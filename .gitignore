@@ -1,0 +1,6 @@
+# spec-kit machine-local state (each environment resolves its own active feature)
+.specify/feature.json
+
+# Claude Code local settings/credentials — never commit agent-local state
+.claude/settings.local.json
+.claude/.credentials.json
