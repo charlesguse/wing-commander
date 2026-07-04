@@ -1,0 +1,9 @@
+{
+  "issue": null,
+  "spec_dir": "specs/001-spec-intake",
+  "feature_num": "001",
+  "stage": "implement",
+  "iteration": 1,
+  "spec_branch": null,
+  "note": "Bootstrap spec: created before the pipeline existed, implemented manually in the bootstrap commit. 'issue' and 'spec_branch' are null because intake automation did not exist yet."
+}
