@@ -1,0 +1,32 @@
+# Stage 2 — Spec accepted → plan. (STUB — see docs/architecture.md §Stage 2)
+# When a draft spec PR merges into main, this stage will create the long-lived
+# spec/<NNN-slug> branch, run /speckit-plan on it, open a plan PR targeting the
+# spec branch, and report to the lifecycle issue.
+name: "speckit · 3 plan"
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+    paths: ["specs/**"]
+
+permissions: {}
+
+jobs:
+  plan:
+    # Only merged draft-spec PRs (head-branch prefix guards against unrelated
+    # PRs that happen to touch specs/**).
+    if: >-
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.head.ref, 'spec-draft/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Not yet implemented
+        run: |
+          {
+            echo "## speckit · plan stage"
+            echo ""
+            echo "Spec PR #${{ github.event.pull_request.number }} merged, but the plan stage"
+            echo "is not implemented yet. See docs/architecture.md (Stage 2)."
+            echo "This stage is itself a spec candidate — open an issue and label it spec-request."
+          } >> "$GITHUB_STEP_SUMMARY"

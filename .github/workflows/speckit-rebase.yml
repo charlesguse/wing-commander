@@ -1,0 +1,29 @@
+# Maintenance — Auto-rebase spec branches. (STUB — see docs/architecture.md §Rebase)
+# On pushes to main (and nightly), rebase every open spec/<NNN-slug> branch onto
+# main; clean rebases are force-pushed with lease, conflicts are handed to
+# Claude for resolution, and unresolvable conflicts are reported to the
+# lifecycle issue.
+name: "speckit · rebase"
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 4 * * *"
+
+permissions: {}
+
+jobs:
+  rebase:
+    # Skip pushes made by the pipeline itself to avoid rebase churn loops.
+    if: ${{ !endsWith(github.actor, '[bot]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Not yet implemented
+        run: |
+          {
+            echo "## speckit · rebase stage"
+            echo ""
+            echo "main moved, but the auto-rebase stage is not implemented yet."
+            echo "See docs/architecture.md (Auto-rebase)."
+          } >> "$GITHUB_STEP_SUMMARY"

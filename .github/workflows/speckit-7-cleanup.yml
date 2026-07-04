@@ -1,0 +1,29 @@
+# Stage 6 — Cleanup. (STUB — see docs/architecture.md §Stage 6)
+# When a final spec PR merges (or any pipeline PR closes unmerged), this stage
+# will delete the spec's branches, flip labels to stage:done (or remove them on
+# rejection), and close the lifecycle issue with a summary.
+name: "speckit · 7 cleanup"
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions: {}
+
+jobs:
+  cleanup:
+    if: >-
+      startsWith(github.event.pull_request.head.ref, 'spec/') ||
+      startsWith(github.event.pull_request.head.ref, 'spec-draft/') ||
+      startsWith(github.event.pull_request.head.ref, 'plan/') ||
+      startsWith(github.event.pull_request.head.ref, 'impl/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Not yet implemented
+        run: |
+          {
+            echo "## speckit · cleanup stage"
+            echo ""
+            echo "PR #${{ github.event.pull_request.number }} closed (merged=${{ github.event.pull_request.merged }}),"
+            echo "but the cleanup stage is not implemented yet. See docs/architecture.md (Stage 6)."
+          } >> "$GITHUB_STEP_SUMMARY"

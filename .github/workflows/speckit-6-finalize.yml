@@ -1,0 +1,42 @@
+# Stage 5 — Finalize. (STUB — see docs/architecture.md §Stage 5)
+# Dispatched after convergence (or hitting the iteration cap). Summarizes the
+# spec branch's diff against main (Haiku), extracts remaining manual tasks from
+# tasks.md, opens the final PR spec/<NNN-slug> → main, and reports both to the
+# lifecycle issue.
+name: "speckit · 6 finalize"
+
+on:
+  workflow_dispatch:
+    inputs:
+      spec_dir:
+        description: "Spec directory (e.g. specs/001-spec-intake)"
+        required: true
+        type: string
+      issue:
+        description: "Lifecycle issue number"
+        required: true
+        type: string
+      converged:
+        description: "Whether the converge loop finished cleanly"
+        required: false
+        default: "true"
+        type: string
+
+permissions: {}
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: speckit-${{ inputs.spec_dir }}
+      cancel-in-progress: false
+    steps:
+      - name: Not yet implemented
+        run: |
+          {
+            echo "## speckit · finalize stage"
+            echo ""
+            echo "Dispatched for ${{ inputs.spec_dir }} (issue #${{ inputs.issue }},"
+            echo "converged=${{ inputs.converged }}), but the finalize stage is not"
+            echo "implemented yet. See docs/architecture.md (Stage 5)."
+          } >> "$GITHUB_STEP_SUMMARY"

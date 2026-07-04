@@ -1,0 +1,42 @@
+# Stage 4 — Implement ⟲ converge loop. (STUB — see docs/architecture.md §Stage 4)
+# Dispatched by the tasks stage (and by itself for iteration N+1). Runs
+# /speckit-implement on the spec branch, then /speckit-converge; if converge
+# appended new tasks and iteration < SPECKIT_MAX_ITERATIONS, re-dispatches
+# itself; otherwise dispatches finalize.
+name: "speckit · 5 implement"
+
+on:
+  workflow_dispatch:
+    inputs:
+      spec_dir:
+        description: "Spec directory (e.g. specs/001-spec-intake)"
+        required: true
+        type: string
+      issue:
+        description: "Lifecycle issue number"
+        required: true
+        type: string
+      iteration:
+        description: "Implement/converge iteration (1-based)"
+        required: false
+        default: "1"
+        type: string
+
+permissions: {}
+
+jobs:
+  implement:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: speckit-${{ inputs.spec_dir }}
+      cancel-in-progress: false
+    steps:
+      - name: Not yet implemented
+        run: |
+          {
+            echo "## speckit · implement stage"
+            echo ""
+            echo "Dispatched for ${{ inputs.spec_dir }} (issue #${{ inputs.issue }},"
+            echo "iteration ${{ inputs.iteration }}), but the implement stage is not"
+            echo "implemented yet. See docs/architecture.md (Stage 4)."
+          } >> "$GITHUB_STEP_SUMMARY"
