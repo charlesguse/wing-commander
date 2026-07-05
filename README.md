@@ -37,7 +37,7 @@ there, and its labels (`spec:NNN-slug`, `stage:*`) always show where things stan
 |---|---|---|
 | 1 · Intake (issue → spec PR) | `speckit-1-intake.yml` | ✅ implemented |
 | 1b · Clarification loop | `speckit-2-clarify.yml` | ✅ implemented |
-| 2 · Plan | `speckit-3-plan.yml` | 🧩 stub — [design](docs/architecture.md#stage-2--plan-speckit-3-planyml-stub) |
+| 2 · Plan | `speckit-3-plan.yml` | ✅ implemented — [spec](specs/002-plan-stage/spec.md) |
 | 3 · Tasks | `speckit-4-tasks.yml` | 🧩 stub |
 | 4 · Implement ⟲ converge | `speckit-5-implement.yml` | 🧩 stub |
 | 5 · Finalize | `speckit-6-finalize.yml` | 🧩 stub |

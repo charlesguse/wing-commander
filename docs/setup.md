@@ -63,8 +63,8 @@ Create these labels (Issues → Labels):
 | `stage:done` | Lifecycle complete |
 | `model:opus` | Opt this spec's implementation into `claude-opus-4-8` |
 
-`spec:<NNN-slug>` labels are created on the fly by the pipeline — no need to
-pre-create those.
+`spec:<NNN-slug>` and `stage:stalled` labels are created on the fly by the
+pipeline — no need to pre-create those.
 
 Quick script (requires `gh` authenticated with repo scope):
 

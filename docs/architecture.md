@@ -1,7 +1,7 @@
 # Pipeline Architecture
 
-How a feature request becomes merged code, stage by stage. Stages 1–1b are
-implemented; stages 2–6 exist as stub workflows with correct triggers and are
+How a feature request becomes merged code, stage by stage. Stages 1–2 are
+implemented; stages 3–6 exist as stub workflows with correct triggers and are
 the next candidates to be built **through the pipeline itself** (open an issue,
 label it `spec-request`).
 
@@ -82,23 +82,32 @@ Every agent step declares `--model` and `--max-turns`.
 
 ---
 
-## Stage 2 — Plan (`speckit-3-plan.yml`, stub)
+## Stage 2 — Plan (`speckit-3-plan.yml`, implemented)
 
-**Trigger**: `pull_request: closed` on `main` touching `specs/**`, gated on
-`merged == true && startsWith(head.ref, 'spec-draft/')` (the head-prefix guard
-prevents unrelated PRs touching `specs/**` from false-triggering).
+Specified in [`specs/002-plan-stage/`](../specs/002-plan-stage/spec.md).
 
-**Design**:
-1. Resolve `spec_dir` from the merged PR's files / spec-meta.json.
-2. Create `spec/NNN-slug` from `main` (plain git push with the App token).
-3. claude-code-action on that branch, `SPECIFY_FEATURE_DIRECTORY` set:
-   run `/speckit-plan`, commit plan artifacts to `plan/NNN-slug`, open a PR
-   **targeting `spec/NNN-slug`**, update spec-meta.json (`stage: plan`).
-4. Comment plan summary + PR link on the lifecycle issue; flip label to
-   `stage:plan`.
-5. If the spec arrived as a hand-written PR with no lifecycle issue
-   (no `spec:` label, spec-meta.json has `"issue": null`), create the lifecycle
-   issue first, then proceed (spec's User Story 3).
+**Trigger**: `pull_request: closed` touching `specs/**`, gated on
+`merged == true && base == main && startsWith(head.ref, 'spec-draft/')` (the
+head-prefix guard prevents unrelated PRs touching `specs/**` from
+false-triggering); plus `workflow_dispatch` (input: `slug`) for manual restarts.
+
+**Flow**:
+1. Resolve + validate the slug from the merged head branch (or dispatch input);
+   refuse to guess if `spec.md` / `spec-meta.json` are missing (FR-010).
+2. Create `spec/NNN-slug` from `main` (plain git push with the App token),
+   reusing it if it exists; if `plan/NNN-slug` already exists, stop — that's a
+   duplicate planning attempt (FR-009).
+3. Hand-submitted specs (`"issue": null`) get a lifecycle issue created and
+   labeled before anything is reported (FR-007).
+4. claude-code-action on the spec branch, `SPECIFY_FEATURE_DIRECTORY` set:
+   run `/speckit-plan` (proceeding despite unresolved markers, FR-011), commit
+   plan artifacts to `plan/NNN-slug`, open a PR **targeting `spec/NNN-slug`**,
+   update spec-meta.json (`stage: plan`), comment the summary on the issue.
+5. Deterministic post-step verifies the plan PR exists, then flips the issue
+   label to `stage:plan`.
+6. A plan PR closed **unmerged** marks the spec stalled (`stage:stalled` label,
+   spec-meta.json `stage: "stalled"`, issue comment); restart is manual —
+   delete `plan/NNN-slug` and dispatch the workflow (FR-012).
 
 ## Stage 3 — Tasks (`speckit-4-tasks.yml`, stub)
 
