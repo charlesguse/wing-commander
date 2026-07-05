@@ -60,7 +60,7 @@ A specification that was written by hand and submitted directly as a pull reques
 - The merged pull request cannot be unambiguously matched to a single specification (e.g., its files or lifecycle record are missing or inconsistent): the pipeline reports the failure rather than guessing which specification to plan.
 - The same specification's merge event is observed more than once (e.g., a retried or duplicated notification): planning must not create a second persistent branch or a second plan pull request for the same planning attempt.
 - The persistent working branch for the specification already exists (e.g., from a prior run): planning reuses it rather than failing or recreating it.
-- The plan pull request is closed without being merged: the specification's stage and lifecycle issue must reflect that planning did not complete, rather than silently remaining marked as "in planning" forever.
+- The plan pull request is closed without being merged: the specification is marked stalled and its lifecycle issue reflects that planning did not complete, rather than silently remaining marked as "in planning" forever; a maintainer must manually restart planning.
 
 ## Requirements *(mandatory)*
 
@@ -76,8 +76,8 @@ A specification that was written by hand and submitted directly as a pull reques
 - **FR-008**: The system MUST NOT merge or approve the plan pull request itself — a human reviews and merges it.
 - **FR-009**: The system MUST treat a repeated or duplicate merge notification for the same specification idempotently, without creating a second branch or a second plan pull request for the same planning attempt.
 - **FR-010**: When the system cannot unambiguously identify which specification a merged pull request corresponds to, it MUST report the failure rather than acting on an incorrect specification.
-- **FR-011**: The system MUST [NEEDS CLARIFICATION: should plan generation proceed if the merged specification still contains unresolved clarification markers, or must it refuse and report back that clarification is incomplete?]
-- **FR-012**: When a plan pull request is closed without merging, the system MUST [NEEDS CLARIFICATION: does the specification revert to the prior stage so a new plan can be generated, does it require a manual re-trigger, or is the feature considered stalled pending maintainer action?]
+- **FR-011**: The system MUST proceed with generating an implementation plan even when the merged specification still contains unresolved [NEEDS CLARIFICATION] markers; it does not block or refuse planning on their account.
+- **FR-012**: When a plan pull request is closed without merging, the system MUST mark the specification as stalled — updating the lifecycle record and lifecycle issue to reflect that planning did not complete — and MUST NOT automatically revert to a prior stage or regenerate a new plan; resuming planning requires manual maintainer action.
 
 ### Key Entities
 

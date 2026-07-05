@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,7 +31,7 @@
 
 ## Notes
 
-- Two [NEEDS CLARIFICATION] markers remain (FR-011, FR-012), both scope-level questions about
-  handling unresolved clarification markers at merge time and what happens when a plan pull
-  request is closed without merging. These are posted to the lifecycle issue for the requester
-  or a trusted repository member to resolve before `/speckit-plan` is run against this spec.
+- FR-011 and FR-012 were resolved via clarification on issue #2: plan generation proceeds even
+  with unresolved [NEEDS CLARIFICATION] markers in the specification (FR-011), and a plan pull
+  request closed without merging leaves the specification stalled pending manual maintainer
+  action rather than auto-reverting or re-triggering (FR-012). No open markers remain.
