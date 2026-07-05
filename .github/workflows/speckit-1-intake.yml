@@ -111,3 +111,15 @@ jobs:
             --max-turns 50
             --allowedTools "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git checkout:*),Bash(git switch:*),Bash(git push:*),Bash(git branch:*),Bash(git log:*),Bash(git diff:*),Bash(ls:*),Bash(mkdir:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue edit:*),Bash(gh issue comment:*),Bash(gh pr create:*),Bash(gh label create:*)"
             --disallowedTools "WebSearch,WebFetch"
+
+      # The action writes its full execution transcript — every tool call,
+      # including permission denials — to claude-execution-output.json in the
+      # runner temp dir. The streamed job log does NOT contain it, so upload it
+      # for post-mortems (which tools were denied, turn count, cost).
+      - name: Upload Claude execution log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-execution-output
+          path: ${{ runner.temp }}/claude-execution-output.json
+          if-no-files-found: ignore

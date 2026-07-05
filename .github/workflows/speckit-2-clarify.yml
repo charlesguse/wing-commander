@@ -100,7 +100,13 @@ jobs:
                ${{ steps.ctx.outputs.spec-dir }}/checklists/ accordingly.
             4. Commit ("spec: resolve clarifications from #${{ github.event.issue.number }}")
                and push to the current branch (the draft PR updates automatically).
-            5. Comment on issue #${{ github.event.issue.number }}:
+            5. Update the draft PR description so it matches the spec: find the PR
+               (gh pr list --head <current branch> --json number,body), then rewrite
+               its "Open questions" section with gh pr edit <num> --body — list only
+               still-open questions, or replace the section with a note that all
+               clarifications are resolved (with a link to the answer comment).
+               Leave the rest of the body untouched.
+            6. Comment on issue #${{ github.event.issue.number }}:
                - which questions were resolved and with what,
                - if markers remain: restate ONLY the still-open questions,
                - if none remain: say the spec is ready for review and link the PR.
@@ -109,5 +115,17 @@ jobs:
           claude_args: |
             --model claude-sonnet-5
             --max-turns 40
-            --allowedTools "Read,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(cat:*),Bash(gh issue comment:*),Bash(gh pr list:*)"
+            --allowedTools "Read,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh pr edit:*)"
             --disallowedTools "WebSearch,WebFetch,Write"
+
+      # The action writes its full execution transcript — every tool call,
+      # including permission denials — to claude-execution-output.json in the
+      # runner temp dir. The streamed job log does NOT contain it, so upload it
+      # for post-mortems (which tools were denied, turn count, cost).
+      - name: Upload Claude execution log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-execution-output
+          path: ${{ runner.temp }}/claude-execution-output.json
+          if-no-files-found: ignore
