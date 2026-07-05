@@ -92,6 +92,8 @@ jobs:
                  --title "Spec: <feature name> (#${{ github.event.issue.number }})" \
                  --body  "<summary of the spec, link 'Closes nothing — lifecycle issue: #${{ github.event.issue.number }}'>"
             7. Update the lifecycle issue #${{ github.event.issue.number }}:
+               - Create the spec identity label first (adding a nonexistent label fails):
+                 gh label create "spec:<NNN-slug>" --color C5DEF5 --description "Lifecycle: <spec-dir>" --force
                - gh issue edit --add-label "spec:<NNN-slug>,stage:spec"
                - If spec.md still contains [NEEDS CLARIFICATION] markers: post ONE
                  comment starting with the heading "## 🔍 Clarification needed",
@@ -107,5 +109,5 @@ jobs:
           claude_args: |
             --model claude-sonnet-5
             --max-turns 50
-            --allowedTools "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git checkout:*),Bash(git switch:*),Bash(git push:*),Bash(git branch:*),Bash(git log:*),Bash(git diff:*),Bash(ls:*),Bash(mkdir:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue edit:*),Bash(gh issue comment:*),Bash(gh pr create:*)"
+            --allowedTools "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git checkout:*),Bash(git switch:*),Bash(git push:*),Bash(git branch:*),Bash(git log:*),Bash(git diff:*),Bash(ls:*),Bash(mkdir:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue edit:*),Bash(gh issue comment:*),Bash(gh pr create:*),Bash(gh label create:*)"
             --disallowedTools "WebSearch,WebFetch"
