@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "spec-meta.json",
+  "description": "Durable lifecycle record for one specification. This stage reads `issue` and writes `stage` and `spec_branch`.",
+  "type": "object",
+  "required": ["issue", "spec_dir", "feature_num", "stage", "iteration", "spec_branch"],
+  "properties": {
+    "issue": {
+      "type": ["integer", "null"],
+      "description": "Lifecycle issue number. null only before this stage creates one for a hand-submitted spec (FR-007)."
+    },
+    "spec_dir": {
+      "type": "string",
+      "pattern": "^specs/[0-9]{3}-[a-z0-9][a-z0-9-]*$"
+    },
+    "feature_num": {
+      "type": "string",
+      "pattern": "^[0-9]{3}$"
+    },
+    "stage": {
+      "type": "string",
+      "enum": ["spec", "plan", "stalled", "tasks", "implement", "review", "done"],
+      "description": "This stage transitions spec -> plan on success, or plan -> stalled if the plan PR closes unmerged (FR-005, FR-012)."
+    },
+    "iteration": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Implement/converge loop counter. Not modified by this stage."
+    },
+    "spec_branch": {
+      "type": ["string", "null"],
+      "pattern": "^spec/[0-9]{3}-[a-z0-9][a-z0-9-]*$",
+      "description": "Set by this stage the first time spec/NNN-slug is created or confirmed to exist (FR-002)."
+    }
+  }
+}
