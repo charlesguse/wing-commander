@@ -62,7 +62,8 @@ serialize, different specs run in parallel. Intake serializes globally
 | Work | Model |
 |---|---|
 | Triage, diff summaries, labels | `claude-haiku-4-5` |
-| specify / clarify / plan / tasks | `claude-sonnet-5` |
+| specify / clarify | `claude-opus-4-8` (constitution v1.1.0: spec quality is bought up front) |
+| plan / tasks | `claude-sonnet-5` |
 | implement / converge | `vars.SPECKIT_IMPLEMENT_MODEL` (default `claude-sonnet-5`; `claude-opus-4-8` via variable or `model:opus` label) |
 
 Every agent step declares `--model` and `--max-turns`.
