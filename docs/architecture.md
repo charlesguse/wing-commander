@@ -1,7 +1,7 @@
 # Pipeline Architecture
 
-How a feature request becomes merged code, stage by stage. Stages 1–3 are
-implemented; stages 4–6 exist as stub workflows with correct triggers and are
+How a feature request becomes merged code, stage by stage. Stages 1–4 are
+implemented; stages 5–6 exist as stub workflows with correct triggers and are
 the next candidates to be built **through the pipeline itself** (open an issue,
 label it `spec-request`).
 
@@ -135,7 +135,10 @@ notifications no-op, FR-011; a manual dispatch may also proceed from
   (`stage:stalled` label, `spec-meta.json` `stage: "stalled"`, issue comment);
   restart is manual — delete `tasks/NNN-slug` and dispatch the workflow.
 
-## Stage 4 — Implement ⟲ converge (`speckit-5-implement.yml`, stub)
+## Stage 4 — Implement ⟲ converge (`speckit-5-implement.yml`, implemented)
+
+Implemented via `specs/005-implement-converge/` (issue #15); the design below
+is what the implementation follows.
 
 **Trigger**: `workflow_dispatch` (`spec_dir`, `issue`, `iteration`). Looping is
 **re-dispatch, not an in-job loop**: each iteration is a separate auditable run,
@@ -148,18 +151,23 @@ vars.SPECKIT_MAX_ITERATIONS`).
    `model:opus`); commits pushed to the spec branch as task phases complete;
    generous `--max-turns`.
 2. **Converge**: `/speckit-converge`. Its contract is append-only: gaps ⇒ a new
-   `## Phase N: Convergence` section appended to tasks.md; converged ⇒ tasks.md
-   byte-identical + "✅ Converged" report. So the loop condition is machine-checkable:
-   ```bash
-   if git status --porcelain -- "$SPEC_DIR/tasks.md" | grep -q .; then
-     # not converged: commit appended tasks, re-dispatch iteration+1 (or stop at cap)
-   else
-     # converged: dispatch finalize
-   fi
-   ```
+   `## Phase N: Convergence` section appended to tasks.md (committed with a
+   `converge:` prefix); converged ⇒ tasks.md byte-identical + "✅ Converged"
+   report. So the loop condition is machine-checkable — the implementation
+   realizes it as a deterministic commit-range walk (a `converge:`-prefixed
+   commit touching tasks.md landed this cycle ⇒ not converged; none ⇒
+   converged), since implement's own checkbox edits to tasks.md make a raw
+   working-tree diff ambiguous across the job boundary
+   (`specs/005-implement-converge/research.md`).
 3. On hitting the iteration cap: post the remaining tasks + final converge
    report to the lifecycle issue and dispatch finalize with `converged=false`.
 4. Post a brief progress comment (`claude-haiku-4-5` summary) each iteration.
+5. **Failure ≠ non-convergence** (FR-013): an outright pass failure (step
+   fails, or `spec-meta.json` didn't advance as instructed) auto-retries the
+   same iteration once, one model tier up (`claude-sonnet-5` →
+   `claude-opus-4-8`). A failed retry — or a failure already on the top
+   tier — marks the spec `stalled` (label, `spec-meta.json`, issue comment);
+   restart is manual: re-dispatch the workflow with the same iteration.
 
 ## Stage 5 — Finalize (`speckit-6-finalize.yml`, stub)
 
