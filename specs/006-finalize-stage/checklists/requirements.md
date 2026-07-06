@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -36,9 +36,8 @@
   the pull request body and a lifecycle-issue comment, advance the issue to the review stage, and
   never approve or merge) is fully determined by docs/architecture.md's Stage 5 design, so no
   clarification was needed for it.
-- One [NEEDS CLARIFICATION] marker remains (FR-010): when the build stage hands a specification off
-  **not converged**, the desired mechanism for signaling that incomplete state on the final pull
-  request — a plain note in the body, a draft pull request, a distinct label, or a combination — is
-  a genuine user-experience choice with several reasonable interpretations and no obvious default.
-  Per CI intake policy the marker is left in place and the question is posted to the lifecycle issue
-  for the requester or maintainers to answer.
+- The FR-010 [NEEDS CLARIFICATION] marker — how to signal a **not-converged** state on the final
+  pull request — has been resolved from the lifecycle issue (#21). The chosen answer (Option A) is a
+  prominent plain note near the top of the pull request body (for example, a ⚠️ "Not fully converged
+  — N tasks remain" callout), with no additional GitHub state (no draft status, no distinct label).
+  FR-010 and User Story 3's third acceptance scenario were updated accordingly. No markers remain.

@@ -52,7 +52,7 @@ Sometimes the build stage hands a specification off without fully converging —
 
 1. **Given** a specification is handed to this stage flagged as not converged, **When** the stage runs, **Then** a final pull request is still opened from the working branch to the main line.
 2. **Given** a specification is handed to this stage flagged as converged, **When** the stage runs, **Then** the final pull request is opened without a not-converged indication.
-3. **Given** a specification handed off not converged, **When** its final pull request is opened, **Then** the incomplete-convergence state is clearly evident to the reviewer.
+3. **Given** a specification handed off not converged, **When** its final pull request is opened, **Then** a prominent note near the top of the pull request body (for example, a ⚠️ "Not fully converged — N tasks remain" callout) makes the incomplete-convergence state clearly evident to the reviewer.
 
 ---
 
@@ -76,7 +76,7 @@ Sometimes the build stage hands a specification off without fully converging —
 - **FR-007**: The system MUST advance the specification's lifecycle issue to the review stage.
 - **FR-008**: The system MUST update the specification's durable lifecycle record to reflect that it has reached this stage / is awaiting review.
 - **FR-009**: The system MUST open a final pull request whether the specification was handed off converged or not converged, so that every specification reaching this stage becomes reviewable exactly once.
-- **FR-010**: When the specification is handed off flagged as not converged, the system MUST make the incomplete-convergence state clearly evident to a reviewer of the final pull request. [NEEDS CLARIFICATION: how should the not-converged state be signaled — a plain note in the pull request body, opening the pull request as a draft, a distinct label on the pull request, or some combination?]
+- **FR-010**: When the specification is handed off flagged as not converged, the system MUST make the incomplete-convergence state clearly evident to a reviewer of the final pull request by including a prominent note near the top of the pull request body (for example, a ⚠️ "Not fully converged — N tasks remain" callout). No additional GitHub state (draft status or a distinct label) is required for this signal.
 - **FR-011**: The system MUST NOT itself approve or merge the final pull request; merging into the main line is reserved for a human, and that human merge is what triggers the downstream cleanup stage.
 - **FR-012**: The system MUST treat a repeated or duplicate hand-off for the same specification idempotently, without opening a second final pull request or posting a duplicate remaining-manual-work comment; an already-open final pull request is reused.
 - **FR-013**: When the specification's working branch carries no changes against the main line, the system MUST report the anomaly on the lifecycle issue rather than opening an empty pull request.
