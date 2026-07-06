@@ -1,6 +1,6 @@
 # Feature Specification: Clarification Replies on the Draft Spec Pull Request
 
-**Feature Branch**: `spec-draft/003-clarify-on-pr`
+**Feature Branch**: `spec-draft/004-clarify-on-pr`
 
 **Created**: 2026-07-05
 
