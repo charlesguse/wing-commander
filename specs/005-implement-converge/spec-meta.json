@@ -2,7 +2,7 @@
   "issue": 15,
   "spec_dir": "specs/005-implement-converge",
   "feature_num": "005",
-  "stage": "spec",
+  "stage": "plan",
   "iteration": 0,
-  "spec_branch": null
+  "spec_branch": "spec/005-implement-converge"
 }
