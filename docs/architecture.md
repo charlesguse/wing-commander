@@ -1,7 +1,7 @@
 # Pipeline Architecture
 
-How a feature request becomes merged code, stage by stage. Stages 1–2 are
-implemented; stages 3–6 exist as stub workflows with correct triggers and are
+How a feature request becomes merged code, stage by stage. Stages 1–3 are
+implemented; stages 4–6 exist as stub workflows with correct triggers and are
 the next candidates to be built **through the pipeline itself** (open an issue,
 label it `spec-request`).
 
@@ -109,17 +109,30 @@ false-triggering); plus `workflow_dispatch` (input: `slug`) for manual restarts.
    spec-meta.json `stage: "stalled"`, issue comment); restart is manual —
    delete `plan/NNN-slug` and dispatch the workflow (FR-012).
 
-## Stage 3 — Tasks (`speckit-4-tasks.yml`, stub)
+## Stage 3 — Tasks (`speckit-4-tasks.yml`, implemented)
 
-**Trigger**: `pull_request: closed` with base `spec/**`, head `plan/*`, merged.
+Specified in [`specs/003-tasks-stage/`](../specs/003-tasks-stage/spec.md).
 
-**Design**: run `/speckit-tasks` (`claude-sonnet-5`, `SPECIFY_FEATURE_DIRECTORY`
-set). Gate by `vars.SPECKIT_TASKS_REVIEW`:
-- `auto` (default): commit `tasks.md` directly to `spec/NNN-slug`; post a task
-  summary to the lifecycle issue; `gh workflow run speckit-5-implement.yml
+**Trigger**: `pull_request: closed` with base `spec/**`, head `plan/*`, merged;
+plus `workflow_dispatch` (input: `slug`) for manual restarts (same restart
+idiom as the plan stage).
+
+**Flow**: resolve + validate the slug from the head branch (refuse to guess,
+FR-012); idempotency-guard on `spec-meta.json` `stage == "plan"` (duplicate
+notifications no-op, FR-011; a manual dispatch may also proceed from
+`"stalled"` — that is the restart path). Then run `/speckit-tasks`
+(`claude-sonnet-5`, `SPECIFY_FEATURE_DIRECTORY` set), gated by
+`vars.SPECKIT_TASKS_REVIEW`:
+- `auto` (default, any other value falls open to it): commit `tasks.md` +
+  `spec-meta.json` (`stage: "tasks"`) directly to `spec/NNN-slug`; post a task
+  summary to the lifecycle issue; flip its label to `stage:tasks`; then a
+  deterministic step runs `gh workflow run speckit-5-implement.yml
   -f spec_dir=… -f issue=… -f iteration=1`.
-- `pr`: open `tasks/NNN-slug` PR; a merged-tasks-PR clause in this same workflow
-  does the dispatch instead.
+- `pr`: open a `tasks/NNN-slug` PR carrying the same changes; a
+  `tasks-approved` job in this same workflow does the dispatch when that PR
+  merges. A tasks PR closed **unmerged** marks the spec stalled
+  (`stage:stalled` label, `spec-meta.json` `stage: "stalled"`, issue comment);
+  restart is manual — delete `tasks/NNN-slug` and dispatch the workflow.
 
 ## Stage 4 — Implement ⟲ converge (`speckit-5-implement.yml`, stub)
 
