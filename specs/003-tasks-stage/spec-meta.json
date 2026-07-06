@@ -2,7 +2,7 @@
   "issue": 8,
   "spec_dir": "specs/003-tasks-stage",
   "feature_num": "003",
-  "stage": "spec",
+  "stage": "plan",
   "iteration": 0,
-  "spec_branch": null
+  "spec_branch": "spec/003-tasks-stage"
 }
