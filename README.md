@@ -38,8 +38,8 @@ there, and its labels (`spec:NNN-slug`, `stage:*`) always show where things stan
 | 1 · Intake (issue → spec PR) | `speckit-1-intake.yml` | ✅ implemented |
 | 1b · Clarification loop | `speckit-2-clarify.yml` | ✅ implemented |
 | 2 · Plan | `speckit-3-plan.yml` | ✅ implemented — [spec](specs/002-plan-stage/spec.md) |
-| 3 · Tasks | `speckit-4-tasks.yml` | 🧩 stub |
-| 4 · Implement ⟲ converge | `speckit-5-implement.yml` | 🧩 stub |
+| 3 · Tasks | `speckit-4-tasks.yml` | ✅ implemented — [spec](specs/003-tasks-stage/spec.md) |
+| 4 · Implement ⟲ converge | `speckit-5-implement.yml` | ✅ implemented — [spec](specs/005-implement-converge/spec.md) |
 | 5 · Finalize | `speckit-6-finalize.yml` | 🧩 stub |
 | 6 · Cleanup | `speckit-7-cleanup.yml` | 🧩 stub |
 | Auto-rebase | `speckit-rebase.yml` | 🧩 stub |
