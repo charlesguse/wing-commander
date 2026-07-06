@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -36,8 +36,9 @@
   finalization flagged not-converged), per-cycle progress reporting, and the model default /
   higher-capability opt-in are all fully determined by docs/architecture.md's Stage 4 design, so
   no clarification was needed for them.
-- One [NEEDS CLARIFICATION] marker remains (FR-013): the desired behavior when an implementation
-  or convergence pass **fails outright** (resource/tooling failure) — as opposed to completing
-  but not yet converging — is not specified by the architecture doc, and multiple reasonable
-  outcomes exist (stall + manual restart, finalize flagged not-converged, or auto-retry once).
-  This question is posted to the lifecycle issue for the requester/maintainers to answer.
+- The one open [NEEDS CLARIFICATION] marker (FR-013) — the desired behavior when an implementation
+  or convergence pass **fails outright** (resource/tooling failure), as opposed to completing but
+  not yet converging — has been resolved from the lifecycle issue: the stage automatically retries
+  the same iteration once, escalating the implementation model one capability tier (Haiku → Sonnet
+  → Opus); if the retry also fails, or the pass was already on the highest tier, the specification
+  is marked stalled for manual restart with the failure surfaced on the lifecycle issue.
