@@ -197,12 +197,23 @@ lifecycle issue for human help.
 
 ## Reusability roadmap
 
-The current workflows are repo-local. The extraction path (milestone 4):
+The current workflows are repo-local; extraction is milestone 4 of the
+[roadmap](../README.md#roadmap). One contract already holds today and must
+survive extraction unchanged (constitution VI): **the pipeline reads everything
+project-specific from the consuming repository's checkout** — its
+`.specify/memory/constitution.md`, its templates and scripts under `.specify/`,
+its `.claude/skills/speckit-*`, its `specs/` directory. No stage resolves any
+artifact from speckit-action itself, and no workflow hardcodes a repository
+name or owner; every path is relative to the checkout, so the same workflow
+bodies operate on whichever repository runs them.
+
+The extraction path:
 1. Move stage bodies into `workflow_call` reusable workflows with explicit
    inputs (`spec_dir`, `issue_number`, `iteration`) and `secrets: inherit`.
 2. Consuming repos keep thin event-trigger wrappers
    (`uses: <org>/speckit-action/.github/workflows/speckit-3-plan.yml@v1`)
-   plus their own `specify init` output.
+   plus their own `specify init` output — constitution, templates, scripts,
+   and skills are theirs, not inherited from this repo.
 3. Everything repo-specific stays in the `speckit-context` composite.
 
 ## Known risks

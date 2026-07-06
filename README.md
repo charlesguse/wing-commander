@@ -61,6 +61,38 @@ Prefer writing specs by hand? Run spec-kit locally (`/speckit-specify` in Claude
 Code) and open the PR yourself — the pipeline picks up from the merge exactly the
 same way.
 
+## Using this on your own project
+
+The pipeline operates on **your** project's artifacts, not this repository's:
+every path it touches — the constitution (`.specify/memory/constitution.md`),
+spec templates and scripts (`.specify/`), the spec-kit skills
+(`.claude/skills/speckit-*`), and the `specs/` directory — resolves relative to
+the repository the workflows run in. speckit-action ships pipeline mechanics;
+it never ships or reads project content of its own. This repository's
+constitution governs this repository only — yours governs yours.
+
+To adopt it today (before the milestone-4 extraction):
+
+1. Run `specify init` in your repo (pin the same spec-kit version, currently
+   v0.12.4) so it has its own `.specify/` and `.claude/skills/speckit-*` —
+   then write your constitution with `/speckit-constitution`.
+2. Copy `.github/workflows/speckit-*.yml` and `.github/actions/speckit-context/`.
+3. Follow [docs/setup.md](docs/setup.md) (App, secrets, variables, labels).
+
+Milestone 4 replaces step 2 with thin `uses:` wrappers — see the roadmap below.
+
+## Roadmap
+
+| Milestone | Scope | State |
+|---|---|---|
+| 1 · Spec stages | intake, clarify, plan, tasks | ✅ done |
+| 2 · Build stages | implement ⟲ converge, finalize, cleanup, auto-rebase | 🔨 in progress |
+| 3 · Hardening & observability | per-run agent metrics (turns/tokens/cost), failure-mode polish | planned |
+| 4 · Extraction | stages become reusable `workflow_call` workflows; consuming repos keep thin event wrappers + their own `specify init` output | planned |
+
+Each milestone is built *through* the pipeline itself (constitution I): open an
+issue, get the `spec-request` label, and the stages above carry it to a PR.
+
 ## Design principles
 
 The project [constitution](.specify/memory/constitution.md) governs every change:

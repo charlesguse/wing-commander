@@ -1,7 +1,11 @@
 # Setup
 
 One-time configuration to bring the speckit pipeline to life in this repository
-(or in any repository that adopts it).
+(or in any repository that adopts it). An adopting repository must first have
+its own `specify init` output — `.specify/` (including
+`memory/constitution.md`) and `.claude/skills/speckit-*` — because the pipeline
+reads all project-specific artifacts from the repository it runs in, never from
+speckit-action (see the [README](../README.md#using-this-on-your-own-project)).
 
 ## 1. Create the speckit-bot GitHub App
 

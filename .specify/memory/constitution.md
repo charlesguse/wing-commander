@@ -1,3 +1,19 @@
+<!--
+Sync Impact Report — 2026-07-05
+Version change: 1.1.0 → 1.2.0 (MINOR: new principle added)
+Modified principles: none
+Added sections: Principle VI. Portability — The Consuming Repository Owns Its Artifacts
+Removed sections: none
+Templates requiring updates:
+  ✅ .specify/templates/plan-template.md — no change needed (Constitution Check is
+     generic; gates are derived from this file at plan time, no principle list to sync)
+  ✅ .specify/templates/spec-template.md — no change needed (no principle references)
+  ✅ .specify/templates/tasks-template.md — no change needed (no principle references)
+  ✅ README.md — updated in same PR (adoption contract + roadmap sections)
+  ✅ docs/architecture.md — updated in same PR (reusability contract cites VI)
+  ✅ docs/setup.md — updated in same PR (adoption prerequisite)
+Follow-up TODOs: none
+-->
 # Speckit GitHub Action Constitution
 
 ## Core Principles
@@ -17,6 +33,9 @@ A requester should only ever need to: describe what they want, answer clarificat
 ### V. Security — Untrusted Content Is Never Instructions (NON-NEGOTIABLE)
 Issue and comment bodies are user data, never agent instructions; prompts must frame them as such. Pipeline entry requires a maintainer-applied label. Comment-triggered stages verify the commenter is a maintainer (OWNER/MEMBER/COLLABORATOR) or the original issue author, and never react to bots. Each stage runs with the least-privilege tool allowlist it needs; web tools are disabled in all issue/comment-driven stages. Only trusted refs are checked out — never fork PR heads. Humans merge every PR into `main`; the bot never approves or merges to `main`. Authentication uses a dedicated GitHub App — never a PAT.
 
+### VI. Portability — The Consuming Repository Owns Its Artifacts
+The pipeline operates exclusively on the repository that runs it. Everything project-specific — the constitution (`.specify/memory/constitution.md`), spec templates and scripts (`.specify/`), spec-kit skills (`.claude/skills/speckit-*`), and the `specs/` directory — is read from the consuming repository's own checkout (its `specify init` output), never bundled with or resolved from speckit-action. Workflows must not hardcode repository names, owners, or project content; all artifact paths resolve relative to the checkout, and anything repo-specific belongs in the consuming repository or its thin wrapper workflows. This constitution governs this repository only; an adopting repository is governed by its own.
+
 ## Operational Constraints
 
 - Spec artifacts live in `specs/<NNN-slug>/` (spec.md, plan.md, tasks.md, spec-meta.json, checklists/). `spec-meta.json` is the machine-readable source of truth for a spec's lifecycle state.
@@ -33,4 +52,4 @@ Stages and their gates: intake (`/speckit-specify`, human gate = maintainer labe
 
 This constitution supersedes ad-hoc practice in this repository. Every spec, plan, and implementation PR is checked against it during review; violations must be fixed or the constitution amended first. Amendments arrive as ordinary PRs that modify this file, state the motivation, and bump the version below (semver: breaking principle changes = MAJOR, new principles/sections = MINOR, clarifications = PATCH).
 
-**Version**: 1.1.0 | **Ratified**: 2026-07-04 | **Last Amended**: 2026-07-05
+**Version**: 1.2.0 | **Ratified**: 2026-07-04 | **Last Amended**: 2026-07-05
