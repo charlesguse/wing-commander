@@ -113,7 +113,7 @@ jobs:
 
             Never merge, approve, close, or relabel anything except as stated.
           claude_args: |
-            --model claude-sonnet-5
+            --model claude-opus-4-8
             --max-turns 40
             --allowedTools "Read,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh pr edit:*)"
             --disallowedTools "WebSearch,WebFetch,Write"

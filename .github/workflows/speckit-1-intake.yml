@@ -46,6 +46,25 @@ jobs:
           token: ${{ steps.ctx.outputs.token }}
           fetch-depth: 0
 
+      # The /speckit-specify skill numbers features by scanning specs/ on the
+      # current checkout, which cannot see specs still in flight on unmerged
+      # spec-draft/ branches — that allocated 003 twice (issues #6 and #8).
+      # Compute the next free number across specs/ on main AND every open
+      # pipeline branch, and hand it to the agent.
+      - name: Allocate feature number
+        id: num
+        run: |
+          highest=$(
+            {
+              ls -d specs/[0-9][0-9][0-9]-* 2>/dev/null | sed 's|^specs/||'
+              git ls-remote --heads origin 'refs/heads/spec-draft/*' 'refs/heads/spec/*' \
+                | sed -E 's|.*refs/heads/spec(-draft)?/||'
+            } | grep -oE '^[0-9]{3}' | sort -n | tail -1
+          )
+          num=$(printf '%03d' $(( 10#${highest:-000} + 1 )))
+          echo "num=$num" >> "$GITHUB_OUTPUT"
+          echo "Allocated feature number $num (highest in use: ${highest:-none})." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Create spec from issue
         uses: anthropics/claude-code-action@v1
         env:
@@ -77,10 +96,16 @@ jobs:
                using the issue title + body as the feature description. Follow the
                skill completely (spec directory under specs/, quality checklist,
                max 3 [NEEDS CLARIFICATION] markers).
-               DEVIATION for CI: the skill says to present clarification questions
-               and wait for the user. Do NOT wait. Leave the [NEEDS CLARIFICATION]
-               markers in spec.md and continue; the questions are posted to the
-               issue in step 7 instead.
+               DEVIATIONS for CI:
+               - The skill says to present clarification questions and wait for
+                 the user. Do NOT wait. Leave the [NEEDS CLARIFICATION] markers
+                 in spec.md and continue; the questions are posted to the issue
+                 in step 7 instead.
+               - The feature number <NNN> MUST be ${{ steps.num.outputs.num }}
+                 (pre-computed to account for specs in flight on unmerged
+                 branches). When the skill auto-generates the spec directory,
+                 use ${{ steps.num.outputs.num }} as the 3-digit prefix instead
+                 of scanning specs/.
             4. Write <spec-dir>/spec-meta.json:
                {"issue": ${{ github.event.issue.number }}, "spec_dir": "<spec-dir>",
                 "feature_num": "<NNN>", "stage": "spec", "iteration": 0,
@@ -107,7 +132,7 @@ jobs:
             Constraints: create at most one spec directory; never edit files outside
             it; never merge or approve anything; never force-push.
           claude_args: |
-            --model claude-sonnet-5
+            --model claude-opus-4-8
             --max-turns 50
             --allowedTools "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git checkout:*),Bash(git switch:*),Bash(git push:*),Bash(git branch:*),Bash(git log:*),Bash(git diff:*),Bash(ls:*),Bash(mkdir:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue edit:*),Bash(gh issue comment:*),Bash(gh pr create:*),Bash(gh label create:*)"
             --disallowedTools "WebSearch,WebFetch"
