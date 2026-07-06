@@ -37,6 +37,10 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
+      # Dispatching the implement stage uses the default GITHUB_TOKEN
+      # (workflow_dispatch is exempt from the no-recursive-trigger rule);
+      # the speckit-bot App token has no actions permission.
+      actions: write
       id-token: write
     # One tasks run per spec at a time: a duplicate merge notification queues
     # behind the first and then no-ops on the stage guard (FR-011).
@@ -307,7 +311,7 @@ jobs:
       - name: Dispatch implement stage (auto)
         if: steps.guard.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto'
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
           SLUG: ${{ steps.spec.outputs.slug }}
           ISSUE: ${{ steps.meta.outputs.issue }}
         run: |
@@ -341,6 +345,8 @@ jobs:
     permissions:
       contents: read
       issues: write
+      # Dispatch uses the default GITHUB_TOKEN — see the tasks job.
+      actions: write
       id-token: write
     concurrency:
       group: speckit-tasks-${{ github.event.pull_request.head.ref }}
@@ -383,6 +389,7 @@ jobs:
       - name: Verify stage and dispatch implement stage
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          DISPATCH_TOKEN: ${{ github.token }}
           SLUG: ${{ steps.spec.outputs.slug }}
           SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
         run: |
@@ -392,7 +399,7 @@ jobs:
             exit 0
           fi
           issue=$(jq -r '.issue // empty' "$SPEC_DIR/spec-meta.json")
-          gh workflow run speckit-5-implement.yml \
+          GH_TOKEN="$DISPATCH_TOKEN" gh workflow run speckit-5-implement.yml \
             -f spec_dir="specs/$SLUG" \
             -f issue="$issue" \
             -f iteration=1
