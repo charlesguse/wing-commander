@@ -689,11 +689,16 @@ jobs:
           gh issue edit "$ISSUE" --remove-label "stage:tasks"     2>/dev/null || true
           # 4-backtick fence so an agent message containing ``` blocks nests.
           fence='````'
+          # NOTE: no apostrophes inside ${VAR:-default} — bash parses quotes
+          # inside ${} even within double quotes (this exact line once broke
+          # the whole report with "unexpected EOF").
+          reason_text="$REASON"
+          [ -n "$reason_text" ] || reason_text="see the failing run's step summary"
           {
             echo "⏸️ **Implementation stalled** — iteration $ITERATION of the implement/converge loop failed (last attempt on \`$TIER\`), and no higher model tier remains to escalate to, so this specification is now **stalled** (nothing restarts automatically)."
             echo ""
             echo "**Failing run**: $RUN_URL"
-            echo "**Why the attempt was judged failed**: ${REASON:-see the failing run's step summary}"
+            echo "**Why the attempt was judged failed**: $reason_text"
             if [ -n "$AGENT_MSG" ]; then
               echo ""
               echo "<details><summary><b>Agent's final message</b> (last attempt — usually states exactly what blocked it)</summary>"

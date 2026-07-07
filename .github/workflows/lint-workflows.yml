@@ -1,0 +1,53 @@
+# Guard rail: every workflow must parse as YAML and every embedded run:
+# script must pass bash -n. Added after an unbalanced quote inside a
+# ${VAR:-default} expansion silently broke the implement stage's stall
+# report — the exact step whose job is to report failures.
+name: "lint · workflows"
+
+on:
+  pull_request:
+    paths: [".github/workflows/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Parse YAML and bash -n every run block
+        run: |
+          python3 - <<'PYEOF'
+          import glob, subprocess, sys, yaml
+
+          failures = 0
+          for f in sorted(glob.glob(".github/workflows/*.yml")):
+              try:
+                  wf = yaml.safe_load(open(f, encoding="utf-8"))
+              except Exception as e:
+                  print(f"::error file={f}::YAML parse failure: {e}")
+                  failures += 1
+                  continue
+              for jname, job in (wf.get("jobs") or {}).items():
+                  for i, step in enumerate(job.get("steps") or []):
+                      run = step.get("run")
+                      if not run:
+                          continue
+                      # Expression interpolation never introduces quoting in
+                      # these workflows' scripts; neutralize it for bash -n.
+                      import re
+                      script = re.sub(r"\$\{\{[^}]*\}\}", "EXPR", run)
+                      r = subprocess.run(["bash", "-n"], input=script.encode(),
+                                         capture_output=True)
+                      if r.returncode != 0:
+                          name = step.get("name", f"step {i}")
+                          err = r.stderr.decode().strip().replace("%", "%25").replace("\n", "%0A")
+                          print(f"::error file={f}::{jname} / {name}: {err}")
+                          failures += 1
+          print(f"Checked all run blocks; {failures} failure(s).")
+          sys.exit(1 if failures else 0)
+          PYEOF
