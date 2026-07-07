@@ -2,7 +2,7 @@
   "issue": 28,
   "spec_dir": "specs/007-cleanup-stage",
   "feature_num": "007",
-  "stage": "plan",
+  "stage": "tasks",
   "iteration": 0,
   "spec_branch": "spec/007-cleanup-stage"
 }
