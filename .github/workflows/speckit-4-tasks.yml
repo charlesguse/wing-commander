@@ -123,6 +123,19 @@ jobs:
             echo "Stage is '$stage' (expected 'plan') — duplicate or out-of-order notification, nothing to do." >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      # Tie every run — merge-triggered or manual — back to the lifecycle
+      # issue the moment it starts doing real work, with a link to the run.
+      - name: Report run started on lifecycle issue
+        if: steps.guard.outputs.skip != 'true' && steps.meta.outputs.issue != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ISSUE: ${{ steps.meta.outputs.issue }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ACTOR: ${{ github.triggering_actor }}
+        run: |
+          gh issue comment "$ISSUE" --body "📋 **speckit · tasks** — task generation started ([run]($RUN_URL), triggered by \`$ACTOR\`)."
+
       # FR-003: repo-level review mode. Anything other than 'pr' fails open
       # to the automation-first default.
       - name: Resolve review mode
@@ -164,6 +177,10 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.ctx.outputs.token }}
+          # Restart/dispatch paths can trigger this workflow via
+          # GITHUB_TOKEN, making the triggering actor github-actions[bot];
+          # the action rejects bot actors unless allow-listed.
+          allowed_bots: "github-actions"
           # Only the validated slug and integer issue number are interpolated.
           # The plan/spec content was merged by a maintainer, but is still
           # framed as data, not instructions.
@@ -216,6 +233,10 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.ctx.outputs.token }}
+          # Restart/dispatch paths can trigger this workflow via
+          # GITHUB_TOKEN, making the triggering actor github-actions[bot];
+          # the action rejects bot actors unless allow-listed.
+          allowed_bots: "github-actions"
           prompt: |
             You are the tasks stage of this repository's spec-driven
             development pipeline, running in review-required mode. The accepted
@@ -284,11 +305,18 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           SLUG: ${{ steps.spec.outputs.slug }}
+          ISSUE: ${{ steps.meta.outputs.issue }}
         run: |
           pr=$(gh pr list --head "tasks/$SLUG" --state open --json number --jq '.[0].number // empty')
           if [ -z "$pr" ]; then
             echo "::error::Tasks run finished but no open PR from tasks/$SLUG exists."
             exit 1
+          fi
+          # Pipeline PRs carry the same labels as their lifecycle issue so PR
+          # lists are filterable by spec.
+          labels=$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name] | join(",")')
+          if [ -n "$labels" ]; then
+            gh pr edit "$pr" --add-label "$labels" || true
           fi
           echo "Tasks PR #$pr opened for review." >> "$GITHUB_STEP_SUMMARY"
 
@@ -471,8 +499,14 @@ jobs:
           git config user.name  "${BOT_SLUG}[bot]"
           git config user.email "${BOT_SLUG}[bot]@users.noreply.github.com"
           git add "$SPEC_DIR/spec-meta.json"
-          git commit -m "tasks: mark $SLUG stalled (tasks PR closed unmerged)"
-          git push
+          # If the record is already stalled, committing nothing must not kill
+          # the job before the issue report below runs.
+          if git diff --cached --quiet; then
+            echo "spec-meta.json already reads stage=stalled — nothing to commit." >> "$GITHUB_STEP_SUMMARY"
+          else
+            git commit -m "tasks: mark $SLUG stalled (tasks PR closed unmerged)"
+            git push
+          fi
 
       - name: Report stalled on lifecycle issue
         if: steps.mark.outputs.issue != ''
@@ -485,4 +519,17 @@ jobs:
           gh label create "stage:stalled" --color E99695 --description "Stage did not complete; manual restart required" --force
           gh issue edit "$ISSUE" --add-label "stage:stalled"
           gh issue edit "$ISSUE" --remove-label "stage:tasks" 2>/dev/null || true
-          gh issue comment "$ISSUE" --body "⏸️ Task generation did not complete: tasks PR #$PR_NUMBER was closed without merging, so this specification is now **stalled** (nothing restarts automatically). To restart the tasks stage, a maintainer should delete the \`tasks/$SLUG\` branch and run the **speckit · 4 tasks** workflow manually (Actions → speckit · 4 tasks → Run workflow → slug \`$SLUG\`)."
+          {
+            echo "⏸️ **Task generation stalled** — tasks PR #$PR_NUMBER was closed without merging, so this specification is now **stalled** (nothing restarts automatically)."
+            echo ""
+            echo "### Runbook — restarting the tasks stage"
+            echo ""
+            echo "1. Delete the \`tasks/$SLUG\` branch."
+            echo "2. Re-dispatch [speckit · 4 tasks]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/speckit-4-tasks.yml) via **Run workflow** with slug \`$SLUG\` (GitHub cannot prefill it from a link), or from a terminal:"
+            echo ""
+            echo "   \`\`\`"
+            echo "   git push origin --delete tasks/$SLUG"
+            echo "   gh workflow run speckit-4-tasks.yml -R $GITHUB_REPOSITORY -f slug=$SLUG"
+            echo "   \`\`\`"
+          } > /tmp/stall-comment.md
+          gh issue comment "$ISSUE" --body-file /tmp/stall-comment.md

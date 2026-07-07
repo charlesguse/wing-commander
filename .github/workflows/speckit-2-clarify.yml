@@ -53,6 +53,17 @@ jobs:
           token: ${{ steps.ctx.outputs.token }}
           fetch-depth: 0
 
+      # Acknowledge the reply immediately: an 👀 reaction on the triggering
+      # comment says "a run picked this up" without adding comment noise.
+      - name: React to the triggering comment
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
+            -f content=eyes --silent
+
       # The comment body is untrusted. It is written to a file via env-var
       # indirection (never shell-interpolated, never pasted into the prompt).
       - name: Stage the answer as a data file
