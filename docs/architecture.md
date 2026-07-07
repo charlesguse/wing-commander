@@ -1,8 +1,8 @@
 # Pipeline Architecture
 
-How a feature request becomes merged code, stage by stage. Stages 1–4 are
-implemented; stages 5–6 exist as stub workflows with correct triggers and are
-the next candidates to be built **through the pipeline itself** (open an issue,
+How a feature request becomes merged code, stage by stage. Stages 1–5 are
+implemented; stage 6 exists as a stub workflow with correct triggers and is
+the next candidate to be built **through the pipeline itself** (open an issue,
 label it `spec-request`).
 
 ```
@@ -169,7 +169,7 @@ vars.SPECKIT_MAX_ITERATIONS`).
    tier — marks the spec `stalled` (label, `spec-meta.json`, issue comment);
    restart is manual: re-dispatch the workflow with the same iteration.
 
-## Stage 5 — Finalize (`speckit-6-finalize.yml`, stub)
+## Stage 5 — Finalize (`speckit-6-finalize.yml`, implemented — see `specs/006-finalize-stage/`)
 
 **Trigger**: `workflow_dispatch` (`spec_dir`, `issue`, `converged`).
 
