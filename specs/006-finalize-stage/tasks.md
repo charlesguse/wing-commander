@@ -93,9 +93,9 @@ than as a separate task here.
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T018 [P] Update `docs/architecture.md`: intro sentence ("Stages 1–4 are implemented" → stages 1–5; stub list shrinks), and the Stage 5 section header from "(stub)" to "(implemented)" with a pointer to `specs/006-finalize-stage/` — keeping the section's design text, which the implementation follows.
-- [ ] T019 Validate `.github/workflows/speckit-6-finalize.yml` end-to-end on paper: YAML parses (e.g. `python -c "import yaml,sys; yaml.safe_load(open(sys.argv[1]))"` or actionlint if available), every gate/step matches `specs/006-finalize-stage/contracts/finalize-workflow.md` (trigger, refusal, idempotency, no-diff, change-summary/remaining-work, PR, post-PR contracts), and every `if:` chain honors the `skip` output.
-- [ ] T020 Walk `specs/006-finalize-stage/quickstart.md` Scenarios 1–7 against the finished workflow as a desk-check, and record which scenarios can only be exercised live after merge (live runs require the workflow on the default branch and a real scratch spec).
+- [X] T018 [P] Update `docs/architecture.md`: intro sentence ("Stages 1–4 are implemented" → stages 1–5; stub list shrinks), and the Stage 5 section header from "(stub)" to "(implemented)" with a pointer to `specs/006-finalize-stage/` — keeping the section's design text, which the implementation follows.
+- [X] T019 Validate `.github/workflows/speckit-6-finalize.yml` end-to-end on paper: YAML parses (e.g. `python -c "import yaml,sys; yaml.safe_load(open(sys.argv[1]))"` or actionlint if available), every gate/step matches `specs/006-finalize-stage/contracts/finalize-workflow.md` (trigger, refusal, idempotency, no-diff, change-summary/remaining-work, PR, post-PR contracts), and every `if:` chain honors the `skip` output.
+- [X] T020 Walk `specs/006-finalize-stage/quickstart.md` Scenarios 1–7 against the finished workflow as a desk-check, and record which scenarios can only be exercised live after merge (live runs require the workflow on the default branch and a real scratch spec).
 
 ---
 
