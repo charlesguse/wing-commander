@@ -164,6 +164,10 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.ctx.outputs.token }}
+          # Restart/dispatch paths can trigger this workflow via
+          # GITHUB_TOKEN, making the triggering actor github-actions[bot];
+          # the action rejects bot actors unless allow-listed.
+          allowed_bots: "github-actions"
           # Only the validated slug and integer issue number are interpolated.
           # The plan/spec content was merged by a maintainer, but is still
           # framed as data, not instructions.
@@ -216,6 +220,10 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.ctx.outputs.token }}
+          # Restart/dispatch paths can trigger this workflow via
+          # GITHUB_TOKEN, making the triggering actor github-actions[bot];
+          # the action rejects bot actors unless allow-listed.
+          allowed_bots: "github-actions"
           prompt: |
             You are the tasks stage of this repository's spec-driven
             development pipeline, running in review-required mode. The accepted

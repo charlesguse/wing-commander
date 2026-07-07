@@ -209,6 +209,10 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.ctx.outputs.token }}
+          # This workflow is dispatched by other pipeline stages via
+          # GITHUB_TOKEN, so the triggering actor is github-actions[bot];
+          # the action rejects bot actors unless allow-listed.
+          allowed_bots: "github-actions"
           # Only the validated slug, integer issue number, and integer
           # iteration are interpolated. The spec/plan/tasks content was merged
           # by a maintainer, but is still framed as data, not instructions.
@@ -328,6 +332,10 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.ctx.outputs.token }}
+          # This workflow is dispatched by other pipeline stages via
+          # GITHUB_TOKEN, so the triggering actor is github-actions[bot];
+          # the action rejects bot actors unless allow-listed.
+          allowed_bots: "github-actions"
           prompt: |
             You are the implement/converge stage of this repository's
             spec-driven development pipeline, retrying build-and-reassess
@@ -467,6 +475,10 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.ctx.outputs.token }}
+          # This workflow is dispatched by other pipeline stages via
+          # GITHUB_TOKEN, so the triggering actor is github-actions[bot];
+          # the action rejects bot actors unless allow-listed.
+          allowed_bots: "github-actions"
           prompt: |
             You are the progress reporter for the implement/converge stage of
             this repository's spec-driven development pipeline. Cycle
