@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,9 +31,16 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain (FR-012, FR-013, FR-014), all genuine
-  scope decisions the architecture doc leaves undefined: the fate of a final PR
-  closed unmerged, whether non-final pipeline PR-close events are in scope, and
-  whether draft rejection also closes the lifecycle issue. These are posted to the
-  lifecycle issue for the requester/maintainers to answer; the remaining checklist
-  items pass.
+- All three clarifications from #28 are resolved (answered by @charlesguse):
+  - **FR-012** (final PR closed unmerged): mark the specification **stalled**, keep
+    the persistent working branch and other pipeline branches intact, comment that
+    the final PR was rejected.
+  - **FR-013** (non-final plan/tasks/impl PR closed unmerged): cleanup **owns** the
+    stalled labeling/commenting for these too; it no-ops when such a PR merges.
+  - **FR-014** (draft rejection): **leave the lifecycle issue open** so the requester
+    can revise and re-enter the pipeline.
+  - Per the reply, the stalled comment (FR-015) includes a link and instructions on
+    how to optionally tear the specification down completely.
+- These answers added a stalled-teardown path: FR-015, User Story 4, and SC-007 now
+  cover it; SC-004 was narrowed to merged/draft-rejected specifications so it no
+  longer contradicts the branch-preserving stalled path.

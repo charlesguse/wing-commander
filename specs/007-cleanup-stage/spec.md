@@ -57,13 +57,30 @@ The stage reacts to pull-request-close events across the repository, but it only
 
 ---
 
+### User Story 4 - A rejected-after-build or abandoned-stage specification is marked stalled, not destroyed (Priority: P3)
+
+A specification has already been built past the draft, but its final pull request is closed without merging — or one of its mid-pipeline pull requests (plan, tasks, or implementation) is closed unmerged. Rather than deleting the built work, the pipeline marks the specification stalled: it advances the lifecycle stage label to the stalled state and comments on the lifecycle issue that the pull request was rejected, with a link and instructions for optionally tearing the specification down completely. The specification's branches are left intact so a human can revive the work, and the lifecycle issue records exactly where and why it stopped.
+
+**Why this priority**: A rejection after real work has been done is different from a draft rejection — throwing the branches away would destroy recoverable effort. Marking the specification stalled and preserving its branches keeps revival cheap while still surfacing the stop in the issue tracker. It is ranked with the robustness concerns because it is a less-common path than the two core teardown behaviors, but it must not silently delete built work.
+
+**Independent Test**: Close a specification's final pull request (or a plan/tasks/implementation pull request) without merging it and verify that the lifecycle stage label advances to the stalled state, the specification's pipeline branches remain intact, and a comment stating the pull request was rejected — including a link and optional full-teardown instructions — is posted to the lifecycle issue.
+
+**Acceptance Scenarios**:
+
+1. **Given** a specification's final pull request, **When** it is closed without being merged, **Then** the lifecycle stage label is advanced to the stalled state, the specification's pipeline branches (including its persistent working branch) are left intact, and a comment stating the final pull request was rejected is posted to the lifecycle issue.
+2. **Given** a specification's plan, tasks, or implementation pull request, **When** it is closed without being merged, **Then** the cleanup stage advances the lifecycle stage label to the stalled state and posts a rejection comment, rather than that behavior being left to the plan, tasks, or implementation stages.
+3. **Given** the cleanup stage marks a specification stalled, **When** it posts the stalled comment, **Then** the comment includes a link and instructions for optionally tearing the specification down completely.
+4. **Given** a specification's plan, tasks, or implementation pull request, **When** it is merged as a normal stage advance, **Then** the cleanup stage takes no action.
+
+---
+
 ### Edge Cases
 
 - The closed pull request's head branch matches a pipeline branch naming convention but the pull request is not actually an owned pipeline pull request (for example, its merge target is not the main line): the stage must not perform teardown.
 - The specification's persistent working branch is auto-deleted when the final pull request merges: the stage must treat the already-deleted branch as success, not as a failure.
 - The closed pull request cannot be matched to a valid specification or lifecycle issue (its slug, identity label, or lifecycle record is missing or inconsistent): the stage must decline to act and record why rather than guessing which specification to tear down.
-- A specification's final pull request is closed **without** being merged: this is a rejection of an already-built specification, which is distinct from the draft-rejection path — see FR-012 [NEEDS CLARIFICATION].
-- A non-final pipeline pull request (a plan, tasks, or implementation-stage pull request) is closed and its head branch matches a pipeline prefix the trigger listens on — see FR-013 [NEEDS CLARIFICATION].
+- A specification's final pull request is closed **without** being merged: this is a rejection of an already-built specification, distinct from the draft-rejection path; the stage marks the specification stalled and preserves its branches for revival rather than deleting anything — see FR-012.
+- A non-final pipeline pull request (a plan, tasks, or implementation-stage pull request) is closed unmerged and its head branch matches a pipeline prefix the trigger listens on: the stage marks the specification stalled and comments; when such a pull request instead merges, the stage no-ops — see FR-013.
 - The specification's lifecycle issue is already closed when a merge event arrives (for example, closed by hand earlier): closing it again is a no-op and must not error.
 
 ## Requirements *(mandatory)*
@@ -81,9 +98,10 @@ The stage reacts to pull-request-close events across the repository, but it only
 - **FR-009**: The system MUST identify the specification and its lifecycle issue from the closed pull request (for example, from its branch slug and the specification's identity label) rather than guessing; when it cannot make that match to a valid specification and lifecycle issue, it MUST decline to act and record why rather than tearing down an incorrect or nonexistent specification.
 - **FR-010**: The system MUST NOT perform teardown when the closed pull request is not one of its owned pipeline pull requests (for example, an ordinary pull request, or one whose merge target is not the main line).
 - **FR-011**: The system MUST behave idempotently: teardown steps whose result is already in place — a branch already absent, an issue already closed — MUST be treated as success, and a repeated close event MUST NOT produce a duplicate comment or repeat already-completed teardown.
-- **FR-012**: When a specification's final pull request is closed **without** being merged (a rejection of an already-built specification, distinct from the draft-rejection path), the system MUST [NEEDS CLARIFICATION: is this case in scope for the cleanup stage, and if so what teardown applies — full teardown of all pipeline branches like the draft rejection, marking the specification stalled/rejected without deleting the persistent working branch, or leaving it untouched for a human? The architecture describes only "final merged" and "draft closed unmerged"; this case is undefined.].
-- **FR-013**: When a non-final pipeline pull request (a plan, tasks, or implementation-stage pull request) closes and its head branch matches a prefix the stage's trigger listens on, the system MUST [NEEDS CLARIFICATION: does the cleanup stage act on these events at all, or are they entirely out of scope because each of those stages already handles its own pull-request-close outcome (e.g. marking the specification stalled)? If out of scope, the stage should no-op on them.].
-- **FR-014**: For the draft-rejection path, after the rejection comment is posted, the system MUST [NEEDS CLARIFICATION: should the lifecycle issue be closed as well, or left open so the requester can revise and re-enter the pipeline? The architecture specifies only that a rejection comment is posted, not whether the issue is closed.].
+- **FR-012**: When a specification's final pull request is closed **without** being merged (a rejection of an already-built specification, distinct from the draft-rejection path), the system MUST mark the specification stalled — advancing its lifecycle stage label to the stalled state, replacing the prior stage label — while leaving its persistent working branch and other pipeline branches intact, and MUST post a comment to the lifecycle issue that the final pull request was rejected. Built work is preserved for possible revival; no pipeline branches are deleted on this path until a human decides.
+- **FR-013**: When a non-final pipeline pull request (a plan, tasks, or implementation-stage pull request) is closed **without** being merged, the system MUST mark the specification stalled — advancing its lifecycle stage label to the stalled state — and MUST post a comment to the lifecycle issue; the cleanup stage owns this stalled-teardown behavior for these pull requests rather than leaving it to the plan, tasks, and implementation stages. When such a pull request is instead merged (a normal stage advance handled by its owning stage), the cleanup stage MUST take no action.
+- **FR-014**: For the draft-rejection path, after the rejection comment is posted, the system MUST leave the lifecycle issue open so the requester can revise the specification and re-enter the pipeline; the system MUST NOT close the lifecycle issue on draft rejection.
+- **FR-015**: Whenever the system marks a specification stalled (the final-pull-request-unmerged path of FR-012 and the non-final-pull-request-unmerged path of FR-013), the comment it posts to the lifecycle issue MUST include a link and instructions describing how to optionally tear the specification down completely — delete its remaining pipeline branches and remove its labels — so a human can trigger full teardown when they decide the stalled specification will not be revived.
 
 ### Key Entities
 
@@ -92,7 +110,7 @@ The stage reacts to pull-request-close events across the repository, but it only
 - **Draft specification pull request**: A specification's initial pull request from its draft branch into the main line; its **unmerged close** drives the rejection path.
 - **Specification pipeline branches**: The set of branches a specification accumulates across the pipeline — its draft branch, its persistent working branch, its plan branch, and its implementation branches — which the successful-teardown path deletes.
 - **Lifecycle issue**: The per-specification issue that every stage reports to; the successful path closes it with a completion summary, the rejection path comments on it.
-- **Lifecycle labels**: The specification's stage label (its current pipeline stage) and identity label (which specification the issue belongs to); the successful path advances the stage label to done, the rejection path removes both.
+- **Lifecycle labels**: The specification's stage label (its current pipeline stage) and identity label (which specification the issue belongs to); the successful path advances the stage label to done, the draft-rejection path removes both, and the stalled path advances the stage label to the stalled state while leaving the identity label in place.
 - **Completion summary**: The short written account of what the merged feature delivered, attached to the lifecycle issue when it is closed on the successful path.
 
 ## Success Criteria *(mandatory)*
@@ -102,7 +120,8 @@ The stage reacts to pull-request-close events across the repository, but it only
 - **SC-001**: Every specification whose final pull request is merged has its pipeline branches deleted, its lifecycle label advanced to the done state, and its lifecycle issue closed — with no human performing any of those steps.
 - **SC-002**: A maintainer following only the lifecycle issue can see, from the issue closing with its completion summary, that the specification is complete — without inspecting the branch list or the merged pull request.
 - **SC-003**: Every specification whose draft pull request is closed unmerged has its draft branch deleted, its stage and identity labels removed, and a rejection record on its lifecycle issue.
-- **SC-004**: After the stage runs, the repository retains no pipeline branches and no specification-stage labels for any specification that has been merged or rejected.
+- **SC-004**: After the stage runs, the repository retains no pipeline branches and no specification-stage labels for any specification that has been merged or draft-rejected. (A stalled specification is intentionally excluded — its branches and labels are preserved for revival.)
+- **SC-007**: A specification whose final pull request is closed unmerged, or whose plan/tasks/implementation pull request is closed unmerged, is marked stalled with its branches left intact and a rejection comment — including optional full-teardown instructions — recorded on its lifecycle issue, and no built work is deleted.
 - **SC-005**: The stage never performs teardown on a pull request it does not own, and never tears down a specification it cannot unambiguously identify.
 - **SC-006**: The stage completes successfully on repeated or partially-applied teardown (already-deleted branches, already-closed issues, re-delivered events) without erroring or duplicating comments.
 
