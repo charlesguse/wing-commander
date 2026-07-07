@@ -2,7 +2,7 @@
   "issue": 21,
   "spec_dir": "specs/006-finalize-stage",
   "feature_num": "006",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 1,
   "spec_branch": "spec/006-finalize-stage"
 }
