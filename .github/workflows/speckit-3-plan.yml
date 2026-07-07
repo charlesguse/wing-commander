@@ -148,6 +148,19 @@ jobs:
           echo "issue=$issue" >> "$GITHUB_OUTPUT"
           echo "Created lifecycle issue #$issue." >> "$GITHUB_STEP_SUMMARY"
 
+      # Tie every run — merge-triggered or manual — back to the lifecycle
+      # issue the moment it starts doing real work, with a link to the run.
+      - name: Report run started on lifecycle issue
+        if: steps.dupe.outputs.skip != 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ISSUE: ${{ steps.meta.outputs.issue || steps.newissue.outputs.issue }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ACTOR: ${{ github.triggering_actor }}
+        run: |
+          gh issue comment "$ISSUE" --body "📐 **speckit · plan** — planning started ([run]($RUN_URL), triggered by \`$ACTOR\`)."
+
       - name: Checkout spec branch as speckit-bot
         if: steps.dupe.outputs.skip != 'true'
         uses: actions/checkout@v4
@@ -240,6 +253,13 @@ jobs:
           gh issue edit "$ISSUE" --add-label "stage:plan"
           gh issue edit "$ISSUE" --remove-label "stage:spec"    2>/dev/null || true
           gh issue edit "$ISSUE" --remove-label "stage:clarify" 2>/dev/null || true
+          # Pipeline PRs carry the same labels as their lifecycle issue so PR
+          # lists are filterable by spec (after the stage flip so the PR
+          # snapshots the stage it belongs to).
+          labels=$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name] | join(",")')
+          if [ -n "$labels" ]; then
+            gh pr edit "$pr" --add-label "$labels" || true
+          fi
           echo "Plan PR #$pr opened; issue #$ISSUE moved to stage:plan." >> "$GITHUB_STEP_SUMMARY"
 
       # The action writes its full execution transcript — every tool call,
@@ -317,8 +337,14 @@ jobs:
           git config user.name  "${BOT_SLUG}[bot]"
           git config user.email "${BOT_SLUG}[bot]@users.noreply.github.com"
           git add "$SPEC_DIR/spec-meta.json"
-          git commit -m "plan: mark $SLUG stalled (plan PR closed unmerged)"
-          git push
+          # If the record is already stalled, committing nothing must not kill
+          # the job before the issue report below runs.
+          if git diff --cached --quiet; then
+            echo "spec-meta.json already reads stage=stalled — nothing to commit." >> "$GITHUB_STEP_SUMMARY"
+          else
+            git commit -m "plan: mark $SLUG stalled (plan PR closed unmerged)"
+            git push
+          fi
 
       - name: Report stalled on lifecycle issue
         if: steps.mark.outputs.issue != ''
@@ -331,4 +357,17 @@ jobs:
           gh label create "stage:stalled" --color E99695 --description "Planning did not complete; manual restart required" --force
           gh issue edit "$ISSUE" --add-label "stage:stalled"
           gh issue edit "$ISSUE" --remove-label "stage:plan" 2>/dev/null || true
-          gh issue comment "$ISSUE" --body "⏸️ Planning did not complete: plan PR #$PR_NUMBER was closed without merging, so this specification is now **stalled** (nothing restarts automatically). To restart planning, a maintainer should delete the \`plan/$SLUG\` branch and run the **speckit · 3 plan** workflow manually (Actions → speckit · 3 plan → Run workflow → slug \`$SLUG\`)."
+          {
+            echo "⏸️ **Planning stalled** — plan PR #$PR_NUMBER was closed without merging, so this specification is now **stalled** (nothing restarts automatically)."
+            echo ""
+            echo "### Runbook — restarting the plan stage"
+            echo ""
+            echo "1. Delete the \`plan/$SLUG\` branch."
+            echo "2. Re-dispatch [speckit · 3 plan]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/speckit-3-plan.yml) via **Run workflow** with slug \`$SLUG\` (GitHub cannot prefill it from a link), or from a terminal:"
+            echo ""
+            echo "   \`\`\`"
+            echo "   git push origin --delete plan/$SLUG"
+            echo "   gh workflow run speckit-3-plan.yml -R $GITHUB_REPOSITORY -f slug=$SLUG"
+            echo "   \`\`\`"
+          } > /tmp/stall-comment.md
+          gh issue comment "$ISSUE" --body-file /tmp/stall-comment.md
