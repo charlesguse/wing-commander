@@ -65,6 +65,17 @@ jobs:
           echo "num=$num" >> "$GITHUB_OUTPUT"
           echo "Allocated feature number $num (highest in use: ${highest:-none})." >> "$GITHUB_STEP_SUMMARY"
 
+      # Tie the run back to the issue the moment intake starts, with a link.
+      - name: Report run started on issue
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ISSUE: ${{ github.event.issue.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ACTOR: ${{ github.triggering_actor }}
+        run: |
+          gh issue comment "$ISSUE" --body "📝 **speckit · intake** — specification drafting started ([run]($RUN_URL), triggered by \`$ACTOR\`)."
+
       - name: Create spec from issue
         uses: anthropics/claude-code-action@v1
         env:
@@ -136,6 +147,27 @@ jobs:
             --max-turns 50
             --allowedTools "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git checkout:*),Bash(git switch:*),Bash(git push:*),Bash(git branch:*),Bash(git log:*),Bash(git diff:*),Bash(ls:*),Bash(mkdir:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue edit:*),Bash(gh issue comment:*),Bash(gh pr create:*),Bash(gh label create:*)"
             --disallowedTools "WebSearch,WebFetch"
+
+      # Pipeline PRs carry the same labels as their lifecycle issue so PR
+      # lists are filterable by spec. Deterministic (the agent may have
+      # legitimately stopped without a PR — an undiscernible request).
+      - name: Label spec PR to match the issue
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ISSUE: ${{ github.event.issue.number }}
+          NUM: ${{ steps.num.outputs.num }}
+        run: |
+          pr=$(gh pr list --state open --json number,headRefName \
+            --jq "[.[] | select(.headRefName | startswith(\"spec-draft/$NUM-\"))][0].number // empty")
+          if [ -z "$pr" ]; then
+            echo "No spec-draft/$NUM-* PR found — intake produced no spec; nothing to label." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          labels=$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name] | join(",")')
+          if [ -n "$labels" ]; then
+            gh pr edit "$pr" --add-label "$labels"
+          fi
 
       # The action writes its full execution transcript — every tool call,
       # including permission denials — to claude-execution-output.json in the

@@ -30,13 +30,26 @@ jobs:
     concurrency:
       group: speckit-${{ inputs.spec_dir }}
       cancel-in-progress: false
+    permissions:
+      issues: write
     steps:
       - name: Not yet implemented
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ inputs.issue }}
+          SPEC_DIR: ${{ inputs.spec_dir }}
+          CONVERGED: ${{ inputs.converged }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           {
             echo "## speckit · finalize stage"
             echo ""
-            echo "Dispatched for ${{ inputs.spec_dir }} (issue #${{ inputs.issue }},"
-            echo "converged=${{ inputs.converged }}), but the finalize stage is not"
+            echo "Dispatched for $SPEC_DIR (issue #$ISSUE,"
+            echo "converged=$CONVERGED), but the finalize stage is not"
             echo "implemented yet. See docs/architecture.md (Stage 5)."
           } >> "$GITHUB_STEP_SUMMARY"
+          # Even as a stub, tie the run to the lifecycle issue so the hand-off
+          # from the implement stage is visible instead of silently vanishing.
+          if printf '%s' "$ISSUE" | grep -Eq '^[0-9]+$'; then
+            gh issue comment "$ISSUE" -R "$GITHUB_REPOSITORY" --body "🎁 **speckit · finalize** — dispatched for \`$SPEC_DIR\` (converged=\`$CONVERGED\`) ([run]($RUN_URL)), but the finalize stage is **not implemented yet** (stub — see \`docs/architecture.md\` §Stage 5). The final PR to \`main\` must be opened manually for now."
+          fi

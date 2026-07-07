@@ -57,6 +57,8 @@ jobs:
     outputs:
       final-ok: ${{ steps.final.outputs.ok }}
       final-tier: ${{ steps.final.outputs.tier }}
+      final-reason: ${{ steps.final.outputs.reason }}
+      agent-final-message: ${{ steps.agentmsg.outputs.message }}
       slug: ${{ steps.spec.outputs.slug }}
       spec-dir: ${{ steps.spec.outputs.spec-dir }}
     steps:
@@ -187,6 +189,21 @@ jobs:
           fi
           echo "max=$max" >> "$GITHUB_OUTPUT"
 
+      # Tie every run — pipeline-dispatched or manual — back to the lifecycle
+      # issue the moment it starts doing real work, with a link to the run.
+      - name: Report run started on lifecycle issue
+        if: steps.guard.outputs.skip != 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ISSUE: ${{ inputs.issue }}
+          ITERATION: ${{ inputs.iteration }}
+          TIER: ${{ steps.tier.outputs.tier }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ACTOR: ${{ github.triggering_actor }}
+        run: |
+          gh issue comment "$ISSUE" --body "🏗️ **speckit · implement** — cycle $ITERATION started on \`$TIER\` ([run]($RUN_URL), triggered by \`$ACTOR\`)."
+
       # The convergence signal is read from the commit range this cycle
       # pushes, so record where the branch stood before the agent ran.
       - name: Record base SHA
@@ -282,18 +299,22 @@ jobs:
         run: |
           git fetch origin "+refs/heads/spec/$SLUG:refs/remotes/origin/spec/$SLUG"
           ok=false
+          reason=""
           if [ "$CYCLE_RESULT" = "success" ]; then
             stage=$(git show "origin/spec/$SLUG:$SPEC_DIR/spec-meta.json" | jq -r '.stage // empty')
             iter=$(git show "origin/spec/$SLUG:$SPEC_DIR/spec-meta.json" | jq -r '.iteration // 0')
             if [ "$stage" = "implement" ] && [ "$iter" = "$ITERATION" ]; then
               ok=true
             else
-              echo "Cycle step exited zero but spec-meta.json reads stage='$stage', iteration=$iter (expected implement/$ITERATION) — treating the attempt as failed (FR-013)." >> "$GITHUB_STEP_SUMMARY"
+              reason="the agent step exited zero, but spec-meta.json on origin/spec/$SLUG still reads stage='$stage', iteration=$iter (expected implement/$ITERATION) — the branch never advanced, which usually means the agent's push was rejected"
+              echo "Cycle: $reason — treating the attempt as failed (FR-013)." >> "$GITHUB_STEP_SUMMARY"
             fi
           else
-            echo "Cycle step finished '$CYCLE_RESULT' — treating the attempt as failed (FR-013)." >> "$GITHUB_STEP_SUMMARY"
+            reason="the agent step itself finished '$CYCLE_RESULT' before completing its work"
+            echo "Cycle: $reason — treating the attempt as failed (FR-013)." >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "ok=$ok" >> "$GITHUB_OUTPUT"
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
           converged=""
           converge_sha=""
           if [ "$ok" = "true" ]; then
@@ -401,17 +422,23 @@ jobs:
         run: |
           git fetch origin "+refs/heads/spec/$SLUG:refs/remotes/origin/spec/$SLUG"
           ok=false
+          reason=""
           if [ "$RETRY_RESULT" = "success" ]; then
             stage=$(git show "origin/spec/$SLUG:$SPEC_DIR/spec-meta.json" | jq -r '.stage // empty')
             iter=$(git show "origin/spec/$SLUG:$SPEC_DIR/spec-meta.json" | jq -r '.iteration // 0')
             if [ "$stage" = "implement" ] && [ "$iter" = "$ITERATION" ]; then
               ok=true
+            else
+              reason="the retry's agent step exited zero, but spec-meta.json on origin/spec/$SLUG still reads stage='$stage', iteration=$iter (expected implement/$ITERATION) — the branch never advanced, which usually means the agent's push was rejected"
             fi
+          else
+            reason="the retry's agent step itself finished '$RETRY_RESULT' before completing its work"
           fi
           if [ "$ok" = "false" ]; then
-            echo "Retry attempt (claude-opus-4-8) also failed — the specification will be marked stalled (FR-013)." >> "$GITHUB_STEP_SUMMARY"
+            echo "Retry attempt (claude-opus-4-8) also failed: $reason — the specification will be marked stalled (FR-013)." >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "ok=$ok" >> "$GITHUB_OUTPUT"
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
           converged=""
           converge_sha=""
           if [ "$ok" = "true" ]; then
@@ -448,19 +475,42 @@ jobs:
           RETRY_OK: ${{ steps.retry-outcome.outputs.ok }}
           RETRY_CONVERGED: ${{ steps.retry-outcome.outputs.converged }}
           RETRY_REMAINING: ${{ steps.retry-outcome.outputs.remaining }}
+          PRIMARY_REASON: ${{ steps.outcome.outputs.reason }}
+          RETRY_REASON: ${{ steps.retry-outcome.outputs.reason }}
         run: |
           if [ "$RETRY_RAN" = "true" ]; then
-            ok="$RETRY_OK"; converged="$RETRY_CONVERGED"; remaining="$RETRY_REMAINING"; tier="claude-opus-4-8"
+            ok="$RETRY_OK"; converged="$RETRY_CONVERGED"; remaining="$RETRY_REMAINING"; tier="claude-opus-4-8"; reason="$RETRY_REASON"
           else
-            ok="$PRIMARY_OK"; converged="$PRIMARY_CONVERGED"; remaining="$PRIMARY_REMAINING"; tier="$PRIMARY_TIER"
+            ok="$PRIMARY_OK"; converged="$PRIMARY_CONVERGED"; remaining="$PRIMARY_REMAINING"; tier="$PRIMARY_TIER"; reason="$PRIMARY_REASON"
           fi
           {
             echo "ok=$ok"
             echo "converged=$converged"
             echo "tier=$tier"
+            echo "reason=$reason"
             echo "remaining<<SPECKIT_REMAINING_EOF"
             printf '%s\n' "$remaining"
             echo "SPECKIT_REMAINING_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # When the cycle is judged failed, the most useful diagnostic is usually
+      # the agent's own final message (e.g. "push rejected — the App lacks the
+      # workflows permission"). The action leaves its transcript in the runner
+      # temp dir; the file reflects the LAST attempt that ran (a retry
+      # overwrites the primary's, which was already uploaded as an artifact).
+      - name: Extract agent final message
+        id: agentmsg
+        if: steps.guard.outputs.skip != 'true' && steps.final.outputs.ok == 'false'
+        run: |
+          file="$RUNNER_TEMP/claude-execution-output.json"
+          msg=""
+          if [ -f "$file" ]; then
+            msg=$(jq -r '[.[] | select(.type == "result")] | last | .result // empty' "$file" 2>/dev/null | head -c 1500 || true)
+          fi
+          {
+            echo "message<<SPECKIT_AGENT_MSG_EOF"
+            printf '%s\n' "$msg"
+            echo "SPECKIT_AGENT_MSG_EOF"
           } >> "$GITHUB_OUTPUT"
 
       # FR-008: a short per-cycle progress comment, authored by Haiku (the
@@ -496,8 +546,10 @@ jobs:
             #${{ inputs.issue }} with gh issue comment. Start it with
             "## speckit · implement stage — cycle ${{ inputs.iteration }}".
             Summarize what the cycle built (from the commits/diffstat), state
-            converged or not converged, and what happens next. Do not edit
-            any files.
+            converged or not converged, and what happens next. End the comment
+            with this line exactly:
+            "_[Changes](${{ github.server_url }}/${{ github.repository }}/compare/${{ steps.base.outputs.base-sha }}...spec/${{ steps.spec.outputs.slug }}) · [run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})_"
+            Do not edit any files.
           claude_args: |
             --model claude-haiku-4-5
             --max-turns 15
@@ -553,7 +605,9 @@ jobs:
               "$REMAINING" \
               "$fence" \
               "" \
-              "Handing off to finalization flagged **converged=false**; the final PR will carry this remaining work for human review.")
+              "Handing off to finalization flagged **converged=false**; the final PR will carry this remaining work for human review." \
+              "" \
+              "_[Final cycle run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})_")
             GH_TOKEN="$APP_TOKEN" gh issue comment "$ISSUE" --body "$body"
             GH_TOKEN="$DISPATCH_TOKEN" gh workflow run speckit-6-finalize.yml \
               -f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f converged=false
@@ -607,18 +661,66 @@ jobs:
           git config user.name  "${BOT_SLUG}[bot]"
           git config user.email "${BOT_SLUG}[bot]@users.noreply.github.com"
           git add "$SPEC_DIR/spec-meta.json"
-          git commit -m "implement: mark $SLUG stalled (iteration ${{ inputs.iteration }} failed)"
-          git push
+          # A restarted iteration that fails again finds the record already
+          # stalled; committing nothing must not kill the job before the
+          # issue report below runs.
+          if git diff --cached --quiet; then
+            echo "spec-meta.json already reads stage=stalled — nothing to commit." >> "$GITHUB_STEP_SUMMARY"
+          else
+            git commit -m "implement: mark $SLUG stalled (iteration ${{ inputs.iteration }} failed)"
+            git push
+          fi
 
       - name: Report stalled on lifecycle issue
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ISSUE: ${{ inputs.issue }}
           ITERATION: ${{ inputs.iteration }}
+          SPEC_DIR: ${{ needs.implement.outputs.spec-dir }}
           TIER: ${{ needs.implement.outputs.final-tier }}
+          REASON: ${{ needs.implement.outputs.final-reason }}
+          AGENT_MSG: ${{ needs.implement.outputs.agent-final-message }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/workflows/speckit-5-implement.yml
         run: |
           gh label create "stage:stalled" --color E99695 --description "Stage did not complete; manual restart required" --force
           gh issue edit "$ISSUE" --add-label "stage:stalled"
           gh issue edit "$ISSUE" --remove-label "stage:implement" 2>/dev/null || true
           gh issue edit "$ISSUE" --remove-label "stage:tasks"     2>/dev/null || true
-          gh issue comment "$ISSUE" --body "⏸️ **Implementation stalled** — iteration $ITERATION of the implement/converge loop failed outright (last attempt on \`$TIER\`), and no higher model tier remains to escalate to, so this specification is now **stalled** (nothing restarts automatically). To restart, a maintainer should re-dispatch the **speckit · 5 implement** workflow with the same inputs (Actions → speckit · 5 implement → Run workflow → spec_dir, issue, iteration \`$ITERATION\`). See the run's uploaded \`claude-execution-output-*\` artifacts for the failure transcript."
+          # 4-backtick fence so an agent message containing ``` blocks nests.
+          fence='````'
+          {
+            echo "⏸️ **Implementation stalled** — iteration $ITERATION of the implement/converge loop failed (last attempt on \`$TIER\`), and no higher model tier remains to escalate to, so this specification is now **stalled** (nothing restarts automatically)."
+            echo ""
+            echo "**Failing run**: $RUN_URL"
+            echo "**Why the attempt was judged failed**: ${REASON:-see the failing run's step summary}"
+            if [ -n "$AGENT_MSG" ]; then
+              echo ""
+              echo "<details><summary><b>Agent's final message</b> (last attempt — usually states exactly what blocked it)</summary>"
+              echo ""
+              echo "$fence"
+              printf '%s\n' "$AGENT_MSG"
+              echo "$fence"
+              echo ""
+              echo "</details>"
+            fi
+            echo ""
+            echo "### Runbook — restarting this specification"
+            echo ""
+            echo "1. **Diagnose** — open the [failing run]($RUN_URL): the step summary says which attempt failed and why, and its \`claude-execution-output-cycle\` / \`-retry\` artifacts hold the full agent transcripts."
+            echo "2. **Fix the cause** — e.g. missing bot permissions, a broken task, an unreachable dependency."
+            echo "3. **Restart** — re-dispatch [speckit · 5 implement]($WORKFLOW_URL) via **Run workflow** with these inputs (GitHub cannot prefill them from a link):"
+            echo ""
+            echo "   | input | value |"
+            echo "   |---|---|"
+            echo "   | \`spec_dir\` | \`$SPEC_DIR\` |"
+            echo "   | \`issue\` | \`$ISSUE\` |"
+            echo "   | \`iteration\` | \`$ITERATION\` |"
+            echo ""
+            echo "   or from a terminal:"
+            echo ""
+            echo "   \`\`\`"
+            echo "   gh workflow run speckit-5-implement.yml -R $GITHUB_REPOSITORY -f spec_dir=$SPEC_DIR -f issue=$ISSUE -f iteration=$ITERATION"
+            echo "   \`\`\`"
+          } > /tmp/stall-comment.md
+          gh issue comment "$ISSUE" --body-file /tmp/stall-comment.md
