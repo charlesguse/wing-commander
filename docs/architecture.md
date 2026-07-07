@@ -1,9 +1,7 @@
 # Pipeline Architecture
 
-How a feature request becomes merged code, stage by stage. Stages 1–5 are
-implemented; stage 6 exists as a stub workflow with correct triggers and is
-the next candidate to be built **through the pipeline itself** (open an issue,
-label it `spec-request`).
+How a feature request becomes merged code, stage by stage. Stages 1–6 are
+implemented.
 
 ```
 issue ──spec-request label──▶ [1 intake] ──▶ spec PR → main
@@ -180,16 +178,37 @@ vars.SPECKIT_MAX_ITERATIONS`).
    it (diff link, key files), remaining manual tasks, lifecycle issue link.
 3. Comment the same manual-task list on the lifecycle issue; label `stage:review`.
 
-## Stage 6 — Cleanup (`speckit-7-cleanup.yml`, stub)
+## Stage 6 — Cleanup (`speckit-7-cleanup.yml`, implemented — see `specs/007-cleanup-stage/`)
 
-**Trigger**: `pull_request: closed` for pipeline branch prefixes.
+**Trigger**: `pull_request: closed`, repo-wide — self-selects one of three
+outcomes from the event payload alone (head ref prefix + base ref + `merged`),
+never guessed. Every other closed-PR shape is a deliberate no-op.
 
-**Design**:
-- Final PR (`spec/NNN-slug`) **merged**: delete `spec/`, `plan/`, `impl/`,
-  `spec-draft/` branches for that spec; flip label to `stage:done`; close the
-  lifecycle issue with a Haiku-written completion summary.
-- Draft spec PR **closed unmerged** (rejection): delete `spec-draft/NNN-slug`,
-  remove `stage:*`/`spec:*` labels, comment that the spec was rejected.
+**Design** — three independently-gated jobs, exactly one of which runs per
+closed PR:
+- `teardown-done` — final PR (`spec/NNN-slug → main`) **merged**: delete
+  `spec-draft/`, `spec/`, `plan/`, `tasks/`, and any `impl/*-iterN` branches
+  for that spec; close the lifecycle issue (atomically, with a
+  Haiku-written completion summary); flip its label to `stage:done`.
+- `teardown-rejected` — draft PR (`spec-draft/NNN-slug → main`) **closed
+  unmerged**: delete `spec-draft/NNN-slug`; remove the `stage:*`/`spec:*`
+  labels; comment that the spec was rejected; leave the issue **open** so
+  the requester can revise and re-enter the pipeline.
+- `mark-stalled` — final PR closed unmerged (built work rejected), **or** a
+  non-final `plan/`/`tasks/`/`impl/*` pull request into `spec/NNN-slug`
+  closed unmerged: commit `spec-meta.json`'s `stage: "stalled"` directly onto
+  the still-intact `spec/NNN-slug`; flip the label to `stage:stalled`;
+  comment a rejection notice with a manual full-teardown runbook. No branch
+  is deleted on this path — everything is preserved for revival. This job is
+  the sole owner of "non-final pipeline PR closed unmerged"; the plan and
+  tasks stages no longer run their own `stalled` jobs.
+
+Every job runs an identity-refusal step first (derive the slug from the
+event payload, validate spec artifacts exist and self-identify consistently)
+and reports failures via a pull-request comment, never a lifecycle-issue
+comment, since the issue can't yet be trusted to be the right one. Every
+outcome's own target state doubles as its idempotency check — no separate
+"already processed" marker exists.
 
 ## Auto-rebase (`speckit-rebase.yml`, stub)
 
