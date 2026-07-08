@@ -2,9 +2,9 @@
 # When a draft spec PR merges into main, this stage creates the long-lived
 # spec/<NNN-slug> branch, runs /speckit-plan on it, opens a plan PR targeting
 # the spec branch, and reports to the lifecycle issue.
-# A plan PR closed WITHOUT merging marks the spec stalled (FR-012); a
-# maintainer restarts planning by deleting plan/<NNN-slug> and dispatching
-# this workflow with the spec's slug.
+# A plan PR closed WITHOUT merging marks the spec stalled — owned by the
+# cleanup stage's mark-stalled job (speckit-7-cleanup.yml), not this
+# workflow (FR-013 of specs/007-cleanup-stage/spec.md).
 # Implements specs/002-plan-stage/spec.md.
 name: "speckit · 3 plan"
 
@@ -273,101 +273,3 @@ jobs:
           name: claude-execution-output
           path: ${{ runner.temp }}/claude-execution-output.json
           if-no-files-found: ignore
-
-  # FR-012: a plan PR closed without merging leaves the spec stalled — the
-  # lifecycle record and issue say so, and nothing restarts automatically.
-  stalled:
-    if: >-
-      github.event_name == 'pull_request' &&
-      github.event.pull_request.merged == false &&
-      startsWith(github.event.pull_request.head.ref, 'plan/')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      issues: write
-      pull-requests: read
-      id-token: write
-    concurrency:
-      group: speckit-plan-${{ github.event.pull_request.head.ref }}
-      cancel-in-progress: false
-    steps:
-      - name: Checkout (bootstrap, default token — composite action needs the repo)
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Speckit context
-        id: ctx
-        uses: ./.github/actions/speckit-context
-        with:
-          app-id: ${{ secrets.SPECKIT_APP_ID }}
-          private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
-
-      - name: Resolve spec identity
-        id: spec
-        env:
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
-        run: |
-          slug="${HEAD_REF#plan/}"
-          if ! printf '%s' "$slug" | grep -Eq '^[0-9]{3}-[a-z0-9][a-z0-9-]*$'; then
-            echo "::error::Cannot resolve a spec slug from '$HEAD_REF'."
-            exit 1
-          fi
-          echo "slug=$slug"           >> "$GITHUB_OUTPUT"
-          echo "spec-dir=specs/$slug" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout spec branch as speckit-bot
-        uses: actions/checkout@v4
-        with:
-          ref: spec/${{ steps.spec.outputs.slug }}
-          token: ${{ steps.ctx.outputs.token }}
-          fetch-depth: 0
-
-      - name: Mark lifecycle record stalled
-        id: mark
-        env:
-          SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
-          SLUG: ${{ steps.spec.outputs.slug }}
-          BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
-        run: |
-          issue=$(jq -r '.issue // empty' "$SPEC_DIR/spec-meta.json")
-          echo "issue=$issue" >> "$GITHUB_OUTPUT"
-          jq '.stage = "stalled"' "$SPEC_DIR/spec-meta.json" > /tmp/meta.json
-          mv /tmp/meta.json "$SPEC_DIR/spec-meta.json"
-          git config user.name  "${BOT_SLUG}[bot]"
-          git config user.email "${BOT_SLUG}[bot]@users.noreply.github.com"
-          git add "$SPEC_DIR/spec-meta.json"
-          # If the record is already stalled, committing nothing must not kill
-          # the job before the issue report below runs.
-          if git diff --cached --quiet; then
-            echo "spec-meta.json already reads stage=stalled — nothing to commit." >> "$GITHUB_STEP_SUMMARY"
-          else
-            git commit -m "plan: mark $SLUG stalled (plan PR closed unmerged)"
-            git push
-          fi
-
-      - name: Report stalled on lifecycle issue
-        if: steps.mark.outputs.issue != ''
-        env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
-          SLUG: ${{ steps.spec.outputs.slug }}
-          ISSUE: ${{ steps.mark.outputs.issue }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          gh label create "stage:stalled" --color E99695 --description "Planning did not complete; manual restart required" --force
-          gh issue edit "$ISSUE" --add-label "stage:stalled"
-          gh issue edit "$ISSUE" --remove-label "stage:plan" 2>/dev/null || true
-          {
-            echo "⏸️ **Planning stalled** — plan PR #$PR_NUMBER was closed without merging, so this specification is now **stalled** (nothing restarts automatically)."
-            echo ""
-            echo "### Runbook — restarting the plan stage"
-            echo ""
-            echo "1. Delete the \`plan/$SLUG\` branch."
-            echo "2. Re-dispatch [speckit · 3 plan]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/speckit-3-plan.yml) via **Run workflow** with slug \`$SLUG\` (GitHub cannot prefill it from a link), or from a terminal:"
-            echo ""
-            echo "   \`\`\`"
-            echo "   git push origin --delete plan/$SLUG"
-            echo "   gh workflow run speckit-3-plan.yml -R $GITHUB_REPOSITORY -f slug=$SLUG"
-            echo "   \`\`\`"
-          } > /tmp/stall-comment.md
-          gh issue comment "$ISSUE" --body-file /tmp/stall-comment.md
