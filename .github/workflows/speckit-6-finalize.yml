@@ -179,6 +179,10 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.ctx.outputs.token }}
+          # The implement stage auto-dispatches this workflow via
+          # GITHUB_TOKEN, making the triggering actor github-actions[bot];
+          # the action rejects bot actors unless allow-listed.
+          allowed_bots: "github-actions"
           prompt: |
             You are the finalize stage of this repository's spec-driven
             development pipeline, reporting on specification
