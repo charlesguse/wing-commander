@@ -2,7 +2,7 @@
   "issue": 33,
   "spec_dir": "specs/008-auto-rebase",
   "feature_num": "008",
-  "stage": "spec",
-  "iteration": 0,
-  "spec_branch": null
+  "stage": "review",
+  "iteration": 1,
+  "spec_branch": "spec/008-auto-rebase"
 }

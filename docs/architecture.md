@@ -210,15 +210,25 @@ comment, since the issue can't yet be trusted to be the right one. Every
 outcome's own target state doubles as its idempotency check — no separate
 "already processed" marker exists.
 
-## Auto-rebase (`speckit-rebase.yml`, stub)
+## Auto-rebase (`speckit-rebase.yml`)
 
 **Trigger**: `push` to main (skipping `*[bot]` actors) + nightly schedule.
 
-**Design**: for each open `spec/**` branch: `git rebase origin/main`; clean ⇒
-`push --force-with-lease`; conflicts ⇒ claude-code-action
-(`--model claude-sonnet-5`, prompt scoped to resolving the in-progress rebase
-without unrelated edits); still stuck ⇒ abort the rebase and comment on the
-lifecycle issue for human help.
+**Design**: a `discover` job selects every in-flight `spec/NNN-slug` branch
+(reading each branch's *own* `spec-meta.json` tip, skipping `stalled` and
+unidentifiable ones), then fans out one isolated `rebase` matrix job per
+branch. Each runs `git rebase origin/main`; clean ⇒ `push --force-with-lease`
+(a rejected lease means the branch moved meanwhile — skip silently, retry next
+run); conflicts ⇒ claude-code-action (`--model claude-sonnet-5`, prompt scoped
+to resolving the in-progress rebase without unrelated edits, verified by a
+deterministic per-commit file-scope check before publish); still stuck ⇒ abort
+the rebase (branch left byte-for-byte untouched) and comment on the lifecycle
+issue for human help. The escalation comment carries a
+`<!-- speckit-rebase: blocked branch-sha=… main-sha=… -->` marker plus a
+`rebase:blocked` label; `discover` reads that marker to skip a branch whose
+`(branch, main)` pair hasn't changed since it was reported blocked, so a stall
+is only escalated once until either side moves (a subsequent success removes
+the label).
 
 ---
 
