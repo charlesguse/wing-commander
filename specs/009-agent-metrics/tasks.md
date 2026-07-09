@@ -53,7 +53,7 @@ Single project, CI/CD-only feature (plan.md's Project Structure):
 **Purpose**: Create the new composite action's skeleton — metadata and
 input contract only, no extraction/rendering logic yet.
 
-- [ ] T001 Create `.github/actions/speckit-metrics-summary/action.yml` with
+- [X] T001 Create `.github/actions/speckit-metrics-summary/action.yml` with
       `name`, `description`, the five inputs from
       `contracts/speckit-metrics-summary-action.md` (`transcript-path`
       defaulting to `${{ runner.temp }}/claude-execution-output.json`,

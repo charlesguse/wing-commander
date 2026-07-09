@@ -1,0 +1,57 @@
+name: speckit-metrics-summary
+description: >
+  Deterministically parse an agent run's execution transcript
+  (claude-execution-output.json) and append a concise metrics summary
+  (model, turns used against budget, duration, tokens, cost, with a
+  turn-budget warning) to $GITHUB_STEP_SUMMARY. Reads an already-produced
+  file only: no agent invocation, no token, no network, and never fails the
+  step or the job (missing/unparseable transcripts degrade to "metrics
+  unavailable").
+
+inputs:
+  transcript-path:
+    description: >
+      Path to the execution transcript to read for this specific invocation
+      only. Callers with more than one agent step per job must invoke this
+      action once per agent step, immediately after it, before any later
+      agent step in the same job overwrites the file at this path.
+    required: false
+    default: ${{ runner.temp }}/claude-execution-output.json
+  model:
+    description: >
+      The literal model name the caller's own claude-code-action step used
+      (e.g. claude-sonnet-5). Never read from the transcript.
+    required: true
+  max-turns:
+    description: >
+      The literal --max-turns value the caller's own step configured. When
+      omitted, the rendered summary reports turns used and omits the
+      used/budgeted ratio and the turn-budget warning entirely.
+    required: false
+  warn-fraction:
+    description: >
+      Fraction of max-turns at/above which the run is flagged. Only
+      meaningful when max-turns is provided.
+    required: false
+    default: '0.8'
+  run-label:
+    description: >
+      Free-text label distinguishing this invocation within a job that has
+      more than one (e.g. cycle, retry, progress comment) — rendered in the
+      summary block's heading. Empty is fine for single-invocation stages.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Render agent run metrics summary
+      shell: bash
+      env:
+        TRANSCRIPT_PATH: ${{ inputs.transcript-path }}
+        MODEL: ${{ inputs.model }}
+        MAX_TURNS: ${{ inputs.max-turns }}
+        WARN_FRACTION: ${{ inputs.warn-fraction }}
+        RUN_LABEL: ${{ inputs.run-label }}
+      run: |
+        echo "speckit-metrics-summary: placeholder step (logic added in Phase 2)"
