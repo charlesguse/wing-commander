@@ -2,7 +2,7 @@
   "issue": 16,
   "spec_dir": "specs/009-agent-metrics",
   "feature_num": "009",
-  "stage": "spec",
+  "stage": "plan",
   "iteration": 0,
-  "spec_branch": null
+  "spec_branch": "spec/009-agent-metrics"
 }
