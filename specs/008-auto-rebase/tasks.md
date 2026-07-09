@@ -46,7 +46,7 @@ Reused, unchanged: `.github/actions/speckit-context` (App-token auth).
 **Purpose**: Replace the stub's placeholder body with the real job skeleton
 and confirm the trigger contract carries over unchanged.
 
-- [ ] T001 In `.github/workflows/speckit-rebase.yml`, remove the stub's single
+- [X] T001 In `.github/workflows/speckit-rebase.yml`, remove the stub's single
       "Not yet implemented" step and its `rebase:` job body, keeping the
       header comment (updated to describe the real two-job design), `name:`,
       `permissions: {}` at the workflow level, and the existing trigger block
@@ -68,7 +68,7 @@ added.
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T002 In `.github/workflows/speckit-rebase.yml`, add the `discover` job:
+- [X] T002 In `.github/workflows/speckit-rebase.yml`, add the `discover` job:
       `runs-on: ubuntu-latest`, `if: ${{ !endsWith(github.actor, '[bot]') }}`
       (FR-009 loop guard, unchanged from the stub, research.md D7),
       `permissions: { contents: read, issues: read }`, an output
@@ -77,10 +77,10 @@ added.
       `speckit-context` step (`uses: ./.github/actions/speckit-context`) for
       the App token, per `contracts/rebase-workflow.md`'s `discover` job
       contract.
-- [ ] T003 In the `discover` job, add a step that runs
+- [X] T003 In the `discover` job, add a step that runs
       `git ls-remote --heads origin 'spec/*'` to list candidate slugs
       (research.md D1, contract step 1).
-- [ ] T004 In the same or a following `discover` step, for each candidate
+- [X] T004 In the same or a following `discover` step, for each candidate
       slug read `git show spec/<slug>:specs/<slug>/spec-meta.json` (the
       branch's own tip, never `main` — research.md D1); exclude a candidate
       whose file is missing, unparseable, or whose `.spec_dir` does not equal
@@ -89,30 +89,30 @@ added.
       `$GITHUB_STEP_SUMMARY` line naming the branch and the reason (spec.md
       edge case: "must record why rather than acting blindly on an
       unidentified specification"; contract step 2).
-- [ ] T005 In the same step, exclude any surviving candidate whose
+- [X] T005 In the same step, exclude any surviving candidate whose
       `spec-meta.json` reads `.stage == "stalled"` — silently, no warning
       (FR-002; this is routine, not an error condition; contract step 2).
-- [ ] T006 In the `discover` job, add a step that emits the surviving
+- [X] T006 In the `discover` job, add a step that emits the surviving
       `{slug, spec_dir, issue}` triples as a JSON array via
       `echo "branches=$json" >> "$GITHUB_OUTPUT"`; an empty array is a valid,
       successful output (FR-010's "no in-flight branches" case, contract
       step 4). Do not add the `rebase:blocked` dedup filter here yet — that
       is T022 (US3), added once the escalation marker it reads exists.
-- [ ] T007 In `.github/workflows/speckit-rebase.yml`, add the `rebase` job
+- [X] T007 In `.github/workflows/speckit-rebase.yml`, add the `rebase` job
       skeleton: `needs: discover`,
       `strategy: { fail-fast: false, matrix: { include: ${{ fromJson(needs.discover.outputs.branches) }} } }`,
       `concurrency: { group: speckit-rebase-${{ matrix.slug }}, cancel-in-progress: false }`,
       `runs-on: ubuntu-latest`,
       `permissions: { contents: write, issues: write }` (data-model.md D2;
       zero matrix entries ⇒ zero job runs ⇒ workflow still succeeds, FR-010).
-- [ ] T008 In the `rebase` job, add the `speckit-context` step for the App
+- [X] T008 In the `rebase` job, add the `speckit-context` step for the App
       token, then check out `spec/${{ matrix.slug }}` with `fetch-depth: 0`
       (populates `refs/remotes/origin/spec/<slug>` at its current tip — the
       `--force-with-lease` comparison value), then a scoped
       `git fetch origin main:refs/remotes/origin/main` — **never** a bare
       `git fetch origin` afterward in any later step, which would silently
       refresh the lease and defeat FR-011 (research.md D3, contract step 2).
-- [ ] T009 In the `rebase` job, add a step that records
+- [X] T009 In the `rebase` job, add a step that records
       `before=$(git rev-parse HEAD)` and then runs `git rebase origin/main`,
       capturing its exit code without failing the step
       (`continue-on-error` or an explicit `|| true` plus captured status) so
@@ -137,15 +137,15 @@ untouched with no spurious update.
 
 ### Implementation for User Story 1
 
-- [ ] T010 [US1] In the `rebase` job, add the clean-exit branch (`git rebase`
+- [X] T010 [US1] In the `rebase` job, add the clean-exit branch (`git rebase`
       from T009 exited 0): compute `after=$(git rev-parse HEAD)`; if
       `after == before`, log "already current" and stop — no push, no
       comment (Acceptance Scenario 1.3, data-model.md's `before == after`
       outcome row).
-- [ ] T011 [US1] In the same branch, when `after != before`, run
+- [X] T011 [US1] In the same branch, when `after != before`, run
       `git push --force-with-lease origin HEAD:refs/heads/spec/${{ matrix.slug }}`
       (FR-004, contract step 4).
-- [ ] T012 [US1] Handle the push's outcome: on success, log it (done — later
+- [X] T012 [US1] Handle the push's outcome: on success, log it (done — later
       stories add the `rebase:blocked` label removal here, T017); on
       rejection (remote moved since checkout), log via `::warning::`/step
       summary and exit the step successfully (exit 0) with **no** lifecycle
@@ -177,12 +177,12 @@ to the resolved result.
 
 ### Implementation for User Story 2
 
-- [ ] T014 [US2] In the `rebase` job, add the conflict branch (T009's rebase
+- [X] T014 [US2] In the `rebase` job, add the conflict branch (T009's rebase
       exited nonzero with `git status` showing `rebase-merge`/`rebase-apply`
       in progress): before running the agent, capture
       `pre_tip` = `git rev-list --reverse origin/main..HEAD` — the ordered
       commit sequence about to be replayed (research.md D4, contract step 5).
-- [ ] T015 [US2] Add the `anthropics/claude-code-action@v1` step on the same
+- [X] T015 [US2] Add the `anthropics/claude-code-action@v1` step on the same
       runner: `--model claude-sonnet-5` (constitution II's implementation
       tier), a bounded `--max-turns`,
       `--allowedTools "Read,Edit,Grep,Glob,Bash(git status:*),Bash(git diff:*),Bash(git add:*),Bash(git rebase --continue:*),Bash(git rebase --abort:*)"`,
@@ -195,7 +195,7 @@ to the resolved result.
       than leaving a half-resolved stop if genuinely stuck; never
       `git commit`, `git push`, or any `gh` command (research.md D4, contract
       step 5).
-- [ ] T016 [US2] Add a deterministic post-step (`if: always()`, guarded on
+- [X] T016 [US2] Add a deterministic post-step (`if: always()`, guarded on
       "the conflict branch was taken") that: treats the rebase as failed if
       `rebase-merge`/`rebase-apply` is still present or the agent step
       errored/timed out; otherwise computes `post_tip` the same way as
@@ -205,7 +205,7 @@ to the resolved result.
       `pre_tip` commit's original file set **union** the manifest file from
       T015) — any file outside that union is a scope-check failure (D4,
       contract step 6).
-- [ ] T017 [US2] On scope-check pass, publish exactly as US1's T011/T012
+- [X] T017 [US2] On scope-check pass, publish exactly as US1's T011/T012
       (`git push --force-with-lease origin HEAD:refs/heads/spec/${{ matrix.slug }}`,
       same lease/no-comment-on-rejection handling); on success, if the
       lifecycle issue currently carries label `rebase:blocked`, remove it
@@ -239,14 +239,14 @@ human help is posted to the lifecycle issue.
 
 ### Implementation for User Story 3
 
-- [ ] T019 [US3] In the `rebase` job, add the abandonment branch — reached
+- [X] T019 [US3] In the `rebase` job, add the abandonment branch — reached
       when: the initial `git rebase` (T009) errors outright and is not a
       conflict stop, the agent step (T015) errors/times out/self-aborts, or
       the post-step scope check (T016) fails: run `git rebase --abort` if a
       rebase is still in progress; no push is attempted on this path under
       any circumstance (FR-007, research.md D5, contract step 6 "Fail"
       branch).
-- [ ] T020 [US3] Add the escalation step (runs only when T019's branch was
+- [X] T020 [US3] Add the escalation step (runs only when T019's branch was
       taken): re-read `specs/${{ matrix.slug }}/spec-meta.json`'s `.issue`
       from `pre_tip` (re-derived, not reused from `discover`, since a long
       agent turn can separate the two reads — research.md D6). If it
@@ -255,12 +255,12 @@ human help is posted to the lifecycle issue.
       `<!-- speckit-rebase: blocked branch-sha=<pre_tip> main-sha=<origin/main tip> -->`;
       `gh label create rebase:blocked --force`; `gh issue edit --add-label
       rebase:blocked` (FR-008, FR-013, contract step 7).
-- [ ] T021 [US3] In the same escalation step, when the issue cannot be
+- [X] T021 [US3] In the same escalation step, when the issue cannot be
       resolved or is inconsistent, skip the comment entirely and log why via
       `::warning::` and `$GITHUB_STEP_SUMMARY` only — no comment, no label,
       no further action on that branch this run (spec.md edge case; contract
       step 7 "does not resolve" branch).
-- [ ] T022 [US3] Back in the `discover` job (extending T006), add the FR-012
+- [X] T022 [US3] Back in the `discover` job (extending T006), add the FR-012
       dedup check: for each surviving candidate, if its lifecycle issue
       carries label `rebase:blocked`, run
       `gh issue view <issue> --json comments` and find the most recent
@@ -302,7 +302,7 @@ others.
 
 ### Implementation for User Story 4
 
-- [ ] T024 [US4] Confirm `.github/workflows/speckit-rebase.yml`'s trigger
+- [X] T024 [US4] Confirm `.github/workflows/speckit-rebase.yml`'s trigger
       block (`on.push.branches: [main]`, `on.schedule.cron: "17 4 * * *"`,
       from T001) and the `discover` job's
       `if: ${{ !endsWith(github.actor, '[bot]') }}` gate (from T002) are
@@ -348,7 +348,7 @@ validated; the stage is safe to run unattended on a busy repository.
       and every `run:` block passes `bash -n` after neutralizing
       `${{ ... }}` expressions) before opening the eventual review PR, since
       that workflow gates every PR touching `.github/workflows/**`.
-- [ ] T029 [P] Cross-check the finished workflow against
+- [X] T029 [P] Cross-check the finished workflow against
       `docs/architecture.md`'s "Auto-rebase (`speckit-rebase.yml`, stub)"
       section (trigger, clean/conflict/stuck design summary) — update that
       section only if the implementation diverges from what it already
