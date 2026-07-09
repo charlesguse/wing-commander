@@ -219,7 +219,7 @@ flagged — all without opening the uploaded artifact.
 
 ### Validation for User Story 1
 
-- [ ] T018 [P] [US1] Validate `quickstart.md` Scenarios 2, 3, 5, and 6
+- [X] T018 [P] [US1] Validate `quickstart.md` Scenarios 2, 3, 5, and 6
       directly against the composite action (no workflow dispatch needed):
       turn-budget warning fires at/above 80% (Scenario 2: 65/80), no
       warning below it (Scenario 3: 40/80), a partial result record renders
@@ -227,7 +227,7 @@ flagged — all without opening the uploaded artifact.
       missing ones rather than the whole block (Scenario 5), and an
       invocation with no `max-turns` input renders turns-used alone with no
       ratio or warning regardless of the count (Scenario 6).
-- [ ] T019 [P] [US1] Validate `quickstart.md` Scenario 4 directly against
+- [X] T019 [P] [US1] Validate `quickstart.md` Scenario 4 directly against
       the composite action: a nonexistent transcript path, an empty file,
       and a file containing `not valid json`, each invoked separately —
       confirm all three render the "Unavailable case" block, the step
@@ -269,7 +269,7 @@ Stories 2 and 3 are deferred per FR-012 — no tasks for them here.)
       review PR, since that workflow gates every PR touching
       `.github/workflows/**` and (per its own scope) likely
       `.github/actions/**`.
-- [ ] T023 [P] Cross-check `docs/architecture.md`'s per-stage sections
+- [X] T023 [P] Cross-check `docs/architecture.md`'s per-stage sections
       (Stage 2 Plan, Stage 3 Tasks, Stage 4 Implement, Stage 5 Finalize,
       Stage 6 Cleanup, Auto-rebase) against the finished implementation;
       update only if a section should note that stage's steps now emit a
