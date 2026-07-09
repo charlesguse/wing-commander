@@ -277,6 +277,18 @@ jobs:
             --allowedTools "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git checkout:*),Bash(git switch:*),Bash(git push:*),Bash(git branch:*),Bash(git log:*),Bash(git diff:*),Bash(ls:*),Bash(cat:*),Bash(.specify/scripts/bash/setup-tasks.sh:*),Bash(bash .specify/scripts/bash/setup-tasks.sh:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh pr create:*),Bash(gh pr list:*)"
             --disallowedTools "WebSearch,WebFetch"
 
+      # One metrics step shared across the two mutually-exclusive agent steps
+      # above (both configure claude-sonnet-5 / --max-turns 60): exactly one of
+      # them runs per invocation, and this unconditional step reads whichever
+      # transcript that branch produced. Surfaces this run's metrics in the run
+      # summary (see intake stage).
+      - name: Agent run metrics summary
+        if: always()
+        uses: ./.github/actions/speckit-metrics-summary
+        with:
+          model: claude-sonnet-5
+          max-turns: 60
+
       # Deterministic verification — no agent turns spent on checking facts.
       # Auto mode: tasks.md and the stage flip must be on the spec branch.
       - name: Verify tasks committed (auto)

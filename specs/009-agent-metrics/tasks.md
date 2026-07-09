@@ -153,23 +153,23 @@ flagged — all without opening the uploaded artifact.
 
 ### Wiring: one metrics step per existing agent invocation
 
-- [ ] T008 [P] [US1] In `.github/workflows/speckit-1-intake.yml`, add a
+- [X] T008 [P] [US1] In `.github/workflows/speckit-1-intake.yml`, add a
       `uses: ./.github/actions/speckit-metrics-summary` step immediately
       after the existing "Upload Claude execution log" step (currently
       lines 176-182), `if: always()`, with `model: claude-opus-4-8` and
       `max-turns: 50` — the same literals already hardcoded in that job's
       `claude_args` (line 146-147, research.md D5).
-- [ ] T009 [P] [US1] In `.github/workflows/speckit-2-clarify.yml`, add the
+- [X] T009 [P] [US1] In `.github/workflows/speckit-2-clarify.yml`, add the
       same kind of step immediately after its "Upload Claude execution log"
       step (around lines 138-141), `if: always()`, with
       `model: claude-opus-4-8` and `max-turns: 40` (matching lines
       127-128).
-- [ ] T010 [P] [US1] In `.github/workflows/speckit-3-plan.yml`, add the
+- [X] T010 [P] [US1] In `.github/workflows/speckit-3-plan.yml`, add the
       same kind of step immediately after its "Upload Claude execution log"
       step (around lines 271-274), `if: always()`, with
       `model: claude-sonnet-5` and `max-turns: 80` (matching lines
       234-235).
-- [ ] T011 [P] [US1] In `.github/workflows/speckit-4-tasks.yml`, add **one**
+- [X] T011 [P] [US1] In `.github/workflows/speckit-4-tasks.yml`, add **one**
       metrics step, `if: always()`, positioned after both mutually-exclusive
       agent steps ("Generate task list (direct commit)" at lines 171-219
       and "Generate task list (review PR)" at lines 224-278) and before the
@@ -179,20 +179,20 @@ flagged — all without opening the uploaded artifact.
       unconditional step correctly reads whichever transcript the branch
       that actually ran produced (plan.md Project Structure: "shared across
       the two mutually-exclusive agent steps").
-- [ ] T012 [US1] In `.github/workflows/speckit-5-implement.yml`, add a
+- [X] T012 [US1] In `.github/workflows/speckit-5-implement.yml`, add a
       metrics step immediately after the primary "cycle" agent step's
       "Upload Claude execution log (cycle)" step (lines 280-283), `if:
       always()`, with `model: ${{ steps.tier.outputs.tier }}` and
       `max-turns: 100` (matching lines 270-272), and `run-label: cycle`
       (research.md D3, FR-008).
-- [ ] T013 [US1] In the same file, add a second metrics step immediately
+- [X] T013 [US1] In the same file, add a second metrics step immediately
       after the conditional opus "retry" agent step's "Upload Claude
       execution log (retry)" step (lines 407-410), `if: always()`, with
       `model: claude-opus-4-8` and `max-turns: 100` (matching lines
       399-401), and `run-label: retry`. Must run before the haiku
       progress-comment step (T014) so the shared transcript file isn't
       overwritten out of order (research.md D3).
-- [ ] T014 [US1] In the same file, add a third (new) metrics step
+- [X] T014 [US1] In the same file, add a third (new) metrics step
       immediately after the "Post progress comment (haiku)" agent step
       (around line 522-555) — this invocation currently has no
       `claude-execution-output` artifact upload to anchor near, so the step
@@ -201,17 +201,17 @@ flagged — all without opening the uploaded artifact.
       554-555), and `run-label: progress comment` (research.md D4 — every
       invocation gets a summary, not just the ones with a pre-existing
       upload).
-- [ ] T015 [P] [US1] In `.github/workflows/speckit-6-finalize.yml`, add the
+- [X] T015 [P] [US1] In `.github/workflows/speckit-6-finalize.yml`, add the
       same kind of step immediately after its "Upload Claude execution log"
       step (around lines 226-229), `if: always()`, with
       `model: claude-haiku-4-5` and `max-turns: 20` (matching lines
       219-220).
-- [ ] T016 [P] [US1] In `.github/workflows/speckit-7-cleanup.yml`, add the
+- [X] T016 [P] [US1] In `.github/workflows/speckit-7-cleanup.yml`, add the
       same kind of step immediately after its "Upload Claude execution log"
       step (around lines 178-181), `if: always()`, with
       `model: claude-haiku-4-5` and `max-turns: 20` (matching lines
       171-172).
-- [ ] T017 [P] [US1] In `.github/workflows/speckit-rebase.yml`, add the same
+- [X] T017 [P] [US1] In `.github/workflows/speckit-rebase.yml`, add the same
       kind of step immediately after its per-matrix-entry "Upload Claude
       execution log" step (around lines 293-296), `if: always()`, with
       `model: claude-sonnet-5` and `max-turns: 30` (matching lines

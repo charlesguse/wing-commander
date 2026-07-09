@@ -283,6 +283,17 @@ jobs:
           path: ${{ runner.temp }}/claude-execution-output.json
           if-no-files-found: ignore
 
+      # Cycle run's metrics — read here, before any retry step overwrites the
+      # shared transcript path. run-label distinguishes it from the retry and
+      # progress-comment blocks in this same job's summary (FR-008).
+      - name: Agent run metrics summary (cycle)
+        if: always()
+        uses: ./.github/actions/speckit-metrics-summary
+        with:
+          model: ${{ steps.tier.outputs.tier }}
+          max-turns: 100
+          run-label: cycle
+
       # FR-013 detection + FR-002/003/004 signal, all deterministic (no agent
       # turns): the attempt "completed" only if the action exited zero AND
       # spec-meta.json on the spec branch advanced as instructed; a completed
@@ -409,6 +420,16 @@ jobs:
           name: claude-execution-output-retry
           path: ${{ runner.temp }}/claude-execution-output.json
           if-no-files-found: ignore
+
+      # Retry run's metrics — read after the retry's own upload and before the
+      # haiku progress-comment step overwrites the shared transcript path.
+      - name: Agent run metrics summary (retry)
+        if: always()
+        uses: ./.github/actions/speckit-metrics-summary
+        with:
+          model: claude-opus-4-8
+          max-turns: 100
+          run-label: retry
 
       - name: Read back retry outcome
         id: retry-outcome
@@ -555,6 +576,17 @@ jobs:
             --max-turns 15
             --allowedTools "Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(gh issue comment:*)"
             --disallowedTools "WebSearch,WebFetch"
+
+      # Progress-comment run's metrics. This invocation uploads no execution
+      # artifact, so the metrics step anchors directly after the agent step
+      # itself — every agent invocation gets its own summary block (FR-008).
+      - name: Agent run metrics summary (progress comment)
+        if: always()
+        uses: ./.github/actions/speckit-metrics-summary
+        with:
+          model: claude-haiku-4-5
+          max-turns: 15
+          run-label: progress comment
 
       # FR-009 visibility: the loop announces itself on the lifecycle issue
       # from the first completed cycle onward; later cycles change nothing.

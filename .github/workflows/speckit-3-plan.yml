@@ -273,3 +273,11 @@ jobs:
           name: claude-execution-output
           path: ${{ runner.temp }}/claude-execution-output.json
           if-no-files-found: ignore
+
+      # Surface this run's own metrics in the run summary (see intake stage).
+      - name: Agent run metrics summary
+        if: always()
+        uses: ./.github/actions/speckit-metrics-summary
+        with:
+          model: claude-sonnet-5
+          max-turns: 80
