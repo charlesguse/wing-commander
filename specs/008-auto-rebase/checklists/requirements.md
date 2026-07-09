@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,5 +31,5 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain (FR-002 branch scope, FR-011 concurrent-update handling, FR-012 repeated-conflict backoff). These are posted to the lifecycle issue for the requester/maintainers to answer per the intake CI deviation; the spec carries informed-default framing in each case so planning can proceed if answers do not arrive. All other checklist items pass.
-- Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.
+- All three [NEEDS CLARIFICATION] markers are resolved from the lifecycle issue #33 answers (Q1/Q2/Q3 → A/A/A): FR-002 rebases only actively-progressing specs (excluding stalled and done/merged); FR-011 skips a concurrently-moved branch silently and retries next run; FR-012 asks for human help once on a persistently unresolvable branch, then skips it until the branch changes. All checklist items pass.
+- The specification is ready for planning.
