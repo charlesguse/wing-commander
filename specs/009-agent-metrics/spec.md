@@ -32,7 +32,9 @@ After any pipeline stage that invokes the Claude agent finishes, a maintainer wa
 
 ---
 
-### User Story 2 - A feature's total spend is legible from its lifecycle issue alone (Priority: P2)
+### User Story 2 - A feature's total spend is legible from its lifecycle issue alone (Priority: P2 — Deferred)
+
+> **Deferred**: Out of scope for this feature. The committed scope is tier 1 only (see FR-012); this story is retained as the shape of a later feature that delivers the per-feature rollup.
 
 A maintainer following a specification through the pipeline can read that specification's cumulative agent spend — per stage and in total — directly from its lifecycle issue, without opening individual workflow runs. As each agent stage reports its status to the lifecycle issue, it carries that run's compact metrics with it, so the issue accumulates a legible record of how many turns, tokens, and dollars the specification has cost across its stages.
 
@@ -47,7 +49,9 @@ A maintainer following a specification through the pipeline can read that specif
 
 ---
 
-### User Story 3 - Budgets can be tuned from history instead of anecdotes (Priority: P3)
+### User Story 3 - Budgets can be tuned from history instead of anecdotes (Priority: P3 — Deferred)
+
+> **Deferred**: Out of scope for this feature. The committed scope is tier 1 only (see FR-012); this story is retained as the shape of a later feature that delivers the durable trend record.
 
 A maintainer deciding where to set turn budgets, which model tier a stage should use, or how many implement/converge iterations to allow can look at a durable, GitHub-native record of past agent runs — one entry per run capturing stage, specification, model, turns, tokens, cost, and outcome — rather than reasoning from one or two remembered examples. The record accumulates across features and stages so tuning decisions rest on a trend.
 
@@ -66,7 +70,7 @@ A maintainer deciding where to set turn budgets, which model tier a stage should
 
 - The execution transcript artifact is missing, empty, truncated, or not valid JSON: the metrics step reports that metrics were unavailable for that run and MUST NOT fail the stage or block the pipeline (see FR-009).
 - The final `result` record is present but missing some fields (e.g. no per-model breakdown, or cost absent): the summary reports the fields it has and marks the rest as unavailable rather than erroring.
-- A stage runs the agent more than once (e.g. an implement ⟲ converge iteration): each agent invocation is treated as its own run with its own metrics, and the per-feature rollup and durable record reflect every run, not just the last.
+- A stage runs the agent more than once (e.g. an implement ⟲ converge iteration): each agent invocation is treated as its own run with its own metrics and its own per-run summary, not just the last. (The deferred per-feature rollup and durable record would likewise reflect every run.)
 - A stage was configured without a discoverable turn budget: the summary still reports turns used and simply omits the used/budgeted ratio and any turn-budget warning rather than inventing a budget.
 - The stage did not invoke the agent at all (deterministic-only stage): no metrics summary is expected and the absence is not an error.
 
@@ -79,13 +83,13 @@ A maintainer deciding where to set turn budgets, which model tier a stage should
 - **FR-003**: The per-run summary MUST express turns as the amount used against the run's turn budget (used and budgeted), so a maintainer can see how close the run came to its cap.
 - **FR-004**: The system MUST flag any run that consumed at or above a warning fraction of its turn budget as close to that budget, and MUST NOT flag runs below that fraction. The warning fraction defaults to 80% of the turn budget.
 - **FR-005**: When a run's turn budget cannot be determined, the system MUST still report turns used and MUST omit the used/budgeted ratio and the turn-budget warning rather than fabricating a budget.
-- **FR-006**: When a specification's agent stage reports its status to that specification's lifecycle issue, that report MUST carry the stage's compact metrics (model, turns, tokens, cost), and the specification's per-stage metrics and cumulative total MUST be legible from the lifecycle issue alone. [NEEDS CLARIFICATION: should the per-feature rollup be a single rolling metrics table maintained on the issue, or a compact metrics line appended to each stage's existing status comment?]
-- **FR-007**: The system MUST append one structured entry per agent run — capturing at least stage, specification, model, turns, tokens, cost, and outcome — to a durable, GitHub-native record, so past runs can be compared to tune budgets, model tiers, and iteration caps. [NEEDS CLARIFICATION: which durable GitHub-native store holds the trend record — a dedicated metrics branch, an aggregated workflow-summary index, or another GitHub-native location? The requester lists a metrics branch and a workflow summary index as examples.]
-- **FR-008**: When a stage invokes the agent more than once (for example across implement/converge iterations), the system MUST treat each invocation as a distinct run with its own metrics, and the per-feature rollup and durable record MUST reflect every run rather than only the last.
+- **FR-006** *(Deferred — tier 2, out of scope for this feature)*: When a specification's agent stage reports its status to that specification's lifecycle issue, that report would carry the stage's compact metrics (model, turns, tokens, cost) so the specification's per-stage metrics and cumulative total are legible from the lifecycle issue alone. The exact rollup form (a single rolling table vs. a compact metrics line appended to each stage's status comment) will be settled when this tier is scheduled.
+- **FR-007** *(Deferred — tier 3, out of scope for this feature)*: One structured entry per agent run — capturing at least stage, specification, model, turns, tokens, cost, and outcome — would be appended to a durable, GitHub-native record so past runs can be compared to tune budgets, model tiers, and iteration caps. The store (a dedicated metrics branch, an aggregated workflow-summary index, or another GitHub-native location) will be chosen when this tier is scheduled.
+- **FR-008**: When a stage invokes the agent more than once (for example across implement/converge iterations), the system MUST treat each invocation as a distinct run with its own metrics and its own per-run summary rather than only summarizing the last. (When the deferred per-feature rollup and durable record are built, they too must reflect every run.)
 - **FR-009**: If a run's execution transcript is missing, empty, truncated, or unparseable, the system MUST report that metrics were unavailable for that run and MUST NOT fail the stage, alter the stage's own outcome, or block the pipeline.
 - **FR-010**: The system MUST remain GitHub-native: metrics surfacing MUST use the run summary, lifecycle issue, and repository-resident storage only, with no external dashboards or services and no dependency on anything outside the repository's own GitHub surfaces.
 - **FR-011**: Metrics extraction and surfacing MUST be read-only with respect to the agent's work: they MUST derive from the already-produced execution transcript and MUST NOT re-run the agent or change any stage's behavior or result.
-- **FR-012**: The system MUST scope which of the three ambition tiers (per-run summary, per-feature rollup, durable trend record) are delivered by this feature. [NEEDS CLARIFICATION: is the committed scope the per-run summary only (tier 1), tiers 1 and 2, or all three tiers? The requester notes tier 1 alone is already valuable.]
+- **FR-012**: This feature's committed scope is tier 1 only — the per-run summary with turn-budget warning (User Story 1, FR-001–FR-005). The per-feature rollup (tier 2, User Story 2, FR-006) and the durable trend record (tier 3, User Story 3, FR-007) are deferred to later features and are out of scope here.
 
 ### Key Entities
 
@@ -103,8 +107,8 @@ A maintainer deciding where to set turn budgets, which model tier a stage should
 
 - **SC-001**: A maintainer can read a completed agent run's model, turns-used-against-budget, duration, tokens, and cost from that run's own workflow summary without downloading any artifact or reading raw JSON.
 - **SC-002**: Every agent run that used at or above the warning fraction of its turn budget is visibly flagged in its run summary, and no run below that fraction is flagged, so stages approaching their turn cap are spotted before they fail.
-- **SC-003**: For a specification that has passed through multiple agent stages, its per-stage metrics and cumulative spend are legible from its lifecycle issue alone, with no workflow run opened.
-- **SC-004**: After a set of agent runs across more than one specification, the durable trend record contains exactly one entry per run, each carrying stage, specification, model, turns, tokens, cost, and outcome.
+- **SC-003** *(Deferred — tier 2)*: For a specification that has passed through multiple agent stages, its per-stage metrics and cumulative spend are legible from its lifecycle issue alone, with no workflow run opened.
+- **SC-004** *(Deferred — tier 3)*: After a set of agent runs across more than one specification, the durable trend record contains exactly one entry per run, each carrying stage, specification, model, turns, tokens, cost, and outcome.
 - **SC-005**: A missing or unparseable execution transcript never causes a stage to fail or the pipeline to block; the affected run's metrics are reported as unavailable instead.
 - **SC-006**: No metrics surfacing depends on any service or dashboard outside the repository's own GitHub surfaces.
 

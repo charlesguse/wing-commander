@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,9 +31,8 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain and are posted to lifecycle issue #16 for the requester/maintainers to answer:
-  - **FR-012 (scope)** — which ambition tiers this feature commits to (per-run only, tiers 1+2, or all three).
-  - **FR-006 (rollup form)** — a single rolling metrics table on the issue vs. a metrics line appended to each stage's status comment.
-  - **FR-007 (trend store)** — which durable GitHub-native location holds the trend record (metrics branch, workflow-summary index, or other).
-- The markers concern scope and presentation choices with multiple reasonable interpretations; the specification is otherwise complete and testable. All remaining checklist items pass.
+- All three [NEEDS CLARIFICATION] markers are resolved (clarification answered on lifecycle issue #16 by the original requester, `charlesguse`):
+  - **FR-012 (scope)** — answered **Q1: A**: committed scope is **tier 1 only** (per-run summary + turn-budget warning). Tiers 2 and 3 are deferred to later features.
+  - **FR-006 (rollup form)** and **FR-007 (trend store)** — moot, since their questions (Q2/Q3) were conditional on tier 2/tier 3 being in scope. With tier 1 only committed, both requirements are marked deferred and their form/location will be settled when those tiers are scheduled.
+- The specification is complete and testable. All checklist items pass.
 - Default turn-budget warning fraction (80%) is documented as a tunable default in Assumptions, not left as a clarification.
