@@ -54,4 +54,134 @@ runs:
         WARN_FRACTION: ${{ inputs.warn-fraction }}
         RUN_LABEL: ${{ inputs.run-label }}
       run: |
-        echo "speckit-metrics-summary: placeholder step (logic added in Phase 2)"
+        set -uo pipefail
+
+        TRANSCRIPT="${TRANSCRIPT_PATH:-}"
+        MODEL_IN="${MODEL:-}"
+        MAX_TURNS="${MAX_TURNS:-}"
+        WARN_FRACTION="${WARN_FRACTION:-0.8}"
+        RUN_LABEL="${RUN_LABEL:-}"
+        SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
+
+        # Heading shared by both the normal and unavailable cases (T006/T007).
+        heading="### 🤖 Agent run metrics"
+        if [ -n "$RUN_LABEL" ]; then
+          heading="$heading — $RUN_LABEL"
+        fi
+
+        # --- T002: availability + capture the LAST .type=="result" record ------
+        availability=unavailable
+        result_json=""
+        if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ] && [ -s "$TRANSCRIPT" ]; then
+          if jq -e . "$TRANSCRIPT" >/dev/null 2>&1; then
+            result_json="$(jq -c 'if type=="array" then . else [.] end
+              | map(select(.type=="result")) | last // empty' "$TRANSCRIPT" 2>/dev/null || true)"
+            if [ -n "$result_json" ] && [ "$result_json" != "null" ]; then
+              availability=ok
+            fi
+          fi
+        fi
+
+        # --- T007: unavailable case — heading + one italic line, exit 0 --------
+        if [ "$availability" != "ok" ]; then
+          {
+            printf '%s\n\n' "$heading"
+            printf '%s\n\n' "_Metrics unavailable for this run (execution transcript missing or unparseable)._"
+          } >> "$SUMMARY"
+          exit 0
+        fi
+
+        # --- T003: defensive per-field extraction (each field independent) -----
+        jqget() { printf '%s' "$result_json" | jq -r "$1 // empty" 2>/dev/null || true; }
+        turns_used="$(jqget '.num_turns')"
+        duration_ms="$(jqget '.duration_ms')"
+        cost_usd="$(jqget '.total_cost_usd')"
+        usage_json="$(printf '%s' "$result_json" | jq -c '.usage // empty' 2>/dev/null || true)"
+        model_usage_json="$(printf '%s' "$result_json" | jq -c '.modelUsage // empty' 2>/dev/null || true)"
+
+        # --- T004: turn-budget fields (only when max-turns AND turns_used known)
+        turn_warning=false
+        turns_pct=""
+        warn_pct=""
+        if [ -n "$MAX_TURNS" ] && [ -n "$turns_used" ] \
+           && printf '%s' "$turns_used" | grep -Eq '^[0-9]+([.][0-9]+)?$' \
+           && printf '%s' "$MAX_TURNS" | grep -Eq '^[0-9]+([.][0-9]+)?$'; then
+          read -r turns_pct turn_warning < <(awk -v u="$turns_used" -v b="$MAX_TURNS" -v w="$WARN_FRACTION" 'BEGIN{
+            r=(b+0>0)?u/b:0
+            printf "%d %s", (r*100)+0.5, (r>=w)?"true":"false"
+          }')
+          warn_pct="$(awk -v w="$WARN_FRACTION" 'BEGIN{ printf "%d", (w*100)+0.5 }')"
+        fi
+
+        # --- T005: formatting helpers, each degrading to "unavailable" ----------
+        fmt_duration() {
+          local ms="$1"
+          printf '%s' "$ms" | grep -Eq '^[0-9]+$' || { printf 'unavailable'; return; }
+          local t=$(( ms / 1000 )) h m s out=""
+          h=$(( t / 3600 )); m=$(( (t % 3600) / 60 )); s=$(( t % 60 ))
+          [ "$h" -gt 0 ] && out="${h}h "
+          { [ "$h" -gt 0 ] || [ "$m" -gt 0 ]; } && out="${out}${m}m "
+          printf '%s%ss' "$out" "$s"
+        }
+        fmt_cost() {
+          local v="$1"
+          printf '%s' "$v" | grep -Eq '^[0-9]+([.][0-9]+)?$' || { printf 'unavailable'; return; }
+          awk -v v="$v" 'BEGIN{ if (v>=1) printf "$%.2f", v; else printf "$%.4f", v }'
+        }
+        fmt_tokens() {
+          local uj="$1"
+          { [ -z "$uj" ] || [ "$uj" = "null" ]; } && { printf 'unavailable'; return; }
+          printf '%s' "$uj" | jq -r '
+            (.input_tokens // 0) as $i | (.output_tokens // 0) as $o
+            | (.cache_creation_input_tokens // 0) as $cc
+            | (.cache_read_input_tokens // 0) as $cr
+            | ($i+$o+$cc+$cr) as $tot
+            | if $tot == 0 then "unavailable"
+              else "\($tot) (in \($i), out \($o), cache \($cc+$cr))" end
+          ' 2>/dev/null || printf 'unavailable'
+        }
+        fmt_per_model() {
+          local mj="$1"
+          { [ -z "$mj" ] || [ "$mj" = "null" ]; } && return
+          printf '%s' "$mj" | jq -r '
+            to_entries | map(
+              .key as $m | .value as $v
+              | (($v.inputTokens // $v.input_tokens // 0)
+                 + ($v.outputTokens // $v.output_tokens // 0)
+                 + ($v.cacheReadInputTokens // $v.cache_read_input_tokens // 0)
+                 + ($v.cacheCreationInputTokens // $v.cache_creation_input_tokens // 0)) as $t
+              | ($v.costUSD // $v.cost_usd // $v.costUsd // null) as $c
+              | "\($m): \($t) tokens" + (if $c != null then " / $\($c|tostring)" else "" end)
+            ) | join("; ")
+          ' 2>/dev/null || true
+        }
+
+        # --- T006: normal-case Markdown block ----------------------------------
+        turns_used_disp="$turns_used"
+        [ -z "$turns_used_disp" ] && turns_used_disp="unavailable"
+        if [ -n "$MAX_TURNS" ]; then
+          turns_cell="$turns_used_disp / $MAX_TURNS"
+        else
+          turns_cell="$turns_used_disp"
+        fi
+        duration_disp="$(fmt_duration "$duration_ms")"
+        cost_disp="$(fmt_cost "$cost_usd")"
+        tokens_disp="$(fmt_tokens "$usage_json")"
+        per_model_line="$(fmt_per_model "$model_usage_json")"
+
+        {
+          printf '%s\n\n' "$heading"
+          printf '| Model | Turns | Duration | Tokens | Cost |\n'
+          printf '|---|---|---|---|---|\n'
+          printf '| %s | %s | %s | %s | %s |\n\n' \
+            "$MODEL_IN" "$turns_cell" "$duration_disp" "$tokens_disp" "$cost_disp"
+          if [ "$turn_warning" = "true" ]; then
+            printf '⚠️ **Turn budget warning**: this run used %s/%s turns (%s%%) — at or above the %s%% warning threshold.\n\n' \
+              "$turns_used" "$MAX_TURNS" "$turns_pct" "$warn_pct"
+          fi
+          if [ -n "$per_model_line" ]; then
+            printf '**Per-model breakdown**: %s\n\n' "$per_model_line"
+          fi
+        } >> "$SUMMARY"
+
+        exit 0

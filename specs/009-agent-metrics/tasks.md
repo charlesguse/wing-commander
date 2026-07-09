@@ -82,14 +82,14 @@ T018 (order note: T018 is listed under US1 below since it's part of the
 Independent Test, but nothing stops running it against the bare action
 immediately after this phase, before any workflow is touched).
 
-- [ ] T002 In `action.yml`'s composite step, resolve `transcript-path`
+- [X] T002 In `action.yml`'s composite step, resolve `transcript-path`
       (default already set by T001) and determine `availability`: read the
       file; if it does not exist, is empty, fails to parse as JSON via
       `jq`, or parses but contains no entry with `.type == "result"`, set
       `availability=unavailable` and skip all further extraction; otherwise
       set `availability=ok` and capture the **last** matching entry as the
       result record (data-model.md's Execution transcript table; FR-009).
-- [ ] T003 [P] When `availability=ok`, defensively extract each field from
+- [X] T003 [P] When `availability=ok`, defensively extract each field from
       the result record independently via a `jq '... // empty'`-style
       pattern so one missing/misnamed field never blocks another:
       `turns_used` from `.num_turns`, `duration_ms` from `.duration_ms`,
@@ -98,7 +98,7 @@ immediately after this phase, before any workflow is touched).
       read (research.md D6 — field names are the documented assumption from
       spec.md's worked example; each falls back to "unavailable"
       independently rather than failing the step).
-- [ ] T004 [US1-independent, feeds US1] Compute the turn-budget fields:
+- [X] T004 [US1-independent, feeds US1] Compute the turn-budget fields:
       when the `max-turns` input is provided and `turns_used` was
       successfully extracted, compute `turns_ratio = turns_used / max-turns`
       and `turn_warning = (turns_ratio >= warn-fraction)`; when `max-turns`
@@ -106,13 +106,13 @@ immediately after this phase, before any workflow is touched).
       never fabricate a budget or a ratio (FR-003, FR-004, FR-005,
       contracts/speckit-metrics-summary-action.md points 4–5; the `>=`
       boundary against `warn-fraction`, default `0.8`, must be exact).
-- [ ] T005 Format the extracted/computed values for display: `duration_ms`
+- [X] T005 Format the extracted/computed values for display: `duration_ms`
       into a human-readable duration, `cost_usd` into a `$`-prefixed
       amount, `tokens`/`per_model_breakdown` into their rendered forms —
       each independently falling back to the literal string `unavailable`
       when its source value was absent (data-model.md's Run metrics
       "Renders as" column).
-- [ ] T006 Render the **normal-case** Markdown block per
+- [X] T006 Render the **normal-case** Markdown block per
       `contracts/step-summary-format.md` ("Normal case"): heading
       `### 🤖 Agent run metrics` with `— <run-label>` appended only when
       `run-label` is non-empty; a table row whose Turns cell is exactly
@@ -122,7 +122,7 @@ immediately after this phase, before any workflow is touched).
       true (silence otherwise — no "all clear" line, Acceptance Scenario
       3); the per-model-breakdown line present only when that data was
       extracted. Append this block to `$GITHUB_STEP_SUMMARY`.
-- [ ] T007 Render the **unavailable-case** Markdown block per
+- [X] T007 Render the **unavailable-case** Markdown block per
       `contracts/step-summary-format.md` ("Unavailable case") when
       `availability=unavailable`: the same heading rule, followed only by
       the italic `_Metrics unavailable for this run (execution transcript
