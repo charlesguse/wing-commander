@@ -1,0 +1,197 @@
+# Release automation (contracts/versioning.md).
+# Manually triggered — tag creation is deliberate, not per-merge:
+#   1. Lint gate: actionlint over all reusable-*.yml + published-stage
+#      invariant greps must pass.
+#   2. Create annotated tag vX.Y.Z at the default branch head.
+#   3. Create-or-advance the floating major tag for the release's OWN major:
+#      force-move vX for a non-breaking release; create it when the release
+#      starts a new major. A breaking release must start a new major and
+#      never touches the previous major's floating tag.
+#   4. Create the GitHub Release; notes ALWAYS contain a Breaking-changes
+#      section (may state "None").
+name: "release · publish pipeline"
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (X.Y.Z or vX.Y.Z)"
+        required: true
+        type: string
+      breaking:
+        description: "This release contains breaking interface changes (must start a new major)"
+        required: false
+        default: false
+        type: boolean
+      breaking-notes:
+        description: "What breaks and how to migrate (required when breaking; prepended to the release notes)"
+        required: false
+        default: ""
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: speckit-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Gate 1a: actionlint over the published stages (and this workflow's
+      # own siblings). -ignore: actionlint 1.7.7 does not yet know the
+      # documented github.job_workflow_sha context property (research.md D3).
+      - name: Lint published stages (actionlint)
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) 1.7.7 /tmp
+          /tmp/actionlint -no-color \
+            -ignore 'property "job_workflow_sha" is not defined' \
+            .github/workflows/reusable-*.yml .github/workflows/release.yml
+
+      # Gate 1b: published-stage invariants (research.md D2/D5, FR-005,
+      # constitution II, spec edge case 3). Interface rules that actionlint
+      # cannot express — one grep each:
+      #   - no github.event.* reads (event facts arrive only via inputs)
+      #   - no vars.* reads (configuration arrives only via declared inputs)
+      #   - no literal main as a branch ref (default-branch input/derivation)
+      #   - every agent step's claude_args carries --model and --max-turns
+      - name: Published-stage invariant checks
+        run: |
+          set -uo pipefail
+          fail=0
+
+          if grep -n 'github\.event\.' .github/workflows/reusable-*.yml; then
+            echo "::error::reusable stages must not read github.event.* — event facts arrive via workflow_call inputs (research.md D2)."
+            fail=1
+          fi
+
+          if grep -n 'vars\.' .github/workflows/reusable-*.yml; then
+            echo "::error::reusable stages must not read vars.* — configuration arrives via declared inputs (research.md D5)."
+            fail=1
+          fi
+
+          # Literal default-branch assumptions: 'main' used as a ref/base.
+          # The word may appear in prose comments; check the wired forms.
+          if grep -nE -- "(--base main|ref: main|origin/main[^_]|'main'|\"main\")" .github/workflows/reusable-*.yml; then
+            echo "::error::reusable stages must not hardcode the branch name main — use the default-branch input or its derived value (spec edge case 3)."
+            fail=1
+          fi
+
+          # Hardcoded publisher strings are allowed ONLY as the pipeline-repo
+          # input default (FR-005).
+          stray=$(grep -n 'charlesguse/speckit-action' .github/workflows/reusable-*.yml | grep -v 'default: charlesguse/speckit-action' || true)
+          if [ -n "$stray" ]; then
+            printf '%s\n' "$stray"
+            echo "::error::the publisher's owner/repo may appear only as the pipeline-repo input default (FR-005)."
+            fail=1
+          fi
+
+          # Every claude_args block must declare --model and --max-turns
+          # (constitution II). Count agent steps vs. declarations.
+          for f in .github/workflows/reusable-*.yml; do
+            agents=$(grep -c 'anthropics/claude-code-action' "$f" || true)
+            models=$(grep -c -- '--model ' "$f" || true)
+            turns=$(grep -c -- '--max-turns ' "$f" || true)
+            if [ "$agents" -gt "$models" ] || [ "$agents" -gt "$turns" ]; then
+              echo "::error::$f: $agents agent step(s) but only $models --model / $turns --max-turns declarations (constitution II requires both on every agent step)."
+              fail=1
+            fi
+          done
+
+          exit "$fail"
+
+      # Gate 2: version syntax, tag collision, and the breaking-release rule
+      # (contracts/versioning.md).
+      - name: Validate version and plan tags
+        id: plan
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+          BREAKING: ${{ inputs.breaking }}
+          BREAKING_NOTES: ${{ inputs.breaking-notes }}
+        run: |
+          set -uo pipefail
+          v="${VERSION_INPUT#v}"
+          if ! printf '%s' "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::version '$VERSION_INPUT' is not X.Y.Z / vX.Y.Z."
+            exit 1
+          fi
+          tag="v$v"
+          major="v${v%%.*}"
+
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "::error::tag $tag already exists — exact release tags are immutable; pick the next version."
+            exit 1
+          fi
+
+          major_exists=false
+          if git rev-parse -q --verify "refs/tags/$major" >/dev/null; then
+            major_exists=true
+          fi
+
+          if [ "$BREAKING" = "true" ]; then
+            if [ "$major_exists" = "true" ]; then
+              echo "::error::breaking release must start a NEW major ($major already exists — bump to the next major; the previous major's floating tag is never advanced onto a breaking change)."
+              exit 1
+            fi
+            if [ -z "$BREAKING_NOTES" ]; then
+              echo "::error::a breaking release requires breaking-notes describing what breaks and how to migrate."
+              exit 1
+            fi
+          fi
+
+          {
+            echo "tag=$tag"
+            echo "major=$major"
+            echo "major-exists=$major_exists"
+          } >> "$GITHUB_OUTPUT"
+          echo "Planned: exact tag $tag; floating tag $major ($([ "$major_exists" = "true" ] && echo force-move || echo create))." >> "$GITHUB_STEP_SUMMARY"
+
+      # Gates passed — create the immutable exact tag, then create-or-advance
+      # the release's own floating major tag.
+      - name: Create tags
+        env:
+          TAG: ${{ steps.plan.outputs.tag }}
+          MAJOR: ${{ steps.plan.outputs.major }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "speckit-action $TAG"
+          git push origin "refs/tags/$TAG"
+          git tag -fa "$MAJOR" -m "speckit-action $MAJOR (currently $TAG)"
+          git push --force origin "refs/tags/$MAJOR"
+          echo "Created $TAG and advanced $MAJOR." >> "$GITHUB_STEP_SUMMARY"
+
+      # The release notes always open with a Breaking-changes section so
+      # breakage is identifiable BEFORE upgrading (FR-008, edge case 2).
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          BREAKING: ${{ inputs.breaking }}
+          BREAKING_NOTES: ${{ inputs.breaking-notes }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Breaking changes"
+            echo ""
+            if [ "$BREAKING" = "true" ]; then
+              printf '%s\n' "$BREAKING_NOTES"
+            else
+              echo "None."
+            fi
+            echo ""
+          } > /tmp/release-notes-head.md
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file /tmp/release-notes-head.md \
+            --generate-notes
+          echo "Release $TAG published." >> "$GITHUB_STEP_SUMMARY"
