@@ -181,6 +181,14 @@ jobs:
           path: ${{ runner.temp }}/claude-execution-output.json
           if-no-files-found: ignore
 
+      # Surface this run's own metrics in the run summary (see intake stage).
+      - name: Agent run metrics summary
+        if: always()
+        uses: ./.github/actions/speckit-metrics-summary
+        with:
+          model: claude-haiku-4-5
+          max-turns: 20
+
       # A summary-generation failure must not block SC-001's teardown.
       - name: Resolve completion summary (with fallback)
         id: summary

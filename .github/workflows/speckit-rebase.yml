@@ -296,6 +296,15 @@ jobs:
           path: ${{ runner.temp }}/claude-execution-output.json
           if-no-files-found: ignore
 
+      # Surface this per-matrix-entry run's own metrics in the run summary
+      # (see intake stage). Reads this entry's transcript at the shared path.
+      - name: Agent run metrics summary
+        if: always()
+        uses: ./.github/actions/speckit-metrics-summary
+        with:
+          model: claude-sonnet-5
+          max-turns: 30
+
       # Contract step 6: deterministic scope verification of the AI result.
       # Treat an incomplete rebase or an errored/timed-out agent as failure.
       # Otherwise require the replayed commit sequence to match pre_tip in

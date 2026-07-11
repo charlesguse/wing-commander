@@ -229,6 +229,14 @@ jobs:
           path: ${{ runner.temp }}/claude-execution-output.json
           if-no-files-found: ignore
 
+      # Surface this run's own metrics in the run summary (see intake stage).
+      - name: Agent run metrics summary
+        if: always()
+        uses: ./.github/actions/speckit-metrics-summary
+        with:
+          model: claude-haiku-4-5
+          max-turns: 20
+
       # FR-015: fail loudly rather than opening a PR with incomplete content.
       - name: Verify agent output
         if: steps.diff.outputs.skip != 'true'

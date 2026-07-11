@@ -64,7 +64,12 @@ serialize, different specs run in parallel. Intake serializes globally
 | plan / tasks | `claude-sonnet-5` |
 | implement / converge | `vars.SPECKIT_IMPLEMENT_MODEL` (default `claude-sonnet-5`; `claude-opus-4-8` via variable or `model:opus` label) |
 
-Every agent step declares `--model` and `--max-turns`.
+Every agent step declares `--model` and `--max-turns`. Each is followed by a
+deterministic `.github/actions/speckit-metrics-summary` step that reads the
+run's own execution transcript and appends a metrics block (model, turns used
+against budget, duration, tokens, cost, with an ≥80% turn-budget warning) to
+that run's `$GITHUB_STEP_SUMMARY` — pure read, no agent, never fails the stage
+(`specs/009-agent-metrics/`).
 
 ### Security (constitution V)
 - Pipeline entry = maintainer-applied `spec-request` label.
