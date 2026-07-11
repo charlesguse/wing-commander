@@ -298,8 +298,11 @@ jobs:
 
       # Surface this per-matrix-entry run's own metrics in the run summary
       # (see intake stage). Reads this entry's transcript at the shared path.
+      # Skipped on clean rebases (agent never ran, so there is no transcript).
       - name: Agent run metrics summary
-        if: always()
+        if: always() && steps.agent.outcome != 'skipped'
+        # Belt-and-braces for the action's own "never fail the job" contract.
+        continue-on-error: true
         uses: ./.github/actions/speckit-metrics-summary
         with:
           model: claude-sonnet-5
