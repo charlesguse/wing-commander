@@ -1,7 +1,10 @@
 # Pipeline Architecture
 
-How a feature request becomes merged code, stage by stage. Stages 1–6 are
-implemented.
+How a feature request becomes merged code, stage by stage. All stages are
+implemented, and each is published as a reusable `workflow_call` workflow
+(`reusable-<stage>.yml`) that adopting repositories pin by tag
+([docs/adoption.md](adoption.md)); this repository's own `speckit-*.yml`
+files are thin wrappers calling those same stages by local path.
 
 ```
 issue ──spec-request label──▶ [1 intake] ──▶ spec PR → main
@@ -23,6 +26,48 @@ issue closed ◀──────────── [6 cleanup] ◀── branc
 ```
 
 ## Foundations
+
+### Published stages & thin wrappers (`specs/010-reusable-pipeline/`)
+
+Every stage body lives in a `reusable-*.yml` workflow whose only trigger is
+`workflow_call`. Stage workflows never read `github.event.*` or `vars.*` —
+every event fact (issue number, head/base refs, merged flag, comment id) and
+every knob (model, max-turns, review mode, iteration cap, chaining targets)
+is a declared, typed input with a default matching the constitution's
+tiering. The **wrapper** owns the trigger, the security gates, and the
+event→input extraction; this repository's eight `speckit-*.yml` wrappers are
+the worked example, and adopters write the same shape against a version tag.
+
+Mechanics worth knowing:
+
+- **Composite-action self-checkout** (research.md D3): inside a called
+  workflow, relative `uses: ./...` resolves against the *caller's* workspace,
+  so each stage checks out the pipeline repository itself into
+  `.speckit-pipeline/` at `github.job_workflow_sha` — the exact commit of the
+  running workflow file — and reaches `speckit-context`, `speckit-preflight`,
+  and `speckit-metrics-summary` through that path. A version pin therefore
+  covers workflow body *and* composites; there is no skew and no release-time
+  ref rewriting. Consumer re-checkouts pass `clean: false` so the untracked
+  `.speckit-pipeline/` survives.
+- **Preflight** (`speckit-preflight` composite): a deterministic, pre-agent
+  fail-fast — at least one Claude credential (`claude-code-oauth-token` or
+  `anthropic-api-key`; both passed through, Claude Code's documented
+  precedence applies when both are set), spec-kit artifacts present in the
+  consumer checkout, stage preconditions met, and a warn-only spec-kit
+  version check against the composite's `SPECKIT_SUPPORTED_VERSION` constant.
+- **No branch-name assumptions**: stages take a `default-branch` input or
+  derive it (`gh repo view --json defaultBranchRef`); only the
+  `spec-draft/ spec/ plan/ tasks/ impl/` *prefixes* are contract.
+- **Chaining is opt-in**: `next-workflow`/`self-workflow` inputs name wrapper
+  files in the consuming repository to `gh workflow run`; empty (the
+  default) means the stage reports to the lifecycle issue and stops, so any
+  stage runs standalone.
+- **Releases** (`release.yml`): actionlint + interface-invariant greps gate a
+  manually dispatched tag `vX.Y.Z`; the floating major tag (`v1`) advances
+  only on non-breaking releases, breaking changes start a new major, and
+  release notes always carry a Breaking-changes section. This repo's
+  local-path wrappers dogfood unreleased head, so interface breakage
+  surfaces here before any tag moves.
 
 ### Identity & chaining: the speckit-bot App
 Everything the pipeline does to the repo (push, PR, label, comment) uses a
@@ -62,7 +107,7 @@ serialize, different specs run in parallel. Intake serializes globally
 | Triage, diff summaries, labels | `claude-haiku-4-5` |
 | specify / clarify | `claude-opus-4-8` (constitution v1.1.0: spec quality is bought up front) |
 | plan / tasks | `claude-sonnet-5` |
-| implement / converge | `vars.SPECKIT_IMPLEMENT_MODEL` (default `claude-sonnet-5`; `claude-opus-4-8` via variable or `model:opus` label) |
+| implement / converge | stage `model` input (default `claude-sonnet-5`); this repo's wrapper wires `vars.SPECKIT_IMPLEMENT_MODEL` and the `model:opus` label opt-in into it |
 
 Every agent step declares `--model` and `--max-turns`. Each is followed by a
 deterministic `.github/actions/speckit-metrics-summary` step that reads the
@@ -86,7 +131,7 @@ that run's `$GITHUB_STEP_SUMMARY` — pure read, no agent, never fails the stage
 
 ---
 
-## Stage 2 — Plan (`speckit-3-plan.yml`, implemented)
+## Stage 2 — Plan (`reusable-plan.yml`, wrapper `speckit-3-plan.yml`)
 
 Specified in [`specs/002-plan-stage/`](../specs/002-plan-stage/spec.md).
 
@@ -113,7 +158,7 @@ false-triggering); plus `workflow_dispatch` (input: `slug`) for manual restarts.
    spec-meta.json `stage: "stalled"`, issue comment); restart is manual —
    delete `plan/NNN-slug` and dispatch the workflow (FR-012).
 
-## Stage 3 — Tasks (`speckit-4-tasks.yml`, implemented)
+## Stage 3 — Tasks (`reusable-tasks.yml`, wrapper `speckit-4-tasks.yml`)
 
 Specified in [`specs/003-tasks-stage/`](../specs/003-tasks-stage/spec.md).
 
@@ -138,7 +183,7 @@ notifications no-op, FR-011; a manual dispatch may also proceed from
   (`stage:stalled` label, `spec-meta.json` `stage: "stalled"`, issue comment);
   restart is manual — delete `tasks/NNN-slug` and dispatch the workflow.
 
-## Stage 4 — Implement ⟲ converge (`speckit-5-implement.yml`, implemented)
+## Stage 4 — Implement ⟲ converge (`reusable-implement.yml`, wrapper `speckit-5-implement.yml`)
 
 Implemented via `specs/005-implement-converge/` (issue #15); the design below
 is what the implementation follows.
@@ -172,7 +217,7 @@ vars.SPECKIT_MAX_ITERATIONS`).
    tier — marks the spec `stalled` (label, `spec-meta.json`, issue comment);
    restart is manual: re-dispatch the workflow with the same iteration.
 
-## Stage 5 — Finalize (`speckit-6-finalize.yml`, implemented — see `specs/006-finalize-stage/`)
+## Stage 5 — Finalize (`reusable-finalize.yml`, wrapper `speckit-6-finalize.yml` — see `specs/006-finalize-stage/`)
 
 **Trigger**: `workflow_dispatch` (`spec_dir`, `issue`, `converged`).
 
@@ -183,7 +228,7 @@ vars.SPECKIT_MAX_ITERATIONS`).
    it (diff link, key files), remaining manual tasks, lifecycle issue link.
 3. Comment the same manual-task list on the lifecycle issue; label `stage:review`.
 
-## Stage 6 — Cleanup (`speckit-7-cleanup.yml`, implemented — see `specs/007-cleanup-stage/`)
+## Stage 6 — Cleanup (`reusable-cleanup.yml`, wrapper `speckit-7-cleanup.yml` — see `specs/007-cleanup-stage/`)
 
 **Trigger**: `pull_request: closed`, repo-wide — self-selects one of three
 outcomes from the event payload alone (head ref prefix + base ref + `merged`),
@@ -215,7 +260,7 @@ comment, since the issue can't yet be trusted to be the right one. Every
 outcome's own target state doubles as its idempotency check — no separate
 "already processed" marker exists.
 
-## Auto-rebase (`speckit-rebase.yml`)
+## Rebase (`reusable-rebase.yml`, wrapper `speckit-rebase.yml`)
 
 **Trigger**: `push` to main (skipping `*[bot]` actors) + nightly schedule.
 
@@ -237,26 +282,35 @@ the label).
 
 ---
 
-## Reusability roadmap
+## Reusability (current state — `specs/010-reusable-pipeline/`)
 
-The current workflows are repo-local; extraction is milestone 4 of the
-[roadmap](../README.md#roadmap). One contract already holds today and must
-survive extraction unchanged (constitution VI): **the pipeline reads everything
-project-specific from the consuming repository's checkout** — its
-`.specify/memory/constitution.md`, its templates and scripts under `.specify/`,
-its `.claude/skills/speckit-*`, its `specs/` directory. No stage resolves any
-artifact from speckit-action itself, and no workflow hardcodes a repository
-name or owner; every path is relative to the checkout, so the same workflow
-bodies operate on whichever repository runs them.
+Extraction is done: every stage is a published `workflow_call` workflow, and
+this repository consumes them the same way adopters do (milestone 4 of the
+[roadmap](../README.md#roadmap)). The load-bearing contract is constitution
+VI: **the pipeline reads everything project-specific from the consuming
+repository's checkout** — its `.specify/memory/constitution.md`, its
+templates and scripts under `.specify/`, its `.claude/skills/speckit-*`, its
+`specs/` directory. No stage resolves any project artifact from
+speckit-action itself; the one self-reference is the composite-action
+checkout at `github.job_workflow_sha`, parameterized by the `pipeline-repo`
+input (defaulting to the publisher).
 
-The extraction path:
-1. Move stage bodies into `workflow_call` reusable workflows with explicit
-   inputs (`spec_dir`, `issue_number`, `iteration`) and `secrets: inherit`.
+The shape that shipped (details in the Foundations section above and in
+[docs/adoption.md](adoption.md)):
+
+1. Stage bodies live in `reusable-<stage>.yml` with explicit typed inputs and
+   declared secrets (no `secrets: inherit` — the credential surface is part
+   of the interface).
 2. Consuming repos keep thin event-trigger wrappers
-   (`uses: <org>/speckit-action/.github/workflows/speckit-3-plan.yml@v1`)
+   (`uses: charlesguse/speckit-action/.github/workflows/reusable-plan.yml@v1`)
    plus their own `specify init` output — constitution, templates, scripts,
-   and skills are theirs, not inherited from this repo.
-3. Everything repo-specific stays in the `speckit-context` composite.
+   and skills are theirs, never inherited from this repo.
+3. Shared mechanics live in the `speckit-context`, `speckit-preflight`, and
+   `speckit-metrics-summary` composites, reached via the self-checkout so a
+   single version pin covers everything.
+4. `release.yml` publishes exact `vX.Y.Z` tags and advances the floating
+   major tag on non-breaking releases; this repo's wrappers call by local
+   path, so dogfooded runs validate unreleased head before any tag moves.
 
 ## Known risks
 

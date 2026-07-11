@@ -34,11 +34,20 @@ avoid reacting to their own actions.
 
 Settings → Secrets and variables → Actions → **Secrets**:
 
-| Secret | Value |
-|---|---|
-| `CLAUDE_CODE_OAUTH_TOKEN` | Claude subscription token — run `claude setup-token` locally and paste the result. (Alternative: use `ANTHROPIC_API_KEY` for pay-per-token Console billing and swap the input name in the workflows.) |
-| `SPECKIT_APP_ID` | The App ID from step 1 |
-| `SPECKIT_APP_PRIVATE_KEY` | Full contents of the downloaded `.pem` |
+| Secret | Required | Value |
+|---|---|---|
+| `CLAUDE_CODE_OAUTH_TOKEN` | one of the two Claude credentials | Claude subscription token — run `claude setup-token` locally and paste the result |
+| `ANTHROPIC_API_KEY` | one of the two Claude credentials | API key from the [Claude Console](https://console.anthropic.com/) (pay-per-token billing) |
+| `SPECKIT_APP_ID` | yes | The App ID from step 1 |
+| `SPECKIT_APP_PRIVATE_KEY` | yes | Full contents of the downloaded `.pem` |
+
+Both Claude credentials are first-class: every stage accepts either, exactly
+one is sufficient, and if you configure both the API key is used (Claude
+Code's own
+[authentication precedence](https://code.claude.com/docs/en/authentication#authentication-precedence)).
+With neither configured, stages fail fast in a preflight step naming both
+secret names, before any agent cost. Details:
+[docs/adoption.md#credentials](adoption.md#credentials).
 
 ## 3. Repository variables
 
