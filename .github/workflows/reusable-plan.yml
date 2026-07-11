@@ -61,6 +61,9 @@ on:
       anthropic-api-key:
         description: "Claude API key (Claude Console) — one of the two credentials"
         required: false
+      pipeline-repo-token:
+        description: "Token with read access to the pipeline repository — only needed when that repository is private (docs/adoption.md#private-pipeline-repository). Empty = the caller's GITHUB_TOKEN, sufficient for a public pipeline repository."
+        required: false
       speckit-app-id:
         description: "GitHub App ID used for pushes/PRs/comments"
         required: true
@@ -109,6 +112,9 @@ jobs:
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ github.job_workflow_sha }}
+          # A private pipeline repository is not readable by the caller's
+          # GITHUB_TOKEN — pipeline-repo-token covers that case (docs/adoption.md).
+          token: ${{ secrets.pipeline-repo-token || github.token }}
           path: .speckit-pipeline
           persist-credentials: false
 

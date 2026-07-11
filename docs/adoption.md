@@ -38,9 +38,11 @@ path. When in doubt, read them — they are the living example.
    rest).
 5. **Access to the pipeline repository.** Reusable workflows and the stages'
    composite-action self-checkout both require that
-   `charlesguse/speckit-action` is accessible to your repository (it is
-   public; forks that republish privately must grant access and set the
-   `pipeline-repo` input).
+   `charlesguse/speckit-action` is accessible to your repository. While the
+   pipeline repository is **private**, that means the extra one-time setup in
+   [Private pipeline repository](#private-pipeline-repository); once it is
+   public, no extra setup is needed. Forks that republish under another name
+   set the `pipeline-repo` input.
 
 ## Credentials
 
@@ -472,6 +474,35 @@ actions, because each stage checks out its own repository at the running
 workflow's exact commit (`github.job_workflow_sha`). There is no path by
 which a pinned adopter receives newer internal logic.
 
+## Private pipeline repository
+
+Adopting from a **private** pipeline repository needs two things a public one
+doesn't (both verified against a private publisher):
+
+1. **Workflow resolution.** The pipeline repository's owner must allow its
+   Actions components to be used by their other repositories:
+   *Settings → Actions → General → Access →* "Accessible from repositories
+   owned by …" (API:
+   `gh api -X PUT repos/<owner>/<pipeline-repo>/actions/permissions/access -f access_level=user`).
+   GitHub only shares private Actions components within the same
+   user/organization — a private pipeline repo is not adoptable across
+   accounts.
+2. **The composite self-checkout.** Your repository's `GITHUB_TOKEN` cannot
+   read a different private repository, so each stage's pipeline self-checkout
+   needs a token: set a repository secret with **read-only contents access**
+   to the pipeline repository (e.g. a fine-grained PAT scoped to that single
+   repo) and pass it to every stage as the optional `pipeline-repo-token`
+   secret:
+
+   ```yaml
+       secrets:
+         pipeline-repo-token: ${{ secrets.PIPELINE_REPO_TOKEN }}
+   ```
+
+   Keep the token read-only and single-repo — it is a code-fetch credential,
+   not a pipeline identity (the pipeline's acting identity remains your
+   GitHub App).
+
 ## Stage reference
 
 Common to every stage below:
@@ -484,8 +515,10 @@ Common to every stage below:
   it. `default-branch` (string, default `""` = derived via
   `gh repo view`) — stages never assume `main`.
 - **Common secrets**: `claude-code-oauth-token` / `anthropic-api-key`
-  (one-of, see [Credentials](#credentials)) and `speckit-app-id` /
-  `speckit-app-private-key` (required — the App writes pushes/PRs/comments).
+  (one-of, see [Credentials](#credentials)); `speckit-app-id` /
+  `speckit-app-private-key` (required — the App writes pushes/PRs/comments);
+  `pipeline-repo-token` (optional — only for a
+  [private pipeline repository](#private-pipeline-repository)).
 - **Preflight** — every stage fails fast, before any agent step, on: no
   credential, missing spec-kit artifacts, or missing stage preconditions,
   with a message naming the missing piece and the step that provides it. A
