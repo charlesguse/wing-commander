@@ -230,8 +230,12 @@ jobs:
           if-no-files-found: ignore
 
       # Surface this run's own metrics in the run summary (see intake stage).
+      # Skipped when the agent itself was skipped — with no fresh transcript
+      # the block would be noise at best, stale data at worst.
       - name: Agent run metrics summary
-        if: always()
+        if: always() && steps.summarize.outcome != 'skipped'
+        # Belt-and-braces for the action's own "never fail the job" contract.
+        continue-on-error: true
         uses: ./.github/actions/speckit-metrics-summary
         with:
           model: claude-haiku-4-5

@@ -106,10 +106,14 @@ runs:
         if [ -n "$MAX_TURNS" ] && [ -n "$turns_used" ] \
            && printf '%s' "$turns_used" | grep -Eq '^[0-9]+([.][0-9]+)?$' \
            && printf '%s' "$MAX_TURNS" | grep -Eq '^[0-9]+([.][0-9]+)?$'; then
+          # `|| true` is load-bearing: GitHub invokes composite `shell: bash`
+          # steps with -e (the `set` above adds flags, it can't remove -e), and
+          # `read` exits 1 at EOF because awk's printf emits no trailing
+          # newline — the variables are populated regardless.
           read -r turns_pct turn_warning < <(awk -v u="$turns_used" -v b="$MAX_TURNS" -v w="$WARN_FRACTION" 'BEGIN{
             r=(b+0>0)?u/b:0
             printf "%d %s", (r*100)+0.5, (r>=w)?"true":"false"
-          }')
+          }') || true
           warn_pct="$(awk -v w="$WARN_FRACTION" 'BEGIN{ printf "%d", (w*100)+0.5 }')"
         fi
 

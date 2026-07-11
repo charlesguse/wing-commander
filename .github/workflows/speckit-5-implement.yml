@@ -285,9 +285,13 @@ jobs:
 
       # Cycle run's metrics — read here, before any retry step overwrites the
       # shared transcript path. run-label distinguishes it from the retry and
-      # progress-comment blocks in this same job's summary (FR-008).
+      # progress-comment blocks in this same job's summary (FR-008). Skipped
+      # when the cycle itself was skipped — the shared path would hold no (or
+      # a stale) transcript, so a block would misattribute someone else's run.
       - name: Agent run metrics summary (cycle)
-        if: always()
+        if: always() && steps.cycle.outcome != 'skipped'
+        # Belt-and-braces for the action's own "never fail the job" contract.
+        continue-on-error: true
         uses: ./.github/actions/speckit-metrics-summary
         with:
           model: ${{ steps.tier.outputs.tier }}
@@ -423,8 +427,13 @@ jobs:
 
       # Retry run's metrics — read after the retry's own upload and before the
       # haiku progress-comment step overwrites the shared transcript path.
+      # Skipped when the retry was skipped (the common converged case): the
+      # shared path still holds the CYCLE's transcript, and rendering it here
+      # would misattribute the cycle's numbers to an opus retry that never ran.
       - name: Agent run metrics summary (retry)
-        if: always()
+        if: always() && steps.retry.outcome != 'skipped'
+        # Belt-and-braces for the action's own "never fail the job" contract.
+        continue-on-error: true
         uses: ./.github/actions/speckit-metrics-summary
         with:
           model: claude-opus-4-8
@@ -538,6 +547,7 @@ jobs:
       # constitution's tier for diff summaries) in a separate step so the
       # main agent's turn budget isn't spent on reporting.
       - name: Post progress comment (haiku)
+        id: progress
         if: steps.guard.outputs.skip != 'true' && steps.final.outputs.ok == 'true'
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
@@ -580,8 +590,13 @@ jobs:
       # Progress-comment run's metrics. This invocation uploads no execution
       # artifact, so the metrics step anchors directly after the agent step
       # itself — every agent invocation gets its own summary block (FR-008).
+      # Skipped when the comment step was skipped (failed cycles): the shared
+      # path still holds the cycle/retry transcript, and rendering it here
+      # would misattribute those numbers to a haiku run that never happened.
       - name: Agent run metrics summary (progress comment)
-        if: always()
+        if: always() && steps.progress.outcome != 'skipped'
+        # Belt-and-braces for the action's own "never fail the job" contract.
+        continue-on-error: true
         uses: ./.github/actions/speckit-metrics-summary
         with:
           model: claude-haiku-4-5
