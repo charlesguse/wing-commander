@@ -1,0 +1,154 @@
+# Deterministic fail-fast checks shared by every published pipeline stage
+# (contracts/credentials.md, research.md D7). Pure shell — no agent, no
+# network — so it can never itself incur cost, and it runs BEFORE any agent
+# step so a misconfigured repository fails with guidance instead of a
+# confusing mid-run agent error (FR-004, FR-009, SC-005).
+#
+# SPECKIT_SUPPORTED_VERSION — the pipeline's supported spec-kit version —
+# is the env constant at the top of the check step below. It is the single
+# place to update whenever the constitution's spec-kit pin changes.
+#
+# Like every shared composite, this action is resolved from the pipeline
+# repository's own checkout at github.job_workflow_sha (see the header of
+# .github/actions/speckit-context/action.yml for the verified snippet), so
+# it must never assume it lives in the workspace-root repository.
+name: speckit-preflight
+description: >
+  Fail fast, deterministically, before any agent step: verify at least one
+  Claude credential is configured (naming both exact secret names when not),
+  verify the consumer checkout carries its own spec-kit artifacts, verify
+  stage-specific prerequisite files and predecessor stages, and warn (never
+  fail) on a spec-kit version mismatch.
+
+inputs:
+  oauth-token:
+    description: >
+      VALUE of the stage's claude-code-oauth-token secret, passed as a value
+      so this composite can test emptiness. Empty means not configured.
+    required: false
+    default: ""
+  api-key:
+    description: >
+      VALUE of the stage's anthropic-api-key secret, passed as a value so
+      this composite can test emptiness. Empty means not configured.
+    required: false
+    default: ""
+  require-credential:
+    description: >
+      When "true", enforce the credential invariant. Agent-free entry points
+      (e.g. the tasks stage's approved mode) set "false" — no agent step
+      means no credential is needed.
+    required: false
+    default: "true"
+  require-speckit:
+    description: >
+      When "true", require the consumer checkout to carry its own spec-kit
+      artifacts (.specify/ and .claude/skills/speckit-*) — the output of the
+      consuming repository's `specify init` (constitution VI).
+    required: false
+    default: "true"
+  require-files:
+    description: >
+      Newline-separated list of paths that must exist in the consumer
+      checkout. Each line is "path" or "path|provider", where provider names
+      the step that produces the file (e.g. "specs/001-x/plan.md|the plan
+      stage (reusable-plan.yml)"). The failure message names the provider.
+    required: false
+    default: ""
+  require-meta-stage:
+    description: >
+      Optional expected value of spec-meta.json's "stage" field. When set,
+      spec-dir must also be set; the run fails if the recorded stage differs,
+      naming the predecessor stage that sets the expected value.
+    required: false
+    default: ""
+  spec-dir:
+    description: >
+      Spec directory (specs/NNN-slug) whose spec-meta.json the
+      require-meta-stage check reads. Ignored when require-meta-stage is
+      empty.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Preflight (credentials, spec-kit, prerequisites)
+      shell: bash
+      env:
+        # The pipeline's supported spec-kit version (constitution pin).
+        # Update here — and only here — when the constitution's pin changes.
+        SPECKIT_SUPPORTED_VERSION: "0.12.4"
+        OAUTH_TOKEN: ${{ inputs.oauth-token }}
+        API_KEY: ${{ inputs.api-key }}
+        REQUIRE_CREDENTIAL: ${{ inputs.require-credential }}
+        REQUIRE_SPECKIT: ${{ inputs.require-speckit }}
+        REQUIRE_FILES: ${{ inputs.require-files }}
+        REQUIRE_META_STAGE: ${{ inputs.require-meta-stage }}
+        SPEC_DIR: ${{ inputs.spec-dir }}
+      run: |
+        set -uo pipefail
+
+        fail() {
+          echo "::error::speckit preflight: $1"
+          echo "❌ **speckit preflight failed** — $1" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+        }
+
+        # 1. Credential invariant (contracts/credentials.md): both empty is
+        #    the only error; no validity probe is performed.
+        if [ "$REQUIRE_CREDENTIAL" = "true" ] && [ -z "$OAUTH_TOKEN" ] && [ -z "$API_KEY" ]; then
+          fail "No Claude credential configured. Add one of these repository secrets and pass it to the stage: \`claude-code-oauth-token\` (from \`claude setup-token\`, subscription plans) or \`anthropic-api-key\` (from the Claude Console). Exactly one is sufficient. See docs/adoption.md#credentials."
+        fi
+
+        # 2. Spec-kit presence (FR-009, constitution VI): the consuming
+        #    repository owns its artifacts; this pipeline never bundles them.
+        if [ "$REQUIRE_SPECKIT" = "true" ]; then
+          if [ ! -d ".specify" ]; then
+            fail "the consumer checkout has no \`.specify/\` directory — this repository has not been initialized with spec-kit. Run \`specify init\` in the consuming repository (and add a constitution via /speckit-constitution) before wiring up pipeline stages. See docs/adoption.md#prerequisites."
+          fi
+          if ! ls -d .claude/skills/speckit-* >/dev/null 2>&1; then
+            fail "the consumer checkout has no \`.claude/skills/speckit-*\` skills — they are part of \`specify init\`'s output (run with the claude integration). Re-run \`specify init\` in the consuming repository. See docs/adoption.md#prerequisites."
+          fi
+        fi
+
+        # 3. Stage-specific prerequisite files, each failure naming the
+        #    providing step (research.md D7).
+        while IFS= read -r line; do
+          [ -n "$line" ] || continue
+          path="${line%%|*}"
+          provider="${line#*|}"
+          [ "$provider" = "$line" ] && provider="a predecessor stage"
+          if [ ! -e "$path" ]; then
+            fail "required file \`$path\` is missing from the consumer checkout — it is produced by $provider. Run that first, then retry this stage."
+          fi
+        done <<EOF_REQUIRE_FILES
+        $REQUIRE_FILES
+        EOF_REQUIRE_FILES
+
+        # 4. Predecessor-stage check against the machine-readable lifecycle
+        #    record (spec-meta.json is the source of truth).
+        if [ -n "$REQUIRE_META_STAGE" ]; then
+          if [ -z "$SPEC_DIR" ]; then
+            fail "require-meta-stage is set but spec-dir is empty — this is a bug in the calling workflow, not in your repository."
+          fi
+          if [ ! -f "$SPEC_DIR/spec-meta.json" ]; then
+            fail "\`$SPEC_DIR/spec-meta.json\` is missing — it is produced by the intake stage (reusable-intake.yml) or committed alongside a hand-written spec. Run that first, then retry this stage."
+          fi
+          stage=$(jq -r '.stage // empty' "$SPEC_DIR/spec-meta.json" 2>/dev/null || true)
+          if [ "$stage" != "$REQUIRE_META_STAGE" ]; then
+            fail "\`$SPEC_DIR/spec-meta.json\` records stage '$stage' where '$REQUIRE_META_STAGE' is required — the predecessor stage that sets it has not completed for this spec. See docs/adoption.md#stage-reference for each stage's preconditions."
+          fi
+        fi
+
+        # 5. Best-effort spec-kit version warning (research.md D7): warn,
+        #    never fail — init-options.json is not guaranteed present.
+        if [ -f ".specify/init-options.json" ]; then
+          v=$(jq -r '.speckit_version // empty' .specify/init-options.json 2>/dev/null || true)
+          if [ -n "$v" ] && [ "$v" != "$SPECKIT_SUPPORTED_VERSION" ]; then
+            echo "::warning::speckit preflight: this repository's spec-kit version ($v, from .specify/init-options.json) differs from the pipeline's supported version ($SPECKIT_SUPPORTED_VERSION). The stage will still run, but behavior is only verified against the supported version."
+            echo "⚠️ spec-kit version mismatch: repository has $v, pipeline supports $SPECKIT_SUPPORTED_VERSION (continuing)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+        fi
+
+        echo "✅ speckit preflight passed (credential configured; prerequisites present)." >> "$GITHUB_STEP_SUMMARY"

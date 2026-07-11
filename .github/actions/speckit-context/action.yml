@@ -1,3 +1,26 @@
+# Cross-repo resolution (research.md D3 of specs/010-reusable-pipeline):
+# published reusable-*.yml stages cannot reach this composite by a relative
+# `uses:` path — inside a called workflow, `./...` resolves against the
+# CALLER's workspace, where this action does not exist. Every stage instead
+# checks out the pipeline repository itself, pinned to the exact commit of
+# the running workflow file, and references the composite through that
+# subdirectory. Verified self-checkout snippet:
+#
+#   - name: Checkout pipeline repository (shared composite actions)
+#     uses: actions/checkout@v4
+#     with:
+#       repository: ${{ inputs.pipeline-repo }}   # default: the publishing repo
+#       ref: ${{ github.job_workflow_sha }}
+#       path: .speckit-pipeline
+#       persist-credentials: false
+#
+#   - uses: ./.speckit-pipeline/.github/actions/speckit-context
+#
+# Consumer re-checkouts that follow the snippet must pass `clean: false` so
+# git clean does not delete the untracked .speckit-pipeline directory.
+# This action itself is relocation-safe: it touches no workspace paths
+# (App-token mint + label parse only). speckit-metrics-summary reads only
+# runner.temp. Audited 2026-07-11 (T003 of specs/010-reusable-pipeline).
 name: speckit-context
 description: >
   Shared context for speckit pipeline stages: mints the speckit-bot GitHub App
