@@ -38,11 +38,12 @@ path. When in doubt, read them — they are the living example.
    rest).
 5. **Access to the pipeline repository.** Reusable workflows and the stages'
    composite-action self-checkout both require that
-   `charlesguse/speckit-action` is accessible to your repository. While the
-   pipeline repository is **private**, that means the extra one-time setup in
-   [Private pipeline repository](#private-pipeline-repository); once it is
-   public, no extra setup is needed. Forks that republish under another name
-   set the `pipeline-repo` input.
+   `charlesguse/speckit-action` is accessible to your repository. The
+   pipeline repository is currently **private**, so the one-time setup in
+   [Private pipeline repository](#private-pipeline-repository) is required;
+   that whole section becomes unnecessary only if the pipeline repository is
+   made public. Forks that republish under another name set the
+   `pipeline-repo` input.
 
 ## Credentials
 
@@ -143,6 +144,9 @@ jobs:
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+      # Only needed while the pipeline repository is private — see
+      # "Private pipeline repository" below. Harmless when unset.
+      pipeline-repo-token: ${{ secrets.PIPELINE_REPO_TOKEN }}
       speckit-app-id: ${{ secrets.SPECKIT_APP_ID }}
       speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
 ```
@@ -181,6 +185,9 @@ jobs:
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+      # Only needed while the pipeline repository is private — see
+      # "Private pipeline repository" below. Harmless when unset.
+      pipeline-repo-token: ${{ secrets.PIPELINE_REPO_TOKEN }}
       speckit-app-id: ${{ secrets.SPECKIT_APP_ID }}
       speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
 ```
@@ -227,6 +234,9 @@ jobs:
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+      # Only needed while the pipeline repository is private — see
+      # "Private pipeline repository" below. Harmless when unset.
+      pipeline-repo-token: ${{ secrets.PIPELINE_REPO_TOKEN }}
       speckit-app-id: ${{ secrets.SPECKIT_APP_ID }}
       speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
 ```
@@ -274,6 +284,9 @@ jobs:
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+      # Only needed while the pipeline repository is private — see
+      # "Private pipeline repository" below. Harmless when unset.
+      pipeline-repo-token: ${{ secrets.PIPELINE_REPO_TOKEN }}
       speckit-app-id: ${{ secrets.SPECKIT_APP_ID }}
       speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
 
@@ -297,6 +310,9 @@ jobs:
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+      # Only needed while the pipeline repository is private — see
+      # "Private pipeline repository" below. Harmless when unset.
+      pipeline-repo-token: ${{ secrets.PIPELINE_REPO_TOKEN }}
       speckit-app-id: ${{ secrets.SPECKIT_APP_ID }}
       speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
 ```
@@ -343,6 +359,9 @@ jobs:
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+      # Only needed while the pipeline repository is private — see
+      # "Private pipeline repository" below. Harmless when unset.
+      pipeline-repo-token: ${{ secrets.PIPELINE_REPO_TOKEN }}
       speckit-app-id: ${{ secrets.SPECKIT_APP_ID }}
       speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
 ```
@@ -386,6 +405,9 @@ jobs:
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+      # Only needed while the pipeline repository is private — see
+      # "Private pipeline repository" below. Harmless when unset.
+      pipeline-repo-token: ${{ secrets.PIPELINE_REPO_TOKEN }}
       speckit-app-id: ${{ secrets.SPECKIT_APP_ID }}
       speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
 ```
@@ -418,6 +440,9 @@ jobs:
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+      # Only needed while the pipeline repository is private — see
+      # "Private pipeline repository" below. Harmless when unset.
+      pipeline-repo-token: ${{ secrets.PIPELINE_REPO_TOKEN }}
       speckit-app-id: ${{ secrets.SPECKIT_APP_ID }}
       speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
 ```
@@ -447,6 +472,9 @@ jobs:
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+      # Only needed while the pipeline repository is private — see
+      # "Private pipeline repository" below. Harmless when unset.
+      pipeline-repo-token: ${{ secrets.PIPELINE_REPO_TOKEN }}
       speckit-app-id: ${{ secrets.SPECKIT_APP_ID }}
       speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
 ```
