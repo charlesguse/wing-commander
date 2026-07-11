@@ -57,6 +57,16 @@ on:
         type: string
         required: false
         default: charlesguse/speckit-action
+      pipeline-ref:
+        description: >
+          Ref of the pipeline repository to check out for the shared
+          composite actions. Empty = the exact commit of the running
+          reusable workflow (github.job_workflow_sha, with an OIDC-claim
+          fallback) — set it only if your calling job cannot grant
+          id-token: write; then it MUST match your uses: pin.
+        type: string
+        required: false
+        default: ""
       default-branch:
         description: >
           The consuming repository's default branch. Empty = derived via
@@ -157,14 +167,35 @@ jobs:
         with:
           persist-credentials: false
 
-      # research.md D3: shared composite actions are resolved from the
-      # pipeline repository itself, pinned to the exact commit of this
-      # workflow file — a version pin covers workflow AND composites.
+      # research.md D3: the composite checkout must pin the EXACT commit of
+      # the running reusable workflow. github.job_workflow_sha is empty for
+      # some remote call shapes (observed live: cross-repo branch refs), so
+      # fall back to the OIDC token's job_workflow_sha claim (requires
+      # id-token: write). Never fall back to a branch name — a silent
+      # default-branch checkout would break version pinning.
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=speckit-pipeline-ref"               | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::speckit stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
       - name: Checkout pipeline repository (shared composite actions)
         uses: actions/checkout@v4
         with:
           repository: ${{ inputs.pipeline-repo }}
-          ref: ${{ github.job_workflow_sha }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
           # A private pipeline repository is not readable by the caller's
           # GITHUB_TOKEN — pipeline-repo-token covers that case (docs/adoption.md).
           token: ${{ secrets.pipeline-repo-token || github.token }}
@@ -401,12 +432,35 @@ jobs:
         with:
           persist-credentials: false
 
-      # research.md D3 — see the teardown-done job.
+      # research.md D3: the composite checkout must pin the EXACT commit of
+      # the running reusable workflow. github.job_workflow_sha is empty for
+      # some remote call shapes (observed live: cross-repo branch refs), so
+      # fall back to the OIDC token's job_workflow_sha claim (requires
+      # id-token: write). Never fall back to a branch name — a silent
+      # default-branch checkout would break version pinning.
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=speckit-pipeline-ref"               | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::speckit stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
       - name: Checkout pipeline repository (shared composite actions)
         uses: actions/checkout@v4
         with:
           repository: ${{ inputs.pipeline-repo }}
-          ref: ${{ github.job_workflow_sha }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
           # A private pipeline repository is not readable by the caller's
           # GITHUB_TOKEN — pipeline-repo-token covers that case (docs/adoption.md).
           token: ${{ secrets.pipeline-repo-token || github.token }}
@@ -544,12 +598,35 @@ jobs:
         with:
           persist-credentials: false
 
-      # research.md D3 — see the teardown-done job.
+      # research.md D3: the composite checkout must pin the EXACT commit of
+      # the running reusable workflow. github.job_workflow_sha is empty for
+      # some remote call shapes (observed live: cross-repo branch refs), so
+      # fall back to the OIDC token's job_workflow_sha claim (requires
+      # id-token: write). Never fall back to a branch name — a silent
+      # default-branch checkout would break version pinning.
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=speckit-pipeline-ref"               | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::speckit stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
       - name: Checkout pipeline repository (shared composite actions)
         uses: actions/checkout@v4
         with:
           repository: ${{ inputs.pipeline-repo }}
-          ref: ${{ github.job_workflow_sha }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
           # A private pipeline repository is not readable by the caller's
           # GITHUB_TOKEN — pipeline-repo-token covers that case (docs/adoption.md).
           token: ${{ secrets.pipeline-repo-token || github.token }}

@@ -87,6 +87,14 @@ therefore always the *same commit* as the stage logic, for exact tags, the
 floating tag, and this repo's local-path dogfood calls alike. Zero release-time
 rewriting.
 
+**Validation note (2026-07-11, live adoption test)**: `github.job_workflow_sha`
+is populated for local-path calls but was observed EMPTY for a cross-repo
+branch-ref call, silently sending `actions/checkout` to the pipeline repo's
+default branch. The shipped implementation therefore resolves the ref as:
+`pipeline-ref` input (explicit override) → `github.job_workflow_sha` → the
+OIDC token's `job_workflow_sha` claim (requires `id-token: write`) → hard
+fail with guidance. Never a branch-name fallback.
+
 **Alternatives considered**:
 - *Reference composites as `owner/repo/path@vN`* — needs release-time ref
   stamping inside workflow bodies; skew bugs when a stamp is missed.

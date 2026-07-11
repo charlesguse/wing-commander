@@ -41,9 +41,12 @@ tag creation is deliberate, not per-merge:
 
 An adopter's `uses: <owner>/speckit-action/.github/workflows/reusable-<stage>.yml@<ref>`
 pins the *entire* stage behavior at that ref: workflow body **and** the shared
-composite actions, because stages check out their own repository at
-`github.job_workflow_sha` for internals (research D3). There is no path by
-which a pinned adopter receives newer internal logic.
+composite actions, because stages check out their own repository at the
+running workflow's exact commit (`github.job_workflow_sha`, with an
+OIDC-claim fallback where that context is empty — research D3 validation
+note). There is no path by which a pinned adopter receives newer internal
+logic; if the commit cannot be determined, the stage fails rather than
+guessing a branch.
 
 ## Publisher self-reference (dogfooding)
 

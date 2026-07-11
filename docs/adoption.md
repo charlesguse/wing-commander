@@ -468,6 +468,7 @@ jobs:
     permissions:
       contents: write
       issues: write
+      id-token: write
     uses: charlesguse/speckit-action/.github/workflows/reusable-rebase.yml@v1
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -540,7 +541,10 @@ Common to every stage below:
 - **Common inputs** (rarely needed):
   `pipeline-repo` (string, default `charlesguse/speckit-action`) — where the
   stage checks out its shared composite actions; only republishing forks set
-  it. `default-branch` (string, default `""` = derived via
+  it. `pipeline-ref` (string, default `""` = the running workflow's exact
+  commit, resolved via `github.job_workflow_sha` or the OIDC token) — set it
+  to match your `uses:` pin only if your calling job cannot grant
+  `id-token: write`. `default-branch` (string, default `""` = derived via
   `gh repo view`) — stages never assume `main`.
 - **Common secrets**: `claude-code-oauth-token` / `anthropic-api-key`
   (one-of, see [Credentials](#credentials)); `speckit-app-id` /
