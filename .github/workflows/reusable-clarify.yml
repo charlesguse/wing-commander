@@ -201,6 +201,7 @@ jobs:
             > /tmp/speckit/clarification-author.txt
 
       - name: Fold answers into the draft spec
+        id: agent
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -272,7 +273,9 @@ jobs:
 
       # Surface this run's own metrics in the run summary (see intake stage).
       - name: Agent run metrics summary
-        if: always()
+        if: always() && steps.agent.outcome != 'skipped'
+        # Belt-and-braces for the action's own "never fail the job" contract.
+        continue-on-error: true
         uses: ./.speckit-pipeline/.github/actions/speckit-metrics-summary
         with:
           model: ${{ inputs.model }}

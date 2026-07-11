@@ -397,7 +397,9 @@ jobs:
       # shared transcript path. run-label distinguishes it from the retry and
       # progress-comment blocks in this same job's summary.
       - name: Agent run metrics summary (cycle)
-        if: always()
+        if: always() && steps.cycle.outcome != 'skipped'
+        # Belt-and-braces for the action's own "never fail the job" contract.
+        continue-on-error: true
         uses: ./.speckit-pipeline/.github/actions/speckit-metrics-summary
         with:
           model: ${{ inputs.model }}
@@ -533,7 +535,9 @@ jobs:
       # Retry run's metrics — read after the retry's own upload and before the
       # haiku progress-comment step overwrites the shared transcript path.
       - name: Agent run metrics summary (retry)
-        if: always()
+        if: always() && steps.retry.outcome != 'skipped'
+        # Belt-and-braces for the action's own "never fail the job" contract.
+        continue-on-error: true
         uses: ./.speckit-pipeline/.github/actions/speckit-metrics-summary
         with:
           model: claude-opus-4-8
@@ -647,6 +651,7 @@ jobs:
       # constitution's tier for diff summaries) in a separate step so the
       # main agent's turn budget isn't spent on reporting.
       - name: Post progress comment (haiku)
+        id: progress
         if: steps.guard.outputs.skip != 'true' && steps.final.outputs.ok == 'true'
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
@@ -689,7 +694,9 @@ jobs:
       # artifact, so the metrics step anchors directly after the agent step
       # itself — every agent invocation gets its own summary block.
       - name: Agent run metrics summary (progress comment)
-        if: always()
+        if: always() && steps.progress.outcome != 'skipped'
+        # Belt-and-braces for the action's own "never fail the job" contract.
+        continue-on-error: true
         uses: ./.speckit-pipeline/.github/actions/speckit-metrics-summary
         with:
           model: claude-haiku-4-5

@@ -356,7 +356,9 @@ jobs:
 
       # Surface this run's own metrics in the run summary (see intake stage).
       - name: Agent run metrics summary
-        if: always()
+        if: always() && steps.summarize.outcome != 'skipped'
+        # Belt-and-braces for the action's own "never fail the job" contract.
+        continue-on-error: true
         uses: ./.speckit-pipeline/.github/actions/speckit-metrics-summary
         with:
           model: ${{ inputs.summary-model }}

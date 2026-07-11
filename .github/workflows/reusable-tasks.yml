@@ -299,6 +299,7 @@ jobs:
       # Auto mode — generate tasks.md and commit it, with the stage update,
       # directly to the spec branch.
       - name: Generate task list (direct commit)
+        id: agent-auto
         if: steps.guard.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto'
         uses: anthropics/claude-code-action@v1
         env:
@@ -354,6 +355,7 @@ jobs:
       # branch; nothing lands on the spec branch directly and implementation
       # does NOT start here.
       - name: Generate task list (review PR)
+        id: agent-pr
         if: >-
           steps.guard.outputs.skip != 'true' &&
           steps.mode.outputs.mode == 'pr' &&
@@ -414,7 +416,12 @@ jobs:
       # them runs per invocation, and this unconditional step reads whichever
       # transcript that branch produced.
       - name: Agent run metrics summary
-        if: always()
+        if: >-
+          always() &&
+          (steps.agent-auto.outcome != 'skipped' ||
+           steps.agent-pr.outcome != 'skipped')
+        # Belt-and-braces for the action's own "never fail the job" contract.
+        continue-on-error: true
         uses: ./.speckit-pipeline/.github/actions/speckit-metrics-summary
         with:
           model: ${{ inputs.model }}

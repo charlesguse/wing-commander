@@ -299,6 +299,7 @@ jobs:
       # Generate the plan on plan/<slug>, open the PR against the spec
       # branch, update the lifecycle record.
       - name: Generate implementation plan
+        id: agent
         if: steps.dupe.outputs.skip != 'true'
         uses: anthropics/claude-code-action@v1
         env:
@@ -407,7 +408,9 @@ jobs:
 
       # Surface this run's own metrics in the run summary (see intake stage).
       - name: Agent run metrics summary
-        if: always()
+        if: always() && steps.agent.outcome != 'skipped'
+        # Belt-and-braces for the action's own "never fail the job" contract.
+        continue-on-error: true
         uses: ./.speckit-pipeline/.github/actions/speckit-metrics-summary
         with:
           model: ${{ inputs.model }}

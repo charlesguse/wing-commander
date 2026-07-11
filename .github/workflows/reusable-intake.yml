@@ -204,6 +204,7 @@ jobs:
           gh issue comment "$ISSUE" --body "📝 **speckit · intake** — specification drafting started ([run]($RUN_URL), triggered by \`$ACTOR\`)."
 
       - name: Create spec from issue
+        id: agent
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -333,7 +334,9 @@ jobs:
       # cost) in the run summary so tuning signals are legible without
       # downloading the artifact above. Pure read of that same transcript.
       - name: Agent run metrics summary
-        if: always()
+        if: always() && steps.agent.outcome != 'skipped'
+        # Belt-and-braces for the action's own "never fail the job" contract.
+        continue-on-error: true
         uses: ./.speckit-pipeline/.github/actions/speckit-metrics-summary
         with:
           model: ${{ inputs.model }}
