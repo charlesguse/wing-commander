@@ -28,7 +28,7 @@ Extract every pipeline stage (intake, clarify, plan, tasks, implement⟲converge
 
 **Constraints**: GitHub reusable-workflow rules — no expressions in `uses:` refs, ≤4 nesting levels, called workflows run in the caller's context (caller's `github.event`, caller's secrets/vars), `secrets` must be declared or `inherit`; relative `uses: ./...` inside a called workflow resolves against the *caller's* workspace checkout, so cross-repo internals need the `job_workflow_sha` checkout pattern (research.md D3). Constitution II (every agent step declares explicit `--model` and `--max-turns`), V (untrusted-content framing, least-privilege `--allowedTools`, no web tools, no fork-head checkouts), VI (all project artifacts from the consumer's checkout)
 
-**Scale/Scope**: 8 published reusable stage workflows, 2–3 shared composite actions, 8 rewritten thin wrappers in this repository, 1 release workflow, adoption docs (new `docs/adoption.md` + updates to README, `docs/setup.md`, `docs/architecture.md`)
+**Scale/Scope**: 8 published reusable stage workflows, 3 shared composite actions, 8 rewritten thin wrappers in this repository, 1 release workflow, adoption docs (new `docs/adoption.md` + updates to README, `docs/setup.md`, `docs/architecture.md`)
 
 ## Constitution Check
 
