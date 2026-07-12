@@ -382,6 +382,10 @@ jobs:
             echo "::error::Plan run finished but no open PR from plan/$SLUG exists."
             exit 1
           fi
+          # Single-stage adopters have no label taxonomy — create-before-add,
+          # like every other stage label (SC-002: no failure from a missing
+          # label convention).
+          gh label create "stage:plan" --color 1D76DB --description "Plan in flight" --force
           gh issue edit "$ISSUE" --add-label "stage:plan"
           gh issue edit "$ISSUE" --remove-label "stage:spec"    2>/dev/null || true
           gh issue edit "$ISSUE" --remove-label "stage:clarify" 2>/dev/null || true
