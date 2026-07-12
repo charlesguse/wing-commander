@@ -280,3 +280,19 @@ jobs:
         with:
           model: ${{ inputs.model }}
           max-turns: ${{ inputs.max-turns }}
+
+      # The action exits zero even when the agent run itself errored (e.g. a
+      # 401 from an invalid credential), and clarify has no downstream
+      # artifact whose absence would fail the run. Fail loudly on an errored
+      # agent (contracts/credentials.md; see the intake stage for the live
+      # occurrence, run 29181108490).
+      - name: Fail on agent API error
+        if: steps.agent.outcome == 'success'
+        run: |
+          f="$RUNNER_TEMP/claude-execution-output.json"
+          [ -f "$f" ] || exit 0
+          err=$(jq -r '[.[] | select(.type=="result")] | last | select(.is_error == true) | .result // "unknown agent error"' "$f")
+          if [ -n "$err" ]; then
+            echo "::error::speckit clarify stage: the agent run errored before completing — $err"
+            exit 1
+          fi
