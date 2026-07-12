@@ -18,7 +18,12 @@ in any `speckit-*.yml`). Three live bugs were found and fixed on the branch
 
 ## 1. Merge `feat/reusable-pipeline` → `main`
 
-- [ ] Open a PR from `feat/reusable-pipeline` to `main` and merge it.
+- [x] Open a PR from `feat/reusable-pipeline` to `main` and merge it.
+      *(PR #42, merged 2026-07-12. The merge's own push exposed a latent
+      spec-008 bug — an empty `matrix.include` fails strategy evaluation, so
+      the first push to main with zero `spec/*` branches failed the rebase
+      run; fixed by a job-level skip guard, PR #43. Cleanup wrapper no-op'd
+      cleanly on the same merge.)*
 
 Nothing below can finish without this: `release.yml` tags from `main`, the
 dogfood lifecycle (step 4) runs this repo's wrappers from `main`, and
@@ -33,14 +38,19 @@ Notes:
 
 ## 2. Scenario 1 — timed docs-only adoption (T015)
 
-- [ ] In a **fresh** test repo (or `speckit-pipeline-test` reset to empty
+- [x] In a **fresh** test repo (or `speckit-pipeline-test` reset to empty
       workflows), start a timer and follow `docs/adoption.md` from its first
       line only — no prior knowledge, no shortcuts.
-- [ ] Pin the wrapper set `@main` (pre-release).
-- [ ] Open a small feature issue, apply the approval label.
-- [ ] **Pass**: spec PR built from the test repo's own templates, issue
+- [x] Pin the wrapper set `@main` (pre-release).
+- [x] Open a small feature issue, apply the approval label.
+- [x] **Pass**: spec PR built from the test repo's own templates, issue
       labeled `spec:NNN-slug` + `stage:spec`, elapsed < 60 min (SC-001).
-- [ ] Record elapsed time and outcome on the lifecycle issue.
+- [x] Record elapsed time and outcome on the lifecycle issue.
+      *(2026-07-12: reset repo → wrappers `@main` → labels → issue #5 →
+      spec PR #6 (`spec-draft/001-add-credits-file`), elapsed **3m58s**
+      (05:08:58–05:12:56Z). One documented deviation: `model:
+      claude-haiku-4-5` on intake for test-repo cost control. The wrapper
+      push also validated the empty-matrix rebase fix cross-repo.)*
 
 Reminder (private-repo prerequisites, already in adoption.md): Actions
 access policy is set on speckit-action; the test repo needs
@@ -50,18 +60,27 @@ set **on the calling repo** (workflow_call resolves them there).
 
 ## 3. Scenario 2 + Scenario 4 part 2 — single-stage adoption (T019)
 
-- [ ] In the test repo, delete all wrappers except one calling
+- [x] In the test repo, delete all wrappers except one calling
       `reusable-plan.yml` with a custom `workflow_dispatch` trigger (e.g. a
       `slug` input) — no other stage, label, or lifecycle convention present.
-- [ ] Hand-write `specs/NNN-slug/spec.md` + `spec-meta.json` (stage `spec`)
+- [x] Hand-write `specs/NNN-slug/spec.md` + `spec-meta.json` (stage `spec`)
       on the default branch; dispatch.
-- [ ] **Pass**: plan PR opens targeting `spec/NNN-slug`; nothing fails due to
+- [x] **Pass**: plan PR opens targeting `spec/NNN-slug`; nothing fails due to
       a missing sibling stage or label (SC-002).
-- [ ] Scenario 4 part 2: dispatch the **tasks** stage for a slug whose
+- [x] Scenario 4 part 2: dispatch the **tasks** stage for a slug whose
       `spec-meta.json.stage` is not `plan`. **Pass**: refusal naming the plan
       stage as the missing predecessor (edge case 4).
-- [ ] Spirit-check the remaining stages against their contract preconditions
+- [x] Spirit-check the remaining stages against their contract preconditions
       (SC-002 claims 100% of stages); report on the lifecycle issue.
+      *(2026-07-12: hand-written `specs/002-support-doc` + single
+      `plan-only.yml` wrapper, stage-label taxonomy deleted from the repo →
+      plan PR #8 into auto-created `spec/002-support-doc`, lifecycle issue
+      #7 auto-created, `stage:plan` label created on the fly. Preparation
+      found a real SC-002 defect: plan was the only stage adding a stage
+      label without the create-before-add guard — fixed in PR #44 before
+      the run. 4b: `tasks-only.yml` dispatch for the plan-less slug failed
+      deterministically at the verify step, zero agent cost, message naming
+      reusable-plan.yml.)*
 
 ## 4. Scenario 5 — full dogfood lifecycle (T032)
 
