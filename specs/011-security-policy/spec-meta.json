@@ -2,7 +2,7 @@
   "issue": 45,
   "spec_dir": "specs/011-security-policy",
   "feature_num": "011",
-  "stage": "spec",
+  "stage": "plan",
   "iteration": 0,
-  "spec_branch": null
+  "spec_branch": "spec/011-security-policy"
 }
