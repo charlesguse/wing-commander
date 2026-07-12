@@ -59,7 +59,7 @@ All paths are repository-root-relative. This feature touches only `.github/workf
 - [X] T012 [US1] Create `.github/workflows/release.yml` per contracts/versioning.md: `workflow_dispatch` (`version`, `breaking`); actionlint gate over `reusable-*.yml`; create annotated `vX.Y.Z` tag; create-or-advance the floating major tag for the release's **own** major (force-move for non-breaking, create for the first release of a new major — a breaking release must start a new major and never touches the previous major's floating tag); create GitHub Release whose notes always contain a Breaking-changes section.
 - [X] T013 [US1] Write `docs/adoption.md` (research.md D8): prerequisites (own `specify init` + constitution, credentials from the adopter's plan, GitHub App one-time setup referencing docs/setup.md, and that the pipeline repository is accessible to the adopting repository — reusable workflows and the self-checkout both require it), the minimal full-pipeline wrapper set as copy-paste YAML pinned `@v1` (wrappers show the security gates — constitution V obligation — and the dispatch-target wrappers declare the chaining payload inputs verbatim per contracts/stage-interfaces.md), version pinning guidance (exact vs. floating tag), and the credential rules per contracts/credentials.md. Adopter-facing docs use the stage name `rebase` (the spec's "auto-rebase") consistently, noting its triggers are automatic.
 - [X] T014 [P] [US1] Update `README.md`: "Using this on your own project" step 2 becomes the thin-wrapper reference (link docs/adoption.md); roadmap milestone 4 marked done; repository map gains `reusable-*.yml` / `docs/adoption.md`.
-- [ ] T015 [US1] **MANUAL** Run quickstart.md Scenario 1 in a fresh test repository (timed, docs-only adoption at `@main` pre-release); report elapsed time and outcome on the lifecycle issue (SC-001, acceptance 1.1).
+- [X] T015 [US1] **MANUAL** Run quickstart.md Scenario 1 in a fresh test repository (timed, docs-only adoption at `@main` pre-release); report elapsed time and outcome on the lifecycle issue (SC-001, acceptance 1.1).
 
 **Checkpoint**: All 8 stages referenceable from another repository; adoption documented end-to-end. MVP delivered.
 
@@ -76,7 +76,7 @@ All paths are repository-root-relative. This feature touches only `.github/workf
 - [X] T016 [US2] Audit every `.github/workflows/reusable-*.yml` for: `github.event.*` and `vars.*` references (research.md D2/D5 — must be zero; event facts and configuration arrive only via declared inputs); literal `main` branch references (must use the `default-branch` input/derivation — spec edge case 3); hardcoded publisher owner/repo strings outside the `pipeline-repo` input default (FR-005); and every agent step having a bounded `--max-turns` sourced from a defaulted or required input (constitution II). Fix any stragglers; add grep one-liners for these invariants to the release.yml lint gate.
 - [X] T017 [US2] Verify and, where missing, implement the standalone paths in `.github/workflows/reusable-tasks.yml` and `.github/workflows/reusable-implement.yml`: with `next-workflow`/`self-workflow` empty, the stage completes its own work, posts its report, and stops cleanly — no failed dispatch step, no required label (FR-002, acceptance 2.1).
 - [X] T018 [P] [US2] Add the per-stage reference to `docs/adoption.md`: one section per stage with inputs/secrets/outputs/preconditions/side-effects tables derived from contracts/stage-interfaces.md, each with a minimal single-stage wrapper example using a custom trigger (acceptance 2.2, 2.3, FR-010).
-- [ ] T019 [US2] **MANUAL** Run quickstart.md Scenario 2 (single-stage adoption, custom `workflow_dispatch` trigger, no sibling conventions) and Scenario 4 (missing spec-kit / missing predecessor refusals) in the test repository; report outcomes on the lifecycle issue (SC-002, FR-009).
+- [X] T019 [US2] **MANUAL** Run quickstart.md Scenario 2 (single-stage adoption, custom `workflow_dispatch` trigger, no sibling conventions) and Scenario 4 (missing spec-kit / missing predecessor refusals) in the test repository; report outcomes on the lifecycle issue (SC-002, FR-009).
 
 **Checkpoint**: Single-stage adoption proven; stage reference published.
 
@@ -92,7 +92,7 @@ All paths are repository-root-relative. This feature touches only `.github/workf
 
 - [X] T020 [US4] Verify dual-credential wiring across all eight `.github/workflows/reusable-*.yml`: both secrets declared optional, both passed to every `anthropics/claude-code-action` step (`claude_code_oauth_token` + `anthropic_api_key`), speckit-preflight invoked with both values before the first agent step in every stage (contracts/credentials.md; FR-003, FR-004). Fix gaps; this is the code-review verification the spec's clarification designates for the API-key path.
 - [X] T021 [P] [US4] Credential documentation: `docs/adoption.md` credentials section states where each credential comes from (`claude setup-token` vs. Claude Console), the API-key-wins precedence with a link to Claude Code's authentication-precedence doc, and the exact preflight error text; update `docs/setup.md` secrets table so `ANTHROPIC_API_KEY` is a first-class alternative (no more "swap the input name in the workflows") (FR-010, acceptance 4.4).
-- [ ] T022 [US4] **MANUAL** Run quickstart.md Scenario 3 in the test repository: neither credential ⇒ preflight failure naming both secret names with zero agent cost; OAuth-only ⇒ stage completes. Report on the lifecycle issue (SC-005, acceptance 4.1, 4.3).
+- [X] T022 [US4] **MANUAL** Run quickstart.md Scenario 3 in the test repository: neither credential ⇒ preflight failure naming both secret names with zero agent cost; OAuth-only ⇒ stage completes. Report on the lifecycle issue (SC-005, acceptance 4.1, 4.3).
 
 **Checkpoint**: Credential contract enforced and documented; SC-005/SC-006 posture satisfied.
 
@@ -117,7 +117,7 @@ All paths are repository-root-relative. This feature touches only `.github/workf
 - [X] T029 [P] [US3] Rewrite `.github/workflows/speckit-7-cleanup.yml` as a thin wrapper (keep repo-wide `pull_request: closed` trigger; pass raw `head-ref`, `base-ref`, `merged` — outcome selection now lives in the reusable stage).
 - [X] T030 [P] [US3] Rewrite `.github/workflows/speckit-rebase.yml` as a thin wrapper (keep `push`-to-main + schedule triggers and bot-actor skip).
 - [X] T031 [US3] Update `docs/architecture.md`: rewrite the "Reusability roadmap" section as current-state (published stages, wrapper pattern, self-checkout mechanism, release contract); adjust the Foundations section so stage descriptions point at `reusable-*.yml`.
-- [ ] T032 [US3] **MANUAL** Run one full lifecycle in this repository (issue → label → merges through cleanup) and confirm every stage job executed inside a `reusable-*` called workflow; report on the lifecycle issue (acceptance 3.1, SC-003).
+- [X] T032 [US3] **MANUAL** Run one full lifecycle in this repository (issue → label → merges through cleanup) and confirm every stage job executed inside a `reusable-*` called workflow; report on the lifecycle issue (acceptance 3.1, SC-003).
 
 **Checkpoint**: Publisher and adopters consume the identical `workflow_call` interface.
 
@@ -127,7 +127,7 @@ All paths are repository-root-relative. This feature touches only `.github/workf
 
 - [X] T033 Duplication audit (SC-003): verify every `speckit-*.yml` wrapper contains no agent prompt, branch surgery, or spec-meta write (e.g., `grep -l "claude-code-action" .github/workflows/speckit-*.yml` must return nothing); delete any dead logic left behind by the rewrites.
 - [X] T034 [P] Cross-check `docs/adoption.md`, `docs/setup.md`, `README.md`, and `docs/architecture.md` tell one consistent story (same secret names, same version-pinning advice, same stage names as contracts/stage-interfaces.md — a single naming convention: `rebase`, not "auto-rebase"). Also fix plan.md Scale/Scope composite-action count ("2–3" → 3), and verify every `reusable-*.yml` declares the contract's common inputs (`default-branch`, `pipeline-repo`) even where a task's inline enumeration (T004) omitted them.
-- [ ] T035 **MANUAL** Run quickstart.md Scenario 6 (pin an exact tag → publish non-breaking release → pinned repo unchanged; switch to `@v1` → fix arrives automatically; release notes carry Breaking-changes section), then publish `v1.0.0` via `release.yml` once Scenarios 1–5 have passed. Report on the lifecycle issue (FR-008, acceptance 1.2).
+- [X] T035 **MANUAL** Run quickstart.md Scenario 6 (pin an exact tag → publish non-breaking release → pinned repo unchanged; switch to `@v1` → fix arrives automatically; release notes carry Breaking-changes section), then publish `v1.0.0` via `release.yml` once Scenarios 1–5 have passed. Report on the lifecycle issue (FR-008, acceptance 1.2).
 
 ---
 

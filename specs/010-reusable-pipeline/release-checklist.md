@@ -84,16 +84,29 @@ set **on the calling repo** (workflow_call resolves them there).
 
 ## 4. Scenario 5 — full dogfood lifecycle (T032)
 
-- [ ] After the merge (step 1), run one full lifecycle **in this repo**:
+- [x] After the merge (step 1), run one full lifecycle **in this repo**:
       open issue → approval label → spec → clarify → plan → tasks →
       implement⟲converge → finalize → merge → cleanup.
-- [ ] **Pass**: every stage job executes inside a `reusable-*` called
+- [x] **Pass**: every stage job executes inside a `reusable-*` called
       workflow — job names render as `wrapper / stage` (acceptance 3.1,
       SC-003).
-- [ ] Make one trivial stage-logic edit; confirm it touches exactly one file
+- [x] Make one trivial stage-logic edit; confirm it touches exactly one file
       (`reusable-*.yml` or a composite) and reaches the test repo by moving
       its pin only (acceptance 3.2, SC-004).
-- [ ] Report on the lifecycle issue.
+- [x] Report on the lifecycle issue.
+      *(2026-07-12: issue #45 "Add a SECURITY.md" ran intake → plan → tasks
+      → implement (converged cycle 1, sonnet) → finalize (PR #50) → merge →
+      cleanup teardown-done; issue closed `stage:done`, all branches
+      deleted. Two runs surfaced real bugs first: a stale
+      CLAUDE_CODE_OAUTH_TOKEN produced a **green** run on a 401 (fixed by
+      the intake/clarify agent-error guard, PR #46) and every tasks trigger
+      died in `startup_failure` because the tasks-approved wrapper job
+      granted less than the called workflow file's union — GitHub validates
+      even `if`-skipped jobs (fixed in wrapper + adoption doc, PR #49). One
+      operational note: a rebase run raced the tasks agent's push when main
+      moved mid-stage (pre-existing spec-008 design gap; re-dispatch
+      recovered). Propagation check satisfied by PR #44 (one file,
+      reached the test repo by pin alone).)*
 
 A good candidate feature: something tiny and real (the haiku smoke tests
 used a THANKS.md file). This run doubles as the first end-to-end exercise of
@@ -103,20 +116,29 @@ the ported metrics guards across all eight stages.
 
 Requires steps 1–4 green (release gate per tasks.md).
 
-- [ ] Publish a pre-1.0 release via `release.yml` (workflow_dispatch, e.g.
+- [x] Publish a pre-1.0 release via `release.yml` (workflow_dispatch, e.g.
       `v0.9.0`) — this also exercises the actionlint + invariant-grep gate.
-- [ ] Pin the test repo to the exact tag `v0.9.0`; publish a non-breaking
+- [x] Pin the test repo to the exact tag `v0.9.0`; publish a non-breaking
       `v0.9.1`. **Pass**: test repo behavior unchanged until the pin moves
       (edge case 2).
-- [ ] Switch the test repo to `@v0`; publish another non-breaking patch.
+- [x] Switch the test repo to `@v0`; publish another non-breaking patch.
       **Pass**: next run picks up the fix with zero changes in the test repo
       (acceptance 1.2).
-- [ ] Inspect release notes. **Pass**: explicit Breaking-changes section
+- [x] Inspect release notes. **Pass**: explicit Breaking-changes section
       present even when "none" (FR-008).
-- [ ] Publish `v1.0.0` via `release.yml`; confirm the floating `v1` tag is
+- [x] Publish `v1.0.0` via `release.yml`; confirm the floating `v1` tag is
       created and `docs/adoption.md`'s `@v1` pins now resolve.
-- [ ] Report on the lifecycle issue; mark T015/T019/T022/T032/T035 `[X]` in
+- [x] Report on the lifecycle issue; mark T015/T019/T022/T032/T035 `[X]` in
       tasks.md.
+      *(2026-07-12: first v0.9.0 attempt failed the gate on style/info
+      shellcheck findings — gate now blocks warning+ only (PR #51). v0.9.0
+      → exact-pin baseline; v0.9.1 (PR #52's one-line discover-log change)
+      → pinned run stayed on the old sha, floating `@v0` picked the change
+      up with zero repo edits; both releases' notes lead with "Breaking
+      changes: None." **v1.0.0 published** (run 29199119335), `v1` floating
+      tag created, and the canary repo's full doc wrapper set now runs
+      green at `@v1`. T022's OAuth-only leg additionally re-verified by the
+      whole dogfood lifecycle running on CLAUDE_CODE_OAUTH_TOKEN alone.)*
 
 ## 6. Post-release housekeeping (not release blockers)
 
