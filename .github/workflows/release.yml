@@ -49,7 +49,12 @@ jobs:
       # Gate 1a: actionlint over the published stages (and this workflow's
       # own siblings). -ignore: actionlint 1.7.7 does not yet know the
       # documented github.job_workflow_sha context property (research.md D3).
+      # SHELLCHECK_OPTS: the gate blocks on real problems (warning+), not
+      # style/info nits — actionlint forwards the variable to its embedded
+      # shellcheck pass.
       - name: Lint published stages (actionlint)
+        env:
+          SHELLCHECK_OPTS: "--severity=warning"
         run: |
           bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) 1.7.7 /tmp
           /tmp/actionlint -no-color \
