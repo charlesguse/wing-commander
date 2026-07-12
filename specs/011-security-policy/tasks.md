@@ -22,7 +22,7 @@ description: "Task list for SECURITY.md Vulnerability-Reporting Policy"
 
 **Purpose**: Confirm the ground the implementation builds on.
 
-- [ ] T001 Confirm `SECURITY.md` does not already exist at the repository root and that no other pending change in this branch touches any file besides the new one to be created (FR-007, SC-004).
+- [X] T001 Confirm `SECURITY.md` does not already exist at the repository root and that no other pending change in this branch touches any file besides the new one to be created (FR-007, SC-004).
 
 ---
 
@@ -32,7 +32,7 @@ description: "Task list for SECURITY.md Vulnerability-Reporting Policy"
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T002 Create `SECURITY.md` at the repository root with exactly one top-level (`#`) heading naming the security policy (e.g. "Security Policy"), per the contract in `specs/011-security-policy/contracts/security-md-convention.md` (FR-001, FR-006, SC-002).
+- [X] T002 Create `SECURITY.md` at the repository root with exactly one top-level (`#`) heading naming the security policy (e.g. "Security Policy"), per the contract in `specs/011-security-policy/contracts/security-md-convention.md` (FR-001, FR-006, SC-002).
 
 **Checkpoint**: `SECURITY.md` exists with its heading — user story content can now be added.
 
@@ -46,7 +46,7 @@ description: "Task list for SECURITY.md Vulnerability-Reporting Policy"
 
 ### Implementation for User Story 1
 
-- [ ] T003 [US1] Add a body paragraph to `SECURITY.md` directing reporters to GitHub's private vulnerability reporting for this repository (Security tab → "Report a vulnerability") and stating that public issues are not the channel for vulnerability reports (FR-002, FR-003, SC-003(1), SC-003(2)).
+- [X] T003 [US1] Add a body paragraph to `SECURITY.md` directing reporters to GitHub's private vulnerability reporting for this repository (Security tab → "Report a vulnerability") and stating that public issues are not the channel for vulnerability reports (FR-002, FR-003, SC-003(1), SC-003(2)).
 
 **Checkpoint**: `SECURITY.md` alone satisfies User Story 1 — a reporter reading it knows the private channel and knows not to use public issues. Independently testable now.
 
@@ -60,7 +60,7 @@ description: "Task list for SECURITY.md Vulnerability-Reporting Policy"
 
 ### Implementation for User Story 2
 
-- [ ] T004 [US2] Add a body paragraph (or extend the existing one, staying within the three-paragraph ceiling) to `SECURITY.md` stating plainly that pipeline runs execute Claude agents with repository write access via a GitHub App, and that credential-handling reports — including leaked tokens and overly broad permissions — are explicitly in scope (FR-004, FR-005, SC-003(3), SC-003(4)).
+- [X] T004 [US2] Add a body paragraph (or extend the existing one, staying within the three-paragraph ceiling) to `SECURITY.md` stating plainly that pipeline runs execute Claude agents with repository write access via a GitHub App, and that credential-handling reports — including leaked tokens and overly broad permissions — are explicitly in scope (FR-004, FR-005, SC-003(3), SC-003(4)).
 
 **Checkpoint**: Both user stories are satisfied — `SECURITY.md` now carries all four required disclosures within at most three body paragraphs.
 
@@ -70,7 +70,7 @@ description: "Task list for SECURITY.md Vulnerability-Reporting Policy"
 
 **Purpose**: Final validation against the full requirement set.
 
-- [ ] T005 Run the `specs/011-security-policy/quickstart.md` validation end-to-end: confirm `git diff --stat` shows exactly one changed file (`SECURITY.md`), exactly one top-level heading, at most three body paragraphs, all four required disclosures present, and (post-merge or via branch preview) that the Security tab surfaces the policy in one click (FR-006, FR-007, SC-001…SC-004).
+- [X] T005 Run the `specs/011-security-policy/quickstart.md` validation end-to-end: confirm `git diff --stat` shows exactly one changed file (`SECURITY.md`), exactly one top-level heading, at most three body paragraphs, all four required disclosures present, and (post-merge or via branch preview) that the Security tab surfaces the policy in one click (FR-006, FR-007, SC-001…SC-004).
 
 ---
 
