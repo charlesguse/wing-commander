@@ -33,25 +33,28 @@ there, and its labels (`spec:NNN-slug`, `stage:*`) always show where things stan
 
 ## Status
 
-| Stage | Workflow | State |
-|---|---|---|
-| 1 · Intake (issue → spec PR) | `speckit-1-intake.yml` | ✅ implemented |
-| 1b · Clarification loop | `speckit-2-clarify.yml` | ✅ implemented |
-| 2 · Plan | `speckit-3-plan.yml` | ✅ implemented — [spec](specs/002-plan-stage/spec.md) |
-| 3 · Tasks | `speckit-4-tasks.yml` | ✅ implemented — [spec](specs/003-tasks-stage/spec.md) |
-| 4 · Implement ⟲ converge | `speckit-5-implement.yml` | ✅ implemented — [spec](specs/005-implement-converge/spec.md) |
-| 5 · Finalize | `speckit-6-finalize.yml` | 🧩 stub |
-| 6 · Cleanup | `speckit-7-cleanup.yml` | 🧩 stub |
-| Auto-rebase | `speckit-rebase.yml` | 🧩 stub |
+Every stage is published as a reusable `workflow_call` workflow
+(`reusable-<stage>.yml`) that any repository can pin; the matching
+`speckit-*.yml` file is this repository's own thin wrapper around it
+(triggers + gates only).
 
-The stubs have their real triggers and gates in place; their bodies are the next
-things to be built *through* the pipeline (open an issue, label it `spec-request`).
+| Stage | Published stage | This repo's wrapper | State |
+|---|---|---|---|
+| 1 · Intake (issue → spec PR) | `reusable-intake.yml` | `speckit-1-intake.yml` | ✅ — [spec](specs/001-spec-intake/spec.md) |
+| 1b · Clarification loop | `reusable-clarify.yml` | `speckit-2-clarify.yml` | ✅ — [spec](specs/004-clarify-on-pr/spec.md) |
+| 2 · Plan | `reusable-plan.yml` | `speckit-3-plan.yml` | ✅ — [spec](specs/002-plan-stage/spec.md) |
+| 3 · Tasks | `reusable-tasks.yml` | `speckit-4-tasks.yml` | ✅ — [spec](specs/003-tasks-stage/spec.md) |
+| 4 · Implement ⟲ converge | `reusable-implement.yml` | `speckit-5-implement.yml` | ✅ — [spec](specs/005-implement-converge/spec.md) |
+| 5 · Finalize | `reusable-finalize.yml` | `speckit-6-finalize.yml` | ✅ — [spec](specs/006-finalize-stage/spec.md) |
+| 6 · Cleanup | `reusable-cleanup.yml` | `speckit-7-cleanup.yml` | ✅ — [spec](specs/007-cleanup-stage/spec.md) |
+| Rebase | `reusable-rebase.yml` | `speckit-rebase.yml` | ✅ — [spec](specs/008-auto-rebase/spec.md) |
 
 ## Quickstart
 
 1. Follow [docs/setup.md](docs/setup.md): create the `speckit-bot` GitHub App,
-   add three secrets (`CLAUDE_CODE_OAUTH_TOKEN`, `SPECKIT_APP_ID`,
-   `SPECKIT_APP_PRIVATE_KEY`), and create the labels.
+   add the secrets (a Claude credential — `CLAUDE_CODE_OAUTH_TOKEN` or
+   `ANTHROPIC_API_KEY` — plus `SPECKIT_APP_ID` and `SPECKIT_APP_PRIVATE_KEY`),
+   and create the labels.
 2. Open an issue describing a feature in plain language.
 3. Apply the `spec-request` label (maintainers only — this is the approval gate).
 4. Review the spec PR that appears; answer any clarification questions by
@@ -71,24 +74,29 @@ the repository the workflows run in. speckit-action ships pipeline mechanics;
 it never ships or reads project content of its own. This repository's
 constitution governs this repository only — yours governs yours.
 
-To adopt it today (before the milestone-4 extraction):
+To adopt it today:
 
 1. Run `specify init` in your repo (pin the same spec-kit version, currently
    v0.12.4) so it has its own `.specify/` and `.claude/skills/speckit-*` —
    then write your constitution with `/speckit-constitution`.
-2. Copy `.github/workflows/speckit-*.yml` and `.github/actions/speckit-context/`.
-3. Follow [docs/setup.md](docs/setup.md) (App, secrets, variables, labels).
+2. Add thin wrapper workflows that call the published `reusable-*.yml` stages
+   by reference, version-pinned — copy-paste set, per-stage reference, and
+   pinning guidance in **[docs/adoption.md](docs/adoption.md)**. You never
+   copy stage logic, and moving your pin picks up fixes.
+3. Follow [docs/setup.md](docs/setup.md) (App, secrets, labels).
 
-Milestone 4 replaces step 2 with thin `uses:` wrappers — see the roadmap below.
+Any subset of stages works, with any triggers you choose — this repository's
+own `speckit-*.yml` workflows are the same thin wrappers, calling the same
+stages by local path.
 
 ## Roadmap
 
 | Milestone | Scope | State |
 |---|---|---|
 | 1 · Spec stages | intake, clarify, plan, tasks | ✅ done |
-| 2 · Build stages | implement ⟲ converge, finalize, cleanup, auto-rebase | 🔨 in progress |
-| 3 · Hardening & observability | per-run agent metrics (turns/tokens/cost), failure-mode polish | planned |
-| 4 · Extraction | stages become reusable `workflow_call` workflows; consuming repos keep thin event wrappers + their own `specify init` output | planned |
+| 2 · Build stages | implement ⟲ converge, finalize, cleanup, rebase | ✅ done |
+| 3 · Hardening & observability | per-run agent metrics (turns/tokens/cost), failure-mode polish | ✅ done |
+| 4 · Extraction | stages become reusable `workflow_call` workflows; consuming repos keep thin event wrappers + their own `specify init` output | ✅ done — [docs/adoption.md](docs/adoption.md) |
 
 Each milestone is built *through* the pipeline itself (constitution I): open an
 issue, get the `spec-request` label, and the stages above carry it to a PR.
@@ -111,11 +119,15 @@ Full stage-by-stage design: [docs/architecture.md](docs/architecture.md).
 ## Repository map
 
 ```
-.github/workflows/        the pipeline stages (speckit-1 … speckit-rebase)
+.github/workflows/reusable-*.yml   the published stages (workflow_call; what adopters pin)
+.github/workflows/speckit-*.yml    this repo's thin wrappers — triggers + gates only
+.github/workflows/release.yml      tag vX.Y.Z, advance the floating major tag
 .github/actions/speckit-context/   shared App-token + spec-identity resolution
+.github/actions/speckit-preflight/ credential + prerequisite fail-fast checks
+.github/actions/speckit-metrics-summary/  per-run agent metrics rendering
 .claude/skills/speckit-*/ spec-kit skills (installed by `specify init`, pinned v0.12.4)
 .specify/                 spec-kit scripts, templates, memory/constitution.md
 specs/NNN-slug/           one directory per feature: spec.md, plan.md, tasks.md,
                           spec-meta.json (lifecycle state), checklists/
-docs/                     setup + architecture
+docs/                     setup + adoption + architecture
 ```
