@@ -291,14 +291,18 @@ jobs:
       speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
 
   # A merged tasks PR (pr review mode) is the acceptance signal — agent-free
-  # hand-off to implementation.
+  # hand-off to implementation. The permissions grant must cover every job
+  # in the called workflow file (GitHub validates them all at startup, even
+  # `if`-skipped ones); the called job's own narrower declaration still
+  # scopes the actual token.
   tasks-approved:
     if: >-
       github.event_name == 'pull_request' &&
       github.event.pull_request.merged == true &&
       startsWith(github.event.pull_request.head.ref, 'tasks/')
     permissions:
-      contents: read
+      contents: write
+      pull-requests: write
       issues: write
       actions: write
       id-token: write
