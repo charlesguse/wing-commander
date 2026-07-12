@@ -237,10 +237,13 @@ jobs:
           count="$(printf '%s' "$selected" | jq 'length')"
           echo "Selected $count in-flight branch(es) for rebase." >> "$GITHUB_STEP_SUMMARY"
 
-  # One isolated instance per selected branch. Zero matrix entries ⇒ zero job
-  # runs ⇒ the workflow still succeeds.
+  # One isolated instance per selected branch. The job-level `if` skips the
+  # job entirely when discover selected nothing — an empty `matrix.include`
+  # array fails strategy evaluation, so zero branches must never reach the
+  # matrix (first observed live 2026-07-12, run 29180556763).
   rebase:
     needs: discover
+    if: ${{ needs.discover.outputs.branches != '[]' }}
     strategy:
       fail-fast: false
       matrix:
