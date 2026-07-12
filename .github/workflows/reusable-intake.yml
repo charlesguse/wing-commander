@@ -341,3 +341,22 @@ jobs:
         with:
           model: ${{ inputs.model }}
           max-turns: ${{ inputs.max-turns }}
+
+      # The action exits zero even when the agent run itself errored (e.g. a
+      # 401 from an invalid credential — observed live, run 29181108490), and
+      # this stage's no-spec path is deliberately green (a completed-but-
+      # underdelivering agent is a report-and-stop, not a failure). An agent
+      # that ERRORED is different: fail loudly, or a credential/API outage
+      # reads as "intake ran fine and produced nothing"
+      # (contracts/credentials.md: invalid credential fails at the first
+      # agent call).
+      - name: Fail on agent API error
+        if: steps.agent.outcome == 'success'
+        run: |
+          f="$RUNNER_TEMP/claude-execution-output.json"
+          [ -f "$f" ] || exit 0
+          err=$(jq -r '[.[] | select(.type=="result")] | last | select(.is_error == true) | .result // "unknown agent error"' "$f")
+          if [ -n "$err" ]; then
+            echo "::error::speckit intake stage: the agent run errored before completing — $err"
+            exit 1
+          fi
