@@ -58,8 +58,14 @@ jobs:
       github.event_name == 'pull_request' &&
       github.event.pull_request.merged == true &&
       startsWith(github.event.pull_request.head.ref, 'tasks/')
+    # The grant must cover EVERY job in the called workflow file — GitHub
+    # validates them all at startup, including jobs whose `if` will skip
+    # them, so this must match the generate-mode job's needs even though
+    # this path only dispatches. The called job's own `contents: read`
+    # declaration still scopes the actual token down.
     permissions:
-      contents: read
+      contents: write
+      pull-requests: write
       issues: write
       actions: write
       id-token: write
