@@ -236,6 +236,9 @@ jobs:
           echo "branches=$selected" >> "$GITHUB_OUTPUT"
           count="$(printf '%s' "$selected" | jq 'length')"
           echo "Selected $count in-flight branch(es) for rebase." >> "$GITHUB_STEP_SUMMARY"
+          # Also to the streamed log, with slugs — the step summary is not
+          # visible when following a run live.
+          echo "rebase discover: selected $count branch(es): $(printf '%s' "$selected" | jq -r '[.[].slug] | join(", ")')"
 
   # One isolated instance per selected branch. The job-level `if` skips the
   # job entirely when discover selected nothing — an empty `matrix.include`
