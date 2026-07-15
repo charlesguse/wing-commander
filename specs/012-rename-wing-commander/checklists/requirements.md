@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -32,9 +32,10 @@
 ## Notes
 
 - Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.
-- 3 [NEEDS CLARIFICATION] markers remain (the maximum allowed), covering: (1) whether
-  the rename includes breaking internal/downstream identifiers or only human-facing
-  branding, (2) whether the GitHub repository name and published action reference are
-  in scope, and (3) how identifiers that mirror the underlying Spec Kit tool's own
-  command names are handled. These are posted as clarification questions on the
-  lifecycle issue rather than blocking spec creation.
+- All 3 clarification questions have been resolved (answered on the lifecycle issue):
+  (1) the rename covers technical/internal identifiers as well as human-facing branding,
+  including dropping the `reusable-` prefix from workflow filenames (FR-009, FR-009a);
+  (2) the GitHub repository name and published action reference are in scope, handled as
+  a documented breaking change (FR-010); and (3) vendored Spec Kit command/skill
+  interfaces (`/speckit-*`) are kept as-is as attribution to the dependency (FR-003,
+  Edge Cases).

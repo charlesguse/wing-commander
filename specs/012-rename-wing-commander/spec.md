@@ -103,9 +103,9 @@ built on Spec Kit and Claude Code, framed as tools it uses rather than as its br
 
 - What happens to identifiers whose names mirror the underlying Spec Kit tool's own
   command names (e.g., the vendored `/speckit-*` skill commands that ARE Spec Kit's
-  interface)? These may need to stay for the engine to work even though they contain
-  the old branding. [NEEDS CLARIFICATION: see Question 3 — do engine-mirroring
-  identifiers get renamed, or are they kept because they belong to the dependency?]
+  interface)? These are kept as-is: they belong to the Spec Kit dependency and are
+  framed as attribution, not as the product's own branding, so renaming them would
+  risk breaking the vendored engine integration.
 - What happens to a downstream repository that has pinned a reusable workflow or
   action by its current path/name when that name changes? (Covered by User Story 2 —
   breaking changes must be preserved or documented.)
@@ -140,15 +140,18 @@ built on Spec Kit and Claude Code, framed as tools it uses rather than as its br
   breaking change with migration guidance.
 - **FR-008**: The scope of the rename (which surfaces are affected) MUST be clearly
   bounded so that "renamed" versus "intentionally unchanged" is unambiguous.
-- **FR-009**: System MUST rename technical/internal identifiers (reusable and wrapper
+- **FR-009**: System MUST rename technical/internal identifiers — reusable and wrapper
   workflow filenames, the `spec-request` and other pipeline labels, action
-  directories, and internal command/skill prefixes) [NEEDS CLARIFICATION: see
-  Question 1 — is the rename limited to human-facing branding, or does it also cover
-  breaking internal/downstream-facing identifiers?].
-- **FR-010**: System MUST rename the outward-facing distribution identity (the GitHub
-  repository name and the published/pinned action reference) [NEEDS CLARIFICATION:
-  see Question 2 — are the repository name and published action reference in scope,
-  or handled outside this feature?].
+  directories, and the product's own internal command/skill prefixes — updating every
+  cross-reference so nothing dangles. Vendored Spec Kit command/skill interfaces (the
+  `/speckit-*` names that ARE Spec Kit's own tooling) are exempt and kept as-is per
+  FR-003 and the Edge Cases above.
+- **FR-009a**: When renaming reusable workflow filenames, the `reusable-` prefix MUST be
+  dropped from the file names (not merely have its `speckit` portion replaced).
+- **FR-010**: System MUST rename the outward-facing distribution identity — the GitHub
+  repository name and the published/pinned action reference — as part of this feature.
+  Because this is a breaking change for existing consumers, it MUST be handled per
+  FR-007 (backward-compatible alias/redirect, or documented migration guidance).
 
 ### Key Entities *(include if data involved)*
 
