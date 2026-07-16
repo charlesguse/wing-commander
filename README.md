@@ -1,4 +1,4 @@
-# speckit-action
+# Wing Commander
 
 **Spec-Driven Development as a GitHub-native pipeline.** Open an issue describing
 what you want; the pipeline turns it into a reviewed specification, a reviewed
@@ -51,7 +51,7 @@ Every stage is published as a reusable `workflow_call` workflow
 
 ## Quickstart
 
-1. Follow [docs/setup.md](docs/setup.md): create the `speckit-bot` GitHub App,
+1. Follow [docs/setup.md](docs/setup.md): create the `wing-commander-bot` GitHub App,
    add the secrets (a Claude credential — `CLAUDE_CODE_OAUTH_TOKEN` or
    `ANTHROPIC_API_KEY` — plus `SPECKIT_APP_ID` and `SPECKIT_APP_PRIVATE_KEY`),
    and create the labels.
@@ -70,7 +70,7 @@ The pipeline operates on **your** project's artifacts, not this repository's:
 every path it touches — the constitution (`.specify/memory/constitution.md`),
 spec templates and scripts (`.specify/`), the spec-kit skills
 (`.claude/skills/speckit-*`), and the `specs/` directory — resolves relative to
-the repository the workflows run in. speckit-action ships pipeline mechanics;
+the repository the workflows run in. Wing Commander ships pipeline mechanics;
 it never ships or reads project content of its own. This repository's
 constitution governs this repository only — yours governs yours.
 
