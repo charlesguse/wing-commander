@@ -234,3 +234,33 @@ Task: "rebase.yml internal identifiers"     # T018
 - Several User Story 2 tasks are explicitly sequenced *after* their User Story 1 counterpart on the same file (T024 after T005, T025 after T007, T026 after T008, T027 after T009) to avoid two tasks editing the same file's overlapping regions out of order — not because the stories are dependent on each other's outcome
 - The breaking-change secret/variable rename (`SPECKIT_*` → `WING_COMMANDER_*`) and the manual GitHub Settings step it requires (T034) are intentionally excluded from this feature's mergeable scope, per `contracts/rename-migration.md` and the versioning contract in `specs/010-reusable-pipeline/contracts/versioning.md` — only the documentation of that future migration (T025's new section) ships now
 - Commit after each task or logical group; verify `git status` shows only the intended file at each step given several tasks touch large multi-concern files
+
+---
+
+## Phase 7: Convergence
+
+Assessment after implement iteration 1: Phase 3 (US1 human-facing display
+text — T001, T005–T010) is complete and committed. All remaining work is
+still unbuilt because it is gated on the physical file/directory renames in
+Phase 2, which the implement stage could not perform (see T035).
+
+- [ ] T035 **CRITICAL — blocker.** The renames in T002–T004 (and therefore every
+  rename-dependent task below) could not be executed by the implement stage:
+  its Claude `--allowedTools` (in `.github/workflows/reusable-implement.yml`,
+  now the running stage) grant `Bash(git status|add|commit|push|pull|fetch|reset|log|diff|show:*)`
+  but **not** `Bash(git mv:*)` or `Bash(git rm:*)`, and the sandbox blocks the
+  shell `mv`/`rm` builtins, so no file can be moved or deleted — only created or
+  overwritten (Write/Edit). Resolve by EITHER (a) a maintainer adding
+  `Bash(git mv:*)` and `Bash(git rm:*)` to the implement-stage allowlist — a
+  GitHub Actions permission change deliberately left out of this feature's task
+  scope — OR (b) a maintainer performing the 19 renames (T002–T004) manually.
+  Until one of these lands, T036–T044 cannot complete. (source: FR-009a, plan Phase 2; gap: contradicts/blocked)
+- [ ] T036 Complete **T002** — `git mv` the 8 `.github/workflows/reusable-<stage>.yml` files to bare `<stage>.yml` (per FR-009a; gap: missing). Blocked by T035.
+- [ ] T037 Complete **T003** — `git mv` the 8 `.github/workflows/speckit-N-<stage>.yml` wrappers to `wing-commander-N-<stage>.yml` (data-model wrapper filenames; gap: missing). Blocked by T035.
+- [ ] T038 Complete **T004** — `git mv` the 3 `.github/actions/speckit-*` directories to `wing-commander-*` (data-model action directories; gap: missing). Blocked by T035.
+- [ ] T039 Complete **T011–T018** — update internal identifiers in the renamed reusable stage files: concurrency `group:` prefix, OIDC `audience=…-pipeline-ref`, `path: .wing-commander-pipeline` + `uses: ./.wing-commander-pipeline/.github/actions/wing-commander-*`, step names, `pipeline-repo` default `charlesguse/wing-commander`, self-referential error strings, `plan.yml`/`tasks.yml`/`implement.yml`/`finalize.yml` heredoc EOF markers, and `rebase.yml`'s escalation marker comment (per US2; gap: missing). Blocked by T036.
+- [ ] T040 Complete **T019** — in the 8 renamed `wing-commander-*.yml` wrappers, update each `uses: ./.github/workflows/<stage>.yml` target, the `reusable-<stage>.yml` header-comment mentions, and the `name: "Wing Commander · N <stage>"` display field (per US2; gap: missing). Blocked by T037.
+- [ ] T041 Complete **T020–T022** — update the 3 renamed `action.yml` files' `name:`, descriptions, step names, header-comment snippets, and self-referential `(reusable-*.yml)` mentions to the `wing-commander-*` / bare-name forms, leaving the `SPECKIT_*` secret names and Spec Kit dependency identifiers untouched (per US2; gap: missing). Blocked by T038.
+- [ ] T042 Complete **T023** — `.github/workflows/release.yml`: concurrency `group: wing-commander-release`; replace the `reusable-*.yml` actionlint/grep globs with the explicit `{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase}.yml` brace list; update both `charlesguse/speckit-action` stray-check patterns; the top-of-file comment; and the two `git tag` annotation messages to `wing-commander …` (per US2; gap: missing). Blocked by T036.
+- [ ] T043 Complete **T024–T027** — docs current-state cross-references: README stage table/status/repo-map; `docs/adoption.md` `wing-commander-*.yml` refs, section subheadings, `@v1` example owner/repo (filename stays `reusable-*.yml`), and the new `@v2` migration section from `contracts/rename-migration.md`; `docs/setup.md` `PIPELINE_REPO_TOKEN` repo + smoke-test display names; `docs/architecture.md` per-stage headers, composite names, and `@v1` example owner/repo (per US1/US2; gap: partial). Blocked by T036–T038.
+- [ ] T044 Complete **T028–T033** — run the verification gates once the renames land: attribution diff (T028), zero-hits grep sweep (T029), dangling-reference checks (T030), `actionlint` (T031), pipeline dry-run (T032), migration-table match (T033) (per SC-002, SC-003; gap: missing). Blocked by T036–T043.
