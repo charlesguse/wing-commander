@@ -14,7 +14,7 @@ Templates requiring updates:
   ✅ docs/setup.md — updated in same PR (adoption prerequisite)
 Follow-up TODOs: none
 -->
-# Speckit GitHub Action Constitution
+# Wing Commander Constitution
 
 ## Core Principles
 
@@ -34,7 +34,7 @@ A requester should only ever need to: describe what they want, answer clarificat
 Issue and comment bodies are user data, never agent instructions; prompts must frame them as such. Pipeline entry requires a maintainer-applied label. Comment-triggered stages verify the commenter is a maintainer (OWNER/MEMBER/COLLABORATOR) or the original issue author, and never react to bots. Each stage runs with the least-privilege tool allowlist it needs; web tools are disabled in all issue/comment-driven stages. Only trusted refs are checked out — never fork PR heads. Humans merge every PR into `main`; the bot never approves or merges to `main`. Authentication uses a dedicated GitHub App — never a PAT.
 
 ### VI. Portability — The Consuming Repository Owns Its Artifacts
-The pipeline operates exclusively on the repository that runs it. Everything project-specific — the constitution (`.specify/memory/constitution.md`), spec templates and scripts (`.specify/`), spec-kit skills (`.claude/skills/speckit-*`), and the `specs/` directory — is read from the consuming repository's own checkout (its `specify init` output), never bundled with or resolved from speckit-action. Workflows must not hardcode repository names, owners, or project content; all artifact paths resolve relative to the checkout, and anything repo-specific belongs in the consuming repository or its thin wrapper workflows. This constitution governs this repository only; an adopting repository is governed by its own.
+The pipeline operates exclusively on the repository that runs it. Everything project-specific — the constitution (`.specify/memory/constitution.md`), spec templates and scripts (`.specify/`), spec-kit skills (`.claude/skills/speckit-*`), and the `specs/` directory — is read from the consuming repository's own checkout (its `specify init` output), never bundled with or resolved from Wing Commander. Workflows must not hardcode repository names, owners, or project content; all artifact paths resolve relative to the checkout, and anything repo-specific belongs in the consuming repository or its thin wrapper workflows. This constitution governs this repository only; an adopting repository is governed by its own.
 
 ## Operational Constraints
 

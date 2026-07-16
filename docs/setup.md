@@ -1,13 +1,13 @@
 # Setup
 
-One-time configuration to bring the speckit pipeline to life in this repository
+One-time configuration to bring the Wing Commander pipeline to life in this repository
 (or in any repository that adopts it). An adopting repository must first have
 its own `specify init` output — `.specify/` (including
 `memory/constitution.md`) and `.claude/skills/speckit-*` — because the pipeline
 reads all project-specific artifacts from the repository it runs in, never from
-speckit-action (see the [README](../README.md#using-this-on-your-own-project)).
+Wing Commander (see the [README](../README.md#using-this-on-your-own-project)).
 
-## 1. Create the speckit-bot GitHub App
+## 1. Create the wing-commander-bot GitHub App
 
 The pipeline performs pushes, PRs, labels, and comments as a dedicated GitHub App
 instead of the default `GITHUB_TOKEN`. This is load-bearing, not cosmetic: events
@@ -17,7 +17,7 @@ normally, and the actor name (`<slug>[bot]`) gives workflows a reliable filter t
 avoid reacting to their own actions.
 
 1. GitHub → Settings → Developer settings → **GitHub Apps** → *New GitHub App*
-   - Name: `speckit-bot` (any unique name works; the slug becomes the actor name)
+   - Name: `wing-commander-bot` (any unique name works; the slug becomes the actor name)
    - Homepage URL: this repository's URL
    - Webhook: **uncheck** *Active* (no webhook needed)
 2. **Repository permissions**:

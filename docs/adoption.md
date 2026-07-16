@@ -1,4 +1,4 @@
-# Adopting the speckit pipeline
+# Adopting the Wing Commander pipeline
 
 The pipeline's eight stages are published from this repository as reusable
 `workflow_call` workflows (`.github/workflows/reusable-*.yml`), versioned by
@@ -28,7 +28,7 @@ path. When in doubt, read them — they are the living example.
    with guidance if these are missing.
 2. **A dedicated GitHub App** installed on your repository, with Contents,
    Issues, and Pull requests read/write — one-time setup, walkthrough in
-   [docs/setup.md](setup.md#1-create-the-speckit-bot-github-app). Store its
+   [docs/setup.md](setup.md#1-create-the-wing-commander-bot-github-app). Store its
    ID and private key as the `SPECKIT_APP_ID` / `SPECKIT_APP_PRIVATE_KEY`
    secrets.
 3. **A Claude credential** from *your* plan — see

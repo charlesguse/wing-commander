@@ -69,7 +69,7 @@ Mechanics worth knowing:
   local-path wrappers dogfood unreleased head, so interface breakage
   surfaces here before any tag moves.
 
-### Identity & chaining: the speckit-bot App
+### Identity & chaining: the wing-commander-bot App
 Everything the pipeline does to the repo (push, PR, label, comment) uses a
 GitHub App installation token minted per-job by `.github/actions/speckit-context`.
 Reasons:
@@ -291,7 +291,7 @@ VI: **the pipeline reads everything project-specific from the consuming
 repository's checkout** — its `.specify/memory/constitution.md`, its
 templates and scripts under `.specify/`, its `.claude/skills/speckit-*`, its
 `specs/` directory. No stage resolves any project artifact from
-speckit-action itself; the one self-reference is the composite-action
+Wing Commander itself; the one self-reference is the composite-action
 checkout at `github.job_workflow_sha`, parameterized by the `pipeline-repo`
 input (defaulting to the publisher).
 
