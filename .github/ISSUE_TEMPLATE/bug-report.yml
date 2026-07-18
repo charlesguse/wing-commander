@@ -1,0 +1,57 @@
+name: Bug report
+description: A pipeline stage misbehaved, failed, or produced the wrong result.
+title: "[bug] "
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Bug reports are handled as ordinary issues (they don't enter the
+        spec pipeline unless a maintainer decides the fix warrants it).
+        **Never paste credentials, App private keys, or tokens.**
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what actually happened.
+    validations:
+      required: true
+  - type: input
+    id: run-link
+    attributes:
+      label: Workflow run link (if applicable)
+      description: Link to the failing Actions run in your repository.
+    validations:
+      required: false
+  - type: input
+    id: pin
+    attributes:
+      label: Version pin
+      description: "The ref your wrappers pin, e.g. @v1, @v2, @v2.0.0, or @main."
+    validations:
+      required: false
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Stage
+      options:
+        - intake
+        - clarify
+        - plan
+        - tasks
+        - implement / converge
+        - finalize
+        - cleanup
+        - rebase
+        - release / other
+    validations:
+      required: false
+  - type: textarea
+    id: setup
+    attributes:
+      label: Setup notes (optional)
+      description: >-
+        Anything unusual about your adoption: custom triggers, subset of
+        stages, non-default branch name, spec-kit version, credential type
+        (OAuth token vs API key).
+    validations:
+      required: false

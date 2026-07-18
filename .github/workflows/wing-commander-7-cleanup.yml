@@ -14,6 +14,10 @@ permissions: {}
 
 jobs:
   cleanup:
+    # Security gate: same-repo PRs only. Spec branches can only exist in this
+    # repository, so a fork-PR close is always a no-op — skipping it here
+    # avoids secret-less failed runs on fork PRs once the repository is public.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     permissions:
       contents: write
       pull-requests: write

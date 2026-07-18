@@ -37,13 +37,12 @@ path. When in doubt, read them — they are the living example.
    the gate; the script in [docs/setup.md](setup.md#4-labels) creates the
    rest).
 5. **Access to the pipeline repository.** Reusable workflows and the stages'
-   composite-action self-checkout both require that
-   `charlesguse/wing-commander` is accessible to your repository. The
-   pipeline repository is currently **private**, so the one-time setup in
-   [Private pipeline repository](#private-pipeline-repository) is required;
-   that whole section becomes unnecessary only if the pipeline repository is
-   made public. Forks that republish under another name set the
-   `pipeline-repo` input.
+   composite-action self-checkout both require that the pipeline repository
+   is accessible to your repository. `charlesguse/wing-commander` is
+   **public**, so this is automatic — no extra setup. Only if you pin a
+   **private** fork/republish instead does the one-time setup in
+   [Private pipeline repository](#private-pipeline-repository) apply; forks
+   that republish under another name also set the `pipeline-repo` input.
 
 ## Credentials
 

@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Adoption guide
+    url: https://github.com/charlesguse/wing-commander/blob/main/docs/adoption.md
+    about: How to wire the pipeline into your own repository (wrappers, secrets, pinning).
+  - name: Setup guide
+    url: https://github.com/charlesguse/wing-commander/blob/main/docs/setup.md
+    about: One-time setup — the GitHub App, secrets, variables, and labels.
+  - name: Report a security vulnerability
+    url: https://github.com/charlesguse/wing-commander/security/advisories/new
+    about: Please report vulnerabilities privately, not as public issues.

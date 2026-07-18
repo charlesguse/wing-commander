@@ -40,7 +40,7 @@ Settings → Secrets and variables → Actions → **Secrets**:
 | `ANTHROPIC_API_KEY` | one of the two Claude credentials | API key from the [Claude Console](https://console.anthropic.com/) (pay-per-token billing) |
 | `SPECKIT_APP_ID` | yes | The App ID from step 1 |
 | `SPECKIT_APP_PRIVATE_KEY` | yes | Full contents of the downloaded `.pem` |
-| `PIPELINE_REPO_TOKEN` | only in adopting repos, while the pipeline repository is private | Read-only contents token for `charlesguse/wing-commander` (e.g. a single-repo fine-grained PAT) — see [docs/adoption.md](adoption.md#private-pipeline-repository). Not needed in the pipeline repository itself. |
+| `PIPELINE_REPO_TOKEN` | only if the pipeline repository you pin is **private** (e.g. a private fork) | Read-only contents token for that private pipeline repository (e.g. a single-repo fine-grained PAT) — see [docs/adoption.md](adoption.md#private-pipeline-repository). Not needed when pinning the public `charlesguse/wing-commander`, and never needed in the pipeline repository itself. |
 
 Both Claude credentials are first-class: every stage accepts either, exactly
 one is sufficient, and if you configure both the API key is used (Claude

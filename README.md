@@ -1,5 +1,7 @@
 # Wing Commander
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 **Spec-Driven Development as a GitHub-native pipeline.** Open an issue describing
 what you want; the pipeline turns it into a reviewed specification, a reviewed
 plan, generated tasks, an implementation, and finally a pull request — powered by
@@ -90,6 +92,12 @@ Any subset of stages works, with any triggers you choose — this repository's
 own `wing-commander-*.yml` workflows are the same thin wrappers, calling the
 same stages by local path.
 
+**"Can I use the `wing-commander-bot`?"** — you create your own. The bot is
+just a GitHub App you register in your own account (any name works; the
+pipeline resolves the App's slug at runtime), so nothing ties your pipeline
+to this repository's bot or credentials. [docs/setup.md](docs/setup.md#1-create-the-wing-commander-bot-github-app)
+walks through the two-minute setup.
+
 ## Roadmap
 
 | Milestone | Scope | State |
@@ -134,3 +142,11 @@ specs/NNN-slug/           one directory per feature: spec.md, plan.md, tasks.md,
                           spec-meta.json (lifecycle state), checklists/
 docs/                     setup + adoption + architecture
 ```
+
+## License
+
+[MIT](LICENSE) — see [CONTRIBUTING.md](CONTRIBUTING.md) for how to get
+involved. Wing Commander is built on [GitHub spec-kit](https://github.com/github/spec-kit)
+and [Claude Code](https://github.com/anthropics/claude-code-action), which are
+their own projects under their own licenses; Wing Commander is not affiliated
+with or endorsed by the Spec Kit project.
