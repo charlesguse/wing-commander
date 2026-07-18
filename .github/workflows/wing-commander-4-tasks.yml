@@ -44,13 +44,13 @@ jobs:
       head-ref: ${{ github.event.pull_request.head.ref }}
       slug: ${{ inputs.slug }}
       restart: ${{ github.event_name == 'workflow_dispatch' }}
-      tasks-review: ${{ vars.SPECKIT_TASKS_REVIEW || 'auto' }}
+      tasks-review: ${{ vars.WING_COMMANDER_TASKS_REVIEW || 'auto' }}
       next-workflow: wing-commander-5-implement.yml
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-      speckit-app-id: ${{ secrets.SPECKIT_APP_ID }}
-      speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
+      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 
   # A tasks PR merged by a maintainer is the review-mode acceptance signal.
   tasks-approved:
@@ -77,5 +77,5 @@ jobs:
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-      speckit-app-id: ${{ secrets.SPECKIT_APP_ID }}
-      speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
+      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}

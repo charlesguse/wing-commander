@@ -40,5 +40,5 @@ jobs:
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-      speckit-app-id: ${{ secrets.SPECKIT_APP_ID }}
-      speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
+      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}

@@ -29,7 +29,7 @@ on:
 permissions: {}
 
 jobs:
-  # Default tier from vars.SPECKIT_IMPLEMENT_MODEL (claude-sonnet-5 when
+  # Default tier from vars.WING_COMMANDER_IMPLEMENT_MODEL (claude-sonnet-5 when
   # unset); the model:opus label on the lifecycle issue escalates to
   # claude-opus-4-8 regardless of the variable.
   resolve-model:
@@ -43,7 +43,7 @@ jobs:
         id: tier
         env:
           GH_TOKEN: ${{ github.token }}
-          MODEL_VAR: ${{ vars.SPECKIT_IMPLEMENT_MODEL }}
+          MODEL_VAR: ${{ vars.WING_COMMANDER_IMPLEMENT_MODEL }}
           ISSUE: ${{ inputs.issue }}
         run: |
           tier="${MODEL_VAR:-claude-sonnet-5}"
@@ -66,11 +66,11 @@ jobs:
       issue-number: ${{ fromJSON(inputs.issue) }}
       iteration: ${{ fromJSON(inputs.iteration) }}
       model: ${{ needs.resolve-model.outputs.model }}
-      max-iterations: ${{ fromJSON(vars.SPECKIT_MAX_ITERATIONS || '5') }}
+      max-iterations: ${{ fromJSON(vars.WING_COMMANDER_MAX_ITERATIONS || '5') }}
       self-workflow: wing-commander-5-implement.yml
       next-workflow: wing-commander-6-finalize.yml
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-      speckit-app-id: ${{ secrets.SPECKIT_APP_ID }}
-      speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
+      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
