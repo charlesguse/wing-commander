@@ -1,7 +1,7 @@
 # Adopting the Wing Commander pipeline
 
 The pipeline's eight stages are published from this repository as reusable
-`workflow_call` workflows (`.github/workflows/reusable-*.yml`), versioned by
+`workflow_call` workflows (`.github/workflows/<stage>.yml`), versioned by
 release tags. You adopt them **by reference**: your repository keeps thin
 wrapper workflows that own the triggers, gates, and configuration, and call
 the published stages with your credentials. You never copy stage logic, and a
@@ -29,8 +29,8 @@ path. When in doubt, read them — they are the living example.
 2. **A dedicated GitHub App** installed on your repository, with Contents,
    Issues, and Pull requests read/write — one-time setup, walkthrough in
    [docs/setup.md](setup.md#1-create-the-wing-commander-bot-github-app). Store its
-   ID and private key as the `SPECKIT_APP_ID` / `SPECKIT_APP_PRIVATE_KEY`
-   secrets.
+   ID and private key as the `WING_COMMANDER_APP_ID` /
+   `WING_COMMANDER_APP_PRIVATE_KEY` secrets.
 3. **A Claude credential** from *your* plan — see
    [Credentials](#credentials). Exactly one is sufficient.
 4. **Labels** for the full-lifecycle flow (only `spec-request` is needed for
@@ -105,9 +105,10 @@ gates. The examples below include them; keep them when you customize:
 ## The minimal full-pipeline wrapper set
 
 Copy these eight files into `.github/workflows/` of your repository. They are
-pinned to the floating major tag `@v1` (see
-[Version pinning](#version-pinning)); before the first release, `@main`
-works the same way. Replace `main` in the `branches:` filters if your default
+pinned to the floating major tag `@v2` (see
+[Version pinning](#version-pinning)); adopters still on `@v1` should read
+[Migrating to `@v2`](#migrating-to-v2) — the `v1` snippets differ in both
+filenames and secret names. Replace `main` in the `branches:` filters if your default
 branch is named differently — the *stages* never assume a name, but your
 triggers are yours.
 
@@ -137,17 +138,18 @@ jobs:
       pull-requests: write
       issues: write
       id-token: write
-    uses: charlesguse/wing-commander/.github/workflows/reusable-intake.yml@v1
+    uses: charlesguse/wing-commander/.github/workflows/intake.yml@v2
     with:
       issue-number: ${{ github.event.issue.number }}
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-      # Only needed while the pipeline repository is private — see
-      # "Private pipeline repository" below. Harmless when unset.
+      # Only needed if the pipeline repository you pin is private (e.g. a
+      # private fork) — see "Private pipeline repository" below. Harmless
+      # when unset.
       pipeline-repo-token: ${{ secrets.PIPELINE_REPO_TOKEN }}
-      speckit-app-id: ${{ secrets.SPECKIT_APP_ID }}
-      speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
+      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 ```
 
 ### 2. `wing-commander-2-clarify.yml`
@@ -177,18 +179,19 @@ jobs:
       pull-requests: write
       issues: write
       id-token: write
-    uses: charlesguse/wing-commander/.github/workflows/reusable-clarify.yml@v1
+    uses: charlesguse/wing-commander/.github/workflows/clarify.yml@v2
     with:
       issue-number: ${{ github.event.issue.number }}
       comment-id: ${{ github.event.comment.id }}
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-      # Only needed while the pipeline repository is private — see
-      # "Private pipeline repository" below. Harmless when unset.
+      # Only needed if the pipeline repository you pin is private (e.g. a
+      # private fork) — see "Private pipeline repository" below. Harmless
+      # when unset.
       pipeline-repo-token: ${{ secrets.PIPELINE_REPO_TOKEN }}
-      speckit-app-id: ${{ secrets.SPECKIT_APP_ID }}
-      speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
+      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 ```
 
 ### 3. `wing-commander-3-plan.yml`
@@ -224,7 +227,7 @@ jobs:
       pull-requests: write
       issues: write
       id-token: write
-    uses: charlesguse/wing-commander/.github/workflows/reusable-plan.yml@v1
+    uses: charlesguse/wing-commander/.github/workflows/plan.yml@v2
     with:
       head-ref: ${{ github.event.pull_request.head.ref }}
       slug: ${{ inputs.slug }}
@@ -233,11 +236,12 @@ jobs:
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-      # Only needed while the pipeline repository is private — see
-      # "Private pipeline repository" below. Harmless when unset.
+      # Only needed if the pipeline repository you pin is private (e.g. a
+      # private fork) — see "Private pipeline repository" below. Harmless
+      # when unset.
       pipeline-repo-token: ${{ secrets.PIPELINE_REPO_TOKEN }}
-      speckit-app-id: ${{ secrets.SPECKIT_APP_ID }}
-      speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
+      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 ```
 
 ### 4. `wing-commander-4-tasks.yml`
@@ -272,22 +276,23 @@ jobs:
       issues: write
       actions: write
       id-token: write
-    uses: charlesguse/wing-commander/.github/workflows/reusable-tasks.yml@v1
+    uses: charlesguse/wing-commander/.github/workflows/tasks.yml@v2
     with:
       mode: generate
       head-ref: ${{ github.event.pull_request.head.ref }}
       slug: ${{ inputs.slug }}
       restart: ${{ github.event_name == 'workflow_dispatch' }}
-      tasks-review: ${{ vars.SPECKIT_TASKS_REVIEW || 'auto' }}
+      tasks-review: ${{ vars.WING_COMMANDER_TASKS_REVIEW || 'auto' }}
       next-workflow: wing-commander-5-implement.yml
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-      # Only needed while the pipeline repository is private — see
-      # "Private pipeline repository" below. Harmless when unset.
+      # Only needed if the pipeline repository you pin is private (e.g. a
+      # private fork) — see "Private pipeline repository" below. Harmless
+      # when unset.
       pipeline-repo-token: ${{ secrets.PIPELINE_REPO_TOKEN }}
-      speckit-app-id: ${{ secrets.SPECKIT_APP_ID }}
-      speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
+      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 
   # A merged tasks PR (pr review mode) is the acceptance signal — agent-free
   # hand-off to implementation. The permissions grant must cover every job
@@ -305,7 +310,7 @@ jobs:
       issues: write
       actions: write
       id-token: write
-    uses: charlesguse/wing-commander/.github/workflows/reusable-tasks.yml@v1
+    uses: charlesguse/wing-commander/.github/workflows/tasks.yml@v2
     with:
       mode: approved
       head-ref: ${{ github.event.pull_request.head.ref }}
@@ -313,11 +318,12 @@ jobs:
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-      # Only needed while the pipeline repository is private — see
-      # "Private pipeline repository" below. Harmless when unset.
+      # Only needed if the pipeline repository you pin is private (e.g. a
+      # private fork) — see "Private pipeline repository" below. Harmless
+      # when unset.
       pipeline-repo-token: ${{ secrets.PIPELINE_REPO_TOKEN }}
-      speckit-app-id: ${{ secrets.SPECKIT_APP_ID }}
-      speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
+      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 ```
 
 ### 5. `wing-commander-5-implement.yml` (dispatch target — keep the input names)
@@ -351,22 +357,23 @@ jobs:
       issues: write
       actions: write
       id-token: write
-    uses: charlesguse/wing-commander/.github/workflows/reusable-implement.yml@v1
+    uses: charlesguse/wing-commander/.github/workflows/implement.yml@v2
     with:
       spec-dir: ${{ inputs.spec_dir }}
       issue-number: ${{ fromJSON(inputs.issue) }}
       iteration: ${{ fromJSON(inputs.iteration) }}
-      max-iterations: ${{ fromJSON(vars.SPECKIT_MAX_ITERATIONS || '5') }}
+      max-iterations: ${{ fromJSON(vars.WING_COMMANDER_MAX_ITERATIONS || '5') }}
       self-workflow: wing-commander-5-implement.yml
       next-workflow: wing-commander-6-finalize.yml
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-      # Only needed while the pipeline repository is private — see
-      # "Private pipeline repository" below. Harmless when unset.
+      # Only needed if the pipeline repository you pin is private (e.g. a
+      # private fork) — see "Private pipeline repository" below. Harmless
+      # when unset.
       pipeline-repo-token: ${{ secrets.PIPELINE_REPO_TOKEN }}
-      speckit-app-id: ${{ secrets.SPECKIT_APP_ID }}
-      speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
+      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 ```
 
 ### 6. `wing-commander-6-finalize.yml` (dispatch target — keep the input names)
@@ -400,7 +407,7 @@ jobs:
       issues: write
       pull-requests: write
       id-token: write
-    uses: charlesguse/wing-commander/.github/workflows/reusable-finalize.yml@v1
+    uses: charlesguse/wing-commander/.github/workflows/finalize.yml@v2
     with:
       spec-dir: ${{ inputs.spec_dir }}
       issue-number: ${{ fromJSON(inputs.issue) }}
@@ -408,11 +415,12 @@ jobs:
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-      # Only needed while the pipeline repository is private — see
-      # "Private pipeline repository" below. Harmless when unset.
+      # Only needed if the pipeline repository you pin is private (e.g. a
+      # private fork) — see "Private pipeline repository" below. Harmless
+      # when unset.
       pipeline-repo-token: ${{ secrets.PIPELINE_REPO_TOKEN }}
-      speckit-app-id: ${{ secrets.SPECKIT_APP_ID }}
-      speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
+      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 ```
 
 ### 7. `wing-commander-7-cleanup.yml`
@@ -433,7 +441,7 @@ jobs:
       pull-requests: write
       issues: write
       id-token: write
-    uses: charlesguse/wing-commander/.github/workflows/reusable-cleanup.yml@v1
+    uses: charlesguse/wing-commander/.github/workflows/cleanup.yml@v2
     with:
       head-ref: ${{ github.event.pull_request.head.ref }}
       base-ref: ${{ github.event.pull_request.base.ref }}
@@ -443,11 +451,12 @@ jobs:
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-      # Only needed while the pipeline repository is private — see
-      # "Private pipeline repository" below. Harmless when unset.
+      # Only needed if the pipeline repository you pin is private (e.g. a
+      # private fork) — see "Private pipeline repository" below. Harmless
+      # when unset.
       pipeline-repo-token: ${{ secrets.PIPELINE_REPO_TOKEN }}
-      speckit-app-id: ${{ secrets.SPECKIT_APP_ID }}
-      speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
+      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 ```
 
 ### 8. `wing-commander-rebase.yml` (triggers are automatic — push + nightly)
@@ -472,15 +481,16 @@ jobs:
       contents: write
       issues: write
       id-token: write
-    uses: charlesguse/wing-commander/.github/workflows/reusable-rebase.yml@v1
+    uses: charlesguse/wing-commander/.github/workflows/rebase.yml@v2
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-      # Only needed while the pipeline repository is private — see
-      # "Private pipeline repository" below. Harmless when unset.
+      # Only needed if the pipeline repository you pin is private (e.g. a
+      # private fork) — see "Private pipeline repository" below. Harmless
+      # when unset.
       pipeline-repo-token: ${{ secrets.PIPELINE_REPO_TOKEN }}
-      speckit-app-id: ${{ secrets.SPECKIT_APP_ID }}
-      speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
+      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 ```
 
 With the wrappers in place, run the smoke test in
@@ -491,13 +501,13 @@ and a spec PR built from **your** templates and constitution appears.
 
 | Pin | Behavior | Choose it when |
 |---|---|---|
-| `@v1.2.3` (exact tag) | Immutable — your behavior changes only when you edit the pin | You want reviewable, deliberate upgrades |
-| `@v1` (floating major) | Force-moved on every **non-breaking** release within major 1 — fixes arrive automatically, breaking changes never do | You want fixes without maintenance (recommended) |
+| `@v2.0.0` (exact tag) | Immutable — your behavior changes only when you edit the pin | You want reviewable, deliberate upgrades |
+| `@v2` (floating major) | Force-moved on every **non-breaking** release within major 2 — fixes arrive automatically, breaking changes never do | You want fixes without maintenance (recommended) |
 | `@main` | Unreleased head — the publisher's dogfooding line | Early adoption / testing an unreleased fix, at your own risk |
 
 Breaking interface changes (an input/secret/output removed or renamed, a
 behavior-altering default, an incompatible precondition) ship **only** behind
-a new major tag (`v2`), and every release's notes carry an explicit
+a new major tag (e.g. `v3`), and every release's notes carry an explicit
 **Breaking changes** section (possibly "None") so breakage is identifiable
 before you upgrade.
 
@@ -638,13 +648,13 @@ on:
 jobs:
   intake:
     permissions: { contents: write, pull-requests: write, issues: write, id-token: write }
-    uses: charlesguse/wing-commander/.github/workflows/reusable-intake.yml@v1
+    uses: charlesguse/wing-commander/.github/workflows/intake.yml@v2
     with:
       issue-number: ${{ fromJSON(inputs.issue) }}
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-      speckit-app-id: ${{ secrets.SPECKIT_APP_ID }}
-      speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
+      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 ```
 
 ### clarify
@@ -680,13 +690,13 @@ on:
 jobs:
   plan:
     permissions: { contents: write, pull-requests: write, issues: write, id-token: write }
-    uses: charlesguse/wing-commander/.github/workflows/reusable-plan.yml@v1
+    uses: charlesguse/wing-commander/.github/workflows/plan.yml@v2
     with:
       slug: ${{ inputs.slug }}
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-      speckit-app-id: ${{ secrets.SPECKIT_APP_ID }}
-      speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
+      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 ```
 
 ### tasks
