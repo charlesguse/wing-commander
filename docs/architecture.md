@@ -2,8 +2,8 @@
 
 How a feature request becomes merged code, stage by stage. All stages are
 implemented, and each is published as a reusable `workflow_call` workflow
-(`reusable-<stage>.yml`) that adopting repositories pin by tag
-([docs/adoption.md](adoption.md)); this repository's own `speckit-*.yml`
+(`<stage>.yml`) that adopting repositories pin by tag
+([docs/adoption.md](adoption.md)); this repository's own `wing-commander-*.yml`
 files are thin wrappers calling those same stages by local path.
 
 ```
@@ -29,13 +29,13 @@ issue closed ◀──────────── [6 cleanup] ◀── branc
 
 ### Published stages & thin wrappers (`specs/010-reusable-pipeline/`)
 
-Every stage body lives in a `reusable-*.yml` workflow whose only trigger is
+Every stage body lives in a published stage workflow (`<stage>.yml`) whose only trigger is
 `workflow_call`. Stage workflows never read `github.event.*` or `vars.*` —
 every event fact (issue number, head/base refs, merged flag, comment id) and
 every knob (model, max-turns, review mode, iteration cap, chaining targets)
 is a declared, typed input with a default matching the constitution's
 tiering. The **wrapper** owns the trigger, the security gates, and the
-event→input extraction; this repository's eight `speckit-*.yml` wrappers are
+event→input extraction; this repository's eight `wing-commander-*.yml` wrappers are
 the worked example, and adopters write the same shape against a version tag.
 
 Mechanics worth knowing:
@@ -43,13 +43,13 @@ Mechanics worth knowing:
 - **Composite-action self-checkout** (research.md D3): inside a called
   workflow, relative `uses: ./...` resolves against the *caller's* workspace,
   so each stage checks out the pipeline repository itself into
-  `.speckit-pipeline/` at `github.job_workflow_sha` — the exact commit of the
-  running workflow file — and reaches `speckit-context`, `speckit-preflight`,
-  and `speckit-metrics-summary` through that path. A version pin therefore
+  `.wing-commander-pipeline/` at `github.job_workflow_sha` — the exact commit of the
+  running workflow file — and reaches `wing-commander-context`, `wing-commander-preflight`,
+  and `wing-commander-metrics-summary` through that path. A version pin therefore
   covers workflow body *and* composites; there is no skew and no release-time
   ref rewriting. Consumer re-checkouts pass `clean: false` so the untracked
-  `.speckit-pipeline/` survives.
-- **Preflight** (`speckit-preflight` composite): a deterministic, pre-agent
+  `.wing-commander-pipeline/` survives.
+- **Preflight** (`wing-commander-preflight` composite): a deterministic, pre-agent
   fail-fast — at least one Claude credential (`claude-code-oauth-token` or
   `anthropic-api-key`; both passed through, Claude Code's documented
   precedence applies when both are set), spec-kit artifacts present in the
@@ -71,7 +71,7 @@ Mechanics worth knowing:
 
 ### Identity & chaining: the wing-commander-bot App
 Everything the pipeline does to the repo (push, PR, label, comment) uses a
-GitHub App installation token minted per-job by `.github/actions/speckit-context`.
+GitHub App installation token minted per-job by `.github/actions/wing-commander-context`.
 Reasons:
 - `GITHUB_TOKEN` events **don't trigger workflows** (documented exceptions:
   `workflow_dispatch` / `repository_dispatch`) — the pipeline would halt after
@@ -97,9 +97,9 @@ implement → finalize), chaining is explicit via `gh workflow run`
   so concurrent specs can't cross-contaminate.
 
 ### Concurrency
-Each stage job uses `concurrency: speckit-<spec key>` — one spec's stages
+Each stage job uses `concurrency: wing-commander-<spec key>` — one spec's stages
 serialize, different specs run in parallel. Intake serializes globally
-(`speckit-intake`) so feature numbers can't collide.
+(`wing-commander-intake`) so feature numbers can't collide.
 
 ### Model tiering (constitution II)
 | Work | Model |
@@ -110,7 +110,7 @@ serialize, different specs run in parallel. Intake serializes globally
 | implement / converge | stage `model` input (default `claude-sonnet-5`); this repo's wrapper wires `vars.SPECKIT_IMPLEMENT_MODEL` and the `model:opus` label opt-in into it |
 
 Every agent step declares `--model` and `--max-turns`. Each is followed by a
-deterministic `.github/actions/speckit-metrics-summary` step that reads the
+deterministic `.github/actions/wing-commander-metrics-summary` step that reads the
 run's own execution transcript and appends a metrics block (model, turns used
 against budget, duration, tokens, cost, with an ≥80% turn-budget warning) to
 that run's `$GITHUB_STEP_SUMMARY` — pure read, no agent, never fails the stage
@@ -131,7 +131,7 @@ that run's `$GITHUB_STEP_SUMMARY` — pure read, no agent, never fails the stage
 
 ---
 
-## Stage 2 — Plan (`reusable-plan.yml`, wrapper `speckit-3-plan.yml`)
+## Stage 2 — Plan (`plan.yml`, wrapper `wing-commander-3-plan.yml`)
 
 Specified in [`specs/002-plan-stage/`](../specs/002-plan-stage/spec.md).
 
@@ -158,7 +158,7 @@ false-triggering); plus `workflow_dispatch` (input: `slug`) for manual restarts.
    spec-meta.json `stage: "stalled"`, issue comment); restart is manual —
    delete `plan/NNN-slug` and dispatch the workflow (FR-012).
 
-## Stage 3 — Tasks (`reusable-tasks.yml`, wrapper `speckit-4-tasks.yml`)
+## Stage 3 — Tasks (`tasks.yml`, wrapper `wing-commander-4-tasks.yml`)
 
 Specified in [`specs/003-tasks-stage/`](../specs/003-tasks-stage/spec.md).
 
@@ -175,7 +175,7 @@ notifications no-op, FR-011; a manual dispatch may also proceed from
 - `auto` (default, any other value falls open to it): commit `tasks.md` +
   `spec-meta.json` (`stage: "tasks"`) directly to `spec/NNN-slug`; post a task
   summary to the lifecycle issue; flip its label to `stage:tasks`; then a
-  deterministic step runs `gh workflow run speckit-5-implement.yml
+  deterministic step runs `gh workflow run wing-commander-5-implement.yml
   -f spec_dir=… -f issue=… -f iteration=1`.
 - `pr`: open a `tasks/NNN-slug` PR carrying the same changes; a
   `tasks-approved` job in this same workflow does the dispatch when that PR
@@ -183,7 +183,7 @@ notifications no-op, FR-011; a manual dispatch may also proceed from
   (`stage:stalled` label, `spec-meta.json` `stage: "stalled"`, issue comment);
   restart is manual — delete `tasks/NNN-slug` and dispatch the workflow.
 
-## Stage 4 — Implement ⟲ converge (`reusable-implement.yml`, wrapper `speckit-5-implement.yml`)
+## Stage 4 — Implement ⟲ converge (`implement.yml`, wrapper `wing-commander-5-implement.yml`)
 
 Implemented via `specs/005-implement-converge/` (issue #15); the design below
 is what the implementation follows.
@@ -217,7 +217,7 @@ vars.SPECKIT_MAX_ITERATIONS`).
    tier — marks the spec `stalled` (label, `spec-meta.json`, issue comment);
    restart is manual: re-dispatch the workflow with the same iteration.
 
-## Stage 5 — Finalize (`reusable-finalize.yml`, wrapper `speckit-6-finalize.yml` — see `specs/006-finalize-stage/`)
+## Stage 5 — Finalize (`finalize.yml`, wrapper `wing-commander-6-finalize.yml` — see `specs/006-finalize-stage/`)
 
 **Trigger**: `workflow_dispatch` (`spec_dir`, `issue`, `converged`).
 
@@ -228,7 +228,7 @@ vars.SPECKIT_MAX_ITERATIONS`).
    it (diff link, key files), remaining manual tasks, lifecycle issue link.
 3. Comment the same manual-task list on the lifecycle issue; label `stage:review`.
 
-## Stage 6 — Cleanup (`reusable-cleanup.yml`, wrapper `speckit-7-cleanup.yml` — see `specs/007-cleanup-stage/`)
+## Stage 6 — Cleanup (`cleanup.yml`, wrapper `wing-commander-7-cleanup.yml` — see `specs/007-cleanup-stage/`)
 
 **Trigger**: `pull_request: closed`, repo-wide — self-selects one of three
 outcomes from the event payload alone (head ref prefix + base ref + `merged`),
@@ -260,7 +260,7 @@ comment, since the issue can't yet be trusted to be the right one. Every
 outcome's own target state doubles as its idempotency check — no separate
 "already processed" marker exists.
 
-## Rebase (`reusable-rebase.yml`, wrapper `speckit-rebase.yml`)
+## Rebase (`rebase.yml`, wrapper `wing-commander-rebase.yml`)
 
 **Trigger**: `push` to main (skipping `*[bot]` actors) + nightly schedule.
 
@@ -274,7 +274,7 @@ to resolving the in-progress rebase without unrelated edits, verified by a
 deterministic per-commit file-scope check before publish); still stuck ⇒ abort
 the rebase (branch left byte-for-byte untouched) and comment on the lifecycle
 issue for human help. The escalation comment carries a
-`<!-- speckit-rebase: blocked branch-sha=… main-sha=… -->` marker plus a
+`<!-- wing-commander-rebase: blocked branch-sha=… main-sha=… -->` marker plus a
 `rebase:blocked` label; `discover` reads that marker to skip a branch whose
 `(branch, main)` pair hasn't changed since it was reported blocked, so a stall
 is only escalated once until either side moves (a subsequent success removes
@@ -298,15 +298,15 @@ input (defaulting to the publisher).
 The shape that shipped (details in the Foundations section above and in
 [docs/adoption.md](adoption.md)):
 
-1. Stage bodies live in `reusable-<stage>.yml` with explicit typed inputs and
+1. Stage bodies live in `<stage>.yml` with explicit typed inputs and
    declared secrets (no `secrets: inherit` — the credential surface is part
    of the interface).
 2. Consuming repos keep thin event-trigger wrappers
-   (`uses: charlesguse/speckit-action/.github/workflows/reusable-plan.yml@v1`)
+   (`uses: charlesguse/wing-commander/.github/workflows/reusable-plan.yml@v1`)
    plus their own `specify init` output — constitution, templates, scripts,
    and skills are theirs, never inherited from this repo.
-3. Shared mechanics live in the `speckit-context`, `speckit-preflight`, and
-   `speckit-metrics-summary` composites, reached via the self-checkout so a
+3. Shared mechanics live in the `wing-commander-context`, `wing-commander-preflight`, and
+   `wing-commander-metrics-summary` composites, reached via the self-checkout so a
    single version pin covers everything.
 4. `release.yml` publishes exact `vX.Y.Z` tags and advances the floating
    major tag on non-breaking releases; this repo's wrappers call by local

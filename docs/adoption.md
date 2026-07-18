@@ -12,7 +12,7 @@ any trigger you like (see the [stage reference](#stage-reference)). No stage
 requires this repository's label taxonomy, branch gate sequence, or sibling
 stages to exist.
 
-This repository is its own first adopter: its `speckit-*.yml` workflows are
+This repository is its own first adopter: its `wing-commander-*.yml` workflows are
 exactly the thin wrappers described here, calling the same stages by local
 path. When in doubt, read them — they are the living example.
 
@@ -38,7 +38,7 @@ path. When in doubt, read them — they are the living example.
    rest).
 5. **Access to the pipeline repository.** Reusable workflows and the stages'
    composite-action self-checkout both require that
-   `charlesguse/speckit-action` is accessible to your repository. The
+   `charlesguse/wing-commander` is accessible to your repository. The
    pipeline repository is currently **private**, so the one-time setup in
    [Private pipeline repository](#private-pipeline-repository) is required;
    that whole section becomes unnecessary only if the pipeline repository is
@@ -118,10 +118,10 @@ triggers are yours.
 > those `workflow_dispatch` input names exactly as written — they are part of
 > the published chaining contract.
 
-### 1. `speckit-1-intake.yml`
+### 1. `wing-commander-1-intake.yml`
 
 ```yaml
-name: "speckit · 1 intake"
+name: "Wing Commander · 1 intake"
 
 on:
   issues:
@@ -138,7 +138,7 @@ jobs:
       pull-requests: write
       issues: write
       id-token: write
-    uses: charlesguse/speckit-action/.github/workflows/reusable-intake.yml@v1
+    uses: charlesguse/wing-commander/.github/workflows/reusable-intake.yml@v1
     with:
       issue-number: ${{ github.event.issue.number }}
     secrets:
@@ -151,10 +151,10 @@ jobs:
       speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
 ```
 
-### 2. `speckit-2-clarify.yml`
+### 2. `wing-commander-2-clarify.yml`
 
 ```yaml
-name: "speckit · 2 clarify"
+name: "Wing Commander · 2 clarify"
 
 on:
   issue_comment:
@@ -178,7 +178,7 @@ jobs:
       pull-requests: write
       issues: write
       id-token: write
-    uses: charlesguse/speckit-action/.github/workflows/reusable-clarify.yml@v1
+    uses: charlesguse/wing-commander/.github/workflows/reusable-clarify.yml@v1
     with:
       issue-number: ${{ github.event.issue.number }}
       comment-id: ${{ github.event.comment.id }}
@@ -192,10 +192,10 @@ jobs:
       speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
 ```
 
-### 3. `speckit-3-plan.yml`
+### 3. `wing-commander-3-plan.yml`
 
 ```yaml
-name: "speckit · 3 plan"
+name: "Wing Commander · 3 plan"
 
 on:
   pull_request:
@@ -225,7 +225,7 @@ jobs:
       pull-requests: write
       issues: write
       id-token: write
-    uses: charlesguse/speckit-action/.github/workflows/reusable-plan.yml@v1
+    uses: charlesguse/wing-commander/.github/workflows/reusable-plan.yml@v1
     with:
       head-ref: ${{ github.event.pull_request.head.ref }}
       slug: ${{ inputs.slug }}
@@ -241,10 +241,10 @@ jobs:
       speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
 ```
 
-### 4. `speckit-4-tasks.yml`
+### 4. `wing-commander-4-tasks.yml`
 
 ```yaml
-name: "speckit · 4 tasks"
+name: "Wing Commander · 4 tasks"
 
 on:
   pull_request:
@@ -273,14 +273,14 @@ jobs:
       issues: write
       actions: write
       id-token: write
-    uses: charlesguse/speckit-action/.github/workflows/reusable-tasks.yml@v1
+    uses: charlesguse/wing-commander/.github/workflows/reusable-tasks.yml@v1
     with:
       mode: generate
       head-ref: ${{ github.event.pull_request.head.ref }}
       slug: ${{ inputs.slug }}
       restart: ${{ github.event_name == 'workflow_dispatch' }}
       tasks-review: ${{ vars.SPECKIT_TASKS_REVIEW || 'auto' }}
-      next-workflow: speckit-5-implement.yml
+      next-workflow: wing-commander-5-implement.yml
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -306,11 +306,11 @@ jobs:
       issues: write
       actions: write
       id-token: write
-    uses: charlesguse/speckit-action/.github/workflows/reusable-tasks.yml@v1
+    uses: charlesguse/wing-commander/.github/workflows/reusable-tasks.yml@v1
     with:
       mode: approved
       head-ref: ${{ github.event.pull_request.head.ref }}
-      next-workflow: speckit-5-implement.yml
+      next-workflow: wing-commander-5-implement.yml
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -321,10 +321,10 @@ jobs:
       speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
 ```
 
-### 5. `speckit-5-implement.yml` (dispatch target — keep the input names)
+### 5. `wing-commander-5-implement.yml` (dispatch target — keep the input names)
 
 ```yaml
-name: "speckit · 5 implement"
+name: "Wing Commander · 5 implement"
 
 on:
   workflow_dispatch:
@@ -352,14 +352,14 @@ jobs:
       issues: write
       actions: write
       id-token: write
-    uses: charlesguse/speckit-action/.github/workflows/reusable-implement.yml@v1
+    uses: charlesguse/wing-commander/.github/workflows/reusable-implement.yml@v1
     with:
       spec-dir: ${{ inputs.spec_dir }}
       issue-number: ${{ fromJSON(inputs.issue) }}
       iteration: ${{ fromJSON(inputs.iteration) }}
       max-iterations: ${{ fromJSON(vars.SPECKIT_MAX_ITERATIONS || '5') }}
-      self-workflow: speckit-5-implement.yml
-      next-workflow: speckit-6-finalize.yml
+      self-workflow: wing-commander-5-implement.yml
+      next-workflow: wing-commander-6-finalize.yml
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -370,10 +370,10 @@ jobs:
       speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
 ```
 
-### 6. `speckit-6-finalize.yml` (dispatch target — keep the input names)
+### 6. `wing-commander-6-finalize.yml` (dispatch target — keep the input names)
 
 ```yaml
-name: "speckit · 6 finalize"
+name: "Wing Commander · 6 finalize"
 
 on:
   workflow_dispatch:
@@ -401,7 +401,7 @@ jobs:
       issues: write
       pull-requests: write
       id-token: write
-    uses: charlesguse/speckit-action/.github/workflows/reusable-finalize.yml@v1
+    uses: charlesguse/wing-commander/.github/workflows/reusable-finalize.yml@v1
     with:
       spec-dir: ${{ inputs.spec_dir }}
       issue-number: ${{ fromJSON(inputs.issue) }}
@@ -416,10 +416,10 @@ jobs:
       speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
 ```
 
-### 7. `speckit-7-cleanup.yml`
+### 7. `wing-commander-7-cleanup.yml`
 
 ```yaml
-name: "speckit · 7 cleanup"
+name: "Wing Commander · 7 cleanup"
 
 on:
   pull_request:
@@ -434,7 +434,7 @@ jobs:
       pull-requests: write
       issues: write
       id-token: write
-    uses: charlesguse/speckit-action/.github/workflows/reusable-cleanup.yml@v1
+    uses: charlesguse/wing-commander/.github/workflows/reusable-cleanup.yml@v1
     with:
       head-ref: ${{ github.event.pull_request.head.ref }}
       base-ref: ${{ github.event.pull_request.base.ref }}
@@ -451,10 +451,10 @@ jobs:
       speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
 ```
 
-### 8. `speckit-rebase.yml` (triggers are automatic — push + nightly)
+### 8. `wing-commander-rebase.yml` (triggers are automatic — push + nightly)
 
 ```yaml
-name: "speckit · rebase"
+name: "Wing Commander · rebase"
 
 on:
   push:
@@ -473,7 +473,7 @@ jobs:
       contents: write
       issues: write
       id-token: write
-    uses: charlesguse/speckit-action/.github/workflows/reusable-rebase.yml@v1
+    uses: charlesguse/wing-commander/.github/workflows/reusable-rebase.yml@v1
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -506,6 +506,48 @@ A pin covers the *whole* stage: workflow body **and** the shared composite
 actions, because each stage checks out its own repository at the running
 workflow's exact commit (`github.job_workflow_sha`). There is no path by
 which a pinned adopter receives newer internal logic.
+
+## Migrating to `@v2`
+
+The product's rename from "speckit-action" to "Wing Commander" ships its
+breaking interface changes behind the `v2` major
+(`specs/012-rename-wing-commander/contracts/rename-migration.md`). **No
+action is needed to stay on `@v1`**: the `v1` floating tag and every exact
+`v1.y.z` tag are immutable, and `charlesguse/speckit-action/...` pins keep
+resolving through GitHub's repository-rename redirect. The GitHub App you
+already created needs no change either — Apps authenticate by App ID, not
+display name.
+
+An adopter moving a pin from `@v1`/`v1.y.z` to `@v2`/`v2.y.z` must, in the
+same change:
+
+1. **Update every `uses:` line** — both the owner/repo *and* the filename
+   change (the `reusable-` prefix is dropped):
+
+   | `@v1` | `@v2` |
+   |---|---|
+   | `charlesguse/speckit-action/.github/workflows/reusable-<stage>.yml@v1` | `charlesguse/wing-commander/.github/workflows/<stage>.yml@v2` |
+
+2. **Rename your repository secrets/variables** (the underlying values — App
+   ID, private key, etc. — do not change, only the names), and update the
+   `secrets:`/`vars:` value expressions in your wrapper YAML to match:
+
+   | Old name | New name |
+   |---|---|
+   | `SPECKIT_APP_ID` | `WING_COMMANDER_APP_ID` |
+   | `SPECKIT_APP_PRIVATE_KEY` | `WING_COMMANDER_APP_PRIVATE_KEY` |
+   | `SPECKIT_TASKS_REVIEW` | `WING_COMMANDER_TASKS_REVIEW` |
+   | `SPECKIT_IMPLEMENT_MODEL` | `WING_COMMANDER_IMPLEMENT_MODEL` |
+   | `SPECKIT_MAX_ITERATIONS` | `WING_COMMANDER_MAX_ITERATIONS` |
+
+3. **If you pin `pipeline-repo` explicitly** (rather than relying on the
+   published default), update it from `charlesguse/speckit-action` to
+   `charlesguse/wing-commander`.
+
+No other adopter-visible interface changes (job outputs, `workflow_call`
+input names other than the filename, label conventions, PR/issue comment
+formats) are part of this migration. The `v2` release's mandatory
+**Breaking changes** notes carry these same tables.
 
 ## Private pipeline repository
 
@@ -543,7 +585,7 @@ Common to every stage below:
 - **`on: workflow_call` only** — your wrapper owns the trigger. Any event
   works: the full-lifecycle triggers above are conventions, not requirements.
 - **Common inputs** (rarely needed):
-  `pipeline-repo` (string, default `charlesguse/speckit-action`) — where the
+  `pipeline-repo` (string, default `charlesguse/wing-commander`) — where the
   stage checks out its shared composite actions; only republishing forks set
   it. `pipeline-ref` (string, default `""` = the running workflow's exact
   commit, resolved via `github.job_workflow_sha` or the OIDC token) — set it
@@ -570,7 +612,7 @@ Common to every stage below:
   *wrapper file in your repository* to `gh workflow run` with the payload
   shown in [the chaining contract](#chaining-payload-contract).
 - **Per-spec serialization** — stages declare job-level concurrency groups
-  (`speckit-<slug>`-shaped), which apply in your repository. Don't add the
+  (`wing-commander-<slug>`-shaped), which apply in your repository. Don't add the
   same group name to your wrapper (a workflow-level group with the same name
   as a called job's group deadlocks the run).
 
@@ -597,7 +639,7 @@ on:
 jobs:
   intake:
     permissions: { contents: write, pull-requests: write, issues: write, id-token: write }
-    uses: charlesguse/speckit-action/.github/workflows/reusable-intake.yml@v1
+    uses: charlesguse/wing-commander/.github/workflows/reusable-intake.yml@v1
     with:
       issue-number: ${{ fromJSON(inputs.issue) }}
     secrets:
@@ -639,7 +681,7 @@ on:
 jobs:
   plan:
     permissions: { contents: write, pull-requests: write, issues: write, id-token: write }
-    uses: charlesguse/speckit-action/.github/workflows/reusable-plan.yml@v1
+    uses: charlesguse/wing-commander/.github/workflows/reusable-plan.yml@v1
     with:
       slug: ${{ inputs.slug }}
     secrets:
