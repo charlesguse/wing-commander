@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,10 +31,8 @@
 
 ## Notes
 
-- One [NEEDS CLARIFICATION] marker remains: the scope of the mutual exclusion
-  (rebase-vs-stage only vs. full per-specification serialization). It is surfaced
-  as Question 1 in the spec's "Outstanding Clarifications" section and posted to
-  the lifecycle issue (#53) for the requester or maintainers to answer. A
-  reasonable default is recorded in the spec's Assumptions, so planning can
-  proceed while the answer is pending.
-- Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.
+- Question 1 (scope of the mutual exclusion) is resolved: @charlesguse answered
+  Option B — full per-specification serialization — on lifecycle issue #53. The
+  answer is recorded in the spec's "Clarifications" section and encoded in FR-001,
+  FR-008, the Edge Cases, and the Assumptions. No [NEEDS CLARIFICATION] markers
+  remain, so the spec is ready for `/speckit-plan`.

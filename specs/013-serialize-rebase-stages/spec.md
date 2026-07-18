@@ -63,7 +63,7 @@ Preventing the collision must not serialize the whole pipeline or defeat the dri
 - **Main-line advance from the pipeline's own automation** (a fix or finalize merge) lands while a stage for the affected specification is mid-run: this is the common trigger in practice, and the rebase it would fire MUST NOT run concurrently with that stage — see FR-001, FR-002.
 - **A stage and a rebase for the same specification are both requested at nearly the same instant**: the two MUST be ordered so only one mutates the branch at a time, regardless of arrival order — see FR-003.
 - **The nightly scheduled rebase fires while a stage is running** for one of the in-flight specifications: the same non-interference applies to the scheduled rebase as to the push-triggered one — see FR-002.
-- **Two different stages for the same specification would somehow overlap** (rather than the normal one-stage-at-a-time progression): whether same-specification stage-vs-stage overlap is also in scope for this change is a [NEEDS CLARIFICATION] item — see the Question below; the reported and required behavior is specifically about the rebase-vs-stage boundary.
+- **Two different stages for the same specification would somehow overlap** (rather than the normal one-stage-at-a-time progression): per the resolved Question 1 (Option B, full per-specification serialization), this is now in scope — any two operations touching the same specification's working branch, including stage-vs-stage, MUST NOT overlap — see FR-001 and FR-008.
 - **Intake (which has no specification slug yet) and the clarify stage (which is keyed to the lifecycle issue, not a branch)** neither rebase nor mutate a specification working branch in a way that collides with auto-rebase; these are excluded from the serialization and keep their current behavior — see FR-005.
 - **A rebase is deferred while a stage runs and the stage then does not finish for a long time**: the deferred rebase MUST NOT be silently dropped forever; currency is restored by the next opportunity (stage completion, a later main-line advance, or the nightly rebase) — see FR-004.
 
@@ -78,6 +78,7 @@ Preventing the collision must not serialize the whole pipeline or defeat the dri
 - **FR-005**: The system MUST scope the mutual exclusion to a single specification and to operations that actually contend for that specification's working branch. Rebases and stages for *different* specifications MUST continue to run concurrently, and pipeline steps that do not mutate a specification's working branch in a way that collides with auto-rebase (for example, intake before a slug exists, and the clarify stage keyed to the lifecycle issue) MUST retain their current behavior and MUST NOT be blocked by this change.
 - **FR-006**: The change MUST NOT alter what a rebase or a stage does when there is no contention — an uncontended rebase or stage MUST run exactly as it does today, with no added delay or behavioral difference.
 - **FR-007**: The change MUST preserve the existing failure-safety and reporting behavior of the affected stages and of auto-rebase — it MUST NOT introduce silent branch corruption, MUST NOT cause a stage's work to be discarded due to a same-specification force-push, and MUST NOT suppress the existing loud, deterministic verification that guards each stage's publish.
+- **FR-008**: Per the resolution of Question 1 (Option B, full per-specification serialization), the mutual exclusion MUST extend to all slug-bearing operations that mutate a single specification's working branch — the auto-rebase and every stage run — placing them under one ordering so that no two such operations for the same specification ever run concurrently, including two stage runs for the same specification. This subsumes the rebase-vs-stage exclusion of FR-001 as the specific reported case, and MUST remain scoped per specification so that FR-005's cross-specification concurrency is unaffected.
 
 ### Key Entities
 
@@ -101,26 +102,12 @@ Preventing the collision must not serialize the whole pipeline or defeat the dri
 
 - "Specification working branch," "auto-rebase," "the main line," "the pipeline's own automation," "stage run," "nightly schedule," and "lifecycle issue" refer to the same concepts established by the earlier pipeline stages (notably the auto-rebase behavior specified in spec 008 and the reusable stages in spec 010); this change introduces no new such concepts and only orders existing operations so they do not collide on the same branch.
 - The intended resolution of contention is that the two operations serialize (queue and run one after the other) rather than one cancelling the other, consistent with the existing convention that these operations are not cancelled in progress; whether a deferred rebase queues behind the stage or is skipped-and-retried on the next trigger is a design/implementation decision left to planning, provided FR-004's currency guarantee holds.
-- Under normal operation the pipeline runs one stage at a time per specification, so same-specification stage-vs-stage overlap is not the reported problem; if the chosen mechanism happens to also serialize stage-vs-stage for the same specification, that is acceptable but not required by this specification (see the open Question below).
+- Under normal operation the pipeline runs one stage at a time per specification, so same-specification stage-vs-stage overlap is not the reported problem; per the resolved Question 1 (Option B, full per-specification serialization), preventing same-specification stage-vs-stage overlap is now also required, so the chosen mechanism MUST place the rebase and all slug-bearing stages for one specification under a single ordering (see FR-008).
 - The affected stages and auto-rebase keep their existing least-privilege tool allowlists, model tiering, and deterministic verification; this change adjusts only how same-specification operations are ordered, not what any stage or the rebase is permitted to do.
 - The fix applies to the reusable pipeline stages, so external adopters of the pipeline inherit the corrected behavior identically, consistent with the portability principle.
 
-## Outstanding Clarifications
+## Clarifications
 
-The following question was raised during specification and is surfaced to the lifecycle issue for the requester or maintainers to answer. The spec above records the reasonable default in its Assumptions; a different answer would adjust the scope noted below.
+### Session 2026-07-18
 
-### Question 1: Scope of the mutual exclusion — rebase-vs-stage only, or full per-specification serialization?
-
-**Context**: FR-001 requires that an auto-rebase and a stage run for the same specification never mutate its branch concurrently. The reported failure is specifically a rebase interrupting a stage. A mechanism that unifies all per-specification operations under one ordering would additionally serialize two stages for the same specification against each other — which the pipeline does not normally do concurrently anyway.
-
-**What we need to know**: Should this change guarantee mutual exclusion only across the rebase-vs-stage boundary (the reported bug), or should it establish full per-specification serialization so that *any* two operations touching the same specification's branch — including stage-vs-stage — never overlap?
-
-**Suggested Answers**:
-
-| Option | Answer | Implications |
-|--------|--------|--------------|
-| A      | Rebase-vs-stage only | Narrowest fix that resolves the reported collision; leaves any future same-specification stage-vs-stage overlap out of scope. |
-| B      | Full per-specification serialization (rebase and all slug-bearing stages share one ordering) | Closes the reported collision and, as a side effect, guarantees no two same-specification operations ever overlap; slightly broader change, matches the issue's "preferred" fix direction. |
-| Custom | Provide your own answer | Describe the exact boundary of what must be mutually exclusive. |
-
-**Your choice**: _[Awaiting response on the lifecycle issue]_
+- **Q1: Scope of the mutual exclusion — rebase-vs-stage only, or full per-specification serialization?** → **A: Option B — Full per-specification serialization.** The auto-rebase and all slug-bearing stages for a single specification share one ordering, guaranteeing that no two same-specification operations touching its working branch — including stage-vs-stage — ever run concurrently. This closes the reported rebase-vs-stage collision and, as a side effect, prevents any same-specification overlap; it matches the issue's preferred fix direction. Answered by @charlesguse on lifecycle issue #53. Encoded in FR-001, FR-008, the Edge Cases, and the Assumptions above.
