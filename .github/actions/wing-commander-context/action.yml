@@ -30,10 +30,10 @@ description: >
 
 inputs:
   app-id:
-    description: GitHub App ID of the wing-commander bot (secrets.SPECKIT_APP_ID)
+    description: GitHub App ID of the wing-commander bot (secrets.WING_COMMANDER_APP_ID)
     required: true
   private-key:
-    description: GitHub App private key (secrets.SPECKIT_APP_PRIVATE_KEY)
+    description: GitHub App private key (secrets.WING_COMMANDER_APP_PRIVATE_KEY)
     required: true
   issue-labels-json:
     description: >

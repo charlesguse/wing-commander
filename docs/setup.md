@@ -38,8 +38,8 @@ Settings → Secrets and variables → Actions → **Secrets**:
 |---|---|---|
 | `CLAUDE_CODE_OAUTH_TOKEN` | one of the two Claude credentials | Claude subscription token — run `claude setup-token` locally and paste the result |
 | `ANTHROPIC_API_KEY` | one of the two Claude credentials | API key from the [Claude Console](https://console.anthropic.com/) (pay-per-token billing) |
-| `SPECKIT_APP_ID` | yes | The App ID from step 1 |
-| `SPECKIT_APP_PRIVATE_KEY` | yes | Full contents of the downloaded `.pem` |
+| `WING_COMMANDER_APP_ID` | yes | The App ID from step 1 |
+| `WING_COMMANDER_APP_PRIVATE_KEY` | yes | Full contents of the downloaded `.pem` |
 | `PIPELINE_REPO_TOKEN` | only if the pipeline repository you pin is **private** (e.g. a private fork) | Read-only contents token for that private pipeline repository (e.g. a single-repo fine-grained PAT) — see [docs/adoption.md](adoption.md#private-pipeline-repository). Not needed when pinning the public `charlesguse/wing-commander`, and never needed in the pipeline repository itself. |
 
 Both Claude credentials are first-class: every stage accepts either, exactly
@@ -57,9 +57,9 @@ create them now so the stubs' documentation stays true):
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `SPECKIT_TASKS_REVIEW` | `auto` | `auto` = commit tasks.md straight to the spec branch; `pr` = open a tasks PR |
-| `SPECKIT_IMPLEMENT_MODEL` | `claude-sonnet-5` | Model for implement/converge; set `claude-opus-4-8` for hard specs |
-| `SPECKIT_MAX_ITERATIONS` | `5` | Cap on implement ⟲ converge loops per spec |
+| `WING_COMMANDER_TASKS_REVIEW` | `auto` | `auto` = commit tasks.md straight to the spec branch; `pr` = open a tasks PR |
+| `WING_COMMANDER_IMPLEMENT_MODEL` | `claude-sonnet-5` | Model for implement/converge; set `claude-opus-4-8` for hard specs |
+| `WING_COMMANDER_MAX_ITERATIONS` | `5` | Cap on implement ⟲ converge loops per spec |
 
 ## 4. Labels
 

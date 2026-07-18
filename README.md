@@ -55,7 +55,7 @@ Every stage is published as a reusable `workflow_call` workflow (a bare
 
 1. Follow [docs/setup.md](docs/setup.md): create the `wing-commander-bot` GitHub App,
    add the secrets (a Claude credential — `CLAUDE_CODE_OAUTH_TOKEN` or
-   `ANTHROPIC_API_KEY` — plus `SPECKIT_APP_ID` and `SPECKIT_APP_PRIVATE_KEY`),
+   `ANTHROPIC_API_KEY` — plus `WING_COMMANDER_APP_ID` and `WING_COMMANDER_APP_PRIVATE_KEY`),
    and create the labels.
 2. Open an issue describing a feature in plain language.
 3. Apply the `spec-request` label (maintainers only — this is the approval gate).

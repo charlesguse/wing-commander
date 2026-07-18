@@ -16,7 +16,7 @@ issue ──spec-request label──▶ [1 intake] ──▶ spec PR → main
   │                           [3 tasks] ──▶ tasks.md auto-committed
   │                                              │  dispatch
   │                                              ▼
-  │                     [4 implement ⟲ converge] (≤ SPECKIT_MAX_ITERATIONS)
+  │                     [4 implement ⟲ converge] (≤ WING_COMMANDER_MAX_ITERATIONS)
   │                                              │  dispatch
   │                                              ▼
   │◀─ manual tasks report  [5 finalize] ──▶ final PR spec/NNN → main
@@ -107,7 +107,7 @@ serialize, different specs run in parallel. Intake serializes globally
 | Triage, diff summaries, labels | `claude-haiku-4-5` |
 | specify / clarify | `claude-opus-4-8` (constitution v1.1.0: spec quality is bought up front) |
 | plan / tasks | `claude-sonnet-5` |
-| implement / converge | stage `model` input (default `claude-sonnet-5`); this repo's wrapper wires `vars.SPECKIT_IMPLEMENT_MODEL` and the `model:opus` label opt-in into it |
+| implement / converge | stage `model` input (default `claude-sonnet-5`); this repo's wrapper wires `vars.WING_COMMANDER_IMPLEMENT_MODEL` and the `model:opus` label opt-in into it |
 
 Every agent step declares `--model` and `--max-turns`. Each is followed by a
 deterministic `.github/actions/wing-commander-metrics-summary` step that reads the
@@ -171,7 +171,7 @@ FR-012); idempotency-guard on `spec-meta.json` `stage == "plan"` (duplicate
 notifications no-op, FR-011; a manual dispatch may also proceed from
 `"stalled"` — that is the restart path). Then run `/speckit-tasks`
 (`claude-sonnet-5`, `SPECIFY_FEATURE_DIRECTORY` set), gated by
-`vars.SPECKIT_TASKS_REVIEW`:
+`vars.WING_COMMANDER_TASKS_REVIEW`:
 - `auto` (default, any other value falls open to it): commit `tasks.md` +
   `spec-meta.json` (`stage: "tasks"`) directly to `spec/NNN-slug`; post a task
   summary to the lifecycle issue; flip its label to `stage:tasks`; then a
@@ -191,11 +191,11 @@ is what the implementation follows.
 **Trigger**: `workflow_dispatch` (`spec_dir`, `issue`, `iteration`). Looping is
 **re-dispatch, not an in-job loop**: each iteration is a separate auditable run,
 stays under the 6-hour job cap, and the cap check is trivial (`iteration <=
-vars.SPECKIT_MAX_ITERATIONS`).
+vars.WING_COMMANDER_MAX_ITERATIONS`).
 
 **Design**:
 1. **Implement**: checkout `spec/NNN-slug`; `/speckit-implement` with
-   `--model vars.SPECKIT_IMPLEMENT_MODEL` (or Opus if the lifecycle issue has
+   `--model vars.WING_COMMANDER_IMPLEMENT_MODEL` (or Opus if the lifecycle issue has
    `model:opus`); commits pushed to the spec branch as task phases complete;
    generous `--max-turns`.
 2. **Converge**: `/speckit-converge`. Its contract is append-only: gaps ⇒ a new
@@ -302,7 +302,7 @@ The shape that shipped (details in the Foundations section above and in
    declared secrets (no `secrets: inherit` — the credential surface is part
    of the interface).
 2. Consuming repos keep thin event-trigger wrappers
-   (`uses: charlesguse/wing-commander/.github/workflows/reusable-plan.yml@v1`)
+   (`uses: charlesguse/wing-commander/.github/workflows/plan.yml@v2`)
    plus their own `specify init` output — constitution, templates, scripts,
    and skills are theirs, never inherited from this repo.
 3. Shared mechanics live in the `wing-commander-context`, `wing-commander-preflight`, and
