@@ -2,11 +2,11 @@
 # When a draft spec PR merges into main, planning starts on a dedicated
 # spec/<NNN-slug> branch. The trigger and the head-prefix guard are
 # trigger-side and live HERE; slug derivation, the duplicate guard, and the
-# hand-submitted-spec path live in reusable-plan.yml (docs/adoption.md),
+# hand-submitted-spec path live in plan.yml (docs/adoption.md),
 # called by local path.
 # A plan PR closed WITHOUT merging marks the spec stalled — owned by the
-# cleanup stage (speckit-7-cleanup.yml), not this workflow.
-name: "speckit · 3 plan"
+# cleanup stage (wing-commander-7-cleanup.yml), not this workflow.
+name: "Wing Commander · 3 plan"
 
 on:
   pull_request:
@@ -36,7 +36,7 @@ jobs:
       pull-requests: write
       issues: write
       id-token: write
-    uses: ./.github/workflows/reusable-plan.yml
+    uses: ./.github/workflows/plan.yml
     with:
       head-ref: ${{ github.event.pull_request.head.ref }}
       slug: ${{ inputs.slug }}
@@ -45,5 +45,5 @@ jobs:
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-      speckit-app-id: ${{ secrets.SPECKIT_APP_ID }}
-      speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
+      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}

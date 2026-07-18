@@ -1,6 +1,6 @@
 # Release automation (contracts/versioning.md).
 # Manually triggered — tag creation is deliberate, not per-merge:
-#   1. Lint gate: actionlint over all reusable-*.yml + published-stage
+#   1. Lint gate: actionlint over the 8 published stage workflows ({intake,clarify,plan,tasks,implement,finalize,cleanup,rebase}.yml) + published-stage
 #      invariant greps must pass.
 #   2. Create annotated tag vX.Y.Z at the default branch head.
 #   3. Create-or-advance the floating major tag for the release's OWN major:
@@ -32,7 +32,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: speckit-release
+  group: wing-commander-release
   cancel-in-progress: false
 
 jobs:
@@ -59,7 +59,7 @@ jobs:
           bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) 1.7.7 /tmp
           /tmp/actionlint -no-color \
             -ignore 'property "job_workflow_sha" is not defined' \
-            .github/workflows/reusable-*.yml .github/workflows/release.yml
+            .github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase}.yml .github/workflows/release.yml
 
       # Gate 1b: published-stage invariants (research.md D2/D5, FR-005,
       # constitution II, spec edge case 3). Interface rules that actionlint
@@ -73,26 +73,26 @@ jobs:
           set -uo pipefail
           fail=0
 
-          if grep -n 'github\.event\.' .github/workflows/reusable-*.yml; then
+          if grep -n 'github\.event\.' .github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase}.yml; then
             echo "::error::reusable stages must not read github.event.* — event facts arrive via workflow_call inputs (research.md D2)."
             fail=1
           fi
 
-          if grep -n 'vars\.' .github/workflows/reusable-*.yml; then
+          if grep -n 'vars\.' .github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase}.yml; then
             echo "::error::reusable stages must not read vars.* — configuration arrives via declared inputs (research.md D5)."
             fail=1
           fi
 
           # Literal default-branch assumptions: 'main' used as a ref/base.
           # The word may appear in prose comments; check the wired forms.
-          if grep -nE -- "(--base main|ref: main|origin/main[^_]|'main'|\"main\")" .github/workflows/reusable-*.yml; then
+          if grep -nE -- "(--base main|ref: main|origin/main[^_]|'main'|\"main\")" .github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase}.yml; then
             echo "::error::reusable stages must not hardcode the branch name main — use the default-branch input or its derived value (spec edge case 3)."
             fail=1
           fi
 
           # Hardcoded publisher strings are allowed ONLY as the pipeline-repo
           # input default (FR-005).
-          stray=$(grep -n 'charlesguse/speckit-action' .github/workflows/reusable-*.yml | grep -v 'default: charlesguse/speckit-action' || true)
+          stray=$(grep -n 'charlesguse/wing-commander' .github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase}.yml | grep -v 'default: charlesguse/wing-commander' || true)
           if [ -n "$stray" ]; then
             printf '%s\n' "$stray"
             echo "::error::the publisher's owner/repo may appear only as the pipeline-repo input default (FR-005)."
@@ -101,7 +101,7 @@ jobs:
 
           # Every claude_args block must declare --model and --max-turns
           # (constitution II). Count agent steps vs. declarations.
-          for f in .github/workflows/reusable-*.yml; do
+          for f in .github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase}.yml; do
             agents=$(grep -c 'anthropics/claude-code-action' "$f" || true)
             models=$(grep -c -- '--model ' "$f" || true)
             turns=$(grep -c -- '--max-turns ' "$f" || true)
@@ -169,9 +169,9 @@ jobs:
           set -euo pipefail
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "$TAG" -m "speckit-action $TAG"
+          git tag -a "$TAG" -m "wing-commander $TAG"
           git push origin "refs/tags/$TAG"
-          git tag -fa "$MAJOR" -m "speckit-action $MAJOR (currently $TAG)"
+          git tag -fa "$MAJOR" -m "wing-commander $MAJOR (currently $TAG)"
           git push --force origin "refs/tags/$MAJOR"
           echo "Created $TAG and advanced $MAJOR." >> "$GITHUB_STEP_SUMMARY"
 

@@ -1,5 +1,5 @@
 # Cross-repo resolution (research.md D3 of specs/010-reusable-pipeline):
-# published reusable-*.yml stages cannot reach this composite by a relative
+# published stage workflows cannot reach this composite by a relative
 # `uses:` path — inside a called workflow, `./...` resolves against the
 # CALLER's workspace, where this action does not exist. Every stage instead
 # checks out the pipeline repository itself, pinned to the exact commit of
@@ -11,26 +11,26 @@
 #     with:
 #       repository: ${{ inputs.pipeline-repo }}   # default: the publishing repo
 #       ref: ${{ github.job_workflow_sha }}
-#       path: .speckit-pipeline
+#       path: .wing-commander-pipeline
 #       persist-credentials: false
 #
-#   - uses: ./.speckit-pipeline/.github/actions/speckit-context
+#   - uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
 #
 # Consumer re-checkouts that follow the snippet must pass `clean: false` so
-# git clean does not delete the untracked .speckit-pipeline directory.
+# git clean does not delete the untracked .wing-commander-pipeline directory.
 # This action itself is relocation-safe: it touches no workspace paths
-# (App-token mint + label parse only). speckit-metrics-summary reads only
+# (App-token mint + label parse only). wing-commander-metrics-summary reads only
 # runner.temp. Audited 2026-07-11 (T003 of specs/010-reusable-pipeline).
-name: speckit-context
+name: wing-commander-context
 description: >
-  Shared context for speckit pipeline stages: mints the speckit-bot GitHub App
+  Shared context for Wing Commander pipeline stages: mints the wing-commander-bot GitHub App
   installation token (so pipeline actions trigger downstream workflows, which
   the default GITHUB_TOKEN cannot) and resolves the spec identity from issue
   labels when provided.
 
 inputs:
   app-id:
-    description: GitHub App ID of the speckit bot (secrets.SPECKIT_APP_ID)
+    description: GitHub App ID of the wing-commander bot (secrets.SPECKIT_APP_ID)
     required: true
   private-key:
     description: GitHub App private key (secrets.SPECKIT_APP_PRIVATE_KEY)
@@ -44,7 +44,7 @@ inputs:
 
 outputs:
   token:
-    description: Installation token for the speckit bot App
+    description: Installation token for the wing-commander bot App
     value: ${{ steps.app-token.outputs.token }}
   bot-slug:
     description: The App slug (actor filter form is <slug>[bot])
@@ -59,7 +59,7 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Mint speckit-bot App token
+    - name: Mint wing-commander-bot App token
       id: app-token
       uses: actions/create-github-app-token@v1
       with:

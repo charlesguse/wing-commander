@@ -1,5 +1,7 @@
 # Wing Commander
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 **Spec-Driven Development as a GitHub-native pipeline.** Open an issue describing
 what you want; the pipeline turns it into a reviewed specification, a reviewed
 plan, generated tasks, an implementation, and finally a pull request — powered by
@@ -33,21 +35,21 @@ there, and its labels (`spec:NNN-slug`, `stage:*`) always show where things stan
 
 ## Status
 
-Every stage is published as a reusable `workflow_call` workflow
-(`reusable-<stage>.yml`) that any repository can pin; the matching
-`speckit-*.yml` file is this repository's own thin wrapper around it
+Every stage is published as a reusable `workflow_call` workflow (a bare
+`<stage>.yml`) that any repository can pin; the matching
+`wing-commander-*.yml` file is this repository's own thin wrapper around it
 (triggers + gates only).
 
 | Stage | Published stage | This repo's wrapper | State |
 |---|---|---|---|
-| 1 · Intake (issue → spec PR) | `reusable-intake.yml` | `speckit-1-intake.yml` | ✅ — [spec](specs/001-spec-intake/spec.md) |
-| 1b · Clarification loop | `reusable-clarify.yml` | `speckit-2-clarify.yml` | ✅ — [spec](specs/004-clarify-on-pr/spec.md) |
-| 2 · Plan | `reusable-plan.yml` | `speckit-3-plan.yml` | ✅ — [spec](specs/002-plan-stage/spec.md) |
-| 3 · Tasks | `reusable-tasks.yml` | `speckit-4-tasks.yml` | ✅ — [spec](specs/003-tasks-stage/spec.md) |
-| 4 · Implement ⟲ converge | `reusable-implement.yml` | `speckit-5-implement.yml` | ✅ — [spec](specs/005-implement-converge/spec.md) |
-| 5 · Finalize | `reusable-finalize.yml` | `speckit-6-finalize.yml` | ✅ — [spec](specs/006-finalize-stage/spec.md) |
-| 6 · Cleanup | `reusable-cleanup.yml` | `speckit-7-cleanup.yml` | ✅ — [spec](specs/007-cleanup-stage/spec.md) |
-| Rebase | `reusable-rebase.yml` | `speckit-rebase.yml` | ✅ — [spec](specs/008-auto-rebase/spec.md) |
+| 1 · Intake (issue → spec PR) | `intake.yml` | `wing-commander-1-intake.yml` | ✅ — [spec](specs/001-spec-intake/spec.md) |
+| 1b · Clarification loop | `clarify.yml` | `wing-commander-2-clarify.yml` | ✅ — [spec](specs/004-clarify-on-pr/spec.md) |
+| 2 · Plan | `plan.yml` | `wing-commander-3-plan.yml` | ✅ — [spec](specs/002-plan-stage/spec.md) |
+| 3 · Tasks | `tasks.yml` | `wing-commander-4-tasks.yml` | ✅ — [spec](specs/003-tasks-stage/spec.md) |
+| 4 · Implement ⟲ converge | `implement.yml` | `wing-commander-5-implement.yml` | ✅ — [spec](specs/005-implement-converge/spec.md) |
+| 5 · Finalize | `finalize.yml` | `wing-commander-6-finalize.yml` | ✅ — [spec](specs/006-finalize-stage/spec.md) |
+| 6 · Cleanup | `cleanup.yml` | `wing-commander-7-cleanup.yml` | ✅ — [spec](specs/007-cleanup-stage/spec.md) |
+| Rebase | `rebase.yml` | `wing-commander-rebase.yml` | ✅ — [spec](specs/008-auto-rebase/spec.md) |
 
 ## Quickstart
 
@@ -79,15 +81,22 @@ To adopt it today:
 1. Run `specify init` in your repo (pin the same spec-kit version, currently
    v0.12.4) so it has its own `.specify/` and `.claude/skills/speckit-*` —
    then write your constitution with `/speckit-constitution`.
-2. Add thin wrapper workflows that call the published `reusable-*.yml` stages
-   by reference, version-pinned — copy-paste set, per-stage reference, and
-   pinning guidance in **[docs/adoption.md](docs/adoption.md)**. You never
-   copy stage logic, and moving your pin picks up fixes.
+2. Add thin wrapper workflows that call the published stage workflows
+   (`intake.yml` … `rebase.yml`) by reference, version-pinned — copy-paste
+   set, per-stage reference, and pinning guidance in
+   **[docs/adoption.md](docs/adoption.md)**. You never copy stage logic, and
+   moving your pin picks up fixes.
 3. Follow [docs/setup.md](docs/setup.md) (App, secrets, labels).
 
 Any subset of stages works, with any triggers you choose — this repository's
-own `speckit-*.yml` workflows are the same thin wrappers, calling the same
-stages by local path.
+own `wing-commander-*.yml` workflows are the same thin wrappers, calling the
+same stages by local path.
+
+**"Can I use the `wing-commander-bot`?"** — you create your own. The bot is
+just a GitHub App you register in your own account (any name works; the
+pipeline resolves the App's slug at runtime), so nothing ties your pipeline
+to this repository's bot or credentials. [docs/setup.md](docs/setup.md#1-create-the-wing-commander-bot-github-app)
+walks through the two-minute setup.
 
 ## Roadmap
 
@@ -119,15 +128,25 @@ Full stage-by-stage design: [docs/architecture.md](docs/architecture.md).
 ## Repository map
 
 ```
-.github/workflows/reusable-*.yml   the published stages (workflow_call; what adopters pin)
-.github/workflows/speckit-*.yml    this repo's thin wrappers — triggers + gates only
+.github/workflows/<stage>.yml      the published stages (workflow_call; what adopters
+                                   pin): intake, clarify, plan, tasks, implement,
+                                   finalize, cleanup, rebase
+.github/workflows/wing-commander-*.yml  this repo's thin wrappers — triggers + gates only
 .github/workflows/release.yml      tag vX.Y.Z, advance the floating major tag
-.github/actions/speckit-context/   shared App-token + spec-identity resolution
-.github/actions/speckit-preflight/ credential + prerequisite fail-fast checks
-.github/actions/speckit-metrics-summary/  per-run agent metrics rendering
+.github/actions/wing-commander-context/   shared App-token + spec-identity resolution
+.github/actions/wing-commander-preflight/ credential + prerequisite fail-fast checks
+.github/actions/wing-commander-metrics-summary/  per-run agent metrics rendering
 .claude/skills/speckit-*/ spec-kit skills (installed by `specify init`, pinned v0.12.4)
 .specify/                 spec-kit scripts, templates, memory/constitution.md
 specs/NNN-slug/           one directory per feature: spec.md, plan.md, tasks.md,
                           spec-meta.json (lifecycle state), checklists/
 docs/                     setup + adoption + architecture
 ```
+
+## License
+
+[MIT](LICENSE) — see [CONTRIBUTING.md](CONTRIBUTING.md) for how to get
+involved. Wing Commander is built on [GitHub spec-kit](https://github.com/github/spec-kit)
+and [Claude Code](https://github.com/anthropics/claude-code-action), which are
+their own projects under their own licenses; Wing Commander is not affiliated
+with or endorsed by the Spec Kit project.

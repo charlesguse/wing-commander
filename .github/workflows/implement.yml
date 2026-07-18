@@ -14,7 +14,7 @@
 # The re-dispatch loop is wrapper-side by design: self-workflow/next-workflow
 # name workflow FILES IN THE CONSUMING REPOSITORY whose workflow_dispatch
 # signature is part of the chaining payload contract.
-# Consumers: uses: <owner>/speckit-action/.github/workflows/reusable-implement.yml@<ref>
+# Consumers: uses: <owner>/wing-commander/.github/workflows/implement.yml@<ref>
 name: "reusable · implement"
 
 on:
@@ -69,7 +69,7 @@ on:
           (research.md D3). Only forks that republish need to set it.
         type: string
         required: false
-        default: charlesguse/speckit-action
+        default: charlesguse/wing-commander
       pipeline-ref:
         description: >
           Ref of the pipeline repository to check out for the shared
@@ -118,14 +118,14 @@ jobs:
     # the two never overlap for the same spec. A duplicate dispatch queues
     # behind the first and then no-ops on the idempotency guard.
     concurrency:
-      group: speckit-${{ inputs.spec-dir }}
+      group: wing-commander-${{ inputs.spec-dir }}
       cancel-in-progress: false
     permissions:
       contents: write
       issues: write
       # Dispatching the finalize wrapper / re-dispatching the implement
       # wrapper uses the default GITHUB_TOKEN (workflow_dispatch is exempt
-      # from the no-recursive-trigger rule); the speckit-bot App token has no
+      # from the no-recursive-trigger rule); the wing-commander-bot App token has no
       # actions permission.
       actions: write
       id-token: write
@@ -159,12 +159,12 @@ jobs:
         run: |
           ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
           if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=speckit-pipeline-ref"               | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref"               | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
             while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
             ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
           fi
           if [ -z "$ref" ]; then
-            echo "::error::speckit stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            echo "::error::wing-commander stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
             exit 1
           fi
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
@@ -177,12 +177,12 @@ jobs:
           # A private pipeline repository is not readable by the caller's
           # GITHUB_TOKEN — pipeline-repo-token covers that case (docs/adoption.md).
           token: ${{ secrets.pipeline-repo-token || github.token }}
-          path: .speckit-pipeline
+          path: .wing-commander-pipeline
           persist-credentials: false
 
       # Deterministic fail-fast before any billable work (FR-004, FR-009).
       - name: Preflight
-        uses: ./.speckit-pipeline/.github/actions/speckit-preflight
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-preflight
         with:
           oauth-token: ${{ secrets.claude-code-oauth-token }}
           api-key: ${{ secrets.anthropic-api-key }}
@@ -191,9 +191,9 @@ jobs:
             .claude/skills/speckit-implement/SKILL.md|specify init (spec-kit's claude integration)
             .claude/skills/speckit-converge/SKILL.md|specify init (spec-kit's claude integration)
 
-      - name: Speckit context
+      - name: Wing Commander context
         id: ctx
-        uses: ./.speckit-pipeline/.github/actions/speckit-context
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
@@ -224,8 +224,8 @@ jobs:
           echo "spec-dir=$SPEC_DIR_INPUT"      >> "$GITHUB_OUTPUT"
 
       # clean: false — a default `git clean` here would delete the untracked
-      # .speckit-pipeline checkout the composite steps below still need.
-      - name: Checkout spec branch as speckit-bot
+      # .wing-commander-pipeline checkout the composite steps below still need.
+      - name: Checkout spec branch as wing-commander-bot
         uses: actions/checkout@v4
         with:
           ref: spec/${{ steps.spec.outputs.slug }}
@@ -244,7 +244,7 @@ jobs:
         run: |
           for f in spec.md plan.md tasks.md spec-meta.json; do
             if [ ! -f "$SPEC_DIR/$f" ]; then
-              msg="speckit implement stage: cannot match this dispatch to a specification — $SPEC_DIR/$f is missing on the spec branch. tasks.md is produced by the tasks stage (reusable-tasks.yml); run the predecessor stages for this spec first."
+              msg="wing-commander implement stage: cannot match this dispatch to a specification — $SPEC_DIR/$f is missing on the spec branch. tasks.md is produced by the tasks stage (tasks.yml); run the predecessor stages for this spec first."
               echo "::error::$msg"
               echo "$msg" >> "$GITHUB_STEP_SUMMARY"
               exit 1
@@ -253,7 +253,7 @@ jobs:
           meta_issue=$(jq -r '.issue // empty' "$SPEC_DIR/spec-meta.json")
           meta_dir=$(jq -r '.spec_dir // empty' "$SPEC_DIR/spec-meta.json")
           if [ "$meta_issue" != "$ISSUE" ] || [ "$meta_dir" != "$SPEC_DIR" ]; then
-            msg="speckit implement stage: spec-meta.json (issue=$meta_issue, spec_dir=$meta_dir) does not match the dispatch inputs (issue=$ISSUE, spec_dir=$SPEC_DIR) — refusing."
+            msg="wing-commander implement stage: spec-meta.json (issue=$meta_issue, spec_dir=$meta_dir) does not match the dispatch inputs (issue=$ISSUE, spec_dir=$SPEC_DIR) — refusing."
             echo "::error::$msg"
             echo "$msg" >> "$GITHUB_STEP_SUMMARY"
             exit 1
@@ -311,7 +311,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           ACTOR: ${{ github.triggering_actor }}
         run: |
-          gh issue comment "$ISSUE" --body "🏗️ **speckit · implement** — cycle $ITERATION started on \`$TIER\` ([run]($RUN_URL), triggered by \`$ACTOR\`)."
+          gh issue comment "$ISSUE" --body "🏗️ **Wing Commander · implement** — cycle $ITERATION started on \`$TIER\` ([run]($RUN_URL), triggered by \`$ACTOR\`)."
 
       # The convergence signal is read from the commit range this cycle
       # pushes, so record where the branch stood before the agent ran.
@@ -400,7 +400,7 @@ jobs:
         if: always() && steps.cycle.outcome != 'skipped'
         # Belt-and-braces for the action's own "never fail the job" contract.
         continue-on-error: true
-        uses: ./.speckit-pipeline/.github/actions/speckit-metrics-summary
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
         with:
           model: ${{ inputs.model }}
           max-turns: ${{ inputs.max-turns }}
@@ -452,11 +452,11 @@ jobs:
           fi
           echo "converged=$converged" >> "$GITHUB_OUTPUT"
           {
-            echo "remaining<<SPECKIT_REMAINING_EOF"
+            echo "remaining<<WING_COMMANDER_REMAINING_EOF"
             if [ -n "$converge_sha" ]; then
               git show "$converge_sha" -- "$SPEC_DIR/tasks.md" | grep '^+' | grep -v '^+++' | sed 's/^+//'
             fi
-            echo "SPECKIT_REMAINING_EOF"
+            echo "WING_COMMANDER_REMAINING_EOF"
           } >> "$GITHUB_OUTPUT"
 
       # One automatic retry of the SAME iteration, one tier up
@@ -538,7 +538,7 @@ jobs:
         if: always() && steps.retry.outcome != 'skipped'
         # Belt-and-braces for the action's own "never fail the job" contract.
         continue-on-error: true
-        uses: ./.speckit-pipeline/.github/actions/speckit-metrics-summary
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
         with:
           model: claude-opus-4-8
           max-turns: ${{ inputs.max-turns }}
@@ -587,11 +587,11 @@ jobs:
           fi
           echo "converged=$converged" >> "$GITHUB_OUTPUT"
           {
-            echo "remaining<<SPECKIT_REMAINING_EOF"
+            echo "remaining<<WING_COMMANDER_REMAINING_EOF"
             if [ -n "$converge_sha" ]; then
               git show "$converge_sha" -- "$SPEC_DIR/tasks.md" | grep '^+' | grep -v '^+++' | sed 's/^+//'
             fi
-            echo "SPECKIT_REMAINING_EOF"
+            echo "WING_COMMANDER_REMAINING_EOF"
           } >> "$GITHUB_OUTPUT"
 
       # Consolidate: when the retry ran, its results are the cycle's results
@@ -622,9 +622,9 @@ jobs:
             echo "converged=$converged"
             echo "tier=$tier"
             echo "reason=$reason"
-            echo "remaining<<SPECKIT_REMAINING_EOF"
+            echo "remaining<<WING_COMMANDER_REMAINING_EOF"
             printf '%s\n' "$remaining"
-            echo "SPECKIT_REMAINING_EOF"
+            echo "WING_COMMANDER_REMAINING_EOF"
           } >> "$GITHUB_OUTPUT"
 
       # When the cycle is judged failed, the most useful diagnostic is usually
@@ -642,9 +642,9 @@ jobs:
             msg=$(jq -r '[.[] | select(.type == "result")] | last | .result // empty' "$file" 2>/dev/null | head -c 1500 || true)
           fi
           {
-            echo "message<<SPECKIT_AGENT_MSG_EOF"
+            echo "message<<WING_COMMANDER_AGENT_MSG_EOF"
             printf '%s\n' "$msg"
-            echo "SPECKIT_AGENT_MSG_EOF"
+            echo "WING_COMMANDER_AGENT_MSG_EOF"
           } >> "$GITHUB_OUTPUT"
 
       # A short per-cycle progress comment, authored by Haiku (the
@@ -678,7 +678,7 @@ jobs:
 
             Then post ONE short markdown comment (under 15 lines) on issue
             #${{ inputs.issue-number }} with gh issue comment. Start it with
-            "## speckit · implement stage — cycle ${{ inputs.iteration }}".
+            "## Wing Commander · implement stage — cycle ${{ inputs.iteration }}".
             Summarize what the cycle built (from the commits/diffstat), state
             converged or not converged, and what happens next. End the comment
             with this line exactly:
@@ -697,7 +697,7 @@ jobs:
         if: always() && steps.progress.outcome != 'skipped'
         # Belt-and-braces for the action's own "never fail the job" contract.
         continue-on-error: true
-        uses: ./.speckit-pipeline/.github/actions/speckit-metrics-summary
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
         with:
           model: claude-haiku-4-5
           max-turns: 15
@@ -800,7 +800,7 @@ jobs:
     if: needs.implement.outputs.final-ok == 'false'
     runs-on: ubuntu-latest
     concurrency:
-      group: speckit-${{ inputs.spec-dir }}
+      group: wing-commander-${{ inputs.spec-dir }}
       cancel-in-progress: false
     permissions:
       contents: write
@@ -826,12 +826,12 @@ jobs:
         run: |
           ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
           if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=speckit-pipeline-ref"               | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref"               | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
             while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
             ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
           fi
           if [ -z "$ref" ]; then
-            echo "::error::speckit stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            echo "::error::wing-commander stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
             exit 1
           fi
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
@@ -844,18 +844,18 @@ jobs:
           # A private pipeline repository is not readable by the caller's
           # GITHUB_TOKEN — pipeline-repo-token covers that case (docs/adoption.md).
           token: ${{ secrets.pipeline-repo-token || github.token }}
-          path: .speckit-pipeline
+          path: .wing-commander-pipeline
           persist-credentials: false
 
-      - name: Speckit context
+      - name: Wing Commander context
         id: ctx
-        uses: ./.speckit-pipeline/.github/actions/speckit-context
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
 
-      # clean: false — preserve .speckit-pipeline (see the implement job).
-      - name: Checkout spec branch as speckit-bot
+      # clean: false — preserve .wing-commander-pipeline (see the implement job).
+      - name: Checkout spec branch as wing-commander-bot
         uses: actions/checkout@v4
         with:
           ref: spec/${{ needs.implement.outputs.slug }}

@@ -13,7 +13,7 @@
 #     publish), and an unresolvable one is abandoned untouched and escalated
 #     to the lifecycle issue with a dedup-able SHA marker.
 # Empty discovery is a clean no-op.
-# Consumers: uses: <owner>/speckit-action/.github/workflows/reusable-rebase.yml@<ref>
+# Consumers: uses: <owner>/wing-commander/.github/workflows/rebase.yml@<ref>
 name: "reusable · rebase"
 
 on:
@@ -35,7 +35,7 @@ on:
           (research.md D3). Only forks that republish need to set it.
         type: string
         required: false
-        default: charlesguse/speckit-action
+        default: charlesguse/wing-commander
       pipeline-ref:
         description: >
           Ref of the pipeline repository to check out for the shared
@@ -102,12 +102,12 @@ jobs:
         run: |
           ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
           if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=speckit-pipeline-ref"               | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref"               | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
             while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
             ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
           fi
           if [ -z "$ref" ]; then
-            echo "::error::speckit stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            echo "::error::wing-commander stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
             exit 1
           fi
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
@@ -120,22 +120,22 @@ jobs:
           # A private pipeline repository is not readable by the caller's
           # GITHUB_TOKEN — pipeline-repo-token covers that case (docs/adoption.md).
           token: ${{ secrets.pipeline-repo-token || github.token }}
-          path: .speckit-pipeline
+          path: .wing-commander-pipeline
           persist-credentials: false
 
       # Deterministic fail-fast before any billable work (FR-004). Rebase
       # runs no spec-kit skill, so only the credential invariant applies —
       # checked here, once, before any matrix job can reach an agent step.
       - name: Preflight
-        uses: ./.speckit-pipeline/.github/actions/speckit-preflight
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-preflight
         with:
           oauth-token: ${{ secrets.claude-code-oauth-token }}
           api-key: ${{ secrets.anthropic-api-key }}
           require-speckit: "false"
 
-      - name: Speckit context
+      - name: Wing Commander context
         id: ctx
-        uses: ./.speckit-pipeline/.github/actions/speckit-context
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
@@ -160,7 +160,7 @@ jobs:
           set -uo pipefail
 
           warn() {
-            echo "::warning::speckit rebase discover: spec/$1 excluded — $2"
+            echo "::warning::wing-commander rebase discover: spec/$1 excluded — $2"
             echo "⚠️ \`spec/$1\` excluded from auto-rebase: $2" >> "$GITHUB_STEP_SUMMARY"
           }
 
@@ -214,7 +214,7 @@ jobs:
                 --jq '[.labels[].name] | index("rebase:blocked") != null' 2>/dev/null || echo false)"
               if [ "$blocked" = "true" ]; then
                 marker="$(gh issue view "$issue" --json comments \
-                  --jq '[.comments[].body] | map(select(test("<!-- speckit-rebase: blocked"))) | last // empty' 2>/dev/null || echo '')"
+                  --jq '[.comments[].body] | map(select(test("<!-- wing-commander-rebase: blocked"))) | last // empty' 2>/dev/null || echo '')"
                 if [ -n "$marker" ]; then
                   m_branch="$(printf '%s' "$marker" | sed -n 's/.*branch-sha=\([0-9a-f]\{1,\}\).*/\1/p')"
                   m_main="$(printf '%s' "$marker" | sed -n 's/.*main-sha=\([0-9a-f]\{1,\}\).*/\1/p')"
@@ -252,7 +252,7 @@ jobs:
       matrix:
         include: ${{ fromJson(needs.discover.outputs.branches) }}
     concurrency:
-      group: speckit-rebase-${{ matrix.slug }}
+      group: wing-commander-rebase-${{ matrix.slug }}
       cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
@@ -285,12 +285,12 @@ jobs:
         run: |
           ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
           if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=speckit-pipeline-ref"               | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref"               | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
             while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
             ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
           fi
           if [ -z "$ref" ]; then
-            echo "::error::speckit stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            echo "::error::wing-commander stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
             exit 1
           fi
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
@@ -303,12 +303,12 @@ jobs:
           # A private pipeline repository is not readable by the caller's
           # GITHUB_TOKEN — pipeline-repo-token covers that case (docs/adoption.md).
           token: ${{ secrets.pipeline-repo-token || github.token }}
-          path: .speckit-pipeline
+          path: .wing-commander-pipeline
           persist-credentials: false
 
-      - name: Speckit context
+      - name: Wing Commander context
         id: ctx
-        uses: ./.speckit-pipeline/.github/actions/speckit-context
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
@@ -318,9 +318,9 @@ jobs:
       # discover gate skips). fetch-depth: 0 also records the remote-tracking
       # ref `refs/remotes/origin/spec/<slug>` at its current tip — the value
       # `--force-with-lease` compares against.
-      # clean: false — preserve the untracked .speckit-pipeline checkout the
+      # clean: false — preserve the untracked .wing-commander-pipeline checkout the
       # metrics composite below still needs.
-      - name: Checkout spec branch as speckit-bot
+      - name: Checkout spec branch as wing-commander-bot
         uses: actions/checkout@v4
         with:
           ref: spec/${{ matrix.slug }}
@@ -460,7 +460,7 @@ jobs:
         if: always() && steps.agent.outcome != 'skipped'
         # Belt-and-braces for the action's own "never fail the job" contract.
         continue-on-error: true
-        uses: ./.speckit-pipeline/.github/actions/speckit-metrics-summary
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
         with:
           model: ${{ inputs.model }}
           max-turns: ${{ inputs.max-turns }}
@@ -590,7 +590,7 @@ jobs:
             exit 0
           fi
 
-          marker="<!-- speckit-rebase: blocked branch-sha=$BEFORE main-sha=$main_sha -->"
+          marker="<!-- wing-commander-rebase: blocked branch-sha=$BEFORE main-sha=$main_sha -->"
           {
             echo "🛠️ **Auto-rebase needs a human** — I could not bring \`spec/$SLUG\` current with \`$DB\` automatically."
             echo ""

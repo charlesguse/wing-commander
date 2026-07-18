@@ -4,8 +4,8 @@
 # draft spec. This is the one deliberately narrow path that lets a requester
 # WITHOUT write access steer the pipeline — hence the tight actor gate, which
 # is trigger-side and therefore lives HERE (constitution V). All stage logic
-# lives in reusable-clarify.yml (docs/adoption.md), called by local path.
-name: "speckit · 2 clarify"
+# lives in clarify.yml (docs/adoption.md), called by local path.
+name: "Wing Commander · 2 clarify"
 
 on:
   issue_comment:
@@ -30,12 +30,12 @@ jobs:
       pull-requests: write
       issues: write
       id-token: write
-    uses: ./.github/workflows/reusable-clarify.yml
+    uses: ./.github/workflows/clarify.yml
     with:
       issue-number: ${{ github.event.issue.number }}
       comment-id: ${{ github.event.comment.id }}
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-      speckit-app-id: ${{ secrets.SPECKIT_APP_ID }}
-      speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
+      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}

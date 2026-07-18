@@ -1,12 +1,12 @@
 # Stage 1 — Spec intake (thin wrapper).
 # A maintainer applying the `spec-request` label to an issue is the human
 # security gate that admits it into the pipeline. All stage logic lives in
-# reusable-intake.yml — the identical workflow_call interface adopters pin
+# intake.yml — the identical workflow_call interface adopters pin
 # (docs/adoption.md), called here by local path so every dogfooded run
 # exercises unreleased head (constitution I; specs/010-reusable-pipeline).
-# Serialization (the speckit-intake concurrency group) is declared inside the
+# Serialization (the wing-commander-intake concurrency group) is declared inside the
 # called stage — repeating the group name here would deadlock the run.
-name: "speckit · 1 intake"
+name: "Wing Commander · 1 intake"
 
 on:
   issues:
@@ -23,11 +23,11 @@ jobs:
       pull-requests: write
       issues: write
       id-token: write
-    uses: ./.github/workflows/reusable-intake.yml
+    uses: ./.github/workflows/intake.yml
     with:
       issue-number: ${{ github.event.issue.number }}
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-      speckit-app-id: ${{ secrets.SPECKIT_APP_ID }}
-      speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
+      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}

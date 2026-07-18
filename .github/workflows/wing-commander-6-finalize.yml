@@ -1,10 +1,10 @@
 # Stage 5 — Finalize (thin wrapper, dispatch target).
 # Dispatched after convergence (or hitting the iteration cap) by the
-# implement stage. All stage logic lives in reusable-finalize.yml
+# implement stage. All stage logic lives in finalize.yml
 # (docs/adoption.md), called by local path. The workflow_dispatch inputs
 # below (spec_dir, issue, converged) are the published chaining payload —
 # do not rename them.
-name: "speckit · 6 finalize"
+name: "Wing Commander · 6 finalize"
 
 on:
   workflow_dispatch:
@@ -32,7 +32,7 @@ jobs:
       issues: write
       pull-requests: write
       id-token: write
-    uses: ./.github/workflows/reusable-finalize.yml
+    uses: ./.github/workflows/finalize.yml
     with:
       spec-dir: ${{ inputs.spec_dir }}
       issue-number: ${{ fromJSON(inputs.issue) }}
@@ -40,5 +40,5 @@ jobs:
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-      speckit-app-id: ${{ secrets.SPECKIT_APP_ID }}
-      speckit-app-private-key: ${{ secrets.SPECKIT_APP_PRIVATE_KEY }}
+      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}

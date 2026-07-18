@@ -1,0 +1,41 @@
+name: Feature request
+description: >-
+  Describe a feature in plain language. If a maintainer approves it (by
+  applying the spec-request label), the Wing Commander pipeline turns this
+  issue into a reviewed spec, plan, and implementation.
+title: "[feature] "
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Your issue text is the input to the spec stage, so focus on the
+        **problem and outcome**, not the implementation. A maintainer applies
+        the `spec-request` label to admit the issue into the pipeline —
+        opening an issue triggers nothing by itself. Clarification questions
+        will be posted right here on this issue; just reply to answer them.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: The situation today and why it falls short.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: What should happen instead?
+      description: >-
+        Describe the desired behavior from a user's point of view. Acceptance
+        criteria ("given X, when Y, then Z") are welcome but not required.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else? (optional)
+      description: >-
+        Constraints, non-goals, prior discussion, or affected stages
+        (intake / clarify / plan / tasks / implement / finalize / cleanup /
+        rebase).
+    validations:
+      required: false
