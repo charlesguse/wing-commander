@@ -1,4 +1,4 @@
-name: speckit-metrics-summary
+name: wing-commander-metrics-summary
 description: >
   Deterministically parse an agent run's execution transcript
   (claude-execution-output.json) and append a concise metrics summary

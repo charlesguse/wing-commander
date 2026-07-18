@@ -1,13 +1,13 @@
 # Stage 4 — Implement ⟲ converge (thin wrapper, dispatch target).
 # Dispatched by the tasks stage (iteration=1) and by itself (iteration+1);
-# each dispatch is ONE build-and-reassess cycle in reusable-implement.yml
+# each dispatch is ONE build-and-reassess cycle in implement.yml
 # (docs/adoption.md), called by local path. The workflow_dispatch inputs
 # below (spec_dir, issue, iteration) are the published chaining payload —
 # do not rename them.
 # The model:opus label read is lifecycle convention (research.md D5 of
 # specs/010-reusable-pipeline), so it stays wrapper-side: a tiny resolve job
 # turns this repo's variables/labels into the stage's declared inputs.
-name: "speckit · 5 implement"
+name: "Wing Commander · 5 implement"
 
 on:
   workflow_dispatch:
@@ -60,15 +60,15 @@ jobs:
       issues: write
       actions: write
       id-token: write
-    uses: ./.github/workflows/reusable-implement.yml
+    uses: ./.github/workflows/implement.yml
     with:
       spec-dir: ${{ inputs.spec_dir }}
       issue-number: ${{ fromJSON(inputs.issue) }}
       iteration: ${{ fromJSON(inputs.iteration) }}
       model: ${{ needs.resolve-model.outputs.model }}
       max-iterations: ${{ fromJSON(vars.SPECKIT_MAX_ITERATIONS || '5') }}
-      self-workflow: speckit-5-implement.yml
-      next-workflow: speckit-6-finalize.yml
+      self-workflow: wing-commander-5-implement.yml
+      next-workflow: wing-commander-6-finalize.yml
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}

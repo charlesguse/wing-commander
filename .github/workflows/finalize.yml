@@ -4,7 +4,7 @@
 # tasks.md, opens the final PR spec/<NNN-slug> → default branch, and reports
 # both to the lifecycle issue. This stage dispatches nothing further itself —
 # the hand-off to cleanup is a human merging the final PR.
-# Consumers: uses: <owner>/speckit-action/.github/workflows/reusable-finalize.yml@<ref>
+# Consumers: uses: <owner>/wing-commander/.github/workflows/finalize.yml@<ref>
 name: "reusable · finalize"
 
 on:
@@ -38,7 +38,7 @@ on:
           (research.md D3). Only forks that republish need to set it.
         type: string
         required: false
-        default: charlesguse/speckit-action
+        default: charlesguse/wing-commander
       pipeline-ref:
         description: >
           Ref of the pipeline repository to check out for the shared
@@ -83,7 +83,7 @@ jobs:
   finalize:
     runs-on: ubuntu-latest
     concurrency:
-      group: speckit-${{ inputs.spec-dir }}
+      group: wing-commander-${{ inputs.spec-dir }}
       cancel-in-progress: false
     permissions:
       contents: write
@@ -112,12 +112,12 @@ jobs:
         run: |
           ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
           if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=speckit-pipeline-ref"               | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref"               | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
             while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
             ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
           fi
           if [ -z "$ref" ]; then
-            echo "::error::speckit stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            echo "::error::wing-commander stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
             exit 1
           fi
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
@@ -130,20 +130,20 @@ jobs:
           # A private pipeline repository is not readable by the caller's
           # GITHUB_TOKEN — pipeline-repo-token covers that case (docs/adoption.md).
           token: ${{ secrets.pipeline-repo-token || github.token }}
-          path: .speckit-pipeline
+          path: .wing-commander-pipeline
           persist-credentials: false
 
       # Deterministic fail-fast before any billable work (FR-004, FR-009).
       - name: Preflight
-        uses: ./.speckit-pipeline/.github/actions/speckit-preflight
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-preflight
         with:
           oauth-token: ${{ secrets.claude-code-oauth-token }}
           api-key: ${{ secrets.anthropic-api-key }}
           require-speckit: "true"
 
-      - name: Speckit context
+      - name: Wing Commander context
         id: ctx
-        uses: ./.speckit-pipeline/.github/actions/speckit-context
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
@@ -179,8 +179,8 @@ jobs:
           echo "spec-dir=$SPEC_DIR_INPUT"      >> "$GITHUB_OUTPUT"
 
       # clean: false — a default `git clean` here would delete the untracked
-      # .speckit-pipeline checkout the composite steps below still need.
-      - name: Checkout spec branch as speckit-bot
+      # .wing-commander-pipeline checkout the composite steps below still need.
+      - name: Checkout spec branch as wing-commander-bot
         uses: actions/checkout@v4
         with:
           ref: spec/${{ steps.spec.outputs.slug }}
@@ -199,7 +199,7 @@ jobs:
         run: |
           for f in spec.md plan.md tasks.md spec-meta.json; do
             if [ ! -f "$SPEC_DIR/$f" ]; then
-              msg="speckit finalize stage: cannot match this dispatch to a specification — $SPEC_DIR/$f is missing on the spec branch. It is produced by the intake/plan/tasks stages; run the predecessor stages for this spec first."
+              msg="wing-commander finalize stage: cannot match this dispatch to a specification — $SPEC_DIR/$f is missing on the spec branch. It is produced by the intake/plan/tasks stages; run the predecessor stages for this spec first."
               echo "::error::$msg"
               echo "$msg" >> "$GITHUB_STEP_SUMMARY"
               exit 1
@@ -208,7 +208,7 @@ jobs:
           meta_issue=$(jq -r '.issue // empty' "$SPEC_DIR/spec-meta.json")
           meta_dir=$(jq -r '.spec_dir // empty' "$SPEC_DIR/spec-meta.json")
           if [ "$meta_issue" != "$ISSUE" ] || [ "$meta_dir" != "$SPEC_DIR" ]; then
-            msg="speckit finalize stage: spec-meta.json (issue=$meta_issue, spec_dir=$meta_dir) does not match the dispatch inputs (issue=$ISSUE, spec_dir=$SPEC_DIR) — refusing."
+            msg="wing-commander finalize stage: spec-meta.json (issue=$meta_issue, spec_dir=$meta_dir) does not match the dispatch inputs (issue=$ISSUE, spec_dir=$SPEC_DIR) — refusing."
             echo "::error::$msg"
             echo "$msg" >> "$GITHUB_STEP_SUMMARY"
             exit 1
@@ -261,7 +261,7 @@ jobs:
           echo "skip=false" >> "$GITHUB_OUTPUT"
           echo "compare-link=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/$DB...spec/$SLUG" >> "$GITHUB_OUTPUT"
           {
-            echo "changed-files<<SPECKIT_FILES_EOF"
+            echo "changed-files<<WING_COMMANDER_FILES_EOF"
             files=$(git diff --name-only "origin/$DB...HEAD")
             total=$(printf '%s\n' "$files" | grep -c .)
             if [ "$total" -gt 25 ]; then
@@ -270,7 +270,7 @@ jobs:
             else
               printf '%s\n' "$files"
             fi
-            echo "SPECKIT_FILES_EOF"
+            echo "WING_COMMANDER_FILES_EOF"
           } >> "$GITHUB_OUTPUT"
 
       # The one agent step, read-only. Only the validated slug and integer
@@ -344,7 +344,7 @@ jobs:
         if: always() && steps.summarize.outcome != 'skipped'
         # Belt-and-braces for the action's own "never fail the job" contract.
         continue-on-error: true
-        uses: ./.speckit-pipeline/.github/actions/speckit-metrics-summary
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
         with:
           model: ${{ inputs.summary-model }}
           max-turns: ${{ inputs.max-turns }}
@@ -360,7 +360,7 @@ jobs:
           if [ "$SUMMARIZE_OUTCOME" != "success" ] \
              || [ ! -f "${{ runner.temp }}/finalize-summary.md" ] \
              || [ ! -f "${{ runner.temp }}/finalize-remaining.md" ]; then
-            msg="speckit finalize stage: the change-summary/remaining-work step did not complete successfully."
+            msg="wing-commander finalize stage: the change-summary/remaining-work step did not complete successfully."
             echo "::error::$msg"
             gh issue comment "$ISSUE" --body "❌ **Finalize failed** — $msg No final pull request was opened; retrigger the finalize stage to retry."
             exit 1
@@ -449,7 +449,7 @@ jobs:
         run: |
           pr=$(gh pr list --head "spec/$SLUG" --base "$DB" --state open --json number --jq '.[0].number // empty')
           if [ -z "$pr" ]; then
-            msg="speckit finalize stage: gh pr create did not result in a verifiable open pull request from spec/$SLUG to $DB."
+            msg="wing-commander finalize stage: gh pr create did not result in a verifiable open pull request from spec/$SLUG to $DB."
             echo "::error::$msg"
             gh issue comment "$ISSUE" --body "❌ **Finalize failed** — $msg spec-meta.json was left untouched; retrigger the finalize stage to retry."
             exit 1

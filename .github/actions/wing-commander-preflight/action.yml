@@ -10,9 +10,9 @@
 #
 # Like every shared composite, this action is resolved from the pipeline
 # repository's own checkout at github.job_workflow_sha (see the header of
-# .github/actions/speckit-context/action.yml for the verified snippet), so
+# .github/actions/wing-commander-context/action.yml for the verified snippet), so
 # it must never assume it lives in the workspace-root repository.
-name: speckit-preflight
+name: wing-commander-preflight
 description: >
   Fail fast, deterministically, before any agent step: verify at least one
   Claude credential is configured (naming both exact secret names when not),
@@ -52,7 +52,7 @@ inputs:
       Newline-separated list of paths that must exist in the consumer
       checkout. Each line is "path" or "path|provider", where provider names
       the step that produces the file (e.g. "specs/001-x/plan.md|the plan
-      stage (reusable-plan.yml)"). The failure message names the provider.
+      stage (plan.yml)"). The failure message names the provider.
     required: false
     default: ""
   require-meta-stage:
@@ -90,8 +90,8 @@ runs:
         set -uo pipefail
 
         fail() {
-          echo "::error::speckit preflight: $1"
-          echo "❌ **speckit preflight failed** — $1" >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::wing-commander preflight: $1"
+          echo "❌ **wing-commander preflight failed** — $1" >> "$GITHUB_STEP_SUMMARY"
           exit 1
         }
 
@@ -133,7 +133,7 @@ runs:
             fail "require-meta-stage is set but spec-dir is empty — this is a bug in the calling workflow, not in your repository."
           fi
           if [ ! -f "$SPEC_DIR/spec-meta.json" ]; then
-            fail "\`$SPEC_DIR/spec-meta.json\` is missing — it is produced by the intake stage (reusable-intake.yml) or committed alongside a hand-written spec. Run that first, then retry this stage."
+            fail "\`$SPEC_DIR/spec-meta.json\` is missing — it is produced by the intake stage (intake.yml) or committed alongside a hand-written spec. Run that first, then retry this stage."
           fi
           stage=$(jq -r '.stage // empty' "$SPEC_DIR/spec-meta.json" 2>/dev/null || true)
           if [ "$stage" != "$REQUIRE_META_STAGE" ]; then
@@ -146,9 +146,9 @@ runs:
         if [ -f ".specify/init-options.json" ]; then
           v=$(jq -r '.speckit_version // empty' .specify/init-options.json 2>/dev/null || true)
           if [ -n "$v" ] && [ "$v" != "$SPECKIT_SUPPORTED_VERSION" ]; then
-            echo "::warning::speckit preflight: this repository's spec-kit version ($v, from .specify/init-options.json) differs from the pipeline's supported version ($SPECKIT_SUPPORTED_VERSION). The stage will still run, but behavior is only verified against the supported version."
+            echo "::warning::wing-commander preflight: this repository's spec-kit version ($v, from .specify/init-options.json) differs from the pipeline's supported version ($SPECKIT_SUPPORTED_VERSION). The stage will still run, but behavior is only verified against the supported version."
             echo "⚠️ spec-kit version mismatch: repository has $v, pipeline supports $SPECKIT_SUPPORTED_VERSION (continuing)." >> "$GITHUB_STEP_SUMMARY"
           fi
         fi
 
-        echo "✅ speckit preflight passed (credential configured; prerequisites present)." >> "$GITHUB_STEP_SUMMARY"
+        echo "✅ wing-commander preflight passed (credential configured; prerequisites present)." >> "$GITHUB_STEP_SUMMARY"

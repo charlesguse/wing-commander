@@ -1,13 +1,13 @@
 # Stage 3 — Tasks (thin wrapper).
 # Two triggers, one stage: a merged plan PR (or manual restart) calls
-# reusable-tasks.yml with mode: generate; a merged tasks/<NNN-slug> review PR
+# tasks.yml with mode: generate; a merged tasks/<NNN-slug> review PR
 # calls it with mode: approved (the agent-free hand-off — a workflow_call
 # workflow cannot own the pull_request trigger itself). Review mode and the
 # implement hand-off are wired from this repo's variables here, as declared
 # stage inputs (docs/adoption.md).
 # A tasks PR closed WITHOUT merging marks the spec stalled — owned by the
-# cleanup stage (speckit-7-cleanup.yml), not this workflow.
-name: "speckit · 4 tasks"
+# cleanup stage (wing-commander-7-cleanup.yml), not this workflow.
+name: "Wing Commander · 4 tasks"
 
 on:
   pull_request:
@@ -38,14 +38,14 @@ jobs:
       issues: write
       actions: write
       id-token: write
-    uses: ./.github/workflows/reusable-tasks.yml
+    uses: ./.github/workflows/tasks.yml
     with:
       mode: generate
       head-ref: ${{ github.event.pull_request.head.ref }}
       slug: ${{ inputs.slug }}
       restart: ${{ github.event_name == 'workflow_dispatch' }}
       tasks-review: ${{ vars.SPECKIT_TASKS_REVIEW || 'auto' }}
-      next-workflow: speckit-5-implement.yml
+      next-workflow: wing-commander-5-implement.yml
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -69,11 +69,11 @@ jobs:
       issues: write
       actions: write
       id-token: write
-    uses: ./.github/workflows/reusable-tasks.yml
+    uses: ./.github/workflows/tasks.yml
     with:
       mode: approved
       head-ref: ${{ github.event.pull_request.head.ref }}
-      next-workflow: speckit-5-implement.yml
+      next-workflow: wing-commander-5-implement.yml
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}

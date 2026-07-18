@@ -2,9 +2,9 @@
 # On pushes to main (and nightly), keep every in-flight spec/<NNN-slug>
 # working branch current with the main line. Discovery, the per-branch
 # matrix fan-out, lease pushes, agent conflict resolution, and escalation all
-# live in reusable-rebase.yml (docs/adoption.md), called by local path. The
+# live in rebase.yml (docs/adoption.md), called by local path. The
 # bot-actor loop guard is trigger-side and lives HERE.
-name: "speckit · rebase"
+name: "Wing Commander · rebase"
 
 on:
   push:
@@ -24,7 +24,7 @@ jobs:
       contents: write
       issues: write
       id-token: write
-    uses: ./.github/workflows/reusable-rebase.yml
+    uses: ./.github/workflows/rebase.yml
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}

@@ -2,9 +2,9 @@
 # The pipeline's terminal stage: reacts to any closed pull request. This
 # wrapper forwards the RAW event facts; the three-way outcome self-selection
 # (teardown-done / teardown-rejected / mark-stalled, every other shape a
-# no-op) lives in reusable-cleanup.yml (docs/adoption.md), called by local
+# no-op) lives in cleanup.yml (docs/adoption.md), called by local
 # path.
-name: "speckit · 7 cleanup"
+name: "Wing Commander · 7 cleanup"
 
 on:
   pull_request:
@@ -19,7 +19,7 @@ jobs:
       pull-requests: write
       issues: write
       id-token: write
-    uses: ./.github/workflows/reusable-cleanup.yml
+    uses: ./.github/workflows/cleanup.yml
     with:
       head-ref: ${{ github.event.pull_request.head.ref }}
       base-ref: ${{ github.event.pull_request.base.ref }}

@@ -8,7 +8,7 @@
 #     review mode: validates the slug and dispatches next-workflow. A
 #     workflow_call workflow has no triggers of its own, so the WRAPPER owns
 #     the pull_request: closed trigger and calls this stage with mode: approved.
-# Consumers: uses: <owner>/speckit-action/.github/workflows/reusable-tasks.yml@<ref>
+# Consumers: uses: <owner>/wing-commander/.github/workflows/tasks.yml@<ref>
 name: "reusable · tasks"
 
 on:
@@ -69,7 +69,7 @@ on:
           (research.md D3). Only forks that republish need to set it.
         type: string
         required: false
-        default: charlesguse/speckit-action
+        default: charlesguse/wing-commander
       pipeline-ref:
         description: >
           Ref of the pipeline repository to check out for the shared
@@ -121,13 +121,13 @@ jobs:
       issues: write
       # Dispatching the implement wrapper uses the default GITHUB_TOKEN
       # (workflow_dispatch is exempt from the no-recursive-trigger rule);
-      # the speckit-bot App token has no actions permission.
+      # the wing-commander-bot App token has no actions permission.
       actions: write
       id-token: write
     # One tasks run per spec at a time: a duplicate merge notification queues
     # behind the first and then no-ops on the stage guard.
     concurrency:
-      group: speckit-tasks-${{ inputs.slug || inputs.head-ref }}
+      group: wing-commander-tasks-${{ inputs.slug || inputs.head-ref }}
       cancel-in-progress: false
     outputs:
       spec-dir: ${{ steps.spec.outputs.spec-dir }}
@@ -151,12 +151,12 @@ jobs:
         run: |
           ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
           if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=speckit-pipeline-ref"               | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref"               | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
             while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
             ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
           fi
           if [ -z "$ref" ]; then
-            echo "::error::speckit stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            echo "::error::wing-commander stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
             exit 1
           fi
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
@@ -169,21 +169,21 @@ jobs:
           # A private pipeline repository is not readable by the caller's
           # GITHUB_TOKEN — pipeline-repo-token covers that case (docs/adoption.md).
           token: ${{ secrets.pipeline-repo-token || github.token }}
-          path: .speckit-pipeline
+          path: .wing-commander-pipeline
           persist-credentials: false
 
       # Deterministic fail-fast before any billable work (FR-004, FR-009).
       - name: Preflight
-        uses: ./.speckit-pipeline/.github/actions/speckit-preflight
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-preflight
         with:
           oauth-token: ${{ secrets.claude-code-oauth-token }}
           api-key: ${{ secrets.anthropic-api-key }}
           require-speckit: "true"
           require-files: ".claude/skills/speckit-tasks/SKILL.md|specify init (spec-kit's claude integration)"
 
-      - name: Speckit context
+      - name: Wing Commander context
         id: ctx
-        uses: ./.speckit-pipeline/.github/actions/speckit-context
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
@@ -206,8 +206,8 @@ jobs:
           echo "spec-dir=specs/$slug" >> "$GITHUB_OUTPUT"
 
       # clean: false — a default `git clean` here would delete the untracked
-      # .speckit-pipeline checkout the composite steps below still need.
-      - name: Checkout spec branch as speckit-bot
+      # .wing-commander-pipeline checkout the composite steps below still need.
+      - name: Checkout spec branch as wing-commander-bot
         uses: actions/checkout@v4
         with:
           ref: spec/${{ steps.spec.outputs.slug }}
@@ -225,7 +225,7 @@ jobs:
           SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
         run: |
           if [ ! -f "$SPEC_DIR/spec.md" ] || [ ! -f "$SPEC_DIR/spec-meta.json" ] || [ ! -f "$SPEC_DIR/plan.md" ]; then
-            msg="speckit tasks stage: cannot match this trigger to a specification — expected $SPEC_DIR/spec.md, spec-meta.json, and plan.md on the spec branch. plan.md is produced by the plan stage (reusable-plan.yml); run it for this spec first."
+            msg="wing-commander tasks stage: cannot match this trigger to a specification — expected $SPEC_DIR/spec.md, spec-meta.json, and plan.md on the spec branch. plan.md is produced by the plan stage (plan.yml); run it for this spec first."
             echo "::error::$msg"
             echo "$msg" >> "$GITHUB_STEP_SUMMARY"
             exit 1
@@ -249,7 +249,7 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           else
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "Stage is '$stage' (expected 'plan', set by the plan stage — reusable-plan.yml) — duplicate or out-of-order notification, nothing to do. If this spec needs a restart from 'stalled', retrigger with restart: true." >> "$GITHUB_STEP_SUMMARY"
+            echo "Stage is '$stage' (expected 'plan', set by the plan stage — plan.yml) — duplicate or out-of-order notification, nothing to do. If this spec needs a restart from 'stalled', retrigger with restart: true." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       # Tie every run — merge-triggered or manual — back to the lifecycle
@@ -263,7 +263,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           ACTOR: ${{ github.triggering_actor }}
         run: |
-          gh issue comment "$ISSUE" --body "📋 **speckit · tasks** — task generation started ([run]($RUN_URL), triggered by \`$ACTOR\`)."
+          gh issue comment "$ISSUE" --body "📋 **Wing Commander · tasks** — task generation started ([run]($RUN_URL), triggered by \`$ACTOR\`)."
 
       # Review mode from the tasks-review input (research.md D5 — declared
       # configuration, not repository vars). Anything other than 'pr' fails
@@ -422,7 +422,7 @@ jobs:
            steps.agent-pr.outcome != 'skipped')
         # Belt-and-braces for the action's own "never fail the job" contract.
         continue-on-error: true
-        uses: ./.speckit-pipeline/.github/actions/speckit-metrics-summary
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
         with:
           model: ${{ inputs.model }}
           max-turns: ${{ inputs.max-turns }}
@@ -534,7 +534,7 @@ jobs:
       actions: write
       id-token: write
     concurrency:
-      group: speckit-tasks-${{ inputs.slug || inputs.head-ref }}
+      group: wing-commander-tasks-${{ inputs.slug || inputs.head-ref }}
       cancel-in-progress: false
     outputs:
       spec-dir: ${{ steps.spec.outputs.spec-dir }}
@@ -558,12 +558,12 @@ jobs:
         run: |
           ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
           if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=speckit-pipeline-ref"               | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref"               | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
             while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
             ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
           fi
           if [ -z "$ref" ]; then
-            echo "::error::speckit stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            echo "::error::wing-commander stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
             exit 1
           fi
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
@@ -576,20 +576,20 @@ jobs:
           # A private pipeline repository is not readable by the caller's
           # GITHUB_TOKEN — pipeline-repo-token covers that case (docs/adoption.md).
           token: ${{ secrets.pipeline-repo-token || github.token }}
-          path: .speckit-pipeline
+          path: .wing-commander-pipeline
           persist-credentials: false
 
       # No agent step runs on this path, so no credential is required —
       # spec-kit presence is still checked so failures carry guidance.
       - name: Preflight
-        uses: ./.speckit-pipeline/.github/actions/speckit-preflight
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-preflight
         with:
           require-credential: "false"
           require-speckit: "true"
 
-      - name: Speckit context
+      - name: Wing Commander context
         id: ctx
-        uses: ./.speckit-pipeline/.github/actions/speckit-context
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
@@ -608,8 +608,8 @@ jobs:
           echo "slug=$slug"           >> "$GITHUB_OUTPUT"
           echo "spec-dir=specs/$slug" >> "$GITHUB_OUTPUT"
 
-      # clean: false — preserve .speckit-pipeline (see the tasks job).
-      - name: Checkout spec branch as speckit-bot
+      # clean: false — preserve .wing-commander-pipeline (see the tasks job).
+      - name: Checkout spec branch as wing-commander-bot
         uses: actions/checkout@v4
         with:
           ref: spec/${{ steps.spec.outputs.slug }}
