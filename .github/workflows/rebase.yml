@@ -252,7 +252,7 @@ jobs:
       matrix:
         include: ${{ fromJson(needs.discover.outputs.branches) }}
     concurrency:
-      group: wing-commander-rebase-${{ matrix.slug }}
+      group: wing-commander-${{ matrix.spec_dir }}
       cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
