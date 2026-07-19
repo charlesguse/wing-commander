@@ -1,7 +1,8 @@
 {
-  "issue": null,
+  "issue": 64,
   "spec_dir": "specs/990-scratch-a",
   "feature_num": "990",
-  "stage": "spec",
+  "stage": "plan",
+  "spec_branch": "spec/990-scratch-a",
   "iteration": 1
 }
