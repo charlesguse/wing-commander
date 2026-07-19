@@ -1,1 +1,1 @@
-main-line advance 3 (scenario 4 push A)
+main-line advance 4 (scenario 4 push B)
