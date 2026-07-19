@@ -93,7 +93,7 @@ Single project — CI/CD automation under `.github/workflows/`. No `src/`/`tests
 
 **Purpose**: Documentation follow-up now that the shared group convergence is real, not just asserted.
 
-- [ ] T014 [P] Correct `specs/010-reusable-pipeline/contracts/stage-interfaces.md`'s per-spec serialization claim (currently asserting a shared `concurrency: speckit-<slug>` convention that, before this feature, only held within a single stage's own re-dispatch chain) to accurately describe the now-real `wing-commander-<spec-dir>` group shared by `rebase`, `plan`, `tasks`/`tasks-approved`, `implement`, and `finalize` (research.md D1, contracts/concurrency-groups.md).
+- [X] T014 [P] Correct `specs/010-reusable-pipeline/contracts/stage-interfaces.md`'s per-spec serialization claim (currently asserting a shared `concurrency: speckit-<slug>` convention that, before this feature, only held within a single stage's own re-dispatch chain) to accurately describe the now-real `wing-commander-<spec-dir>` group shared by `rebase`, `plan`, `tasks`/`tasks-approved`, `implement`, and `finalize` (research.md D1, contracts/concurrency-groups.md).
 
 ---
 

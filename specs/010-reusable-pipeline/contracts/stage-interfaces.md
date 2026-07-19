@@ -44,8 +44,12 @@ Credential behavior: see [credentials.md](credentials.md).
   dispatch, so any stage runs standalone (FR-002/US2). When set, the stage
   dispatches that workflow *file in the consuming repository* via
   `gh workflow run`, using the chaining payload contract below.
-- Per-spec serialization (`concurrency: speckit-<slug>`) is declared at job
-  level inside the stage and therefore applies in the consuming repository.
+- Per-spec serialization: every stage that checks out and publishes to a
+  specification's `spec/NNN-slug` working branch — `rebase`, `plan`, `tasks`
+  (both `mode: generate` and `mode: approved`), `implement`, and `finalize` —
+  declares the same job-level `concurrency: wing-commander-<spec-dir>` group
+  (`cancel-in-progress: false`), so at most one of them ever runs against a
+  given specification at a time (specs/013-serialize-rebase-stages/contracts/concurrency-groups.md).
 
 **Wrapper gate obligations** (documented, adopter-owned — constitution V
 guidance shipped in docs/adoption.md): maintainer-label entry gate before
