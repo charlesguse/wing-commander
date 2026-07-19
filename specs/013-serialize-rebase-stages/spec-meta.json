@@ -2,7 +2,7 @@
   "issue": 53,
   "spec_dir": "specs/013-serialize-rebase-stages",
   "feature_num": "013",
-  "stage": "spec",
-  "iteration": 0,
-  "spec_branch": null
+  "stage": "review",
+  "iteration": 1,
+  "spec_branch": "spec/013-serialize-rebase-stages"
 }
