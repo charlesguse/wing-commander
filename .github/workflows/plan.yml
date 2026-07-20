@@ -40,6 +40,20 @@ on:
         type: number
         required: false
         default: 80
+      plan-review:
+        description: "pr (open a plan PR and wait for a human merge) or auto (commit the plan directly, dispatch the tasks stage)"
+        type: string
+        required: false
+        default: pr
+      next-workflow:
+        description: >
+          Filename of the CONSUMER wrapper workflow to dispatch for the tasks
+          stage when plan-review resolves to auto (chaining payload: slug).
+          Empty = no dispatch: the stage completes its own work, reports, and
+          stops — any stage runs standalone (FR-002).
+        type: string
+        required: false
+        default: ""
       pipeline-repo:
         description: >
           Repository to check out for the pipeline's shared composite actions
@@ -127,6 +141,10 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
+      # Dispatching the tasks wrapper in auto mode uses the default
+      # GITHUB_TOKEN (workflow_dispatch is exempt from the no-recursive-trigger
+      # rule); the wing-commander-bot App token has no actions permission.
+      actions: write
       id-token: write
     # One planning/rebase/tasks/implement/finalize run per specification at a
     # time, across all six job instances (contracts/concurrency-groups.md).
@@ -296,6 +314,26 @@ jobs:
           ACTOR: ${{ github.triggering_actor }}
         run: |
           gh issue comment "$ISSUE" --body "📐 **Wing Commander · plan** — planning started ([run]($RUN_URL), triggered by \`$ACTOR\`)."
+
+      # Review mode from the plan-review input (research.md D5 — declared
+      # configuration, not repository vars). Unlike tasks.yml's tasks-review
+      # (which silently treats anything other than 'pr' as 'auto'), an
+      # unrecognized value here fails open to 'pr' and is surfaced, never
+      # silently treated as 'auto' (contracts/plan-workflow.md).
+      - name: Resolve review mode
+        id: mode
+        if: steps.dupe.outputs.skip != 'true'
+        env:
+          REVIEW: ${{ inputs.plan-review }}
+        run: |
+          if [ -z "$REVIEW" ] || [ "$REVIEW" = "pr" ]; then
+            echo "mode=pr" >> "$GITHUB_OUTPUT"
+          elif [ "$REVIEW" = "auto" ]; then
+            echo "mode=auto" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=pr" >> "$GITHUB_OUTPUT"
+            echo "invalid=$REVIEW" >> "$GITHUB_OUTPUT"
+          fi
 
       # clean: false — preserve .wing-commander-pipeline (see above).
       - name: Checkout spec branch as wing-commander-bot
