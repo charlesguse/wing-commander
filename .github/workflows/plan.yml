@@ -333,7 +333,23 @@ jobs:
           else
             echo "mode=pr" >> "$GITHUB_OUTPUT"
             echo "invalid=$REVIEW" >> "$GITHUB_OUTPUT"
+            msg="WING_COMMANDER_PLAN_REVIEW='$REVIEW' is not a recognized value (expected 'pr' or 'auto') — Gate 3 defaulted to enabled ('pr')."
+            echo "::warning::$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      # Follow-up to "Report run started on lifecycle issue": that comment is
+      # posted before the review mode is known, so an invalid value is
+      # surfaced on the lifecycle issue here instead (FR-008).
+      - name: Report invalid plan-review value on lifecycle issue
+        if: steps.dupe.outputs.skip != 'true' && steps.mode.outputs.invalid != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ISSUE: ${{ steps.meta.outputs.issue || steps.newissue.outputs.issue }}
+          INVALID: ${{ steps.mode.outputs.invalid }}
+        run: |
+          gh issue comment "$ISSUE" --body "⚠️ \`WING_COMMANDER_PLAN_REVIEW='$INVALID'\` is not a recognized value (expected \`pr\` or \`auto\`) — Gate 3 (plan review) defaulted to enabled (\`pr\`)."
 
       # clean: false — preserve .wing-commander-pipeline (see above).
       - name: Checkout spec branch as wing-commander-bot
