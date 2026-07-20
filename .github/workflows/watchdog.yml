@@ -102,6 +102,7 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
+  actions: read
   id-token: write
 
 concurrency:
@@ -114,15 +115,141 @@ jobs:
   collect:
     runs-on: ubuntu-latest
     outputs:
-      evidence-available: ${{ steps.placeholder.outputs.evidence-available }}
-      signals: ${{ steps.placeholder.outputs.signals }}
-      spec-dir: ${{ steps.placeholder.outputs.spec-dir }}
-      lifecycle-issue: ${{ steps.placeholder.outputs.lifecycle-issue }}
-      slug: ${{ steps.placeholder.outputs.slug }}
+      evidence-available: ${{ steps.aggregate.outputs.evidence-available }}
+      signals: ${{ steps.aggregate.outputs.signals }}
+      spec-dir: ${{ steps.spec-slug.outputs.spec-dir }}
+      lifecycle-issue: ${{ steps.spec-slug.outputs.lifecycle-issue }}
+      slug: ${{ steps.spec-slug.outputs.slug }}
+      run-html-url: ${{ steps.run-meta.outputs.html-url }}
     steps:
-      # Phase 1 skeleton placeholder — replaced by the Foundational/US1 steps.
-      - id: placeholder
-        run: "true"
+      - name: Checkout consumer repository (bootstrap, default token)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # research.md D3: the composite checkout must pin the EXACT commit of
+      # the running reusable workflow. github.job_workflow_sha is empty for
+      # some remote call shapes (observed live: cross-repo branch refs), so
+      # fall back to the OIDC token's job_workflow_sha claim (requires
+      # id-token: write). Never fall back to a branch name — a silent
+      # default-branch checkout would break version pinning.
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref" | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          # A private pipeline repository is not readable by the caller's
+          # GITHUB_TOKEN — pipeline-repo-token covers that case (docs/adoption.md).
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      # Deterministic fail-fast before any billable work (FR-004). Watchdog
+      # runs no spec-kit skill, so only the credential invariant applies.
+      - name: Preflight
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-preflight
+        with:
+          oauth-token: ${{ secrets.claude-code-oauth-token }}
+          api-key: ${{ secrets.anthropic-api-key }}
+          require-speckit: "false"
+
+      - name: Wing Commander context
+        id: ctx
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      # watchdog.yml never reads github.event.* (workflow_call convention) —
+      # the wrapper only forwards run-id/run-name, so every other fact about
+      # the inspected run (branch, sha, conclusion, url) is fetched here.
+      - name: Fetch inspected run metadata
+        id: run-meta
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          RUN_ID: ${{ inputs.run-id }}
+        run: |
+          set -euo pipefail
+          json=$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json headBranch,headSha,conclusion,htmlUrl,event,createdAt,databaseId)
+          {
+            echo "head-branch=$(printf '%s' "$json" | jq -r '.headBranch // empty')"
+            echo "head-sha=$(printf '%s' "$json" | jq -r '.headSha // empty')"
+            echo "conclusion=$(printf '%s' "$json" | jq -r '.conclusion // empty')"
+            echo "html-url=$(printf '%s' "$json" | jq -r '.htmlUrl // empty')"
+            echo "event=$(printf '%s' "$json" | jq -r '.event // empty')"
+            echo "created-at=$(printf '%s' "$json" | jq -r '.createdAt // empty')"
+          } >> "$GITHUB_OUTPUT"
+
+      # Best-effort, read-only spec identity resolution (contract's collect
+      # job step 2) — never a refusal gate, unlike every write-capable
+      # stage's identity check. A run the watchdog can't tie to a spec (e.g.
+      # a main-based cleanup run) is still inspected and reported against its
+      # own run URL; this step just records that no lifecycle issue
+      # destination exists rather than failing the job.
+      - name: Resolve inspected run's spec slug and lifecycle issue
+        id: spec-slug
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          HEAD_BRANCH: ${{ steps.run-meta.outputs.head-branch }}
+        run: |
+          set -uo pipefail
+          slug=""
+          case "$HEAD_BRANCH" in
+            spec-draft/*) slug="${HEAD_BRANCH#spec-draft/}" ;;
+            spec/*)       slug="${HEAD_BRANCH#spec/}" ;;
+            plan/*)       slug="${HEAD_BRANCH#plan/}" ;;
+            tasks/*)      slug="${HEAD_BRANCH#tasks/}" ;;
+            impl/*)       slug="${HEAD_BRANCH#impl/}"; slug="${slug%-iter*}" ;;
+          esac
+
+          issue=""
+          spec_dir=""
+          if [ -n "$slug" ]; then
+            spec_dir="specs/$slug"
+            git fetch --no-tags --quiet origin "refs/heads/spec/$slug:refs/remotes/origin/spec/$slug" 2>/dev/null || true
+            if meta="$(git show "refs/remotes/origin/spec/$slug:$spec_dir/spec-meta.json" 2>/dev/null)"; then
+              meta_dir="$(printf '%s' "$meta" | jq -r '.spec_dir // empty' 2>/dev/null || true)"
+              if [ "$meta_dir" = "$spec_dir" ]; then
+                issue="$(printf '%s' "$meta" | jq -r '.issue // empty' 2>/dev/null || true)"
+              fi
+            fi
+          fi
+
+          if [ -z "$issue" ]; then
+            echo "No lifecycle issue destination could be resolved for head branch '$HEAD_BRANCH' — this run will be reported against its own run URL only." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          {
+            echo "slug=$slug"
+            echo "spec-dir=$spec_dir"
+            echo "lifecycle-issue=$issue"
+          } >> "$GITHUB_OUTPUT"
+
+      # Phase 2 placeholder — replaced by the US1 aggregation step (T012),
+      # which computes evidence-available from the five collectors below.
+      - name: Aggregate signals (placeholder)
+        id: aggregate
+        run: |
+          echo "evidence-available=true" >> "$GITHUB_OUTPUT"
+          echo "signals=[]" >> "$GITHUB_OUTPUT"
 
   # Single haiku-tier, read-only, structured-output step turning signals into
   # zero or more Findings. Skipped when collect could not gather any evidence
@@ -132,31 +259,58 @@ jobs:
     if: needs.collect.outputs.evidence-available != 'false'
     runs-on: ubuntu-latest
     outputs:
+      # "passed-inspection" (zero Findings) or "findings" (one or more).
       outcome: ${{ steps.placeholder.outputs.outcome }}
+      # JSON array of Finding objects (data-model.md shape), each with a
+      # deterministic zero-based "index" field added for the triage/act
+      # matrix and per-index artifact naming below.
       findings: ${{ steps.placeholder.outputs.findings }}
     steps:
-      # Phase 1 skeleton placeholder — replaced by the US1 diagnose step.
+      # Phase 2 placeholder — replaced by the US1 diagnose agent step (T013).
       - id: placeholder
-        run: "true"
+        run: |
+          echo "outcome=passed-inspection" >> "$GITHUB_OUTPUT"
+          echo "findings=[]" >> "$GITHUB_OUTPUT"
 
   # One matrix entry per Finding: coexistence check, fingerprint, dedup
   # search, propose-fix, deterministic rung gate. No agent judgment gates an
-  # autonomous write (FR-011). Skipped entirely when diagnose found nothing.
+  # autonomous write (FR-011). Skipped entirely when diagnose found nothing —
+  # a zero-length matrix.include array fails strategy evaluation outright, so
+  # the job-level `if` must also exclude an empty findings array (rebase.yml
+  # precedent, run 29180556763).
   triage:
     needs: [collect, diagnose]
-    if: needs.diagnose.outputs.outcome != 'passed-inspection' && needs.collect.outputs.evidence-available != 'false'
+    if: >-
+      needs.diagnose.outputs.outcome != 'passed-inspection' &&
+      needs.collect.outputs.evidence-available != 'false' &&
+      needs.diagnose.outputs.findings != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.diagnose.outputs.findings) }}
     runs-on: ubuntu-latest
     steps:
-      # Phase 1 skeleton placeholder — replaced by the US2 triage steps.
+      # Phase 2 placeholder — replaced by the US2/US3/US4 triage steps.
       - run: "true"
 
-  # One matrix entry per non-suppressed Finding: executes exactly what
-  # triage's rung gate selected, and always reports to the lifecycle issue
-  # (FR-022) — the one write every path through this workflow performs
-  # unconditionally.
+  # One matrix entry per Finding (same source array as triage — see above):
+  # each instance downloads its own index's triage decision artifact and
+  # executes exactly what the rung gate selected, always reporting to the
+  # lifecycle issue (FR-022) — the one write every path through this
+  # workflow performs unconditionally. Suppressed findings (research.md
+  # coexistence check) still run this job but perform no write beyond the
+  # shared report step.
   act:
     needs: [collect, diagnose, triage]
+    if: >-
+      needs.diagnose.outputs.outcome != 'passed-inspection' &&
+      needs.collect.outputs.evidence-available != 'false' &&
+      needs.diagnose.outputs.findings != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.diagnose.outputs.findings) }}
     runs-on: ubuntu-latest
     steps:
-      # Phase 1 skeleton placeholder — replaced by the US1/US2 act steps.
+      # Phase 2 placeholder — replaced by the US1/US2/US3/US4 act steps.
       - run: "true"
