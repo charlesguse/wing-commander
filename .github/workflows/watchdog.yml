@@ -1108,9 +1108,78 @@ jobs:
             } >> "$GITHUB_OUTPUT"
           fi
 
+      # FR-018 (US4): before any write, if the run being inspected is itself
+      # a watchdog run, count how many consecutive prior watchdog runs form
+      # an unbroken self-inspects-self chain (research.md) — every entry
+      # walked backward from the inspected run whose own trigger was itself
+      # workflow_run (never a human-initiated workflow_dispatch link, which
+      # would break the chain). watchdog.yml never reads github.event.*
+      # directly; inputs.run-name already carries the inspected run's own
+      # display name, so "== '8 - Watchdog'" here means self-inspection —
+      # the ONLY place this stage special-cases its own name anywhere in
+      # this file (T028 desk-check: detection/fingerprint/dedup/report are
+      # identical for a watchdog-inspecting-watchdog run).
+      - name: Self-dispatch depth
+        id: self-dispatch-depth
+        if: inputs.run-name == '8 - Watchdog'
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          RUN_ID: ${{ inputs.run-id }}
+          CAP_INPUT: ${{ vars.WING_COMMANDER_WATCHDOG_SELF_DISPATCH_CAP }}
+        run: |
+          set -uo pipefail
+          cap="${CAP_INPUT:-3}"
+          if ! printf '%s' "$cap" | grep -Eq '^[1-9][0-9]*$'; then
+            cap=3
+          fi
+          limit=$((cap + 5))
+          runs_json="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow '8 - Watchdog' --json databaseId,event,createdAt --limit "$limit" --jq 'sort_by(.createdAt) | reverse' 2>/dev/null || echo '[]')"
+          depth="$(printf '%s' "$runs_json" | jq --argjson rid "$RUN_ID" '
+            (map(.databaseId) | index($rid)) as $start
+            | if $start == null then 0
+              else
+                reduce .[$start:][] as $r (
+                  {count: 0, stop: false};
+                  if .stop then .
+                  elif $r.event == "workflow_run" then {count: (.count + 1), stop: false}
+                  else {count: .count, stop: true}
+                  end
+                ) | .count
+              end
+          ' 2>/dev/null || echo 0)"
+          {
+            echo "depth=$depth"
+            echo "cap=$cap"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$depth" -ge "$cap" ]; then
+            echo "capped=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "capped=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Write-suppression gate over every write path below (T022–T024): the
+      # self-dispatch cap (this phase) and the pause switch (US3) share the
+      # identical short-circuit — collect/diagnose/triage still ran and are
+      # still reported, only act's writes are suppressed.
+      - name: Determine write suppression
+        id: write-suppression
+        env:
+          CAPPED: ${{ steps.self-dispatch-depth.outputs.capped }}
+        run: |
+          if [ "$CAPPED" = "true" ]; then
+            echo "suppressed=true"  >> "$GITHUB_OUTPUT"
+            echo "reason=self-dispatch-cap" >> "$GITHUB_OUTPUT"
+          else
+            echo "suppressed=false" >> "$GITHUB_OUTPUT"
+            echo "reason=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Resolve default branch
         id: defbranch
-        if: steps.decision.outputs.suppressed != 'true' && steps.decision.outputs.rung == '2'
+        if: >-
+          steps.decision.outputs.suppressed != 'true' &&
+          steps.write-suppression.outputs.suppressed != 'true' &&
+          steps.decision.outputs.rung == '2'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           DEFAULT_BRANCH: ${{ inputs.default-branch }}
@@ -1127,6 +1196,7 @@ jobs:
         id: ensure-issue
         if: >-
           steps.decision.outputs.suppressed != 'true' &&
+          steps.write-suppression.outputs.suppressed != 'true' &&
           (steps.decision.outputs.rung == '2' || steps.decision.outputs.rung == '3')
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -1177,7 +1247,10 @@ jobs:
       # comment (closed); never file anything new (FR-013/FR-014).
       - name: Dedup-only report (no diff, existing match)
         id: dedup-only
-        if: steps.decision.outputs.suppressed != 'true' && steps.decision.outputs.rung == 'dedup-only'
+        if: >-
+          steps.decision.outputs.suppressed != 'true' &&
+          steps.write-suppression.outputs.suppressed != 'true' &&
+          steps.decision.outputs.rung == 'dedup-only'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           DEDUP_OUTCOME: ${{ steps.decision.outputs.dedup }}
@@ -1200,7 +1273,10 @@ jobs:
 
       - name: Download propose-fix diff
         id: download-diff
-        if: steps.decision.outputs.suppressed != 'true' && steps.decision.outputs.rung == '2'
+        if: >-
+          steps.decision.outputs.suppressed != 'true' &&
+          steps.write-suppression.outputs.suppressed != 'true' &&
+          steps.decision.outputs.rung == '2'
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
@@ -1210,7 +1286,10 @@ jobs:
       # clean: false — a default `git clean` here would delete the untracked
       # .wing-commander-pipeline checkout still needed above.
       - name: Checkout default branch as wing-commander-bot
-        if: steps.decision.outputs.suppressed != 'true' && steps.decision.outputs.rung == '2'
+        if: >-
+          steps.decision.outputs.suppressed != 'true' &&
+          steps.write-suppression.outputs.suppressed != 'true' &&
+          steps.decision.outputs.rung == '2'
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.defbranch.outputs.name }}
@@ -1224,7 +1303,10 @@ jobs:
       # decides the issue is resolved — data-model.md).
       - name: Commit fix and open PR (rung 2)
         id: rung2-pr
-        if: steps.decision.outputs.suppressed != 'true' && steps.decision.outputs.rung == '2'
+        if: >-
+          steps.decision.outputs.suppressed != 'true' &&
+          steps.write-suppression.outputs.suppressed != 'true' &&
+          steps.decision.outputs.rung == '2'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
@@ -1279,6 +1361,8 @@ jobs:
           DEDUP_OUTCOME: ${{ steps.decision.outputs.dedup }}
           ISSUE_NUMBER: ${{ steps.ensure-issue.outputs.issue-number || steps.dedup-only.outputs.issue-number }}
           PR_URL: ${{ steps.rung2-pr.outputs.pr-url }}
+          WRITE_SUPPRESSED: ${{ steps.write-suppression.outputs.suppressed }}
+          WRITE_SUPPRESS_REASON: ${{ steps.write-suppression.outputs.reason }}
         run: |
           set -uo pipefail
           {
@@ -1291,6 +1375,12 @@ jobs:
             echo ""
             if [ "$SUPPRESSED" = "true" ]; then
               echo "_Already reported by existing automation: ${ALREADY_HANDLED_BY:-a prior stage}._"
+            elif [ "$WRITE_SUPPRESSED" = "true" ]; then
+              case "$WRITE_SUPPRESS_REASON" in
+                self-dispatch-cap) echo "_Self-dispatch cap reached — reporting only, no autonomous action taken._" ;;
+                paused) echo "_Autonomous fixes are paused (\`WING_COMMANDER_WATCHDOG_PAUSED\`) — reporting only._" ;;
+                *) echo "_Autonomous action suppressed — reporting only._" ;;
+              esac
             else
               case "$RUNG" in
                 2) echo "**Action**: rung 2 — pull request referencing #$ISSUE_NUMBER${PR_URL:+ ($PR_URL)}." ;;
