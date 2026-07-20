@@ -320,6 +320,26 @@ jobs:
         if: steps.guard.outputs.skip != 'true'
         run: echo "base-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      # actionlint (the proper GitHub-workflow linter — it also shellchecks
+      # the shell inside run: blocks, using the shellcheck pre-installed on
+      # ubuntu-latest) is not on the runner by default. Install it here, once,
+      # onto PATH via GITHUB_PATH so BOTH the cycle and retry agent steps can
+      # invoke it. Pinned to a version tag; the official download script
+      # verifies the release checksum. yamllint alone only proves a file
+      # parses — actionlint catches Actions-schema and embedded-shell bugs the
+      # agent would otherwise ship blind (it edits workflow YAML for a living).
+      - name: Install actionlint for the agent
+        id: actionlint
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          ACTIONLINT_VERSION: "1.7.7"
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL "https://raw.githubusercontent.com/rhysd/actionlint/v${ACTIONLINT_VERSION}/scripts/download-actionlint.bash" \
+            | bash -s -- "$ACTIONLINT_VERSION" "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bin/actionlint" -version
+
       # One agent pass runs /speckit-implement then /speckit-converge,
       # committing directly to the spec branch. continue-on-error so the
       # deterministic outcome step can inspect the result instead of the job
@@ -385,17 +405,21 @@ jobs:
             approve anything; do not edit files under .github/workflows
             unless the task list explicitly requires it.
 
-            Tooling: to validate YAML you edit, run `yamllint` — it is the
-            only linter allowlisted in this run. Use the Grep tool (not shell
-            `grep`) to search files. Do NOT invoke python3, bash -n,
-            actionlint, which, or wc: none are allowlisted, so every such call
-            is auto-denied in this headless run and only burns turns. If you
-            want a check that only a non-allowlisted tool could give, note it
-            for the human instead of retrying variants.
+            Tooling: validators allowlisted in this run are `actionlint`
+            (lints GitHub workflow YAML, including the shell inside run:
+            blocks via shellcheck — use it on any .github/workflows file you
+            touch), `yamllint` (plain YAML), `shellcheck` (standalone *.sh
+            scripts), and `jq` (JSON, e.g. spec-meta.json). Use the Grep tool
+            (not shell `grep`) to search files. Do NOT invoke python3,
+            bash -n, which, or wc: none are allowlisted, so every such call is
+            auto-denied in this headless run and only burns turns. Lint the
+            files you edit; do not chase pre-existing warnings your changes
+            did not introduce. If a check needs a tool not listed here, note
+            it for the human instead of retrying variants.
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ inputs.max-turns }}
-            --allowedTools "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(ls:*),Bash(cat:*),Bash(yamllint:*),Bash(mkdir:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*)"
+            --allowedTools "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(ls:*),Bash(cat:*),Bash(yamllint:*),Bash(actionlint:*),Bash(shellcheck:*),Bash(jq:*),Bash(mkdir:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*)"
             --disallowedTools "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
 
       # Uploaded before any retry runs so the retry's transcript (same temp
@@ -541,17 +565,21 @@ jobs:
             approve anything; do not edit files under .github/workflows
             unless the task list explicitly requires it.
 
-            Tooling: to validate YAML you edit, run `yamllint` — it is the
-            only linter allowlisted in this run. Use the Grep tool (not shell
-            `grep`) to search files. Do NOT invoke python3, bash -n,
-            actionlint, which, or wc: none are allowlisted, so every such call
-            is auto-denied in this headless run and only burns turns. If you
-            want a check that only a non-allowlisted tool could give, note it
-            for the human instead of retrying variants.
+            Tooling: validators allowlisted in this run are `actionlint`
+            (lints GitHub workflow YAML, including the shell inside run:
+            blocks via shellcheck — use it on any .github/workflows file you
+            touch), `yamllint` (plain YAML), `shellcheck` (standalone *.sh
+            scripts), and `jq` (JSON, e.g. spec-meta.json). Use the Grep tool
+            (not shell `grep`) to search files. Do NOT invoke python3,
+            bash -n, which, or wc: none are allowlisted, so every such call is
+            auto-denied in this headless run and only burns turns. Lint the
+            files you edit; do not chase pre-existing warnings your changes
+            did not introduce. If a check needs a tool not listed here, note
+            it for the human instead of retrying variants.
           claude_args: |
             --model claude-opus-4-8
             --max-turns ${{ inputs.max-turns }}
-            --allowedTools "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git pull:*),Bash(git fetch:*),Bash(git reset:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(ls:*),Bash(cat:*),Bash(yamllint:*),Bash(mkdir:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*)"
+            --allowedTools "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git pull:*),Bash(git fetch:*),Bash(git reset:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(ls:*),Bash(cat:*),Bash(yamllint:*),Bash(actionlint:*),Bash(shellcheck:*),Bash(jq:*),Bash(mkdir:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*)"
             --disallowedTools "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
 
       - name: Upload Claude execution log (retry)
