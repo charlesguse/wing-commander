@@ -1,0 +1,77 @@
+# Stage 8 — Watchdog (thin wrapper).
+# Reacts to the completion of any of this pipeline's other stage wrappers
+# (plus itself, for self-inspection — FR-021/US4) and to manual
+# workflow_dispatch re-inspection (FR-025). This wrapper only resolves the
+# inspected run's identity (run-id/run-name); every detection/triage/act job
+# lives in watchdog.yml (docs/architecture.md), called by local path.
+name: "8 - Watchdog"
+
+on:
+  workflow_run:
+    workflows:
+      - "1 - Intake"
+      - "1b - Clarify"
+      - "3 - Plan"
+      - "4 - Tasks"
+      - "5 - Implement"
+      - "6 - Finalize"
+      - "7 - Cleanup"
+      - "Rebase"
+      - "8 - Watchdog"
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run-id:
+        description: "The run ID to (re-)inspect"
+        required: true
+
+permissions: {}
+
+jobs:
+  # Resolve run-id/run-name from whichever trigger fired — the event path
+  # reads the workflow_run payload directly; the dispatch path resolves the
+  # display name via the Actions API (contracts/watchdog-workflow.md).
+  resolve:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      run-id: ${{ steps.resolve.outputs.run-id }}
+      run-name: ${{ steps.resolve.outputs.run-name }}
+    steps:
+      - name: Resolve inspected run identity
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_RUN_ID: ${{ github.event.workflow_run.id }}
+          EVENT_RUN_NAME: ${{ github.event.workflow_run.name }}
+          DISPATCH_RUN_ID: ${{ inputs.run-id }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            run_id="$DISPATCH_RUN_ID"
+            run_name="$(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json name --jq .name)"
+          else
+            run_id="$EVENT_RUN_ID"
+            run_name="$EVENT_RUN_NAME"
+          fi
+          echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "run-name=$run_name" >> "$GITHUB_OUTPUT"
+
+  watchdog:
+    needs: resolve
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    uses: ./.github/workflows/watchdog.yml
+    with:
+      run-id: ${{ needs.resolve.outputs.run-id }}
+      run-name: ${{ needs.resolve.outputs.run-name }}
+    secrets:
+      claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}

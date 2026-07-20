@@ -1,0 +1,162 @@
+# Published stage — watchdog (contracts/stage-interfaces.md).
+# on: workflow_call only. Inspects a completed pipeline run (any of the other
+# nine stages, or itself — FR-021) and works down a triage ladder from
+# report-only to autonomous fix. Four jobs, sequential:
+#   - collect:  deterministic evidence gathering (five FR-006 sources) into
+#               one normalized signals.json; no LLM sees raw untrusted
+#               content directly (FR-023).
+#   - diagnose: a single claude-haiku-4-5, read-only, structured-output step
+#               turning signals into zero or more Findings.
+#   - triage:   one matrix entry per Finding — coexistence check, fingerprint,
+#               dedup search, propose-fix (claude-sonnet-5, for known-
+#               remediable classes), and the deterministic rung gate
+#               (data-model.md's Triage decision table).
+#   - act:      one matrix entry per non-suppressed Finding — executes
+#               exactly what triage's rung gate selected (rung 1/2/3, or a
+#               dedup comment/reopen) and always reports to the lifecycle
+#               issue (FR-022).
+# See specs/015-pipeline-watchdog/contracts/watchdog-workflow.md for the full
+# contract this file implements.
+# Consumers: uses: <owner>/wing-commander/.github/workflows/watchdog.yml@<ref>
+name: "reusable · watchdog"
+
+on:
+  workflow_call:
+    inputs:
+      run-id:
+        description: "The run ID to inspect"
+        type: string
+        required: true
+      run-name:
+        description: >
+          Display name of the workflow the inspected run belongs to (e.g.
+          "5 - Implement", or "8 - Watchdog" itself for self-inspection).
+        type: string
+        required: true
+      diagnose-model:
+        description: "Model for the read-only diagnose agent (constitution II tiering: triage/classification)"
+        type: string
+        required: false
+        default: claude-haiku-4-5
+      diagnose-max-turns:
+        description: "Turn budget for the diagnose agent"
+        type: number
+        required: false
+        default: 20
+      propose-fix-model:
+        description: "Model for the propose-fix agent (constitution II tiering: implementation-weight)"
+        type: string
+        required: false
+        default: claude-sonnet-5
+      propose-fix-max-turns:
+        description: "Turn budget for the propose-fix agent"
+        type: number
+        required: false
+        default: 30
+      pipeline-repo:
+        description: >
+          Repository to check out for the pipeline's shared composite actions
+          (research.md D3). Only forks that republish need to set it.
+        type: string
+        required: false
+        default: charlesguse/wing-commander
+      pipeline-ref:
+        description: >
+          Ref of the pipeline repository to check out for the shared
+          composite actions. Empty = the exact commit of the running
+          reusable workflow (github.job_workflow_sha, with an OIDC-claim
+          fallback) — set it only if your calling job cannot grant
+          id-token: write; then it MUST match your uses: pin.
+        type: string
+        required: false
+        default: ""
+      default-branch:
+        description: >
+          The consuming repository's default branch. Empty = derived via
+          `gh repo view` — the stage never assumes `main`.
+        type: string
+        required: false
+        default: ""
+    secrets:
+      claude-code-oauth-token:
+        description: "Claude OAuth token (claude setup-token) — one of the two credentials"
+        required: false
+      anthropic-api-key:
+        description: "Claude API key (Claude Console) — one of the two credentials"
+        required: false
+      pipeline-repo-token:
+        description: "Token with read access to the pipeline repository — only needed when that repository is private (docs/adoption.md#private-pipeline-repository). Empty = the caller's GITHUB_TOKEN, sufficient for a public pipeline repository."
+        required: false
+      speckit-app-id:
+        description: "GitHub App ID used for pushes/PRs/comments/issues"
+        required: true
+      speckit-app-private-key:
+        description: "GitHub App private key"
+        required: true
+
+# Top-level (not per-job): every job in this stage needs the same write
+# surface (issues for the lifecycle/pipeline-defect reports, pull-requests
+# and contents for rung 1/2 fix PRs), and only one concurrency group needs to
+# span all four jobs of a single run-inspection.
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+
+concurrency:
+  group: wing-commander-watchdog-${{ inputs.run-id }}
+  cancel-in-progress: false
+
+jobs:
+  # Deterministic evidence gathering — five FR-006 collectors into one
+  # normalized signals.json. No agent step in this job (research.md).
+  collect:
+    runs-on: ubuntu-latest
+    outputs:
+      evidence-available: ${{ steps.placeholder.outputs.evidence-available }}
+      signals: ${{ steps.placeholder.outputs.signals }}
+      spec-dir: ${{ steps.placeholder.outputs.spec-dir }}
+      lifecycle-issue: ${{ steps.placeholder.outputs.lifecycle-issue }}
+      slug: ${{ steps.placeholder.outputs.slug }}
+    steps:
+      # Phase 1 skeleton placeholder — replaced by the Foundational/US1 steps.
+      - id: placeholder
+        run: "true"
+
+  # Single haiku-tier, read-only, structured-output step turning signals into
+  # zero or more Findings. Skipped when collect could not gather any evidence
+  # at all (FR-005).
+  diagnose:
+    needs: collect
+    if: needs.collect.outputs.evidence-available != 'false'
+    runs-on: ubuntu-latest
+    outputs:
+      outcome: ${{ steps.placeholder.outputs.outcome }}
+      findings: ${{ steps.placeholder.outputs.findings }}
+    steps:
+      # Phase 1 skeleton placeholder — replaced by the US1 diagnose step.
+      - id: placeholder
+        run: "true"
+
+  # One matrix entry per Finding: coexistence check, fingerprint, dedup
+  # search, propose-fix, deterministic rung gate. No agent judgment gates an
+  # autonomous write (FR-011). Skipped entirely when diagnose found nothing.
+  triage:
+    needs: [collect, diagnose]
+    if: needs.diagnose.outputs.outcome != 'passed-inspection' && needs.collect.outputs.evidence-available != 'false'
+    runs-on: ubuntu-latest
+    steps:
+      # Phase 1 skeleton placeholder — replaced by the US2 triage steps.
+      - run: "true"
+
+  # One matrix entry per non-suppressed Finding: executes exactly what
+  # triage's rung gate selected, and always reports to the lifecycle issue
+  # (FR-022) — the one write every path through this workflow performs
+  # unconditionally.
+  act:
+    needs: [collect, diagnose, triage]
+    runs-on: ubuntu-latest
+    steps:
+      # Phase 1 skeleton placeholder — replaced by the US1/US2 act steps.
+      - run: "true"
