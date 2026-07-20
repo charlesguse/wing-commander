@@ -47,24 +47,27 @@ gate was bypassed.
 
 ---
 
-### User Story 2 - Configure each gate independently (Priority: P2)
+### User Story 2 - Configure each configurable gate independently (Priority: P2)
 
-As a maintainer, I want to enable or disable each human review gate independently,
-so that I can tune how much automation I want per gate as I gain confidence in the
-pipeline's output for that stage.
+As a maintainer, I want to enable or disable each configurable human review gate
+independently, so that I can tune how much automation I want per gate as I gain
+confidence in the pipeline's output for that stage.
 
 **Why this priority**: The requester explicitly asked for the mechanism to apply
 to "the other human gates" too, "in case I find I want to do this with the other
 gates." Independent per-gate control is the general capability behind User Story 1.
+The configurable set is limited to gates that never merge into `main` — the plan
+review gate (Gate 3) and the already-automatic tasks step — because the constitution
+keeps Gates 1, 2, and 4 as mandatory human gates (FR-011).
 
-**Independent Test**: Set each gate's configuration independently and confirm that
-each configured gate behaves as specified (bypassed or enforced) without affecting
-the others.
+**Independent Test**: Set each configurable gate's setting independently and confirm
+that each behaves as specified (bypassed or enforced) without affecting the others,
+and that the mandatory gates (1, 2, 4) cannot be disabled.
 
 **Acceptance Scenarios**:
 
-1. **Given** configuration that disables one gate and leaves the others enabled, **When** the pipeline runs, **Then** only the disabled gate is bypassed and every other gate still pauses for human action.
-2. **Given** configuration that names an unknown gate or an invalid value, **When** the pipeline reads it, **Then** the configuration is rejected or ignored safely, the gate defaults to enabled, and the discrepancy is surfaced rather than silently changing gate behavior.
+1. **Given** configuration that disables one configurable gate and leaves the other(s) enabled, **When** the pipeline runs, **Then** only the disabled gate is bypassed and every other gate still pauses for human action.
+2. **Given** configuration that names an unknown gate, a non-configurable gate (1, 2, or 4), or an invalid value, **When** the pipeline reads it, **Then** the configuration is rejected or ignored safely, the affected gate defaults to enabled, and the discrepancy is surfaced rather than silently changing gate behavior.
 
 ---
 
@@ -90,11 +93,11 @@ confirm all four gates behave exactly as they do today.
 
 ### Edge Cases
 
-- **Merge-to-main gates vs. the security constitution**: Gates 2 and 4 merge into `main`, and Gate 1 is the maintainer-applied entry approval. The project constitution marks "humans merge every PR into `main`" and "pipeline entry requires a maintainer-applied label" as NON-NEGOTIABLE. Whether these gates may be bypassed at all — and, if so, under what safeguards — is the subject of a clarification below. See **FR** notes and [NEEDS CLARIFICATION] markers.
+- **Merge-to-main gates vs. the security constitution**: Gates 2 and 4 merge into `main`, and Gate 1 is the maintainer-applied entry approval. The project constitution marks "humans merge every PR into `main`" and "pipeline entry requires a maintainer-applied label" as NON-NEGOTIABLE. These gates are therefore NOT configurable (FR-011): only the plan review gate (Gate 3) and the already-automatic tasks step may be bypassed, so the constitution's Principle V holds without amendment.
 - **Auto-advanced artifact is defective**: If a gate is bypassed and the auto-generated artifact (e.g., the plan) is empty, invalid, or the generating stage failed, the pipeline must not silently proceed on bad input; it should stop and report rather than cascade a failure into later stages.
-- **Concurrent specs**: Multiple specs can be in flight at once. A gate configuration change must apply predictably to specs (e.g., consistently repository-wide, or per-spec if per-spec overrides exist) without one spec's setting affecting another unexpectedly.
+- **Concurrent specs**: Multiple specs can be in flight at once. Gate configuration is repository-wide (FR-012), so every in-flight spec observes the same settings; there is no per-spec override that could make one spec's setting affect another unexpectedly.
 - **Traceability when a gate is bypassed**: When a review gate is skipped, the produced artifact should still be recorded/committed so the lifecycle remains legible from the issue, even though no human paused to approve it.
-- **Configuration changed mid-lifecycle**: If a gate's setting changes while a spec is between stages, the behavior at the next gate the spec reaches must be well-defined.
+- **Configuration changed mid-lifecycle**: If the repository-wide gate setting changes while a spec is between stages, the setting is read when the spec reaches a gate, so the behavior at the next gate the spec reaches is always the currently-configured value. A spec that has already passed a gate is unaffected.
 
 ## Requirements *(mandatory)*
 
@@ -110,13 +113,13 @@ confirm all four gates behave exactly as they do today.
 - **FR-008**: Invalid, unrecognized, or malformed gate configuration MUST NOT weaken a gate: the affected gate MUST fall back to enabled, and the problem MUST be surfaced rather than silently applied.
 - **FR-009**: The current enabled/disabled state of each gate MUST be discoverable by a maintainer.
 - **FR-010**: Gate configuration MUST be treated as trusted maintainer configuration; it MUST NOT be settable by, or inferred from, untrusted issue or comment content.
-- **FR-011**: The set of gates the pipeline recognizes as configurable MUST be [NEEDS CLARIFICATION: The constitution marks "humans merge every PR into `main`" and "pipeline entry requires a maintainer-applied label" as NON-NEGOTIABLE. Is configurability limited to gates that do NOT merge into `main` and do NOT gate pipeline entry (i.e., the plan gate — the requester's use case — plus the already-auto tasks step), or must it extend to Gate 1 (entry label), Gate 2 (spec→main), and Gate 4 (final→main), which would require amending the constitution first?].
-- **FR-012**: Gate configuration MUST be applied at [NEEDS CLARIFICATION: granularity — is configuration set once per repository and applied to all specs, or can it also be overridden per spec (e.g., via a label or per-spec setting on the lifecycle issue)? This affects how concurrent specs with different desired behavior are handled.].
+- **FR-011**: The set of gates the pipeline recognizes as configurable MUST be limited to gates that do NOT merge into `main` and do NOT gate pipeline entry — that is, the plan review gate (Gate 3) and the already-automatic tasks step. Gate 1 (entry label), Gate 2 (spec→`main`), and Gate 4 (final→`main`) MUST remain mandatory human gates and MUST NOT be configurable, preserving the constitution's NON-NEGOTIABLE Principle V without any amendment.
+- **FR-012**: Gate configuration MUST be applied repository-wide: a single repository-level configuration governs every spec in the repository, and there is NO per-spec override. All in-flight and future specs observe the same gate settings.
 
 ### Key Entities *(include if data involved)*
 
 - **Review Gate**: A named point between two pipeline stages where the pipeline currently pauses for maintainer action. Attributes: identity (which gate — entry, spec, plan, final), whether it merges into `main`, and its enabled/disabled state.
-- **Gate Configuration**: The maintainer-owned declaration of each gate's enabled/disabled state, its scope (repository-wide and/or per-spec), and its default (enabled).
+- **Gate Configuration**: The maintainer-owned, repository-wide declaration of each configurable gate's enabled/disabled state, and its default (enabled). Only the plan review gate (Gate 3) and the tasks step are configurable; Gates 1, 2, and 4 are not.
 
 ## Success Criteria *(mandatory)*
 

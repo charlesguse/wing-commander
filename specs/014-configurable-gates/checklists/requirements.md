@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,9 +31,9 @@
 
 ## Notes
 
-- Two [NEEDS CLARIFICATION] markers remain (FR-011 gate scope vs. constitution
-  non-negotiables; FR-012 configuration granularity). These are the two decisions
-  with genuine scope/security impact and no safe default. They are posted to the
-  lifecycle issue for the requester/maintainers to answer; the rest of the spec is
-  complete and internally consistent.
-- Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.
+- Both [NEEDS CLARIFICATION] markers are now resolved from the answer on #74:
+  FR-011 (gate scope) — configurability is limited to gates that never merge into
+  `main`: the plan review gate (Gate 3) and the already-automatic tasks step; Gates
+  1, 2, and 4 stay mandatory, so no constitution amendment is needed. FR-012
+  (granularity) — configuration is repository-wide only, with no per-spec override.
+- The spec is complete and internally consistent; ready for planning.
