@@ -35,6 +35,7 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
+      actions: write
       id-token: write
     uses: ./.github/workflows/plan.yml
     with:
@@ -42,6 +43,8 @@ jobs:
       slug: ${{ inputs.slug }}
       merged: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged }}
       pr-number: ${{ github.event.pull_request.number }}
+      plan-review: ${{ vars.WING_COMMANDER_PLAN_REVIEW || 'pr' }}
+      next-workflow: wing-commander-4-tasks.yml
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
