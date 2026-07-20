@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,10 +31,14 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain by design and are posted to the
-  lifecycle issue for the clarify phase (CI intake does not block on them):
-  - **FR-006** — which detection sources are in scope for v1.
-  - **FR-011** — the crisp, testable rung-1 vs. rung-2 "minor" boundary.
-  - **FR-025** — which trigger(s) invoke the watchdog for v1.
-- All other checklist items pass. Items marked incomplete require spec updates
-  before `/speckit-plan` only insofar as the clarifications above are resolved.
+- All three [NEEDS CLARIFICATION] markers have been resolved from the clarify
+  phase (lifecycle issue #80):
+  - **FR-006** — v1 inspects **all** listed detection sources (step summaries,
+    workflow annotations, `claude-execution-output-*` artifacts, `spec-meta.json`
+    state vs. expected stage, and branch-vs-origin drift).
+  - **FR-011** — a fix is rung-1 "minor" **only when** it is confined to an
+    allowlisted change-class **and** touches only allowlisted paths **and** its
+    diff is under a small, configurable line cap; otherwise it falls back to rung 2.
+  - **FR-025** — v1 triggers are `workflow_run` on each stage's completion **plus**
+    on-demand manual dispatch; a scheduled sweep is deferred.
+- All checklist items pass; the spec is ready for planning.

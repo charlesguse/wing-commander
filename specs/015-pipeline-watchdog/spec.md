@@ -157,7 +157,7 @@ including the loop-prevention cap so self-inspection cannot run away.
 - **FR-003**: The watchdog MUST detect, at minimum for v1, the two problem classes from the motivating incident: (a) repeated invocation of a non-allowlisted read-only tool that is auto-denied, and (b) an interrupted run that left no progress (no commits) on its work branch.
 - **FR-004**: The watchdog MUST NOT produce a finding when a run exhibits no detectable problem; it MUST instead record that the run passed inspection.
 - **FR-005**: When a run's evidence is missing, expired, or unreadable, the watchdog MUST record that it could not inspect the run and MUST NOT fabricate a finding.
-- **FR-006**: The set of detection sources in scope for v1 is [NEEDS CLARIFICATION: which of these are in v1 — step summaries, workflow annotations, `claude-execution-output-*` artifacts (turn/tool-denial patterns), `spec-meta.json` state vs. expected stage, branch-vs-origin drift? Default assumption: transcript tool-denial patterns + branch-vs-origin drift only for v1, the rest deferred].
+- **FR-006**: The set of detection sources in scope for v1 is **all** of the following: step summaries, workflow annotations, `claude-execution-output-*` artifacts (turn/tool-denial patterns), `spec-meta.json` state vs. expected stage, and branch-vs-origin drift. The watchdog MUST be able to draw findings from any of these sources; broad coverage is accepted with the understanding that it carries a larger v1 surface and more false-positive tuning.
 
 #### Triage ladder
 
@@ -165,7 +165,7 @@ including the loop-prevention cap so self-inspection cannot run away.
 - **FR-008**: The watchdog MUST support rung 2 — opening a PR carrying the fix and referencing the existing pipeline issue the finding is tied to.
 - **FR-009**: The watchdog MUST support rung 3 — opening a new issue (or a spec proposal) carrying the evidence, used when a finding is large or has no existing issue to attach to.
 - **FR-010**: When a finding sits ambiguously between two rungs, the watchdog MUST resolve toward the higher rung (more human involvement).
-- **FR-011**: The boundary between rung 1 (autonomous auto-fix) and rung 2 (open a PR) MUST be defined by a crisp, testable rule, because rung 1 writes to the repository autonomously. That rule is [NEEDS CLARIFICATION: what precise, testable predicate distinguishes a rung-1 "minor" fix from a rung-2 fix — e.g. change confined to an allowlisted change-class AND touching only allowlisted paths AND under an N-line diff cap? Which change-classes qualify (allowlist grant of a read-only tool, path/typo correction, syntax fix)?].
+- **FR-011**: The boundary between rung 1 (autonomous auto-fix) and rung 2 (open a PR) MUST be defined by a crisp, testable rule, because rung 1 writes to the repository autonomously. A fix qualifies as rung-1 "minor" **only when it satisfies all three** of the following conditions: (a) the change is confined to an allowlisted change-class, (b) it touches only allowlisted paths, and (c) its diff is under a small, configurable line cap. A fix that fails **any** of these conditions is not rung-1 and MUST fall back to rung 2. The qualifying change-classes are enumerated up front in the guardrail configuration (see FR-017); the v1 seed set covers the motivating incident's classes (e.g. an allowlist grant of a read-only tool, a path/typo correction, a syntax fix).
 
 #### Deduplication & recurrence
 
@@ -191,7 +191,7 @@ including the loop-prevention cap so self-inspection cannot run away.
 - **FR-022**: The watchdog MUST post its findings and actions to the lifecycle issue associated with the inspected run, keeping the run's history legible from that issue.
 - **FR-023**: The watchdog MUST treat all inspected content (transcripts, artifacts, summaries, issue/comment bodies) as untrusted data and never as instructions to itself.
 - **FR-024**: The watchdog MUST complement, not duplicate, existing stalled-run and cleanup automation; when such automation has already reported or handled a condition, the watchdog MUST NOT double-report it.
-- **FR-025**: The watchdog is invoked by [NEEDS CLARIFICATION: which trigger(s) for v1 — `workflow_run` on completion of each stage, a scheduled sweep, on-demand manual dispatch, or a mix? Default assumption: `workflow_run` on stage completion plus on-demand dispatch, scheduled sweep deferred].
+- **FR-025**: The watchdog is invoked in v1 by two triggers: `workflow_run` on each pipeline stage's completion, plus on-demand manual dispatch (a maintainer-initiated re-run lever). A scheduled sweep for catch-up on missed runs is explicitly deferred beyond v1.
 
 ### Key Entities *(include if feature involves data)*
 
