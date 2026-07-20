@@ -400,6 +400,11 @@ jobs:
         if: steps.attempt.outputs.outcome == 'conflict'
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
+        env:
+          # Force subagents synchronous — headless has no turn-boundary resume,
+          # so a backgrounded subagent silently yields an unbuilt deliverable
+          # (anthropics/claude-code-action#1462 / #1499).
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
@@ -444,7 +449,7 @@ jobs:
             --model ${{ inputs.model }}
             --max-turns ${{ inputs.max-turns }}
             --allowedTools "Read,Edit,Grep,Glob,Bash(git status:*),Bash(git diff:*),Bash(git add:*),Bash(git rebase --continue:*),Bash(git rebase --abort:*)"
-            --disallowedTools "WebSearch,WebFetch"
+            --disallowedTools "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
 
       - name: Upload Claude execution log
         if: always() && steps.agent.outcome != 'skipped'

@@ -325,6 +325,10 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           SPECIFY_FEATURE_DIRECTORY: ${{ needs.resolve-spec.outputs.spec-dir }}
+          # Force subagents synchronous — headless has no turn-boundary resume,
+          # so a backgrounded subagent silently yields an unbuilt deliverable
+          # (anthropics/claude-code-action#1462 / #1499).
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
@@ -369,7 +373,7 @@ jobs:
             --model ${{ inputs.model }}
             --max-turns ${{ inputs.max-turns }}
             --allowedTools "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(ls:*),Bash(cat:*),Bash(.specify/scripts/bash/setup-tasks.sh:*),Bash(bash .specify/scripts/bash/setup-tasks.sh:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*)"
-            --disallowedTools "WebSearch,WebFetch"
+            --disallowedTools "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
 
       # Pr mode — the task list arrives as a reviewable PR targeting the spec
       # branch; nothing lands on the spec branch directly and implementation
@@ -384,6 +388,10 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           SPECIFY_FEATURE_DIRECTORY: ${{ needs.resolve-spec.outputs.spec-dir }}
+          # Force subagents synchronous — headless has no turn-boundary resume,
+          # so a backgrounded subagent silently yields an unbuilt deliverable
+          # (anthropics/claude-code-action#1462 / #1499).
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
@@ -429,7 +437,7 @@ jobs:
             --model ${{ inputs.model }}
             --max-turns ${{ inputs.max-turns }}
             --allowedTools "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git checkout:*),Bash(git switch:*),Bash(git push:*),Bash(git branch:*),Bash(git log:*),Bash(git diff:*),Bash(ls:*),Bash(cat:*),Bash(.specify/scripts/bash/setup-tasks.sh:*),Bash(bash .specify/scripts/bash/setup-tasks.sh:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh pr create:*),Bash(gh pr list:*)"
-            --disallowedTools "WebSearch,WebFetch"
+            --disallowedTools "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
 
       # One metrics step shared across the two mutually-exclusive agent steps
       # above (both configure the same model/max-turns inputs): exactly one of
