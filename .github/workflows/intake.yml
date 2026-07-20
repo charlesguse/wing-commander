@@ -208,6 +208,10 @@ jobs:
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          # Force subagents synchronous — headless has no turn-boundary resume,
+          # so a backgrounded subagent silently yields an unbuilt deliverable
+          # (anthropics/claude-code-action#1462 / #1499).
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
@@ -280,7 +284,7 @@ jobs:
             --model ${{ inputs.model }}
             --max-turns ${{ inputs.max-turns }}
             --allowedTools "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git checkout:*),Bash(git switch:*),Bash(git push:*),Bash(git branch:*),Bash(git log:*),Bash(git diff:*),Bash(ls:*),Bash(mkdir:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue edit:*),Bash(gh issue comment:*),Bash(gh pr create:*),Bash(gh label create:*)"
-            --disallowedTools "WebSearch,WebFetch"
+            --disallowedTools "WebFetch,ScheduleWakeup,Monitor,SendMessage"
 
       # Deterministic read-back of what intake produced — feeds the stage's
       # declared outputs (the agent may have legitimately stopped without a

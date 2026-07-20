@@ -332,6 +332,10 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           SPECIFY_FEATURE_DIRECTORY: ${{ steps.spec.outputs.spec-dir }}
+          # Force subagents synchronous — headless has no turn-boundary resume,
+          # so a backgrounded subagent silently yields an unbuilt deliverable
+          # (anthropics/claude-code-action#1462 / #1499).
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
@@ -381,7 +385,7 @@ jobs:
             --model ${{ inputs.model }}
             --max-turns ${{ inputs.max-turns }}
             --allowedTools "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(ls:*),Bash(cat:*),Bash(mkdir:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*)"
-            --disallowedTools "WebSearch,WebFetch"
+            --disallowedTools "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
 
       # Uploaded before any retry runs so the retry's transcript (same temp
       # path) doesn't clobber the primary attempt's.
@@ -473,6 +477,10 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           SPECIFY_FEATURE_DIRECTORY: ${{ steps.spec.outputs.spec-dir }}
+          # Force subagents synchronous — headless has no turn-boundary resume,
+          # so a backgrounded subagent silently yields an unbuilt deliverable
+          # (anthropics/claude-code-action#1462 / #1499).
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
@@ -522,7 +530,7 @@ jobs:
             --model claude-opus-4-8
             --max-turns ${{ inputs.max-turns }}
             --allowedTools "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git pull:*),Bash(git fetch:*),Bash(git reset:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(ls:*),Bash(cat:*),Bash(mkdir:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*)"
-            --disallowedTools "WebSearch,WebFetch"
+            --disallowedTools "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
 
       - name: Upload Claude execution log (retry)
         if: always() && steps.retry.outcome != 'skipped'
@@ -657,6 +665,10 @@ jobs:
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          # Force subagents synchronous — headless has no turn-boundary resume,
+          # so a backgrounded subagent silently yields an unbuilt deliverable
+          # (anthropics/claude-code-action#1462 / #1499).
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
@@ -688,7 +700,7 @@ jobs:
             --model claude-haiku-4-5
             --max-turns 15
             --allowedTools "Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(gh issue comment:*)"
-            --disallowedTools "WebSearch,WebFetch"
+            --disallowedTools "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
 
       # Progress-comment run's metrics. This invocation uploads no execution
       # artifact, so the metrics step anchors directly after the agent step
