@@ -941,29 +941,113 @@ jobs:
             echo "has-diff=false" >> "$GITHUB_OUTPUT"
           else
             echo "has-diff=true" >> "$GITHUB_OUTPUT"
-            git diff       > "${{ runner.temp }}/watchdog-fix-${{ matrix.index }}.diff"
-            git diff --stat > "${{ runner.temp }}/watchdog-fix-${{ matrix.index }}.stat"
+            git diff         > "${{ runner.temp }}/watchdog-fix-${{ matrix.index }}.diff"
+            git diff --stat  > "${{ runner.temp }}/watchdog-fix-${{ matrix.index }}.stat"
+            # --numstat gives added<TAB>removed<TAB>path per file — the exact
+            # per-path line counts the FR-011 rung gate needs for conditions
+            # (b) paths and (c) line cap (T029).
+            git diff --numstat > "${{ runner.temp }}/watchdog-fix-${{ matrix.index }}.numstat"
           fi
 
-      # US2 slice of the rung gate (data-model.md's Triage decision table):
-      # the FR-011 allowlist/paths/line-cap guardrail (US3) and the pause/
-      # self-dispatch-cap demotions (US3/US4) are not wired yet — any diff
-      # at all currently lands on rung 2 (Phase 6 replaces this step).
+      # The deterministic rung gate (data-model.md's Triage decision table).
+      # No diff ⇒ rung 3 (dedup miss) or dedup-only (dedup hit). A diff ⇒
+      # the FR-011 three-condition guardrail (T029) decides rung 1 vs rung 2:
+      #   (a) finding.class is an allowlisted changeClasses[].id;
+      #   (b) every path touched matches that class's pathGlobs;
+      #   (c) changed-line count <= min(class.maxDiffLines, config.maxDiffLines).
+      # All three pass ⇒ candidate rung 1; any single failure ⇒ rung 2
+      # (FR-010: any ambiguity resolves toward the more human-involved rung).
+      # The remaining two rung-1 preconditions — not paused (FR-019) and
+      # under the self-dispatch cap (FR-018) — are enforced in the act job's
+      # write-suppression gate (T027/T030), which zeroes EVERY write at EVERY
+      # rung, so a rung-1 candidate under a pause/cap simply writes nothing,
+      # exactly as the table's "demote to rung 2 then suppress" would. The
+      # guardrails config is read-only here (FR-017/T033): a missing file or
+      # an absent class fails condition (a); no default entry is invented.
       - name: Rung gate
         id: rung
         if: steps.suppress.outputs.suppressed != 'true' && steps.dedup.outputs.outcome != 'data-integrity'
         env:
           HAS_DIFF: ${{ steps.diff-check.outputs.has-diff }}
           DEDUP_OUTCOME: ${{ steps.dedup.outputs.outcome }}
+          FINDING_CLASS: ${{ matrix.class }}
+          NUMSTAT: ${{ runner.temp }}/watchdog-fix-${{ matrix.index }}.numstat
         run: |
           set -uo pipefail
-          if [ "$HAS_DIFF" = "true" ]; then
-            echo "rung=2" >> "$GITHUB_OUTPUT"
-          elif [ "$DEDUP_OUTCOME" = "none" ]; then
-            echo "rung=3" >> "$GITHUB_OUTPUT"
-          else
-            echo "rung=dedup-only" >> "$GITHUB_OUTPUT"
+          if [ "$HAS_DIFF" != "true" ]; then
+            if [ "$DEDUP_OUTCOME" = "none" ]; then
+              echo "rung=3" >> "$GITHUB_OUTPUT"
+            else
+              echo "rung=dedup-only" >> "$GITHUB_OUTPUT"
+            fi
+            echo "rung-reason=no fix diff attempted" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+
+          config=".specify/memory/watchdog-guardrails.json"
+          rung=2
+          reason="fix diff did not satisfy all three FR-011 guardrail conditions"
+
+          class_json=""
+          if [ -f "$config" ]; then
+            class_json="$(jq -c --arg c "$FINDING_CLASS" '[.changeClasses[]? | select(.id == $c)][0] // empty' "$config" 2>/dev/null || true)"
+          fi
+
+          if [ ! -f "$config" ]; then
+            reason="no guardrail config present — class '$FINDING_CLASS' is not rung-1-eligible"
+          elif [ -z "$class_json" ]; then
+            reason="class '$FINDING_CLASS' is not an allowlisted change-class"
+          elif [ ! -f "$NUMSTAT" ]; then
+            reason="could not read the diff numstat to evaluate guardrails"
+          else
+            # (c) line cap = min(class.maxDiffLines, config.maxDiffLines).
+            class_cap="$(printf '%s' "$class_json" | jq -r '.maxDiffLines // 0')"
+            global_cap="$(jq -r '.maxDiffLines // 0' "$config")"
+            cap="$class_cap"
+            if [ "$global_cap" -gt 0 ] && [ "$global_cap" -lt "$cap" ]; then
+              cap="$global_cap"
+            fi
+
+            # (b) every touched path matches one of the class's pathGlobs.
+            globs="$(printf '%s' "$class_json" | jq -r '.pathGlobs[]?')"
+            paths_ok=true
+            changed=0
+            binary=false
+            while IFS="$(printf '\t')" read -r added removed path; do
+              [ -n "${path:-}" ] || continue
+              if [ "$added" = "-" ] || [ "$removed" = "-" ]; then
+                binary=true
+                continue
+              fi
+              changed=$((changed + added + removed))
+              match=false
+              set -f
+              for glob in $globs; do
+                # shellcheck disable=SC2254 # $glob is intentionally a match pattern, not a literal
+                case "$path" in
+                  $glob) match=true; break ;;
+                esac
+              done
+              set +f
+              [ "$match" = "true" ] || paths_ok=false
+            done < "$NUMSTAT"
+
+            if [ "$binary" = "true" ]; then
+              reason="fix touches a binary file — not rung-1-eligible"
+            elif [ "$paths_ok" != "true" ]; then
+              reason="fix touches a path outside class '$FINDING_CLASS' pathGlobs"
+            elif [ "$changed" -gt "$cap" ]; then
+              reason="fix changes $changed lines, over the $cap-line cap for class '$FINDING_CLASS'"
+            else
+              rung=1
+              reason="all three FR-011 guardrail conditions passed ($changed lines <= $cap; paths and class allowlisted)"
+            fi
+          fi
+
+          {
+            echo "rung=$rung"
+            echo "rung-reason=$reason"
+          } >> "$GITHUB_OUTPUT"
 
       # Persist this matrix instance's decision for the act job (a separate
       # runner, over the SAME Finding array — see act's comment) to consume
@@ -978,6 +1062,7 @@ jobs:
           DEDUP_ISSUE: ${{ steps.dedup.outputs.issue-number }}
           HAS_DIFF: ${{ steps.diff-check.outputs.has-diff }}
           RUNG: ${{ steps.rung.outputs.rung }}
+          RUNG_REASON: ${{ steps.rung.outputs.rung-reason }}
         run: |
           set -uo pipefail
           jq -n \
@@ -988,7 +1073,8 @@ jobs:
             --arg dedupissue "${DEDUP_ISSUE:-}" \
             --argjson hasdiff "${HAS_DIFF:-false}" \
             --arg rung "${RUNG:-}" \
-            '{suppressed: $suppressed, fingerprint: $fingerprint, "short-fingerprint": $shortfp, dedup: $dedup, "dedup-issue": $dedupissue, "has-diff": $hasdiff, rung: $rung}' \
+            --arg rungreason "${RUNG_REASON:-}" \
+            '{suppressed: $suppressed, fingerprint: $fingerprint, "short-fingerprint": $shortfp, dedup: $dedup, "dedup-issue": $dedupissue, "has-diff": $hasdiff, rung: $rung, "rung-reason": $rungreason}' \
             > "${{ runner.temp }}/watchdog-triage-decision.json"
 
       - name: Upload triage decision artifact
@@ -1095,6 +1181,7 @@ jobs:
               echo "dedup=$(jq -r '.dedup' "$f")"
               echo "dedup-issue=$(jq -r '."dedup-issue"' "$f")"
               echo "rung=$(jq -r '.rung' "$f")"
+              echo "rung-reason=$(jq -r '."rung-reason" // ""' "$f")"
             } >> "$GITHUB_OUTPUT"
           else
             echo "::warning::no triage decision artifact for index ${{ matrix.index }} — treating this Finding as report-only."
@@ -1105,6 +1192,7 @@ jobs:
               echo "dedup="
               echo "dedup-issue="
               echo "rung="
+              echo "rung-reason="
             } >> "$GITHUB_OUTPUT"
           fi
 
@@ -1157,16 +1245,26 @@ jobs:
             echo "capped=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # Write-suppression gate over every write path below (T022–T024): the
-      # self-dispatch cap (this phase) and the pause switch (US3) share the
-      # identical short-circuit — collect/diagnose/triage still ran and are
-      # still reported, only act's writes are suppressed.
+      # Write-suppression gate over every write path below (T022–T024, T032):
+      # the self-dispatch cap (T027, FR-018) and the pause switch (T030,
+      # FR-019) share the identical short-circuit — collect/diagnose/triage
+      # still ran and are still reported, only act's writes are suppressed,
+      # for every Finding at every rung. Pause takes precedence in the
+      # reported reason (an operator flipping the kill switch wants that
+      # named first). The pause var is read here in act rather than in the
+      # triage rung gate because this is the single enforcement point every
+      # write path already funnels through (T027) — reading it here keeps one
+      # authority over "does any write happen," rather than two.
       - name: Determine write suppression
         id: write-suppression
         env:
           CAPPED: ${{ steps.self-dispatch-depth.outputs.capped }}
+          PAUSED: ${{ vars.WING_COMMANDER_WATCHDOG_PAUSED }}
         run: |
-          if [ "$CAPPED" = "true" ]; then
+          if [ "$PAUSED" = "true" ]; then
+            echo "suppressed=true" >> "$GITHUB_OUTPUT"
+            echo "reason=paused" >> "$GITHUB_OUTPUT"
+          elif [ "$CAPPED" = "true" ]; then
             echo "suppressed=true"  >> "$GITHUB_OUTPUT"
             echo "reason=self-dispatch-cap" >> "$GITHUB_OUTPUT"
           else
@@ -1179,7 +1277,7 @@ jobs:
         if: >-
           steps.decision.outputs.suppressed != 'true' &&
           steps.write-suppression.outputs.suppressed != 'true' &&
-          steps.decision.outputs.rung == '2'
+          (steps.decision.outputs.rung == '1' || steps.decision.outputs.rung == '2')
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           DEFAULT_BRANCH: ${{ inputs.default-branch }}
@@ -1276,7 +1374,7 @@ jobs:
         if: >-
           steps.decision.outputs.suppressed != 'true' &&
           steps.write-suppression.outputs.suppressed != 'true' &&
-          steps.decision.outputs.rung == '2'
+          (steps.decision.outputs.rung == '1' || steps.decision.outputs.rung == '2')
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
@@ -1289,7 +1387,7 @@ jobs:
         if: >-
           steps.decision.outputs.suppressed != 'true' &&
           steps.write-suppression.outputs.suppressed != 'true' &&
-          steps.decision.outputs.rung == '2'
+          (steps.decision.outputs.rung == '1' || steps.decision.outputs.rung == '2')
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.defbranch.outputs.name }}
@@ -1342,6 +1440,54 @@ jobs:
           echo "pr-url=$pr_url" >> "$GITHUB_OUTPUT"
           gh issue comment "$ISSUE_NUMBER" --body "🐕 Opened $pr_url to fix this."
 
+      # Rung 1 (T032): the finding's first occurrence (dedup found nothing),
+      # its diff passed every FR-011 guardrail, not paused, under the
+      # self-dispatch cap. Commit to a fresh branch and open a PR to the
+      # default branch with a short "here's exactly what changed and why"
+      # body — NO prior pipeline-defect issue is created or referenced
+      # (research.md's rung-1 decision). A human still merges (constitution V,
+      # FR-020: "autonomous" is the diagnosis speed, never the merge gate).
+      - name: Commit fix and open PR (rung 1)
+        id: rung1-pr
+        if: >-
+          steps.decision.outputs.suppressed != 'true' &&
+          steps.write-suppression.outputs.suppressed != 'true' &&
+          steps.decision.outputs.rung == '1'
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
+          SHORT_FP: ${{ steps.decision.outputs.short-fingerprint }}
+          FINDING_CLASS: ${{ matrix.class }}
+          FINDING_DESCRIPTION: ${{ matrix.description }}
+          RUN_URL: ${{ needs.collect.outputs.run-html-url }}
+          DB: ${{ steps.defbranch.outputs.name }}
+        run: |
+          set -uo pipefail
+          diff_file="${{ runner.temp }}/triage-diff/watchdog-fix-${{ matrix.index }}.diff"
+          if [ ! -s "$diff_file" ]; then
+            echo "::warning::rung 1 selected but no diff artifact was found for index ${{ matrix.index }} — nothing to commit."
+            exit 0
+          fi
+          branch="watchdog-fix/$SHORT_FP"
+          git config user.name  "${BOT_SLUG}[bot]"
+          git config user.email "${BOT_SLUG}[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git apply "$diff_file"
+          git add -A
+          git commit -m "watchdog: fix $FINDING_CLASS"
+          git push origin "$branch"
+          {
+            echo "Minor fix opened autonomously by the pipeline watchdog (rung 1)."
+            echo ""
+            echo "$FINDING_DESCRIPTION"
+            echo ""
+            echo "Diagnosed from [this run]($RUN_URL). This diff passed every"
+            echo "guardrail check (allowlisted change-class, allowlisted paths,"
+            echo "under the line cap); a human still reviews and merges it."
+          } > "${{ runner.temp }}/pr-body-rung1.md"
+          pr_url="$(gh pr create --repo "$GITHUB_REPOSITORY" --base "$DB" --head "$branch" --title "watchdog: fix $FINDING_CLASS" --body-file "${{ runner.temp }}/pr-body-rung1.md")"
+          echo "pr-url=$pr_url" >> "$GITHUB_OUTPUT"
+
       # The terminal write every path through this workflow performs
       # unconditionally (FR-022) — one block per Finding: description +
       # evidence + rung taken + dedup outcome (data-model.md's Lifecycle
@@ -1360,7 +1506,7 @@ jobs:
           RUNG: ${{ steps.decision.outputs.rung }}
           DEDUP_OUTCOME: ${{ steps.decision.outputs.dedup }}
           ISSUE_NUMBER: ${{ steps.ensure-issue.outputs.issue-number || steps.dedup-only.outputs.issue-number }}
-          PR_URL: ${{ steps.rung2-pr.outputs.pr-url }}
+          PR_URL: ${{ steps.rung2-pr.outputs.pr-url || steps.rung1-pr.outputs.pr-url }}
           WRITE_SUPPRESSED: ${{ steps.write-suppression.outputs.suppressed }}
           WRITE_SUPPRESS_REASON: ${{ steps.write-suppression.outputs.reason }}
         run: |
@@ -1383,6 +1529,7 @@ jobs:
               esac
             else
               case "$RUNG" in
+                1) echo "**Action**: rung 1 — autonomous fix PR${PR_URL:+ ($PR_URL)}, no prior issue required." ;;
                 2) echo "**Action**: rung 2 — pull request referencing #$ISSUE_NUMBER${PR_URL:+ ($PR_URL)}." ;;
                 3) echo "**Action**: rung 3 — filed as #$ISSUE_NUMBER." ;;
                 dedup-only)
