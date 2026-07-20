@@ -2,7 +2,7 @@
   "issue": 74,
   "spec_dir": "specs/014-configurable-gates",
   "feature_num": "014",
-  "stage": "stalled",
-  "iteration": 0,
+  "stage": "implement",
+  "iteration": 1,
   "spec_branch": "spec/014-configurable-gates"
 }
