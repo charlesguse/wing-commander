@@ -148,15 +148,33 @@ false-triggering); plus `workflow_dispatch` (input: `slug`) for manual restarts.
    duplicate planning attempt (FR-009).
 3. Hand-submitted specs (`"issue": null`) get a lifecycle issue created and
    labeled before anything is reported (FR-007).
-4. claude-code-action on the spec branch, `SPECIFY_FEATURE_DIRECTORY` set:
-   run `/speckit-plan` (proceeding despite unresolved markers, FR-011), commit
-   plan artifacts to `plan/NNN-slug`, open a PR **targeting `spec/NNN-slug`**,
-   update spec-meta.json (`stage: plan`), comment the summary on the issue.
-5. Deterministic post-step verifies the plan PR exists, then flips the issue
-   label to `stage:plan`.
-6. A plan PR closed **unmerged** marks the spec stalled (`stage:stalled` label,
-   spec-meta.json `stage: "stalled"`, issue comment); restart is manual —
-   delete `plan/NNN-slug` and dispatch the workflow (FR-012).
+4. Resolve the review mode from `vars.WING_COMMANDER_PLAN_REVIEW` (Gate 3):
+   unset or `pr` → `pr`; `auto` → `auto`; any other non-empty value fails open
+   to `pr` (never to `auto`) and is surfaced — `::warning::` annotation, a
+   step-summary line, and a note on the "planning started" lifecycle-issue
+   comment naming the invalid value (spec `014-configurable-gates`, FR-008).
+   This differs from Stage 3's `WING_COMMANDER_TASKS_REVIEW` resolution
+   (below), which silently falls open to `auto` with no invalid-value
+   surfacing — the two gates are configured and resolved independently
+   (FR-003).
+5. claude-code-action on the spec branch, `SPECIFY_FEATURE_DIRECTORY` set: run
+   `/speckit-plan` (proceeding despite unresolved markers, FR-011), update
+   spec-meta.json (`stage: plan`), comment the summary on the issue. Then,
+   gated on the resolved mode:
+   - `pr` (default): commit plan artifacts to `plan/NNN-slug`, open a PR
+     **targeting `spec/NNN-slug`**; a deterministic post-step verifies the
+     plan PR exists, then flips the issue label to `stage:plan`.
+   - `auto`: commit plan artifacts directly to `spec/NNN-slug` — no
+     `plan/NNN-slug` branch, no PR; a deterministic step verifies `plan.md`
+     is on the spec branch and `spec-meta.json.stage == "plan"`, flips the
+     issue label to `stage:plan`, then (if `next-workflow` is configured)
+     runs `gh workflow run <next-workflow> -f slug=…` to dispatch the tasks
+     stage automatically — zero human action on the plan artifact.
+6. `pr` mode only: a plan PR closed **unmerged** marks the spec stalled
+   (`stage:stalled` label, spec-meta.json `stage: "stalled"`, issue comment);
+   restart is manual — delete `plan/NNN-slug` and dispatch the workflow
+   (FR-012). `auto` mode never opens a PR that could be closed unmerged, so
+   this stalled path does not apply to it.
 
 ## Stage 3 — Tasks (`tasks.yml`, wrapper `wing-commander-4-tasks.yml`)
 

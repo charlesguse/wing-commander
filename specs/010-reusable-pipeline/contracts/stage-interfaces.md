@@ -92,9 +92,9 @@ docs/adoption.md's wrapper examples MUST show these signatures verbatim.
 
 | | |
 |---|---|
-| Inputs | `head-ref` (string) **or** `slug` (string) — one required; `merged` (boolean, default `true`); `model` (string, default `claude-sonnet-5`); `max-turns` (number, default `80`) |
+| Inputs | `head-ref` (string) **or** `slug` (string) — one required; `merged` (boolean, default `true`); `model` (string, default `claude-sonnet-5`); `max-turns` (number, default `80`); `plan-review` (string `pr`\|`auto`, default `pr`); `next-workflow` (string, default `""`) — wrapper filename to dispatch for tasks |
 | Preconditions | `specs/NNN-slug/spec.md` + `spec-meta.json` exist on the default branch; no existing `plan/NNN-slug` branch (duplicate guard) |
-| Behavior | Derive+validate slug internally from `head-ref` (`spec-draft/` prefix) or take `slug` directly; create/reuse `spec/NNN-slug`; create lifecycle issue for hand-submitted specs; run `/speckit-plan`; open plan PR → `spec/NNN-slug`; advance `spec-meta.json` to `plan`; flip label |
+| Behavior | Derive+validate slug internally from `head-ref` (`spec-draft/` prefix) or take `slug` directly; create/reuse `spec/NNN-slug`; create lifecycle issue for hand-submitted specs; run `/speckit-plan`; `pr` opens a plan PR → `spec/NNN-slug` and stops — no dispatch; `auto` commits the plan directly to `spec/NNN-slug` and (if `next-workflow` set) dispatches tasks directly; either mode advances `spec-meta.json` to `plan` and flips the label; an unrecognized `plan-review` value fails open to `pr` and is surfaced (`::warning::`, step summary, lifecycle-issue comment) |
 | Outputs | `spec-branch`, `spec-dir` |
 
 ## reusable-tasks.yml
