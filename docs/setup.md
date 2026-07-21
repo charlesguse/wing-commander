@@ -61,6 +61,18 @@ create them now so the stubs' documentation stays true):
 | `WING_COMMANDER_TASKS_REVIEW` | `auto` | `auto` = commit tasks.md straight to the spec branch; `pr` = open a tasks PR |
 | `WING_COMMANDER_IMPLEMENT_MODEL` | `claude-sonnet-5` | Model for implement/converge; set `claude-opus-4-8` for hard specs |
 | `WING_COMMANDER_MAX_ITERATIONS` | `5` | Cap on implement ⟲ converge loops per spec |
+| `WING_COMMANDER_WATCHDOG_PAUSED` | unset (not paused) | `true` = kill switch: the watchdog still inspects and reports, but performs **no** autonomous write (no PR, issue, comment, or reopen) at any rung until you clear it |
+| `WING_COMMANDER_WATCHDOG_SELF_DISPATCH_CAP` | `3` | Max consecutive watchdog-inspects-watchdog runs before the chain stops writing (bounds a self-inspection loop); the run is still inspected and reported |
+
+The watchdog also reads one consuming-repo-owned config file,
+`.specify/memory/watchdog-guardrails.json`, which defines the change-class
+allowlist and per-class line caps that gate its lightest-touch autonomous
+fixes (rung 1). It is read-only from the watchdog's perspective — edit it via
+an ordinary PR to your default branch like any other file; a change-class
+absent from it (or the file missing entirely) simply makes that class
+ineligible for a rung-1 fix, never inventing a default. See
+[docs/architecture.md](architecture.md#stage-9--watchdog-watchdogyml-wrapper-wing-commander-8-watchdogyml)
+for the full triage ladder.
 
 ## 4. Labels
 

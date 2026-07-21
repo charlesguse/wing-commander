@@ -2,7 +2,7 @@
   "issue": 80,
   "spec_dir": "specs/015-pipeline-watchdog",
   "feature_num": "015",
-  "stage": "spec",
-  "iteration": 0,
-  "spec_branch": null
+  "stage": "review",
+  "iteration": 1,
+  "spec_branch": "spec/015-pipeline-watchdog"
 }

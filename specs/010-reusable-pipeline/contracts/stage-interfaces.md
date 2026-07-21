@@ -143,3 +143,18 @@ The stage the spec calls "auto-rebase" — `rebase` is its canonical published i
 | Preconditions | none (discovers in-flight `spec/*` branches itself; empty discovery is a clean no-op) |
 | Behavior | Discover → fan-out per-branch rebase onto the default branch; clean push with lease, agent conflict resolution with deterministic scope check, escalate-once marker on stuck branches — all internal, as today |
 | Outputs | none |
+
+## reusable-watchdog.yml
+
+The run-validation-and-triage stage (`specs/015-pipeline-watchdog/`). Its
+wrapper (`wing-commander-8-watchdog.yml`) owns the `workflow_run: [completed]`
+trigger across all nine stage display names (including `"8 - Watchdog"` for
+self-inspection) plus a `workflow_dispatch` `run-id` for manual re-inspection,
+and resolves `run-id`/`run-name` before calling this stage.
+
+| | |
+|---|---|
+| Inputs | `run-id` (string, required); `run-name` (string, required) — inspected run's display name; `diagnose-model` (string, default `claude-haiku-4-5`); `diagnose-max-turns` (number, default `20`); `propose-fix-model` (string, default `claude-sonnet-5`); `propose-fix-max-turns` (number, default `30`) |
+| Preconditions | none as a refusal gate — spec-slug/lifecycle-issue resolution is best-effort (a run not tied to a spec is still inspected and reported against its own run URL). The credential invariant still applies to the two agent steps |
+| Behavior | `collect → diagnose → triage → act`: five deterministic FR-006 collectors into one `signals.json`; a read-only haiku diagnose step emits zero+ Findings; per-Finding fingerprint + `gh search issues` dedup + optional sonnet propose-fix + deterministic rung gate; act executes the selected rung and always reports to the lifecycle issue. Guardrails (`.specify/memory/watchdog-guardrails.json`, read-only), `vars.WING_COMMANDER_WATCHDOG_PAUSED`, and `vars.WING_COMMANDER_WATCHDOG_SELF_DISPATCH_CAP` (default `3`) gate every autonomous write; identical rules apply to self-inspection (FR-018/FR-021) |
+| Outputs | none (side effects only): a lifecycle-issue comment on every run (FR-022); at rung 2/3 a pipeline-defect issue (created/reused/reopened, fingerprint-marked); at rung 1/2 a fix PR to the default branch (`Refs #N`, never auto-closing) |

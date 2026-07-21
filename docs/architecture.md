@@ -298,6 +298,71 @@ issue for human help. The escalation comment carries a
 is only escalated once until either side moves (a subsequent success removes
 the label).
 
+## Stage 9 — Watchdog (`watchdog.yml`, wrapper `wing-commander-8-watchdog.yml`)
+
+**Trigger**: `workflow_run: [completed]` across all nine stage wrappers —
+including itself, for self-inspection (FR-021) — plus manual
+`workflow_dispatch` with a `run-id` to re-inspect any past run. The thin
+wrapper only resolves the inspected run's identity (`run-id`/`run-name`);
+every job below lives in the reusable `watchdog.yml`.
+
+**Design** — four sequential jobs, `collect → diagnose → triage → act`:
+- `collect` — deterministic evidence gathering only (no agent). Five FR-006
+  sources — execution-output denied-tool counts, branch drift (zero pushed
+  commits on a push-expected stage), `spec-meta.json` stage vs. expected,
+  step-summary sentinels, and check-run annotations — merge into one
+  normalized `signals.json`. Best-effort spec-slug/lifecycle-issue
+  resolution: a run that can't be tied to a spec (e.g. a `main`-based
+  cleanup) is still inspected and reported against its own run URL. Only if
+  *every* collector errors outright does it flip `evidence-available: false`
+  → "could not inspect this run" (FR-005); an empty-but-successful signal set
+  still proceeds to `diagnose`.
+- `diagnose` — one `claude-haiku-4-5`, read-only, structured-output step
+  (no write tools, no `git`/`gh` write access) turning signals into zero or
+  more Findings. `signals.json` and anything read is framed as untrusted
+  data, never instructions (FR-023). Zero Findings ⇒ "passed inspection"
+  (FR-004) and nothing is filed.
+- `triage` — one matrix entry per Finding: coexistence-suppression check
+  (a Finding already handled by `implement.yml`'s stalled job or
+  `cleanup.yml`'s `mark-stalled` is reported, not re-acted, FR-024),
+  deterministic `sha256(class + "|" + canonical(normalizedFacts))`
+  fingerprint (the `rebase.yml` marker-dedup convention), `gh search issues`
+  dedup over the marker (`--state all`), an optional `claude-sonnet-5`
+  propose-fix step scoped to `.github/**`/`docs/**` for known-remediable
+  classes, and the deterministic **rung gate**.
+- `act` — one matrix entry per non-suppressed Finding: executes exactly what
+  the rung gate selected and always appends a per-Finding report to the
+  lifecycle issue (FR-022).
+
+**The triage ladder** (no LLM judgment ever gates an autonomous write —
+FR-011's crisp, testable rule lives in deterministic bash/jq):
+- **rung 1** — a fix diff that clears all three FR-011 guardrail conditions
+  (allowlisted change-class, allowlisted paths, changed lines
+  `<= min(class.maxDiffLines, config.maxDiffLines)`) opens a PR to the
+  default branch with no prior pipeline-defect issue. A human still merges
+  (constitution V); "autonomous" is the diagnosis speed, not the merge.
+- **rung 2** — a fix diff that fails any guardrail condition: create/find/
+  reopen the pipeline-defect issue and open a PR referencing it with
+  `Refs #N` (never an auto-closing keyword).
+- **rung 3** — no fix attempted and no dedup match: file a new pipeline-defect
+  issue carrying the fingerprint marker.
+- **dedup-only** — no fix, but an existing issue matches the fingerprint:
+  comment fresh evidence (open) or reopen + comment (closed); file nothing
+  new. More than one match is a data-integrity finding, reported for a human.
+
+**Guardrail/pause/self-dispatch knobs** — `.specify/memory/watchdog-guardrails.json`
+(consuming-repo-owned, read-only from the watchdog) defines the rung-1
+change-class allowlist and line caps; a missing file or class simply fails
+rung-1 eligibility, never invents a default. `vars.WING_COMMANDER_WATCHDOG_PAUSED`
+(`true` ⇒ report-only, every write at every rung suppressed) and
+`vars.WING_COMMANDER_WATCHDOG_SELF_DISPATCH_CAP` (default `3`) are the two
+operator switches; the cap counts the consecutive `workflow_run`-sourced
+self-inspection chain and, once reached, suppresses all writes so an
+unattended watchdog-inspects-watchdog loop is bounded (FR-018). Detection,
+fingerprinting, dedup, and reporting are identical whether the inspected run
+is a watchdog run or any other stage (FR-021) — the self-dispatch-depth count
+is the only place the stage looks at its own name.
+
 ---
 
 ## Reusability (current state — `specs/010-reusable-pipeline/`)
