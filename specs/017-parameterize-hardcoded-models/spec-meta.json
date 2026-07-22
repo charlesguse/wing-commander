@@ -2,7 +2,7 @@
   "issue": 87,
   "spec_dir": "specs/017-parameterize-hardcoded-models",
   "feature_num": "017",
-  "stage": "spec",
+  "stage": "plan",
   "iteration": 0,
-  "spec_branch": null
+  "spec_branch": "spec/017-parameterize-hardcoded-models"
 }
