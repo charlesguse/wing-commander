@@ -67,7 +67,9 @@ jobs:
       #   - no github.event.* reads (event facts arrive only via inputs)
       #   - no vars.* reads (configuration arrives only via declared inputs)
       #   - no literal main as a branch ref (default-branch input/derivation)
-      #   - every agent step's claude_args carries --model and --max-turns
+      #   - every agent step (a `uses: anthropics/claude-code-action` line —
+      #     NOT a bare mention, which also matches `#1462`-style issue refs in
+      #     comments) carries --model and --max-turns
       - name: Published-stage invariant checks
         run: |
           set -uo pipefail
@@ -100,9 +102,12 @@ jobs:
           fi
 
           # Every claude_args block must declare --model and --max-turns
-          # (constitution II). Count agent steps vs. declarations.
+          # (constitution II). Count agent steps vs. declarations. Anchor on the
+          # `uses:` wiring form so comment references to the action's issue
+          # tracker (e.g. anthropics/claude-code-action#1462) are not miscounted
+          # as agent steps.
           for f in .github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase}.yml; do
-            agents=$(grep -c 'anthropics/claude-code-action' "$f" || true)
+            agents=$(grep -c 'uses: anthropics/claude-code-action' "$f" || true)
             models=$(grep -c -- '--model ' "$f" || true)
             turns=$(grep -c -- '--max-turns ' "$f" || true)
             if [ "$agents" -gt "$models" ] || [ "$agents" -gt "$turns" ]; then
