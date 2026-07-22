@@ -16,9 +16,10 @@ name: wing-commander-preflight
 description: >
   Fail fast, deterministically, before any agent step: verify at least one
   Claude credential is configured (naming both exact secret names when not),
-  verify the consumer checkout carries its own spec-kit artifacts, verify
-  stage-specific prerequisite files and predecessor stages, and warn (never
-  fail) on a spec-kit version mismatch.
+  or, when use-bedrock is true, verify aws-role-arn/aws-region instead
+  (contracts/bedrock-provider.md); verify the consumer checkout carries its
+  own spec-kit artifacts, verify stage-specific prerequisite files and
+  predecessor stages, and warn (never fail) on a spec-kit version mismatch.
 
 inputs:
   oauth-token:
@@ -69,6 +70,26 @@ inputs:
       empty.
     required: false
     default: ""
+  use-bedrock:
+    description: >
+      When "true", the credential invariant (check 1) branches: the
+      Anthropic-credential-empty check is skipped (FR-004) and aws-role-arn/
+      aws-region are required instead (FR-008). When "false"/unset
+      (default), check 1 is unchanged (FR-005, SC-002).
+    required: false
+    default: "false"
+  aws-role-arn:
+    description: >
+      VALUE of the stage's aws-role-arn input, tested for emptiness only
+      when use-bedrock is "true".
+    required: false
+    default: ""
+  aws-region:
+    description: >
+      VALUE of the stage's aws-region input, tested for emptiness only when
+      use-bedrock is "true".
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -86,6 +107,9 @@ runs:
         REQUIRE_FILES: ${{ inputs.require-files }}
         REQUIRE_META_STAGE: ${{ inputs.require-meta-stage }}
         SPEC_DIR: ${{ inputs.spec-dir }}
+        USE_BEDROCK: ${{ inputs.use-bedrock }}
+        AWS_ROLE_ARN_INPUT: ${{ inputs.aws-role-arn }}
+        AWS_REGION_INPUT: ${{ inputs.aws-region }}
       run: |
         set -uo pipefail
 
@@ -95,9 +119,29 @@ runs:
           exit 1
         }
 
-        # 1. Credential invariant (contracts/credentials.md): both empty is
-        #    the only error; no validity probe is performed.
-        if [ "$REQUIRE_CREDENTIAL" = "true" ] && [ -z "$OAUTH_TOKEN" ] && [ -z "$API_KEY" ]; then
+        # 1. Credential invariant (contracts/credentials.md,
+        #    contracts/bedrock-provider.md): branches on use-bedrock.
+        #    - use-bedrock true: skip the Anthropic-credential check
+        #      entirely (FR-004); require aws-role-arn and aws-region
+        #      instead, naming whichever is missing — both named together
+        #      when both are missing (FR-008). No validity probe against
+        #      AWS is performed, matching the "no probe" posture below.
+        #    - use-bedrock false/unset: unchanged — both Anthropic
+        #      credentials empty is the only error; no validity probe.
+        if [ "$REQUIRE_CREDENTIAL" = "true" ] && [ "$USE_BEDROCK" = "true" ]; then
+          missing=""
+          [ -z "$AWS_ROLE_ARN_INPUT" ] && missing="\`aws-role-arn\`"
+          if [ -z "$AWS_REGION_INPUT" ]; then
+            if [ -n "$missing" ]; then
+              missing="$missing and \`aws-region\`"
+            else
+              missing="\`aws-region\`"
+            fi
+          fi
+          if [ -n "$missing" ]; then
+            fail "use-bedrock is true but $missing not configured. Set both aws-role-arn and aws-region when enabling Bedrock. See docs/adoption.md#credentials."
+          fi
+        elif [ "$REQUIRE_CREDENTIAL" = "true" ] && [ -z "$OAUTH_TOKEN" ] && [ -z "$API_KEY" ]; then
           fail "No Claude credential configured. Add one of these repository secrets and pass it to the stage: \`claude-code-oauth-token\` (from \`claude setup-token\`, subscription plans) or \`anthropic-api-key\` (from the Claude Console). Exactly one is sufficient. See docs/adoption.md#credentials."
         fi
 
@@ -151,4 +195,8 @@ runs:
           fi
         fi
 
-        echo "✅ wing-commander preflight passed (credential configured; prerequisites present)." >> "$GITHUB_STEP_SUMMARY"
+        if [ "$USE_BEDROCK" = "true" ]; then
+          echo "✅ wing-commander preflight passed (Bedrock credentials configured; prerequisites present)." >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "✅ wing-commander preflight passed (credential configured; prerequisites present)." >> "$GITHUB_STEP_SUMMARY"
+        fi

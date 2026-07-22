@@ -1,0 +1,49 @@
+# Like every shared composite, this action is resolved from the pipeline
+# repository's own checkout at github.job_workflow_sha (see the header of
+# .github/actions/wing-commander-context/action.yml for the verified
+# self-checkout snippet), so it must never assume it lives in the
+# workspace-root repository.
+#
+# Gated, single-step composite (research.md D2, contracts/bedrock-provider.md):
+# runs aws-actions/configure-aws-credentials via OIDC only (no
+# aws-access-key-id/secret inputs — FR-003's no-long-lived-secrets
+# constraint) when use-bedrock is "true"; a no-op otherwise. Each stage job
+# invokes this once per job containing an agent step — configure-aws-
+# credentials exports job-scoped env vars, so one invocation covers every
+# agent step within the same job, but a separate job needs its own
+# invocation (research.md D2's "per-job repetition" note).
+name: wing-commander-bedrock-credentials
+description: >
+  Configure AWS credentials for Bedrock via OIDC (aws-actions/configure-aws-
+  credentials), gated on use-bedrock. No-op when use-bedrock is "false"/unset.
+
+inputs:
+  use-bedrock:
+    description: >
+      When "true", assume aws-role-arn via OIDC and export AWS credentials
+      for the job. When "false"/unset (default), this composite is a no-op.
+    required: false
+    default: "false"
+  aws-role-arn:
+    description: >
+      IAM role ARN to assume via OIDC. Required (validated by
+      wing-commander-preflight, not here) when use-bedrock is "true".
+    required: false
+    default: ""
+  aws-region:
+    description: >
+      AWS region for both credential configuration and the Bedrock
+      endpoint. Required (validated by wing-commander-preflight, not here)
+      when use-bedrock is "true".
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Configure AWS credentials for Bedrock
+      if: inputs.use-bedrock == 'true'
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ inputs.aws-role-arn }}
+        aws-region: ${{ inputs.aws-region }}
