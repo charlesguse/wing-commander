@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,11 +31,13 @@
 
 ## Notes
 
-- Two [NEEDS CLARIFICATION] markers remain, both intentionally left for the
-  requester/maintainers to resolve (posted to the lifecycle issue): (1) how AWS
-  configuration reaches an isolated stage job, and (2) whether Bedrock model
-  identifiers are pure pass-through or pipeline-translated. Items marked
-  incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.
+- Both [NEEDS CLARIFICATION] markers are now resolved (answers posted to the
+  lifecycle issue #83): (1) AWS configuration reaches each isolated stage job via
+  an AWS role ARN + region accepted as stage inputs, with `configure-aws-credentials`
+  (OIDC) run inside each stage — no long-lived secrets; and (2) Bedrock model
+  identifiers are pure pass-through — the consumer supplies Bedrock-compatible IDs
+  through the existing per-stage model settings; the pipeline does not translate
+  its default Anthropic tiers.
 - The spec necessarily references domain concepts (AWS Bedrock, AWS credentials,
   reusable workflows) because they are the subject of the feature; it avoids
   prescribing pipeline implementation mechanics.
