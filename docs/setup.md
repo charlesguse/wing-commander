@@ -50,6 +50,13 @@ With neither configured, stages fail fast in a preflight step naming both
 secret names, before any agent cost. Details:
 [docs/adoption.md#credentials](adoption.md#credentials).
 
+> **Using AWS Bedrock instead?** Bedrock is enabled per stage via the
+> `use-bedrock` / `aws-role-arn` / `aws-region` `workflow_call` inputs (set in
+> your wrapper's `with:` block), not as repository secrets or variables —
+> credentials are assumed via OIDC inside each stage job, so there are no
+> long-lived AWS secrets to add here. See
+> [docs/adoption.md#credentials](adoption.md#credentials) for the full setup.
+
 ## 3. Repository variables
 
 Settings → Secrets and variables → Actions → **Variables** (used by later stages;

@@ -23,6 +23,9 @@ Credential behavior: see [credentials.md](credentials.md).
 |---|---|---|---|
 | `pipeline-repo` | string | the publishing repository | Where the stage checks out its own shared composite actions, at `github.job_workflow_sha` (research D3). Only forks that republish need to set it. |
 | `default-branch` | string | `""` = derive | The consuming repository's default branch. When empty, the stage derives it itself (`gh repo view --json defaultBranchRef`) — stages never assume `main` (spec edge case 3). |
+| `use-bedrock` | boolean | `false` | Route the stage's agent step(s) through AWS Bedrock instead of the Anthropic API. Off by default — a zero-change no-op for Anthropic adopters ([`specs/016-bedrock-support/`](../../016-bedrock-support/contracts/bedrock-provider.md)). |
+| `aws-role-arn` | string | `""` | IAM role ARN the stage assumes via OIDC for Bedrock. Required when `use-bedrock` is true. |
+| `aws-region` | string | `""` | AWS region for both credential configuration and the Bedrock endpoint. Required when `use-bedrock` is true. |
 
 **Universal behavior**:
 - `on:` is `workflow_call` **only**; stages never read `github.event` — all

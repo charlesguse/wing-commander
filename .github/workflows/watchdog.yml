@@ -77,6 +77,28 @@ on:
         type: string
         required: false
         default: ""
+      use-bedrock:
+        description: >
+          Run this stage's agent steps against AWS Bedrock instead of
+          Anthropic (contracts/bedrock-provider.md). Off by default — zero
+          behavior change for adopters who don't opt in (FR-005).
+        type: boolean
+        required: false
+        default: false
+      aws-role-arn:
+        description: >
+          IAM role ARN to assume via OIDC for Bedrock. Required when
+          use-bedrock is true.
+        type: string
+        required: false
+        default: ""
+      aws-region:
+        description: >
+          AWS region for both credential configuration and the Bedrock
+          endpoint. Required when use-bedrock is true.
+        type: string
+        required: false
+        default: ""
     secrets:
       claude-code-oauth-token:
         description: "Claude OAuth token (claude setup-token) — one of the two credentials"
@@ -170,6 +192,9 @@ jobs:
           oauth-token: ${{ secrets.claude-code-oauth-token }}
           api-key: ${{ secrets.anthropic-api-key }}
           require-speckit: "false"
+          use-bedrock: ${{ inputs.use-bedrock }}
+          aws-role-arn: ${{ inputs.aws-role-arn }}
+          aws-region: ${{ inputs.aws-region }}
 
       - name: Wing Commander context
         id: ctx
@@ -544,6 +569,9 @@ jobs:
           oauth-token: ${{ secrets.claude-code-oauth-token }}
           api-key: ${{ secrets.anthropic-api-key }}
           require-speckit: "false"
+          use-bedrock: ${{ inputs.use-bedrock }}
+          aws-role-arn: ${{ inputs.aws-role-arn }}
+          aws-region: ${{ inputs.aws-region }}
 
       - name: Wing Commander context
         id: ctx
@@ -551,6 +579,17 @@ jobs:
         with:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
+
+      # The diagnose agent runs in this job, separate from collect/triage —
+      # configure-aws-credentials exports job-scoped env vars, so Bedrock
+      # credentials must be configured here too (research.md D2's "per-job
+      # repetition" note).
+      - name: Configure AWS credentials for Bedrock
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-bedrock-credentials
+        with:
+          use-bedrock: ${{ inputs.use-bedrock }}
+          aws-role-arn: ${{ inputs.aws-role-arn }}
+          aws-region: ${{ inputs.aws-region }}
 
       # collect's signals are passed as a job output (string); materialize it
       # as a file here so the agent reads it via the Read tool rather than
@@ -605,6 +644,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
+          use_bedrock: ${{ inputs.use-bedrock }}
           github_token: ${{ steps.ctx.outputs.token }}
           allowed_bots: "github-actions"
           prompt: |
@@ -781,6 +821,9 @@ jobs:
           oauth-token: ${{ secrets.claude-code-oauth-token }}
           api-key: ${{ secrets.anthropic-api-key }}
           require-speckit: "false"
+          use-bedrock: ${{ inputs.use-bedrock }}
+          aws-role-arn: ${{ inputs.aws-role-arn }}
+          aws-region: ${{ inputs.aws-region }}
 
       - name: Wing Commander context
         id: ctx
@@ -788,6 +831,17 @@ jobs:
         with:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
+
+      # The propose-fix agent runs in this job, separate from collect/diagnose
+      # — configure-aws-credentials exports job-scoped env vars, so Bedrock
+      # credentials must be configured here too (research.md D2's "per-job
+      # repetition" note).
+      - name: Configure AWS credentials for Bedrock
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-bedrock-credentials
+        with:
+          use-bedrock: ${{ inputs.use-bedrock }}
+          aws-role-arn: ${{ inputs.aws-role-arn }}
+          aws-region: ${{ inputs.aws-region }}
 
       # Coexistence check (research.md, contract step 1): a Finding the
       # collect job already tagged alreadyHandledBy skips fingerprint/dedup/
@@ -885,6 +939,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
+          use_bedrock: ${{ inputs.use-bedrock }}
           github_token: ${{ steps.ctx.outputs.token }}
           allowed_bots: "github-actions"
           prompt: |

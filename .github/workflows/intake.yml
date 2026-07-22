@@ -54,6 +54,28 @@ on:
         type: string
         required: false
         default: ""
+      use-bedrock:
+        description: >
+          Run this stage's agent step against AWS Bedrock instead of
+          Anthropic (contracts/bedrock-provider.md). Off by default — zero
+          behavior change for adopters who don't opt in (FR-005).
+        type: boolean
+        required: false
+        default: false
+      aws-role-arn:
+        description: >
+          IAM role ARN to assume via OIDC for Bedrock. Required when
+          use-bedrock is true.
+        type: string
+        required: false
+        default: ""
+      aws-region:
+        description: >
+          AWS region for both credential configuration and the Bedrock
+          endpoint. Required when use-bedrock is true.
+        type: string
+        required: false
+        default: ""
     secrets:
       claude-code-oauth-token:
         description: "Claude OAuth token (claude setup-token) — one of the two credentials"
@@ -146,6 +168,16 @@ jobs:
           api-key: ${{ secrets.anthropic-api-key }}
           require-speckit: "true"
           require-files: ".claude/skills/speckit-specify/SKILL.md|specify init (spec-kit's claude integration)"
+          use-bedrock: ${{ inputs.use-bedrock }}
+          aws-role-arn: ${{ inputs.aws-role-arn }}
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Configure AWS credentials for Bedrock
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-bedrock-credentials
+        with:
+          use-bedrock: ${{ inputs.use-bedrock }}
+          aws-role-arn: ${{ inputs.aws-role-arn }}
+          aws-region: ${{ inputs.aws-region }}
 
       - name: Wing Commander context
         id: ctx
@@ -215,6 +247,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
+          use_bedrock: ${{ inputs.use-bedrock }}
           github_token: ${{ steps.ctx.outputs.token }}
           # Wrappers may dispatch this stage via GITHUB_TOKEN (custom
           # triggers), making the triggering actor github-actions[bot]; the

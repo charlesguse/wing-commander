@@ -116,6 +116,12 @@ against budget, duration, tokens, cost, with an ≥80% turn-budget warning) to
 that run's `$GITHUB_STEP_SUMMARY` — pure read, no agent, never fails the stage
 (`specs/009-agent-metrics/`).
 
+**Bedrock pass-through** (`specs/016-bedrock-support/`): the per-stage
+`use-bedrock` input changes only which backend serves these already-tiered
+`model` inputs — the consumer supplies Bedrock-compatible identifiers directly
+through the same `model` inputs, with no new model-mapping mechanism and no
+change to the tiering above.
+
 ### Security (constitution V)
 - Pipeline entry = maintainer-applied `spec-request` label.
 - Comment triggers: commenter must be OWNER/MEMBER/COLLABORATOR **or** the
