@@ -70,7 +70,7 @@ Single-project CI/CD feature (GitHub Actions reusable workflows + composite acti
 
 ### Implementation for User Story 2
 
-- [ ] T005 [US2] Desk-check `.github/workflows/intake.yml` and `.github/actions/wing-commander-preflight/action.yml` against quickstart.md Scenario 1: with `use-bedrock` unset, confirm (a) no new input is `required: true`, so a caller who sets nothing still validates; (b) the Anthropic-credential-empty check in preflight still fires with the exact same message text as before T003; (c) the `wing-commander-bedrock-credentials` step's `if:` condition never evaluates true, so no AWS/STS call is ever attempted; (d) the `claude-code-action` call's existing `claude_code_oauth_token`/`anthropic_api_key` wiring is byte-for-byte unchanged from before this feature.
+- [X] T005 [US2] Desk-check `.github/workflows/intake.yml` and `.github/actions/wing-commander-preflight/action.yml` against quickstart.md Scenario 1: with `use-bedrock` unset, confirm (a) no new input is `required: true`, so a caller who sets nothing still validates; (b) the Anthropic-credential-empty check in preflight still fires with the exact same message text as before T003; (c) the `wing-commander-bedrock-credentials` step's `if:` condition never evaluates true, so no AWS/STS call is ever attempted; (d) the `claude-code-action` call's existing `claude_code_oauth_token`/`anthropic_api_key` wiring is byte-for-byte unchanged from before this feature.
 
 **Checkpoint**: User Stories 1 AND 2 both hold on `intake.yml` — quickstart.md Scenarios 1, 3, and 6 pass.
 
