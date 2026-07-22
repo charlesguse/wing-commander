@@ -1,1 +1,8 @@
-{"issue": 83, "spec_dir": "specs/016-bedrock-support", "feature_num": "016", "stage": "implement", "iteration": 1, "spec_branch": "spec/016-bedrock-support"}
+{
+  "issue": 83,
+  "spec_dir": "specs/016-bedrock-support",
+  "feature_num": "016",
+  "stage": "review",
+  "iteration": 1,
+  "spec_branch": "spec/016-bedrock-support"
+}
