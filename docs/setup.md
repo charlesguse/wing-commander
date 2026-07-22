@@ -67,6 +67,10 @@ create them now so the stubs' documentation stays true):
 | `WING_COMMANDER_PLAN_REVIEW` | `pr` | `pr` = open a plan PR and wait for a human merge; `auto` = commit the plan directly and dispatch the tasks stage |
 | `WING_COMMANDER_TASKS_REVIEW` | `auto` | `auto` = commit tasks.md straight to the spec branch; `pr` = open a tasks PR |
 | `WING_COMMANDER_IMPLEMENT_MODEL` | `claude-sonnet-5` | Model for implement/converge; set `claude-opus-4-8` for hard specs |
+| `WING_COMMANDER_SPEC_MODEL` | `claude-opus-4-8` | Model for the spec/clarify tier (intake and clarify stages) |
+| `WING_COMMANDER_PLAN_MODEL` | `claude-sonnet-5` | Model for the plan/tasks tier (plan, tasks, and rebase stages) |
+| `WING_COMMANDER_SUMMARY_MODEL` | `claude-haiku-4-5` | Model for the triage/summary tier (finalize, cleanup, implement's progress comments, and watchdog's diagnose step) |
+| `WING_COMMANDER_IMPLEMENT_ESCALATION_MODEL` | `claude-opus-4-8` | Model for implement's one-tier-up retry after a failed attempt |
 | `WING_COMMANDER_MAX_ITERATIONS` | `5` | Cap on implement ⟲ converge loops per spec |
 | `WING_COMMANDER_WATCHDOG_PAUSED` | unset (not paused) | `true` = kill switch: the watchdog still inspects and reports, but performs **no** autonomous write (no PR, issue, comment, or reopen) at any rung until you clear it |
 | `WING_COMMANDER_WATCHDOG_SELF_DISPATCH_CAP` | `3` | Max consecutive watchdog-inspects-watchdog runs before the chain stops writing (bounds a self-inspection loop); the run is still inspected and reported |
