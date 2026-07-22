@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,8 +31,7 @@
 
 ## Notes
 
-- Two [NEEDS CLARIFICATION] markers remain (override granularity and configuration
-  surface). Per CI intake policy these are posted as questions on the lifecycle
-  issue rather than blocking; the spec proceeds to review with sensible defaults
-  implied. Items marked incomplete require spec updates before `/speckit-plan`
-  once the questions are answered.
+- Both [NEEDS CLARIFICATION] markers are resolved from the answer on lifecycle
+  issue #87 (Session 2026-07-22): override granularity is **per tier** (Q1: A) and
+  the configuration surface is **repository variables** in the consuming repository
+  (Q2: A). The spec is ready for `/speckit-plan`.

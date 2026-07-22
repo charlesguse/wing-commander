@@ -8,6 +8,13 @@
 
 **Input**: User description: "Some locations have a model hard-coded in. These models don't work when using Bedrock. Any model that is hardcoded in should be passed in as a parameter with a default set. That way Bedrock consumers can properly change the model as needed, or if someone wants to use a different model than is set by default."
 
+## Clarifications
+
+### Session 2026-07-22
+
+- Q: At what granularity should model selections be overridable? → A: Per tier — expose the small set of task tiers (e.g. triage, plan/tasks, spec/clarify, implement/escalation) as named overrides, and map every currently-hardcoded model location to a tier. Fewest knobs, cost tiering preserved cleanly; locations sharing a tier resolve to the same override.
+- Q: Where should a consumer set the model overrides? → A: Repository variables in the consuming repository — the same mechanism already used for the implement-tier model. Set once per repo, no per-run editing, consuming repo owns the values.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Bedrock consumer overrides every model the pipeline uses (Priority: P1)
@@ -67,12 +74,12 @@ A maintainer reviewing the change wants to confirm that no executable model sele
 
 ### Functional Requirements
 
-- **FR-001**: Every model identifier that an automated agent step selects MUST be resolved from a configurable override point rather than from a literal embedded in the pipeline's executable logic.
+- **FR-001**: Every model identifier that an automated agent step selects MUST be resolved from a configurable override point rather than from a literal embedded in the pipeline's executable logic. Override points are exposed per task tier: every currently-hardcoded model location MUST map to one of the pipeline's task tiers (e.g. triage, plan/tasks, spec/clarify, implement/escalation), and locations sharing a tier resolve to that tier's override.
 - **FR-002**: Each override point MUST define a default value that reproduces the pipeline's current model selection when no override is supplied.
-- **FR-003**: Consumers MUST be able to set each override without modifying pipeline-owned source (consistent with the project's principle that the consuming repository owns its configuration). [NEEDS CLARIFICATION: configuration surface — see Question 2.]
-- **FR-004**: Retry, fallback, and escalation model selections (e.g., escalating to a higher-capability model after a failed attempt) MUST be resolved through override points, not embedded identifiers.
+- **FR-003**: Consumers MUST be able to set each override by defining repository variables in the consuming repository — the same mechanism already used for the implement-tier model — without modifying pipeline-owned source (consistent with the project's principle that the consuming repository owns its configuration).
+- **FR-004**: Retry, fallback, and escalation model selections (e.g., escalating to a higher-capability model after a failed attempt) MUST be resolved through the override point of their assigned tier, not embedded identifiers.
 - **FR-005**: When no overrides are supplied, the pipeline MUST select the same models — for every stage and every retry/escalation path — that it selects today.
-- **FR-006**: Overrides MUST be independent: supplying an override for one point MUST NOT require supplying overrides for any other point.
+- **FR-006**: Overrides MUST be independent: supplying an override for one tier MUST NOT require supplying overrides for any other tier.
 - **FR-007**: The set of models a run may select MUST be discoverable from the pipeline's configuration surface alone, without reading pipeline internals.
 - **FR-008**: The design MUST preserve the ability to assign different models to different task tiers, so that per-tier cost tiering is not lost when overrides are introduced.
 - **FR-009**: When an override point receives an empty or blank value, the pipeline MUST fall back to that point's default rather than invoking an empty model identifier.
@@ -80,7 +87,8 @@ A maintainer reviewing the change wants to confirm that no executable model sele
 
 ### Key Entities *(include if feature involves data)*
 
-- **Model override point**: A named, configurable setting that determines which model a particular stage or code path selects. Has a default value and may be set by a consumer. [NEEDS CLARIFICATION: granularity — see Question 1.]
+- **Model override point**: A named, per-tier configurable setting (a repository variable in the consuming repository) that determines which model the code paths in a given task tier select. The pipeline exposes a small set of tier overrides (e.g. triage, plan/tasks, spec/clarify, implement/escalation); every currently-hardcoded model location maps to exactly one tier. Has a default value and may be set by a consumer.
+- **Task tier**: A grouping of pipeline stages/code paths by task weight (cost tiering) to which one model override point applies. Distinct tiers may resolve to distinct models.
 - **Default model value**: The value an override point resolves to when the consumer supplies nothing; reproduces current behavior.
 
 ## Success Criteria *(mandatory)*
@@ -90,7 +98,7 @@ A maintainer reviewing the change wants to confirm that no executable model sele
 - **SC-001**: 100% of model selections in the pipeline's executable logic — including retry and escalation paths — resolve through a configurable override point; zero remain as embedded identifiers.
 - **SC-002**: With no overrides supplied, every stage selects the identical model it selects before the change (verified across all stages and retry/escalation paths).
 - **SC-003**: A Bedrock consumer can run every affected stage end-to-end using only their own model identifiers, with no stage invoking a model identifier they did not supply.
-- **SC-004**: A consumer can override any single model point without being forced to configure any other point.
+- **SC-004**: A consumer can override any single tier's model without being forced to configure any other tier.
 - **SC-005**: A reviewer can enumerate every model a run may select by reading configuration alone, in under 5 minutes, without inspecting pipeline logic.
 
 ## Assumptions
