@@ -83,6 +83,49 @@ Your repository-side secret names are your choice; the wrappers map them:
 
 Leave either line out (or the secret unset) if you only use one.
 
+### AWS Bedrock
+
+To run the agent steps against **AWS Bedrock** instead of the Anthropic API,
+every agent-running stage accepts three optional `workflow_call` inputs (set
+in your wrapper's `with:` block, not as repository secrets):
+
+| Input | Type | Default | Purpose |
+|---|---|---|---|
+| `use-bedrock` | boolean | `false` | Route this stage's agent step through Bedrock. Off by default — leaving it unset is a zero-change no-op for existing Anthropic adopters. |
+| `aws-role-arn` | string | `""` | IAM role ARN the stage assumes via OIDC. **Required** when `use-bedrock: true`. |
+| `aws-region` | string | `""` | AWS region for both credential configuration and the Bedrock endpoint. **Required** when `use-bedrock: true`. |
+
+Rules:
+
+- **Credentials are assumed via OIDC inside each stage job** — the stage calls
+  `aws-actions/configure-aws-credentials` with `role-to-assume:
+  ${{ inputs.aws-role-arn }}` and no long-lived AWS secrets (no access-key /
+  secret-key inputs exist). Your `aws-role-arn` must trust GitHub's OIDC
+  provider for this repository.
+- **No new permission grant.** The stage jobs already request
+  `id-token: write` for the pipeline-ref OIDC resolution every stage uses;
+  enabling Bedrock reuses that same grant and adds nothing.
+- **Both `use-bedrock: true` and an Anthropic credential configured** →
+  *Bedrock is used, regardless.* Setting `use-bedrock: true` selects Bedrock
+  whether or not an Anthropic credential is also present; the Anthropic
+  credentials are still passed through unconditionally, and upstream Claude
+  Code's own provider precedence honors the Bedrock flag.
+- **Preflight** requires `aws-role-arn` and `aws-region` (naming whichever is
+  missing) when `use-bedrock: true`, and skips the Anthropic-credential check
+  in that case — still deterministically, before any agent cost.
+- **Models are pure pass-through.** Supply Bedrock-compatible model
+  identifiers through the existing per-stage `model` inputs (constitution II
+  tiering) exactly as you would Anthropic model names — the pipeline performs
+  no translation or mapping.
+
+```yaml
+    with:
+      use-bedrock: true
+      aws-role-arn: arn:aws:iam::123456789012:role/wing-commander-bedrock
+      aws-region: us-east-1
+      # model inputs carry Bedrock-compatible identifiers directly
+```
+
 ## Wrapper security obligations
 
 The published stages carry the pipeline's internal security posture

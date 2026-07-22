@@ -58,5 +58,7 @@ documentation (code.claude.com/docs/en/authentication#authentication-precedence)
 
 - No shared/publisher credentials, proxying, or billing (spec assumption 6).
 - No credential validity/expiry probing in preflight.
-- No support here for Bedrock/Vertex/Foundry credentials (out of scope for v1;
-  would be a non-breaking additive input later).
+- No support here for Vertex/Foundry credentials (out of scope for v1; would
+  be a non-breaking additive input later). Bedrock support has since been added
+  as exactly such a non-breaking additive input — see
+  [`specs/016-bedrock-support/contracts/bedrock-provider.md`](../../016-bedrock-support/contracts/bedrock-provider.md).
