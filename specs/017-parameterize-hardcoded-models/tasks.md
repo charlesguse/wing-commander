@@ -75,8 +75,8 @@ Single-project CI/CD feature (GitHub Actions reusable workflows + repository-var
 
 ### Implementation for User Story 2
 
-- [ ] T013 [US2] Desk-check T002's new inputs against research.md D1's literal inventory: confirm `escalation-model`'s `default: claude-opus-4-8` and `summary-model`'s `default: claude-haiku-4-5` reproduce the exact values every one of the seven replaced literals held, and confirm no other reusable stage workflow's existing `model`/`summary-model`/`diagnose-model`/`propose-fix-model` input default changed as a side effect of T003–T011 (quickstart.md Scenario 1, first half).
-- [ ] T014 [US2] Desk-check T003–T011's `vars.X || 'default'` (and, for `watchdog.yml`, `${VAR:-default}`-equivalent) expressions against contracts/model-override-points.md Layer 2: confirm each of the five variables' documented default is what actually resolves when the variable is unset, and separately confirm an explicitly-blank value (`gh variable set ... --body ""`) resolves identically, since GitHub Actions `||` and bash parameter expansion both treat `''` as falsy (FR-009; quickstart.md Scenario 4).
+- [X] T013 [US2] Desk-check T002's new inputs against research.md D1's literal inventory: confirm `escalation-model`'s `default: claude-opus-4-8` and `summary-model`'s `default: claude-haiku-4-5` reproduce the exact values every one of the seven replaced literals held, and confirm no other reusable stage workflow's existing `model`/`summary-model`/`diagnose-model`/`propose-fix-model` input default changed as a side effect of T003–T011 (quickstart.md Scenario 1, first half).
+- [X] T014 [US2] Desk-check T003–T011's `vars.X || 'default'` (and, for `watchdog.yml`, `${VAR:-default}`-equivalent) expressions against contracts/model-override-points.md Layer 2: confirm each of the five variables' documented default is what actually resolves when the variable is unset, and separately confirm an explicitly-blank value (`gh variable set ... --body ""`) resolves identically, since GitHub Actions `||` and bash parameter expansion both treat `''` as falsy (FR-009; quickstart.md Scenario 4).
 
 **Checkpoint**: User Stories 1 AND 2 both hold — quickstart.md Scenarios 1–4 pass.
 
@@ -90,7 +90,7 @@ Single-project CI/CD feature (GitHub Actions reusable workflows + repository-var
 
 ### Implementation for User Story 3
 
-- [ ] T015 [US3] Run quickstart.md Scenario 6's grep audit — `grep -rn "claude-opus-4-8\|claude-haiku-4-5\|claude-sonnet-5\|claude-fable-5" .github/workflows/*.yml` filtered to exclude `default:` lines and prose comments — and confirm zero remaining matches where a `claude-*` string is used directly as a `--model` flag value, a `model:`/`diagnose-model:`/`propose-fix-model:`/`summary-model:` field value, or a bash variable assignment outside an input's own `default:` (SC-001).
+- [X] T015 [US3] Run quickstart.md Scenario 6's grep audit — `grep -rn "claude-opus-4-8\|claude-haiku-4-5\|claude-sonnet-5\|claude-fable-5" .github/workflows/*.yml` filtered to exclude `default:` lines and prose comments — and confirm zero remaining matches where a `claude-*` string is used directly as a `--model` flag value, a `model:`/`diagnose-model:`/`propose-fix-model:`/`summary-model:` field value, or a bash variable assignment outside an input's own `default:` (SC-001).
 
 **Checkpoint**: All three user stories are independently functional — the full quickstart.md scenario set (1–6) passes.
 
@@ -100,9 +100,9 @@ Single-project CI/CD feature (GitHub Actions reusable workflows + repository-var
 
 **Purpose**: Static validation and a full scenario walkthrough across the whole feature.
 
-- [ ] T016 [P] Validate every workflow file touched by T002–T011 parses as valid YAML and, where applicable, embedded `run:` scripts pass `bash -n`, matching `.github/workflows/lint-workflows.yml`'s own CI checks — run locally or trigger `lint-workflows.yml` itself.
-- [ ] T017 Confirm `release.yml` Gate 1b's `vars\.` grep scope (research.md D5) is unaffected: the eight gated files (`intake.yml`, `clarify.yml`, `plan.yml`, `tasks.yml`, `implement.yml`, `finalize.yml`, `cleanup.yml`, `rebase.yml`) contain zero `vars.*` reads after T002–T012 — every new `vars.*` read landed either in a `wing-commander-*.yml` wrapper file (outside Gate 1b's scope) or in `watchdog.yml` (T011, already excluded). Also confirm the "every agent step declares `--model` and `--max-turns`" sub-check still holds for `implement.yml`'s retry and progress-comment steps after T002 (same flag count, different right-hand side).
-- [ ] T018 Walk `specs/017-parameterize-hardcoded-models/quickstart.md`'s full scenario set (1–6) end-to-end against the finished workflow files, recording in the PR body which were exercised live (e.g. via a scratch repository or throwaway test issue) versus desk-checked only.
+- [X] T016 [P] Validate every workflow file touched by T002–T011 parses as valid YAML and, where applicable, embedded `run:` scripts pass `bash -n`, matching `.github/workflows/lint-workflows.yml`'s own CI checks — run locally or trigger `lint-workflows.yml` itself.
+- [X] T017 Confirm `release.yml` Gate 1b's `vars\.` grep scope (research.md D5) is unaffected: the eight gated files (`intake.yml`, `clarify.yml`, `plan.yml`, `tasks.yml`, `implement.yml`, `finalize.yml`, `cleanup.yml`, `rebase.yml`) contain zero `vars.*` reads after T002–T012 — every new `vars.*` read landed either in a `wing-commander-*.yml` wrapper file (outside Gate 1b's scope) or in `watchdog.yml` (T011, already excluded). Also confirm the "every agent step declares `--model` and `--max-turns`" sub-check still holds for `implement.yml`'s retry and progress-comment steps after T002 (same flag count, different right-hand side).
+- [X] T018 Walk `specs/017-parameterize-hardcoded-models/quickstart.md`'s full scenario set (1–6) end-to-end against the finished workflow files, recording in the PR body which were exercised live (e.g. via a scratch repository or throwaway test issue) versus desk-checked only.
 
 ---
 
