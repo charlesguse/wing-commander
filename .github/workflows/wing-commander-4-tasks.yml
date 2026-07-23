@@ -45,6 +45,7 @@ jobs:
       slug: ${{ inputs.slug }}
       restart: ${{ github.event_name == 'workflow_dispatch' }}
       tasks-review: ${{ vars.WING_COMMANDER_TASKS_REVIEW || 'auto' }}
+      model: ${{ vars.WING_COMMANDER_PLAN_MODEL || 'claude-sonnet-5' }}
       next-workflow: wing-commander-5-implement.yml
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

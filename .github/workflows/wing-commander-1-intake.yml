@@ -26,6 +26,7 @@ jobs:
     uses: ./.github/workflows/intake.yml
     with:
       issue-number: ${{ github.event.issue.number }}
+      model: ${{ vars.WING_COMMANDER_SPEC_MODEL || 'claude-opus-4-8' }}
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}

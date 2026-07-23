@@ -42,6 +42,16 @@ on:
         type: number
         required: false
         default: 100
+      escalation-model:
+        description: "Model for the one-tier-up retry after a failed attempt (constitution II escalation default)"
+        type: string
+        required: false
+        default: claude-opus-4-8
+      summary-model:
+        description: "Model for the progress-comment and metrics-summary steps (constitution II tiering default)"
+        type: string
+        required: false
+        default: claude-haiku-4-5
       max-iterations:
         description: "Hard cap on implement/converge cycles"
         type: number
@@ -532,14 +542,14 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       # One automatic retry of the SAME iteration, one tier up
-      # (→ claude-opus-4-8). Skipped when the failing attempt already ran on
-      # the top tier — that goes straight to stalled.
-      - name: Implement and converge (retry at claude-opus-4-8)
+      # (→ inputs.escalation-model). Skipped when the failing attempt already
+      # ran on the escalation tier — that goes straight to stalled.
+      - name: Implement and converge (retry at escalation model)
         id: retry
         if: >-
           steps.guard.outputs.skip != 'true' &&
           steps.outcome.outputs.ok == 'false' &&
-          inputs.model != 'claude-opus-4-8'
+          inputs.model != inputs.escalation-model
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
@@ -611,7 +621,7 @@ jobs:
             did not introduce. If a check needs a tool not listed here, note
             it for the human instead of retrying variants.
           claude_args: |
-            --model claude-opus-4-8
+            --model ${{ inputs.escalation-model }}
             --max-turns ${{ inputs.max-turns }}
             --allowedTools "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git pull:*),Bash(git fetch:*),Bash(git reset:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(ls:*),Bash(cat:*),Bash(yamllint:*),Bash(actionlint:*),Bash(shellcheck:*),Bash(jq:*),Bash(mkdir:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*)"
             --disallowedTools "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
@@ -632,7 +642,7 @@ jobs:
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
         with:
-          model: claude-opus-4-8
+          model: ${{ inputs.escalation-model }}
           max-turns: ${{ inputs.max-turns }}
           run-label: retry
 
@@ -645,6 +655,7 @@ jobs:
           ITERATION: ${{ inputs.iteration }}
           BASE_SHA: ${{ steps.base.outputs.base-sha }}
           RETRY_RESULT: ${{ steps.retry.outcome }}
+          ESCALATION_MODEL: ${{ inputs.escalation-model }}
         run: |
           git fetch origin "+refs/heads/spec/$SLUG:refs/remotes/origin/spec/$SLUG"
           ok=false
@@ -661,7 +672,7 @@ jobs:
             reason="the retry's agent step itself finished '$RETRY_RESULT' before completing its work"
           fi
           if [ "$ok" = "false" ]; then
-            echo "Retry attempt (claude-opus-4-8) also failed: $reason — the specification will be marked stalled." >> "$GITHUB_STEP_SUMMARY"
+            echo "Retry attempt ($ESCALATION_MODEL) also failed: $reason — the specification will be marked stalled." >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "ok=$ok" >> "$GITHUB_OUTPUT"
           echo "reason=$reason" >> "$GITHUB_OUTPUT"
@@ -703,9 +714,10 @@ jobs:
           RETRY_REMAINING: ${{ steps.retry-outcome.outputs.remaining }}
           PRIMARY_REASON: ${{ steps.outcome.outputs.reason }}
           RETRY_REASON: ${{ steps.retry-outcome.outputs.reason }}
+          ESCALATION_MODEL: ${{ inputs.escalation-model }}
         run: |
           if [ "$RETRY_RAN" = "true" ]; then
-            ok="$RETRY_OK"; converged="$RETRY_CONVERGED"; remaining="$RETRY_REMAINING"; tier="claude-opus-4-8"; reason="$RETRY_REASON"
+            ok="$RETRY_OK"; converged="$RETRY_CONVERGED"; remaining="$RETRY_REMAINING"; tier="$ESCALATION_MODEL"; reason="$RETRY_REASON"
           else
             ok="$PRIMARY_OK"; converged="$PRIMARY_CONVERGED"; remaining="$PRIMARY_REMAINING"; tier="$PRIMARY_TIER"; reason="$PRIMARY_REASON"
           fi
@@ -782,7 +794,7 @@ jobs:
             "_[Changes](${{ github.server_url }}/${{ github.repository }}/compare/${{ steps.base.outputs.base-sha }}...spec/${{ steps.spec.outputs.slug }}) · [run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})_"
             Do not edit any files.
           claude_args: |
-            --model claude-haiku-4-5
+            --model ${{ inputs.summary-model }}
             --max-turns 15
             --allowedTools "Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(gh issue comment:*)"
             --disallowedTools "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
@@ -796,7 +808,7 @@ jobs:
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
         with:
-          model: claude-haiku-4-5
+          model: ${{ inputs.summary-model }}
           max-turns: 15
           run-label: progress comment
 

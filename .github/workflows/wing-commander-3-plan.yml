@@ -44,6 +44,7 @@ jobs:
       merged: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged }}
       pr-number: ${{ github.event.pull_request.number }}
       plan-review: ${{ vars.WING_COMMANDER_PLAN_REVIEW || 'pr' }}
+      model: ${{ vars.WING_COMMANDER_PLAN_MODEL || 'claude-sonnet-5' }}
       next-workflow: wing-commander-4-tasks.yml
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

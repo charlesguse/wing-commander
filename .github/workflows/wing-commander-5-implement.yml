@@ -38,6 +38,8 @@ jobs:
       issues: read
     outputs:
       model: ${{ steps.tier.outputs.tier }}
+      escalation-model: ${{ vars.WING_COMMANDER_IMPLEMENT_ESCALATION_MODEL || 'claude-opus-4-8' }}
+      summary-model: ${{ vars.WING_COMMANDER_SUMMARY_MODEL || 'claude-haiku-4-5' }}
     steps:
       - name: Resolve model tier
         id: tier
@@ -66,6 +68,8 @@ jobs:
       issue-number: ${{ fromJSON(inputs.issue) }}
       iteration: ${{ fromJSON(inputs.iteration) }}
       model: ${{ needs.resolve-model.outputs.model }}
+      escalation-model: ${{ needs.resolve-model.outputs.escalation-model }}
+      summary-model: ${{ needs.resolve-model.outputs.summary-model }}
       max-iterations: ${{ fromJSON(vars.WING_COMMANDER_MAX_ITERATIONS || '5') }}
       self-workflow: wing-commander-5-implement.yml
       next-workflow: wing-commander-6-finalize.yml

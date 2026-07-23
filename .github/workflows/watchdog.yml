@@ -634,6 +634,18 @@ jobs:
       # access. signals.json (and anything read via Read/Grep/gh) is framed
       # explicitly as untrusted data (FR-023) — the same framing convention
       # every comment-triggered stage already uses for issue/comment bodies.
+      # D4 (research.md): watchdog.yml is release.yml Gate 1b's documented
+      # vars.*-read exception, so the repo-variable override for the
+      # diagnose agent's tier is resolved directly here, the same way
+      # WING_COMMANDER_WATCHDOG_PAUSED/_SELF_DISPATCH_CAP are read above,
+      # rather than adding a wrapper-side resolve-model job.
+      - name: Resolve diagnose model
+        id: resolve-diagnose-model
+        env:
+          MODEL_VAR: ${{ vars.WING_COMMANDER_SUMMARY_MODEL }}
+          MODEL_INPUT: ${{ inputs.diagnose-model }}
+        run: echo "model=${MODEL_VAR:-$MODEL_INPUT}" >> "$GITHUB_OUTPUT"
+
       - name: Diagnose
         id: diagnose
         continue-on-error: true
@@ -697,7 +709,7 @@ jobs:
             Output ONLY the JSON array of Findings matching the provided
             schema — no prose, no markdown fences.
           claude_args: |
-            --model ${{ inputs.diagnose-model }}
+            --model ${{ steps.resolve-diagnose-model.outputs.model }}
             --max-turns ${{ inputs.diagnose-max-turns }}
             --json-schema ${{ runner.temp }}/watchdog-finding-schema.json
             --allowedTools "Read,Grep,Bash(gh:*),Bash(git log:*),Bash(git diff:*)"
@@ -716,7 +728,7 @@ jobs:
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
         with:
-          model: ${{ inputs.diagnose-model }}
+          model: ${{ steps.resolve-diagnose-model.outputs.model }}
           max-turns: ${{ inputs.diagnose-max-turns }}
           run-label: diagnose
 
@@ -929,6 +941,18 @@ jobs:
       # can't confidently fix it (a decline always falls back to rung 2/3).
       # No git/gh write access is declared: a deterministic step commits
       # whatever ends up in the worktree, never this step itself.
+      # D4 (research.md): watchdog.yml is release.yml Gate 1b's documented
+      # vars.*-read exception, so the repo-variable override for the
+      # propose-fix agent's tier is resolved directly here (newly wired to
+      # the existing implement-tier variable — no model:opus label logic;
+      # that label only applies to implement.yml's own primary attempt).
+      - name: Resolve propose-fix model
+        id: resolve-propose-fix-model
+        env:
+          MODEL_VAR: ${{ vars.WING_COMMANDER_IMPLEMENT_MODEL }}
+          MODEL_INPUT: ${{ inputs.propose-fix-model }}
+        run: echo "model=${MODEL_VAR:-$MODEL_INPUT}" >> "$GITHUB_OUTPUT"
+
       - name: Propose fix
         id: propose-fix
         if: steps.suppress.outputs.suppressed != 'true' && steps.fix-eligible.outputs.eligible == 'true'
@@ -962,7 +986,7 @@ jobs:
             You have no git or gh access in this step; a later
             deterministic step commits whatever you leave in the worktree.
           claude_args: |
-            --model ${{ inputs.propose-fix-model }}
+            --model ${{ steps.resolve-propose-fix-model.outputs.model }}
             --max-turns ${{ inputs.propose-fix-max-turns }}
             --allowedTools "Read,Grep,Glob,Edit,Write"
             --disallowedTools "WebSearch,WebFetch,Bash,ScheduleWakeup,Monitor,SendMessage"
@@ -980,7 +1004,7 @@ jobs:
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
         with:
-          model: ${{ inputs.propose-fix-model }}
+          model: ${{ steps.resolve-propose-fix-model.outputs.model }}
           max-turns: ${{ inputs.propose-fix-max-turns }}
           run-label: propose-fix (${{ matrix.class }})
 
