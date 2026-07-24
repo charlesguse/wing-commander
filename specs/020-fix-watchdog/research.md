@@ -117,6 +117,25 @@ unguarded step failed first, since the safety net catches all of them
 uniformly, and the spec's own Assumptions already anticipate the original run
 may not be available for verification.
 
+**Implement-stage confirmation attempt (T001)**: `gh run view 30118703536
+--repo charlesguse/wing-commander --json jobs,conclusion` was attempted at
+the start of implementation, as this task requires. It could not be run: the
+implement stage's sandboxed environment requires interactive approval for
+`gh` invocations that this headless run does not grant (the same class of
+constraint noted above for the plan stage — `gh`'s API-reaching subcommands
+are unavailable, not merely the specific ones tried during planning).
+Deliberately fault-injecting a live `workflow_dispatch` run (quickstart.md
+Scenario 2's reproduction method) was also not attempted here, since that
+creates a real, externally-visible Actions run and branch push, which is
+outside what an unattended implement run should do without a human present
+to revert it. The fix therefore still proceeds on R1's static-analysis
+hypothesis, unconfirmed against live logs. **Flagged for a human maintainer**:
+run `gh run view 30118703536 --repo charlesguse/wing-commander --json
+jobs,conclusion` (or, if that run has aged out, quickstart.md Scenario 2's
+manual fault injection on a throwaway branch) to confirm the exact failing
+step, and update this note with the result before treating T009/T011's
+validation as fully closed.
+
 ## R4 — Regression protection scope (FR-008)
 
 **Decision**: Two forms of regression protection, both additive:
