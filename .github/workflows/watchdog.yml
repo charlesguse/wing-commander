@@ -143,7 +143,7 @@ jobs:
       spec-dir: ${{ steps.spec-slug.outputs.spec-dir }}
       lifecycle-issue: ${{ steps.spec-slug.outputs.lifecycle-issue }}
       slug: ${{ steps.spec-slug.outputs.slug }}
-      run-html-url: ${{ steps.run-meta.outputs.html-url }}
+      run-url: ${{ steps.run-meta.outputs.url }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v4
@@ -214,12 +214,12 @@ jobs:
           RUN_ID: ${{ inputs.run-id }}
         run: |
           set -euo pipefail
-          json=$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json headBranch,headSha,conclusion,htmlUrl,event,createdAt,databaseId)
+          json=$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json headBranch,headSha,conclusion,url,event,createdAt,databaseId)
           {
             echo "head-branch=$(printf '%s' "$json" | jq -r '.headBranch // empty')"
             echo "head-sha=$(printf '%s' "$json" | jq -r '.headSha // empty')"
             echo "conclusion=$(printf '%s' "$json" | jq -r '.conclusion // empty')"
-            echo "html-url=$(printf '%s' "$json" | jq -r '.htmlUrl // empty')"
+            echo "url=$(printf '%s' "$json" | jq -r '.url // empty')"
             echo "event=$(printf '%s' "$json" | jq -r '.event // empty')"
             echo "created-at=$(printf '%s' "$json" | jq -r '.createdAt // empty')"
           } >> "$GITHUB_OUTPUT"
@@ -516,7 +516,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ISSUE: ${{ steps.spec-slug.outputs.lifecycle-issue }}
-          RUN_URL: ${{ steps.run-meta.outputs.html-url }}
+          RUN_URL: ${{ steps.run-meta.outputs.url }}
         run: |
           set -uo pipefail
           body="🐕 **Wing Commander · watchdog** — could not inspect this run: every evidence collector failed outright (evidence missing, expired, or unreadable). _[Inspected run]($RUN_URL)_"
@@ -775,7 +775,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ISSUE: ${{ needs.collect.outputs.lifecycle-issue }}
-          RUN_URL: ${{ needs.collect.outputs.run-html-url }}
+          RUN_URL: ${{ needs.collect.outputs.run-url }}
         run: |
           set -uo pipefail
           body="🐕 **Wing Commander · watchdog** — run passed inspection. No problems detected. _[Inspected run]($RUN_URL)_"
@@ -1396,7 +1396,7 @@ jobs:
           FINDING_CLASS: ${{ matrix.class }}
           FINDING_DESCRIPTION: ${{ matrix.description }}
           FINDING_EVIDENCE: ${{ toJson(matrix.evidence) }}
-          RUN_URL: ${{ needs.collect.outputs.run-html-url }}
+          RUN_URL: ${{ needs.collect.outputs.run-url }}
         run: |
           set -uo pipefail
           if [ "$DEDUP_OUTCOME" = "none" ]; then
@@ -1446,7 +1446,7 @@ jobs:
           DEDUP_OUTCOME: ${{ steps.decision.outputs.dedup }}
           DEDUP_ISSUE: ${{ steps.decision.outputs.dedup-issue }}
           FINDING_EVIDENCE: ${{ toJson(matrix.evidence) }}
-          RUN_URL: ${{ needs.collect.outputs.run-html-url }}
+          RUN_URL: ${{ needs.collect.outputs.run-url }}
         run: |
           set -uo pipefail
           number="$DEDUP_ISSUE"
@@ -1504,7 +1504,7 @@ jobs:
           ISSUE_NUMBER: ${{ steps.ensure-issue.outputs.issue-number }}
           FINDING_CLASS: ${{ matrix.class }}
           FINDING_DESCRIPTION: ${{ matrix.description }}
-          RUN_URL: ${{ needs.collect.outputs.run-html-url }}
+          RUN_URL: ${{ needs.collect.outputs.run-url }}
           DB: ${{ steps.defbranch.outputs.name }}
         run: |
           set -uo pipefail
@@ -1551,7 +1551,7 @@ jobs:
           SHORT_FP: ${{ steps.decision.outputs.short-fingerprint }}
           FINDING_CLASS: ${{ matrix.class }}
           FINDING_DESCRIPTION: ${{ matrix.description }}
-          RUN_URL: ${{ needs.collect.outputs.run-html-url }}
+          RUN_URL: ${{ needs.collect.outputs.run-url }}
           DB: ${{ steps.defbranch.outputs.name }}
         run: |
           set -uo pipefail
@@ -1589,7 +1589,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ISSUE: ${{ needs.collect.outputs.lifecycle-issue }}
-          RUN_URL: ${{ needs.collect.outputs.run-html-url }}
+          RUN_URL: ${{ needs.collect.outputs.run-url }}
           FINDING_CLASS: ${{ matrix.class }}
           FINDING_DESCRIPTION: ${{ matrix.description }}
           FINDING_EVIDENCE: ${{ toJson(matrix.evidence) }}
