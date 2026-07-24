@@ -357,14 +357,14 @@ jobs:
                - Create the spec identity label first (adding a nonexistent label fails):
                  gh label create "spec:<NNN-slug>" --color C5DEF5 --description "Lifecycle: <spec-dir>" --force
                - gh issue edit --add-label "spec:<NNN-slug>,stage:spec"
-               - If spec.md still contains [NEEDS CLARIFICATION] markers: post ONE
-                 comment starting with the heading "## 🔍 Clarification needed",
-                 containing each question in the skill's "## Question N" format
-                 (context, question, suggested-answer option table), ending with:
-                 "Reply to this comment with your choices (e.g. `Q1: A, Q2: custom — ...`).
-                 The original requester or repository maintainers can answer."
-               - Otherwise: post a comment linking the PR and stating the spec is
-                 ready for review.
+               - If spec.md still contains [NEEDS CLARIFICATION] markers: write
+                 each question, in the skill's "## Question N" format (context,
+                 question, suggested-answer option table), to
+                 ${{ runner.temp }}/intake-clarification.md. A deterministic
+                 step after this one posts them to the issue — do not comment
+                 on the issue yourself.
+               - Otherwise: write nothing to that file — a deterministic step
+                 after this one announces the spec PR is ready for review.
 
             Constraints: create at most one spec directory; never edit files outside
             it; never merge or approve anything; never force-push.
@@ -391,6 +391,58 @@ jobs:
             echo "spec-dir=" >> "$GITHUB_OUTPUT"
             echo "No $SPEC_DRAFT_PREFIX$NUM-* branch found — intake produced no spec." >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      # Deterministic kind decision (contracts/callout-points.md rows 1/2):
+      # the agent never decides whether to post an action-required callout,
+      # it only authors the clarification-question content when needed.
+      - name: Check whether the spec still needs clarification
+        id: clarification
+        if: steps.created.outputs.spec-dir != ''
+        env:
+          SPEC_DIR: ${{ steps.created.outputs.spec-dir }}
+        run: |
+          if grep -q '\[NEEDS CLARIFICATION\]' "$SPEC_DIR/spec.md"; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Announce clarification needed
+        if: steps.clarification.outputs.needed == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: action
+          summary: "Answer the open clarification questions"
+          body-file: ${{ runner.temp }}/intake-clarification.md
+
+      # Same jq-side startswith() filter "Label spec PR to match the issue"
+      # already uses below — gh pr list --head takes an exact branch name,
+      # not a glob, so the NNN-slug suffix (unknown at this point) must be
+      # matched client-side.
+      - name: Resolve spec PR URL
+        id: spec-pr
+        if: steps.clarification.outputs.needed == 'false'
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          NUM: ${{ steps.num.outputs.num }}
+          SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
+        run: |
+          url=$(gh pr list --state open --json url,headRefName \
+            --jq "[.[] | select(.headRefName | startswith(\"$SPEC_DRAFT_PREFIX$NUM-\"))][0].url // empty")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Announce spec PR ready for review
+        if: steps.clarification.outputs.needed == 'false'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: action
+          summary: "Review the spec PR"
+          pr-url: ${{ steps.spec-pr.outputs.url }}
+          pr-label: "the spec PR"
 
       # Pipeline PRs carry the same labels as their lifecycle issue so PR
       # lists are filterable by spec. Deterministic.

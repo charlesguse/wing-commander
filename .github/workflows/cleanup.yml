@@ -638,23 +638,29 @@ jobs:
             echo "spec:$SLUG label already absent from issue #$ISSUE — skipping comment/label-removal steps." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      # Comment and strip labels, but never close the issue.
+      # Strip labels, but never close the issue.
       - name: Comment rejection and remove labels
         if: steps.idempotency.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ISSUE: ${{ steps.meta.outputs.issue }}
           SLUG: ${{ steps.spec.outputs.slug }}
-          PR_NUMBER: ${{ inputs.pr-number }}
-          DB: ${{ needs.select.outputs.default-branch }}
-          SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
         run: |
-          gh issue comment "$ISSUE" --body "🚫 **Draft rejected** — the draft pull request (#$PR_NUMBER, \`${SPEC_DRAFT_PREFIX}$SLUG → $DB\`) was closed without merging. This specification's labels have been removed; the issue stays **open** so you can revise and resubmit a new draft pull request whenever you're ready."
           gh issue edit "$ISSUE" --remove-label "spec:$SLUG" 2>/dev/null || true
           stale=$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name | select(startswith("stage:"))] | .[]')
           for l in $stale; do
             gh issue edit "$ISSUE" --remove-label "$l"
           done
+
+      - name: Announce the draft rejection on the lifecycle issue
+        if: steps.idempotency.outputs.skip != 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ steps.meta.outputs.issue }}
+          kind: action
+          summary: "Decide whether to revise and resubmit"
+          body: "the draft pull request (#${{ inputs.pr-number }}, `${{ inputs.spec-draft-prefix }}${{ steps.spec.outputs.slug }} → ${{ needs.select.outputs.default-branch }}`) was closed without merging. This specification's labels have been removed; the issue stays **open** so you can revise and resubmit a new draft pull request whenever you're ready."
 
       # The only branch that exists at the draft stage; always attempted,
       # independent of the idempotency skip above.
