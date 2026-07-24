@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,7 +31,7 @@
 
 ## Notes
 
-- Two [NEEDS CLARIFICATION] markers remain (FR-009 scope of non-branch naming values;
-  FR-010 handling of invalid values). These are posted to the lifecycle issue for the
-  requester/maintainers to answer during the clarify stage and do not block a draft spec.
-- Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.
+- Both [NEEDS CLARIFICATION] markers are resolved from the answer on lifecycle issue #90:
+  FR-009 scope is limited to branch prefixes only (Q1: A); FR-010 requires the run to fail
+  with a clear, actionable error on an invalid/unusable value (Q2: A).
+- No open clarification markers remain; the spec is ready for review.

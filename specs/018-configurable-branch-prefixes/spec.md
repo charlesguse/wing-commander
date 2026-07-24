@@ -41,7 +41,7 @@ A team adopts the pipeline and does not care about branch naming. They expect ev
 
 An adopter setting up the pipeline wants to know which naming values are customizable and how to change them, from a single documented location, rather than discovering hardcoded strings scattered across stage definitions.
 
-**Why this priority**: The request says "and other parts that should be modifiable by consumers," implying the surface is broader than branch prefixes alone. Centralized discovery reduces adoption friction, but the pipeline still functions without it, so it is P2.
+**Why this priority**: Even with the customizable surface scoped to branch prefixes for this feature (see FR-009), an adopter still benefits from discovering every configurable prefix, its default, and its effect in one place. Centralized discovery reduces adoption friction, but the pipeline still functions without it, so it is P2.
 
 **Independent Test**: From the documentation and a single configuration location, an adopter can identify every consumer-modifiable naming value and its default, and change any of them without reading stage internals.
 
@@ -52,9 +52,8 @@ An adopter setting up the pipeline wants to know which naming values are customi
 
 ### Edge Cases
 
-- What happens when a configured prefix is empty, contains characters that are invalid in git branch names, or would collide with an existing branch type's namespace?
+- What happens when a configured prefix is empty, contains characters that are invalid in git branch names, or would collide with an existing branch type's namespace? (Resolved by FR-010: the run fails with a clear, actionable error before any branch is created.)
 - How does the system behave when a consumer changes a prefix while lifecycle items are already in flight on branches created with the old prefix?
-- What happens when a stage-identifying label or other non-branch naming value is customized but a later stage still expects the default value?
 - How does the system handle a configuration file that exists but is malformed or contains unknown keys?
 
 ## Requirements *(mandatory)*
@@ -69,14 +68,14 @@ An adopter setting up the pipeline wants to know which naming values are customi
 - **FR-006**: The set of consumer-modifiable naming values MUST be defined in a single, discoverable configuration location rather than duplicated across stage definitions.
 - **FR-007**: Adoption documentation MUST enumerate every consumer-modifiable naming value, its default, and the effect of changing it.
 - **FR-008**: The pipeline MUST NOT require any new configuration for existing adopters or for the repository's own self-hosted use to keep working.
-- **FR-009**: The set of consumer-modifiable naming values MUST include, beyond branch prefixes, the other naming elements consumers are expected to customize [NEEDS CLARIFICATION: which values beyond branch prefixes are in scope — e.g., stage/lifecycle labels, the approval/gate label that triggers intake, pull request title formats, the spec directory name pattern? Or is scope limited to branch prefixes only for this feature?].
-- **FR-010**: When a consumer supplies a naming value that is invalid or unusable, the pipeline MUST [NEEDS CLARIFICATION: fail the run with a clear error, or silently fall back to the default? What counts as invalid — empty, illegal git-ref characters, namespace collision?].
+- **FR-009**: For this feature, the set of consumer-modifiable naming values is limited to branch prefixes. Other naming elements — stage/lifecycle labels, the approval/gate label that triggers intake, pull request title formats, and the spec directory name pattern — remain fixed and are explicitly out of scope; they may be addressed by a future feature.
+- **FR-010**: When a consumer supplies a naming value that is invalid or unusable — empty, containing characters that are illegal in git branch refs, or colliding with another branch type's namespace — the pipeline MUST fail the run with a clear, actionable error before creating any branch, rather than silently falling back to the default.
 
 ### Key Entities *(include if feature involves data)*
 
 - **Naming configuration**: The single source that maps each consumer-modifiable naming value to an override, with any omitted value falling back to its default. Consumed by every stage that reads or writes the corresponding names.
 - **Branch type**: A distinct category of branch the pipeline creates during the lifecycle (for example, the draft branch produced at intake and any per-stage working branches), each with its own configurable prefix and default.
-- **Naming value**: An individual customizable string (a branch prefix or another consumer-modifiable naming element) with a default and an optional override.
+- **Naming value**: An individual customizable string — for this feature, a branch prefix — with a default and an optional override.
 
 ## Success Criteria *(mandatory)*
 
