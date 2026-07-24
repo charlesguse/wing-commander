@@ -361,6 +361,16 @@ every job below lives in the reusable `watchdog.yml`.
 - `act` — one matrix entry per non-suppressed Finding: executes exactly what
   the rung gate selected and always appends a per-Finding report to the
   lifecycle issue (FR-022).
+- `report-unhandled-failure` — `needs: [collect, diagnose, triage, act]`,
+  `if: always()` (specs/020-fix-watchdog). No-ops when every job above
+  succeeded or was cleanly skipped; otherwise independently re-resolves a
+  GitHub App token and the lifecycle issue (never trusting `collect`'s
+  outputs, since `collect` may be the job that failed) and posts "could not
+  inspect this run: the `<job>` job ended `<result>` unexpectedly" — to the
+  lifecycle issue if one resolves, else the run summary. The structural
+  safety net that makes a hard job failure in any of the four jobs above
+  still end in a truthful verdict instead of silence, rather than the bare
+  red X with no verdict anywhere that issue #96 reported.
 
 **The triage ladder** (no LLM judgment ever gates an autonomous write —
 FR-011's crisp, testable rule lives in deterministic bash/jq):
