@@ -26,6 +26,7 @@ Credential behavior: see [credentials.md](credentials.md).
 | `use-bedrock` | boolean | `false` | Route the stage's agent step(s) through AWS Bedrock instead of the Anthropic API. Off by default — a zero-change no-op for Anthropic adopters ([`specs/016-bedrock-support/`](../../016-bedrock-support/contracts/bedrock-provider.md)). |
 | `aws-role-arn` | string | `""` | IAM role ARN the stage assumes via OIDC for Bedrock. Required when `use-bedrock` is true. |
 | `aws-region` | string | `""` | AWS region for both credential configuration and the Bedrock endpoint. Required when `use-bedrock` is true. |
+| `spec-draft-prefix`, `spec-prefix`, `plan-prefix`, `tasks-prefix`, `impl-prefix` | string | per-branch-type: `spec-draft/`, `spec/`, `plan/`, `tasks/`, `impl/` | Optional per-branch-type overrides for the pipeline's branch-name prefixes, newly common across the CREATE-capable stages. Each defaults to its literal shown, so a consumer can override branch naming without touching the rest of the artifact contract. |
 
 **Universal behavior**:
 - `on:` is `workflow_call` **only**; stages never read `github.event` — all
@@ -41,8 +42,10 @@ Credential behavior: see [credentials.md](credentials.md).
   repository's default branch (checkout refs, PR bases, rebase targets) uses
   the `default-branch` input or its derived value — never a literal `main`
   (spec edge case 3). The `spec-draft/`, `spec/`, `plan/`, `tasks/`, `impl/`
-  branch *prefixes* remain part of the shared artifact contract (spec
-  assumption 5).
+  branch *prefixes* are configurable-with-defaults: each is a `workflow_call`
+  input on the CREATE-capable stages (and, in this repo's wrappers, a
+  repository variable `WING_COMMANDER_*_PREFIX`), defaulting to the literal
+  shown, and remains part of the shared artifact contract (spec assumption 5).
 - Chaining is opt-in: `next-workflow`-style inputs default to `""` = no
   dispatch, so any stage runs standalone (FR-002/US2). When set, the stage
   dispatches that workflow *file in the consuming repository* via

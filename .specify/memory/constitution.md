@@ -1,4 +1,18 @@
 <!--
+Sync Impact Report — 2026-07-24
+Version change: 1.2.0 → 1.2.1 (PATCH: clarification — branch prefixes documented as consumer-configurable with defaults; no principle changed)
+Modified principles: none
+Modified sections: Operational Constraints — "Branch conventions" now names all five default prefixes (adds tasks/) and states they are consumer-configurable via repository variables (spec 018)
+Added sections: none
+Removed sections: none
+Templates requiring updates:
+  ✅ docs/setup.md — updated in same feature (adds the five WING_COMMANDER_*_PREFIX repository-variable rows)
+  ✅ docs/adoption.md — updated in same feature (prefixes described as configurable-with-defaults)
+  ✅ docs/architecture.md — updated in same feature (branch-prefix contract now configurable-with-default)
+  ✅ specs/010-reusable-pipeline/contracts/stage-interfaces.md — updated in same feature (prefix inputs documented)
+Follow-up TODOs: none
+-->
+<!--
 Sync Impact Report — 2026-07-05
 Version change: 1.1.0 → 1.2.0 (MINOR: new principle added)
 Modified principles: none
@@ -39,7 +53,7 @@ The pipeline operates exclusively on the repository that runs it. Everything pro
 ## Operational Constraints
 
 - Spec artifacts live in `specs/<NNN-slug>/` (spec.md, plan.md, tasks.md, spec-meta.json, checklists/). `spec-meta.json` is the machine-readable source of truth for a spec's lifecycle state.
-- Branch conventions: `spec-draft/<NNN-slug>` (draft spec PRs to main), `spec/<NNN-slug>` (long-lived per-spec integration branch), `plan/<NNN-slug>` and `impl/<NNN-slug>-iterN` (stage work branches).
+- Branch conventions: the pipeline's default branch prefixes are `spec-draft/<NNN-slug>` (draft spec PRs to main), `spec/<NNN-slug>` (long-lived per-spec integration branch), and `plan/<NNN-slug>`, `tasks/<NNN-slug>`, `impl/<NNN-slug>-iterN` (stage work branches). Each prefix is consumer-configurable via a repository variable, defaulting to the literal shown (see docs/setup.md).
 - The implement ⟲ converge loop is capped (default 5 iterations); the final converge report is always posted to the lifecycle issue.
 - Concurrent specs are supported: stages of one spec serialize via a per-spec concurrency group; different specs run in parallel.
 - Spec-kit is pinned (currently v0.12.4); upgrades re-verify `.specify/scripts` behavior before adoption.
@@ -52,4 +66,4 @@ Stages and their gates: intake (`/speckit-specify`, human gate = maintainer labe
 
 This constitution supersedes ad-hoc practice in this repository. Every spec, plan, and implementation PR is checked against it during review; violations must be fixed or the constitution amended first. Amendments arrive as ordinary PRs that modify this file, state the motivation, and bump the version below (semver: breaking principle changes = MAJOR, new principles/sections = MINOR, clarifications = PATCH).
 
-**Version**: 1.2.0 | **Ratified**: 2026-07-04 | **Last Amended**: 2026-07-05
+**Version**: 1.2.1 | **Ratified**: 2026-07-04 | **Last Amended**: 2026-07-24

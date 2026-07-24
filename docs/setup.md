@@ -71,6 +71,11 @@ create them now so the stubs' documentation stays true):
 | `WING_COMMANDER_PLAN_MODEL` | `claude-sonnet-5` | Model for the plan/tasks tier (plan, tasks, and rebase stages) |
 | `WING_COMMANDER_SUMMARY_MODEL` | `claude-haiku-4-5` | Model for the triage/summary tier (finalize, cleanup, implement's progress comments, and watchdog's diagnose step) |
 | `WING_COMMANDER_IMPLEMENT_ESCALATION_MODEL` | `claude-opus-4-8` | Model for implement's one-tier-up retry after a failed attempt |
+| `WING_COMMANDER_SPEC_DRAFT_PREFIX` | `spec-draft/` | Branch prefix for the draft spec branch (default `spec-draft/`) |
+| `WING_COMMANDER_SPEC_PREFIX` | `spec/` | Branch prefix for the persistent spec branch (default `spec/`) |
+| `WING_COMMANDER_PLAN_PREFIX` | `plan/` | Branch prefix for the plan branch (default `plan/`) |
+| `WING_COMMANDER_TASKS_PREFIX` | `tasks/` | Branch prefix for the tasks branch (default `tasks/`) |
+| `WING_COMMANDER_IMPL_PREFIX` | `impl/` | Branch prefix for the implement branch (default `impl/`) |
 | `WING_COMMANDER_MAX_ITERATIONS` | `5` | Cap on implement ⟲ converge loops per spec |
 | `WING_COMMANDER_WATCHDOG_PAUSED` | unset (not paused) | `true` = kill switch: the watchdog still inspects and reports, but performs **no** autonomous write (no PR, issue, comment, or reopen) at any rung until you clear it |
 | `WING_COMMANDER_WATCHDOG_SELF_DISPATCH_CAP` | `3` | Max consecutive watchdog-inspects-watchdog runs before the chain stops writing (bounds a self-inspection loop); the run is still inspected and reported |
