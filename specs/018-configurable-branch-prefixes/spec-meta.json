@@ -2,7 +2,7 @@
   "issue": 90,
   "spec_dir": "specs/018-configurable-branch-prefixes",
   "feature_num": "018",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 1,
   "spec_branch": "spec/018-configurable-branch-prefixes"
 }
