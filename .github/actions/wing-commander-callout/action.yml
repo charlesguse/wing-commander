@@ -1,0 +1,123 @@
+# The single enforcement point for the action-required/informational
+# convention (contracts/callout-format.md, specs/019-next-step-callouts).
+# Like every shared composite, this action is resolved from the pipeline
+# repository's own checkout at github.job_workflow_sha (see the header of
+# .github/actions/wing-commander-context/action.yml for the verified
+# snippet), so it must never assume it lives in the workspace-root
+# repository — it touches no workspace paths (issue-comment post only).
+name: wing-commander-callout
+description: >
+  Post one lifecycle-issue comment in one of two visually distinct
+  templates: kind: action renders inside a GitHub [!IMPORTANT] alert box;
+  kind: info renders as a plain, unwrapped message. Never edits or deletes
+  a prior comment — always a fresh, append-only post.
+
+inputs:
+  token:
+    description: >
+      GitHub token with issues: write (the same App-installation token
+      every stage already mints via wing-commander-context)
+    required: true
+  issue-number:
+    description: The lifecycle issue to comment on
+    required: true
+  kind:
+    description: "action or info — selects the rendering template"
+    required: true
+  summary:
+    description: >
+      One-sentence plain-language statement: what the reader must do
+      (kind: action) or what happened (kind: info)
+    required: true
+  body:
+    description: >
+      Literal short markdown string for additional detail. Mutually
+      exclusive with body-file
+    required: false
+    default: ""
+  body-file:
+    description: >
+      Path to a file containing additional markdown detail (agent-authored
+      or otherwise multi-line content). Mutually exclusive with body
+    required: false
+    default: ""
+  pr-url:
+    description: "Direct URL to the related pull request. kind: action only"
+    required: false
+    default: ""
+  pr-label:
+    description: >
+      Human label for the PR (e.g. "the spec PR", "the implementation
+      PR"). Defaults to "the pull request" when pr-url is set.
+    required: false
+    default: ""
+  timing:
+    description: >
+      Free-text statement of when the action should be performed (e.g.
+      "after this PR merges"). kind: action only
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Render and post callout
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        ISSUE_NUMBER: ${{ inputs.issue-number }}
+        KIND: ${{ inputs.kind }}
+        SUMMARY: ${{ inputs.summary }}
+        BODY: ${{ inputs.body }}
+        BODY_FILE: ${{ inputs.body-file }}
+        PR_URL: ${{ inputs.pr-url }}
+        PR_LABEL: ${{ inputs.pr-label }}
+        TIMING: ${{ inputs.timing }}
+      run: |
+        set -uo pipefail
+
+        if [ -n "$BODY" ] && [ -n "$BODY_FILE" ]; then
+          echo "::error::wing-commander-callout: both body and body-file were set — exactly one is allowed."
+          exit 1
+        fi
+
+        body_content=""
+        if [ -n "$BODY_FILE" ]; then
+          body_content="$(cat "$BODY_FILE")"
+        elif [ -n "$BODY" ]; then
+          body_content="$BODY"
+        fi
+
+        out="$RUNNER_TEMP/wing-commander-callout-body.md"
+
+        if [ "$KIND" = "action" ]; then
+          {
+            echo "> [!IMPORTANT]"
+            echo "> **Action needed: $SUMMARY**"
+            if [ -n "$body_content" ]; then
+              echo ">"
+              printf '%s\n' "$body_content" | sed 's/^/> /'
+            fi
+            if [ -n "$PR_URL" ]; then
+              label="${PR_LABEL:-the pull request}"
+              echo ">"
+              echo "> **PR:** [$label]($PR_URL)"
+            fi
+            if [ -n "$TIMING" ]; then
+              echo "> **When:** $TIMING"
+            fi
+          } > "$out"
+        else
+          {
+            echo "$SUMMARY"
+            if [ -n "$body_content" ]; then
+              echo ""
+              printf '%s\n' "$body_content"
+            fi
+          } > "$out"
+        fi
+
+        # --body-file only — never shell-interpolate agent-authored content
+        # into a --body "$(...)" string (research.md, injection-safety
+        # decision). Never edits or deletes a prior comment (FR-012).
+        gh issue comment "$ISSUE_NUMBER" --body-file "$out"

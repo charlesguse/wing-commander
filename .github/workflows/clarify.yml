@@ -293,17 +293,73 @@ jobs:
                still-open questions, or replace the section with a note that all
                clarifications are resolved (with a link to the answer comment).
                Leave the rest of the body untouched.
-            6. Comment on issue #${{ inputs.issue-number }}:
+            6. Write to ${{ runner.temp }}/clarify-followup.md:
                - which questions were resolved and with what,
-               - if markers remain: restate ONLY the still-open questions,
-               - if none remain: say the spec is ready for review and link the PR.
+               - if markers remain: restate ONLY the still-open questions.
+               A deterministic step after this one posts the result to the
+               issue — do not comment on the issue yourself for this part.
 
             Never merge, approve, close, or relabel anything except as stated.
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ inputs.max-turns }}
-            --allowedTools "Read,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh pr edit:*)"
-            --disallowedTools "WebSearch,WebFetch,Write,ScheduleWakeup,Monitor,SendMessage"
+            --allowedTools "Read,Edit,Write,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh pr edit:*)"
+            --disallowedTools "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
+
+      # Deterministic kind decision (contracts/callout-points.md rows 3/4).
+      # outcome=none covers the agent's early-STOP path (step 2: the reply
+      # didn't answer any open question) — the agent's own gh issue comment
+      # already covered that case, so no clarify-followup.md exists and no
+      # callout is posted here.
+      - name: Determine clarification follow-up outcome
+        id: clarification
+        if: steps.agent.outcome == 'success'
+        env:
+          SPEC_DIR: ${{ steps.ctx.outputs.spec-dir }}
+        run: |
+          followup="${{ runner.temp }}/clarify-followup.md"
+          if [ ! -f "$followup" ]; then
+            echo "outcome=none" >> "$GITHUB_OUTPUT"
+          elif grep -q '\[NEEDS CLARIFICATION\]' "$SPEC_DIR/spec.md"; then
+            echo "outcome=needs-clarification" >> "$GITHUB_OUTPUT"
+          else
+            echo "outcome=ready" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Announce remaining clarification questions
+        if: steps.clarification.outputs.outcome == 'needs-clarification'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: action
+          summary: "Answer the remaining clarification questions"
+          body-file: ${{ runner.temp }}/clarify-followup.md
+
+      # Same PR the agent's own "update the draft PR description" step
+      # already located via gh pr list --head <branch> — the branch name is
+      # fully known here (spec-slug is already resolved), unlike intake.yml
+      # where the NNN-slug suffix isn't known until this same run.
+      - name: Resolve spec PR URL
+        id: spec-pr
+        if: steps.clarification.outputs.outcome == 'ready'
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+        run: |
+          url=$(gh pr list --head "${{ inputs.spec-draft-prefix }}${{ steps.ctx.outputs.spec-slug }}" --state open --json url --jq '.[0].url // empty')
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Announce spec PR ready for review
+        if: steps.clarification.outputs.outcome == 'ready'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: action
+          summary: "Review the spec PR"
+          pr-url: ${{ steps.spec-pr.outputs.url }}
+          body-file: ${{ runner.temp }}/clarify-followup.md
+          pr-label: "the spec PR"
 
       # The action writes its full execution transcript — every tool call,
       # including permission denials — to claude-execution-output.json in the

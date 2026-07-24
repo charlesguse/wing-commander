@@ -296,7 +296,7 @@ jobs:
           git fetch origin "$DB"
           if [ -z "$(git diff --stat "origin/$DB...HEAD")" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            gh issue comment "$ISSUE" --body "⚠️ **Finalize anomaly** — the persistent branch \`${SPEC_PREFIX}$SLUG\` carries no changes against \`$DB\`; nothing to finalize."
+            echo "anomaly=true" >> "$GITHUB_OUTPUT"
             echo "${SPEC_PREFIX}$SLUG has no diff against $DB — reported anomaly, stopping." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
@@ -314,6 +314,15 @@ jobs:
             fi
             echo "WING_COMMANDER_FILES_EOF"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Announce finalize anomaly (no diff)
+        if: steps.diff.outputs.anomaly == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: action
+          summary: "the persistent branch `${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}` carries no changes against `${{ steps.defbranch.outputs.name }}`; nothing to finalize"
 
       # The one agent step, read-only. Only the validated slug and integer
       # issue number are interpolated; spec/tasks content is framed as data,
@@ -398,10 +407,9 @@ jobs:
 
       # Fail loudly rather than opening a PR with incomplete content.
       - name: Verify agent output
+        id: verify-agent-output
         if: steps.diff.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
-          ISSUE: ${{ inputs.issue-number }}
           SUMMARIZE_OUTCOME: ${{ steps.summarize.outcome }}
         run: |
           if [ "$SUMMARIZE_OUTCOME" != "success" ] \
@@ -409,9 +417,18 @@ jobs:
              || [ ! -f "${{ runner.temp }}/finalize-remaining.md" ]; then
             msg="wing-commander finalize stage: the change-summary/remaining-work step did not complete successfully."
             echo "::error::$msg"
-            gh issue comment "$ISSUE" --body "❌ **Finalize failed** — $msg No final pull request was opened; retrigger the finalize stage to retry."
+            echo "failed=true" >> "$GITHUB_OUTPUT"
             exit 1
           fi
+
+      - name: Announce finalize failure (agent output)
+        if: always() && steps.verify-agent-output.outputs.failed == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: action
+          summary: "wing-commander finalize stage: the change-summary/remaining-work step did not complete successfully. No final pull request was opened; retrigger the finalize stage to retry."
 
       # Deterministic assembly — the ⚠️ banner's task count and the "no
       # manual work remains" fallback both read the same finalize-remaining.md
@@ -492,7 +509,6 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           SLUG: ${{ steps.spec.outputs.slug }}
-          ISSUE: ${{ inputs.issue-number }}
           DB: ${{ steps.defbranch.outputs.name }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
         run: |
@@ -500,11 +516,35 @@ jobs:
           if [ -z "$pr" ]; then
             msg="wing-commander finalize stage: gh pr create did not result in a verifiable open pull request from ${SPEC_PREFIX}$SLUG to $DB."
             echo "::error::$msg"
-            gh issue comment "$ISSUE" --body "❌ **Finalize failed** — $msg spec-meta.json was left untouched; retrigger the finalize stage to retry."
+            echo "failed=true" >> "$GITHUB_OUTPUT"
             exit 1
           fi
           echo "pr-number=$pr" >> "$GITHUB_OUTPUT"
+          echo "pr-url=$(gh pr view "$pr" --json url --jq .url)" >> "$GITHUB_OUTPUT"
           echo "Final pull request #$pr opened (${SPEC_PREFIX}$SLUG -> $DB)." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Announce finalize failure (PR verification)
+        if: always() && steps.verify-pr.outputs.failed == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: action
+          summary: "wing-commander finalize stage: gh pr create did not result in a verifiable open pull request from ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }} to ${{ steps.defbranch.outputs.name }}. spec-meta.json was left untouched; retrigger the finalize stage to retry."
+
+      # User Story 1's core fix (contracts/callout-points.md row 5): today
+      # this moment posts no comment at all — a customer-visible silent
+      # stall until a human happens to notice the PR.
+      - name: Announce the implementation PR for review
+        if: steps.diff.outputs.skip != 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: action
+          summary: "Review the implementation PR"
+          pr-url: ${{ steps.verify-pr.outputs.pr-url }}
+          pr-label: "the implementation PR"
 
       # Direct commit onto the spec branch, no work branch — same shape the
       # implement stage already uses for its own metadata writes.
@@ -526,18 +566,36 @@ jobs:
 
       # The same remaining-manual-work content the PR body used, verbatim —
       # guarantees the PR and the issue never disagree.
-      - name: Comment remaining manual work on the lifecycle issue
+      - name: Check for remaining manual work
+        id: remaining
         if: steps.diff.outputs.skip != 'true'
-        env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
-          ISSUE: ${{ inputs.issue-number }}
         run: |
           remaining_file="${{ runner.temp }}/finalize-remaining.md"
           if [ -s "$remaining_file" ] && [ -n "$(tr -d '[:space:]' < "$remaining_file")" ]; then
-            gh issue comment "$ISSUE" --body-file "$remaining_file"
+            echo "has-remaining=true" >> "$GITHUB_OUTPUT"
           else
-            gh issue comment "$ISSUE" --body "No manual work remains."
+            echo "has-remaining=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Announce remaining manual work on the lifecycle issue
+        if: steps.remaining.outputs.has-remaining == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: action
+          summary: "Complete the remaining manual work"
+          body-file: ${{ runner.temp }}/finalize-remaining.md
+          timing: "after this PR merges"
+
+      - name: Announce no remaining manual work on the lifecycle issue
+        if: steps.remaining.outputs.has-remaining == 'false'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: info
+          summary: "No manual work remains."
 
       # The last write this run performs — the lifecycle issue's advance to
       # the review stage.
