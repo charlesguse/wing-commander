@@ -2,7 +2,7 @@
   "issue": 96,
   "spec_dir": "specs/020-fix-watchdog",
   "feature_num": "020",
-  "stage": "plan",
+  "stage": "tasks",
   "iteration": 0,
   "spec_branch": "spec/020-fix-watchdog"
 }
