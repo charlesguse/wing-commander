@@ -1641,3 +1641,223 @@ jobs:
           else
             cat "${{ runner.temp }}/finding-comment-${{ matrix.index }}.md" >> "$GITHUB_STEP_SUMMARY"
           fi
+
+  # Workflow-level safety net (specs/020-fix-watchdog, FR-002/FR-007/FR-008):
+  # guarantees a verdict is posted even when collect/diagnose/triage/act
+  # itself hard-fails for a reason none of their own per-step error handling
+  # anticipated (research.md R1 — the mechanism behind issue #96). Runs
+  # unconditionally (if: always()) and no-ops when every job above already
+  # succeeded or was cleanly skipped, since every such path already reported
+  # its own verdict. Its own steps are best-effort (continue-on-error: true)
+  # so this last line of defense cannot itself become a new single point of
+  # failure — unlike collect's identical-looking but hard-failing versions.
+  report-unhandled-failure:
+    needs: [collect, diagnose, triage, act]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout consumer repository (bootstrap, default token)
+        uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          persist-credentials: false
+
+      # See the collect job's identical step for the fallback rationale.
+      # Cannot be inherited from collect — job_workflow_sha/OIDC resolution
+      # is job-scoped — and best-effort here since this job must still
+      # produce a report even if this resolution fails.
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        continue-on-error: true
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref" | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      - name: Wing Commander context
+        id: ctx
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      # Reads only needs.*.result — a workflow-engine-computed keyword, never
+      # user-influenced text (Constitution V) — so there is nothing here that
+      # should ever fail; no set -e/pipefail needed, and none used.
+      - name: Determine failed jobs
+        id: gate
+        env:
+          COLLECT_RESULT: ${{ needs.collect.result }}
+          DIAGNOSE_RESULT: ${{ needs.diagnose.result }}
+          TRIAGE_RESULT: ${{ needs.triage.result }}
+          ACT_RESULT: ${{ needs.act.result }}
+        run: |
+          any_failed=false
+          failed_jobs=""
+          for pair in "collect:$COLLECT_RESULT" "diagnose:$DIAGNOSE_RESULT" "triage:$TRIAGE_RESULT" "act:$ACT_RESULT"; do
+            result="${pair#*:}"
+            if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
+              any_failed=true
+              failed_jobs="${failed_jobs}${failed_jobs:+ }${pair}"
+            fi
+          done
+          {
+            echo "any-failed=$any_failed"
+            echo "failed-jobs=$failed_jobs"
+          } >> "$GITHUB_OUTPUT"
+
+      # Independently re-derives the lifecycle issue the same way collect's
+      # "Resolve inspected run's spec slug and lifecycle issue" step does —
+      # it must not read needs.collect.outputs.lifecycle-issue, since collect
+      # may be the job that failed before computing that output. Best-effort:
+      # tolerates an empty token (steps.ctx failed above), a failed gh run
+      # view, or a missing checkout (git fetch/show simply find nothing).
+      - name: Resolve inspected run's lifecycle issue
+        id: issue
+        if: steps.gate.outputs.any-failed == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          RUN_ID: ${{ inputs.run-id }}
+          SPEC_DRAFT_PREFIX: ${{ vars.WING_COMMANDER_SPEC_DRAFT_PREFIX }}
+          SPEC_PREFIX: ${{ vars.WING_COMMANDER_SPEC_PREFIX }}
+          PLAN_PREFIX: ${{ vars.WING_COMMANDER_PLAN_PREFIX }}
+          TASKS_PREFIX: ${{ vars.WING_COMMANDER_TASKS_PREFIX }}
+          IMPL_PREFIX: ${{ vars.WING_COMMANDER_IMPL_PREFIX }}
+        run: |
+          set -uo pipefail
+          SPEC_DRAFT_PREFIX="${SPEC_DRAFT_PREFIX:-spec-draft/}"
+          SPEC_PREFIX="${SPEC_PREFIX:-spec/}"
+          PLAN_PREFIX="${PLAN_PREFIX:-plan/}"
+          TASKS_PREFIX="${TASKS_PREFIX:-tasks/}"
+          IMPL_PREFIX="${IMPL_PREFIX:-impl/}"
+
+          issue=""
+          if [ -n "$GH_TOKEN" ]; then
+            head_branch="$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json headBranch --jq '.headBranch // empty' 2>/dev/null || true)"
+
+            slug=""
+            case "$head_branch" in
+              "${SPEC_DRAFT_PREFIX}"*) slug="${head_branch#"$SPEC_DRAFT_PREFIX"}" ;;
+              "${SPEC_PREFIX}"*)       slug="${head_branch#"$SPEC_PREFIX"}" ;;
+              "${PLAN_PREFIX}"*)       slug="${head_branch#"$PLAN_PREFIX"}" ;;
+              "${TASKS_PREFIX}"*)      slug="${head_branch#"$TASKS_PREFIX"}" ;;
+              "${IMPL_PREFIX}"*)       slug="${head_branch#"$IMPL_PREFIX"}"; slug="${slug%-iter*}" ;;
+            esac
+
+            if [ -n "$slug" ]; then
+              spec_dir="specs/$slug"
+              git fetch --no-tags --quiet origin "refs/heads/${SPEC_PREFIX}$slug:refs/remotes/origin/${SPEC_PREFIX}$slug" 2>/dev/null || true
+              if meta="$(git show "refs/remotes/origin/${SPEC_PREFIX}$slug:$spec_dir/spec-meta.json" 2>/dev/null)"; then
+                meta_dir="$(printf '%s' "$meta" | jq -r '.spec_dir // empty' 2>/dev/null || true)"
+                if [ "$meta_dir" = "$spec_dir" ]; then
+                  issue="$(printf '%s' "$meta" | jq -r '.issue // empty' 2>/dev/null || true)"
+                fi
+              fi
+            fi
+          fi
+
+          echo "issue-number=$issue" >> "$GITHUB_OUTPUT"
+
+      # Uses the default GITHUB_TOKEN (actions: read, already granted at
+      # workflow level) — no App token needed for this read. Matches by
+      # job name, tolerating a reusable-workflow name prefix (e.g. "watchdog
+      # / collect") since the exact displayed job name isn't guaranteed.
+      - name: Resolve failed job log URLs
+        id: job-urls
+        if: steps.gate.outputs.any-failed == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FAILED_JOBS: ${{ steps.gate.outputs.failed-jobs }}
+        run: |
+          set -uo pipefail
+          jobs_json="$(gh api "repos/${{ github.repository }}/actions/runs/${{ inputs.run-id }}/jobs" 2>/dev/null || echo '{"jobs":[]}')"
+          urls=""
+          for pair in $FAILED_JOBS; do
+            job="${pair%%:*}"
+            url="$(printf '%s' "$jobs_json" | jq -r --arg name "$job" '[.jobs[]? | select(.name == $name or (.name | endswith("/ " + $name))) | .html_url] | first // empty' 2>/dev/null || true)"
+            urls="${urls}${urls:+ }${job}:${url}"
+          done
+          echo "job-urls=$urls" >> "$GITHUB_OUTPUT"
+
+      # Two-branch verdict delivery, matching every other verdict path's
+      # destination rule (data-model.md, contracts/watchdog-workflow-delta.md).
+      # Wording ("ended <result> unexpectedly") is deliberately distinct from
+      # the existing "every evidence collector failed outright" message
+      # (line 521) — a maintainer reading either can immediately tell which
+      # failure shape occurred without cross-referencing anything else.
+      - name: Report unhandled job failure
+        id: report
+        if: steps.gate.outputs.any-failed == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ISSUE: ${{ steps.issue.outputs.issue-number }}
+          FAILED_JOBS: ${{ steps.gate.outputs.failed-jobs }}
+          JOB_URLS: ${{ steps.job-urls.outputs.job-urls }}
+          RUN_ID: ${{ inputs.run-id }}
+        run: |
+          set -uo pipefail
+          body=""
+          for pair in $FAILED_JOBS; do
+            job="${pair%%:*}"
+            result="${pair#*:}"
+            url=""
+            for upair in $JOB_URLS; do
+              if [ "${upair%%:*}" = "$job" ]; then
+                url="${upair#*:}"
+                break
+              fi
+            done
+            link=""
+            [ -n "$url" ] && link=" [Job logs]($url)."
+            body="${body}🐕 **Wing Commander · watchdog** — could not inspect this run: the \`$job\` job ended \`$result\` unexpectedly.${link} This is a pipeline defect, not a finding about the inspected run itself."$'\n'
+          done
+          if [ -n "$ISSUE" ]; then
+            printf '%s' "$body" | gh issue comment "$ISSUE" --body-file -
+          else
+            printf '%s' "$body" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # FR-002's guarantee, at its floor: this last-resort fallback fires
+      # only if the two-branch report step above itself failed (e.g. gh
+      # issue comment erroring) — so even this safety net's own failure
+      # still leaves a written verdict in the run summary rather than
+      # silently dropping it. Omits the job-log link (steps.job-urls may not
+      # have run or resolved anything) rather than depending on it.
+      - name: Report unhandled job failure to run summary
+        id: report-baseline
+        if: always() && steps.report.outcome == 'failure'
+        env:
+          FAILED_JOBS: ${{ steps.gate.outputs.failed-jobs }}
+          RUN_ID: ${{ inputs.run-id }}
+        run: |
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${RUN_ID}"
+          for pair in $FAILED_JOBS; do
+            job="${pair%%:*}"
+            result="${pair#*:}"
+            echo "🐕 **Wing Commander · watchdog** — could not inspect this run: the \`$job\` job ended \`$result\` unexpectedly. _[Inspected run]($run_url)_. This is a pipeline defect, not a finding about the inspected run itself." >> "$GITHUB_STEP_SUMMARY"
+          done
