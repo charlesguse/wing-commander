@@ -2,7 +2,7 @@
   "issue": 93,
   "spec_dir": "specs/019-next-step-callouts",
   "feature_num": "019",
-  "stage": "spec",
+  "stage": "plan",
   "iteration": 0,
-  "spec_branch": null
+  "spec_branch": "spec/019-next-step-callouts"
 }
