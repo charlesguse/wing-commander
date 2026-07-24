@@ -1063,4 +1063,12 @@ jobs:
             echo "   gh workflow run $restart_workflow -R $GITHUB_REPOSITORY -f spec_dir=$SPEC_DIR -f issue=$ISSUE -f iteration=$ITERATION"
             echo "   \`\`\`"
           } > /tmp/stall-comment.md
-          gh issue comment "$ISSUE" --body-file /tmp/stall-comment.md
+
+      - name: Announce the stall on the lifecycle issue
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: action
+          summary: "Restart the implement stage"
+          body-file: /tmp/stall-comment.md

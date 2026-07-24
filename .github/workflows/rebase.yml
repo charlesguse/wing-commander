@@ -620,6 +620,7 @@ jobs:
       # to the lifecycle issue, re-deriving it from the pre-attempt tip. If
       # the issue cannot be trusted, record why and act no further.
       - name: Abandon and escalate
+        id: escalate
         if: always() && (steps.verify.outputs.escalate == 'true' || steps.attempt.outputs.outcome == 'error')
         env:
           SLUG: ${{ matrix.slug }}
@@ -660,7 +661,17 @@ jobs:
             echo "$marker"
           } > "$RUNNER_TEMP/escalation.md"
 
-          gh issue comment "$issue" --body-file "$RUNNER_TEMP/escalation.md"
           gh label create "rebase:blocked" --color B60205 --description "Auto-rebase stuck; needs a manual rebase" --force
           gh issue edit "$issue" --add-label "rebase:blocked"
+          echo "issue=$issue" >> "$GITHUB_OUTPUT"
           echo "${SPEC_PREFIX}$SLUG: abandoned and escalated to #$issue with a rebase:blocked marker." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Announce the rebase escalation on the lifecycle issue
+        if: always() && steps.escalate.outputs.issue != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ steps.escalate.outputs.issue }}
+          kind: action
+          summary: "Manually rebase this branch"
+          body-file: "${{ runner.temp }}/escalation.md"
