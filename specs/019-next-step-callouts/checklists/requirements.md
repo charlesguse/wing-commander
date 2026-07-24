@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -32,4 +32,4 @@
 ## Notes
 
 - Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.
-- Two [NEEDS CLARIFICATION] markers remain by design (FR-011 scope breadth, FR-012 presentation approach). Per CI intake policy, clarification questions are posted to the lifecycle issue rather than blocking; the markers stay in spec.md until answered. Both are below the 3-marker limit.
+- Both clarifications are resolved from the answer on lifecycle issue #93: FR-011 scope breadth → Q1 option C (every human-action moment: PR gates, remaining work, clarifications, and failure/stall states); FR-012 presentation → Q2 option A (fresh, clearly-marked append-only comment at each action moment). No [NEEDS CLARIFICATION] markers remain.
