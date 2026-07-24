@@ -55,6 +55,15 @@ Mechanics worth knowing:
   precedence applies when both are set), spec-kit artifacts present in the
   consumer checkout, stage preconditions met, and a warn-only spec-kit
   version check against the composite's `SPECKIT_SUPPORTED_VERSION` constant.
+- **Next-step callouts** (`wing-commander-callout` composite): every
+  human-action moment the pipeline reaches posts through one shared action so
+  the action-required/informational split is enforced in one place.
+  Action-required moments (`kind: action`) render inside a GitHub
+  `[!IMPORTANT]` alert box naming what the reader must do (and linking the PR
+  or stating timing when relevant); informational moments (`kind: info`)
+  render as a plain message with no alert wrapper.
+  `contracts/callout-format.md` (specs/019) is the source of truth for the
+  template.
 - **No branch-name assumptions**: stages take a `default-branch` input or
   derive it (`gh repo view --json defaultBranchRef`); only the five branch
   *prefixes* are contract, and each is configurable-with-default via its
