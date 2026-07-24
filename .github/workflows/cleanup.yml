@@ -96,6 +96,46 @@ on:
         type: string
         required: false
         default: ""
+      spec-draft-prefix:
+        description: >
+          Branch prefix for draft-spec branches this stage tears down
+          (contracts/branch-prefix-override-points.md). Consumer-configurable naming;
+          the default reproduces today's behavior (FR-005).
+        type: string
+        required: false
+        default: spec-draft/
+      spec-prefix:
+        description: >
+          Branch prefix for spec branches this stage tears down
+          (contracts/branch-prefix-override-points.md). Consumer-configurable naming;
+          the default reproduces today's behavior (FR-005).
+        type: string
+        required: false
+        default: spec/
+      plan-prefix:
+        description: >
+          Branch prefix for plan branches this stage tears down
+          (contracts/branch-prefix-override-points.md). Consumer-configurable naming;
+          the default reproduces today's behavior (FR-005).
+        type: string
+        required: false
+        default: plan/
+      tasks-prefix:
+        description: >
+          Branch prefix for tasks branches this stage tears down
+          (contracts/branch-prefix-override-points.md). Consumer-configurable naming;
+          the default reproduces today's behavior (FR-005).
+        type: string
+        required: false
+        default: tasks/
+      impl-prefix:
+        description: >
+          Branch prefix for implement-cycle branches this stage tears down
+          (contracts/branch-prefix-override-points.md). Consumer-configurable naming;
+          the default reproduces today's behavior (FR-005).
+        type: string
+        required: false
+        default: impl/
     secrets:
       claude-code-oauth-token:
         description: "Claude OAuth token (claude setup-token) — one of the two credentials (used by teardown-done's summary only)"
@@ -147,20 +187,25 @@ jobs:
           BASE_REF: ${{ inputs.base-ref }}
           MERGED: ${{ inputs.merged }}
           DB: ${{ steps.defbranch.outputs.name }}
+          SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          PLAN_PREFIX: ${{ inputs.plan-prefix }}
+          TASKS_PREFIX: ${{ inputs.tasks-prefix }}
+          IMPL_PREFIX: ${{ inputs.impl-prefix }}
         run: |
           outcome=none
           case "$HEAD_REF" in
-            spec/*)
+            "${SPEC_PREFIX}"*)
               if [ "$BASE_REF" = "$DB" ]; then
                 if [ "$MERGED" = "true" ]; then outcome=teardown-done; else outcome=mark-stalled; fi
               fi
               ;;
-            spec-draft/*)
+            "${SPEC_DRAFT_PREFIX}"*)
               if [ "$BASE_REF" = "$DB" ] && [ "$MERGED" != "true" ]; then
                 outcome=teardown-rejected
               fi
               ;;
-            plan/*|tasks/*|impl/*)
+            "${PLAN_PREFIX}"*|"${TASKS_PREFIX}"*|"${IMPL_PREFIX}"*)
               if [ "$BASE_REF" != "$DB" ] && [ "$MERGED" != "true" ]; then
                 outcome=mark-stalled
               fi
@@ -258,8 +303,9 @@ jobs:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           HEAD_REF: ${{ inputs.head-ref }}
           PR_NUMBER: ${{ inputs.pr-number }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
         run: |
-          slug="${HEAD_REF#spec/}"
+          slug="${HEAD_REF#"$SPEC_PREFIX"}"
           if ! printf '%s' "$slug" | grep -Eq '^[0-9]{3}-[a-z0-9][a-z0-9-]*$'; then
             msg="wing-commander cleanup stage: cannot resolve a spec slug from '$HEAD_REF'; refusing to guess."
             echo "::error::$msg"
@@ -275,7 +321,7 @@ jobs:
       - name: Checkout spec branch as wing-commander-bot
         uses: actions/checkout@v4
         with:
-          ref: spec/${{ steps.spec.outputs.slug }}
+          ref: ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
           token: ${{ steps.ctx.outputs.token }}
           fetch-depth: 0
           clean: false
@@ -433,6 +479,11 @@ jobs:
       - name: Delete pipeline branches
         env:
           SLUG: ${{ steps.spec.outputs.slug }}
+          SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          PLAN_PREFIX: ${{ inputs.plan-prefix }}
+          TASKS_PREFIX: ${{ inputs.tasks-prefix }}
+          IMPL_PREFIX: ${{ inputs.impl-prefix }}
         run: |
           delete_branch() {
             if git push origin --delete "$1" 2>/tmp/delete-err; then
@@ -442,11 +493,11 @@ jobs:
               sed 's/^/  /' /tmp/delete-err >> "$GITHUB_STEP_SUMMARY"
             fi
           }
-          delete_branch "spec-draft/$SLUG"
-          delete_branch "spec/$SLUG"
-          delete_branch "plan/$SLUG"
-          delete_branch "tasks/$SLUG"
-          for ref in $(git ls-remote --heads origin "impl/$SLUG-iter*" | awk '{print $2}'); do
+          delete_branch "${SPEC_DRAFT_PREFIX}$SLUG"
+          delete_branch "${SPEC_PREFIX}$SLUG"
+          delete_branch "${PLAN_PREFIX}$SLUG"
+          delete_branch "${TASKS_PREFIX}$SLUG"
+          for ref in $(git ls-remote --heads origin "${IMPL_PREFIX}$SLUG-iter*" | awk '{print $2}'); do
             delete_branch "${ref#refs/heads/}"
           done
 
@@ -521,8 +572,9 @@ jobs:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           HEAD_REF: ${{ inputs.head-ref }}
           PR_NUMBER: ${{ inputs.pr-number }}
+          SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
         run: |
-          slug="${HEAD_REF#spec-draft/}"
+          slug="${HEAD_REF#"$SPEC_DRAFT_PREFIX"}"
           if ! printf '%s' "$slug" | grep -Eq '^[0-9]{3}-[a-z0-9][a-z0-9-]*$'; then
             msg="wing-commander cleanup stage: cannot resolve a spec slug from '$HEAD_REF'; refusing to guess."
             echo "::error::$msg"
@@ -537,7 +589,7 @@ jobs:
       - name: Checkout draft branch as wing-commander-bot
         uses: actions/checkout@v4
         with:
-          ref: spec-draft/${{ steps.spec.outputs.slug }}
+          ref: ${{ inputs.spec-draft-prefix }}${{ steps.spec.outputs.slug }}
           token: ${{ steps.ctx.outputs.token }}
           fetch-depth: 0
           clean: false
@@ -595,8 +647,9 @@ jobs:
           SLUG: ${{ steps.spec.outputs.slug }}
           PR_NUMBER: ${{ inputs.pr-number }}
           DB: ${{ needs.select.outputs.default-branch }}
+          SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
         run: |
-          gh issue comment "$ISSUE" --body "🚫 **Draft rejected** — the draft pull request (#$PR_NUMBER, \`spec-draft/$SLUG → $DB\`) was closed without merging. This specification's labels have been removed; the issue stays **open** so you can revise and resubmit a new draft pull request whenever you're ready."
+          gh issue comment "$ISSUE" --body "🚫 **Draft rejected** — the draft pull request (#$PR_NUMBER, \`${SPEC_DRAFT_PREFIX}$SLUG → $DB\`) was closed without merging. This specification's labels have been removed; the issue stays **open** so you can revise and resubmit a new draft pull request whenever you're ready."
           gh issue edit "$ISSUE" --remove-label "spec:$SLUG" 2>/dev/null || true
           stale=$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name | select(startswith("stage:"))] | .[]')
           for l in $stale; do
@@ -608,11 +661,12 @@ jobs:
       - name: Delete draft branch
         env:
           SLUG: ${{ steps.spec.outputs.slug }}
+          SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
         run: |
-          if git push origin --delete "spec-draft/$SLUG" 2>/tmp/delete-err; then
-            echo "Deleted spec-draft/$SLUG." >> "$GITHUB_STEP_SUMMARY"
+          if git push origin --delete "${SPEC_DRAFT_PREFIX}$SLUG" 2>/tmp/delete-err; then
+            echo "Deleted ${SPEC_DRAFT_PREFIX}$SLUG." >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "spec-draft/$SLUG already absent (or could not be deleted) — treated as success:" >> "$GITHUB_STEP_SUMMARY"
+            echo "${SPEC_DRAFT_PREFIX}$SLUG already absent (or could not be deleted) — treated as success:" >> "$GITHUB_STEP_SUMMARY"
             sed 's/^/  /' /tmp/delete-err >> "$GITHUB_STEP_SUMMARY"
           fi
 
@@ -689,6 +743,10 @@ jobs:
           HEAD_REF: ${{ inputs.head-ref }}
           BASE_REF: ${{ inputs.base-ref }}
           PR_NUMBER: ${{ inputs.pr-number }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          PLAN_PREFIX: ${{ inputs.plan-prefix }}
+          TASKS_PREFIX: ${{ inputs.tasks-prefix }}
+          IMPL_PREFIX: ${{ inputs.impl-prefix }}
         run: |
           fail() {
             msg="wing-commander cleanup stage: $1"
@@ -698,20 +756,20 @@ jobs:
             exit 1
           }
           case "$HEAD_REF" in
-            spec/*)
-              slug="${HEAD_REF#spec/}"
+            "${SPEC_PREFIX}"*)
+              slug="${HEAD_REF#"$SPEC_PREFIX"}"
               arm="final"
               ;;
-            plan/*)
-              slug="${HEAD_REF#plan/}"
+            "${PLAN_PREFIX}"*)
+              slug="${HEAD_REF#"$PLAN_PREFIX"}"
               arm="nonfinal"
               ;;
-            tasks/*)
-              slug="${HEAD_REF#tasks/}"
+            "${TASKS_PREFIX}"*)
+              slug="${HEAD_REF#"$TASKS_PREFIX"}"
               arm="nonfinal"
               ;;
-            impl/*)
-              slug="${HEAD_REF#impl/}"
+            "${IMPL_PREFIX}"*)
+              slug="${HEAD_REF#"$IMPL_PREFIX"}"
               slug="${slug%-iter*}"
               arm="nonfinal"
               ;;
@@ -723,8 +781,8 @@ jobs:
           if ! printf '%s' "$slug" | grep -Eq '^[0-9]{3}-[a-z0-9][a-z0-9-]*$'; then
             fail "cannot resolve a spec slug from '$HEAD_REF'; refusing to guess."
           fi
-          if [ "$arm" = "nonfinal" ] && [ "$BASE_REF" != "spec/$slug" ]; then
-            fail "'$HEAD_REF' targets '$BASE_REF', not its own spec/$slug — refusing to guess."
+          if [ "$arm" = "nonfinal" ] && [ "$BASE_REF" != "${SPEC_PREFIX}$slug" ]; then
+            fail "'$HEAD_REF' targets '$BASE_REF', not its own ${SPEC_PREFIX}$slug — refusing to guess."
           fi
           echo "slug=$slug"           >> "$GITHUB_OUTPUT"
           echo "spec-dir=specs/$slug" >> "$GITHUB_OUTPUT"
@@ -734,7 +792,7 @@ jobs:
       - name: Checkout spec branch as wing-commander-bot
         uses: actions/checkout@v4
         with:
-          ref: spec/${{ steps.spec.outputs.slug }}
+          ref: ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
           token: ${{ steps.ctx.outputs.token }}
           fetch-depth: 0
           clean: false
@@ -817,6 +875,10 @@ jobs:
           PR_NUMBER: ${{ inputs.pr-number }}
           HEAD_REF: ${{ inputs.head-ref }}
           DB: ${{ needs.select.outputs.default-branch }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          PLAN_PREFIX: ${{ inputs.plan-prefix }}
+          TASKS_PREFIX: ${{ inputs.tasks-prefix }}
+          IMPL_PREFIX: ${{ inputs.impl-prefix }}
         run: |
           gh label create "stage:stalled" --color E99695 --description "Pipeline stalled; manual restart or teardown required" --force
           gh issue edit "$ISSUE" --add-label "stage:stalled"
@@ -825,7 +887,7 @@ jobs:
             gh issue edit "$ISSUE" --remove-label "$l"
           done
           if [ "$ARM" = "final" ]; then
-            what="the final pull request (#$PR_NUMBER, \`spec/$SLUG → $DB\`)"
+            what="the final pull request (#$PR_NUMBER, \`${SPEC_PREFIX}$SLUG → $DB\`)"
           else
             what="the \`$HEAD_REF\` pull request (#$PR_NUMBER)"
           fi
@@ -839,10 +901,10 @@ jobs:
             echo "If you'd rather tear this specification down completely instead of reviving it, run (skip any branch that doesn't exist — deleting an absent branch is a no-op):"
             echo ""
             echo '```'
-            echo "git push origin --delete spec/$SLUG"
-            echo "git push origin --delete plan/$SLUG"
-            echo "git push origin --delete tasks/$SLUG"
-            echo "# and any impl/$SLUG-iterN branches"
+            echo "git push origin --delete ${SPEC_PREFIX}$SLUG"
+            echo "git push origin --delete ${PLAN_PREFIX}$SLUG"
+            echo "git push origin --delete ${TASKS_PREFIX}$SLUG"
+            echo "# and any ${IMPL_PREFIX}$SLUG-iterN branches"
             echo "gh label create \"stage:done\" --force"
             echo "gh issue edit $ISSUE --add-label stage:done --remove-label stage:stalled"
             echo "gh issue close $ISSUE --comment \"Specification torn down manually.\""

@@ -234,15 +234,25 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           HEAD_BRANCH: ${{ steps.run-meta.outputs.head-branch }}
+          SPEC_DRAFT_PREFIX: ${{ vars.WING_COMMANDER_SPEC_DRAFT_PREFIX }}
+          SPEC_PREFIX: ${{ vars.WING_COMMANDER_SPEC_PREFIX }}
+          PLAN_PREFIX: ${{ vars.WING_COMMANDER_PLAN_PREFIX }}
+          TASKS_PREFIX: ${{ vars.WING_COMMANDER_TASKS_PREFIX }}
+          IMPL_PREFIX: ${{ vars.WING_COMMANDER_IMPL_PREFIX }}
         run: |
           set -uo pipefail
+          SPEC_DRAFT_PREFIX="${SPEC_DRAFT_PREFIX:-spec-draft/}"
+          SPEC_PREFIX="${SPEC_PREFIX:-spec/}"
+          PLAN_PREFIX="${PLAN_PREFIX:-plan/}"
+          TASKS_PREFIX="${TASKS_PREFIX:-tasks/}"
+          IMPL_PREFIX="${IMPL_PREFIX:-impl/}"
           slug=""
           case "$HEAD_BRANCH" in
-            spec-draft/*) slug="${HEAD_BRANCH#spec-draft/}" ;;
-            spec/*)       slug="${HEAD_BRANCH#spec/}" ;;
-            plan/*)       slug="${HEAD_BRANCH#plan/}" ;;
-            tasks/*)      slug="${HEAD_BRANCH#tasks/}" ;;
-            impl/*)       slug="${HEAD_BRANCH#impl/}"; slug="${slug%-iter*}" ;;
+            "${SPEC_DRAFT_PREFIX}"*) slug="${HEAD_BRANCH#"$SPEC_DRAFT_PREFIX"}" ;;
+            "${SPEC_PREFIX}"*)       slug="${HEAD_BRANCH#"$SPEC_PREFIX"}" ;;
+            "${PLAN_PREFIX}"*)       slug="${HEAD_BRANCH#"$PLAN_PREFIX"}" ;;
+            "${TASKS_PREFIX}"*)      slug="${HEAD_BRANCH#"$TASKS_PREFIX"}" ;;
+            "${IMPL_PREFIX}"*)       slug="${HEAD_BRANCH#"$IMPL_PREFIX"}"; slug="${slug%-iter*}" ;;
           esac
 
           issue=""
@@ -250,8 +260,8 @@ jobs:
           meta_stage=""
           if [ -n "$slug" ]; then
             spec_dir="specs/$slug"
-            git fetch --no-tags --quiet origin "refs/heads/spec/$slug:refs/remotes/origin/spec/$slug" 2>/dev/null || true
-            if meta="$(git show "refs/remotes/origin/spec/$slug:$spec_dir/spec-meta.json" 2>/dev/null)"; then
+            git fetch --no-tags --quiet origin "refs/heads/${SPEC_PREFIX}$slug:refs/remotes/origin/${SPEC_PREFIX}$slug" 2>/dev/null || true
+            if meta="$(git show "refs/remotes/origin/${SPEC_PREFIX}$slug:$spec_dir/spec-meta.json" 2>/dev/null)"; then
               meta_dir="$(printf '%s' "$meta" | jq -r '.spec_dir // empty' 2>/dev/null || true)"
               if [ "$meta_dir" = "$spec_dir" ]; then
                 issue="$(printf '%s' "$meta" | jq -r '.issue // empty' 2>/dev/null || true)"
