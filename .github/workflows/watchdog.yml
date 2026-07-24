@@ -1781,8 +1781,34 @@ jobs:
 
           echo "issue-number=$issue" >> "$GITHUB_OUTPUT"
 
+      # Uses the default GITHUB_TOKEN (actions: read, already granted at
+      # workflow level) — no App token needed for this read. Matches by
+      # job name, tolerating a reusable-workflow name prefix (e.g. "watchdog
+      # / collect") since the exact displayed job name isn't guaranteed.
+      - name: Resolve failed job log URLs
+        id: job-urls
+        if: steps.gate.outputs.any-failed == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FAILED_JOBS: ${{ steps.gate.outputs.failed-jobs }}
+        run: |
+          set -uo pipefail
+          jobs_json="$(gh api "repos/${{ github.repository }}/actions/runs/${{ inputs.run-id }}/jobs" 2>/dev/null || echo '{"jobs":[]}')"
+          urls=""
+          for pair in $FAILED_JOBS; do
+            job="${pair%%:*}"
+            url="$(printf '%s' "$jobs_json" | jq -r --arg name "$job" '[.jobs[]? | select(.name == $name or (.name | endswith("/ " + $name))) | .html_url] | first // empty' 2>/dev/null || true)"
+            urls="${urls}${urls:+ }${job}:${url}"
+          done
+          echo "job-urls=$urls" >> "$GITHUB_OUTPUT"
+
       # Two-branch verdict delivery, matching every other verdict path's
       # destination rule (data-model.md, contracts/watchdog-workflow-delta.md).
+      # Wording ("ended <result> unexpectedly") is deliberately distinct from
+      # the existing "every evidence collector failed outright" message
+      # (line 521) — a maintainer reading either can immediately tell which
+      # failure shape occurred without cross-referencing anything else.
       - name: Report unhandled job failure
         id: report
         if: steps.gate.outputs.any-failed == 'true'
@@ -1791,15 +1817,24 @@ jobs:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ISSUE: ${{ steps.issue.outputs.issue-number }}
           FAILED_JOBS: ${{ steps.gate.outputs.failed-jobs }}
+          JOB_URLS: ${{ steps.job-urls.outputs.job-urls }}
           RUN_ID: ${{ inputs.run-id }}
         run: |
           set -uo pipefail
-          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${RUN_ID}"
           body=""
           for pair in $FAILED_JOBS; do
             job="${pair%%:*}"
             result="${pair#*:}"
-            body="${body}🐕 **Wing Commander · watchdog** — could not inspect this run: the \`$job\` job ended \`$result\` unexpectedly. _[Inspected run]($run_url)_. This is a pipeline defect, not a finding about the inspected run itself."$'\n'
+            url=""
+            for upair in $JOB_URLS; do
+              if [ "${upair%%:*}" = "$job" ]; then
+                url="${upair#*:}"
+                break
+              fi
+            done
+            link=""
+            [ -n "$url" ] && link=" [Job logs]($url)."
+            body="${body}🐕 **Wing Commander · watchdog** — could not inspect this run: the \`$job\` job ended \`$result\` unexpectedly.${link} This is a pipeline defect, not a finding about the inspected run itself."$'\n'
           done
           if [ -n "$ISSUE" ]; then
             printf '%s' "$body" | gh issue comment "$ISSUE" --body-file -
@@ -1811,7 +1846,8 @@ jobs:
       # only if the two-branch report step above itself failed (e.g. gh
       # issue comment erroring) — so even this safety net's own failure
       # still leaves a written verdict in the run summary rather than
-      # silently dropping it.
+      # silently dropping it. Omits the job-log link (steps.job-urls may not
+      # have run or resolved anything) rather than depending on it.
       - name: Report unhandled job failure to run summary
         id: report-baseline
         if: always() && steps.report.outcome == 'failure'
