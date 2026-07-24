@@ -86,7 +86,7 @@ Single-project CI/CD feature (one new GitHub Actions composite action + targeted
 
 ### Implementation for User Story 3
 
-- [ ] T010 [US3] In `.github/workflows/finalize.yml`, replace "Comment remaining manual work on the lifecycle issue"'s two-branch `gh issue comment` body with `wing-commander-callout` invocations, keeping its existing `[ -s remaining_file ] && [ -n "$(tr -d '[:space:]' < remaining_file)" ]` condition unchanged (contracts/callout-points.md row 6/6b): non-empty branch invokes `kind: action`, `summary: "Complete the remaining manual work"`, `body-file: ${{ runner.temp }}/finalize-remaining.md`, `timing: "after this PR merges"`, no `pr-url`; empty branch invokes `kind: info`, `summary: "No manual work remains."`, no `body`.
+- [X] T010 [US3] In `.github/workflows/finalize.yml`, replace "Comment remaining manual work on the lifecycle issue"'s two-branch `gh issue comment` body with `wing-commander-callout` invocations, keeping its existing `[ -s remaining_file ] && [ -n "$(tr -d '[:space:]' < remaining_file)" ]` condition unchanged (contracts/callout-points.md row 6/6b): non-empty branch invokes `kind: action`, `summary: "Complete the remaining manual work"`, `body-file: ${{ runner.temp }}/finalize-remaining.md`, `timing: "after this PR merges"`, no `pr-url`; empty branch invokes `kind: info`, `summary: "No manual work remains."`, no `body`.
 
 **Checkpoint**: All three user stories are independently functional — the full quickstart.md scenario set (1–5) passes.
 
