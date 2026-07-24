@@ -31,6 +31,11 @@ jobs:
       pr-number: ${{ github.event.pull_request.number }}
       merge-commit-sha: ${{ github.event.pull_request.merge_commit_sha || '' }}
       summary-model: ${{ vars.WING_COMMANDER_SUMMARY_MODEL || 'claude-haiku-4-5' }}
+      spec-draft-prefix: ${{ vars.WING_COMMANDER_SPEC_DRAFT_PREFIX || 'spec-draft/' }}
+      spec-prefix: ${{ vars.WING_COMMANDER_SPEC_PREFIX || 'spec/' }}
+      plan-prefix: ${{ vars.WING_COMMANDER_PLAN_PREFIX || 'plan/' }}
+      tasks-prefix: ${{ vars.WING_COMMANDER_TASKS_PREFIX || 'tasks/' }}
+      impl-prefix: ${{ vars.WING_COMMANDER_IMPL_PREFIX || 'impl/' }}
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}

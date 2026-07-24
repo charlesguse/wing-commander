@@ -56,8 +56,12 @@ Mechanics worth knowing:
   consumer checkout, stage preconditions met, and a warn-only spec-kit
   version check against the composite's `SPECKIT_SUPPORTED_VERSION` constant.
 - **No branch-name assumptions**: stages take a `default-branch` input or
-  derive it (`gh repo view --json defaultBranchRef`); only the
-  `spec-draft/ spec/ plan/ tasks/ impl/` *prefixes* are contract.
+  derive it (`gh repo view --json defaultBranchRef`); only the five branch
+  *prefixes* are contract, and each is configurable-with-default via its
+  `WING_COMMANDER_*_PREFIX` repository variable
+  (`WING_COMMANDER_SPEC_DRAFT_PREFIX` → `spec-draft/`, `_SPEC_PREFIX` → `spec/`,
+  `_PLAN_PREFIX` → `plan/`, `_TASKS_PREFIX` → `tasks/`, `_IMPL_PREFIX` →
+  `impl/`), so consumers can rename them while the contract holds.
 - **Chaining is opt-in**: `next-workflow`/`self-workflow` inputs name wrapper
   files in the consuming repository to `gh workflow run`; empty (the
   default) means the stage reports to the lifecycle issue and stops, so any
@@ -86,10 +90,15 @@ implement → finalize), chaining is explicit via `gh workflow run`
 ### State model
 - **`specs/NNN-slug/spec-meta.json`** — durable source of truth:
   `{issue, spec_dir, feature_num, stage, iteration, spec_branch}`.
-- **Branches** (routing keys for PR-event triggers):
-  - `spec-draft/NNN-slug` — draft spec PR head (intake → main)
-  - `spec/NNN-slug` — long-lived per-spec integration branch (concurrent specs)
-  - `plan/NNN-slug`, `impl/NNN-slug-iterN` — stage work branches → spec branch
+- **Branches** (routing keys for PR-event triggers; each prefix is
+  configurable-with-default via its `WING_COMMANDER_*_PREFIX` repository
+  variable, defaults shown):
+  - `<spec-draft-prefix>NNN-slug` (default `spec-draft/`) — draft spec PR head
+    (intake → main)
+  - `<spec-prefix>NNN-slug` (default `spec/`) — long-lived per-spec integration
+    branch (concurrent specs)
+  - `<plan-prefix>NNN-slug` (default `plan/`), `<impl-prefix>NNN-slug-iterN`
+    (default `impl/`) — stage work branches → spec branch
 - **Labels** on the lifecycle issue: `spec:NNN-slug` + one `stage:*` label.
 - **spec-kit targeting**: every agent step sets
   `SPECIFY_FEATURE_DIRECTORY=specs/NNN-slug` (spec-kit ≥0.12 resolves the active
@@ -260,16 +269,20 @@ never guessed. Every other closed-PR shape is a deliberate no-op.
 
 **Design** — three independently-gated jobs, exactly one of which runs per
 closed PR:
-- `teardown-done` — final PR (`spec/NNN-slug → main`) **merged**: delete
-  `spec-draft/`, `spec/`, `plan/`, `tasks/`, and any `impl/*-iterN` branches
-  for that spec; close the lifecycle issue (atomically, with a
+- `teardown-done` — final PR (`spec/NNN-slug → main`) **merged**: delete the
+  spec-draft, spec, plan, tasks, and any impl `*-iterN` branches for that spec
+  (each identified by its configurable-with-default prefix — defaults
+  `spec-draft/`, `spec/`, `plan/`, `tasks/`, `impl/`); close the lifecycle
+  issue (atomically, with a
   Haiku-written completion summary); flip its label to `stage:done`.
 - `teardown-rejected` — draft PR (`spec-draft/NNN-slug → main`) **closed
   unmerged**: delete `spec-draft/NNN-slug`; remove the `stage:*`/`spec:*`
   labels; comment that the spec was rejected; leave the issue **open** so
   the requester can revise and re-enter the pipeline.
 - `mark-stalled` — final PR closed unmerged (built work rejected), **or** a
-  non-final `plan/`/`tasks/`/`impl/*` pull request into `spec/NNN-slug`
+  non-final plan/tasks/impl pull request (heads matching the
+  configurable-with-default `plan/`, `tasks/`, `impl/` prefixes) into
+  `spec/NNN-slug`
   closed unmerged: commit `spec-meta.json`'s `stage: "stalled"` directly onto
   the still-intact `spec/NNN-slug`; flip the label to `stage:stalled`;
   comment a rejection notice with a manual full-teardown runbook. No branch

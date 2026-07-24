@@ -658,10 +658,16 @@ Common to every stage below:
   spec-kit version different from the supported pin (v0.12.4) produces a
   warning, never a failure.
 - **Side effects land in your repository only** — branches, commits, PRs,
-  labels, comments. The branch *prefixes* `spec-draft/`, `spec/`, `plan/`,
-  `tasks/`, `impl/` and the `specs/NNN-slug/` layout (with `spec-meta.json`
-  as lifecycle state) are the shared artifact contract; the default branch
-  is whatever yours is.
+  labels, comments. The branch *prefixes* — each configurable via its
+  repository variable and defaulting to today's literal:
+  `WING_COMMANDER_SPEC_DRAFT_PREFIX` (`spec-draft/`),
+  `WING_COMMANDER_SPEC_PREFIX` (`spec/`), `WING_COMMANDER_PLAN_PREFIX`
+  (`plan/`), `WING_COMMANDER_TASKS_PREFIX` (`tasks/`), and
+  `WING_COMMANDER_IMPL_PREFIX` (`impl/`) (see
+  [docs/setup.md](setup.md#3-repository-variables) for the variable list) —
+  and the `specs/NNN-slug/` layout (with `spec-meta.json` as lifecycle
+  state) are the shared artifact contract; the default branch is whatever
+  yours is.
 - **Chaining is opt-in** — `next-workflow`/`self-workflow` inputs default to
   `""` (no dispatch), so every stage runs standalone; when set, they name a
   *wrapper file in your repository* to `gh workflow run` with the payload
@@ -678,7 +684,7 @@ Common to every stage below:
 | Inputs | `issue-number` (number, required); `model` (string, `claude-opus-4-8`); `max-turns` (number, `50`) |
 | Secrets | credentials + App (all stages; omitted below) |
 | Preconditions | spec-kit present in your checkout |
-| Side effects | `spec-draft/NNN-slug` branch + draft spec PR to your default branch; `specs/NNN-slug/` with `spec.md`, `spec-meta.json`; `spec:NNN-slug` + `stage:spec` labels; clarification-questions or ready-for-review comment |
+| Side effects | `spec-draft/NNN-slug` branch (prefix configurable via `WING_COMMANDER_SPEC_DRAFT_PREFIX`, default `spec-draft/`) + draft spec PR to your default branch; `specs/NNN-slug/` with `spec.md`, `spec-meta.json`; `spec:NNN-slug` + `stage:spec` labels; clarification-questions or ready-for-review comment |
 | Outputs | `spec-dir`, `feature-num` |
 
 Single-stage example — spec PRs from a manual dispatch instead of a label:
@@ -708,7 +714,7 @@ jobs:
 | | |
 |---|---|
 | Inputs | `issue-number` (number, required); `comment-id` (number, required); `model` (string, `claude-opus-4-8`); `max-turns` (number, `40`) |
-| Preconditions | spec-kit present; issue carries a `spec:NNN-slug` label; open `spec-draft/NNN-slug` branch |
+| Preconditions | spec-kit present; issue carries a `spec:NNN-slug` label; open `spec-draft/NNN-slug` branch (prefix configurable via `WING_COMMANDER_SPEC_DRAFT_PREFIX`, default `spec-draft/`) |
 | Side effects | commits to the draft branch (PR updates automatically); 👀 reaction on the comment; updated PR body; status comment on the issue |
 | Outputs | none |
 
@@ -719,8 +725,8 @@ The wrapper owns the commenter-authorization gate — see wrapper 2 above.
 | | |
 |---|---|
 | Inputs | `head-ref` (string) **or** `slug` (string) — one required; `merged` (boolean, `true`; `false` no-ops); `pr-number` (string, `""` — refusal comments only); `model` (string, `claude-sonnet-5`); `max-turns` (number, `80`) |
-| Preconditions | `specs/NNN-slug/spec.md` + `spec-meta.json` on your default branch; no existing `plan/NNN-slug` branch (duplicate guard) |
-| Side effects | `spec/NNN-slug` persistent branch (created if absent); `plan/NNN-slug` branch + plan PR into the spec branch; lifecycle issue created for hand-submitted specs; `spec-meta.json` → `plan`; label flip |
+| Preconditions | `specs/NNN-slug/spec.md` + `spec-meta.json` on your default branch; no existing `plan/NNN-slug` branch (prefix configurable via `WING_COMMANDER_PLAN_PREFIX`, default `plan/`) (duplicate guard) |
+| Side effects | `spec/NNN-slug` persistent branch (prefix configurable via `WING_COMMANDER_SPEC_PREFIX`, default `spec/`), created if absent; `plan/NNN-slug` branch (prefix configurable via `WING_COMMANDER_PLAN_PREFIX`, default `plan/`) + plan PR into the spec branch; lifecycle issue created for hand-submitted specs; `spec-meta.json` → `plan`; label flip |
 | Outputs | `spec-branch`, `spec-dir` |
 
 Single-stage example — plan a hand-written spec via manual dispatch:
@@ -751,7 +757,7 @@ jobs:
 |---|---|
 | Inputs | `mode` (string `generate`\|`approved`, default `generate`); `head-ref` or `slug` (one required — `plan/…` for generate, `tasks/…` for approved); `restart` (boolean, `false` — admits a `stalled` spec on deliberate manual restart); `tasks-review` (string `auto`\|`pr`, default `auto`); `model` (string, `claude-sonnet-5`); `max-turns` (number, `60`); `next-workflow` (string, `""` = no dispatch) |
 | Preconditions | `generate`: `plan.md` on the spec branch; `spec-meta.json.stage == "plan"` (or `stalled` with `restart: true`). `approved`: `spec-meta.json.stage == "tasks"` |
-| Side effects | `auto`: `tasks.md` + stage flip committed to the spec branch, implement dispatched if configured. `pr`: `tasks/NNN-slug` branch + review PR, no dispatch. `approved`: dispatch only |
+| Side effects | `auto`: `tasks.md` + stage flip committed to the spec branch, implement dispatched if configured. `pr`: `tasks/NNN-slug` branch (prefix configurable via `WING_COMMANDER_TASKS_PREFIX`, default `tasks/`) + review PR, no dispatch. `approved`: dispatch only |
 | Outputs | `spec-dir` |
 
 `mode: approved` is agent-free (no Claude credential needed) — it exists so
@@ -787,7 +793,7 @@ or one-cycle-at-a-time manual.
 |---|---|
 | Inputs | `head-ref`, `base-ref` (string, required); `merged` (boolean, required); `pr-number` (number, required); `merge-commit-sha` (string, `""`); `summary-model` (string, `claude-haiku-4-5`); `max-turns` (number, `20`) |
 | Preconditions | matched spec's artifacts exist and self-identify consistently (identity refusal otherwise) |
-| Side effects | self-selects exactly one outcome from the raw PR facts: merged final PR → full teardown + issue closed (`teardown-done`); unmerged draft PR → draft deleted, issue left open (`teardown-rejected`); unmerged final/plan/tasks/impl PR → marked stalled, nothing deleted (`mark-stalled`); everything else → no-op |
+| Side effects | self-selects exactly one outcome from the raw PR facts: merged final PR → full teardown + issue closed (`teardown-done`); unmerged draft PR → draft deleted, issue left open (`teardown-rejected`); unmerged final/plan/tasks/impl PR (the `plan/`, `tasks/`, `impl/` prefixes are configurable defaults, set via `WING_COMMANDER_PLAN_PREFIX`/`WING_COMMANDER_TASKS_PREFIX`/`WING_COMMANDER_IMPL_PREFIX`) → marked stalled, nothing deleted (`mark-stalled`); everything else → no-op |
 | Outputs | `outcome` (`teardown-done` \| `teardown-rejected` \| `mark-stalled` \| `none`) |
 
 Wire it to a repo-wide `pull_request: closed` trigger and forward the raw

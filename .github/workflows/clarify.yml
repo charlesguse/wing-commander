@@ -74,6 +74,15 @@ on:
         type: string
         required: false
         default: ""
+      spec-draft-prefix:
+        description: >
+          Branch prefix the draft-spec branch this stage checks out lives
+          under (contracts/branch-prefix-override-points.md).
+          Consumer-configurable naming; the default reproduces today's
+          behavior (FR-005).
+        type: string
+        required: false
+        default: spec-draft/
     secrets:
       claude-code-oauth-token:
         description: "Claude OAuth token (claude setup-token) — one of the two credentials"
@@ -202,7 +211,7 @@ jobs:
       - name: Checkout draft spec branch as wing-commander-bot
         uses: actions/checkout@v4
         with:
-          ref: spec-draft/${{ steps.ctx.outputs.spec-slug }}
+          ref: ${{ inputs.spec-draft-prefix }}${{ steps.ctx.outputs.spec-slug }}
           token: ${{ steps.ctx.outputs.token }}
           fetch-depth: 0
           clean: false

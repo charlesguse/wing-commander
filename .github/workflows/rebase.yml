@@ -53,6 +53,14 @@ on:
         type: string
         required: false
         default: ""
+      spec-prefix:
+        description: >
+          Branch prefix for the persistent spec branches this stage discovers and
+          rebases (contracts/branch-prefix-override-points.md). Consumer-configurable
+          naming; the default reproduces today's behavior (FR-005).
+        type: string
+        required: false
+        default: spec/
       use-bedrock:
         description: >
           Run this stage's agent step against AWS Bedrock instead of
@@ -181,12 +189,13 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           DB: ${{ steps.defbranch.outputs.name }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
         run: |
           set -uo pipefail
 
           warn() {
-            echo "::warning::wing-commander rebase discover: spec/$1 excluded — $2"
-            echo "⚠️ \`spec/$1\` excluded from auto-rebase: $2" >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::wing-commander rebase discover: ${SPEC_PREFIX}$1 excluded — $2"
+            echo "⚠️ \`${SPEC_PREFIX}$1\` excluded from auto-rebase: $2" >> "$GITHUB_STEP_SUMMARY"
           }
 
           # Bring the default branch and every spec/* branch tip into local
@@ -196,7 +205,7 @@ jobs:
           # touched it.
           git fetch --no-tags --quiet origin \
             "$DB:refs/remotes/origin/$DB" \
-            '+refs/heads/spec/*:refs/remotes/origin/spec/*' || \
+            "+refs/heads/${SPEC_PREFIX}*:refs/remotes/origin/${SPEC_PREFIX}*" || \
             git fetch --no-tags --quiet origin "$DB:refs/remotes/origin/$DB" || true
 
           main_sha="$(git rev-parse "refs/remotes/origin/$DB" 2>/dev/null || git rev-parse HEAD)"
@@ -204,12 +213,12 @@ jobs:
           selected='[]'
           while read -r _sha ref; do
             [ -n "${ref:-}" ] || continue
-            slug="${ref#refs/heads/spec/}"
+            slug="${ref#refs/heads/"${SPEC_PREFIX}"}"
             spec_dir="specs/$slug"
             meta_path="$spec_dir/spec-meta.json"
 
             # Read the branch's own spec-meta.json tip.
-            if ! meta="$(git show "refs/remotes/origin/spec/$slug:$meta_path" 2>/dev/null)"; then
+            if ! meta="$(git show "refs/remotes/origin/${SPEC_PREFIX}$slug:$meta_path" 2>/dev/null)"; then
               warn "$slug" "no $meta_path on its own branch tip"
               continue
             fi
@@ -243,9 +252,9 @@ jobs:
                 if [ -n "$marker" ]; then
                   m_branch="$(printf '%s' "$marker" | sed -n 's/.*branch-sha=\([0-9a-f]\{1,\}\).*/\1/p')"
                   m_main="$(printf '%s' "$marker" | sed -n 's/.*main-sha=\([0-9a-f]\{1,\}\).*/\1/p')"
-                  branch_tip="$(git ls-remote origin "refs/heads/spec/$slug" | awk '{print $1}')"
+                  branch_tip="$(git ls-remote origin "refs/heads/${SPEC_PREFIX}$slug" | awk '{print $1}')"
                   if [ -n "$m_branch" ] && [ "$m_branch" = "$branch_tip" ] && [ "$m_main" = "$main_sha" ]; then
-                    echo "⏭️ \`spec/$slug\` unchanged since it was reported blocked (branch=\`$branch_tip\`, $DB=\`$main_sha\`) — skipping (dedup)." >> "$GITHUB_STEP_SUMMARY"
+                    echo "⏭️ \`${SPEC_PREFIX}$slug\` unchanged since it was reported blocked (branch=\`$branch_tip\`, $DB=\`$main_sha\`) — skipping (dedup)." >> "$GITHUB_STEP_SUMMARY"
                     continue
                   fi
                 fi
@@ -255,7 +264,7 @@ jobs:
             selected="$(printf '%s' "$selected" | jq -c \
               --arg slug "$slug" --arg dir "$spec_dir" --arg issue "$issue" \
               '. + [{slug: $slug, spec_dir: $dir, issue: $issue}]')"
-          done < <(git ls-remote --heads origin 'spec/*')
+          done < <(git ls-remote --heads origin "${SPEC_PREFIX}*")
 
           # An empty array is a valid, successful output.
           echo "branches=$selected" >> "$GITHUB_OUTPUT"
@@ -359,7 +368,7 @@ jobs:
       - name: Checkout spec branch as wing-commander-bot
         uses: actions/checkout@v4
         with:
-          ref: spec/${{ matrix.slug }}
+          ref: ${{ inputs.spec-prefix }}${{ matrix.slug }}
           token: ${{ steps.ctx.outputs.token }}
           fetch-depth: 0
           clean: false
@@ -374,6 +383,7 @@ jobs:
         env:
           SLUG: ${{ matrix.slug }}
           BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
         run: |
           set -euo pipefail
           git config user.name  "${BOT_SLUG}[bot]"
@@ -407,7 +417,7 @@ jobs:
             outcome=error
           fi
           echo "outcome=$outcome" >> "$GITHUB_OUTPUT"
-          echo "spec/$SLUG: rebase attempt outcome=**$outcome**." >> "$GITHUB_STEP_SUMMARY"
+          echo "${SPEC_PREFIX}$SLUG: rebase attempt outcome=**$outcome**." >> "$GITHUB_STEP_SUMMARY"
 
       # Clean outcome: decide whether there is anything to publish. A rebase
       # that left the tip unchanged is a no-op — no push, no comment.
@@ -417,12 +427,13 @@ jobs:
         env:
           SLUG: ${{ matrix.slug }}
           BEFORE: ${{ steps.attempt.outputs.before }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
         run: |
           set -uo pipefail
           after="$(git rev-parse HEAD)"
           if [ "$after" = "$BEFORE" ]; then
             echo "push=false" >> "$GITHUB_OUTPUT"
-            echo "spec/$SLUG: already current with $DB — nothing to publish." >> "$GITHUB_STEP_SUMMARY"
+            echo "${SPEC_PREFIX}$SLUG: already current with $DB — nothing to publish." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "push=true" >> "$GITHUB_OUTPUT"
           fi
@@ -452,7 +463,7 @@ jobs:
           prompt: |
             You are the conflict-resolution assistant for this repository's
             auto-rebase maintenance stage. A rebase of the branch
-            spec/${{ matrix.slug }} onto the repository's default branch has
+            ${{ inputs.spec-prefix }}${{ matrix.slug }} onto the repository's default branch has
             stopped on merge conflicts, and the repository is checked out on
             the runner mid-rebase.
 
@@ -519,6 +530,7 @@ jobs:
         env:
           SLUG: ${{ matrix.slug }}
           AGENT_OUTCOME: ${{ steps.agent.outcome }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
         run: |
           set -uo pipefail
           push=false
@@ -527,8 +539,8 @@ jobs:
           if [ -d "$(git rev-parse --git-path rebase-merge)" ] || \
              [ -d "$(git rev-parse --git-path rebase-apply)" ] || \
              [ "$AGENT_OUTCOME" != "success" ]; then
-            echo "::warning::spec/$SLUG: AI rebase did not complete (agent outcome=$AGENT_OUTCOME) — abandoning."
-            echo "spec/$SLUG: AI resolution incomplete — abandoning and escalating." >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::${SPEC_PREFIX}$SLUG: AI rebase did not complete (agent outcome=$AGENT_OUTCOME) — abandoning."
+            echo "${SPEC_PREFIX}$SLUG: AI resolution incomplete — abandoning and escalating." >> "$GITHUB_STEP_SUMMARY"
             escalate=true
           else
             mapfile -t pre  < "$RUNNER_TEMP/pre_tip.txt"
@@ -539,7 +551,7 @@ jobs:
 
             verdict=pass
             if [ "${#pre[@]}" -ne "${#post[@]}" ]; then
-              echo "::warning::spec/$SLUG: rebased commit count ${#post[@]} != original ${#pre[@]} — scope check failed."
+              echo "::warning::${SPEC_PREFIX}$SLUG: rebased commit count ${#post[@]} != original ${#pre[@]} — scope check failed."
               verdict=fail
             else
               i=0
@@ -549,7 +561,7 @@ jobs:
                 cat "$RUNNER_TEMP/pre-files.txt" "$RUNNER_TEMP/manifest-sorted.txt" | sort -u > "$RUNNER_TEMP/allowed.txt"
                 extra="$(comm -23 "$RUNNER_TEMP/post-files.txt" "$RUNNER_TEMP/allowed.txt")"
                 if [ -n "$extra" ]; then
-                  echo "::warning::spec/$SLUG: rebased commit ${post[$i]} touched out-of-scope file(s):"
+                  echo "::warning::${SPEC_PREFIX}$SLUG: rebased commit ${post[$i]} touched out-of-scope file(s):"
                   printf '%s\n' "$extra"
                   verdict=fail
                   break
@@ -560,10 +572,10 @@ jobs:
 
             if [ "$verdict" = "pass" ]; then
               push=true
-              echo "spec/$SLUG: AI resolution passed the scope check." >> "$GITHUB_STEP_SUMMARY"
+              echo "${SPEC_PREFIX}$SLUG: AI resolution passed the scope check." >> "$GITHUB_STEP_SUMMARY"
             else
               escalate=true
-              echo "spec/$SLUG: AI resolution failed the scope check — abandoning and escalating." >> "$GITHUB_STEP_SUMMARY"
+              echo "${SPEC_PREFIX}$SLUG: AI resolution failed the scope check — abandoning and escalating." >> "$GITHUB_STEP_SUMMARY"
             fi
           fi
 
@@ -581,22 +593,23 @@ jobs:
           SLUG: ${{ matrix.slug }}
           ISSUE: ${{ matrix.issue }}
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
         run: |
           set -uo pipefail
-          if git push --force-with-lease origin "HEAD:refs/heads/spec/$SLUG" 2>"$RUNNER_TEMP/push-err.txt"; then
-            echo "spec/$SLUG: pushed rebased result (force-with-lease)." >> "$GITHUB_STEP_SUMMARY"
+          if git push --force-with-lease origin "HEAD:refs/heads/${SPEC_PREFIX}$SLUG" 2>"$RUNNER_TEMP/push-err.txt"; then
+            echo "${SPEC_PREFIX}$SLUG: pushed rebased result (force-with-lease)." >> "$GITHUB_STEP_SUMMARY"
             if [ -n "$ISSUE" ]; then
               has_label="$(gh issue view "$ISSUE" --json labels \
                 --jq '[.labels[].name] | index("rebase:blocked") != null' 2>/dev/null || echo false)"
               if [ "$has_label" = "true" ]; then
                 gh issue edit "$ISSUE" --remove-label "rebase:blocked" || true
-                echo "spec/$SLUG: removed rebase:blocked from #$ISSUE (auto-recovery)." >> "$GITHUB_STEP_SUMMARY"
+                echo "${SPEC_PREFIX}$SLUG: removed rebase:blocked from #$ISSUE (auto-recovery)." >> "$GITHUB_STEP_SUMMARY"
               fi
             fi
           else
-            echo "::warning::spec/$SLUG: force-with-lease push rejected (branch moved since checkout) — skipping this run, no comment."
+            echo "::warning::${SPEC_PREFIX}$SLUG: force-with-lease push rejected (branch moved since checkout) — skipping this run, no comment."
             {
-              echo "spec/$SLUG: push rejected — the branch moved since checkout; skipping silently, the next run retries."
+              echo "${SPEC_PREFIX}$SLUG: push rejected — the branch moved since checkout; skipping silently, the next run retries."
               sed 's/^/    /' "$RUNNER_TEMP/push-err.txt"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
@@ -612,6 +625,7 @@ jobs:
           SLUG: ${{ matrix.slug }}
           BEFORE: ${{ steps.attempt.outputs.before }}
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
         run: |
           set -uo pipefail
           spec_dir="specs/$SLUG"
@@ -627,14 +641,14 @@ jobs:
           meta_dir="$(printf '%s' "$meta" | jq -r '.spec_dir // empty' 2>/dev/null || true)"
 
           if [ -z "$issue" ] || [ "$meta_dir" != "$spec_dir" ]; then
-            echo "::warning::spec/$SLUG: cannot resolve a trustworthy lifecycle issue from $spec_dir/spec-meta.json — recording the abandonment here only, taking no action on the issue."
-            echo "spec/$SLUG: abandoned; lifecycle issue could not be identified, so no comment/label was posted." >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::${SPEC_PREFIX}$SLUG: cannot resolve a trustworthy lifecycle issue from $spec_dir/spec-meta.json — recording the abandonment here only, taking no action on the issue."
+            echo "${SPEC_PREFIX}$SLUG: abandoned; lifecycle issue could not be identified, so no comment/label was posted." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
           marker="<!-- wing-commander-rebase: blocked branch-sha=$BEFORE main-sha=$main_sha -->"
           {
-            echo "🛠️ **Auto-rebase needs a human** — I could not bring \`spec/$SLUG\` current with \`$DB\` automatically."
+            echo "🛠️ **Auto-rebase needs a human** — I could not bring \`${SPEC_PREFIX}$SLUG\` current with \`$DB\` automatically."
             echo ""
             echo "The rebase was **abandoned** and the branch left exactly as it was (nothing was force-pushed). Its conflicts against \`$DB\` need a manual rebase or a decision on how to reconcile them."
             echo ""
@@ -649,4 +663,4 @@ jobs:
           gh issue comment "$issue" --body-file "$RUNNER_TEMP/escalation.md"
           gh label create "rebase:blocked" --color B60205 --description "Auto-rebase stuck; needs a manual rebase" --force
           gh issue edit "$issue" --add-label "rebase:blocked"
-          echo "spec/$SLUG: abandoned and escalated to #$issue with a rebase:blocked marker." >> "$GITHUB_STEP_SUMMARY"
+          echo "${SPEC_PREFIX}$SLUG: abandoned and escalated to #$issue with a rebase:blocked marker." >> "$GITHUB_STEP_SUMMARY"

@@ -76,6 +76,46 @@ on:
         type: string
         required: false
         default: ""
+      spec-draft-prefix:
+        description: >
+          Branch prefix this stage creates draft-spec branches under
+          (contracts/branch-prefix-override-points.md). Consumer-configurable
+          naming; the default reproduces today's behavior (FR-005).
+        type: string
+        required: false
+        default: spec-draft/
+      spec-prefix:
+        description: >
+          Branch prefix for the persistent spec branch. Not used for any git
+          operation in this stage — forwarded to wing-commander-preflight's
+          collision check only (FR-010).
+        type: string
+        required: false
+        default: spec/
+      plan-prefix:
+        description: >
+          Branch prefix for plan branches. Not used for any git operation in
+          this stage — forwarded to wing-commander-preflight's collision
+          check only (FR-010).
+        type: string
+        required: false
+        default: plan/
+      tasks-prefix:
+        description: >
+          Branch prefix for tasks branches. Not used for any git operation in
+          this stage — forwarded to wing-commander-preflight's collision
+          check only (FR-010).
+        type: string
+        required: false
+        default: tasks/
+      impl-prefix:
+        description: >
+          Branch prefix for implement-cycle branches. Not used for any git
+          operation in this stage — forwarded to wing-commander-preflight's
+          collision check only (FR-010).
+        type: string
+        required: false
+        default: impl/
     secrets:
       claude-code-oauth-token:
         description: "Claude OAuth token (claude setup-token) — one of the two credentials"
@@ -171,6 +211,12 @@ jobs:
           use-bedrock: ${{ inputs.use-bedrock }}
           aws-role-arn: ${{ inputs.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
+          branch-prefixes: |
+            spec-draft=${{ inputs.spec-draft-prefix }}
+            spec=${{ inputs.spec-prefix }}
+            plan=${{ inputs.plan-prefix }}
+            tasks=${{ inputs.tasks-prefix }}
+            impl=${{ inputs.impl-prefix }}
 
       - name: Configure AWS credentials for Bedrock
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-bedrock-credentials
@@ -212,12 +258,21 @@ jobs:
       # every open pipeline branch, and hand it to the agent.
       - name: Allocate feature number
         id: num
+        env:
+          SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
         run: |
           highest=$(
             {
               ls -d specs/[0-9][0-9][0-9]-* 2>/dev/null | sed 's|^specs/||'
-              git ls-remote --heads origin 'refs/heads/spec-draft/*' 'refs/heads/spec/*' \
-                | sed -E 's|.*refs/heads/spec(-draft)?/||'
+              git ls-remote --heads origin "refs/heads/$SPEC_DRAFT_PREFIX*" "refs/heads/$SPEC_PREFIX*" \
+                | sed -E 's|^[0-9a-f]+[[:space:]]+refs/heads/||' \
+                | while IFS= read -r ref; do
+                    case "$ref" in
+                      "$SPEC_DRAFT_PREFIX"*) printf '%s\n' "${ref#"$SPEC_DRAFT_PREFIX"}" ;;
+                      "$SPEC_PREFIX"*) printf '%s\n' "${ref#"$SPEC_PREFIX"}" ;;
+                    esac
+                  done
             } | grep -oE '^[0-9]{3}' | sort -n | tail -1
           )
           num=$(printf '%03d' $(( 10#${highest:-000} + 1 )))
@@ -291,11 +346,11 @@ jobs:
                {"issue": ${{ inputs.issue-number }}, "spec_dir": "<spec-dir>",
                 "feature_num": "<NNN>", "stage": "spec", "iteration": 0,
                 "spec_branch": null}
-            5. Create branch spec-draft/<NNN-slug> from
+            5. Create branch ${{ inputs.spec-draft-prefix }}<NNN-slug> from
                ${{ steps.defbranch.outputs.name }}, commit ONLY the new
                spec directory (git add <spec-dir>), and push it.
             6. Open a pull request to ${{ steps.defbranch.outputs.name }}:
-               gh pr create --base ${{ steps.defbranch.outputs.name }} --head spec-draft/<NNN-slug> \
+               gh pr create --base ${{ steps.defbranch.outputs.name }} --head ${{ inputs.spec-draft-prefix }}<NNN-slug> \
                  --title "Spec: <feature name> (#${{ inputs.issue-number }})" \
                  --body  "<summary of the spec, link 'Closes nothing — lifecycle issue: #${{ inputs.issue-number }}'>"
             7. Update the lifecycle issue #${{ inputs.issue-number }}:
@@ -326,13 +381,15 @@ jobs:
         id: created
         env:
           NUM: ${{ steps.num.outputs.num }}
+          SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
         run: |
-          branch=$(git ls-remote --heads origin "refs/heads/spec-draft/$NUM-*" | sed -E 's|.*refs/heads/spec-draft/||' | head -1)
+          ref=$(git ls-remote --heads origin "refs/heads/$SPEC_DRAFT_PREFIX$NUM-*" | awk '{print $2}' | head -1)
+          branch="${ref#refs/heads/"$SPEC_DRAFT_PREFIX"}"
           if [ -n "$branch" ]; then
             echo "spec-dir=specs/$branch" >> "$GITHUB_OUTPUT"
           else
             echo "spec-dir=" >> "$GITHUB_OUTPUT"
-            echo "No spec-draft/$NUM-* branch found — intake produced no spec." >> "$GITHUB_STEP_SUMMARY"
+            echo "No $SPEC_DRAFT_PREFIX$NUM-* branch found — intake produced no spec." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       # Pipeline PRs carry the same labels as their lifecycle issue so PR
@@ -343,11 +400,12 @@ jobs:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ISSUE: ${{ inputs.issue-number }}
           NUM: ${{ steps.num.outputs.num }}
+          SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
         run: |
           pr=$(gh pr list --state open --json number,headRefName \
-            --jq "[.[] | select(.headRefName | startswith(\"spec-draft/$NUM-\"))][0].number // empty")
+            --jq "[.[] | select(.headRefName | startswith(\"$SPEC_DRAFT_PREFIX$NUM-\"))][0].number // empty")
           if [ -z "$pr" ]; then
-            echo "No spec-draft/$NUM-* PR found — intake produced no spec; nothing to label." >> "$GITHUB_STEP_SUMMARY"
+            echo "No $SPEC_DRAFT_PREFIX$NUM-* PR found — intake produced no spec; nothing to label." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           labels=$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name] | join(",")')

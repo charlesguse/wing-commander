@@ -31,7 +31,7 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.pull_request.merged == true &&
-       startsWith(github.event.pull_request.head.ref, 'plan/'))
+       startsWith(github.event.pull_request.head.ref, vars.WING_COMMANDER_PLAN_PREFIX || 'plan/'))
     permissions:
       contents: write
       pull-requests: write
@@ -46,6 +46,11 @@ jobs:
       restart: ${{ github.event_name == 'workflow_dispatch' }}
       tasks-review: ${{ vars.WING_COMMANDER_TASKS_REVIEW || 'auto' }}
       model: ${{ vars.WING_COMMANDER_PLAN_MODEL || 'claude-sonnet-5' }}
+      spec-draft-prefix: ${{ vars.WING_COMMANDER_SPEC_DRAFT_PREFIX || 'spec-draft/' }}
+      spec-prefix: ${{ vars.WING_COMMANDER_SPEC_PREFIX || 'spec/' }}
+      plan-prefix: ${{ vars.WING_COMMANDER_PLAN_PREFIX || 'plan/' }}
+      tasks-prefix: ${{ vars.WING_COMMANDER_TASKS_PREFIX || 'tasks/' }}
+      impl-prefix: ${{ vars.WING_COMMANDER_IMPL_PREFIX || 'impl/' }}
       next-workflow: wing-commander-5-implement.yml
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -58,7 +63,7 @@ jobs:
     if: >-
       github.event_name == 'pull_request' &&
       github.event.pull_request.merged == true &&
-      startsWith(github.event.pull_request.head.ref, 'tasks/')
+      startsWith(github.event.pull_request.head.ref, vars.WING_COMMANDER_TASKS_PREFIX || 'tasks/')
     # The grant must cover EVERY job in the called workflow file — GitHub
     # validates them all at startup, including jobs whose `if` will skip
     # them, so this must match the generate-mode job's needs even though
@@ -74,6 +79,11 @@ jobs:
     with:
       mode: approved
       head-ref: ${{ github.event.pull_request.head.ref }}
+      spec-draft-prefix: ${{ vars.WING_COMMANDER_SPEC_DRAFT_PREFIX || 'spec-draft/' }}
+      spec-prefix: ${{ vars.WING_COMMANDER_SPEC_PREFIX || 'spec/' }}
+      plan-prefix: ${{ vars.WING_COMMANDER_PLAN_PREFIX || 'plan/' }}
+      tasks-prefix: ${{ vars.WING_COMMANDER_TASKS_PREFIX || 'tasks/' }}
+      impl-prefix: ${{ vars.WING_COMMANDER_IMPL_PREFIX || 'impl/' }}
       next-workflow: wing-commander-5-implement.yml
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

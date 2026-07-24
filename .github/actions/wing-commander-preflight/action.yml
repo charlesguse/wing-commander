@@ -90,6 +90,15 @@ inputs:
       use-bedrock is "true".
     required: false
     default: ""
+  branch-prefixes:
+    description: >
+      Newline-separated "type=value" list of the full resolved set of
+      branch-type prefixes for this run (e.g. "spec-draft=spec-draft/"),
+      supplied by the three CREATE-capable stages (intake, plan, tasks) so an
+      invalid or colliding value fails before any branch is created
+      (FR-010). Empty (default) performs no check.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -110,6 +119,7 @@ runs:
         USE_BEDROCK: ${{ inputs.use-bedrock }}
         AWS_ROLE_ARN_INPUT: ${{ inputs.aws-role-arn }}
         AWS_REGION_INPUT: ${{ inputs.aws-region }}
+        BRANCH_PREFIXES: ${{ inputs.branch-prefixes }}
       run: |
         set -uo pipefail
 
@@ -193,6 +203,56 @@ runs:
             echo "::warning::wing-commander preflight: this repository's spec-kit version ($v, from .specify/init-options.json) differs from the pipeline's supported version ($SPECKIT_SUPPORTED_VERSION). The stage will still run, but behavior is only verified against the supported version."
             echo "⚠️ spec-kit version mismatch: repository has $v, pipeline supports $SPECKIT_SUPPORTED_VERSION (continuing)." >> "$GITHUB_STEP_SUMMARY"
           fi
+        fi
+
+        # 6. Branch-prefix validation (research.md D4,
+        #    contracts/branch-prefix-override-points.md): the three
+        #    CREATE-capable stages (intake, plan, tasks) forward the full
+        #    resolved five-value prefix set here so an invalid or colliding
+        #    value fails before any branch is created (FR-010). Empty/unset
+        #    performs no check — every other call site is unaffected.
+        if [ -n "$BRANCH_PREFIXES" ]; then
+          declare -a prefix_types=()
+          declare -a prefix_values=()
+          while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            ptype="${line%%=*}"
+            pvalue="${line#*=}"
+            if [ "$ptype" = "$line" ]; then
+              fail "branch-prefixes entry '$line' is not in 'type=value' form — this is a bug in the calling workflow, not in your repository."
+            fi
+            if [ -z "$pvalue" ]; then
+              fail "branch-prefix '$ptype' is empty — configure a non-empty value, or leave its repository variable unset to use the default."
+            fi
+            pbody="${pvalue%/}"
+            if [ "$pvalue" = "$pbody" ] || ! printf '%s' "$pbody" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*$'; then
+              fail "branch-prefix '$ptype' value '$pvalue' is not valid — it must end in exactly one '/' and, before that, start with a letter or digit and contain only letters, digits, '.', '_', or '-'."
+            fi
+            prefix_types+=("$ptype")
+            prefix_values+=("$pvalue")
+          done <<EOF_BRANCH_PREFIXES
+        $BRANCH_PREFIXES
+        EOF_BRANCH_PREFIXES
+
+          i=0
+          while [ "$i" -lt "${#prefix_values[@]}" ]; do
+            j=$((i + 1))
+            while [ "$j" -lt "${#prefix_values[@]}" ]; do
+              a="${prefix_values[$i]}"
+              b="${prefix_values[$j]}"
+              case "$a" in
+                "$b") fail "branch-prefix '${prefix_types[$i]}' and '${prefix_types[$j]}' both resolve to '$a' — configure distinct values." ;;
+              esac
+              case "$a" in
+                "$b"*) fail "branch-prefix '${prefix_types[$j]}' value '$b' is a prefix of branch-prefix '${prefix_types[$i]}' value '$a' — a startsWith()/case match meant for one would also match the other. Configure non-overlapping values." ;;
+              esac
+              case "$b" in
+                "$a"*) fail "branch-prefix '${prefix_types[$i]}' value '$a' is a prefix of branch-prefix '${prefix_types[$j]}' value '$b' — a startsWith()/case match meant for one would also match the other. Configure non-overlapping values." ;;
+              esac
+              j=$((j + 1))
+            done
+            i=$((i + 1))
+          done
         fi
 
         if [ "$USE_BEDROCK" = "true" ]; then

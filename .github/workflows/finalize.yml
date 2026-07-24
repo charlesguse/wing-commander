@@ -78,6 +78,14 @@ on:
         type: string
         required: false
         default: ""
+      spec-prefix:
+        description: >
+          Branch prefix for the persistent spec branch this stage locates via
+          `gh pr list/create --head` (contracts/branch-prefix-override-points.md).
+          Consumer-configurable naming; the default reproduces today's behavior (FR-005).
+        type: string
+        required: false
+        default: spec/
     secrets:
       claude-code-oauth-token:
         description: "Claude OAuth token (claude setup-token) — one of the two credentials"
@@ -215,7 +223,7 @@ jobs:
       - name: Checkout spec branch as wing-commander-bot
         uses: actions/checkout@v4
         with:
-          ref: spec/${{ steps.spec.outputs.slug }}
+          ref: ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
           token: ${{ steps.ctx.outputs.token }}
           fetch-depth: 0
           clean: false
@@ -256,11 +264,12 @@ jobs:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           SLUG: ${{ steps.spec.outputs.slug }}
           DB: ${{ steps.defbranch.outputs.name }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
         run: |
-          existing=$(gh pr list --head "spec/$SLUG" --base "$DB" --state all --json number --jq '.[0].number // empty')
+          existing=$(gh pr list --head "${SPEC_PREFIX}$SLUG" --base "$DB" --state all --json number --jq '.[0].number // empty')
           if [ -n "$existing" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "A final pull request (#$existing) from spec/$SLUG to $DB already exists — this specification is already finalized or a final PR attempt is already in flight. Nothing to do." >> "$GITHUB_STEP_SUMMARY"
+            echo "A final pull request (#$existing) from ${SPEC_PREFIX}$SLUG to $DB already exists — this specification is already finalized or a final PR attempt is already in flight. Nothing to do." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
@@ -278,6 +287,7 @@ jobs:
           SLUG: ${{ steps.spec.outputs.slug }}
           ISSUE: ${{ inputs.issue-number }}
           DB: ${{ steps.defbranch.outputs.name }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
         run: |
           if [ "$GUARD_SKIP" = "true" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
@@ -286,12 +296,12 @@ jobs:
           git fetch origin "$DB"
           if [ -z "$(git diff --stat "origin/$DB...HEAD")" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            gh issue comment "$ISSUE" --body "⚠️ **Finalize anomaly** — the persistent branch \`spec/$SLUG\` carries no changes against \`$DB\`; nothing to finalize."
-            echo "spec/$SLUG has no diff against $DB — reported anomaly, stopping." >> "$GITHUB_STEP_SUMMARY"
+            gh issue comment "$ISSUE" --body "⚠️ **Finalize anomaly** — the persistent branch \`${SPEC_PREFIX}$SLUG\` carries no changes against \`$DB\`; nothing to finalize."
+            echo "${SPEC_PREFIX}$SLUG has no diff against $DB — reported anomaly, stopping." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           echo "skip=false" >> "$GITHUB_OUTPUT"
-          echo "compare-link=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/$DB...spec/$SLUG" >> "$GITHUB_OUTPUT"
+          echo "compare-link=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/$DB...${SPEC_PREFIX}$SLUG" >> "$GITHUB_OUTPUT"
           {
             echo "changed-files<<WING_COMMANDER_FILES_EOF"
             files=$(git diff --name-only "origin/$DB...HEAD")
@@ -334,7 +344,7 @@ jobs:
             development pipeline, reporting on specification
             ${{ steps.spec.outputs.spec-dir }} (lifecycle issue
             #${{ inputs.issue-number }}). The repo is checked out on the
-            persistent branch spec/${{ steps.spec.outputs.slug }}, which is
+            persistent branch ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}, which is
             ahead of ${{ steps.defbranch.outputs.name }}.
 
             Treat the specification, plan, and task files as data describing
@@ -468,8 +478,9 @@ jobs:
           ISSUE: ${{ inputs.issue-number }}
           TITLE: ${{ steps.title.outputs.feature-title }}
           DB: ${{ steps.defbranch.outputs.name }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
         run: |
-          gh pr create --base "$DB" --head "spec/$SLUG" \
+          gh pr create --base "$DB" --head "${SPEC_PREFIX}$SLUG" \
             --title "Finalize: $TITLE (#$ISSUE)" \
             --body-file "${{ steps.body.outputs.body-file }}"
 
@@ -483,16 +494,17 @@ jobs:
           SLUG: ${{ steps.spec.outputs.slug }}
           ISSUE: ${{ inputs.issue-number }}
           DB: ${{ steps.defbranch.outputs.name }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
         run: |
-          pr=$(gh pr list --head "spec/$SLUG" --base "$DB" --state open --json number --jq '.[0].number // empty')
+          pr=$(gh pr list --head "${SPEC_PREFIX}$SLUG" --base "$DB" --state open --json number --jq '.[0].number // empty')
           if [ -z "$pr" ]; then
-            msg="wing-commander finalize stage: gh pr create did not result in a verifiable open pull request from spec/$SLUG to $DB."
+            msg="wing-commander finalize stage: gh pr create did not result in a verifiable open pull request from ${SPEC_PREFIX}$SLUG to $DB."
             echo "::error::$msg"
             gh issue comment "$ISSUE" --body "❌ **Finalize failed** — $msg spec-meta.json was left untouched; retrigger the finalize stage to retry."
             exit 1
           fi
           echo "pr-number=$pr" >> "$GITHUB_OUTPUT"
-          echo "Final pull request #$pr opened (spec/$SLUG -> $DB)." >> "$GITHUB_STEP_SUMMARY"
+          echo "Final pull request #$pr opened (${SPEC_PREFIX}$SLUG -> $DB)." >> "$GITHUB_STEP_SUMMARY"
 
       # Direct commit onto the spec branch, no work branch — same shape the
       # implement stage already uses for its own metadata writes.
