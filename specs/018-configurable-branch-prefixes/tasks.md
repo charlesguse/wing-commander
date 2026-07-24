@@ -86,8 +86,8 @@ Single-project CI/CD feature (GitHub Actions reusable workflows + a shared compo
 
 ### Implementation for User Story 2
 
-- [ ] T020 [US2] Desk-check every new input's `default:` added in T003–T011 against `contracts/branch-prefix-override-points.md` Layer 1: confirm each of the five defaults (`spec-draft/`, `spec/`, `plan/`, `tasks/`, `impl/`) exactly reproduces the literal it replaced, with no other existing input's default changed as a side effect (quickstart.md Scenario 1).
-- [ ] T021 [US2] Desk-check every `vars.X || 'default'` expression wired in T012–T019 (and `watchdog.yml`'s bash `${VAR:-default}` equivalent from T011) against `contracts/branch-prefix-override-points.md` Layer 2: confirm each variable's documented default resolves when unset, and confirm an explicitly-blank value (`gh variable set ... --body ""`) resolves identically to unset, since GitHub Actions `||` and bash parameter expansion both treat `''` as falsy (FR-004; quickstart.md Scenario 4).
+- [X] T020 [US2] Desk-check every new input's `default:` added in T003–T011 against `contracts/branch-prefix-override-points.md` Layer 1: confirm each of the five defaults (`spec-draft/`, `spec/`, `plan/`, `tasks/`, `impl/`) exactly reproduces the literal it replaced, with no other existing input's default changed as a side effect (quickstart.md Scenario 1).
+- [X] T021 [US2] Desk-check every `vars.X || 'default'` expression wired in T012–T019 (and `watchdog.yml`'s bash `${VAR:-default}` equivalent from T011) against `contracts/branch-prefix-override-points.md` Layer 2: confirm each variable's documented default resolves when unset, and confirm an explicitly-blank value (`gh variable set ... --body ""`) resolves identically to unset, since GitHub Actions `||` and bash parameter expansion both treat `''` as falsy (FR-004; quickstart.md Scenario 4).
 
 **Checkpoint**: User Stories 1 AND 2 both hold — quickstart.md Scenarios 1–5 pass.
 
