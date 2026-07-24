@@ -328,11 +328,30 @@ the label).
 
 ## Stage 9 — Watchdog (`watchdog.yml`, wrapper `wing-commander-8-watchdog.yml`)
 
-**Trigger**: `workflow_run: [completed]` across all nine stage wrappers —
-including itself, for self-inspection (FR-021) — plus manual
-`workflow_dispatch` with a `run-id` to re-inspect any past run. The thin
-wrapper only resolves the inspected run's identity (`run-id`/`run-name`);
-every job below lives in the reusable `watchdog.yml`.
+**Trigger**: `workflow_run: [completed]` across the eight other stage
+wrappers, plus manual `workflow_dispatch` with a `run-id` to re-inspect any
+past run. The thin wrapper only resolves the inspected run's identity
+(`run-id`/`run-name`); every job below lives in the reusable `watchdog.yml`.
+
+Self-inspection (FR-021) needs a **second wrapper**,
+`wing-commander-8b-watchdog-self.yml`, which listens to stage 8 and calls the
+same `watchdog.yml`. It cannot be folded into stage 8: GitHub rejects any
+workflow that names itself under `workflow_run.workflows` — *"failed to parse
+workflow: Workflow '<name>' cannot listen to itself"* — and an unparseable
+workflow is never registered, so the attempt takes the whole stage offline
+instead of adding self-inspection. Recursion terminates by construction (8 →
+8b, and nothing listens to 8b), so `watchdog.yml` only ever sees stage 8's
+own run as a self-inspection subject.
+
+Two constraints the wrappers must hold, both enforced by
+`lint-workflows.yml` (gates 1–3):
+- Every name in `workflow_run.workflows` must match another workflow's
+  `name:` **exactly**. A name matching nothing is not an error to GitHub —
+  just a trigger that silently never fires.
+- The calling job's `permissions:` must be a superset of `watchdog.yml`'s
+  workflow-level grant (notably `actions: read`). GitHub validates this
+  against every job in the called workflow at startup and kills the run with
+  zero jobs if the caller grants less.
 
 **Design** — four sequential jobs, `collect → diagnose → triage → act`:
 - `collect` — deterministic evidence gathering only (no agent). Five FR-006

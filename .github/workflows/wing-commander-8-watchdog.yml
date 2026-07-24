@@ -1,23 +1,35 @@
 # Stage 8 — Watchdog (thin wrapper).
-# Reacts to the completion of any of this pipeline's other stage wrappers
-# (plus itself, for self-inspection — FR-021/US4) and to manual
-# workflow_dispatch re-inspection (FR-025). This wrapper only resolves the
-# inspected run's identity (run-id/run-name); every detection/triage/act job
-# lives in watchdog.yml (docs/architecture.md), called by local path.
-name: "8 - Watchdog"
+# Reacts to the completion of any of this pipeline's other stage wrappers and
+# to manual workflow_dispatch re-inspection (FR-025). This wrapper only
+# resolves the inspected run's identity (run-id/run-name); every
+# detection/triage/act job lives in watchdog.yml (docs/architecture.md),
+# called by local path.
+#
+# Self-inspection (FR-021/US4) is NOT wired here: GitHub rejects the entire
+# file — "failed to parse workflow: Workflow '<name>' cannot listen to
+# itself" — if a workflow names itself under workflow_run.workflows, and an
+# unparseable file is never registered, so the stage silently never runs at
+# all. Self-inspection therefore lives in its own wrapper,
+# wing-commander-8b-watchdog-self.yml, which listens to THIS workflow and
+# calls the same watchdog.yml.
+#
+# Every name below must match another workflow's `name:` EXACTLY —
+# workflow_run resolves by display name, and a name that matches nothing is
+# not an error, just a trigger that silently never fires. lint-workflows.yml
+# gate 2 enforces both rules.
+name: "Wing Commander · 8 watchdog"
 
 on:
   workflow_run:
     workflows:
-      - "1 - Intake"
-      - "1b - Clarify"
-      - "3 - Plan"
-      - "4 - Tasks"
-      - "5 - Implement"
-      - "6 - Finalize"
-      - "7 - Cleanup"
-      - "Rebase"
-      - "8 - Watchdog"
+      - "Wing Commander · 1 intake"
+      - "Wing Commander · 2 clarify"
+      - "Wing Commander · 3 plan"
+      - "Wing Commander · 4 tasks"
+      - "Wing Commander · 5 implement"
+      - "Wing Commander · 6 finalize"
+      - "Wing Commander · 7 cleanup"
+      - "Wing Commander · rebase"
     types: [completed]
   workflow_dispatch:
     inputs:
@@ -61,11 +73,17 @@ jobs:
 
   watchdog:
     needs: resolve
+    # Must be a superset of watchdog.yml's workflow-level `permissions:` —
+    # GitHub validates the grant against every job in the called workflow at
+    # startup (including if-skipped ones) and fails the run with zero jobs if
+    # the called workflow asks for more. `actions: read` is what the collect
+    # job's run/job/artifact reads need. lint-workflows.yml gate 3 enforces it.
     permissions:
       contents: write
       pull-requests: write
       issues: write
       id-token: write
+      actions: read
     uses: ./.github/workflows/watchdog.yml
     with:
       run-id: ${{ needs.resolve.outputs.run-id }}

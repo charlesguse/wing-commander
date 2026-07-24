@@ -2,17 +2,36 @@
 # script must pass bash -n. Added after an unbalanced quote inside a
 # ${VAR:-default} expansion silently broke the implement stage's stall
 # report — the exact step whose job is to report failures.
+#
+# Gates 2 and 3 were added after stage 8 (watchdog) sat completely dead for
+# four days: valid YAML and valid bash, but rejected outright by GitHub's own
+# workflow parser ("Workflow '8 - Watchdog' cannot listen to itself"),
+# under-permissioned against the reusable workflow it calls, and pointing its
+# workflow_run trigger at eight display names that no longer existed after the
+# Wing Commander rename. Nothing in the YAML/bash gate can see any of that.
+# Gate 1 is the catch-all backstop for the same class, post-merge.
 name: "lint · workflows"
 
 on:
   pull_request:
     paths: [".github/workflows/**"]
+  # Gate 1 only — it reads how GitHub actually registered the workflows on
+  # the default branch, which a PR's files cannot tell us.
+  push:
+    branches: [main]
+    paths: [".github/workflows/**"]
+  schedule:
+    - cron: "43 5 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  # Gates 2 and 3 are pure static analysis over the workflow set in the
+  # checkout, so they run on the PR that introduces the defect.
   lint:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -51,3 +70,160 @@ jobs:
           print(f"Checked all run blocks; {failures} failure(s).")
           sys.exit(1 if failures else 0)
           PYEOF
+
+      # Gate 2 — workflow_run triggers resolve by DISPLAY NAME, and a name
+      # matching nothing is not an error to GitHub, just a trigger that
+      # silently never fires. Self-reference is worse: it makes the whole
+      # file unparseable, so the workflow is never registered at all.
+      - name: Gate 2 — workflow_run names resolve and are not self-references
+        run: |
+          python3 - <<'PYEOF'
+          import glob, sys, yaml
+
+          workflows = {}
+          for f in sorted(glob.glob(".github/workflows/*.yml")):
+              wf = yaml.safe_load(open(f, encoding="utf-8")) or {}
+              # PyYAML resolves the bare key `on` to the boolean True (YAML
+              # 1.1); quoted "on" stays a string. Accept either.
+              workflows[f] = (wf.get("name"), wf.get(True, wf.get("on")))
+          names = {n for n, _ in workflows.values() if n}
+
+          failures = 0
+          for f, (own_name, on) in workflows.items():
+              wr = on.get("workflow_run") if isinstance(on, dict) else None
+              if not isinstance(wr, dict):
+                  continue
+              for ref in wr.get("workflows") or []:
+                  if ref == own_name:
+                      print(f"::error file={f}::workflow_run lists its own name "
+                            f"{ref!r}; GitHub rejects the entire file with "
+                            f"\"Workflow '{ref}' cannot listen to itself\" and never "
+                            f"registers it. Move self-inspection into a separate "
+                            f"workflow that listens to this one.")
+                      failures += 1
+                  elif ref not in names:
+                      print(f"::error file={f}::workflow_run references {ref!r}, "
+                            f"which is no workflow's name: in this repository — the "
+                            f"trigger will never fire. Known names: "
+                            f"{', '.join(sorted(names))}")
+                      failures += 1
+          print(f"Gate 2: checked every workflow_run reference; {failures} failure(s).")
+          sys.exit(1 if failures else 0)
+          PYEOF
+
+      # Gate 3 — GitHub validates the calling job's grant against EVERY job in
+      # the called workflow at startup, including if-skipped ones, and kills
+      # the run with zero jobs and no annotations when the called workflow
+      # asks for a permission the caller did not grant. (Same failure shape
+      # cost us a v1.0.0 release-day startup_failure on tasks-approved.)
+      - name: Gate 3 — callers grant every permission their reusable workflow requests
+        run: |
+          python3 - <<'PYEOF'
+          import glob, os, sys, yaml
+
+          docs = {}
+          for f in sorted(glob.glob(".github/workflows/*.yml")):
+              docs[os.path.basename(f)] = yaml.safe_load(open(f, encoding="utf-8")) or {}
+
+          failures = 0
+          for fname, wf in docs.items():
+              for jname, job in (wf.get("jobs") or {}).items():
+                  uses = (job or {}).get("uses", "")
+                  if not uses.startswith("./.github/workflows/"):
+                      continue
+                  called = docs.get(os.path.basename(uses))
+                  if called is None:
+                      print(f"::error file=.github/workflows/{fname}::{jname} calls "
+                            f"{uses}, which does not exist")
+                      failures += 1
+                      continue
+                  needed = called.get("permissions") or {}
+                  granted = job.get("permissions")
+                  # No explicit grant means the job inherits the workflow (or
+                  # repository) default, which this check cannot resolve.
+                  if granted is None or not isinstance(needed, dict):
+                      continue
+                  missing = {k: v for k, v in needed.items() if k not in granted}
+                  if missing:
+                      print(f"::error file=.github/workflows/{fname}::job {jname!r} calls "
+                            f"{uses} but does not grant {missing} — the run will die at "
+                            f"startup with zero jobs. Add it to this job's permissions:.")
+                      failures += 1
+          print(f"Gate 3: checked every local reusable-workflow call; {failures} failure(s).")
+          sys.exit(1 if failures else 0)
+          PYEOF
+
+  # Gate 1 — the catch-all. When GitHub cannot parse a workflow file it
+  # registers the workflow with its PATH as its name and creates a failed
+  # "workflow file issue" run with zero jobs, no annotations, and no error
+  # text anywhere in the API. Comparing each file's declared name: against
+  # the registered name detects that exactly, whatever the underlying cause.
+  # Cannot run on pull_request: the API reports the default branch's state,
+  # not the PR's files.
+  registered:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Gate 1 — every workflow is registered under its declared name
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          # Registration is updated as the push is processed; on a push-
+          # triggered run the job can occasionally win that race, so retry
+          # before believing a mismatch.
+          for attempt in 1 2 3; do
+            gh api "repos/$GITHUB_REPOSITORY/actions/workflows" --paginate \
+              --jq '.workflows[] | [.path, .name] | @tsv' > registered.tsv || true
+
+            python3 - <<'PYEOF' > result.txt
+          import glob, yaml
+
+          registered = {}
+          for line in open("registered.tsv", encoding="utf-8"):
+              path, _, name = line.rstrip("\n").partition("\t")
+              registered[path] = name
+
+          failures = 0
+          for path in sorted(glob.glob(".github/workflows/*.yml")):
+              # Registered paths are always posix-style; local globs on
+              # Windows are not.
+              f = path.replace("\\", "/")
+              declared = (yaml.safe_load(open(path, encoding="utf-8")) or {}).get("name")
+              # A file with no name: legitimately registers under its path.
+              if not declared:
+                  continue
+              # Present in the checkout but not yet registered — a brand new
+              # workflow on its first push. Nothing to compare against.
+              if f not in registered:
+                  continue
+              if registered[f] != declared:
+                  encoded = f.replace("/", "%2F")
+                  print(f"::error file={f}::registered as {registered[f]!r} but declares "
+                        f"name: {declared!r}. GitHub falls back to the path when it "
+                        f"cannot parse a workflow, so this file is almost certainly "
+                        f"invalid and never runs. GitHub reports no error text for this "
+                        f"anywhere in the UI or the runs API; get the real parser message "
+                        f"by attempting a dispatch, whose 422 body carries it verbatim: "
+                        f"gh api -X POST 'repos/OWNER/REPO/actions/workflows/{encoded}"
+                        f"/dispatches' -f ref=main")
+                  failures += 1
+          print(f"Gate 1: compared every declared name against its registration; {failures} failure(s).")
+          print(f"EXIT={1 if failures else 0}")
+          PYEOF
+
+            cat result.txt
+            if grep -q '^EXIT=0$' result.txt; then
+              exit 0
+            fi
+            echo "Attempt $attempt saw a mismatch; re-reading registrations."
+            sleep 15
+          done
+          exit 1

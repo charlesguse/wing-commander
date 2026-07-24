@@ -1,0 +1,65 @@
+# Stage 8b — Watchdog self-inspection (thin wrapper).
+# Exists only because a workflow may not name itself under
+# workflow_run.workflows: GitHub rejects the whole file with "failed to parse
+# workflow: Workflow '<name>' cannot listen to itself", and an unparseable
+# workflow is never registered — so wiring FR-021/US4 into stage 8 itself
+# takes the ENTIRE watchdog offline rather than adding self-inspection.
+#
+# Identical to wing-commander-8-watchdog.yml apart from its trigger: it
+# listens to stage 8's completion and calls the same watchdog.yml, which
+# recognises `run-name == "Wing Commander · 8 watchdog"` as self-inspection
+# and applies the FR-018 self-dispatch cap.
+#
+# Recursion terminates by construction: stage 8 does not listen to this
+# workflow, and this workflow does not listen to itself, so the chain is at
+# most stage → 8 → 8b and stops. There is deliberately no workflow_dispatch
+# trigger here — manual re-inspection of any run, including a watchdog run,
+# goes through stage 8's dispatch input.
+name: "Wing Commander · 8b watchdog self"
+
+on:
+  workflow_run:
+    workflows:
+      - "Wing Commander · 8 watchdog"
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  # workflow_run only — the payload carries the inspected run's identity
+  # directly, so unlike stage 8 there is no dispatch branch to resolve.
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      run-id: ${{ steps.resolve.outputs.run-id }}
+      run-name: ${{ steps.resolve.outputs.run-name }}
+    steps:
+      - name: Resolve inspected run identity
+        id: resolve
+        env:
+          EVENT_RUN_ID: ${{ github.event.workflow_run.id }}
+          EVENT_RUN_NAME: ${{ github.event.workflow_run.name }}
+        run: |
+          set -euo pipefail
+          echo "run-id=$EVENT_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "run-name=$EVENT_RUN_NAME" >> "$GITHUB_OUTPUT"
+
+  watchdog:
+    needs: resolve
+    # Superset of watchdog.yml's workflow-level `permissions:` — see the
+    # identical comment in wing-commander-8-watchdog.yml.
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    uses: ./.github/workflows/watchdog.yml
+    with:
+      run-id: ${{ needs.resolve.outputs.run-id }}
+      run-name: ${{ needs.resolve.outputs.run-name }}
+    secrets:
+      claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
