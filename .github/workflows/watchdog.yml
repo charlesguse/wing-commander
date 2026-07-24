@@ -1728,14 +1728,93 @@ jobs:
             echo "failed-jobs=$failed_jobs"
           } >> "$GITHUB_OUTPUT"
 
-      # FR-002's guarantee, at its floor: this write depends on none of the
-      # best-effort steps above having succeeded, so a verdict lands in the
-      # run's own summary even in the worst case (token mint and lifecycle-
-      # issue resolution both also fail). User Story 2 replaces this with a
-      # two-branch step that prefers the lifecycle issue when resolvable.
+      # Independently re-derives the lifecycle issue the same way collect's
+      # "Resolve inspected run's spec slug and lifecycle issue" step does —
+      # it must not read needs.collect.outputs.lifecycle-issue, since collect
+      # may be the job that failed before computing that output. Best-effort:
+      # tolerates an empty token (steps.ctx failed above), a failed gh run
+      # view, or a missing checkout (git fetch/show simply find nothing).
+      - name: Resolve inspected run's lifecycle issue
+        id: issue
+        if: steps.gate.outputs.any-failed == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          RUN_ID: ${{ inputs.run-id }}
+          SPEC_DRAFT_PREFIX: ${{ vars.WING_COMMANDER_SPEC_DRAFT_PREFIX }}
+          SPEC_PREFIX: ${{ vars.WING_COMMANDER_SPEC_PREFIX }}
+          PLAN_PREFIX: ${{ vars.WING_COMMANDER_PLAN_PREFIX }}
+          TASKS_PREFIX: ${{ vars.WING_COMMANDER_TASKS_PREFIX }}
+          IMPL_PREFIX: ${{ vars.WING_COMMANDER_IMPL_PREFIX }}
+        run: |
+          set -uo pipefail
+          SPEC_DRAFT_PREFIX="${SPEC_DRAFT_PREFIX:-spec-draft/}"
+          SPEC_PREFIX="${SPEC_PREFIX:-spec/}"
+          PLAN_PREFIX="${PLAN_PREFIX:-plan/}"
+          TASKS_PREFIX="${TASKS_PREFIX:-tasks/}"
+          IMPL_PREFIX="${IMPL_PREFIX:-impl/}"
+
+          issue=""
+          if [ -n "$GH_TOKEN" ]; then
+            head_branch="$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json headBranch --jq '.headBranch // empty' 2>/dev/null || true)"
+
+            slug=""
+            case "$head_branch" in
+              "${SPEC_DRAFT_PREFIX}"*) slug="${head_branch#"$SPEC_DRAFT_PREFIX"}" ;;
+              "${SPEC_PREFIX}"*)       slug="${head_branch#"$SPEC_PREFIX"}" ;;
+              "${PLAN_PREFIX}"*)       slug="${head_branch#"$PLAN_PREFIX"}" ;;
+              "${TASKS_PREFIX}"*)      slug="${head_branch#"$TASKS_PREFIX"}" ;;
+              "${IMPL_PREFIX}"*)       slug="${head_branch#"$IMPL_PREFIX"}"; slug="${slug%-iter*}" ;;
+            esac
+
+            if [ -n "$slug" ]; then
+              spec_dir="specs/$slug"
+              git fetch --no-tags --quiet origin "refs/heads/${SPEC_PREFIX}$slug:refs/remotes/origin/${SPEC_PREFIX}$slug" 2>/dev/null || true
+              if meta="$(git show "refs/remotes/origin/${SPEC_PREFIX}$slug:$spec_dir/spec-meta.json" 2>/dev/null)"; then
+                meta_dir="$(printf '%s' "$meta" | jq -r '.spec_dir // empty' 2>/dev/null || true)"
+                if [ "$meta_dir" = "$spec_dir" ]; then
+                  issue="$(printf '%s' "$meta" | jq -r '.issue // empty' 2>/dev/null || true)"
+                fi
+              fi
+            fi
+          fi
+
+          echo "issue-number=$issue" >> "$GITHUB_OUTPUT"
+
+      # Two-branch verdict delivery, matching every other verdict path's
+      # destination rule (data-model.md, contracts/watchdog-workflow-delta.md).
+      - name: Report unhandled job failure
+        id: report
+        if: steps.gate.outputs.any-failed == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ISSUE: ${{ steps.issue.outputs.issue-number }}
+          FAILED_JOBS: ${{ steps.gate.outputs.failed-jobs }}
+          RUN_ID: ${{ inputs.run-id }}
+        run: |
+          set -uo pipefail
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${RUN_ID}"
+          body=""
+          for pair in $FAILED_JOBS; do
+            job="${pair%%:*}"
+            result="${pair#*:}"
+            body="${body}🐕 **Wing Commander · watchdog** — could not inspect this run: the \`$job\` job ended \`$result\` unexpectedly. _[Inspected run]($run_url)_. This is a pipeline defect, not a finding about the inspected run itself."$'\n'
+          done
+          if [ -n "$ISSUE" ]; then
+            printf '%s' "$body" | gh issue comment "$ISSUE" --body-file -
+          else
+            printf '%s' "$body" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # FR-002's guarantee, at its floor: this last-resort fallback fires
+      # only if the two-branch report step above itself failed (e.g. gh
+      # issue comment erroring) — so even this safety net's own failure
+      # still leaves a written verdict in the run summary rather than
+      # silently dropping it.
       - name: Report unhandled job failure to run summary
         id: report-baseline
-        if: steps.gate.outputs.any-failed == 'true'
+        if: always() && steps.report.outcome == 'failure'
         env:
           FAILED_JOBS: ${{ steps.gate.outputs.failed-jobs }}
           RUN_ID: ${{ inputs.run-id }}
