@@ -27,6 +27,7 @@ jobs:
     uses: ./.github/workflows/rebase.yml
     with:
       model: ${{ vars.WING_COMMANDER_PLAN_MODEL || 'claude-sonnet-5' }}
+      spec-prefix: ${{ vars.WING_COMMANDER_SPEC_PREFIX || 'spec/' }}
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}

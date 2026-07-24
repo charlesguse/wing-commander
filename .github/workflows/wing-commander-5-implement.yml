@@ -71,6 +71,7 @@ jobs:
       escalation-model: ${{ needs.resolve-model.outputs.escalation-model }}
       summary-model: ${{ needs.resolve-model.outputs.summary-model }}
       max-iterations: ${{ fromJSON(vars.WING_COMMANDER_MAX_ITERATIONS || '5') }}
+      spec-prefix: ${{ vars.WING_COMMANDER_SPEC_PREFIX || 'spec/' }}
       self-workflow: wing-commander-5-implement.yml
       next-workflow: wing-commander-6-finalize.yml
     secrets:

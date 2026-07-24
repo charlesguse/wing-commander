@@ -30,7 +30,7 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event.pull_request.merged == true &&
        github.event.pull_request.base.ref == 'main' &&
-       startsWith(github.event.pull_request.head.ref, 'spec-draft/'))
+       startsWith(github.event.pull_request.head.ref, vars.WING_COMMANDER_SPEC_DRAFT_PREFIX || 'spec-draft/'))
     permissions:
       contents: write
       pull-requests: write
@@ -45,6 +45,11 @@ jobs:
       pr-number: ${{ github.event.pull_request.number }}
       plan-review: ${{ vars.WING_COMMANDER_PLAN_REVIEW || 'pr' }}
       model: ${{ vars.WING_COMMANDER_PLAN_MODEL || 'claude-sonnet-5' }}
+      spec-draft-prefix: ${{ vars.WING_COMMANDER_SPEC_DRAFT_PREFIX || 'spec-draft/' }}
+      spec-prefix: ${{ vars.WING_COMMANDER_SPEC_PREFIX || 'spec/' }}
+      plan-prefix: ${{ vars.WING_COMMANDER_PLAN_PREFIX || 'plan/' }}
+      tasks-prefix: ${{ vars.WING_COMMANDER_TASKS_PREFIX || 'tasks/' }}
+      impl-prefix: ${{ vars.WING_COMMANDER_IMPL_PREFIX || 'impl/' }}
       next-workflow: wing-commander-4-tasks.yml
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

@@ -35,6 +35,7 @@ jobs:
       issue-number: ${{ github.event.issue.number }}
       comment-id: ${{ github.event.comment.id }}
       model: ${{ vars.WING_COMMANDER_SPEC_MODEL || 'claude-opus-4-8' }}
+      spec-draft-prefix: ${{ vars.WING_COMMANDER_SPEC_DRAFT_PREFIX || 'spec-draft/' }}
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
