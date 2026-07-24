@@ -1702,3 +1702,47 @@ jobs:
         with:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
+
+      # Reads only needs.*.result — a workflow-engine-computed keyword, never
+      # user-influenced text (Constitution V) — so there is nothing here that
+      # should ever fail; no set -e/pipefail needed, and none used.
+      - name: Determine failed jobs
+        id: gate
+        env:
+          COLLECT_RESULT: ${{ needs.collect.result }}
+          DIAGNOSE_RESULT: ${{ needs.diagnose.result }}
+          TRIAGE_RESULT: ${{ needs.triage.result }}
+          ACT_RESULT: ${{ needs.act.result }}
+        run: |
+          any_failed=false
+          failed_jobs=""
+          for pair in "collect:$COLLECT_RESULT" "diagnose:$DIAGNOSE_RESULT" "triage:$TRIAGE_RESULT" "act:$ACT_RESULT"; do
+            result="${pair#*:}"
+            if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
+              any_failed=true
+              failed_jobs="${failed_jobs}${failed_jobs:+ }${pair}"
+            fi
+          done
+          {
+            echo "any-failed=$any_failed"
+            echo "failed-jobs=$failed_jobs"
+          } >> "$GITHUB_OUTPUT"
+
+      # FR-002's guarantee, at its floor: this write depends on none of the
+      # best-effort steps above having succeeded, so a verdict lands in the
+      # run's own summary even in the worst case (token mint and lifecycle-
+      # issue resolution both also fail). User Story 2 replaces this with a
+      # two-branch step that prefers the lifecycle issue when resolvable.
+      - name: Report unhandled job failure to run summary
+        id: report-baseline
+        if: steps.gate.outputs.any-failed == 'true'
+        env:
+          FAILED_JOBS: ${{ steps.gate.outputs.failed-jobs }}
+          RUN_ID: ${{ inputs.run-id }}
+        run: |
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${RUN_ID}"
+          for pair in $FAILED_JOBS; do
+            job="${pair%%:*}"
+            result="${pair#*:}"
+            echo "🐕 **Wing Commander · watchdog** — could not inspect this run: the \`$job\` job ended \`$result\` unexpectedly. _[Inspected run]($run_url)_. This is a pipeline defect, not a finding about the inspected run itself." >> "$GITHUB_STEP_SUMMARY"
+          done
