@@ -30,7 +30,8 @@ on:
       run-name:
         description: >
           Display name of the workflow the inspected run belongs to (e.g.
-          "5 - Implement", or "8 - Watchdog" itself for self-inspection).
+          "Wing Commander · 5 implement", or "Wing Commander · 8 watchdog"
+          itself for self-inspection).
         type: string
         required: true
       diagnose-model:
@@ -367,7 +368,7 @@ jobs:
         run: |
           set -uo pipefail
           case "$RUN_NAME" in
-            "3 - Plan"|"4 - Tasks"|"5 - Implement") ;;
+            "Wing Commander · 3 plan"|"Wing Commander · 4 tasks"|"Wing Commander · 5 implement") ;;
             *)
               echo "branch-drift: '$RUN_NAME' is not a push-expected stage — skipping." >> "$GITHUB_STEP_SUMMARY"
               exit 0
@@ -419,11 +420,11 @@ jobs:
           fi
           expected=""
           case "$RUN_NAME" in
-            "1 - Intake")     expected="spec" ;;
-            "3 - Plan")       expected="plan" ;;
-            "4 - Tasks")      expected="tasks" ;;
-            "5 - Implement")  expected="implement" ;;
-            "6 - Finalize")   expected="review" ;;
+            "Wing Commander · 1 intake")    expected="spec" ;;
+            "Wing Commander · 3 plan")      expected="plan" ;;
+            "Wing Commander · 4 tasks")     expected="tasks" ;;
+            "Wing Commander · 5 implement") expected="implement" ;;
+            "Wing Commander · 6 finalize")  expected="review" ;;
             *)
               echo "spec-meta: '$RUN_NAME' has no single expected stage to compare against — skipping." >> "$GITHUB_STEP_SUMMARY"
               exit 0
@@ -1292,13 +1293,15 @@ jobs:
       # workflow_run (never a human-initiated workflow_dispatch link, which
       # would break the chain). watchdog.yml never reads github.event.*
       # directly; inputs.run-name already carries the inspected run's own
-      # display name, so "== '8 - Watchdog'" here means self-inspection —
-      # the ONLY place this stage special-cases its own name anywhere in
-      # this file (T028 desk-check: detection/fingerprint/dedup/report are
-      # identical for a watchdog-inspecting-watchdog run).
+      # display name, so "== 'Wing Commander · 8 watchdog'" here means
+      # self-inspection — the ONLY place this stage special-cases its own
+      # name anywhere in this file (T028 desk-check: detection/fingerprint/
+      # dedup/report are identical for a watchdog-inspecting-watchdog run).
+      # The run being inspected is always stage 8's, never stage 8b's:
+      # 8b is what listens to 8, and nothing listens to 8b.
       - name: Self-dispatch depth
         id: self-dispatch-depth
-        if: inputs.run-name == '8 - Watchdog'
+        if: inputs.run-name == 'Wing Commander · 8 watchdog'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           RUN_ID: ${{ inputs.run-id }}
@@ -1310,7 +1313,7 @@ jobs:
             cap=3
           fi
           limit=$((cap + 5))
-          runs_json="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow '8 - Watchdog' --json databaseId,event,createdAt --limit "$limit" --jq 'sort_by(.createdAt) | reverse' 2>/dev/null || echo '[]')"
+          runs_json="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow 'Wing Commander · 8 watchdog' --json databaseId,event,createdAt --limit "$limit" --jq 'sort_by(.createdAt) | reverse' 2>/dev/null || echo '[]')"
           depth="$(printf '%s' "$runs_json" | jq --argjson rid "$RUN_ID" '
             (map(.databaseId) | index($rid)) as $start
             | if $start == null then 0
