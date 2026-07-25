@@ -78,9 +78,11 @@ jobs:
           set -euo pipefail
           run_id=""
           for i in $(seq 1 24); do   # up to 2 min for the run to register
+            # NB: gh's --jq takes only the expression (no --arg passthrough);
+            # MARK is our own %Y-%m-%dT%H:%M:%SZ stamp, safe to inline.
             run_id="$(gh run list -R "$REPO" --workflow wing-commander-8-watchdog.yml \
               --event workflow_dispatch --limit 1 --json databaseId,createdAt \
-              --jq --arg m "$MARK" '.[] | select(.createdAt >= $m) | .databaseId' | head -1)"
+              --jq ".[] | select(.createdAt >= \"$MARK\") | .databaseId" | head -1)"
             [ -n "$run_id" ] && break
             sleep 5
           done
@@ -113,7 +115,7 @@ jobs:
           for i in $(seq 1 24); do   # up to 2 min to appear
             run_id="$(gh run list -R "$REPO" --workflow wing-commander-8b-watchdog-self.yml \
               --limit 5 --json databaseId,createdAt \
-              --jq --arg m "$MARK" '[.[] | select(.createdAt >= $m)] | last | .databaseId // empty')"
+              --jq "[.[] | select(.createdAt >= \"$MARK\")] | last | .databaseId // empty")"
             [ -n "$run_id" ] && break
             sleep 5
           done
