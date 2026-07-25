@@ -1214,8 +1214,21 @@ jobs:
               echo "::warning::watchdog dedup: no fingerprint key projection for class '$FINDING_CLASS' — falling back to all string facts, which may not dedup stably. Add it to the case in watchdog.yml's Compute fingerprint step."
               ;;
           esac
+          # Per-key value canonicalization. Constraining WHICH keys are used
+          # does not stabilize WHAT the model writes in them: the same defect
+          # was reported with branch "spec/012-foo" on one run and "012-foo"
+          # on the next, and file as a full repo-relative path on one and a
+          # bare filename on another. Both axes are collapsed deterministically
+          # here — branch loses any known pipeline prefix, file reduces to its
+          # basename — so an equivalent fact hashes the same however the model
+          # chose to spell it.
           strings=$(printf '%s' "$FACTS" \
-            | jq -cS 'with_entries(select(.value | type == "string")) | map_values(ascii_downcase)')
+            | jq -cS 'with_entries(select(.value | type == "string"))
+                      | map_values(ascii_downcase)
+                      | with_entries(
+                          if   .key == "branch" then .value |= sub("^(spec-draft|spec|plan|tasks|impl)/"; "")
+                          elif .key == "file"   then .value |= sub("^.*/"; "")
+                          else . end)')
           canonical=$(printf '%s' "$strings" \
             | jq -cS --argjson keys "$keys" \
                 'if $keys == null then .
