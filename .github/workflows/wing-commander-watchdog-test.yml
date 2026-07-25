@@ -1,0 +1,177 @@
+# Manual end-to-end test of the watchdog chain (stage 8 → 8b verifier).
+# Exists so nobody has to wait for an organic pipeline run to know the
+# watchdog still fires: dispatch this, watch the chain run within minutes.
+#
+# Two modes, chosen by the inject-failure input:
+#   - false (default): dispatches stage 8 at a real completed run and asserts
+#     the whole chain goes green — stage 8 succeeds, 8b's deterministic
+#     verifier agrees.
+#   - true: dispatches stage 8 at run-id 1, which can never resolve, so
+#     stage 8 fails HONESTLY. The point of this mode is watching red appear
+#     where red belongs: stage 8 turns red, then 8b turns red because its
+#     verifier refuses to bless a failed watchdog run (and files/appends the
+#     dedup'd pipeline-defect issue — expected; close it after testing).
+#     This test run itself also exits non-zero in that mode once it has
+#     confirmed the chain behaved, so the red is impossible to miss — a
+#     watchdog that stays green when it should be red is exactly the defect
+#     class this repository keeps re-learning.
+#
+# GITHUB_TOKEN note: workflow_dispatch is one of the two event types
+# (with repository_dispatch) EXEMPT from GitHub's "events created with
+# GITHUB_TOKEN don't trigger workflows" rule, so the dispatch below works
+# with the default token; and 8b's workflow_run trigger fires off stage 8's
+# completion regardless of who dispatched it.
+name: "Wing Commander · watchdog test"
+
+on:
+  workflow_dispatch:
+    inputs:
+      inject-failure:
+        description: "Inject a failure: stage 8 gets an unresolvable run-id and the chain must turn RED"
+        type: boolean
+        required: false
+        default: false
+
+permissions: {}
+
+jobs:
+  trigger-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: write   # dispatch stage 8, then read the resulting runs
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      INJECT: ${{ inputs.inject-failure }}
+    steps:
+      - name: Dispatch stage 8
+        id: dispatch
+        run: |
+          set -euo pipefail
+          if [ "$INJECT" = "true" ]; then
+            target=1   # no run 1 exists; stage 8's resolve job must fail
+            echo "Injecting failure: dispatching stage 8 at unresolvable run-id $target"
+          else
+            # Prefer re-inspecting the latest completed stage-8 run (the
+            # designed manual re-inspection path); fall back to any
+            # completed run on an empty history.
+            target="$(gh run list -R "$REPO" --workflow wing-commander-8-watchdog.yml \
+              --status completed --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+            if [ -z "$target" ]; then
+              target="$(gh run list -R "$REPO" --status completed --limit 1 \
+                --json databaseId --jq '.[0].databaseId')"
+            fi
+            echo "Dispatching stage 8 at run $target"
+          fi
+          mark="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          gh workflow run wing-commander-8-watchdog.yml -R "$REPO" -f run-id="$target"
+          echo "mark=$mark" >> "$GITHUB_OUTPUT"
+
+      # Poll helpers below compare ISO-8601 UTC timestamps lexicographically
+      # — same format, same zone, so string > is time >.
+      - name: Wait for stage 8 to appear and complete
+        id: stage8
+        env:
+          MARK: ${{ steps.dispatch.outputs.mark }}
+        run: |
+          set -euo pipefail
+          run_id=""
+          for i in $(seq 1 24); do   # up to 2 min for the run to register
+            run_id="$(gh run list -R "$REPO" --workflow wing-commander-8-watchdog.yml \
+              --event workflow_dispatch --limit 1 --json databaseId,createdAt \
+              --jq --arg m "$MARK" '.[] | select(.createdAt >= $m) | .databaseId' | head -1)"
+            [ -n "$run_id" ] && break
+            sleep 5
+          done
+          if [ -z "$run_id" ]; then
+            echo "::error::stage 8 never started after dispatch — its workflow_dispatch trigger is broken"
+            exit 1
+          fi
+          echo "Stage 8 run: $run_id — waiting for completion"
+          conclusion=""
+          for i in $(seq 1 80); do   # up to 20 min
+            conclusion="$(gh api "repos/$REPO/actions/runs/$run_id" --jq '.conclusion // empty')"
+            [ -n "$conclusion" ] && break
+            sleep 15
+          done
+          [ -z "$conclusion" ] && { echo "::error::stage 8 run $run_id did not complete in 20 min"; exit 1; }
+          echo "Stage 8 concluded: $conclusion"
+          echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "conclusion=$conclusion" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for 8b verifier to react
+        id: stage8b
+        env:
+          MARK: ${{ steps.dispatch.outputs.mark }}
+        run: |
+          set -euo pipefail
+          # First 8b run created after our dispatch mark. On a busy repo an
+          # interleaved organic stage-8 completion could race this — for a
+          # manual smoke test that ambiguity is acceptable.
+          run_id=""
+          for i in $(seq 1 24); do   # up to 2 min to appear
+            run_id="$(gh run list -R "$REPO" --workflow wing-commander-8b-watchdog-self.yml \
+              --limit 5 --json databaseId,createdAt \
+              --jq --arg m "$MARK" '[.[] | select(.createdAt >= $m)] | last | .databaseId // empty')"
+            [ -n "$run_id" ] && break
+            sleep 5
+          done
+          if [ -z "$run_id" ]; then
+            echo "::error::no 8b run followed stage 8's completion — 8b's workflow_run trigger is broken"
+            exit 1
+          fi
+          echo "8b run: $run_id — waiting for completion"
+          conclusion=""
+          for i in $(seq 1 40); do   # up to 10 min
+            conclusion="$(gh api "repos/$REPO/actions/runs/$run_id" --jq '.conclusion // empty')"
+            [ -n "$conclusion" ] && break
+            sleep 15
+          done
+          [ -z "$conclusion" ] && { echo "::error::8b run $run_id did not complete in 10 min"; exit 1; }
+          echo "8b concluded: $conclusion"
+          echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "conclusion=$conclusion" >> "$GITHUB_OUTPUT"
+
+      - name: Assert the chain behaved
+        env:
+          S8: ${{ steps.stage8.outputs.conclusion }}
+          S8_ID: ${{ steps.stage8.outputs.run-id }}
+          S8B: ${{ steps.stage8b.outputs.conclusion }}
+          S8B_ID: ${{ steps.stage8b.outputs.run-id }}
+        run: |
+          set -euo pipefail
+          url="${GITHUB_SERVER_URL}/${REPO}/actions/runs"
+          {
+            echo "### Watchdog chain test (inject-failure: $INJECT)"
+            echo "- stage 8: [$S8_ID]($url/$S8_ID) → **$S8**"
+            echo "- 8b verifier: [$S8B_ID]($url/$S8B_ID) → **$S8B**"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$INJECT" = "true" ]; then
+            if [ "$S8" != "failure" ]; then
+              echo "::error::injected an unresolvable run-id but stage 8 concluded '$S8' — it should have failed"
+              exit 1
+            fi
+            # The failure must be OUR failure: an earlier fault-injection
+            # era was silently preempted by an unrelated bug that fired
+            # first, giving false confidence the scenario was exercised.
+            # Injecting run-id 1 must kill exactly the resolve job.
+            failed_jobs="$(gh api "repos/$REPO/actions/runs/$S8_ID/jobs?per_page=100" \
+              --jq '[.jobs[] | select(.conclusion == "failure") | .name] | join(", ")')"
+            case "$failed_jobs" in
+              *resolve*) echo "Injected failure landed where expected (failed jobs: $failed_jobs)" ;;
+              *) echo "::error::stage 8 failed, but not in the injected way (failed jobs: $failed_jobs) — a different defect preempted the injection"; exit 1 ;;
+            esac
+            if [ "$S8B" = "success" ]; then
+              echo "::error::stage 8 failed but the 8b verifier stayed GREEN — the exact defect this test exists to catch"
+              exit 1
+            fi
+            echo "Chain correctly turned red (8b: $S8B). Failing this run too so the red is visible here." \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if [ "$S8" != "success" ] || [ "$S8B" != "success" ]; then
+            echo "::error::expected a green chain, got stage8=$S8, 8b=$S8B"
+            exit 1
+          fi
+          echo "Chain green end to end." | tee -a "$GITHUB_STEP_SUMMARY"

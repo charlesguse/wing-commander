@@ -1,20 +1,34 @@
-# Stage 8b — Watchdog self-inspection (thin wrapper).
-# Exists only because a workflow may not name itself under
-# workflow_run.workflows: GitHub rejects the whole file with "failed to parse
-# workflow: Workflow '<name>' cannot listen to itself", and an unparseable
-# workflow is never registered — so wiring FR-021/US4 into stage 8 itself
-# takes the ENTIRE watchdog offline rather than adding self-inspection.
+# Stage 8b — deterministic watchdog verifier.
+# Listens to stage 8's completion (a workflow may not name itself under
+# workflow_run.workflows, so this lives in its own file — see the header of
+# wing-commander-8-watchdog.yml) and decides WITHOUT an LLM whether that
+# watchdog run actually worked.
 #
-# Identical to wing-commander-8-watchdog.yml apart from its trigger: it
-# listens to stage 8's completion and calls the same watchdog.yml, which
-# recognises `run-name == "Wing Commander · 8 watchdog"` as self-inspection
-# and applies the FR-018 self-dispatch cap.
+# History: 8b originally re-ran the agentic watchdog (watchdog.yml) against
+# stage 8 itself. That was replaced 2026-07-24 after an audit of all prior
+# runs found its findings unreliable: 5 of 10 audited 8b runs elevated
+# collector self-matches (the sentinel scanner grepping its own echoed
+# script source and env dumps out of raw job logs) into false findings —
+# including a "budget exceeded" claim disproved by the target's own
+# num_turns=3 of 20 — and 3 of those runs contained zero true findings. An
+# agent inspecting an agent compounds error rates; verifying "did the
+# watchdog run do its job" needs no judgment at all. Every check here is a
+# script over the Actions API and run artifacts (verify-watchdog-run.sh):
+#   - run conclusion is success;
+#   - runtime sits inside a band derived from this workflow's own history
+#     (catches both instant agent deaths and multi-minute stalls);
+#   - the conditional reporter steps that encode agent-crash /
+#     could-not-inspect / internal-failure truths are all 'skipped'
+#     (continue-on-error makes the agent step itself always look green in
+#     the API — those reporter steps are the only externally visible truth);
+#   - the diagnose execution log is not an error and cites no fabricated
+#     evidence.
+# On failure this job turns RED and files (or appends to) a pipeline-defect
+# issue — a broken watchdog must never be quiet.
 #
 # Recursion terminates by construction: stage 8 does not listen to this
-# workflow, and this workflow does not listen to itself, so the chain is at
-# most stage → 8 → 8b and stops. There is deliberately no workflow_dispatch
-# trigger here — manual re-inspection of any run, including a watchdog run,
-# goes through stage 8's dispatch input.
+# workflow, this workflow does not listen to itself, and this workflow runs
+# no agent that could itself need inspecting.
 name: "Wing Commander · 8b watchdog self"
 
 on:
@@ -26,40 +40,23 @@ on:
 permissions: {}
 
 jobs:
-  # workflow_run only — the payload carries the inspected run's identity
-  # directly, so unlike stage 8 there is no dispatch branch to resolve.
-  resolve:
+  verify:
     runs-on: ubuntu-latest
-    outputs:
-      run-id: ${{ steps.resolve.outputs.run-id }}
-      run-name: ${{ steps.resolve.outputs.run-name }}
-    steps:
-      - name: Resolve inspected run identity
-        id: resolve
-        env:
-          EVENT_RUN_ID: ${{ github.event.workflow_run.id }}
-          EVENT_RUN_NAME: ${{ github.event.workflow_run.name }}
-        run: |
-          set -euo pipefail
-          echo "run-id=$EVENT_RUN_ID" >> "$GITHUB_OUTPUT"
-          echo "run-name=$EVENT_RUN_NAME" >> "$GITHUB_OUTPUT"
-
-  watchdog:
-    needs: resolve
-    # Superset of watchdog.yml's workflow-level `permissions:` — see the
-    # identical comment in wing-commander-8-watchdog.yml.
     permissions:
-      contents: write
-      pull-requests: write
-      issues: write
-      id-token: write
-      actions: read
-    uses: ./.github/workflows/watchdog.yml
-    with:
-      run-id: ${{ needs.resolve.outputs.run-id }}
-      run-name: ${{ needs.resolve.outputs.run-name }}
-    secrets:
-      claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-      anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
-      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
+      actions: read      # run/jobs/artifact reads
+      contents: read     # checkout (the verifier script)
+      issues: write      # pipeline-defect issue on failure
+    steps:
+      # The workflow_run payload carries the inspected run's identity
+      # directly; no resolve job needed.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Verify stage 8 run deterministically
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          REPO: ${{ github.repository }}
+          CREATE_ISSUE: "true"
+        run: bash .github/scripts/verify-watchdog-run.sh

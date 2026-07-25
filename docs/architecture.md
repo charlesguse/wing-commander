@@ -333,15 +333,32 @@ wrappers, plus manual `workflow_dispatch` with a `run-id` to re-inspect any
 past run. The thin wrapper only resolves the inspected run's identity
 (`run-id`/`run-name`); every job below lives in the reusable `watchdog.yml`.
 
-Self-inspection (FR-021) needs a **second wrapper**,
-`wing-commander-8b-watchdog-self.yml`, which listens to stage 8 and calls the
-same `watchdog.yml`. It cannot be folded into stage 8: GitHub rejects any
-workflow that names itself under `workflow_run.workflows` — *"failed to parse
-workflow: Workflow '<name>' cannot listen to itself"* — and an unparseable
-workflow is never registered, so the attempt takes the whole stage offline
-instead of adding self-inspection. Recursion terminates by construction (8 →
-8b, and nothing listens to 8b), so `watchdog.yml` only ever sees stage 8's
-own run as a self-inspection subject.
+Self-inspection (FR-021) lives in a **second wrapper**,
+`wing-commander-8b-watchdog-self.yml`, which listens to stage 8. It cannot be
+folded into stage 8: GitHub rejects any workflow that names itself under
+`workflow_run.workflows` — *"failed to parse workflow: Workflow '<name>'
+cannot listen to itself"* — and an unparseable workflow is never registered,
+so the attempt takes the whole stage offline instead of adding
+self-inspection. Recursion terminates by construction (8 → 8b, and nothing
+listens to 8b).
+
+8b is **deterministic** — it does not call `watchdog.yml`. It originally did,
+but an agent inspecting an agent compounds error rates (an audit found half
+of its runs elevating collector self-matches into false findings, one
+disproved by the target's own turn count), and "did the
+watchdog run do its job" needs no judgment. 8b runs
+`.github/scripts/verify-watchdog-run.sh` against the completed stage-8 run:
+conclusion is success; runtime sits inside a band derived from the workflow's
+own successful history (catches instant agent deaths and multi-minute
+stalls); the conditional reporter steps that encode agent-crash /
+could-not-inspect / internal-failure truths all read `skipped` (the agent
+step itself always looks green in the API — `continue-on-error` reports the
+post-rescue conclusion); and the diagnose execution log parses without
+`is_error` or known fabrication markers. On any failure 8b turns red and
+files (or appends to) a deduplicated `pipeline-defect` issue. The chain can
+be exercised on demand — including its red path — via the manual
+`wing-commander-watchdog-test.yml` (`inject-failure: true` dispatches stage 8
+at an unresolvable run-id and asserts red propagates).
 
 Two constraints the wrappers must hold, both enforced by
 `lint-workflows.yml` (gates 1–3):
@@ -415,7 +432,9 @@ rung-1 eligibility, never invents a default. `vars.WING_COMMANDER_WATCHDOG_PAUSE
 `vars.WING_COMMANDER_WATCHDOG_SELF_DISPATCH_CAP` (default `3`) are the two
 operator switches; the cap counts the consecutive `workflow_run`-sourced
 self-inspection chain and, once reached, suppresses all writes so an
-unattended watchdog-inspects-watchdog loop is bounded (FR-018). Detection,
+unattended watchdog-inspects-watchdog loop is bounded (FR-018). (Since 8b
+went deterministic the agentic self-inspection path only arises from a
+manual stage-8 dispatch at a watchdog run; the cap remains as its bound.) Detection,
 fingerprinting, dedup, and reporting are identical whether the inspected run
 is a watchdog run or any other stage (FR-021) — the self-dispatch-depth count
 is the only place the stage looks at its own name.

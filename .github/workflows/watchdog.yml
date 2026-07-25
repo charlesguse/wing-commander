@@ -137,9 +137,18 @@ jobs:
   # normalized signals.json. No agent step in this job (research.md).
   collect:
     runs-on: ubuntu-latest
+    # Every job here carries a timeout: a diagnose agent once stalled for 44
+    # minutes (run 30137720127) and, with no timeout anywhere in this file,
+    # would have burned the runner for GitHub's 6-hour default. Job-level
+    # timeouts are the backstop; the agent steps also carry their own
+    # step-level timeout so a stall degrades through continue-on-error into
+    # the diagnose-failed/propose-fix-missing paths instead of killing the
+    # whole job as 'cancelled'.
+    timeout-minutes: 10
     outputs:
       evidence-available: ${{ steps.aggregate.outputs.evidence-available }}
       signals: ${{ steps.aggregate.outputs.signals }}
+      collectors-failed: ${{ steps.aggregate.outputs.collectors-failed }}
       spec-dir: ${{ steps.spec-slug.outputs.spec-dir }}
       lifecycle-issue: ${{ steps.spec-slug.outputs.lifecycle-issue }}
       slug: ${{ steps.spec-slug.outputs.slug }}
@@ -455,11 +464,28 @@ jobs:
           entries='[]'
           for job_id in $(printf '%s' "$jobs_json" | jq -r '.jobs[]?.id // empty'); do
             job_name="$(printf '%s' "$jobs_json" | jq -r --arg id "$job_id" '.jobs[] | select((.id|tostring) == $id) | .name')"
+            job_conclusion="$(printf '%s' "$jobs_json" | jq -r --arg id "$job_id" '.jobs[] | select((.id|tostring) == $id) | .conclusion // "in_progress"')"
             log="$(gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$job_id/logs" 2>/dev/null || true)"
             [ -n "$log" ] || continue
-            match="$(printf '%s' "$log" | grep -Eio "$sentinels" | sort -u | head -1 || true)"
-            [ -n "$match" ] || continue
-            entries="$(printf '%s' "$entries" | jq -c --arg job "$job_name" --arg m "$match" '. + [{source:"step-summary","class-hint":null,facts:{job:$job,"matched-sentinel":$m}}]')"
+            # Match RUNTIME OUTPUT only. Actions echoes every step's own
+            # script source and env/with blocks into the log between
+            # "##[group]Run …" and "##[endgroup]" — so sentinel words in
+            # unexecuted source (this very scanner's regex, a warning
+            # printf template, a `STALLED_LABEL: false` env dump)
+            # self-match on essentially every run. A 2026-07-24 audit
+            # traced 7 false findings, one of them a real filed issue, to
+            # exactly this.
+            runtime="$(printf '%s' "$log" | awk '/##\[group\]/{echo_block=1} /##\[endgroup\]/{echo_block=0; next} !echo_block')"
+            match_line="$(printf '%s' "$runtime" | grep -Eim1 "$sentinels" || true)"
+            [ -n "$match_line" ] || continue
+            match="$(printf '%s' "$match_line" | grep -Eio "$sentinels" | head -1)"
+            # Carry the matched line and the job's own conclusion so the
+            # diagnose step can ground its evidence in a quotable excerpt
+            # and weigh a stall-flavored word against a job GitHub records
+            # as having succeeded in seconds.
+            excerpt="$(printf '%s' "$match_line" | sed -E 's/^[0-9][0-9T:.Z-]* //' | cut -c1-240)"
+            entries="$(printf '%s' "$entries" | jq -c --arg job "$job_name" --arg m "$match" --arg c "$job_conclusion" --arg x "$excerpt" \
+              '. + [{source:"step-summary","class-hint":null,facts:{job:$job,"matched-sentinel":$m,"job-conclusion":$c,"matched-line":$x}}]')"
           done
           jq -c --argjson new "$entries" '. + $new' "$RUNNER_TEMP/signals.json" > "$RUNNER_TEMP/signals.json.tmp" && mv "$RUNNER_TEMP/signals.json.tmp" "$RUNNER_TEMP/signals.json"
 
@@ -500,6 +526,10 @@ jobs:
             "${{ steps.collect-annotations.outcome }}"; do
             [ "$outcome" = "failure" ] && failed=$((failed + 1))
           done
+          # Exported even when evidence-available stays true: "passed
+          # inspection on 3 of 5 collectors" is a weaker claim than a full
+          # pass, and the verdict wording downstream must be able to say so.
+          echo "collectors-failed=$failed" >> "$GITHUB_OUTPUT"
           if [ "$failed" -ge 5 ]; then
             echo "evidence-available=false" >> "$GITHUB_OUTPUT"
             echo "signals=[]" >> "$GITHUB_OUTPUT"
@@ -533,6 +563,9 @@ jobs:
     needs: collect
     if: needs.collect.outputs.evidence-available != 'false'
     runs-on: ubuntu-latest
+    # Backstop only — the Diagnose step's own timeout-minutes fires first so
+    # a stalled agent takes the graceful diagnose-failed path.
+    timeout-minutes: 20
     outputs:
       # "passed-inspection" (zero Findings), "findings" (one or more), or
       # "diagnose-failed" (the agent step never produced a usable result —
@@ -637,6 +670,11 @@ jobs:
       - name: Diagnose
         id: diagnose
         continue-on-error: true
+        # A stalled agent must fail THIS STEP (not the job): continue-on-error
+        # then routes it into the diagnose-failed read-back path, which
+        # reports "this run was NOT inspected" instead of dying silently.
+        # Normal diagnose completes in well under 2 minutes.
+        timeout-minutes: 10
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -669,7 +707,13 @@ jobs:
             that class unless you have clear reason not to; a signal with
             "class-hint": null (step-summary, annotations, spec-meta
             mismatches) needs your own judgment to decide whether it
-            describes a genuine problem worth a Finding.
+            describes a genuine problem worth a Finding. For step-summary
+            signals, weigh the "job-conclusion" and "matched-line" facts:
+            a stall- or failure-flavored sentinel about a job whose own
+            recorded conclusion is "success" is NOT a Finding unless the
+            matched line itself plainly states the problem — quote that
+            line in your description if you keep it, and drop the signal
+            if you cannot.
 
             For each Finding, produce:
             - class: a short, stable, kebab-case identifier for the problem
@@ -679,8 +723,17 @@ jobs:
               etc.) — a human must be able to confirm the diagnosis without
               opening raw artifacts themselves.
             - evidence: an array of {source, locator} pairs pointing at
-              where you found this (e.g. {"source": "execution-output",
-              "locator": "WebFetch denied 4 times across turns 12,15,19,22"}).
+              where you found this. The source is the originating signal's
+              "source" field; the locator must quote or precisely reference
+              text that actually appears in the signals file or in a file
+              you read during THIS run. Never write a locator you cannot
+              point back to — drop any Finding whose evidence you cannot
+              ground that way. (This description deliberately contains no
+              example locator: the prompt is echoed verbatim into job
+              logs, so an earlier version's literal example kept
+              tripping log-scanning tooling, and a concrete example is
+              one pattern-completion away from surfacing in real
+              output.)
             - normalizedFacts: a small object of STABLE, class-specific facts
               (e.g. {"tool": "webfetch"} or {"branch": "spec/NNN-slug"}) —
               never volatile fields like run IDs, timestamps, or turn
@@ -745,7 +798,21 @@ jobs:
           set -uo pipefail
           file="${{ runner.temp }}/claude-execution-output.json"
           findings='[]'
+          agent_ok=false
           if [ "${{ steps.diagnose.outcome }}" = "success" ] && [ -f "$file" ]; then
+            # A green step is not enough: the SDK can exit 0 with an empty
+            # log, no terminal result record, or a result record whose
+            # subtype is error_max_turns / error_during_execution — all of
+            # which yield zero findings and must read as "diagnose failed",
+            # never as a clean pass. (Observed 2026-07-24: run 30134852122
+            # posted "passed inspection" over an artifact that was
+            # literally `[]`.)
+            # NB: jq's // treats false like null, so `.is_error // true`
+            # would turn a healthy is_error=false into true — compare
+            # directly instead.
+            agent_ok="$(jq -r '([.[] | select(.type=="result")] | last) as $r
+              | if $r != null and $r.is_error == false and $r.subtype == "success"
+                then "true" else "false" end' "$file" 2>/dev/null || echo false)"
             raw="$(jq -r '[.[] | select(.type=="result")] | last | .result // empty' "$file" 2>/dev/null || true)"
             # Structured output arrives as the object {"findings": [...]} —
             # unwrap it. A bare array is still accepted so an older execution
@@ -762,7 +829,7 @@ jobs:
           # into the same report. steps.diagnose.outcome is the result BEFORE
           # continue-on-error rescues the job, so it is the only place a
           # crashed agent is still visible from.
-          if [ "${{ steps.diagnose.outcome }}" != "success" ]; then
+          if [ "${{ steps.diagnose.outcome }}" != "success" ] || [ "$agent_ok" != "true" ]; then
             echo "outcome=diagnose-failed" >> "$GITHUB_OUTPUT"
           elif [ "$count" -eq 0 ]; then
             echo "outcome=passed-inspection" >> "$GITHUB_OUTPUT"
@@ -778,9 +845,18 @@ jobs:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ISSUE: ${{ needs.collect.outputs.lifecycle-issue }}
           RUN_URL: ${{ needs.collect.outputs.run-url }}
+          COLLECTORS_FAILED: ${{ needs.collect.outputs.collectors-failed }}
         run: |
           set -uo pipefail
-          body="🐕 **Wing Commander · watchdog** — run passed inspection. No problems detected. _[Inspected run]($RUN_URL)_"
+          # A pass reached with fewer collectors is a weaker claim and must
+          # say so — evidence classes that were never gathered were never
+          # examined.
+          failed="${COLLECTORS_FAILED:-0}"
+          if [ "$failed" -gt 0 ]; then
+            body="🐕 **Wing Commander · watchdog** — run passed inspection on $((5 - failed)) of 5 evidence collectors ($failed collector(s) errored; their evidence classes were not examined). _[Inspected run]($RUN_URL)_"
+          else
+            body="🐕 **Wing Commander · watchdog** — run passed inspection. No problems detected. _[Inspected run]($RUN_URL)_"
+          fi
           if [ -n "$ISSUE" ]; then
             gh issue comment "$ISSUE" --body "$body"
           else
@@ -821,6 +897,7 @@ jobs:
       needs.diagnose.outputs.outcome != 'passed-inspection' &&
       needs.collect.outputs.evidence-available != 'false' &&
       needs.diagnose.outputs.findings != '[]'
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -991,6 +1068,10 @@ jobs:
       - name: Propose fix
         id: propose-fix
         if: steps.suppress.outputs.suppressed != 'true' && steps.fix-eligible.outputs.eligible == 'true'
+        # Same shape as Diagnose: a stall fails the step, continue-on-error
+        # keeps the job alive, and the rung gate degrades to report-only when
+        # the diff never materializes.
+        timeout-minutes: 15
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
@@ -1226,6 +1307,7 @@ jobs:
       needs.diagnose.outputs.outcome != 'passed-inspection' &&
       needs.collect.outputs.evidence-available != 'false' &&
       needs.diagnose.outputs.findings != '[]'
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -1686,6 +1768,7 @@ jobs:
     needs: [collect, diagnose, triage, act]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v4
