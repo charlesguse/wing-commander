@@ -1,0 +1,65 @@
+# Answers exactly one question — "is this lifecycle issue currently open?"
+# — by re-fetching it live from the GitHub API, never trusting a cached
+# event payload (research.md R3 of specs/022-gate-closed-lifecycle). Every
+# comment-/label-/PR-merge-/dispatch-triggered stage entry point calls this
+# as its first billable step, before wing-commander-preflight, before any
+# branch checkout, and before any agent step (FR-001, FR-002, FR-004).
+#
+# Like every shared composite, this action is resolved from the pipeline
+# repository's own checkout at github.job_workflow_sha (see the header of
+# .github/actions/wing-commander-context/action.yml for the verified
+# snippet), so it must never assume it lives in the workspace-root
+# repository. It performs no write and has no side effect of its own —
+# posting the decline note on a closed lifecycle is the calling job's
+# responsibility via a sibling wing-commander-callout step.
+name: wing-commander-lifecycle-gate
+description: >
+  Fetch the lifecycle issue's current state (open/closed) from the GitHub
+  API and expose it as is-open, so a comment-/label-/PR-merge-/dispatch-
+  triggered stage can decline to act on a closed lifecycle issue at the
+  trigger layer. Does not check who commented or what labels the issue
+  carries — those who/what gates are unchanged and stay where they are.
+
+inputs:
+  issue-number:
+    description: The lifecycle issue to check
+    required: true
+  token:
+    description: >
+      GitHub token with at least issues: read (the calling job's
+      github.token is sufficient — this composite runs before any stage
+      mints its GitHub App token, by design).
+    required: true
+
+outputs:
+  state:
+    description: Raw value from `gh issue view --json state` (open/closed)
+    value: ${{ steps.check.outputs.state }}
+  is-open:
+    description: "\"true\" iff state == \"open\", \"false\" otherwise"
+    value: ${{ steps.check.outputs.is-open }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check lifecycle issue state
+      id: check
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        ISSUE_NUMBER: ${{ inputs.issue-number }}
+      run: |
+        set -uo pipefail
+
+        state="$(gh issue view "$ISSUE_NUMBER" --json state --jq .state)"
+        if [ $? -ne 0 ] || [ -z "$state" ]; then
+          echo "::error::wing-commander-lifecycle-gate: could not determine state of issue #$ISSUE_NUMBER — it may not exist, or the token lacks issues: read."
+          exit 1
+        fi
+
+        echo "state=$state" >> "$GITHUB_OUTPUT"
+        if [ "$state" = "open" ]; then
+          echo "is-open=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "is-open=false" >> "$GITHUB_OUTPUT"
+        fi

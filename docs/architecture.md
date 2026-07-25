@@ -49,6 +49,22 @@ Mechanics worth knowing:
   covers workflow body *and* composites; there is no skew and no release-time
   ref rewriting. Consumer re-checkouts pass `clean: false` so the untracked
   `.wing-commander-pipeline/` survives.
+- **Lifecycle gate** (`wing-commander-lifecycle-gate` composite,
+  `specs/022-gate-closed-lifecycle/`): a closed lifecycle issue is inert. The
+  composite re-fetches the issue's live `state` from the API (`gh issue view
+  --json state`, never the stale triggering-event payload) and exposes
+  `is-open`. It is the **first billable step** — after the pipeline
+  self-checkout, before Preflight — of `clarify.yml`, `intake.yml`,
+  `finalize.yml`, and `implement.yml`, and is inserted before the sole write
+  step of `tasks.yml`'s `tasks-approved` job. Every subsequent step in those
+  jobs carries `if: steps.lifecycle-gate.outputs.is-open == 'true'`, so a
+  comment, label, PR-merge, or dispatch against a closed issue — including the
+  very comment that closed it — does no checkout-as-bot, commit, push, or PR
+  edit, and posts exactly one `kind: info` decline note ("This lifecycle issue
+  is closed — no action was taken."). The composite only reads state; it does
+  no write and posts the decline note via a sibling `wing-commander-callout`
+  step. `plan.yml`/`cleanup.yml`/`claude.yml` are deliberately out of scope
+  (PR-merge trigger, teardown mechanism, and `if: false` respectively).
 - **Preflight** (`wing-commander-preflight` composite): a deterministic, pre-agent
   fail-fast — at least one Claude credential (`claude-code-oauth-token` or
   `anthropic-api-key`; both passed through, Claude Code's documented
@@ -375,7 +391,15 @@ Two constraints the wrappers must hold, both enforced by
   sources — execution-output denied-tool counts, branch drift (zero pushed
   commits on a push-expected stage), `spec-meta.json` stage vs. expected,
   step-summary sentinels, and check-run annotations — merge into one
-  normalized `signals.json`. Best-effort spec-slug/lifecycle-issue
+  normalized `signals.json`. The denied-tool collector reports a per-tool
+  `denials` count that equals the true number of denial-shaped `tool_result`
+  entries (no silent single-tool drop) and records each denial's array
+  position under `record-index`, not `turn` (spec 022, FR-008/FR-010:
+  `record-index` is a raw SDK-message-array position that can exceed the run's
+  own `num_turns` and must never be presented as a conversation turn); it
+  prefers a terminal result record's own permission-denials count if a future
+  SDK version supplies one, falling back to the (explicitly non-authoritative)
+  log scan otherwise. Best-effort spec-slug/lifecycle-issue
   resolution: a run that can't be tied to a spec (e.g. a `main`-based
   cleanup) is still inspected and reported against its own run URL. Only if
   *every* collector errors outright does it flip `evidence-available: false`

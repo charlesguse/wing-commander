@@ -732,10 +732,39 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      # The gate cannot run any earlier: issue-number is not a workflow_call
+      # input on this path, only readable once the spec branch's
+      # spec-meta.json is checked out (research.md R3's placement table).
+      - name: Resolve lifecycle issue number
+        id: issue
+        env:
+          SPEC_DIR: ${{ needs.resolve-spec.outputs.spec-dir }}
+        run: |
+          echo "number=$(jq -r '.issue // empty' "$SPEC_DIR/spec-meta.json")" >> "$GITHUB_OUTPUT"
+
+      # Re-fetch the lifecycle issue's live state before the sole write step
+      # below runs (specs/022-gate-closed-lifecycle).
+      - name: Check lifecycle issue state
+        id: lifecycle-gate
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-lifecycle-gate
+        with:
+          issue-number: ${{ steps.issue.outputs.number }}
+          token: ${{ github.token }}
+
+      - name: Note closed lifecycle and stop
+        if: steps.lifecycle-gate.outputs.is-open != 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ github.token }}
+          issue-number: ${{ steps.issue.outputs.number }}
+          kind: info
+          summary: "This lifecycle issue is closed — no action was taken."
+
       # The merged PR carried the stage flip to "tasks"; anything else means a
       # duplicate/out-of-order event — no second hand-off. With next-workflow
       # empty the acceptance is recorded and the stage stops cleanly (FR-002).
       - name: Verify stage and dispatch implement stage
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           DISPATCH_TOKEN: ${{ github.token }}
