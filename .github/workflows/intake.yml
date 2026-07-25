@@ -405,7 +405,9 @@ jobs:
         env:
           SPEC_DIR: ${{ steps.created.outputs.spec-dir }}
         run: |
-          if grep -q '\[NEEDS CLARIFICATION\]' "$SPEC_DIR/spec.md"; then
+          # No closing \]: real markers are '[NEEDS CLARIFICATION: <question>]'
+          # (spec-template.md) — the bare-bracket literal never matched one.
+          if grep -q '\[NEEDS CLARIFICATION' "$SPEC_DIR/spec.md"; then
             echo "needed=true" >> "$GITHUB_OUTPUT"
           else
             echo "needed=false" >> "$GITHUB_OUTPUT"

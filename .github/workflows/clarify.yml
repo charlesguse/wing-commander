@@ -324,7 +324,9 @@ jobs:
           followup="${{ runner.temp }}/clarify-followup.md"
           if [ ! -f "$followup" ]; then
             echo "outcome=none" >> "$GITHUB_OUTPUT"
-          elif grep -q '\[NEEDS CLARIFICATION\]' "$SPEC_DIR/spec.md"; then
+          # No closing \]: real markers are '[NEEDS CLARIFICATION: <question>]'
+          # (spec-template.md) — the bare-bracket literal never matched one.
+          elif grep -q '\[NEEDS CLARIFICATION' "$SPEC_DIR/spec.md"; then
             echo "outcome=needs-clarification" >> "$GITHUB_OUTPUT"
           else
             echo "outcome=ready" >> "$GITHUB_OUTPUT"
