@@ -33,10 +33,10 @@ inputs:
 
 outputs:
   state:
-    description: Raw value from `gh issue view --json state` (open/closed)
+    description: Raw value from `gh issue view --json state` (OPEN/CLOSED)
     value: ${{ steps.check.outputs.state }}
   is-open:
-    description: "\"true\" iff state == \"open\", \"false\" otherwise"
+    description: "\"true\" iff state is OPEN, \"false\" iff CLOSED (the step fails on any other value rather than guessing)"
     value: ${{ steps.check.outputs.is-open }}
 
 runs:
@@ -51,15 +51,32 @@ runs:
       run: |
         set -uo pipefail
 
-        state="$(gh issue view "$ISSUE_NUMBER" --json state --jq .state)"
-        if [ $? -ne 0 ] || [ -z "$state" ]; then
+        if ! state="$(gh issue view "$ISSUE_NUMBER" --json state --jq .state)" || [ -z "$state" ]; then
           echo "::error::wing-commander-lifecycle-gate: could not determine state of issue #$ISSUE_NUMBER — it may not exist, or the token lacks issues: read."
           exit 1
         fi
 
         echo "state=$state" >> "$GITHUB_OUTPUT"
-        if [ "$state" = "open" ]; then
-          echo "is-open=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "is-open=false" >> "$GITHUB_OUTPUT"
-        fi
+
+        # `gh issue view --json` reads through GitHub's GraphQL API, which
+        # reports the state as OPEN/CLOSED — uppercase, unlike the REST
+        # API's open/closed. cleanup.yml's "Idempotency check" has always
+        # compared against CLOSED for exactly this reason. Match
+        # case-insensitively so a casing change upstream cannot brick the
+        # gate, and refuse to guess on anything else: an unrecognized value
+        # must fail loudly rather than fall through to "closed" and
+        # silently skip every downstream step, which is precisely how the
+        # original lowercase comparison made all five gated stages inert
+        # while still reporting success.
+        case "$(printf '%s' "$state" | tr '[:upper:]' '[:lower:]')" in
+          open)
+            echo "is-open=true" >> "$GITHUB_OUTPUT"
+            ;;
+          closed)
+            echo "is-open=false" >> "$GITHUB_OUTPUT"
+            ;;
+          *)
+            echo "::error::wing-commander-lifecycle-gate: unrecognized state '$state' for issue #$ISSUE_NUMBER — expected OPEN or CLOSED. Refusing to guess whether this lifecycle is open."
+            exit 1
+            ;;
+        esac

@@ -28,8 +28,8 @@ spec.md's "race at close time" edge case).
 
 | Output | Values | Meaning |
 |---|---|---|
-| `state` | `open` \| `closed` | Raw value from `gh issue view "$ISSUE" --json state --jq .state` |
-| `is-open` | `"true"` \| `"false"` | `"true"` iff `state == "open"` — the value every subsequent step's `if:` reads |
+| `state` | `OPEN` \| `CLOSED` | Raw value from `gh issue view "$ISSUE" --json state --jq .state`. **Uppercase** — `gh --json` reads through GitHub's GraphQL API, not REST, so it reports `OPEN`/`CLOSED`, not `open`/`closed` (`cleanup.yml`'s "Idempotency check" compares against `CLOSED` for the same reason) |
+| `is-open` | `"true"` \| `"false"` | `"true"` iff `state` is `OPEN`, `"false"` iff `CLOSED`, compared case-insensitively — the value every subsequent step's `if:` reads |
 
 ## Behavior
 
@@ -37,11 +37,12 @@ spec.md's "race at close time" edge case).
    supplied `token`. No other issue field is read (labels/commenter
    identity stay the existing who/what gates' responsibility — this
    composite only ever answers the state question).
-2. Set `is-open` accordingly. This step performs no write and has no side
-   effect of its own — posting the FR-012 decline note is the **calling
-   job's** responsibility (via a sibling `wing-commander-callout` step
-   gated on this composite's own output), not this composite's, keeping
-   its contract to "read state, report it" only.
+2. Set `is-open` accordingly, matching the returned state
+   case-insensitively against `open` and `closed`. This step performs no
+   write and has no side effect of its own — posting the FR-012 decline
+   note is the **calling job's** responsibility (via a sibling
+   `wing-commander-callout` step gated on this composite's own output), not
+   this composite's, keeping its contract to "read state, report it" only.
 3. This step does **not** tolerate its own failure silently (unlike
    `wing-commander-preflight`'s deliberately fail-fast posture for
    load-bearing values) — if `gh issue view` fails (e.g. the issue does not
@@ -50,6 +51,13 @@ spec.md's "race at close time" edge case).
    the truth; this mirrors every other load-bearing lookup in this
    codebase (e.g. `clarify.yml`'s "Verify spec identity" step) rather than
    introducing a new fail-open or fail-closed default.
+4. The same refusal-to-default applies to a state value that is neither
+   `open` nor `closed`: the step fails loudly rather than treating the
+   unrecognized value as "closed". An `else`-branch default is what turned
+   a one-word casing mistake into a silent pipeline-wide outage — all five
+   gated stages declined every trigger while still reporting success,
+   because "not the string I expected" and "this lifecycle is closed" were
+   the same branch.
 
 ## Caller contract (every affected reusable workflow)
 

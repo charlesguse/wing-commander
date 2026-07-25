@@ -10,7 +10,7 @@ records the shapes and the one state machine this feature adds.
 
 | Field | Source | Used by this feature as |
 |---|---|---|
-| `state` | `gh issue view <issue> --json state` (live re-fetch, never the calling event's cached payload — research.md R3) | The sole input to the trigger gate: `open` → proceed, `closed` → decline |
+| `state` | `gh issue view <issue> --json state` (live re-fetch, never the calling event's cached payload — research.md R3). Returns `OPEN`/`CLOSED` — uppercase, because `gh --json` goes through GraphQL rather than REST | The sole input to the trigger gate: `OPEN` → proceed, `CLOSED` → decline, anything else → fail loudly rather than assume either |
 | `number` | Already a required input (`issue-number`) on every affected `workflow_call`, or derived from `spec-meta.json` for `tasks-approved` (research.md R3) | Identifies which issue's state to check and, on decline, which issue to post the FR-012 note to |
 
 No other issue field (labels, comments, assignees) is read by the new gate
@@ -38,8 +38,8 @@ Assumptions: "The who/what gates stay as they are").
 
 | Field | Type | Meaning |
 |---|---|---|
-| `state` | string (`open`/`closed`) | Raw value from `gh issue view --json state` |
-| `is-open` | string (`"true"`/`"false"`) | `"true"` iff `state == "open"`; the value every gated step's `if:` reads |
+| `state` | string (`OPEN`/`CLOSED`) | Raw value from `gh issue view --json state`, uppercase as GraphQL returns it |
+| `is-open` | string (`"true"`/`"false"`) | `"true"` iff `state` is `OPEN`, `"false"` iff `CLOSED` (case-insensitive match); the value every gated step's `if:` reads |
 
 Exists only within the run of the job that calls it — not written anywhere
 persistent. See contracts/wing-commander-lifecycle-gate.md for the full
