@@ -759,13 +759,19 @@ jobs:
               tripping log-scanning tooling, and a concrete example is
               one pattern-completion away from surfacing in real
               output.)
-            - normalizedFacts: a small object of STABLE, class-specific facts
-              (e.g. {"tool": "webfetch"} or {"branch": "spec/NNN-slug"}) —
-              never volatile fields like run IDs, timestamps, or turn
-              numbers; lowercase string values where practical. A
-              deterministic step (not you) hashes this into a fingerprint,
-              so keep it consistent across independent runs diagnosing the
-              same recurring problem.
+            - normalizedFacts: the small set of STABLE facts that IDENTIFY
+              this problem, drawn ONLY from this fixed key vocabulary:
+              tool, branch, spec, file, job, step, workflow, stage,
+              expected, actual. The schema rejects every other key, so use
+              the ones that fit and omit the rest. Values must be short
+              lowercase strings. Never record counts, turn numbers, run
+              IDs, timestamps, or any other quantity here — two runs
+              diagnosing the same underlying problem must produce a
+              byte-identical object, because a deterministic step (not you)
+              hashes it into the fingerprint that decides whether this gets
+              filed as a NEW issue or reported as a recurrence of an
+              existing one. Anything that varies between occurrences
+              belongs in the description, not here.
             - severityHint: one of "minor", "notable", "large" — your
               proposed rung input; a deterministic gate makes the final
               rung decision, not you.
@@ -815,7 +821,7 @@ jobs:
           claude_args: |
             --model ${{ steps.resolve-diagnose-model.outputs.model }}
             --max-turns ${{ inputs.diagnose-max-turns }}
-            --json-schema '{"type":"object","properties":{"findings":{"type":"array","items":{"type":"object","properties":{"class":{"type":"string"},"description":{"type":"string"},"evidence":{"type":"array","items":{"type":"object","properties":{"source":{"type":"string"},"locator":{"type":"string"}},"required":["source","locator"]}},"normalizedFacts":{"type":"object"},"severityHint":{"type":"string","enum":["minor","notable","large"]},"alreadyHandledBy":{"type":["string","null"]}},"required":["class","description","evidence","normalizedFacts","severityHint"]}}},"required":["findings"]}'
+            --json-schema '{"type":"object","properties":{"findings":{"type":"array","items":{"type":"object","properties":{"class":{"type":"string"},"description":{"type":"string"},"evidence":{"type":"array","items":{"type":"object","properties":{"source":{"type":"string"},"locator":{"type":"string"}},"required":["source","locator"]}},"normalizedFacts":{"type":"object","additionalProperties":false,"properties":{"tool":{"type":"string"},"branch":{"type":"string"},"spec":{"type":"string"},"file":{"type":"string"},"job":{"type":"string"},"step":{"type":"string"},"workflow":{"type":"string"},"stage":{"type":"string"},"expected":{"type":"string"},"actual":{"type":"string"}}},"severityHint":{"type":"string","enum":["minor","notable","large"]},"alreadyHandledBy":{"type":["string","null"]}},"required":["class","description","evidence","normalizedFacts","severityHint"]}}},"required":["findings"]}'
             --allowedTools "Read,Grep,Bash(gh:*),Bash(git log:*),Bash(git diff:*)"
             --disallowedTools "WebSearch,WebFetch,Write,Edit,Bash(git commit:*),Bash(git push:*)"
 
@@ -1034,9 +1040,17 @@ jobs:
 
       # Fingerprint (data-model.md): sha256(class + "|" + canonical(facts)),
       # computed deterministically, never model-generated. canonical() here:
-      # sort object keys (jq -S) and lowercase every string value (walk) —
-      # the diagnose prompt already omits volatile fields (run IDs,
-      # timestamps, turn numbers) from normalizedFacts.
+      # drop every non-string value, lowercase the rest, sort keys (jq -S).
+      #
+      # Two layers defend the stability this hash depends on, because the
+      # prompt asking nicely was NOT enough (issue #118): the structured
+      # output schema pins normalizedFacts to a fixed key vocabulary with
+      # additionalProperties:false, so a model cannot invent "actual-stage"
+      # where another emitted "actual" — the measured failure, where haiku
+      # and opus described the SAME defect with identical values under
+      # different key names and so never deduped. The non-string filter
+      # here is the second layer: a count or turn list that slips through
+      # is dropped rather than silently making the hash unique per run.
       - name: Compute fingerprint
         id: fingerprint
         if: steps.suppress.outputs.suppressed != 'true'
@@ -1045,10 +1059,16 @@ jobs:
           FACTS: ${{ toJson(matrix.normalizedFacts) }}
         run: |
           set -uo pipefail
-          canonical=$(printf '%s' "$FACTS" | jq -cS 'walk(if type == "string" then ascii_downcase else . end)')
+          canonical=$(printf '%s' "$FACTS" \
+            | jq -cS 'with_entries(select(.value | type == "string"))
+                      | map_values(ascii_downcase)')
           fp=$(printf '%s|%s' "$FINDING_CLASS" "$canonical" | sha256sum | cut -d' ' -f1)
           echo "fingerprint=$fp" >> "$GITHUB_OUTPUT"
           echo "short-fingerprint=${fp:0:12}" >> "$GITHUB_OUTPUT"
+          # Surfaced into the filed issue so a future fingerprint mismatch
+          # is diagnosable from the tracker alone — #118 had to be argued
+          # from differing hashes because the hashed input was invisible.
+          echo "canonical-facts=$canonical" >> "$GITHUB_OUTPUT"
 
       # Dedup search (FR-012–FR-016, research.md): reuses rebase.yml's
       # marker-in-body convention. state=all so open/closed surface in one
@@ -1306,6 +1326,7 @@ jobs:
           SUPPRESSED: ${{ steps.suppress.outputs.suppressed }}
           FINGERPRINT: ${{ steps.fingerprint.outputs.fingerprint }}
           SHORT_FINGERPRINT: ${{ steps.fingerprint.outputs.short-fingerprint }}
+          CANONICAL_FACTS: ${{ steps.fingerprint.outputs.canonical-facts }}
           DEDUP_OUTCOME: ${{ steps.dedup.outputs.outcome }}
           DEDUP_ISSUE: ${{ steps.dedup.outputs.issue-number }}
           HAS_DIFF: ${{ steps.diff-check.outputs.has-diff }}
@@ -1317,12 +1338,13 @@ jobs:
             --argjson suppressed "${SUPPRESSED:-false}" \
             --arg fingerprint "${FINGERPRINT:-}" \
             --arg shortfp "${SHORT_FINGERPRINT:-}" \
+            --arg canonicalfacts "${CANONICAL_FACTS:-}" \
             --arg dedup "${DEDUP_OUTCOME:-}" \
             --arg dedupissue "${DEDUP_ISSUE:-}" \
             --argjson hasdiff "${HAS_DIFF:-false}" \
             --arg rung "${RUNG:-}" \
             --arg rungreason "${RUNG_REASON:-}" \
-            '{suppressed: $suppressed, fingerprint: $fingerprint, "short-fingerprint": $shortfp, dedup: $dedup, "dedup-issue": $dedupissue, "has-diff": $hasdiff, rung: $rung, "rung-reason": $rungreason}' \
+            '{suppressed: $suppressed, fingerprint: $fingerprint, "short-fingerprint": $shortfp, "canonical-facts": $canonicalfacts, dedup: $dedup, "dedup-issue": $dedupissue, "has-diff": $hasdiff, rung: $rung, "rung-reason": $rungreason}' \
             > "${{ runner.temp }}/watchdog-triage-decision.json"
 
       - name: Upload triage decision artifact
@@ -1427,6 +1449,7 @@ jobs:
               echo "suppressed=$(jq -r '.suppressed' "$f")"
               echo "fingerprint=$(jq -r '.fingerprint' "$f")"
               echo "short-fingerprint=$(jq -r '."short-fingerprint"' "$f")"
+              echo "canonical-facts=$(jq -r '."canonical-facts" // ""' "$f")"
               echo "dedup=$(jq -r '.dedup' "$f")"
               echo "dedup-issue=$(jq -r '."dedup-issue"' "$f")"
               echo "rung=$(jq -r '.rung' "$f")"
@@ -1438,6 +1461,7 @@ jobs:
               echo "suppressed=false"
               echo "fingerprint="
               echo "short-fingerprint="
+              echo "canonical-facts="
               echo "dedup="
               echo "dedup-issue="
               echo "rung="
@@ -1552,6 +1576,7 @@ jobs:
           DEDUP_OUTCOME: ${{ steps.decision.outputs.dedup }}
           DEDUP_ISSUE: ${{ steps.decision.outputs.dedup-issue }}
           FINGERPRINT: ${{ steps.decision.outputs.fingerprint }}
+          CANONICAL_FACTS: ${{ steps.decision.outputs.canonical-facts }}
           FINDING_CLASS: ${{ matrix.class }}
           FINDING_DESCRIPTION: ${{ matrix.description }}
           FINDING_EVIDENCE: ${{ toJson(matrix.evidence) }}
@@ -1569,6 +1594,11 @@ jobs:
               printf '%s' "$FINDING_EVIDENCE" | jq -r '.[]? | "- \(.source): \(.locator)"'
               echo ""
               echo "_First seen: [this run]($RUN_URL)_"
+              echo ""
+              # The exact hashed input. If a later occurrence files a new
+              # issue instead of deduping onto this one, comparing these two
+              # lines says immediately which fact drifted (issue #118).
+              echo "_Fingerprint facts: \`$FINDING_CLASS\` + \`$CANONICAL_FACTS\`_"
               echo ""
               echo "<!-- wing-commander-watchdog: fingerprint=$FINGERPRINT -->"
             } > "${{ runner.temp }}/pipeline-defect-body.md"
