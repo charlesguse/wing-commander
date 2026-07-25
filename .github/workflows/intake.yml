@@ -200,8 +200,29 @@ jobs:
           path: .wing-commander-pipeline
           persist-credentials: false
 
+      # Re-fetch the lifecycle issue's live state before any write can occur
+      # (specs/022-gate-closed-lifecycle): a closed lifecycle is inert, even
+      # to the very label application that closed it. Never trusts the
+      # triggering event payload.
+      - name: Check lifecycle issue state
+        id: lifecycle-gate
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-lifecycle-gate
+        with:
+          issue-number: ${{ inputs.issue-number }}
+          token: ${{ github.token }}
+
+      - name: Note closed lifecycle and stop
+        if: steps.lifecycle-gate.outputs.is-open != 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ github.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: info
+          summary: "This lifecycle issue is closed — no action was taken."
+
       # Deterministic fail-fast before any billable work (FR-004, FR-009).
       - name: Preflight
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-preflight
         with:
           oauth-token: ${{ secrets.claude-code-oauth-token }}
@@ -219,6 +240,7 @@ jobs:
             impl=${{ inputs.impl-prefix }}
 
       - name: Configure AWS credentials for Bedrock
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-bedrock-credentials
         with:
           use-bedrock: ${{ inputs.use-bedrock }}
@@ -227,6 +249,7 @@ jobs:
 
       - name: Wing Commander context
         id: ctx
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.speckit-app-id }}
@@ -235,6 +258,7 @@ jobs:
       # Spec edge case 3: never assume `main` — take the input or derive.
       - name: Resolve default branch
         id: defbranch
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           DEFAULT_BRANCH: ${{ inputs.default-branch }}
@@ -245,6 +269,7 @@ jobs:
       # clean: false — a default `git clean` here would delete the untracked
       # .wing-commander-pipeline checkout the composite steps below still need.
       - name: Re-checkout default branch as wing-commander-bot
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.defbranch.outputs.name }}
@@ -258,6 +283,7 @@ jobs:
       # every open pipeline branch, and hand it to the agent.
       - name: Allocate feature number
         id: num
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
           SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
@@ -281,6 +307,7 @@ jobs:
 
       # Tie the run back to the issue the moment intake starts, with a link.
       - name: Report run started on issue
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -292,6 +319,7 @@ jobs:
 
       - name: Create spec from issue
         id: agent
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -383,6 +411,7 @@ jobs:
       # spec: an undiscernible request).
       - name: Resolve created spec
         id: created
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
           NUM: ${{ steps.num.outputs.num }}
           SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
@@ -401,7 +430,7 @@ jobs:
       # it only authors the clarification-question content when needed.
       - name: Check whether the spec still needs clarification
         id: clarification
-        if: steps.created.outputs.spec-dir != ''
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.created.outputs.spec-dir != ''
         env:
           SPEC_DIR: ${{ steps.created.outputs.spec-dir }}
         run: |
@@ -414,7 +443,7 @@ jobs:
           fi
 
       - name: Announce clarification needed
-        if: steps.clarification.outputs.needed == 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ steps.ctx.outputs.token }}
@@ -429,7 +458,7 @@ jobs:
       # matched client-side.
       - name: Resolve spec PR URL
         id: spec-pr
-        if: steps.clarification.outputs.needed == 'false'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'false'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           NUM: ${{ steps.num.outputs.num }}
@@ -440,7 +469,7 @@ jobs:
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
       - name: Announce spec PR ready for review
-        if: steps.clarification.outputs.needed == 'false'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'false'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ steps.ctx.outputs.token }}
@@ -453,6 +482,7 @@ jobs:
       # Pipeline PRs carry the same labels as their lifecycle issue so PR
       # lists are filterable by spec. Deterministic.
       - name: Label spec PR to match the issue
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -476,7 +506,7 @@ jobs:
       # runner temp dir. The streamed job log does NOT contain it, so upload it
       # for post-mortems (which tools were denied, turn count, cost).
       - name: Upload Claude execution log
-        if: always()
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && always()
         uses: actions/upload-artifact@v4
         with:
           name: claude-execution-output
@@ -487,7 +517,7 @@ jobs:
       # cost) in the run summary so tuning signals are legible without
       # downloading the artifact above. Pure read of that same transcript.
       - name: Agent run metrics summary
-        if: always() && steps.agent.outcome != 'skipped'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.agent.outcome != 'skipped'
         # Belt-and-braces for the action's own "never fail the job" contract.
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
@@ -504,7 +534,7 @@ jobs:
       # (contracts/credentials.md: invalid credential fails at the first
       # agent call).
       - name: Fail on agent API error
-        if: steps.agent.outcome == 'success'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent.outcome == 'success'
         run: |
           f="$RUNNER_TEMP/claude-execution-output.json"
           [ -f "$f" ] || exit 0
