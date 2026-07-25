@@ -1228,7 +1228,10 @@ jobs:
                       | with_entries(
                           if   .key == "branch" then .value |= sub("^(spec-draft|spec|plan|tasks|impl)/"; "")
                           elif .key == "file"   then .value |= sub("^.*/"; "")
-                          else . end)')
+                          else . end)
+                      | (if (has("spec") and (has("branch") | not))
+                         then .branch = .spec else . end)
+                      | del(.spec)')
           canonical=$(printf '%s' "$strings" \
             | jq -cS --argjson keys "$keys" \
                 'if $keys == null then .
