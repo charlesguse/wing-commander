@@ -166,6 +166,14 @@ up as red. A monitoring path you have never seen fail is not monitoring.
   then prefix.
 - **Re-runs execute the workflow at the original SHA.** You cannot test a
   workflow fix by re-running an old failure; trigger a fresh run.
+- **The GITHUB_TOKEN taint outlives the dispatch.** `workflow_dispatch` is
+  exempt from the no-recursive-trigger rule, so dispatching with
+  `GITHUB_TOKEN` works — but the dispatched run's *completion* event still
+  will not fire anyone's `workflow_run` trigger (proven live: 3
+  token-dispatched completions → 0 downstream runs; 3 event-triggered
+  completions → 3). Chains that must cascade need an App/user token at the
+  first link, and tests that dispatch with `GITHUB_TOKEN` must not sit
+  waiting for a downstream run that can never come.
 
 ## Checklist for a new agent-bearing workflow
 
