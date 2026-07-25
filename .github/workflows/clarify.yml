@@ -258,7 +258,11 @@ jobs:
           github_token: ${{ steps.ctx.outputs.token }}
           # Wrappers may dispatch this stage via GITHUB_TOKEN (custom
           # triggers); the action rejects bot actors unless allow-listed.
-          allowed_bots: "github-actions"
+          # The pipeline's own App bot is the actor whenever one stage
+          # advances another, so it is allow-listed too — without it those
+          # runs die with "Workflow initiated by non-human actor". The
+          # filter form is the bare slug, no [bot] suffix.
+          allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           prompt: |
             You are the clarification stage of this repository's spec pipeline,
             working on the draft spec in ${{ steps.ctx.outputs.spec-dir }} for

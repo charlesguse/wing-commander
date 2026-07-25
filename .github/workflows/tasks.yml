@@ -419,7 +419,11 @@ jobs:
           # Wrapper triggers can dispatch this stage via GITHUB_TOKEN, making
           # the triggering actor github-actions[bot]; the action rejects bot
           # actors unless allow-listed.
-          allowed_bots: "github-actions"
+          # The pipeline's own App bot is the actor whenever one stage
+          # advances another, so it is allow-listed too — without it those
+          # runs die with "Workflow initiated by non-human actor". The
+          # filter form is the bare slug, no [bot] suffix.
+          allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           # Only the validated slug and integer issue number are interpolated.
           # The plan/spec content was merged by a maintainer, but is still
           # framed as data, not instructions.
@@ -481,7 +485,11 @@ jobs:
           use_bedrock: ${{ inputs.use-bedrock }}
           github_token: ${{ steps.ctx.outputs.token }}
           # See the auto-mode step above.
-          allowed_bots: "github-actions"
+          # The pipeline's own App bot is the actor whenever one stage
+          # advances another, so it is allow-listed too — without it those
+          # runs die with "Workflow initiated by non-human actor". The
+          # filter form is the bare slug, no [bot] suffix.
+          allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           prompt: |
             You are the tasks stage of this repository's spec-driven
             development pipeline, running in review-required mode. The accepted

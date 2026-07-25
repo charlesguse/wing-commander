@@ -414,7 +414,11 @@ jobs:
           # This stage is dispatched by other pipeline stages via
           # GITHUB_TOKEN, so the triggering actor is github-actions[bot];
           # the action rejects bot actors unless allow-listed.
-          allowed_bots: "github-actions"
+          # The pipeline's own App bot is the actor whenever one stage
+          # advances another, so it is allow-listed too — without it those
+          # runs die with "Workflow initiated by non-human actor". The
+          # filter form is the bare slug, no [bot] suffix.
+          allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           # Only the validated slug, integer issue number, and integer
           # iteration are interpolated. The spec/plan/tasks content was merged
           # by a maintainer, but is still framed as data, not instructions.
@@ -574,7 +578,11 @@ jobs:
           use_bedrock: ${{ inputs.use-bedrock }}
           github_token: ${{ steps.ctx.outputs.token }}
           # See the cycle step above.
-          allowed_bots: "github-actions"
+          # The pipeline's own App bot is the actor whenever one stage
+          # advances another, so it is allow-listed too — without it those
+          # runs die with "Workflow initiated by non-human actor". The
+          # filter form is the bare slug, no [bot] suffix.
+          allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           prompt: |
             You are the implement/converge stage of this repository's
             spec-driven development pipeline, retrying build-and-reassess
@@ -781,7 +789,11 @@ jobs:
           use_bedrock: ${{ inputs.use-bedrock }}
           github_token: ${{ steps.ctx.outputs.token }}
           # See the cycle step above.
-          allowed_bots: "github-actions"
+          # The pipeline's own App bot is the actor whenever one stage
+          # advances another, so it is allow-listed too — without it those
+          # runs die with "Workflow initiated by non-human actor". The
+          # filter form is the bare slug, no [bot] suffix.
+          allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           prompt: |
             You are the progress reporter for the implement/converge stage of
             this repository's spec-driven development pipeline. Cycle

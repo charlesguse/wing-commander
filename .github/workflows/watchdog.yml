@@ -646,7 +646,11 @@ jobs:
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
           use_bedrock: ${{ inputs.use-bedrock }}
           github_token: ${{ steps.ctx.outputs.token }}
-          allowed_bots: "github-actions"
+          # The pipeline's own App bot is the actor whenever one stage
+          # advances another, so it is allow-listed too — without it those
+          # runs die with "Workflow initiated by non-human actor". The
+          # filter form is the bare slug, no [bot] suffix.
+          allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           prompt: |
             You are the diagnose step of this repository's pipeline
             watchdog, inspecting the just-completed run of
@@ -996,7 +1000,11 @@ jobs:
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
           use_bedrock: ${{ inputs.use-bedrock }}
           github_token: ${{ steps.ctx.outputs.token }}
-          allowed_bots: "github-actions"
+          # The pipeline's own App bot is the actor whenever one stage
+          # advances another, so it is allow-listed too — without it those
+          # runs die with "Workflow initiated by non-human actor". The
+          # filter form is the bare slug, no [bot] suffix.
+          allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           prompt: |
             You are the propose-fix step of this repository's pipeline
             watchdog. A Finding of class "${{ matrix.class }}" was diagnosed
@@ -1822,9 +1830,19 @@ jobs:
           echo "issue-number=$issue" >> "$GITHUB_OUTPUT"
 
       # Uses the default GITHUB_TOKEN (actions: read, already granted at
-      # workflow level) — no App token needed for this read. Matches by
-      # job name, tolerating a reusable-workflow name prefix (e.g. "watchdog
-      # / collect") since the exact displayed job name isn't guaranteed.
+      # workflow level) — no App token needed for this read.
+      #
+      # The jobs queried are github.run_id, THIS watchdog run — not
+      # inputs.run-id. gate's failed-jobs names collect/diagnose/triage/act,
+      # which are jobs of the watchdog itself; the inspected run has no such
+      # jobs, so pointing this at inputs.run-id resolved nothing, ever.
+      #
+      # Matching normalizes the displayed name, which is not guaranteed to be
+      # the bare job id: a reusable workflow prefixes it ("watchdog / collect")
+      # and a matrix job appends its parameters ("watchdog / triage (step-
+      # stalled, ...)"). Strip the parenthesized suffix first, then the prefix
+      # — a matrix parameter can itself contain "/ ", so the greedy prefix
+      # strip is only safe once the suffix is gone.
       - name: Resolve failed job log URLs
         id: job-urls
         if: steps.gate.outputs.any-failed == 'true'
@@ -1834,11 +1852,11 @@ jobs:
           FAILED_JOBS: ${{ steps.gate.outputs.failed-jobs }}
         run: |
           set -uo pipefail
-          jobs_json="$(gh api "repos/${{ github.repository }}/actions/runs/${{ inputs.run-id }}/jobs" 2>/dev/null || echo '{"jobs":[]}')"
+          jobs_json="$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100" 2>/dev/null || echo '{"jobs":[]}')"
           urls=""
           for pair in $FAILED_JOBS; do
             job="${pair%%:*}"
-            url="$(printf '%s' "$jobs_json" | jq -r --arg name "$job" '[.jobs[]? | select(.name == $name or (.name | endswith("/ " + $name))) | .html_url] | first // empty' 2>/dev/null || true)"
+            url="$(printf '%s' "$jobs_json" | jq -r --arg name "$job" '[.jobs[]? | select((.name | sub(" \\(.*$"; "") | sub("^.*/ "; "")) == $name) | .html_url] | first // empty' 2>/dev/null || true)"
             urls="${urls}${urls:+ }${job}:${url}"
           done
           echo "job-urls=$urls" >> "$GITHUB_OUTPUT"

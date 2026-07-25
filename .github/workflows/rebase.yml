@@ -459,7 +459,11 @@ jobs:
           github_token: ${{ steps.ctx.outputs.token }}
           # Wrapper triggers may be schedule/dispatch chains via GITHUB_TOKEN;
           # the action rejects bot actors unless allow-listed.
-          allowed_bots: "github-actions"
+          # The pipeline's own App bot is the actor whenever one stage
+          # advances another, so it is allow-listed too — without it those
+          # runs die with "Workflow initiated by non-human actor". The
+          # filter form is the bare slug, no [bot] suffix.
+          allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           prompt: |
             You are the conflict-resolution assistant for this repository's
             auto-rebase maintenance stage. A rebase of the branch

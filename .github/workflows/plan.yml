@@ -463,7 +463,11 @@ jobs:
           github_token: ${{ steps.ctx.outputs.token }}
           # Wrappers may dispatch this stage via GITHUB_TOKEN (custom
           # triggers); the action rejects bot actors unless allow-listed.
-          allowed_bots: "github-actions"
+          # The pipeline's own App bot is the actor whenever one stage
+          # advances another, so it is allow-listed too — without it those
+          # runs die with "Workflow initiated by non-human actor". The
+          # filter form is the bare slug, no [bot] suffix.
+          allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           # Only the validated slug and integer issue number are interpolated.
           # The spec content is human-reviewed (it was merged by a maintainer),
           # but is still framed as data, not instructions.
@@ -538,7 +542,11 @@ jobs:
           github_token: ${{ steps.ctx.outputs.token }}
           # Wrappers may dispatch this stage via GITHUB_TOKEN (custom
           # triggers); the action rejects bot actors unless allow-listed.
-          allowed_bots: "github-actions"
+          # The pipeline's own App bot is the actor whenever one stage
+          # advances another, so it is allow-listed too — without it those
+          # runs die with "Workflow initiated by non-human actor". The
+          # filter form is the bare slug, no [bot] suffix.
+          allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           # Only the validated slug and integer issue number are interpolated.
           # The spec content is human-reviewed (it was merged by a maintainer),
           # but is still framed as data, not instructions.
