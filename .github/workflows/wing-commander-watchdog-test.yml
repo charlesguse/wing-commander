@@ -1,26 +1,30 @@
-# Manual end-to-end test of the watchdog chain (stage 8 → 8b verifier).
+# Manual end-to-end test of the watchdog chain (stage 8 + the 8b verifier).
 # Exists so nobody has to wait for an organic pipeline run to know the
-# watchdog still fires: dispatch this, watch the chain run within minutes.
+# watchdog still fires: dispatch this, watch the result within minutes.
 #
 # Two modes, chosen by the inject-failure input:
-#   - false (default): dispatches stage 8 at a real completed run and asserts
-#     the whole chain goes green — stage 8 succeeds, 8b's deterministic
-#     verifier agrees.
+#   - false (default): dispatches stage 8 at a real completed run, asserts
+#     stage 8 goes green, and runs the same deterministic verifier 8b uses
+#     against it — asserting it agrees.
 #   - true: dispatches stage 8 at run-id 1, which can never resolve, so
-#     stage 8 fails HONESTLY. The point of this mode is watching red appear
-#     where red belongs: stage 8 turns red, then 8b turns red because its
-#     verifier refuses to bless a failed watchdog run (and files/appends the
-#     dedup'd pipeline-defect issue — expected; close it after testing).
-#     This test run itself also exits non-zero in that mode once it has
-#     confirmed the chain behaved, so the red is impossible to miss — a
-#     watchdog that stays green when it should be red is exactly the defect
-#     class this repository keeps re-learning.
+#     stage 8 fails HONESTLY (and the test asserts the failure landed in
+#     the resolve job — an earlier fault-injection era was silently
+#     preempted by an unrelated bug and never exercised its scenario).
+#     The verifier must then REFUSE to bless that run, and this test run
+#     itself exits non-zero once the chain behaved — so red is visible in
+#     the run list, because a watchdog that stays green when it should be
+#     red is exactly the defect class this repository keeps re-learning.
 #
-# GITHUB_TOKEN note: workflow_dispatch is one of the two event types
-# (with repository_dispatch) EXEMPT from GitHub's "events created with
-# GITHUB_TOKEN don't trigger workflows" rule, so the dispatch below works
-# with the default token; and 8b's workflow_run trigger fires off stage 8's
-# completion regardless of who dispatched it.
+# Why the verifier runs INSIDE this job instead of waiting for an 8b run:
+# this workflow dispatches stage 8 with the default GITHUB_TOKEN
+# (workflow_dispatch is exempt from GitHub's no-recursive-trigger rule, so
+# the dispatch works) — but the taint carries through to the dispatched
+# run's COMPLETION event, which therefore never fires 8b's workflow_run
+# trigger. Proven live 2026-07-25: three GITHUB_TOKEN-dispatched stage-8
+# completions produced zero 8b runs while three event-triggered ones
+# produced three. The pipeline's organic chains are App-bot-actored, so
+# real stage-8 completions DO fire 8b; the "8b wiring is alive" check
+# below verifies exactly that against the most recent organic chain.
 name: "Wing Commander · watchdog test"
 
 on:
@@ -40,11 +44,16 @@ jobs:
     timeout-minutes: 30
     permissions:
       actions: write   # dispatch stage 8, then read the resulting runs
+      contents: read   # checkout (the verifier script)
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
       INJECT: ${{ inputs.inject-failure }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
       - name: Dispatch stage 8
         id: dispatch
         run: |
@@ -68,8 +77,8 @@ jobs:
           gh workflow run wing-commander-8-watchdog.yml -R "$REPO" -f run-id="$target"
           echo "mark=$mark" >> "$GITHUB_OUTPUT"
 
-      # Poll helpers below compare ISO-8601 UTC timestamps lexicographically
-      # — same format, same zone, so string > is time >.
+      # ISO-8601 UTC timestamps compare lexicographically — string > is
+      # time >.
       - name: Wait for stage 8 to appear and complete
         id: stage8
         env:
@@ -102,52 +111,50 @@ jobs:
           echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
           echo "conclusion=$conclusion" >> "$GITHUB_OUTPUT"
 
-      - name: Wait for 8b verifier to react
-        id: stage8b
+      # The same deterministic checks 8b runs, against the run we just
+      # produced. CREATE_ISSUE stays false — a test must not page anyone.
+      - name: Run the 8b verifier against the dispatched run
+        id: verify
+        continue-on-error: true
         env:
-          MARK: ${{ steps.dispatch.outputs.mark }}
+          RUN_ID: ${{ steps.stage8.outputs.run-id }}
+          CREATE_ISSUE: "false"
+        run: bash .github/scripts/verify-watchdog-run.sh
+
+      - name: 8b wiring is alive (organic chains still trigger it)
         run: |
           set -euo pipefail
-          # First 8b run created after our dispatch mark. On a busy repo an
-          # interleaved organic stage-8 completion could race this — for a
-          # manual smoke test that ambiguity is acceptable.
-          run_id=""
-          for i in $(seq 1 24); do   # up to 2 min to appear
-            run_id="$(gh run list -R "$REPO" --workflow wing-commander-8b-watchdog-self.yml \
-              --limit 5 --json databaseId,createdAt \
-              --jq "[.[] | select(.createdAt >= \"$MARK\")] | last | .databaseId // empty")"
-            [ -n "$run_id" ] && break
-            sleep 5
-          done
-          if [ -z "$run_id" ]; then
-            echo "::error::no 8b run followed stage 8's completion — 8b's workflow_run trigger is broken"
+          # Latest stage-8 completion that came from a real workflow_run
+          # event (App-bot-actored, untainted — the shape 8b listens to).
+          last_organic="$(gh run list -R "$REPO" --workflow wing-commander-8-watchdog.yml \
+            --event workflow_run --status completed --limit 1 \
+            --json databaseId,updatedAt --jq '.[0] // empty')"
+          if [ -z "$last_organic" ]; then
+            echo "::warning::no organic stage-8 completion exists yet — cannot check 8b liveness"
+            exit 0
+          fi
+          done_at="$(printf '%s' "$last_organic" | jq -r '.updatedAt')"
+          follow="$(gh run list -R "$REPO" --workflow wing-commander-8b-watchdog-self.yml \
+            --limit 10 --json databaseId,createdAt \
+            --jq "[.[] | select(.createdAt >= \"$done_at\")] | length")"
+          if [ "$follow" -eq 0 ]; then
+            echo "::error::the most recent organic stage-8 completion ($done_at) was never followed by an 8b run — 8b's workflow_run trigger is broken (renamed workflow? unregistered file?)"
             exit 1
           fi
-          echo "8b run: $run_id — waiting for completion"
-          conclusion=""
-          for i in $(seq 1 40); do   # up to 10 min
-            conclusion="$(gh api "repos/$REPO/actions/runs/$run_id" --jq '.conclusion // empty')"
-            [ -n "$conclusion" ] && break
-            sleep 15
-          done
-          [ -z "$conclusion" ] && { echo "::error::8b run $run_id did not complete in 10 min"; exit 1; }
-          echo "8b concluded: $conclusion"
-          echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
-          echo "conclusion=$conclusion" >> "$GITHUB_OUTPUT"
+          echo "8b followed the most recent organic stage-8 completion ($follow run(s) since $done_at)."
 
       - name: Assert the chain behaved
         env:
           S8: ${{ steps.stage8.outputs.conclusion }}
           S8_ID: ${{ steps.stage8.outputs.run-id }}
-          S8B: ${{ steps.stage8b.outputs.conclusion }}
-          S8B_ID: ${{ steps.stage8b.outputs.run-id }}
+          VERIFY: ${{ steps.verify.outcome }}
         run: |
           set -euo pipefail
           url="${GITHUB_SERVER_URL}/${REPO}/actions/runs"
           {
             echo "### Watchdog chain test (inject-failure: $INJECT)"
             echo "- stage 8: [$S8_ID]($url/$S8_ID) → **$S8**"
-            echo "- 8b verifier: [$S8B_ID]($url/$S8B_ID) → **$S8B**"
+            echo "- deterministic verifier verdict on it: **$VERIFY**"
           } >> "$GITHUB_STEP_SUMMARY"
           if [ "$INJECT" = "true" ]; then
             if [ "$S8" != "failure" ]; then
@@ -164,16 +171,16 @@ jobs:
               *resolve*) echo "Injected failure landed where expected (failed jobs: $failed_jobs)" ;;
               *) echo "::error::stage 8 failed, but not in the injected way (failed jobs: $failed_jobs) — a different defect preempted the injection"; exit 1 ;;
             esac
-            if [ "$S8B" = "success" ]; then
-              echo "::error::stage 8 failed but the 8b verifier stayed GREEN — the exact defect this test exists to catch"
+            if [ "$VERIFY" = "success" ]; then
+              echo "::error::stage 8 failed but the verifier blessed it — the exact defect this test exists to catch"
               exit 1
             fi
-            echo "Chain correctly turned red (8b: $S8B). Failing this run too so the red is visible here." \
+            echo "Chain correctly turned red (verifier: $VERIFY). Failing this run too so the red is visible here." \
               | tee -a "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          if [ "$S8" != "success" ] || [ "$S8B" != "success" ]; then
-            echo "::error::expected a green chain, got stage8=$S8, 8b=$S8B"
+          if [ "$S8" != "success" ] || [ "$VERIFY" != "success" ]; then
+            echo "::error::expected green, got stage8=$S8, verifier=$VERIFY"
             exit 1
           fi
           echo "Chain green end to end." | tee -a "$GITHUB_STEP_SUMMARY"
