@@ -69,12 +69,13 @@ control is broken. Every other item in this feature is secondary to restoring it
 
 **Independent Test**: Close a lifecycle issue, then add a comment and a label to
 it in the ways that normally trigger stages, and confirm no stage runs and no
-side effects occur (no branch created or re-pushed, no commit, no PR edit, no
-comment posted by the pipeline).
+substantive side effects occur (no branch created or re-pushed, no commit, no PR
+edit, and no comment beyond the single brief closed-lifecycle note the trigger
+gate posts).
 
 **Acceptance Scenarios**:
 
-1. **Given** a lifecycle issue that has been closed, **When** a maintainer or the requester comments on it in a way that would normally trigger a stage, **Then** no pipeline stage runs and the issue, its branches, and its PRs are left untouched by the pipeline.
+1. **Given** a lifecycle issue that has been closed, **When** a maintainer or the requester comments on it in a way that would normally trigger a stage, **Then** no pipeline stage runs and the issue, its branches, and its PRs are left untouched by the pipeline — aside from at most a single brief, non-actionable note that the lifecycle is closed and no action was taken.
 2. **Given** a lifecycle issue closed at the same moment its closing comment is posted, **When** that closing comment would normally trigger a stage, **Then** the stage does not act on it — reproducing the reported scenario with the opposite outcome.
 3. **Given** a closed lifecycle whose spec branch was already torn down by cleanup, **When** a later comment would normally cause a stage to commit and push, **Then** no branch is resurrected and no push occurs.
 4. **Given** a label is added to a closed lifecycle issue in a way that would normally admit it to a stage (e.g. intake on `labeled`), **When** the trigger fires, **Then** the stage does not proceed.
@@ -142,7 +143,7 @@ presented as turn numbers they are not.
 
 - **Reopened issue**: A lifecycle issue that is closed and later reopened is open again; activity on it after reopening should be actionable again, because the gate reflects the issue's *current* state rather than the fact that it was once closed.
 - **Race at close time**: The reported failure was a trigger firing on the very comment that closed the issue. The gate must evaluate the issue's state at the moment the stage would act, so a close-and-comment in the same instant is treated as closed.
-- **Open lifecycle, unrelated comment**: A comment on an *open* lifecycle that does not actually answer a pending question is out of the state gate's scope; whether the pipeline should also guard against acting on such comments is called out as a clarification below.
+- **Open lifecycle, unrelated comment**: A comment on an *open* lifecycle that does not actually answer a pending question is out of the state gate's scope; hardening against acting on such comments is deferred to a separate follow-up and is not addressed by this feature (see FR-013).
 - **Closed lifecycle, benign comment**: An ordinary human comment on a closed lifecycle (e.g. a thank-you or a note) must not wake any stage; inertness applies to all triggers, not only stage-shaped ones.
 - **Collector with no terminal result record**: If a run's evidence lacks a terminal result record entirely, the collector must degrade to its log-scan fallback rather than fail or fabricate a count.
 - **Remediation of the specific orphan**: The draft branch torn down and then resurrected by the zombie run (bearing an orphan "resolve clarifications" commit atop a closed PR's history) must be removed as part of delivering this fix, since it exists today only because the defect ran.
@@ -153,17 +154,17 @@ presented as turn numbers they are not.
 
 - **FR-001**: Every comment-triggered and label-triggered pipeline stage MUST decline to act on a lifecycle issue whose current state is closed; a closed lifecycle issue MUST be inert to all further comments and labels with respect to pipeline behavior.
 - **FR-002**: The closed-state check MUST be enforced at the trigger level — before any agent is launched and before any command can run — and MUST NOT be left to be enforced only by downstream tool allowlists, which govern the form of a command rather than the agent's authority to act.
-- **FR-003**: When a stage declines because the lifecycle is closed, it MUST produce no side effects: no branch created or re-pushed, no commit or push, no PR body or PR state edited, and no callout or status comment posted by the pipeline.
+- **FR-003**: When a stage declines because the lifecycle is closed, it MUST produce no substantive side effects: no branch created or re-pushed, no commit or push, no PR body or PR state edited, and no actionable callout or status comment posted by the pipeline. The single brief, non-actionable closed-lifecycle note defined in FR-012 is the only permitted output.
 - **FR-004**: The closed-state gate MUST be applied consistently to every comment-/label-triggered entry point. At minimum this covers the clarify stage, the tasks-approval trigger, the finalize and converge comment paths, and intake's `labeled` trigger; any other comment-/label-triggered wrapper MUST be audited and gated the same way, so no entry point is left without the gate.
 - **FR-005**: The gate MUST reflect the issue's current open/closed state, so a lifecycle issue that is reopened after being closed becomes actionable again; closing is not a permanent, irreversible retirement of the issue.
 - **FR-006**: When a stage is triggered against an open lifecycle issue, its behavior MUST be unchanged by this feature; the gate blocks only closed lifecycles and MUST NOT narrow, delay, or alter the normal open-lifecycle path.
 - **FR-007**: The specific scenario reported in issue #109 — a comment-triggered stage firing on the closing comment of an already-closed lifecycle, resurrecting a torn-down branch, editing a closed PR, and posting a callout on the closed issue — MUST no longer occur, and MUST be guarded against silent recurrence.
 - **FR-008**: The watchdog's denied-tool collector MUST report a denial count that matches the run's terminal result record's own permission-denial count when that record is present, and MUST NOT overcount relative to it.
 - **FR-009**: When a terminal result record with a permission-denial count is present, the collector MUST source the count from it; only when it is absent may the collector fall back to scanning the execution log, and it MUST make clear that a fallback count is not authoritative.
-- **FR-010**: The collector MUST NOT label a per-denial location drawn from a result-record array position as a "turn" number. It MUST either report those positions under an accurate name (e.g. record index) or report genuine turn numbers, so that the reported locations are consistent with the run's own turn count. [NEEDS CLARIFICATION: report the positions under an accurate "record index" name (minimal fix), or invest in deriving and reporting genuine turn numbers?]
+- **FR-010**: The collector MUST NOT label a per-denial location drawn from a result-record array position as a "turn" number. It MUST report those positions under an accurate name (record index) rather than as turn numbers, so that the reported locations are consistent with the run's own turn count. Deriving and reporting genuine turn numbers is explicitly not required; the minimal, accurate-naming fix is the chosen approach.
 - **FR-011**: The draft branch resurrected by the reported zombie run — carrying the orphan "resolve clarifications" commit on top of a closed PR's history — MUST be removed as part of delivering this fix, restoring the state that cleanup had already established before the defect ran.
-- **FR-012**: When a comment- or label-triggered stage declines to act on a closed lifecycle, the pipeline's response MUST be defined: either it stays entirely silent, or it leaves a single brief, non-actionable note that the lifecycle is closed and no action was taken. [NEEDS CLARIFICATION: stay completely silent on closed lifecycles, or post one brief "lifecycle closed — no action taken" note so a human commenter is not left wondering?]
-- **FR-013**: Whether this feature also hardens comment-triggered agents against acting on comments that do not actually answer the pending question (the "invented resolutions" symptom observed even though it was reached only via the closed-issue path) MUST be decided. [NEEDS CLARIFICATION: is invented-resolution hardening on open lifecycles in scope for this feature, or is it a separate follow-up and this feature is limited to the state gate plus the collector fix?]
+- **FR-012**: When a comment- or label-triggered stage declines to act on a closed lifecycle, the pipeline MUST leave a single brief, non-actionable note that the lifecycle is closed and no action was taken, so a human commenter is not left wondering. This note is the only output permitted by the decline path; it MUST be posted by the trigger gate (not by a launched stage), MUST NOT be actionable, and MUST NOT be accompanied by any branch, commit, push, PR edit, or other write.
+- **FR-013**: Invented-resolution hardening — guarding comment-triggered agents against acting on comments that do not actually answer the pending question, on *open* lifecycles — is OUT OF SCOPE for this feature and is deferred to a separate follow-up. The "invented resolutions" symptom observed in the report was reached only via the closed-issue path, which the closed-state gate (FR-001–FR-007) already prevents; this feature is limited to that state gate plus the collector accuracy fix (FR-008–FR-010).
 
 ### Key Entities *(include if data involved)*
 
@@ -177,7 +178,7 @@ presented as turn numbers they are not.
 
 ### Measurable Outcomes
 
-- **SC-001**: In verification, 100% of comment-/label-triggered stage entry points decline to act when triggered against a closed lifecycle issue, and produce zero side effects (no branch, commit, push, PR edit, or comment) in doing so.
+- **SC-001**: In verification, 100% of comment-/label-triggered stage entry points decline to act when triggered against a closed lifecycle issue, and produce zero substantive side effects (no branch, commit, push, PR edit, or actionable callout) in doing so — at most a single brief closed-lifecycle note.
 - **SC-002**: The reported scenario — a stage firing on a closing comment of a just-closed lifecycle — is reproduced and, after the fix, results in no stage action in 100% of reproduction attempts.
 - **SC-003**: Zero comment-/label-triggered entry points remain without the closed-state gate after the audit; the count of ungated such entry points is 0.
 - **SC-004**: For an open lifecycle, 100% of the previously-passing comment-/label-triggered stage behaviors still pass, confirming the gate blocks only closed lifecycles.

@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,10 +31,16 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain by design (FR-010 collector
-  rename-vs-derive-turns, FR-012 silent-vs-note on closed lifecycles, FR-013
-  scope of invented-resolution hardening). Per the CI intake flow these are
-  posted to the lifecycle issue for maintainer answer rather than blocking the
-  spec draft; they are within the skill's max-3 limit.
-- Items marked incomplete require spec updates before `/speckit-clarify` or
-  `/speckit-plan`.
+- All three [NEEDS CLARIFICATION] markers are resolved from the maintainer's
+  answers on #109:
+  - FR-010 (collector rename-vs-derive-turns) → **A**: report positions under an
+    accurate "record index" name (minimal fix); deriving genuine turn numbers is
+    not required.
+  - FR-012 (silent-vs-note on closed lifecycles) → **B**: post one brief,
+    non-actionable "lifecycle closed — no action taken" note. FR-003, US1's
+    independent test and acceptance scenario 1, and SC-001 were reconciled to
+    permit this single note.
+  - FR-013 (scope of invented-resolution hardening) → **B**: out of scope,
+    deferred to a separate follow-up; this feature is limited to the closed-state
+    gate plus the collector accuracy fix.
+- No incomplete items remain; the spec is ready to proceed.
