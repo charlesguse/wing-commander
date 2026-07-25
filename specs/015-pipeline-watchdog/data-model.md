@@ -33,6 +33,18 @@ per evidence source that produced anything:
 ]
 ```
 
+> **Deviation (spec 022, FR-010):** the `denied-tool` signal's
+> `facts.turns` field shown above (the first row) is renamed to
+> `facts.record-index` by
+> [`022-gate-closed-lifecycle`](../022-gate-closed-lifecycle/contracts/denied-tool-collector-delta.md).
+> The value is unchanged — a zero-based position into the raw SDK message
+> array — but `turns` mislabeled it as a conversation-turn count (a single
+> turn spans several array entries, so the index can exceed the run's own
+> `num_turns`; see issues #105/#106). This is a deliberate,
+> spec-022-sanctioned deviation from this spec's original contract; see that
+> delta for the full corrected `jq` filter and the `denials`-count fix that
+> lands with it.
+
 `class-hint` is populated only for the two v1 pattern-matched classes
 (FR-003a/b, computed directly by the collector, not the diagnose step);
 `null` for sources whose interpretation genuinely needs the diagnose
