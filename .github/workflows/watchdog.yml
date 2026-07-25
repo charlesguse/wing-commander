@@ -1059,9 +1059,46 @@ jobs:
           FACTS: ${{ toJson(matrix.normalizedFacts) }}
         run: |
           set -uo pipefail
-          canonical=$(printf '%s' "$FACTS" \
-            | jq -cS 'with_entries(select(.value | type == "string"))
-                      | map_values(ascii_downcase)')
+          # Per-class projection: the identifying keys for each class, applied
+          # deterministically HERE rather than trusted from the model.
+          #
+          # The schema's key vocabulary alone was measured insufficient. It
+          # stops synonyms ("actual-stage" vs "actual") but not subset drift:
+          # two opus-5 runs over the identical finding emitted
+          #   {"actual","expected"}                          -> ee10c3d582bf
+          #   {"actual","expected","stage","workflow"}       -> 3b985ddc96a8
+          # both legal under the vocabulary, both different hashes. Projecting
+          # to the class's identifying keys makes the extra ones irrelevant.
+          case "$FINDING_CLASS" in
+            denied-tool)           keys='["tool"]' ;;
+            lost-progress)         keys='["branch"]' ;;
+            stage-mismatch)        keys='["expected","actual"]' ;;
+            missing-spec-artifact) keys='["branch","file"]' ;;
+            missing-spec-metadata) keys='["branch","file"]' ;;
+            token-budget-warning)  keys='["job"]' ;;
+            *)
+              # Classes are model-authored too, so this map is always
+              # partial. Unknown class falls back to every string key, which
+              # is the old (drift-prone) behaviour — flagged so the class can
+              # be added rather than quietly deduping badly forever.
+              keys='null'
+              echo "::warning::watchdog dedup: no fingerprint key projection for class '$FINDING_CLASS' — falling back to all string facts, which may not dedup stably. Add it to the case in watchdog.yml's Compute fingerprint step."
+              ;;
+          esac
+          strings=$(printf '%s' "$FACTS" \
+            | jq -cS 'with_entries(select(.value | type == "string")) | map_values(ascii_downcase)')
+          canonical=$(printf '%s' "$strings" \
+            | jq -cS --argjson keys "$keys" \
+                'if $keys == null then .
+                 else with_entries(select(.key as $k | $keys | index($k))) end')
+          # Projecting to nothing while real facts exist would hash every
+          # finding of this class to class|{} and merge unrelated defects
+          # onto one issue. Filing a duplicate is the safer failure than
+          # hiding a distinct problem, so fall back and say so.
+          if [ "$canonical" = '{}' ] && [ "$strings" != '{}' ]; then
+            echo "::warning::watchdog dedup: class '$FINDING_CLASS' supplied none of its identifying keys ($keys); falling back to all string facts to avoid merging unrelated findings."
+            canonical="$strings"
+          fi
           fp=$(printf '%s|%s' "$FINDING_CLASS" "$canonical" | sha256sum | cut -d' ' -f1)
           echo "fingerprint=$fp" >> "$GITHUB_OUTPUT"
           echo "short-fingerprint=${fp:0:12}" >> "$GITHUB_OUTPUT"
