@@ -409,7 +409,23 @@ Two constraints the wrappers must hold, both enforced by
   (no write tools, no `git`/`gh` write access) turning signals into zero or
   more Findings. `signals.json` and anything read is framed as untrusted
   data, never instructions (FR-023). Zero Findings ⇒ "passed inspection"
-  (FR-004) and nothing is filed.
+  (FR-004) and nothing is filed. A `Classify diagnose attempt` step
+  (`if: always()`, spec 023) reads attempt 1's execution-output file to
+  decide, with no access to the still-in-progress job's own raw log,
+  whether a failed attempt is a recognized transient/infrastructure crash
+  (the SDK reached *some* terminal `result` record that wasn't OK) or a
+  deterministic one (no terminal record at all — the SDK never started). A
+  transient/infrastructure failure gets exactly one bounded retry
+  (`Diagnose (retry)`, byte-for-byte the same model/prompt/schema/tool
+  allowlists as attempt 1 — a genuine second attempt, never a degraded
+  fallback); a deterministic failure reports "diagnose failed" immediately,
+  with no retry. The job's `timeout-minutes` is 35 (not 20) to give two
+  back-to-back 10-minute agent-step attempts headroom without loosening
+  `verify-watchdog-run.sh`'s own runtime-anomaly band. Whichever attempt is
+  final feeds the existing "diagnose failed" honesty path unchanged — the
+  lifecycle issue notes "failed after 2 attempts" when a retry was
+  exhausted, otherwise reads exactly as it did before this mechanism
+  existed.
 - `triage` — one matrix entry per Finding: coexistence-suppression check
   (a Finding already handled by `implement.yml`'s stalled job or
   `cleanup.yml`'s `mark-stalled` is reported, not re-acted, FR-024),
