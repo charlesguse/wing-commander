@@ -784,12 +784,18 @@ jobs:
             which is strictly worse than a well-grounded partial one.
 
             Signals that are expected rather than problems: if the inspected
-            run's own conclusion is "skipped" or "cancelled", then
-            stage-mismatch and branch-drift signals about it are normal
-            consequences of the run not executing, and are not Findings.
-            Note that a job log fetched for such a run is usually empty —
-            if a log read comes back with no content, accept that and move
-            on rather than retrying it another way.
+            run's own conclusion is "skipped" or "cancelled", a branch-drift
+            signal reporting zero commits is a tautological consequence of
+            the run never executing, and is not a Finding. This does NOT
+            extend to spec-meta stage mismatches — the recorded stage is
+            independent state that a skipped run neither caused nor excuses,
+            so those still deserve a Finding on their merits. Judge them
+            from the signal's own facts; the mismatch is already fully
+            described there, so do not go reading the repository to
+            corroborate it. Note also that a job log fetched for a skipped
+            or cancelled run is usually empty — if a log read comes back
+            with no content, accept that and move on rather than retrying
+            it another way.
 
             If no signal rises to a genuine Finding, return an empty
             "findings" array — this is the common, expected case ("run passed
