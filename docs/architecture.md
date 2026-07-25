@@ -139,6 +139,7 @@ serialize, different specs run in parallel. Intake serializes globally
 | Work | Model |
 |---|---|
 | Triage, diff summaries, labels | `claude-haiku-4-5` |
+| Watchdog diagnosis | `claude-opus-5` (evidence adjudication under a strict schema — not the triage tier; see issue #124) |
 | specify / clarify | `claude-opus-4-8` (constitution v1.1.0: spec quality is bought up front) |
 | plan / tasks | `claude-sonnet-5` |
 | implement / converge | stage `model` input (default `claude-sonnet-5`); this repo's wrapper wires `vars.WING_COMMANDER_IMPLEMENT_MODEL` and the `model:opus` label opt-in into it |
@@ -405,7 +406,7 @@ Two constraints the wrappers must hold, both enforced by
   *every* collector errors outright does it flip `evidence-available: false`
   → "could not inspect this run" (FR-005); an empty-but-successful signal set
   still proceeds to `diagnose`.
-- `diagnose` — one `claude-haiku-4-5`, read-only, structured-output step
+- `diagnose` — one `claude-opus-5`, read-only, structured-output step
   (no write tools, no `git`/`gh` write access) turning signals into zero or
   more Findings. `signals.json` and anything read is framed as untrusted
   data, never instructions (FR-023). Zero Findings ⇒ "passed inspection"

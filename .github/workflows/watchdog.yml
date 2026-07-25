@@ -35,10 +35,14 @@ on:
         type: string
         required: true
       diagnose-model:
-        description: "Model for the read-only diagnose agent (constitution II tiering: triage/classification)"
+        description: "Model for the read-only diagnose agent (constitution II tiering: evidence-weight analysis)"
         type: string
         required: false
-        default: claude-haiku-4-5
+        # NOT the triage/summary tier. Diagnose adjudicates multi-signal
+        # evidence against a strict output schema; on haiku it exhausted its
+        # turn budget wandering the repo instead of reaching a verdict
+        # (issue #124, run 30161188955: error_max_turns at 21 turns).
+        default: claude-opus-5
       diagnose-max-turns:
         description: "Turn budget for the diagnose agent"
         type: number
@@ -676,10 +680,15 @@ jobs:
       # diagnose agent's tier is resolved directly here, the same way
       # WING_COMMANDER_WATCHDOG_PAUSED/_SELF_DISPATCH_CAP are read above,
       # rather than adding a wrapper-side resolve-model job.
+      # WING_COMMANDER_DIAGNOSE_MODEL, not _SUMMARY_MODEL: diagnose used to
+      # share the summary tier's variable, which meant any operator retuning
+      # finalize/cleanup/implement's cheap summary agents silently retuned
+      # this one too — and diagnose is the one step here that cannot afford a
+      # weak model (issue #124). It gets its own override knob.
       - name: Resolve diagnose model
         id: resolve-diagnose-model
         env:
-          MODEL_VAR: ${{ vars.WING_COMMANDER_SUMMARY_MODEL }}
+          MODEL_VAR: ${{ vars.WING_COMMANDER_DIAGNOSE_MODEL }}
           MODEL_INPUT: ${{ inputs.diagnose-model }}
         run: echo "model=${MODEL_VAR:-$MODEL_INPUT}" >> "$GITHUB_OUTPUT"
 
@@ -763,6 +772,24 @@ jobs:
             - alreadyHandledBy: if the signal you're basing this Finding on
               already carries an "alreadyHandledBy" field, copy it through
               unchanged; otherwise omit the field or set it to null.
+
+            How much to investigate: you run under a bounded turn budget,
+            and reaching a verdict matters more than being exhaustive. The
+            signals file is your primary evidence — confirm at most one or
+            two facts per signal before deciding, and do NOT explore the
+            repository open-endedly. If a signal cannot be adjudicated
+            within a couple of checks, either emit a Finding citing only
+            what you actually confirmed, or drop it — never keep digging to
+            be certain. Running out of turns produces NO verdict at all,
+            which is strictly worse than a well-grounded partial one.
+
+            Signals that are expected rather than problems: if the inspected
+            run's own conclusion is "skipped" or "cancelled", then
+            stage-mismatch and branch-drift signals about it are normal
+            consequences of the run not executing, and are not Findings.
+            Note that a job log fetched for such a run is usually empty —
+            if a log read comes back with no content, accept that and move
+            on rather than retrying it another way.
 
             If no signal rises to a genuine Finding, return an empty
             "findings" array — this is the common, expected case ("run passed
