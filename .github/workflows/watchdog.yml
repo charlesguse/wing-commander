@@ -528,6 +528,89 @@ jobs:
           done
           jq -c --argjson new "$entries" '. + $new' "$RUNNER_TEMP/signals.json" > "$RUNNER_TEMP/signals.json.tmp" && mv "$RUNNER_TEMP/signals.json.tmp" "$RUNNER_TEMP/signals.json"
 
+      # Stamps every signal with a content-derived id, which is what the
+      # dedup fingerprint is ultimately built from (issue #118).
+      #
+      # The long way round to get here: the fingerprint used to hash the
+      # agent's own normalizedFacts. Constraining that object's keys, then
+      # its values, then folding synonyms each fixed a real drift axis and
+      # each time a new one appeared, because the input was still prose an
+      # LLM wrote. Signals are not — every collector above emits a FIXED
+      # fact shape from deterministic code, so an identity derived from them
+      # is stable by construction rather than by exhortation.
+      #
+      # Per-source projection keeps only the facts that IDENTIFY the problem
+      # and drops the ones that merely describe this occurrence of it: a
+      # denial count, the before/after shas, the specific matched line. Two
+      # runs hitting the same underlying problem therefore produce the same
+      # id; the agent's remaining influence on the fingerprint is limited to
+      # choosing WHICH ids a Finding cites, which is selection from a fixed
+      # list rather than authorship.
+      #
+      # An unknown source falls back to hashing all its facts and warns —
+      # drift-prone like the old scheme, but visible, and only for a source
+      # that did not exist when this map was written.
+      - name: Stamp signal ids
+        id: signal-ids
+        run: |
+          set -uo pipefail
+          f="$RUNNER_TEMP/signals.json"
+          [ -f "$f" ] || echo '[]' > "$f"
+          # Project first, then hash the projection, so the id depends only
+          # on identifying facts. Sources are matched by prefix: the
+          # execution-output collector appends a "(log-scan fallback …)"
+          # qualifier to its own source string.
+          # The kind, not the raw source string, is what the id hashes —
+          # result-record and the execution-output log-scan are two ways of
+          # detecting ONE problem (the latter is the explicit fallback when
+          # the artifact is missing), so they must share a kind or the same
+          # denial would dedup differently depending on which collector
+          # happened to see it.
+          jq -c 'map(
+            . as $s
+            | (.source // "") as $src
+            | (.facts // {}) as $fx
+            | (if   ($src | startswith("result-record")) or ($src | startswith("execution-output"))
+               then {kind: "tool-denial",
+                     ident: {tool: ($fx.tool // "" | ascii_downcase)}}
+               elif ($src | startswith("branch-drift"))
+               then {kind: "branch-drift",
+                     ident: {branch: ($fx.branch // "" | ascii_downcase | sub("^(spec-draft|spec|plan|tasks|impl)/"; ""))}}
+               elif ($src | startswith("spec-meta"))
+               then {kind: "spec-meta",
+                     ident: {expected: ($fx["expected-stage"] // "" | ascii_downcase),
+                             actual:   ($fx["actual-stage"]   // "" | ascii_downcase)}}
+               elif ($src | startswith("step-summary"))
+               then {kind: "step-summary",
+                     ident: {job: ($fx.job // "" | ascii_downcase),
+                             sentinel: ($fx["matched-sentinel"] // "" | ascii_downcase)}}
+               elif ($src | startswith("annotations"))
+               then {kind: "annotations",
+                     ident: {message: ($fx.message // "" | ascii_downcase)}}
+               else {kind: ($src | split(" ") | .[0]),
+                     ident: ($fx | with_entries(select(.value | type == "string")) | map_values(ascii_downcase)),
+                     unmapped: true}
+               end) as $p
+            | $s + {"signal-kind": $p.kind, "identity": $p.ident,
+                    "unmapped": ($p.unmapped // false)}
+          )' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+          # sha256 of kind + canonical identity, truncated — short enough to
+          # sit in a prompt and an enum, long enough not to collide.
+          python3 - "$f" <<'PY'
+          import hashlib, json, sys
+          p = sys.argv[1]
+          sigs = json.load(open(p, encoding="utf-8"))
+          for s in sigs:
+              basis = s["signal-kind"] + "|" + json.dumps(s.pop("identity"), sort_keys=True, separators=(",", ":"))
+              s["id"] = hashlib.sha256(basis.encode()).hexdigest()[:16]
+          json.dump(sigs, open(p, "w", encoding="utf-8"), separators=(",", ":"))
+          PY
+          unmapped="$(jq -r '[.[] | select(.unmapped) | .["signal-kind"]] | unique | join(", ")' "$f")"
+          if [ -n "$unmapped" ]; then
+            echo "::warning::watchdog: no signal-identity projection for source(s) '${unmapped}' — their ids hash all string facts and may not dedup stably. Add them to the Stamp signal ids step in watchdog.yml."
+          fi
+          jq -c 'map(del(.unmapped))' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+
       # Only when every one of the five collector steps outright errored
       # (not merely "produced nothing") does evidence-available flip to
       # false — an empty signals.json with every collector succeeding is a
@@ -733,7 +816,20 @@ jobs:
           else
             class_schema="$(printf '%s' "$classes" | jq -c '. + ["__new__"] | {type:"string", enum:.}')"
           fi
-          schema="$(jq -cn --argjson cls "$class_schema" '{
+          # signalId is enum-constrained to the ids actually present in THIS
+          # run's signals, so citing evidence is selection from a fixed list
+          # rather than free-text authorship — that constraint is what makes
+          # the fingerprint derivable from collector output (#118). With no
+          # signals there is nothing to cite and the field goes unconstrained;
+          # a Finding without signals cannot be signal-fingerprinted anyway
+          # and falls back to the normalizedFacts path in triage.
+          sig_ids="$(jq -c '[.[].id] | unique' "${{ runner.temp }}/watchdog-signals.json" 2>/dev/null || echo '[]')"
+          if [ "$sig_ids" = "[]" ] || [ -z "$sig_ids" ]; then
+            sigid_schema='{"type":"string"}'
+          else
+            sigid_schema="$(printf '%s' "$sig_ids" | jq -c '{type:"string", enum:.}')"
+          fi
+          schema="$(jq -cn --argjson cls "$class_schema" --argjson sid "$sigid_schema" '{
             type:"object",
             properties:{findings:{type:"array",items:{
               type:"object",
@@ -742,8 +838,8 @@ jobs:
                 proposedClass:{type:["string","null"]},
                 description:{type:"string"},
                 evidence:{type:"array",items:{type:"object",
-                  properties:{source:{type:"string"},locator:{type:"string"}},
-                  required:["source","locator"]}},
+                  properties:{signalId:$sid,source:{type:"string"},locator:{type:"string"}},
+                  required:["signalId","source","locator"]}},
                 normalizedFacts:{type:"object",additionalProperties:false,properties:{
                   tool:{type:"string"},branch:{type:"string"},spec:{type:"string"},
                   file:{type:"string"},job:{type:"string"},step:{type:"string"},
@@ -756,6 +852,7 @@ jobs:
           echo "classes=$classes" >> "$GITHUB_OUTPUT"
           echo "schema=$schema" >> "$GITHUB_OUTPUT"
           echo "Finding-class vocabulary: $classes" >> "$GITHUB_STEP_SUMMARY"
+          echo "Citable signal ids: $sig_ids" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Diagnose
         id: diagnose
@@ -827,9 +924,17 @@ jobs:
               evidence (tool name, branch, commit counts, matched sentinel,
               etc.) — a human must be able to confirm the diagnosis without
               opening raw artifacts themselves.
-            - evidence: an array of {source, locator} pairs pointing at
-              where you found this. The source is the originating signal's
-              "source" field; the locator must quote or precisely reference
+            - evidence: an array of {signalId, source, locator} entries
+              pointing at where you found this. signalId MUST be the "id"
+              field of the signal in the signals file that this evidence
+              comes from — copy it exactly; the schema only accepts ids
+              present in this run. Cite EVERY signal the Finding rests on,
+              and cite no signal the Finding does not rest on: these ids,
+              not your prose, are what a deterministic step hashes to decide
+              whether this problem has been seen before. Two runs finding
+              the same problem must cite the same signals.
+              The source is the originating signal's "source" field; the
+              locator must quote or precisely reference
               text that actually appears in the signals file or in a file
               you read during THIS run. Never write a locator you cannot
               point back to — drop any Finding whose evidence you cannot
@@ -839,19 +944,18 @@ jobs:
               tripping log-scanning tooling, and a concrete example is
               one pattern-completion away from surfacing in real
               output.)
-            - normalizedFacts: the small set of STABLE facts that IDENTIFY
-              this problem, drawn ONLY from this fixed key vocabulary:
+            - normalizedFacts: a short, human-facing summary of the facts
+              that characterize this problem. This is DESCRIPTIVE ONLY — the
+              identity of the problem now comes from the signal ids you cite
+              in evidence, not from this object, so do not agonize over
+              making it stable. Draw keys ONLY from this fixed vocabulary:
               tool, branch, spec, file, job, step, workflow, stage,
               expected, actual. The schema rejects every other key, so use
               the ones that fit and omit the rest. Values must be short
-              lowercase strings. Never record counts, turn numbers, run
-              IDs, timestamps, or any other quantity here — two runs
-              diagnosing the same underlying problem must produce a
-              byte-identical object, because a deterministic step (not you)
-              hashes it into the fingerprint that decides whether this gets
-              filed as a NEW issue or reported as a recurrence of an
-              existing one. Anything that varies between occurrences
-              belongs in the description, not here.
+              lowercase strings. Still keep run IDs, timestamps and turn
+              numbers out of it — they age badly on an issue that may be
+              reported against many times — but a count or a specific path
+              is fine here now that this object no longer decides identity.
             - severityHint: one of "minor", "notable", "large" — your
               proposed rung input; a deterministic gate makes the final
               rung decision, not you.
@@ -1138,19 +1242,6 @@ jobs:
             echo "suppressed=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # Fingerprint (data-model.md): sha256(class + "|" + canonical(facts)),
-      # computed deterministically, never model-generated. canonical() here:
-      # drop every non-string value, lowercase the rest, sort keys (jq -S).
-      #
-      # Two layers defend the stability this hash depends on, because the
-      # prompt asking nicely was NOT enough (issue #118): the structured
-      # output schema pins normalizedFacts to a fixed key vocabulary with
-      # additionalProperties:false, so a model cannot invent "actual-stage"
-      # where another emitted "actual" — the measured failure, where haiku
-      # and opus described the SAME defect with identical values under
-      # different key names and so never deduped. The non-string filter
-      # here is the second layer: a count or turn list that slips through
-      # is dropped rather than silently making the hash unique per run.
       # Registers a genuinely new finding class in the label vocabulary the
       # diagnose schema is compiled from, so the NEXT run is offered it as an
       # enum choice instead of inventing another synonym. Deliberately here
@@ -1173,14 +1264,53 @@ jobs:
             echo "::warning::could not register finding class '${FINDING_CLASS}' as a label — the next run will not be offered it and may propose a synonym."
           fi
 
+      # Fingerprint: sha256 over the finding's class plus the ids of the
+      # SIGNALS it cites — both selections from fixed lists, neither prose an
+      # LLM wrote (issue #118).
+      #
+      # Earlier revisions hashed the agent's own normalizedFacts and tried to
+      # tame it: pin the key vocabulary, project to the identifying keys,
+      # canonicalize the values, fold synonym slots. Every one of those fixed
+      # a genuine drift axis and every one was followed by a new axis, because
+      # the input was still free text. Signal ids are computed in collect from
+      # deterministic collector output, so equal problems produce equal ids by
+      # construction.
+      #
+      # The normalizedFacts machinery survives only as the fallback for a
+      # Finding that cites no usable signal — a Finding grounded in something
+      # the agent read itself rather than in a collected signal. It is
+      # drift-prone, which is exactly why it is no longer the primary path.
       - name: Compute fingerprint
         id: fingerprint
         if: steps.suppress.outputs.suppressed != 'true'
         env:
           FINDING_CLASS: ${{ matrix.class }}
           FACTS: ${{ toJson(matrix.normalizedFacts) }}
+          EVIDENCE: ${{ toJson(matrix.evidence) }}
+          SIGNALS: ${{ needs.collect.outputs.signals }}
         run: |
           set -uo pipefail
+          # Cross-check cited ids against the ids collect actually emitted.
+          # The schema enum should make an unknown id impossible; this is the
+          # belt-and-braces that keeps a hallucinated id from silently
+          # becoming half of a fingerprint.
+          cited="$(printf '%s' "$EVIDENCE" | jq -c '[ .[]?.signalId // empty ] | unique' 2>/dev/null || echo '[]')"
+          known="$(printf '%s' "$SIGNALS" | jq -c '[ .[]?.id // empty ]' 2>/dev/null || echo '[]')"
+          valid="$(jq -cn --argjson c "$cited" --argjson k "$known" '$c | map(select(. as $x | $k | index($x)))' 2>/dev/null || echo '[]')"
+          bogus="$(jq -cn --argjson c "$cited" --argjson v "$valid" '$c - $v' 2>/dev/null || echo '[]')"
+          if [ "$(printf '%s' "$bogus" | jq 'length')" -gt 0 ]; then
+            echo "::warning::watchdog dedup: finding cited signal id(s) $bogus that this run did not emit — ignored for fingerprinting."
+          fi
+          if [ "$(printf '%s' "$valid" | jq 'length')" -gt 0 ]; then
+            basis="$(printf '%s' "$valid" | jq -r 'sort | join(",")')"
+            fp=$(printf '%s|signals:%s' "$FINDING_CLASS" "$basis" | sha256sum | cut -d' ' -f1)
+            echo "fingerprint=$fp" >> "$GITHUB_OUTPUT"
+            echo "short-fingerprint=${fp:0:12}" >> "$GITHUB_OUTPUT"
+            echo "canonical-facts=signals:[$basis]" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "::warning::watchdog dedup: finding cited no usable signal id — falling back to hashing the agent-authored normalizedFacts, which historically does not dedup reliably (#118)."
+          # ---- fallback path (agent-authored facts) ----
           # Per-class projection: the identifying keys for each class, applied
           # deterministically HERE rather than trusted from the model.
           #
