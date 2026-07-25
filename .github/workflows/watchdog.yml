@@ -1081,7 +1081,25 @@ jobs:
           FP: ${{ steps.fingerprint.outputs.fingerprint }}
         run: |
           set -uo pipefail
-          results=$(gh search issues --repo "$GITHUB_REPOSITORY" "wing-commander-watchdog: fingerprint=$FP in:body" --state all --json number,state 2>/dev/null || echo '[]')
+          # Query shape matters twice over (issue #118):
+          #   - `--state all` is NOT a valid value for `gh search issues`
+          #     (only open|closed). The old call therefore exited non-zero on
+          #     EVERY run, and `2>/dev/null || echo '[]'` turned that into a
+          #     confident "no match" — which is why dedup never once matched
+          #     and "New occurrence" has never fired. Omitting --state
+          #     searches both states, which is what was wanted.
+          #   - The fingerprint must be a QUOTED phrase. Searching the whole
+          #     marker unquoted let GitHub tokenize "wing-commander-watchdog"
+          #     and "fingerprint" as words, matching every watchdog issue
+          #     regardless of hash — enough results to trip the >1
+          #     "data-integrity" branch below on a hash that in fact
+          #     appears exactly once.
+          # A failure here must stay loud: reporting "none" on a broken
+          # search is how this went unnoticed for so long.
+          if ! results=$(gh search issues --repo "$GITHUB_REPOSITORY" "\"$FP\" in:body" --json number,state 2>"$RUNNER_TEMP/dedup-search-err.txt"); then
+            echo "::warning::dedup search failed ($(tr -d '\n' < "$RUNNER_TEMP/dedup-search-err.txt" | head -c 200)) — this Finding is treated as new, which may file a duplicate issue."
+            results='[]'
+          fi
           count=$(printf '%s' "$results" | jq 'length')
           issue_number=""
           if [ "$count" -eq 0 ]; then
