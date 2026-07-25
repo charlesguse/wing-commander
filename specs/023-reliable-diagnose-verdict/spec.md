@@ -129,7 +129,7 @@ passes for those runs.
 
 ### Edge Cases
 
-- **Genuinely un-inspectable run**: When evidence truly cannot be gathered or the diagnose agent legitimately cannot reach a verdict, the outcome must be an honest "could not inspect" surfaced to the maintainer — never a masked green pass. [NEEDS CLARIFICATION: when the diagnose agent fails despite the fix, should the watchdog automatically retry the diagnosis once (or a bounded number of times) before recording an honest failure, or record the honest failure immediately with no retry?]
+- **Genuinely un-inspectable run**: When evidence truly cannot be gathered or the diagnose agent legitimately cannot reach a verdict, the outcome must be an honest "could not inspect" surfaced to the maintainer — never a masked green pass. When the diagnose agent fails, the watchdog retries the diagnosis only for recognized transient/infrastructure crash signatures; for all other failures it records the honest failure immediately with no retry.
 - **Transient vs. persistent crash**: A one-off infrastructure hiccup versus a repeatable crash class should both end honestly; the fix must not convert a transient failure into a false pass.
 - **Safety net interaction**: If the internal unhandled-failure safety net fires, that internal failure must remain visible (the run must not be reported as a clean success) so the stage-8b verifier can still catch it.
 - **Verifier remains the backstop**: The fix must not weaken or bypass the stage-8b deterministic verifier; a healthy run must pass it, and a masked crash must still fail it.
@@ -144,7 +144,9 @@ passes for those runs.
 - **FR-004**: A diagnose-agent crash MUST NOT be masked into an all-green run: the true outcome MUST remain externally visible so that the stage-8b deterministic verifier continues to detect it.
 - **FR-005**: The specific failure class reported in issue #117 (agent-crash signature with no terminal result record) MUST be root-caused and guarded against so that equivalent stage 8 runs no longer exhibit it.
 - **FR-006**: After the fix, a normal (non-crashing) stage 8 watchdog run MUST pass the existing stage-8b deterministic verification, and the pipeline-defect issue for the issue-#117 reasons MUST NOT be auto-filed for healthy runs.
-- **FR-007**: The fix MUST NOT weaken, disable, or bypass the stage-8b deterministic verifier or the watchdog's honest-reporting steps; the verifier MUST still fail any future masked-crash run. [NEEDS CLARIFICATION: is the intended scope a targeted fix for the exact issue-#117 crash signature, or a broader hardening that guarantees an honest verdict across all known diagnose-agent crash classes?]
+- **FR-007**: The fix MUST NOT weaken, disable, or bypass the stage-8b deterministic verifier or the watchdog's honest-reporting steps; the verifier MUST still fail any future masked-crash run.
+- **FR-009**: The fix's scope MUST be a targeted root-cause fix for the exact issue-#117 crash signature PLUS a general guarantee that no masked diagnose-agent crash — of any class — ever presents as a passed inspection; exhaustive per-crash-class handling is explicitly deferred, but the general "no masked crash ever passes" honesty guarantee applies to all crash classes.
+- **FR-010**: When the diagnose agent fails to produce a genuine terminal result, the watchdog MUST retry the diagnosis only for recognized transient/infrastructure crash signatures (bounded), and MUST record the honest failure immediately with no retry for all other failure classes; a retried diagnosis that still fails MUST end in an honest surfaced failure, never a masked pass.
 - **FR-008**: The watchdog's behavior on healthy runs (reaching and posting a genuine verdict to the lifecycle issue) MUST be preserved; this fix changes only the crashed/failed path so that failures are honest and the observed crash stops recurring.
 
 ### Key Entities *(include if feature involves data)*

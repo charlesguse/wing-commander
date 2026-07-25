@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,12 +31,14 @@
 
 ## Notes
 
-- Two [NEEDS CLARIFICATION] markers remain, both scope-level decisions with no
-  clear default: (1) whether the watchdog should auto-retry a failed diagnosis
-  before recording an honest failure, and (2) whether the fix is targeted at the
-  exact issue-#117 crash signature or a broader hardening across all known
-  diagnose-agent crash classes. These are posted to lifecycle issue #117 for
-  maintainer input and can be resolved via `/speckit-clarify` before `/speckit-plan`.
+- Both [NEEDS CLARIFICATION] markers are now resolved from maintainer input on
+  lifecycle issue #117: (1) the watchdog retries a failed diagnosis only for
+  recognized transient/infrastructure crash signatures and records an honest
+  failure immediately for all other failures (FR-010, Edge Cases); and (2) the
+  fix is a targeted root-cause fix for the exact issue-#117 crash signature plus
+  a general "no masked crash ever passes" honesty guarantee across all crash
+  classes, with exhaustive per-class handling deferred (FR-009). The spec is now
+  free of open clarifications and can proceed to `/speckit-plan`.
 - All other items pass. The domain terms (watchdog, diagnose step, lifecycle
   issue, stage-8b verifier) are established by prior specs 015 and 020 and are
   used descriptively, not as implementation prescriptions.
