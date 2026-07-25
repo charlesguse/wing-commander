@@ -35,10 +35,14 @@ on:
         type: string
         required: true
       diagnose-model:
-        description: "Model for the read-only diagnose agent (constitution II tiering: triage/classification)"
+        description: "Model for the read-only diagnose agent (constitution II tiering: evidence-weight analysis)"
         type: string
         required: false
-        default: claude-haiku-4-5
+        # NOT the triage/summary tier. Diagnose adjudicates multi-signal
+        # evidence against a strict output schema; on haiku it exhausted its
+        # turn budget wandering the repo instead of reaching a verdict
+        # (issue #124, run 30161188955: error_max_turns at 21 turns).
+        default: claude-opus-5
       diagnose-max-turns:
         description: "Turn budget for the diagnose agent"
         type: number
@@ -676,10 +680,15 @@ jobs:
       # diagnose agent's tier is resolved directly here, the same way
       # WING_COMMANDER_WATCHDOG_PAUSED/_SELF_DISPATCH_CAP are read above,
       # rather than adding a wrapper-side resolve-model job.
+      # WING_COMMANDER_DIAGNOSE_MODEL, not _SUMMARY_MODEL: diagnose used to
+      # share the summary tier's variable, which meant any operator retuning
+      # finalize/cleanup/implement's cheap summary agents silently retuned
+      # this one too — and diagnose is the one step here that cannot afford a
+      # weak model (issue #124). It gets its own override knob.
       - name: Resolve diagnose model
         id: resolve-diagnose-model
         env:
-          MODEL_VAR: ${{ vars.WING_COMMANDER_SUMMARY_MODEL }}
+          MODEL_VAR: ${{ vars.WING_COMMANDER_DIAGNOSE_MODEL }}
           MODEL_INPUT: ${{ inputs.diagnose-model }}
         run: echo "model=${MODEL_VAR:-$MODEL_INPUT}" >> "$GITHUB_OUTPUT"
 
@@ -750,19 +759,49 @@ jobs:
               tripping log-scanning tooling, and a concrete example is
               one pattern-completion away from surfacing in real
               output.)
-            - normalizedFacts: a small object of STABLE, class-specific facts
-              (e.g. {"tool": "webfetch"} or {"branch": "spec/NNN-slug"}) —
-              never volatile fields like run IDs, timestamps, or turn
-              numbers; lowercase string values where practical. A
-              deterministic step (not you) hashes this into a fingerprint,
-              so keep it consistent across independent runs diagnosing the
-              same recurring problem.
+            - normalizedFacts: the small set of STABLE facts that IDENTIFY
+              this problem, drawn ONLY from this fixed key vocabulary:
+              tool, branch, spec, file, job, step, workflow, stage,
+              expected, actual. The schema rejects every other key, so use
+              the ones that fit and omit the rest. Values must be short
+              lowercase strings. Never record counts, turn numbers, run
+              IDs, timestamps, or any other quantity here — two runs
+              diagnosing the same underlying problem must produce a
+              byte-identical object, because a deterministic step (not you)
+              hashes it into the fingerprint that decides whether this gets
+              filed as a NEW issue or reported as a recurrence of an
+              existing one. Anything that varies between occurrences
+              belongs in the description, not here.
             - severityHint: one of "minor", "notable", "large" — your
               proposed rung input; a deterministic gate makes the final
               rung decision, not you.
             - alreadyHandledBy: if the signal you're basing this Finding on
               already carries an "alreadyHandledBy" field, copy it through
               unchanged; otherwise omit the field or set it to null.
+
+            How much to investigate: you run under a bounded turn budget,
+            and reaching a verdict matters more than being exhaustive. The
+            signals file is your primary evidence — confirm at most one or
+            two facts per signal before deciding, and do NOT explore the
+            repository open-endedly. If a signal cannot be adjudicated
+            within a couple of checks, either emit a Finding citing only
+            what you actually confirmed, or drop it — never keep digging to
+            be certain. Running out of turns produces NO verdict at all,
+            which is strictly worse than a well-grounded partial one.
+
+            Signals that are expected rather than problems: if the inspected
+            run's own conclusion is "skipped" or "cancelled", a branch-drift
+            signal reporting zero commits is a tautological consequence of
+            the run never executing, and is not a Finding. This does NOT
+            extend to spec-meta stage mismatches — the recorded stage is
+            independent state that a skipped run neither caused nor excuses,
+            so those still deserve a Finding on their merits. Judge them
+            from the signal's own facts; the mismatch is already fully
+            described there, so do not go reading the repository to
+            corroborate it. Note also that a job log fetched for a skipped
+            or cancelled run is usually empty — if a log read comes back
+            with no content, accept that and move on rather than retrying
+            it another way.
 
             If no signal rises to a genuine Finding, return an empty
             "findings" array — this is the common, expected case ("run passed
@@ -782,7 +821,7 @@ jobs:
           claude_args: |
             --model ${{ steps.resolve-diagnose-model.outputs.model }}
             --max-turns ${{ inputs.diagnose-max-turns }}
-            --json-schema '{"type":"object","properties":{"findings":{"type":"array","items":{"type":"object","properties":{"class":{"type":"string"},"description":{"type":"string"},"evidence":{"type":"array","items":{"type":"object","properties":{"source":{"type":"string"},"locator":{"type":"string"}},"required":["source","locator"]}},"normalizedFacts":{"type":"object"},"severityHint":{"type":"string","enum":["minor","notable","large"]},"alreadyHandledBy":{"type":["string","null"]}},"required":["class","description","evidence","normalizedFacts","severityHint"]}}},"required":["findings"]}'
+            --json-schema '{"type":"object","properties":{"findings":{"type":"array","items":{"type":"object","properties":{"class":{"type":"string"},"description":{"type":"string"},"evidence":{"type":"array","items":{"type":"object","properties":{"source":{"type":"string"},"locator":{"type":"string"}},"required":["source","locator"]}},"normalizedFacts":{"type":"object","additionalProperties":false,"properties":{"tool":{"type":"string"},"branch":{"type":"string"},"spec":{"type":"string"},"file":{"type":"string"},"job":{"type":"string"},"step":{"type":"string"},"workflow":{"type":"string"},"stage":{"type":"string"},"expected":{"type":"string"},"actual":{"type":"string"}}},"severityHint":{"type":"string","enum":["minor","notable","large"]},"alreadyHandledBy":{"type":["string","null"]}},"required":["class","description","evidence","normalizedFacts","severityHint"]}}},"required":["findings"]}'
             --allowedTools "Read,Grep,Bash(gh:*),Bash(git log:*),Bash(git diff:*)"
             --disallowedTools "WebSearch,WebFetch,Write,Edit,Bash(git commit:*),Bash(git push:*)"
 
@@ -1001,9 +1040,17 @@ jobs:
 
       # Fingerprint (data-model.md): sha256(class + "|" + canonical(facts)),
       # computed deterministically, never model-generated. canonical() here:
-      # sort object keys (jq -S) and lowercase every string value (walk) —
-      # the diagnose prompt already omits volatile fields (run IDs,
-      # timestamps, turn numbers) from normalizedFacts.
+      # drop every non-string value, lowercase the rest, sort keys (jq -S).
+      #
+      # Two layers defend the stability this hash depends on, because the
+      # prompt asking nicely was NOT enough (issue #118): the structured
+      # output schema pins normalizedFacts to a fixed key vocabulary with
+      # additionalProperties:false, so a model cannot invent "actual-stage"
+      # where another emitted "actual" — the measured failure, where haiku
+      # and opus described the SAME defect with identical values under
+      # different key names and so never deduped. The non-string filter
+      # here is the second layer: a count or turn list that slips through
+      # is dropped rather than silently making the hash unique per run.
       - name: Compute fingerprint
         id: fingerprint
         if: steps.suppress.outputs.suppressed != 'true'
@@ -1012,10 +1059,53 @@ jobs:
           FACTS: ${{ toJson(matrix.normalizedFacts) }}
         run: |
           set -uo pipefail
-          canonical=$(printf '%s' "$FACTS" | jq -cS 'walk(if type == "string" then ascii_downcase else . end)')
+          # Per-class projection: the identifying keys for each class, applied
+          # deterministically HERE rather than trusted from the model.
+          #
+          # The schema's key vocabulary alone was measured insufficient. It
+          # stops synonyms ("actual-stage" vs "actual") but not subset drift:
+          # two opus-5 runs over the identical finding emitted
+          #   {"actual","expected"}                          -> ee10c3d582bf
+          #   {"actual","expected","stage","workflow"}       -> 3b985ddc96a8
+          # both legal under the vocabulary, both different hashes. Projecting
+          # to the class's identifying keys makes the extra ones irrelevant.
+          case "$FINDING_CLASS" in
+            denied-tool)           keys='["tool"]' ;;
+            lost-progress)         keys='["branch"]' ;;
+            stage-mismatch)        keys='["expected","actual"]' ;;
+            missing-spec-artifact) keys='["branch","file"]' ;;
+            missing-spec-metadata) keys='["branch","file"]' ;;
+            token-budget-warning)  keys='["job"]' ;;
+            *)
+              # Classes are model-authored too, so this map is always
+              # partial. Unknown class falls back to every string key, which
+              # is the old (drift-prone) behaviour — flagged so the class can
+              # be added rather than quietly deduping badly forever.
+              keys='null'
+              echo "::warning::watchdog dedup: no fingerprint key projection for class '$FINDING_CLASS' — falling back to all string facts, which may not dedup stably. Add it to the case in watchdog.yml's Compute fingerprint step."
+              ;;
+          esac
+          strings=$(printf '%s' "$FACTS" \
+            | jq -cS 'with_entries(select(.value | type == "string")) | map_values(ascii_downcase)')
+          canonical=$(printf '%s' "$strings" \
+            | jq -cS --argjson keys "$keys" \
+                'if $keys == null then .
+                 else with_entries(select(.key as $k | $keys | index($k))) end')
+          # Projecting to nothing while real facts exist would hash every
+          # finding of this class to class|{} and merge unrelated defects
+          # onto one issue. Filing a duplicate is the safer failure than
+          # hiding a distinct problem, so fall back and say so.
+          if [ "$canonical" = '{}' ] && [ "$strings" != '{}' ]; then
+            echo "::warning::watchdog dedup: class '$FINDING_CLASS' supplied none of its identifying keys ($keys); falling back to all string facts to avoid merging unrelated findings."
+            canonical="$strings"
+          fi
           fp=$(printf '%s|%s' "$FINDING_CLASS" "$canonical" | sha256sum | cut -d' ' -f1)
           echo "fingerprint=$fp" >> "$GITHUB_OUTPUT"
           echo "short-fingerprint=${fp:0:12}" >> "$GITHUB_OUTPUT"
+          # Surfaced into the filed issue so a future fingerprint mismatch
+          # is diagnosable from the tracker alone — #118 had to be argued
+          # from differing hashes because the hashed input was invisible.
+          echo "canonical-facts=$canonical" >> "$GITHUB_OUTPUT"
 
       # Dedup search (FR-012–FR-016, research.md): reuses rebase.yml's
       # marker-in-body convention. state=all so open/closed surface in one
@@ -1028,13 +1118,38 @@ jobs:
           FP: ${{ steps.fingerprint.outputs.fingerprint }}
         run: |
           set -uo pipefail
-          results=$(gh search issues --repo "$GITHUB_REPOSITORY" "wing-commander-watchdog: fingerprint=$FP in:body" --state all --json number,state 2>/dev/null || echo '[]')
+          # Query shape matters twice over (issue #118):
+          #   - `--state all` is NOT a valid value for `gh search issues`
+          #     (only open|closed). The old call therefore exited non-zero on
+          #     EVERY run, and `2>/dev/null || echo '[]'` turned that into a
+          #     confident "no match" — which is why dedup never once matched
+          #     and "New occurrence" has never fired. Omitting --state
+          #     searches both states, which is what was wanted.
+          #   - The fingerprint must be a QUOTED phrase. Searching the whole
+          #     marker unquoted let GitHub tokenize "wing-commander-watchdog"
+          #     and "fingerprint" as words, matching every watchdog issue
+          #     regardless of hash — enough results to trip the >1
+          #     "data-integrity" branch below on a hash that in fact
+          #     appears exactly once.
+          # A failure here must stay loud: reporting "none" on a broken
+          # search is how this went unnoticed for so long.
+          if ! results=$(gh search issues --repo "$GITHUB_REPOSITORY" "\"$FP\" in:body" --json number,state 2>"$RUNNER_TEMP/dedup-search-err.txt"); then
+            echo "::warning::dedup search failed ($(tr -d '\n' < "$RUNNER_TEMP/dedup-search-err.txt" | head -c 200)) — this Finding is treated as new, which may file a duplicate issue."
+            results='[]'
+          fi
           count=$(printf '%s' "$results" | jq 'length')
           issue_number=""
           if [ "$count" -eq 0 ]; then
             outcome=none
           elif [ "$count" -eq 1 ]; then
-            state=$(printf '%s' "$results" | jq -r '.[0].state')
+            # Case-normalized on purpose: `gh issue view --json state`
+            # yields "OPEN" but `gh search issues --json state` yields
+            # "open", and comparing the search's output against "OPEN"
+            # silently classified every live match as match-closed — so a
+            # recurrence was reported as a REGRESSION and the act job tried
+            # to reopen an already-open issue. Same defect class as
+            # f97408f, opposite casing.
+            state=$(printf '%s' "$results" | jq -r '.[0].state | ascii_upcase')
             issue_number=$(printf '%s' "$results" | jq -r '.[0].number')
             if [ "$state" = "OPEN" ]; then outcome=match-open; else outcome=match-closed; fi
           else
@@ -1273,6 +1388,7 @@ jobs:
           SUPPRESSED: ${{ steps.suppress.outputs.suppressed }}
           FINGERPRINT: ${{ steps.fingerprint.outputs.fingerprint }}
           SHORT_FINGERPRINT: ${{ steps.fingerprint.outputs.short-fingerprint }}
+          CANONICAL_FACTS: ${{ steps.fingerprint.outputs.canonical-facts }}
           DEDUP_OUTCOME: ${{ steps.dedup.outputs.outcome }}
           DEDUP_ISSUE: ${{ steps.dedup.outputs.issue-number }}
           HAS_DIFF: ${{ steps.diff-check.outputs.has-diff }}
@@ -1284,12 +1400,13 @@ jobs:
             --argjson suppressed "${SUPPRESSED:-false}" \
             --arg fingerprint "${FINGERPRINT:-}" \
             --arg shortfp "${SHORT_FINGERPRINT:-}" \
+            --arg canonicalfacts "${CANONICAL_FACTS:-}" \
             --arg dedup "${DEDUP_OUTCOME:-}" \
             --arg dedupissue "${DEDUP_ISSUE:-}" \
             --argjson hasdiff "${HAS_DIFF:-false}" \
             --arg rung "${RUNG:-}" \
             --arg rungreason "${RUNG_REASON:-}" \
-            '{suppressed: $suppressed, fingerprint: $fingerprint, "short-fingerprint": $shortfp, dedup: $dedup, "dedup-issue": $dedupissue, "has-diff": $hasdiff, rung: $rung, "rung-reason": $rungreason}' \
+            '{suppressed: $suppressed, fingerprint: $fingerprint, "short-fingerprint": $shortfp, "canonical-facts": $canonicalfacts, dedup: $dedup, "dedup-issue": $dedupissue, "has-diff": $hasdiff, rung: $rung, "rung-reason": $rungreason}' \
             > "${{ runner.temp }}/watchdog-triage-decision.json"
 
       - name: Upload triage decision artifact
@@ -1394,6 +1511,7 @@ jobs:
               echo "suppressed=$(jq -r '.suppressed' "$f")"
               echo "fingerprint=$(jq -r '.fingerprint' "$f")"
               echo "short-fingerprint=$(jq -r '."short-fingerprint"' "$f")"
+              echo "canonical-facts=$(jq -r '."canonical-facts" // ""' "$f")"
               echo "dedup=$(jq -r '.dedup' "$f")"
               echo "dedup-issue=$(jq -r '."dedup-issue"' "$f")"
               echo "rung=$(jq -r '.rung' "$f")"
@@ -1405,6 +1523,7 @@ jobs:
               echo "suppressed=false"
               echo "fingerprint="
               echo "short-fingerprint="
+              echo "canonical-facts="
               echo "dedup="
               echo "dedup-issue="
               echo "rung="
@@ -1519,6 +1638,7 @@ jobs:
           DEDUP_OUTCOME: ${{ steps.decision.outputs.dedup }}
           DEDUP_ISSUE: ${{ steps.decision.outputs.dedup-issue }}
           FINGERPRINT: ${{ steps.decision.outputs.fingerprint }}
+          CANONICAL_FACTS: ${{ steps.decision.outputs.canonical-facts }}
           FINDING_CLASS: ${{ matrix.class }}
           FINDING_DESCRIPTION: ${{ matrix.description }}
           FINDING_EVIDENCE: ${{ toJson(matrix.evidence) }}
@@ -1536,6 +1656,11 @@ jobs:
               printf '%s' "$FINDING_EVIDENCE" | jq -r '.[]? | "- \(.source): \(.locator)"'
               echo ""
               echo "_First seen: [this run]($RUN_URL)_"
+              echo ""
+              # The exact hashed input. If a later occurrence files a new
+              # issue instead of deduping onto this one, comparing these two
+              # lines says immediately which fact drifted (issue #118).
+              echo "_Fingerprint facts: \`$FINDING_CLASS\` + \`$CANONICAL_FACTS\`_"
               echo ""
               echo "<!-- wing-commander-watchdog: fingerprint=$FINGERPRINT -->"
             } > "${{ runner.temp }}/pipeline-defect-body.md"
