@@ -1191,12 +1191,19 @@ jobs:
           #   {"actual","expected","stage","workflow"}       -> 3b985ddc96a8
           # both legal under the vocabulary, both different hashes. Projecting
           # to the class's identifying keys makes the extra ones irrelevant.
+          # Project to the MINIMUM set of keys that actually discriminate.
+          # Every additional key is drift surface, not precision: observed
+          # live, `missing-spec-metadata` reported file as "spec-meta.json"
+          # on one run and as the full repo-relative path on another, which
+          # split one defect across two fingerprints. The file adds nothing
+          # here — the branch already identifies which spec is affected —
+          # so it is projected away.
           case "$FINDING_CLASS" in
             denied-tool)           keys='["tool"]' ;;
             lost-progress)         keys='["branch"]' ;;
             stage-mismatch)        keys='["expected","actual"]' ;;
-            missing-spec-artifact) keys='["branch","file"]' ;;
-            missing-spec-metadata) keys='["branch","file"]' ;;
+            missing-spec-artifact) keys='["branch"]' ;;
+            missing-spec-metadata) keys='["branch"]' ;;
             token-budget-warning)  keys='["job"]' ;;
             *)
               # Classes are model-authored too, so this map is always
