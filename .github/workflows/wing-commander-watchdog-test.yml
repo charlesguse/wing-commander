@@ -62,11 +62,14 @@ jobs:
             target=1   # no run 1 exists; stage 8's resolve job must fail
             echo "Injecting failure: dispatching stage 8 at unresolvable run-id $target"
           else
-            # Prefer re-inspecting the latest completed stage-8 run (the
+            # Prefer re-inspecting the latest SUCCESSFUL stage-8 run (the
             # designed manual re-inspection path); fall back to any
-            # completed run on an empty history.
+            # completed run on an empty history. Successful only: a prior
+            # inject-failure test leaves a deliberately failed stage-8 run
+            # behind, and pointing the watchdog at it makes it (correctly)
+            # file a step-failure issue about our own test wreckage.
             target="$(gh run list -R "$REPO" --workflow wing-commander-8-watchdog.yml \
-              --status completed --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+              --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
             if [ -z "$target" ]; then
               target="$(gh run list -R "$REPO" --status completed --limit 1 \
                 --json databaseId --jq '.[0].databaseId')"
