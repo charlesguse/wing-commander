@@ -163,8 +163,28 @@ jobs:
           path: .wing-commander-pipeline
           persist-credentials: false
 
+      # Re-fetch the lifecycle issue's live state before any write can occur
+      # (specs/022-gate-closed-lifecycle). finalize.yml has no comment
+      # trigger of its own — gated defensively per FR-004's explicit naming.
+      - name: Check lifecycle issue state
+        id: lifecycle-gate
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-lifecycle-gate
+        with:
+          issue-number: ${{ inputs.issue-number }}
+          token: ${{ github.token }}
+
+      - name: Note closed lifecycle and stop
+        if: steps.lifecycle-gate.outputs.is-open != 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ github.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: info
+          summary: "This lifecycle issue is closed — no action was taken."
+
       # Deterministic fail-fast before any billable work (FR-004, FR-009).
       - name: Preflight
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-preflight
         with:
           oauth-token: ${{ secrets.claude-code-oauth-token }}
@@ -175,6 +195,7 @@ jobs:
           aws-region: ${{ inputs.aws-region }}
 
       - name: Configure AWS credentials for Bedrock
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-bedrock-credentials
         with:
           use-bedrock: ${{ inputs.use-bedrock }}
@@ -183,6 +204,7 @@ jobs:
 
       - name: Wing Commander context
         id: ctx
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.speckit-app-id }}
@@ -191,6 +213,7 @@ jobs:
       # Spec edge case 3: never assume `main` — take the input or derive.
       - name: Resolve default branch
         id: defbranch
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           DEFAULT_BRANCH: ${{ inputs.default-branch }}
@@ -203,6 +226,7 @@ jobs:
       # agent prompts.
       - name: Resolve and validate spec identity
         id: spec
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
           SPEC_DIR_INPUT: ${{ inputs.spec-dir }}
           ISSUE: ${{ inputs.issue-number }}
@@ -221,6 +245,7 @@ jobs:
       # clean: false — a default `git clean` here would delete the untracked
       # .wing-commander-pipeline checkout the composite steps below still need.
       - name: Checkout spec branch as wing-commander-bot
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
@@ -233,6 +258,7 @@ jobs:
       # finalizing the wrong thing (the message names the providing stages).
       - name: Verify spec artifacts match the dispatch
         id: meta
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
           SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
           ISSUE: ${{ inputs.issue-number }}
@@ -260,6 +286,7 @@ jobs:
       # change.
       - name: Check for an existing final pull request
         id: guard
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           SLUG: ${{ steps.spec.outputs.slug }}
@@ -281,6 +308,7 @@ jobs:
       # later step only needs to check this one flag.
       - name: Check for a diff and compute "how to see it"
         id: diff
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           GUARD_SKIP: ${{ steps.guard.outputs.skip }}
@@ -316,7 +344,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Announce finalize anomaly (no diff)
-        if: steps.diff.outputs.anomaly == 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.anomaly == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ steps.ctx.outputs.token }}
@@ -329,7 +357,7 @@ jobs:
       # never instructions (constitution II/V).
       - name: Summarize change and extract remaining manual work
         id: summarize
-        if: steps.diff.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
@@ -392,7 +420,7 @@ jobs:
             --disallowedTools "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
 
       - name: Upload Claude execution log
-        if: always() && steps.summarize.outcome != 'skipped'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.summarize.outcome != 'skipped'
         uses: actions/upload-artifact@v4
         with:
           name: claude-execution-output
@@ -401,7 +429,7 @@ jobs:
 
       # Surface this run's own metrics in the run summary (see intake stage).
       - name: Agent run metrics summary
-        if: always() && steps.summarize.outcome != 'skipped'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.summarize.outcome != 'skipped'
         # Belt-and-braces for the action's own "never fail the job" contract.
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
@@ -412,7 +440,7 @@ jobs:
       # Fail loudly rather than opening a PR with incomplete content.
       - name: Verify agent output
         id: verify-agent-output
-        if: steps.diff.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
         env:
           SUMMARIZE_OUTCOME: ${{ steps.summarize.outcome }}
         run: |
@@ -426,7 +454,7 @@ jobs:
           fi
 
       - name: Announce finalize failure (agent output)
-        if: always() && steps.verify-agent-output.outputs.failed == 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.verify-agent-output.outputs.failed == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ steps.ctx.outputs.token }}
@@ -439,7 +467,7 @@ jobs:
       # the issue comment below will also use verbatim.
       - name: Assemble PR body
         id: body
-        if: steps.diff.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
         env:
           CONVERGED: ${{ inputs.converged }}
           ISSUE: ${{ inputs.issue-number }}
@@ -482,7 +510,7 @@ jobs:
       # The feature name for the PR title, from spec.md's title heading.
       - name: Determine feature title
         id: title
-        if: steps.diff.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
         env:
           SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
         run: |
@@ -491,7 +519,7 @@ jobs:
 
       - name: Open the final pull request
         id: pr
-        if: steps.diff.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -509,7 +537,7 @@ jobs:
       # on failure so a later dispatch still retries the whole thing.
       - name: Verify the final pull request was created
         id: verify-pr
-        if: steps.diff.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           SLUG: ${{ steps.spec.outputs.slug }}
@@ -528,7 +556,7 @@ jobs:
           echo "Final pull request #$pr opened (${SPEC_PREFIX}$SLUG -> $DB)." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Announce finalize failure (PR verification)
-        if: always() && steps.verify-pr.outputs.failed == 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.verify-pr.outputs.failed == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ steps.ctx.outputs.token }}
@@ -540,7 +568,7 @@ jobs:
       # this moment posts no comment at all — a customer-visible silent
       # stall until a human happens to notice the PR.
       - name: Announce the implementation PR for review
-        if: steps.diff.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ steps.ctx.outputs.token }}
@@ -553,7 +581,7 @@ jobs:
       # Direct commit onto the spec branch, no work branch — same shape the
       # implement stage already uses for its own metadata writes.
       - name: Commit metadata (stage -> review)
-        if: steps.diff.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
         env:
           SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
           SLUG: ${{ steps.spec.outputs.slug }}
@@ -572,7 +600,7 @@ jobs:
       # guarantees the PR and the issue never disagree.
       - name: Check for remaining manual work
         id: remaining
-        if: steps.diff.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
         run: |
           remaining_file="${{ runner.temp }}/finalize-remaining.md"
           if [ -s "$remaining_file" ] && [ -n "$(tr -d '[:space:]' < "$remaining_file")" ]; then
@@ -582,7 +610,7 @@ jobs:
           fi
 
       - name: Announce remaining manual work on the lifecycle issue
-        if: steps.remaining.outputs.has-remaining == 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.remaining.outputs.has-remaining == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ steps.ctx.outputs.token }}
@@ -593,7 +621,7 @@ jobs:
           timing: "after this PR merges"
 
       - name: Announce no remaining manual work on the lifecycle issue
-        if: steps.remaining.outputs.has-remaining == 'false'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.remaining.outputs.has-remaining == 'false'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ steps.ctx.outputs.token }}
@@ -604,7 +632,7 @@ jobs:
       # The last write this run performs — the lifecycle issue's advance to
       # the review stage.
       - name: Flip stage label
-        if: steps.diff.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ISSUE: ${{ inputs.issue-number }}

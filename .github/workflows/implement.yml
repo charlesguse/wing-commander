@@ -220,8 +220,28 @@ jobs:
           path: .wing-commander-pipeline
           persist-credentials: false
 
+      # Re-fetch the lifecycle issue's live state before any write can occur
+      # (specs/022-gate-closed-lifecycle). implement.yml has no comment
+      # trigger of its own — gated defensively per FR-004's explicit naming.
+      - name: Check lifecycle issue state
+        id: lifecycle-gate
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-lifecycle-gate
+        with:
+          issue-number: ${{ inputs.issue-number }}
+          token: ${{ github.token }}
+
+      - name: Note closed lifecycle and stop
+        if: steps.lifecycle-gate.outputs.is-open != 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ github.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: info
+          summary: "This lifecycle issue is closed — no action was taken."
+
       # Deterministic fail-fast before any billable work (FR-004, FR-009).
       - name: Preflight
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-preflight
         with:
           oauth-token: ${{ secrets.claude-code-oauth-token }}
@@ -235,6 +255,7 @@ jobs:
           aws-region: ${{ inputs.aws-region }}
 
       - name: Configure AWS credentials for Bedrock
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-bedrock-credentials
         with:
           use-bedrock: ${{ inputs.use-bedrock }}
@@ -243,6 +264,7 @@ jobs:
 
       - name: Wing Commander context
         id: ctx
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.speckit-app-id }}
@@ -253,6 +275,7 @@ jobs:
       # agent prompts.
       - name: Resolve and validate spec identity
         id: spec
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
           SPEC_DIR_INPUT: ${{ inputs.spec-dir }}
           ISSUE: ${{ inputs.issue-number }}
@@ -276,6 +299,7 @@ jobs:
       # clean: false — a default `git clean` here would delete the untracked
       # .wing-commander-pipeline checkout the composite steps below still need.
       - name: Checkout spec branch as wing-commander-bot
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
@@ -288,6 +312,7 @@ jobs:
       # than building the wrong thing (the message names the providing stage).
       - name: Verify spec artifacts match the dispatch
         id: meta
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
           SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
           ISSUE: ${{ inputs.issue-number }}
@@ -319,6 +344,7 @@ jobs:
       # no-ops: no cycle, no comment, no dispatch.
       - name: Idempotency guard
         id: guard
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
           STAGE: ${{ steps.meta.outputs.stage }}
           RECORDED: ${{ steps.meta.outputs.recorded-iteration }}
@@ -337,7 +363,7 @@ jobs:
       # The iteration cap, from the max-iterations input (research.md D5).
       - name: Resolve iteration cap
         id: cap
-        if: steps.guard.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
         env:
           MAX_INPUT: ${{ inputs.max-iterations }}
         run: |
@@ -351,7 +377,7 @@ jobs:
       # Tie every run — pipeline-dispatched or manual — back to the lifecycle
       # issue the moment it starts doing real work, with a link to the run.
       - name: Report run started on lifecycle issue
-        if: steps.guard.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -367,7 +393,7 @@ jobs:
       # pushes, so record where the branch stood before the agent ran.
       - name: Record base SHA
         id: base
-        if: steps.guard.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
         run: echo "base-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       # actionlint (the proper GitHub-workflow linter — it also shellchecks
@@ -380,7 +406,7 @@ jobs:
       # agent would otherwise ship blind (it edits workflow YAML for a living).
       - name: Install actionlint for the agent
         id: actionlint
-        if: steps.guard.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
         env:
           ACTIONLINT_VERSION: "1.7.7"
         run: |
@@ -396,7 +422,7 @@ jobs:
       # dying here.
       - name: Implement and converge (cycle)
         id: cycle
-        if: steps.guard.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
@@ -480,7 +506,7 @@ jobs:
       # Uploaded before any retry runs so the retry's transcript (same temp
       # path) doesn't clobber the primary attempt's.
       - name: Upload Claude execution log (cycle)
-        if: always() && steps.cycle.outcome != 'skipped'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.cycle.outcome != 'skipped'
         uses: actions/upload-artifact@v4
         with:
           name: claude-execution-output-cycle
@@ -491,7 +517,7 @@ jobs:
       # shared transcript path. run-label distinguishes it from the retry and
       # progress-comment blocks in this same job's summary.
       - name: Agent run metrics summary (cycle)
-        if: always() && steps.cycle.outcome != 'skipped'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.cycle.outcome != 'skipped'
         # Belt-and-braces for the action's own "never fail the job" contract.
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
@@ -506,7 +532,7 @@ jobs:
       # cycle converged iff no "converge:" commit touching tasks.md landed.
       - name: Read back cycle outcome
         id: outcome
-        if: steps.guard.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
         env:
           SLUG: ${{ steps.spec.outputs.slug }}
           SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
@@ -560,6 +586,7 @@ jobs:
       - name: Implement and converge (retry at escalation model)
         id: retry
         if: >-
+          steps.lifecycle-gate.outputs.is-open == 'true' &&
           steps.guard.outputs.skip != 'true' &&
           steps.outcome.outputs.ok == 'false' &&
           inputs.model != inputs.escalation-model
@@ -644,7 +671,7 @@ jobs:
             --disallowedTools "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
 
       - name: Upload Claude execution log (retry)
-        if: always() && steps.retry.outcome != 'skipped'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.retry.outcome != 'skipped'
         uses: actions/upload-artifact@v4
         with:
           name: claude-execution-output-retry
@@ -654,7 +681,7 @@ jobs:
       # Retry run's metrics — read after the retry's own upload and before the
       # haiku progress-comment step overwrites the shared transcript path.
       - name: Agent run metrics summary (retry)
-        if: always() && steps.retry.outcome != 'skipped'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.retry.outcome != 'skipped'
         # Belt-and-braces for the action's own "never fail the job" contract.
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
@@ -665,7 +692,7 @@ jobs:
 
       - name: Read back retry outcome
         id: retry-outcome
-        if: steps.retry.outcome == 'success' || steps.retry.outcome == 'failure'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && (steps.retry.outcome == 'success' || steps.retry.outcome == 'failure')
         env:
           SLUG: ${{ steps.spec.outputs.slug }}
           SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
@@ -720,7 +747,7 @@ jobs:
       # stand. Downstream steps read only these final-* values.
       - name: Consolidate final outcome
         id: final
-        if: steps.guard.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
         env:
           RETRY_RAN: ${{ (steps.retry.outcome == 'success' || steps.retry.outcome == 'failure') && 'true' || 'false' }}
           PRIMARY_OK: ${{ steps.outcome.outputs.ok }}
@@ -756,7 +783,7 @@ jobs:
       # overwrites the primary's, which was already uploaded as an artifact).
       - name: Extract agent final message
         id: agentmsg
-        if: steps.guard.outputs.skip != 'true' && steps.final.outputs.ok == 'false'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.final.outputs.ok == 'false'
         run: |
           file="$RUNNER_TEMP/claude-execution-output.json"
           msg=""
@@ -774,7 +801,7 @@ jobs:
       # main agent's turn budget isn't spent on reporting.
       - name: Post progress comment (haiku)
         id: progress
-        if: steps.guard.outputs.skip != 'true' && steps.final.outputs.ok == 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.final.outputs.ok == 'true'
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
@@ -825,7 +852,7 @@ jobs:
       # artifact, so the metrics step anchors directly after the agent step
       # itself — every agent invocation gets its own summary block.
       - name: Agent run metrics summary (progress comment)
-        if: always() && steps.progress.outcome != 'skipped'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.progress.outcome != 'skipped'
         # Belt-and-braces for the action's own "never fail the job" contract.
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
@@ -838,6 +865,7 @@ jobs:
       # completed cycle onward; later cycles change nothing.
       - name: Flip stage label (first cycle)
         if: >-
+          steps.lifecycle-gate.outputs.is-open == 'true' &&
           steps.guard.outputs.skip != 'true' &&
           steps.final.outputs.ok == 'true' &&
           inputs.iteration == 1
@@ -857,7 +885,7 @@ jobs:
       # report to the issue and stops — standalone adoption needs no sibling
       # workflow (FR-002).
       - name: Dispatch next step
-        if: steps.guard.outputs.skip != 'true' && steps.final.outputs.ok == 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.final.outputs.ok == 'true'
         env:
           APP_TOKEN: ${{ steps.ctx.outputs.token }}
           DISPATCH_TOKEN: ${{ github.token }}
