@@ -328,22 +328,38 @@ jobs:
 
           # Build an id->name map of every tool_use block, then flag any
           # tool_result marked is_error==true (a denied/rejected tool call),
-          # grouping by tool name; only tools with MORE THAN ONE denial are
-          # "repeated" enough to signal (data-model.md's denied-tool class).
+          # grouping by tool name — every tool with at least one denial is
+          # reported (specs/022-gate-closed-lifecycle, FR-008: no silent
+          # single-tool drop). The array position recorded per denial is
+          # record-index, not a conversation turn (FR-010) — a single turn
+          # commonly spans several array entries, so this index can exceed
+          # the run's own num_turns; never compared against it. Prefers a
+          # terminal result record's own permission-denials count when
+          # present (FR-009, forward-compatible: no live case exists today
+          # per research.md R4 — the Claude Code SDK result record carries
+          # no permission_denials-shaped field in the version this pipeline
+          # currently uses; assumed shape if a future SDK version adds one:
+          # an array of {tool, count} objects).
           # shellcheck disable=SC2016 # this is a jq program — its $vars must
           # NOT be shell-expanded.
           filter='
-            ( [ .[] | select(.type=="assistant") | (.message.content // [])[]? | select(.type=="tool_use") | {(.id): .name} ] | add // {} ) as $toolmap
-            | [ to_entries[] as $e
-                | $e.value as $ev
-                | select($ev.type=="user")
-                | ($ev.message.content // [])[]?
-                | select(.type=="tool_result" and (.is_error==true))
-                | { turn: $e.key, tool: ($toolmap[.tool_use_id] // "unknown") }
+            if ([ .[] | select(.type=="result") | has("permission_denials") ] | any)
+            then
+              [ .[] | select(.type=="result") | .permission_denials[]?
+                | {source:"result-record", "class-hint":"denied-tool", facts:{tool: .tool, denials: .count}}
               ]
-            | group_by(.tool)
-            | map(select(length > 1))
-            | map({source:"execution-output", "class-hint":"denied-tool", facts:{tool: .[0].tool, denials: length, turns: [.[].turn]}})
+            else
+              ( [ .[] | select(.type=="assistant") | (.message.content // [])[]? | select(.type=="tool_use") | {(.id): .name} ] | add // {} ) as $toolmap
+              | [ to_entries[] as $e
+                  | $e.value as $ev
+                  | select($ev.type=="user")
+                  | ($ev.message.content // [])[]?
+                  | select(.type=="tool_result" and (.is_error==true))
+                  | { "record-index": $e.key, tool: ($toolmap[.tool_use_id] // "unknown") }
+                ]
+              | group_by(.tool)
+              | map({source:"execution-output (log-scan fallback — not authoritative)", "class-hint":"denied-tool", facts:{tool: .[0].tool, denials: length, "record-index": [.[]."record-index"]}})
+            end
           '
           found=false
           for f in "$dl_dir"/*/*.json "$dl_dir"/*.json; do
