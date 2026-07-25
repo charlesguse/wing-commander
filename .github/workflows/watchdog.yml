@@ -692,6 +692,71 @@ jobs:
           MODEL_INPUT: ${{ inputs.diagnose-model }}
         run: echo "model=${MODEL_VAR:-$MODEL_INPUT}" >> "$GITHUB_OUTPUT"
 
+      # The finding-class vocabulary lives in GitHub labels, not in this file.
+      #
+      # `class` is half the dedup fingerprint, and left as free text the agent
+      # invented a fresh synonym for the same defect every few runs —
+      # missing-spec-metadata / missing-spec-artifact / spec-excluded-missing-
+      # meta were three names for one rebase-discover bug (#118, #120, #122).
+      # Naming it in the prompt was not enough; the prompt has always asked
+      # for stability. So the label set is compiled into the structured-output
+      # schema as an enum, which the model cannot step outside.
+      #
+      # Keeping the registry in labels rather than an inline enum means a new
+      # problem type needs a label, not a code change — and the labels double
+      # as issue triage facets. "__new__" is the escape hatch for a genuinely
+      # novel type; a deterministic step (never the agent) turns the proposal
+      # into the real class name and creates the label, so the vocabulary
+      # self-heals after exactly one occurrence.
+      - name: Resolve finding-class vocabulary
+        id: class-vocab
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          LABEL_PREFIX: "🐕 · "
+        run: |
+          set -uo pipefail
+          # Sanitized to [a-z0-9-]: these strings are interpolated into a
+          # single-quoted --json-schema argument that claude-code-action
+          # tokenizes with shell-quote, so an apostrophe in a label name
+          # would split the token and corrupt the schema.
+          classes="$(gh label list --repo "$GITHUB_REPOSITORY" --limit 200 --json name \
+            --jq '[.[].name | select(startswith($ENV.LABEL_PREFIX)) | sub("^" + $ENV.LABEL_PREFIX; "")
+                   | ascii_downcase | gsub("[^a-z0-9-]"; "")] | map(select(length > 0)) | unique' \
+            2>/dev/null || echo '[]')"
+          if [ -z "$classes" ] || [ "$classes" = "[]" ]; then
+            # No registry yet (fresh consumer repo, or the label query failed).
+            # Fall back to a free-text class so diagnosis still works; dedup is
+            # degraded for this run, which is strictly better than no verdict.
+            echo "::warning::no '${LABEL_PREFIX}<type>' labels found — falling back to a free-text finding class, so dedup may not match across runs for this run's findings."
+            class_schema='{"type":"string"}'
+            classes='[]'
+          else
+            class_schema="$(printf '%s' "$classes" | jq -c '. + ["__new__"] | {type:"string", enum:.}')"
+          fi
+          schema="$(jq -cn --argjson cls "$class_schema" '{
+            type:"object",
+            properties:{findings:{type:"array",items:{
+              type:"object",
+              properties:{
+                class:$cls,
+                proposedClass:{type:["string","null"]},
+                description:{type:"string"},
+                evidence:{type:"array",items:{type:"object",
+                  properties:{source:{type:"string"},locator:{type:"string"}},
+                  required:["source","locator"]}},
+                normalizedFacts:{type:"object",additionalProperties:false,properties:{
+                  tool:{type:"string"},branch:{type:"string"},spec:{type:"string"},
+                  file:{type:"string"},job:{type:"string"},step:{type:"string"},
+                  workflow:{type:"string"},stage:{type:"string"},
+                  expected:{type:"string"},actual:{type:"string"}}},
+                severityHint:{type:"string",enum:["minor","notable","large"]},
+                alreadyHandledBy:{type:["string","null"]}},
+              required:["class","description","evidence","normalizedFacts","severityHint"]}}},
+            required:["findings"]}')"
+          echo "classes=$classes" >> "$GITHUB_OUTPUT"
+          echo "schema=$schema" >> "$GITHUB_OUTPUT"
+          echo "Finding-class vocabulary: $classes" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Diagnose
         id: diagnose
         continue-on-error: true
@@ -741,8 +806,23 @@ jobs:
             if you cannot.
 
             For each Finding, produce:
-            - class: a short, stable, kebab-case identifier for the problem
-              type (reuse "denied-tool" or "lost-progress" when applicable).
+            - class: the problem type, chosen from the vocabulary the schema
+              allows. These are this repository's known problem types:
+              ${{ steps.class-vocab.outputs.classes }}
+              STRONGLY prefer an existing one — two runs describing the same
+              underlying problem MUST choose the same class, because it is
+              half the identity used to decide whether this is a new issue
+              or a recurrence of one already filed. Near-synonyms are the
+              specific failure to avoid: a missing spec-meta file is the
+              same class whether you would have called it "missing metadata",
+              "missing artifact", or "spec excluded".
+              Use "__new__" ONLY when the problem is genuinely a type not in
+              that list, and then also set proposedClass to the kebab-case
+              name you would give it. Do not use "__new__" merely because the
+              wording of an existing class is an imperfect fit.
+            - proposedClass: the kebab-case name for a genuinely new type,
+              set ONLY alongside class "__new__"; otherwise omit it or set
+              it to null. A deterministic step, not you, registers it.
             - description: human-readable, MUST quote or cite the specific
               evidence (tool name, branch, commit counts, matched sentinel,
               etc.) — a human must be able to confirm the diagnosis without
@@ -814,14 +894,18 @@ jobs:
           # JSON.parses this argument directly (a path fails with
           # "Unrecognized token '/'"). Single-quoted so shell-quote, which
           # claude-code-action tokenizes claude_args with, keeps it as one
-          # token with its double quotes intact. The Findings array is wrapped
+          # token with its double quotes intact — which is also why the
+          # class names compiled into it upstream are stripped to [a-z0-9-].
+          # The schema itself is built by the "Resolve finding-class
+          # vocabulary" step so the class enum reflects the label registry
+          # at run time. The Findings array is wrapped
           # in an object because the API rejects a top-level "type": "array"
           # structured-output schema outright ("input_schema.type: Input
           # should be 'object'"); the read-back step below unwraps .findings.
           claude_args: |
             --model ${{ steps.resolve-diagnose-model.outputs.model }}
             --max-turns ${{ inputs.diagnose-max-turns }}
-            --json-schema '{"type":"object","properties":{"findings":{"type":"array","items":{"type":"object","properties":{"class":{"type":"string"},"description":{"type":"string"},"evidence":{"type":"array","items":{"type":"object","properties":{"source":{"type":"string"},"locator":{"type":"string"}},"required":["source","locator"]}},"normalizedFacts":{"type":"object","additionalProperties":false,"properties":{"tool":{"type":"string"},"branch":{"type":"string"},"spec":{"type":"string"},"file":{"type":"string"},"job":{"type":"string"},"step":{"type":"string"},"workflow":{"type":"string"},"stage":{"type":"string"},"expected":{"type":"string"},"actual":{"type":"string"}}},"severityHint":{"type":"string","enum":["minor","notable","large"]},"alreadyHandledBy":{"type":["string","null"]}},"required":["class","description","evidence","normalizedFacts","severityHint"]}}},"required":["findings"]}'
+            --json-schema '${{ steps.class-vocab.outputs.schema }}'
             --allowedTools "Read,Grep,Bash(gh:*),Bash(git log:*),Bash(git diff:*)"
             --disallowedTools "WebSearch,WebFetch,Write,Edit,Bash(git commit:*),Bash(git push:*)"
 
@@ -875,6 +959,22 @@ jobs:
             # previous shape rather than to zero Findings.
             findings="$(printf '%s' "$raw" | jq -c 'if type=="object" and (.findings|type)=="array" then .findings elif type=="array" then . else [] end' 2>/dev/null || echo '[]')"
           fi
+          # Resolve the "__new__" class escape deterministically — the agent
+          # proposes a name, it never authors the final one. proposedClass is
+          # normalized to the same [a-z0-9-] kebab shape the vocabulary step
+          # compiles into the enum, so a registered class always round-trips
+          # to itself on the next run. A "__new__" with no usable proposal
+          # degrades to "unclassified" rather than leaving the literal
+          # sentinel to become a fingerprint input and an issue title.
+          findings="$(printf '%s' "$findings" | jq -c '
+            map(if .class == "__new__"
+                then .class = ((.proposedClass // "")
+                               | ascii_downcase
+                               | gsub("[^a-z0-9]+"; "-")
+                               | sub("^-+"; "") | sub("-+$"; "")
+                               | if . == "" then "unclassified" else . end)
+                     | .newClass = true
+                else .newClass = false end)')"
           # Add a stable zero-based index to each Finding for the
           # triage/act matrix and per-index artifact naming.
           findings="$(printf '%s' "$findings" | jq -c 'to_entries | map(.value + {index: .key})')"
@@ -1051,6 +1151,28 @@ jobs:
       # different key names and so never deduped. The non-string filter
       # here is the second layer: a count or turn list that slips through
       # is dropped rather than silently making the hash unique per run.
+      # Registers a genuinely new finding class in the label vocabulary the
+      # diagnose schema is compiled from, so the NEXT run is offered it as an
+      # enum choice instead of inventing another synonym. Deliberately here
+      # rather than in act: the vocabulary must grow even when act's writes
+      # are suppressed (WING_COMMANDER_WATCHDOG_PAUSED), otherwise a paused
+      # watchdog would keep re-proposing the same "new" class forever.
+      - name: Register new finding class
+        id: register-class
+        if: steps.suppress.outputs.suppressed != 'true' && matrix.newClass
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          FINDING_CLASS: ${{ matrix.class }}
+        run: |
+          set -uo pipefail
+          label="🐕 · ${FINDING_CLASS}"
+          if gh label create "$label" --repo "$GITHUB_REPOSITORY" --color 5319E7 \
+               --description "Watchdog finding class: ${FINDING_CLASS}" --force >/dev/null 2>&1; then
+            echo "Registered new finding class \`${FINDING_CLASS}\` as label \`${label}\`." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::could not register finding class '${FINDING_CLASS}' as a label — the next run will not be offered it and may propose a synonym."
+          fi
+
       - name: Compute fingerprint
         id: fingerprint
         if: steps.suppress.outputs.suppressed != 'true'
@@ -1664,7 +1786,11 @@ jobs:
               echo ""
               echo "<!-- wing-commander-watchdog: fingerprint=$FINGERPRINT -->"
             } > "${{ runner.temp }}/pipeline-defect-body.md"
-            number="$(gh issue create --repo "$GITHUB_REPOSITORY" --title "watchdog: $FINDING_CLASS" --body-file "${{ runner.temp }}/pipeline-defect-body.md" --label "pipeline-defect" | grep -Eo '[0-9]+$')"
+            # The class label is best-effort: it is a triage facet, so a
+            # labelling failure must not lose the issue itself.
+            class_label="🐕 · ${FINDING_CLASS}"
+            gh label create "$class_label" --color 5319E7 --description "Watchdog finding class: ${FINDING_CLASS}" --force >/dev/null 2>&1 || true
+            number="$(gh issue create --repo "$GITHUB_REPOSITORY" --title "watchdog: $FINDING_CLASS" --body-file "${{ runner.temp }}/pipeline-defect-body.md" --label "pipeline-defect" --label "$class_label" | grep -Eo '[0-9]+$')"
             echo "issue-action=created" >> "$GITHUB_OUTPUT"
           else
             number="$DEDUP_ISSUE"
@@ -1696,11 +1822,16 @@ jobs:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           DEDUP_OUTCOME: ${{ steps.decision.outputs.dedup }}
           DEDUP_ISSUE: ${{ steps.decision.outputs.dedup-issue }}
+          FINDING_CLASS: ${{ matrix.class }}
           FINDING_EVIDENCE: ${{ toJson(matrix.evidence) }}
           RUN_URL: ${{ needs.collect.outputs.run-url }}
         run: |
           set -uo pipefail
           number="$DEDUP_ISSUE"
+          # Backfill the class label on issues filed before the vocabulary
+          # existed, so the label set stays a complete index of what is
+          # actually open. Best-effort: never fail the report over a facet.
+          gh issue edit "$number" --repo "$GITHUB_REPOSITORY" --add-label "🐕 · ${FINDING_CLASS}" >/dev/null 2>&1 || true
           if [ "$DEDUP_OUTCOME" = "match-closed" ]; then
             gh issue reopen "$number"
           fi
