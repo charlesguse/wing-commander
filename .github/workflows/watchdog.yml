@@ -1105,7 +1105,14 @@ jobs:
           if [ "$count" -eq 0 ]; then
             outcome=none
           elif [ "$count" -eq 1 ]; then
-            state=$(printf '%s' "$results" | jq -r '.[0].state')
+            # Case-normalized on purpose: `gh issue view --json state`
+            # yields "OPEN" but `gh search issues --json state` yields
+            # "open", and comparing the search's output against "OPEN"
+            # silently classified every live match as match-closed — so a
+            # recurrence was reported as a REGRESSION and the act job tried
+            # to reopen an already-open issue. Same defect class as
+            # f97408f, opposite casing.
+            state=$(printf '%s' "$results" | jq -r '.[0].state | ascii_upcase')
             issue_number=$(printf '%s' "$results" | jq -r '.[0].number')
             if [ "$state" = "OPEN" ]; then outcome=match-open; else outcome=match-closed; fi
           else
