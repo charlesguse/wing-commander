@@ -392,10 +392,21 @@ jobs:
           HEAD_BRANCH: ${{ steps.run-meta.outputs.head-branch }}
           HEAD_SHA: ${{ steps.run-meta.outputs.head-sha }}
           RUN_NAME: ${{ inputs.run-name }}
+          RUN_CONCLUSION: ${{ steps.run-meta.outputs.conclusion }}
           META_STAGE: ${{ steps.spec-slug.outputs.meta-stage }}
           STALLED_LABEL: ${{ steps.spec-slug.outputs.stalled-label }}
         run: |
           set -uo pipefail
+          # A run that skipped or was cancelled executed nothing, so "this
+          # stage should have pushed commits" was never in force. Suppressed
+          # here rather than left for the agent to reason around: the
+          # condition is fully determined by the run's own conclusion.
+          case "$RUN_CONCLUSION" in
+            skipped|cancelled)
+              echo "branch-drift: run conclusion is '$RUN_CONCLUSION' — nothing executed, so zero commits is expected. Skipping." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+          esac
           case "$RUN_NAME" in
             "Wing Commander · 3 plan"|"Wing Commander · 4 tasks"|"Wing Commander · 5 implement") ;;
             *)
@@ -439,10 +450,24 @@ jobs:
         continue-on-error: true
         env:
           RUN_NAME: ${{ inputs.run-name }}
+          RUN_CONCLUSION: ${{ steps.run-meta.outputs.conclusion }}
           META_STAGE: ${{ steps.spec-slug.outputs.meta-stage }}
           SLUG: ${{ steps.spec-slug.outputs.slug }}
         run: |
           set -uo pipefail
+          # Same reasoning as branch-drift above. "expected" below is derived
+          # purely from the workflow's display name — it asserts that a plan
+          # run *that executed* should leave the spec at stage "plan". A
+          # skipped run advanced nothing, so the comparison has no premise;
+          # the recorded stage disagreeing with it is the stage gate working,
+          # not drift. This is issue #125: a plan workflow correctly skipped
+          # for a stalled spec was reported as a stage-mismatch defect.
+          case "$RUN_CONCLUSION" in
+            skipped|cancelled)
+              echo "spec-meta: run conclusion is '$RUN_CONCLUSION' — the stage never ran, so it owes no stage transition. Skipping." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+          esac
           if [ -z "$SLUG" ] || [ -z "$META_STAGE" ]; then
             echo "spec-meta: no resolvable spec-meta.json for this run — skipping." >> "$GITHUB_STEP_SUMMARY"
             exit 0
@@ -973,15 +998,14 @@ jobs:
             be certain. Running out of turns produces NO verdict at all,
             which is strictly worse than a well-grounded partial one.
 
-            Signals that are expected rather than problems: if the inspected
-            run's own conclusion is "skipped" or "cancelled", a branch-drift
-            signal reporting zero commits is a tautological consequence of
-            the run never executing, and is not a Finding. This does NOT
-            extend to spec-meta stage mismatches — the recorded stage is
-            independent state that a skipped run neither caused nor excuses,
-            so those still deserve a Finding on their merits. Judge them
-            from the signal's own facts; the mismatch is already fully
-            described there, so do not go reading the repository to
+            Signals that are expected rather than problems: branch-drift and
+            spec-meta signals are no longer emitted at all for a run whose own
+            conclusion is "skipped" or "cancelled", because both compare
+            observed state against something the workflow only owes if it
+            actually executed. You will therefore not see them for such runs;
+            you do not need to reason about that case. Judge a spec-meta
+            mismatch from the signal's own facts — the mismatch is already
+            fully described there, so do not go reading the repository to
             corroborate it. Note also that a job log fetched for a skipped
             or cancelled run is usually empty — if a log read comes back
             with no content, accept that and move on rather than retrying
