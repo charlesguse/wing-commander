@@ -198,6 +198,13 @@ jobs:
             echo "⚠️ \`${SPEC_PREFIX}$1\` excluded from auto-rebase: $2" >> "$GITHUB_STEP_SUMMARY"
           }
 
+          # A routine, expected exclusion. Deliberately not a ::warning:: —
+          # stage 8 collects workflow annotations as defect signals, so
+          # warning about something working as intended files a defect.
+          note() {
+            echo "⏭️ \`${SPEC_PREFIX}$1\` excluded from auto-rebase: $2" >> "$GITHUB_STEP_SUMMARY"
+          }
+
           # Bring the default branch and every spec/* branch tip into local
           # refs so their spec-meta.json can be read with `git show`. Reading
           # from the branch tip (never the default branch) is deliberate: the
@@ -216,6 +223,29 @@ jobs:
             slug="${ref#refs/heads/"${SPEC_PREFIX}"}"
             spec_dir="specs/$slug"
             meta_path="$spec_dir/spec-meta.json"
+
+            # #95, first filter: a branch whose own PR is already merged is
+            # finished, and nothing about it is auto-rebase's business.
+            #
+            # This has to be a merged-PR test rather than an ancestry test.
+            # Finalize squash-merges, so the branch's content is in $DB while
+            # none of its commits are — `git merge-base --is-ancestor` reports
+            # "not merged" and a rebase replays commits whose changes are
+            # already applied, which conflicts every time. The push that
+            # triggers this very run IS that squash-merge, so the merge is
+            # always visible here before discover reads it (37s of margin on
+            # spec 018, 19s on spec 022).
+            #
+            # Note this runs before the spec-meta reads, so a merged branch
+            # left undeleted is skipped silently rather than warned about for
+            # as long as it exists — that was the whole of #120.
+            merged_pr="$(gh pr list --repo "$GITHUB_REPOSITORY" \
+              --head "${SPEC_PREFIX}$slug" --state merged --limit 1 \
+              --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+            if [ -n "$merged_pr" ]; then
+              note "$slug" "its pull request (#$merged_pr) is already merged — the spec is complete"
+              continue
+            fi
 
             # Read the branch's own spec-meta.json tip.
             if ! meta="$(git show "refs/remotes/origin/${SPEC_PREFIX}$slug:$meta_path" 2>/dev/null)"; then
@@ -648,6 +678,22 @@ jobs:
           if [ -z "$issue" ] || [ "$meta_dir" != "$spec_dir" ]; then
             echo "::warning::${SPEC_PREFIX}$SLUG: cannot resolve a trustworthy lifecycle issue from $spec_dir/spec-meta.json — recording the abandonment here only, taking no action on the issue."
             echo "${SPEC_PREFIX}$SLUG: abandoned; lifecycle issue could not be identified, so no comment/label was posted." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # #95 defense in depth: never stamp rebase:blocked on a lifecycle
+          # issue that has already closed. Be clear about what this does and
+          # does not do — it would NOT have prevented either occurrence in
+          # #95, where the escalation beat cleanup's close by 26s (#90) and
+          # 34s (#109). The merged-PR filter in discover is what fixes those.
+          # This only bounds the damage when a slower variant of the race
+          # loses the other way, which is the #73 neighbourhood.
+          # `gh issue view --json state` returns UPPERCASE; comparing against
+          # a lowercase literal is how every gated stage went inert (f97408f).
+          issue_state="$(gh issue view "$issue" --json state --jq '.state | ascii_upcase' 2>/dev/null || true)"
+          if [ "$issue_state" = "CLOSED" ]; then
+            echo "::notice::${SPEC_PREFIX}$SLUG: lifecycle issue #$issue is already closed — abandoning quietly, with no label or comment."
+            echo "${SPEC_PREFIX}$SLUG: abandoned; lifecycle issue #$issue is already closed, so no \`rebase:blocked\` label or escalation comment was posted." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
