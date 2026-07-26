@@ -41,9 +41,22 @@ jobs:
       - name: Parse YAML and bash -n every run block
         run: |
           python3 - <<'PYEOF'
-          import glob, subprocess, sys, yaml
+          import glob, subprocess, sys, re, yaml
 
           failures = 0
+
+          def check_script(f, step_identity, run):
+              # Expression interpolation never introduces quoting in these
+              # workflows'/actions' scripts; neutralize it for bash -n.
+              script = re.sub(r"\$\{\{[^}]*\}\}", "EXPR", run)
+              r = subprocess.run(["bash", "-n"], input=script.encode(),
+                                 capture_output=True)
+              if r.returncode != 0:
+                  err = r.stderr.decode().strip().replace("%", "%25").replace("\n", "%0A")
+                  print(f"::error file={f}::{step_identity}: {err}")
+                  return 1
+              return 0
+
           for f in sorted(glob.glob(".github/workflows/*.yml")):
               try:
                   wf = yaml.safe_load(open(f, encoding="utf-8"))
@@ -56,17 +69,30 @@ jobs:
                       run = step.get("run")
                       if not run:
                           continue
-                      # Expression interpolation never introduces quoting in
-                      # these workflows' scripts; neutralize it for bash -n.
-                      import re
-                      script = re.sub(r"\$\{\{[^}]*\}\}", "EXPR", run)
-                      r = subprocess.run(["bash", "-n"], input=script.encode(),
-                                         capture_output=True)
-                      if r.returncode != 0:
-                          name = step.get("name", f"step {i}")
-                          err = r.stderr.decode().strip().replace("%", "%25").replace("\n", "%0A")
-                          print(f"::error file={f}::{jname} / {name}: {err}")
-                          failures += 1
+                      name = step.get("name", f"step {i}")
+                      failures += check_script(f, f"{jname} / {name}", run)
+
+          # Composite action scripts, discovered recursively at any depth
+          # under .github/actions/** (both extensions) — see issue #41.
+          action_files = sorted(
+              glob.glob(".github/actions/**/action.yml", recursive=True)
+              + glob.glob(".github/actions/**/action.yaml", recursive=True)
+          )
+          for f in action_files:
+              try:
+                  action = yaml.safe_load(open(f, encoding="utf-8"))
+              except Exception as e:
+                  print(f"::error file={f}::YAML parse failure: {e}")
+                  failures += 1
+                  continue
+              steps = (action.get("runs") or {}).get("steps") or []
+              for i, step in enumerate(steps):
+                  run = step.get("run")
+                  if not run:
+                      continue
+                  name = step.get("name", f"step {i}")
+                  failures += check_script(f, name, run)
+
           print(f"Checked all run blocks; {failures} failure(s).")
           sys.exit(1 if failures else 0)
           PYEOF
