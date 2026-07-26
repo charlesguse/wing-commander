@@ -330,28 +330,52 @@ jobs:
             exit 0
           fi
 
-          # Build an id->name map of every tool_use block, then flag any
-          # tool_result marked is_error==true (a denied/rejected tool call),
+          # Build an id->name map of every tool_use block, then flag every
+          # tool_result that is BOTH is_error==true AND carries permission-
+          # denial text, grouping by tool name. is_error alone is not a
+          # denial — it is set for any failing tool call, so an actionlint
+          # exit 1 or a Read on a directory counted as "denied-tool". Measured
+          # over three real artifacts before this changed: 20 is_error results
+          # -> 8 denials (#99), 18 -> 13 (#112), 3 -> 2 (#105). Ordinary
+          # failures are still visible through the step-summary and
+          # annotation collectors; this class is specifically about the
+          # permission system refusing a call.
           # grouping by tool name — every tool with at least one denial is
           # reported (specs/022-gate-closed-lifecycle, FR-008: no silent
           # single-tool drop). The array position recorded per denial is
           # record-index, not a conversation turn (FR-010) — a single turn
           # commonly spans several array entries, so this index can exceed
           # the run's own num_turns; never compared against it. Prefers a
-          # terminal result record's own permission-denials count when
-          # present (FR-009, forward-compatible: no live case exists today
-          # per research.md R4 — the Claude Code SDK result record carries
-          # no permission_denials-shaped field in the version this pipeline
-          # currently uses; assumed shape if a future SDK version adds one:
-          # an array of {tool, count} objects).
+          # terminal result record's own permission_denials list when present
+          # (FR-009).
+          #
+          # research.md R4 recorded that no live case existed and guessed the
+          # shape as an array of {tool, count}. Both halves were wrong. The
+          # SDK does emit permission_denials, and each element is ONE denial:
+          #   {tool_name, tool_use_id, tool_input:{command, description}}
+          # There is no .tool and no .count, so this branch — which is the
+          # one actually taken — emitted {tool: null, denials: null} for
+          # every finding it has ever produced. Verified against three real
+          # artifacts: 2 denials (#105), 16 (#112), 8 (#99).
+          #
+          # tool_input.command is carried through as descriptive facts so a
+          # Finding can name what was denied. It is deliberately not part of
+          # the signal identity (#118 projects tool-denial to {tool} alone),
+          # so this does not move any fingerprint.
           # shellcheck disable=SC2016 # this is a jq program — its $vars must
           # NOT be shell-expanded.
           filter='
             if ([ .[] | select(.type=="result") | has("permission_denials") ] | any)
             then
               [ .[] | select(.type=="result") | .permission_denials[]?
-                | {source:"result-record", "class-hint":"denied-tool", facts:{tool: .tool, denials: .count}}
+                | { tool: (.tool_name // .tool // "unknown"),
+                    cmd: ((.tool_input.command // .tool_input.file_path // "") | tostring | .[0:120]) }
               ]
+              | group_by(.tool)
+              | map({source:"result-record", "class-hint":"denied-tool",
+                     facts:{ tool: .[0].tool,
+                             denials: length,
+                             "denied-commands": ([ .[].cmd | select(. != "") ] | unique | .[0:5]) }})
             else
               ( [ .[] | select(.type=="assistant") | (.message.content // [])[]? | select(.type=="tool_use") | {(.id): .name} ] | add // {} ) as $toolmap
               | [ to_entries[] as $e
@@ -359,6 +383,14 @@ jobs:
                   | select($ev.type=="user")
                   | ($ev.message.content // [])[]?
                   | select(.type=="tool_result" and (.is_error==true))
+                  | select(
+                      ( .content
+                        | if type=="string" then .
+                          elif type=="array" then (map(.text? // "") | join(" "))
+                          else tostring end
+                      )
+                      | test("require(s)? approval|has been denied|was blocked|Claude Code may only|Contains simple_expansion"; "i")
+                    )
                   | { "record-index": $e.key, tool: ($toolmap[.tool_use_id] // "unknown") }
                 ]
               | group_by(.tool)

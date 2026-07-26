@@ -400,10 +400,28 @@ jobs:
 
             Constraints: create at most one spec directory; never edit files outside
             it; never merge or approve anything; never force-push.
+
+            Shell constraints in this headless run. Each of these cost real
+            turns in earlier runs, so read them before your first Bash call:
+            - Every part of a compound command must be separately allowed:
+              `cmd; echo done` is denied whole even when `cmd` alone is fine.
+            - Never prefix a command with an environment assignment.
+              `SPECIFY_FEATURE_DIRECTORY=... some-script.sh` is denied; the
+              variable is already exported for you, so just run the script.
+            - The .specify scripts are not executable in this checkout — always
+              invoke them as `bash .specify/scripts/bash/<name>.sh ...`.
+            - Use bare git verbs from the repo root; `git -C <path> ...` is denied.
+            - No output redirection (`>`, `>>`) — use the Write tool instead.
+            - No shell loops: `for f in ...; do ... done` is rejected outright
+              ("Contains simple_expansion"). Use Glob and Read instead.
+            - Bash cannot reach paths outside the checkout, but the Write tool
+              can. Never mkdir or ls a temp path first to prepare it.
+            A denial is not a hint to retry a variant. Switch to the allowed form
+            above, or record the limitation for the human and move on.
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ inputs.max-turns }}
-            --allowedTools "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git checkout:*),Bash(git switch:*),Bash(git push:*),Bash(git branch:*),Bash(git log:*),Bash(git diff:*),Bash(ls:*),Bash(mkdir:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue edit:*),Bash(gh issue comment:*),Bash(gh pr create:*),Bash(gh label create:*)"
+            --allowedTools "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git checkout:*),Bash(git switch:*),Bash(git push:*),Bash(git branch:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git ls-tree:*),Bash(echo:*),Bash(ls:*),Bash(mkdir:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue edit:*),Bash(gh issue comment:*),Bash(gh pr create:*),Bash(gh label create:*)"
             --disallowedTools "WebFetch,ScheduleWakeup,Monitor,SendMessage"
 
       # Deterministic read-back of what intake produced — feeds the stage's
