@@ -14,7 +14,7 @@ name: "lint · workflows"
 
 on:
   pull_request:
-    paths: [".github/workflows/**"]
+    paths: [".github/workflows/**", ".github/actions/**", ".github/scripts/**"]
   # Gate 1 only — it reads how GitHub actually registered the workflows on
   # the default branch, which a PR's files cannot tell us.
   push:
@@ -38,35 +38,61 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Parse YAML and bash -n every run block
+      # Composite actions under .github/actions/** are covered too (issue
+      # #41): their run: blocks execute in every pipeline job, but they were
+      # invisible here for months because the glob only saw workflows.
+      # Known limitation, worth stating rather than discovering later:
+      # bash -n is a SYNTAX check. It could not have caught the bug that
+      # motivated #41 (a `read` returning 1 at EOF under the -e GitHub adds
+      # to composite `shell: bash` steps — runtime semantics, not syntax).
+      # For that class the answer is a fixture that actually executes the
+      # script, which is what gate 4 below does for the one collector whose
+      # output files issues at humans.
+      - name: Parse YAML and bash -n every run block (workflows and composite actions)
         run: |
           python3 - <<'PYEOF'
-          import glob, subprocess, sys, yaml
+          import glob, re, subprocess, sys, yaml
+
+          # (file, container-label, steps) for both layouts: workflows keep
+          # their steps under jobs.<id>.steps, composite actions under
+          # runs.steps.
+          def units():
+              for f in sorted(glob.glob(".github/workflows/*.yml")):
+                  try:
+                      wf = yaml.safe_load(open(f, encoding="utf-8"))
+                  except Exception as e:
+                      yield f, None, e
+                      continue
+                  for jname, job in ((wf or {}).get("jobs") or {}).items():
+                      yield f, jname, (job or {}).get("steps") or []
+              for f in sorted(glob.glob(".github/actions/*/action.yml")):
+                  try:
+                      act = yaml.safe_load(open(f, encoding="utf-8"))
+                  except Exception as e:
+                      yield f, None, e
+                      continue
+                  yield f, "runs", ((act or {}).get("runs") or {}).get("steps") or []
 
           failures = 0
-          for f in sorted(glob.glob(".github/workflows/*.yml")):
-              try:
-                  wf = yaml.safe_load(open(f, encoding="utf-8"))
-              except Exception as e:
-                  print(f"::error file={f}::YAML parse failure: {e}")
+          for f, jname, steps in units():
+              if jname is None:
+                  print(f"::error file={f}::YAML parse failure: {steps}")
                   failures += 1
                   continue
-              for jname, job in (wf.get("jobs") or {}).items():
-                  for i, step in enumerate(job.get("steps") or []):
-                      run = step.get("run")
-                      if not run:
-                          continue
-                      # Expression interpolation never introduces quoting in
-                      # these workflows' scripts; neutralize it for bash -n.
-                      import re
-                      script = re.sub(r"\$\{\{[^}]*\}\}", "EXPR", run)
-                      r = subprocess.run(["bash", "-n"], input=script.encode(),
-                                         capture_output=True)
-                      if r.returncode != 0:
-                          name = step.get("name", f"step {i}")
-                          err = r.stderr.decode().strip().replace("%", "%25").replace("\n", "%0A")
-                          print(f"::error file={f}::{jname} / {name}: {err}")
-                          failures += 1
+              for i, step in enumerate(steps):
+                  run = (step or {}).get("run")
+                  if not run:
+                      continue
+                  # Expression interpolation never introduces quoting in
+                  # these workflows' scripts; neutralize it for bash -n.
+                  script = re.sub(r"\$\{\{[^}]*\}\}", "EXPR", run)
+                  r = subprocess.run(["bash", "-n"], input=script.encode(),
+                                     capture_output=True)
+                  if r.returncode != 0:
+                      name = step.get("name", f"step {i}")
+                      err = r.stderr.decode().strip().replace("%", "%25").replace("\n", "%0A")
+                      print(f"::error file={f}::{jname} / {name}: {err}")
+                      failures += 1
           print(f"Checked all run blocks; {failures} failure(s).")
           sys.exit(1 if failures else 0)
           PYEOF
@@ -151,6 +177,66 @@ jobs:
                       failures += 1
           print(f"Gate 3: checked every local reusable-workflow call; {failures} failure(s).")
           sys.exit(1 if failures else 0)
+          PYEOF
+
+      # Gate 4 — the denied-tool collector is the one piece of watchdog
+      # evidence-gathering that has its own executable fixture check. That
+      # check existed for a day and was never run by anything, so when PR
+      # #137 rewrote the collector the fixture kept asserting against the
+      # old filter — including the exact {tool: .tool, denials: .count} bug
+      # #137 was written to fix. A verifier nothing runs is not a verifier.
+      #
+      # Two halves, and both are needed. Running the script proves the
+      # filter it holds is correct; diffing that filter against the real one
+      # in watchdog.yml proves the script is still describing the shipped
+      # collector. Either alone can be green while the collector is broken.
+      - name: Gate 4 — the denied-tool collector's fixture check, and its filter is in sync
+        run: |
+          set -uo pipefail
+          bash .github/scripts/verify-denied-tool-collector.sh || exit 1
+
+          python3 - <<'PYEOF'
+          import io, re, sys, yaml
+
+          def norm(s):
+              # jq is whitespace-insensitive, and the two copies sit at
+              # different indentation (a YAML block scalar vs a shell
+              # assignment). Comparing raw text would force cosmetic sync
+              # and get worked around; compare the program instead.
+              return "\n".join(
+                  ln.strip() for ln in s.strip().splitlines() if ln.strip()
+              )
+
+          wf = yaml.safe_load(io.open(".github/workflows/watchdog.yml", encoding="utf-8"))
+          run = None
+          for job in (wf.get("jobs") or {}).values():
+              for step in (job or {}).get("steps") or []:
+                  if (step or {}).get("id") == "collect-execution-output":
+                      run = step.get("run")
+          if run is None:
+              print("::error file=.github/workflows/watchdog.yml::gate 4 could not find "
+                    "the step with id: collect-execution-output. If it was renamed, update "
+                    "this gate and .github/scripts/verify-denied-tool-collector.sh together.")
+              sys.exit(1)
+
+          m = re.search(r"\n\s*filter='(.*?)'\n", run, re.S)
+          script = io.open(".github/scripts/verify-denied-tool-collector.sh", encoding="utf-8").read()
+          s = re.search(r"\nFILTER='(.*?)'\n", script, re.S)
+          if not m or not s:
+              print("::error::gate 4 could not extract the jq filter from "
+                    f"{'watchdog.yml' if not m else 'verify-denied-tool-collector.sh'} — "
+                    "the single-quoted filter='...' / FILTER='...' assignment it keys on "
+                    "has changed shape.")
+              sys.exit(1)
+
+          if norm(m.group(1)) != norm(s.group(1)):
+              print("::error file=.github/scripts/verify-denied-tool-collector.sh::the "
+                    "fixture check's FILTER no longer matches watchdog.yml's "
+                    "collect-execution-output filter, so it is verifying a collector that "
+                    "is not the one that ships. Copy the filter across and extend the "
+                    "fixtures to cover whatever changed.")
+              sys.exit(1)
+          print("Gate 4: fixture check passed and its filter matches watchdog.yml.")
           PYEOF
 
   # Gate 1 — the catch-all. When GitHub cannot parse a workflow file it

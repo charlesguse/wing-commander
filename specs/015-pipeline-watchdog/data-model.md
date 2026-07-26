@@ -45,6 +45,23 @@ per evidence source that produced anything:
 > delta for the full corrected `jq` filter and the `denials`-count fix that
 > lands with it.
 
+> **Deviation (PR #137):** the shape above, and spec 022's correction of it,
+> both describe only the **fallback** log scan. The SDK's terminal result
+> record does emit `permission_denials` — spec 022's research.md R4 recorded
+> that it did not and guessed the shape as `{tool, count}`, and both halves
+> were wrong — so the authoritative branch is the one actually taken, and it
+> emitted `{tool: null, denials: null}` for every finding it ever produced.
+> Its real per-signal shape is
+> `{"source": "result-record", "class-hint": "denied-tool", "facts": {"tool": "Bash", "denials": 2, "denied-commands": ["…"]}}`:
+> grouped by the SDK's `tool_name`, with up to five distinct denied commands
+> carried as descriptive facts. There is no `record-index` on this path —
+> the SDK gives commands, which are better evidence than array positions —
+> so `record-index` is now specific to the fallback. The fallback also
+> narrowed: `is_error` alone is no longer treated as a denial, because it is
+> set for any failing call. Both paths are held to fixtures by
+> `.github/scripts/verify-denied-tool-collector.sh`, which
+> `lint-workflows.yml` gate 4 runs and diffs against the shipped filter.
+
 `class-hint` is populated only for the two v1 pattern-matched classes
 (FR-003a/b, computed directly by the collector, not the diagnose step);
 `null` for sources whose interpretation genuinely needs the diagnose
