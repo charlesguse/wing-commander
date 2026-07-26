@@ -427,6 +427,8 @@ jobs:
           RUN_CONCLUSION: ${{ steps.run-meta.outputs.conclusion }}
           META_STAGE: ${{ steps.spec-slug.outputs.meta-stage }}
           STALLED_LABEL: ${{ steps.spec-slug.outputs.stalled-label }}
+          SLUG: ${{ steps.spec-slug.outputs.slug }}
+          SPEC_PREFIX: ${{ vars.WING_COMMANDER_SPEC_PREFIX }}
         run: |
           set -uo pipefail
           # A run that skipped or was cancelled executed nothing, so "this
@@ -448,6 +450,22 @@ jobs:
           esac
           if [ -z "$HEAD_BRANCH" ] || [ -z "$HEAD_SHA" ]; then
             echo "branch-drift: no head branch/sha resolved for this run — skipping." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # #112: plan and tasks commit to the persistent spec branch, but a
+          # pull_request-triggered run reports the DRAFT branch as its head.
+          # Counting commits on the head branch then measures a branch the
+          # stage never promised to touch, and zero is the correct answer.
+          # Run 30146154626 was reported as lost-progress on
+          # spec-draft/022-gate-closed-lifecycle while the same run pushed
+          # e97b9b6 to spec/022-gate-closed-lifecycle at 05:57:30, inside its
+          # own window. Only compare when the run's head branch IS the branch
+          # the stage pushes to; the before-sha baseline is only meaningful
+          # for that branch anyway.
+          _spec_prefix="${SPEC_PREFIX:-spec/}"
+          if [ -n "$SLUG" ] && [ "$HEAD_BRANCH" != "${_spec_prefix}${SLUG}" ]; then
+            echo "branch-drift: run head is '$HEAD_BRANCH' but this stage pushes to '${_spec_prefix}${SLUG}' — the head branch owes no commits. Skipping." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
