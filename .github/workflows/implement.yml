@@ -515,6 +515,12 @@ jobs:
               can. Never mkdir or ls a temp path first to prepare it.
             A denial is not a hint to retry a variant. Switch to the allowed form
             above, or record the limitation for the human and move on.
+
+            Turn budget. Cycle 1 of spec 019 exhausted its whole turn cap with
+            polish unfinished; roughly a fifth of those turns went to the habits
+            below rather than to the work:
+            - Lint in one batch. Run `actionlint file1.yml file2.yml ...` once
+              over every workflow you touched, not one invocation per file.
             - `actionlint` reports `property "job_workflow_sha" is not defined`
               on every workflow in this repository. It is pre-existing: ignore it,
               and never reconstruct an original file to diff warning lists.
@@ -705,6 +711,12 @@ jobs:
               can. Never mkdir or ls a temp path first to prepare it.
             A denial is not a hint to retry a variant. Switch to the allowed form
             above, or record the limitation for the human and move on.
+
+            Turn budget. Cycle 1 of spec 019 exhausted its whole turn cap with
+            polish unfinished; roughly a fifth of those turns went to the habits
+            below rather than to the work:
+            - Lint in one batch. Run `actionlint file1.yml file2.yml ...` once
+              over every workflow you touched, not one invocation per file.
             - `actionlint` reports `property "job_workflow_sha" is not defined`
               on every workflow in this repository. It is pre-existing: ignore it,
               and never reconstruct an original file to diff warning lists.
