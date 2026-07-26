@@ -97,18 +97,18 @@ composite scripts.
 ### Edge Cases
 
 - What happens when a composite action file does not parse as structured data? The guard
-  should surface this rather than silently skipping the file. [NEEDS CLARIFICATION:
-  should a composite action that fails to parse be reported as a lint failure, matching
-  the parse-failure handling for workflow files, or only its embedded scripts be
-  checked?]
+  fails the lint on the parse failure, matching how workflow-file parse failures are
+  reported, rather than silently skipping the file or only checking the scripts it can
+  extract.
 - What happens for action definitions that contain no embedded scripts (for example,
   actions built on a container or JavaScript rather than composite steps)? These have no
   scripts to syntax-check and should pass without failure.
 - What happens for a composite step whose script is empty or absent? It is skipped, the
   same as a workflow step with no script.
 - How does the guard handle composite action files stored at a nesting depth or with a
-  file-name form that the discovery pattern does not match? See the discovery-scope
-  clarification below.
+  file-name form other than the top level? Discovery is recursive at any depth and
+  accepts both `action.yml` and `action.yaml`, so these files are still discovered and
+  checked (see FR-008).
 
 ## Requirements *(mandatory)*
 
@@ -133,11 +133,14 @@ composite scripts.
   the class of runtime-semantics failures that motivated this coverage extension.
 - **FR-007**: The extension MUST NOT reduce or regress existing coverage of
   reusable-workflow scripts; all currently-covered workflow scripts remain covered.
-- **FR-008**: The guard's discovery of composite action files MUST cover the composite
-  actions that exist in the repository today. [NEEDS CLARIFICATION: should discovery
-  match only a single directory level and the `.yml` file-name form (as the issue
-  proposes), or also cover nested subdirectories and the `.yaml` form to future-proof
-  coverage?]
+- **FR-008**: The guard's discovery of composite action files MUST match `action.yml`
+  and `action.yaml` files recursively at any depth under the composite-actions
+  directory, so that no composite action can slip past discovery regardless of nesting
+  depth or file-name extension.
+- **FR-009**: When a composite action definition cannot be parsed as structured data,
+  the guard MUST fail the run and report the parse failure, with parity to how
+  reusable-workflow parse failures are reported; it MUST NOT silently skip the file or
+  limit itself to the scripts it can extract.
 
 ### Key Entities *(include if data involved)*
 

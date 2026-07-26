@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,9 +31,7 @@
 
 ## Notes
 
-- Two [NEEDS CLARIFICATION] markers remain open (discovery scope in FR-008/edge cases,
-  and parse-failure handling in edge cases). Per the CI intake process these are posted
-  to the lifecycle issue rather than resolved interactively; the spec carries reasonable
-  defaults in its Assumptions section in the meantime.
-- Items marked incomplete require spec updates before `/speckit-clarify` or
-  `/speckit-plan`.
+- Both [NEEDS CLARIFICATION] markers are resolved from the answer on issue #41:
+  discovery scope (FR-008) is recursive at any depth accepting both `action.yml` and
+  `action.yaml`; a composite action that fails to parse is reported as a lint failure
+  with parity to workflow-file parse handling (FR-009).
