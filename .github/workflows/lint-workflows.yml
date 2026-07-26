@@ -1,7 +1,11 @@
 # Guard rail: every workflow must parse as YAML and every embedded run:
 # script must pass bash -n. Added after an unbalanced quote inside a
 # ${VAR:-default} expansion silently broke the implement stage's stall
-# report — the exact step whose job is to report failures.
+# report — the exact step whose job is to report failures. This includes
+# every composite action under .github/actions/**, but the check is a
+# syntax check only: it does not execute the script and cannot verify
+# errexit/pipefail runtime behavior, so a passing guard is not a
+# guarantee a composite shell: bash step is safe at runtime.
 #
 # Gates 2 and 3 were added after stage 8 (watchdog) sat completely dead for
 # four days: valid YAML and valid bash, but rejected outright by GitHub's own

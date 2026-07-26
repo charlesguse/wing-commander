@@ -85,8 +85,9 @@ Single-project GitHub Actions pipeline repository, no `src`/`tests` split (plan.
 
 ### Implementation for User Story 3
 
-- [ ] T007 [US3] In `.github/workflows/lint-workflows.yml`'s header comment block (lines 1-12), add a sentence stating that the "Parse YAML and bash -n every run block" check is a syntax check only and does not exercise or guarantee `errexit`/`pipefail` runtime behavior of composite `shell: bash` steps (FR-006, research.md R6) — place it alongside the existing sentences explaining what each gate catches and misses, not in a new file or a new `docs/architecture.md` section (research.md R6's rejected alternative).
-- [ ] T008 [US3] Confirm quickstart.md Scenario 7 by inspection: read the edited header comment and confirm it states the syntax-only limitation in terms a maintainer would find before mistaking a passing guard for errexit-safety.
+- [X] T007 [US3] In `.github/workflows/lint-workflows.yml`'s header comment block (lines 1-12), add a sentence stating that the "Parse YAML and bash -n every run block" check is a syntax check only and does not exercise or guarantee `errexit`/`pipefail` runtime behavior of composite `shell: bash` steps (FR-006, research.md R6) — place it alongside the existing sentences explaining what each gate catches and misses, not in a new file or a new `docs/architecture.md` section (research.md R6's rejected alternative).
+- [X] T008 [US3] Confirm quickstart.md Scenario 7 by inspection: read the edited header comment and confirm it states the syntax-only limitation in terms a maintainer would find before mistaking a passing guard for errexit-safety.
+  - Confirmed by inspection: the header comment now states composite actions are included and that the check "does not execute the script and cannot verify errexit/pipefail runtime behavior."
 
 **Checkpoint**: All three user stories hold — SC-005 is satisfied, and the guard's own documentation matches what it actually checks.
 
