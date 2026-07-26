@@ -1,1 +1,8 @@
-{"issue": 41, "spec_dir": "specs/025-lint-composite-actions", "feature_num": "025", "stage": "spec", "iteration": 0, "spec_branch": null}
+{
+  "issue": 41,
+  "spec_dir": "specs/025-lint-composite-actions",
+  "feature_num": "025",
+  "stage": "review",
+  "iteration": 1,
+  "spec_branch": "spec/025-lint-composite-actions"
+}
