@@ -86,6 +86,37 @@ on:
         type: string
         required: false
         default: spec/
+      extra-allowed-tools:
+        description: >
+          Comma-separated tool list added to this stage's default allowed
+          tools (union, not replacement). Unset/empty = no addition
+          (specs/026-configurable-tool-lists).
+        type: string
+        required: false
+        default: ""
+      extra-disallowed-tools:
+        description: >
+          Comma-separated tool list added to this stage's default
+          disallowed tools (union, not replacement). Unset/empty = no
+          addition (specs/026-configurable-tool-lists).
+        type: string
+        required: false
+        default: ""
+      allowed-tools-override:
+        description: >
+          Replaces this stage's default allowed tools entirely when set to
+          any value other than the sentinel default (including ""), which
+          means "replace with nothing" (specs/026-configurable-tool-lists).
+        type: string
+        required: false
+        default: "__unset__"
+      disallowed-tools-override:
+        description: >
+          Same semantics as allowed-tools-override, for the disallowed
+          list (specs/026-configurable-tool-lists).
+        type: string
+        required: false
+        default: "__unset__"
     secrets:
       claude-code-oauth-token:
         description: "Claude OAuth token (claude setup-token) — one of the two credentials"
@@ -355,9 +386,21 @@ jobs:
       # The one agent step, read-only. Only the validated slug and integer
       # issue number are interpolated; spec/tasks content is framed as data,
       # never instructions (constitution II/V).
+      - name: Compose tool args (finalize)
+        id: tool-args-finalize
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
+        with:
+          default-allowed-tools: "Read,Glob,Grep,Bash(git log:*),Bash(git diff:*),Bash(git show:*),Write"
+          default-disallowed-tools: "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
+          extra-allowed-tools: ${{ inputs.extra-allowed-tools }}
+          extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
+          allowed-tools-override: ${{ inputs.allowed-tools-override }}
+          disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
+          step-label: "finalize"
+
       - name: Summarize change and extract remaining manual work
         id: summarize
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true' && steps.tool-args-finalize.outputs.allowed-tools != ''
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
@@ -416,8 +459,8 @@ jobs:
           claude_args: |
             --model ${{ inputs.summary-model }}
             --max-turns ${{ inputs.max-turns }}
-            --allowedTools "Read,Glob,Grep,Bash(git log:*),Bash(git diff:*),Bash(git show:*),Write"
-            --disallowedTools "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
+            --allowedTools "${{ steps.tool-args-finalize.outputs.allowed-tools }}"
+            --disallowedTools "${{ steps.tool-args-finalize.outputs.disallowed-tools }}"
 
       - name: Upload Claude execution log
         if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.summarize.outcome != 'skipped'

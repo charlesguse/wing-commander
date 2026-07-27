@@ -104,6 +104,37 @@ on:
         type: string
         required: false
         default: ""
+      extra-allowed-tools:
+        description: >
+          Comma-separated tool list added to this stage's default allowed
+          tools (union, not replacement). Unset/empty = no addition
+          (specs/026-configurable-tool-lists).
+        type: string
+        required: false
+        default: ""
+      extra-disallowed-tools:
+        description: >
+          Comma-separated tool list added to this stage's default
+          disallowed tools (union, not replacement). Unset/empty = no
+          addition (specs/026-configurable-tool-lists).
+        type: string
+        required: false
+        default: ""
+      allowed-tools-override:
+        description: >
+          Replaces this stage's default allowed tools entirely when set to
+          any value other than the sentinel default (including ""), which
+          means "replace with nothing" (specs/026-configurable-tool-lists).
+        type: string
+        required: false
+        default: "__unset__"
+      disallowed-tools-override:
+        description: >
+          Same semantics as allowed-tools-override, for the disallowed
+          list (specs/026-configurable-tool-lists).
+        type: string
+        required: false
+        default: "__unset__"
     secrets:
       claude-code-oauth-token:
         description: "Claude OAuth token (claude setup-token) — one of the two credentials"
@@ -929,8 +960,21 @@ jobs:
           echo "Finding-class vocabulary: $classes" >> "$GITHUB_STEP_SUMMARY"
           echo "Citable signal ids: $sig_ids" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Compose tool args (watchdog.diagnose)
+        id: tool-args-diagnose
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
+        with:
+          default-allowed-tools: "Read,Grep,Bash(gh:*),Bash(git log:*),Bash(git diff:*)"
+          default-disallowed-tools: "WebSearch,WebFetch,Write,Edit,Bash(git commit:*),Bash(git push:*)"
+          extra-allowed-tools: ${{ inputs.extra-allowed-tools }}
+          extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
+          allowed-tools-override: ${{ inputs.allowed-tools-override }}
+          disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
+          step-label: "watchdog.diagnose"
+
       - name: Diagnose
         id: diagnose
+        if: steps.tool-args-diagnose.outputs.allowed-tools != ''
         continue-on-error: true
         # A stalled agent must fail THIS STEP (not the job): continue-on-error
         # then routes it into the diagnose-failed read-back path, which
@@ -1084,8 +1128,8 @@ jobs:
             --model ${{ steps.resolve-diagnose-model.outputs.model }}
             --max-turns ${{ inputs.diagnose-max-turns }}
             --json-schema '${{ steps.class-vocab.outputs.schema }}'
-            --allowedTools "Read,Grep,Bash(gh:*),Bash(git log:*),Bash(git diff:*)"
-            --disallowedTools "WebSearch,WebFetch,Write,Edit,Bash(git commit:*),Bash(git push:*)"
+            --allowedTools "${{ steps.tool-args-diagnose.outputs.allowed-tools }}"
+            --disallowedTools "${{ steps.tool-args-diagnose.outputs.disallowed-tools }}"
 
       - name: Upload Claude execution log
         if: always() && steps.diagnose.outcome != 'skipped'
@@ -1545,9 +1589,21 @@ jobs:
           MODEL_INPUT: ${{ inputs.propose-fix-model }}
         run: echo "model=${MODEL_VAR:-$MODEL_INPUT}" >> "$GITHUB_OUTPUT"
 
+      - name: Compose tool args (watchdog.propose-fix)
+        id: tool-args-propose-fix
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
+        with:
+          default-allowed-tools: "Read,Grep,Glob,Edit,Write"
+          default-disallowed-tools: "WebSearch,WebFetch,Bash,ScheduleWakeup,Monitor,SendMessage"
+          extra-allowed-tools: ${{ inputs.extra-allowed-tools }}
+          extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
+          allowed-tools-override: ${{ inputs.allowed-tools-override }}
+          disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
+          step-label: "watchdog.propose-fix"
+
       - name: Propose fix
         id: propose-fix
-        if: steps.suppress.outputs.suppressed != 'true' && steps.fix-eligible.outputs.eligible == 'true'
+        if: steps.suppress.outputs.suppressed != 'true' && steps.fix-eligible.outputs.eligible == 'true' && steps.tool-args-propose-fix.outputs.allowed-tools != ''
         # Same shape as Diagnose: a stall fails the step, continue-on-error
         # keeps the job alive, and the rung gate degrades to report-only when
         # the diff never materializes.
@@ -1588,8 +1644,8 @@ jobs:
           claude_args: |
             --model ${{ steps.resolve-propose-fix-model.outputs.model }}
             --max-turns ${{ inputs.propose-fix-max-turns }}
-            --allowedTools "Read,Grep,Glob,Edit,Write"
-            --disallowedTools "WebSearch,WebFetch,Bash,ScheduleWakeup,Monitor,SendMessage"
+            --allowedTools "${{ steps.tool-args-propose-fix.outputs.allowed-tools }}"
+            --disallowedTools "${{ steps.tool-args-propose-fix.outputs.disallowed-tools }}"
 
       - name: Upload Claude execution log (propose-fix)
         if: always() && steps.propose-fix.outcome != 'skipped'

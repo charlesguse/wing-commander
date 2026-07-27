@@ -128,6 +128,37 @@ on:
         type: string
         required: false
         default: spec/
+      extra-allowed-tools:
+        description: >
+          Comma-separated tool list added to this stage's default allowed
+          tools (union, not replacement). Unset/empty = no addition
+          (specs/026-configurable-tool-lists).
+        type: string
+        required: false
+        default: ""
+      extra-disallowed-tools:
+        description: >
+          Comma-separated tool list added to this stage's default
+          disallowed tools (union, not replacement). Unset/empty = no
+          addition (specs/026-configurable-tool-lists).
+        type: string
+        required: false
+        default: ""
+      allowed-tools-override:
+        description: >
+          Replaces this stage's default allowed tools entirely when set to
+          any value other than the sentinel default (including ""), which
+          means "replace with nothing" (specs/026-configurable-tool-lists).
+        type: string
+        required: false
+        default: "__unset__"
+      disallowed-tools-override:
+        description: >
+          Same semantics as allowed-tools-override, for the disallowed
+          list (specs/026-configurable-tool-lists).
+        type: string
+        required: false
+        default: "__unset__"
     secrets:
       claude-code-oauth-token:
         description: "Claude OAuth token (claude setup-token) — one of the two credentials"
@@ -420,9 +451,21 @@ jobs:
       # committing directly to the spec branch. continue-on-error so the
       # deterministic outcome step can inspect the result instead of the job
       # dying here.
+      - name: Compose tool args (implement.cycle)
+        id: tool-args-cycle
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
+        with:
+          default-allowed-tools: "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(git ls-tree:*),Bash(git branch:*),Bash(echo:*),Bash(git show:*),Bash(ls:*),Bash(cat:*),Bash(yamllint:*),Bash(actionlint:*),Bash(shellcheck:*),Bash(jq:*),Bash(mkdir:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh run view:*),Bash(gh run list:*)"
+          default-disallowed-tools: "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
+          extra-allowed-tools: ${{ inputs.extra-allowed-tools }}
+          extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
+          allowed-tools-override: ${{ inputs.allowed-tools-override }}
+          disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
+          step-label: "implement.cycle"
+
       - name: Implement and converge (cycle)
         id: cycle
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.tool-args-cycle.outputs.allowed-tools != ''
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
@@ -529,8 +572,8 @@ jobs:
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ inputs.max-turns }}
-            --allowedTools "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(git ls-tree:*),Bash(git branch:*),Bash(echo:*),Bash(git show:*),Bash(ls:*),Bash(cat:*),Bash(yamllint:*),Bash(actionlint:*),Bash(shellcheck:*),Bash(jq:*),Bash(mkdir:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh run view:*),Bash(gh run list:*)"
-            --disallowedTools "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
+            --allowedTools "${{ steps.tool-args-cycle.outputs.allowed-tools }}"
+            --disallowedTools "${{ steps.tool-args-cycle.outputs.disallowed-tools }}"
 
       # Uploaded before any retry runs so the retry's transcript (same temp
       # path) doesn't clobber the primary attempt's.
@@ -612,13 +655,26 @@ jobs:
       # One automatic retry of the SAME iteration, one tier up
       # (→ inputs.escalation-model). Skipped when the failing attempt already
       # ran on the escalation tier — that goes straight to stalled.
+      - name: Compose tool args (implement.retry)
+        id: tool-args-retry
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
+        with:
+          default-allowed-tools: "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git pull:*),Bash(git fetch:*),Bash(git reset:*),Bash(git log:*),Bash(git diff:*),Bash(git ls-tree:*),Bash(git branch:*),Bash(echo:*),Bash(git show:*),Bash(ls:*),Bash(cat:*),Bash(yamllint:*),Bash(actionlint:*),Bash(shellcheck:*),Bash(jq:*),Bash(mkdir:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh run view:*),Bash(gh run list:*)"
+          default-disallowed-tools: "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
+          extra-allowed-tools: ${{ inputs.extra-allowed-tools }}
+          extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
+          allowed-tools-override: ${{ inputs.allowed-tools-override }}
+          disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
+          step-label: "implement.retry"
+
       - name: Implement and converge (retry at escalation model)
         id: retry
         if: >-
           steps.lifecycle-gate.outputs.is-open == 'true' &&
           steps.guard.outputs.skip != 'true' &&
           steps.outcome.outputs.ok == 'false' &&
-          inputs.model != inputs.escalation-model
+          inputs.model != inputs.escalation-model &&
+          steps.tool-args-retry.outputs.allowed-tools != ''
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
@@ -725,8 +781,8 @@ jobs:
           claude_args: |
             --model ${{ inputs.escalation-model }}
             --max-turns ${{ inputs.max-turns }}
-            --allowedTools "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git pull:*),Bash(git fetch:*),Bash(git reset:*),Bash(git log:*),Bash(git diff:*),Bash(git ls-tree:*),Bash(git branch:*),Bash(echo:*),Bash(git show:*),Bash(ls:*),Bash(cat:*),Bash(yamllint:*),Bash(actionlint:*),Bash(shellcheck:*),Bash(jq:*),Bash(mkdir:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh run view:*),Bash(gh run list:*)"
-            --disallowedTools "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
+            --allowedTools "${{ steps.tool-args-retry.outputs.allowed-tools }}"
+            --disallowedTools "${{ steps.tool-args-retry.outputs.disallowed-tools }}"
 
       - name: Upload Claude execution log (retry)
         if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.retry.outcome != 'skipped'
@@ -857,9 +913,21 @@ jobs:
       # A short per-cycle progress comment, authored by Haiku (the
       # constitution's tier for diff summaries) in a separate step so the
       # main agent's turn budget isn't spent on reporting.
+      - name: Compose tool args (implement.post-progress-comment)
+        id: tool-args-post-progress-comment
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
+        with:
+          default-allowed-tools: "Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(gh issue comment:*)"
+          default-disallowed-tools: "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
+          extra-allowed-tools: ${{ inputs.extra-allowed-tools }}
+          extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
+          allowed-tools-override: ${{ inputs.allowed-tools-override }}
+          disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
+          step-label: "implement.post-progress-comment"
+
       - name: Post progress comment (haiku)
         id: progress
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.final.outputs.ok == 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.final.outputs.ok == 'true' && steps.tool-args-post-progress-comment.outputs.allowed-tools != ''
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
@@ -903,8 +971,8 @@ jobs:
           claude_args: |
             --model ${{ inputs.summary-model }}
             --max-turns 15
-            --allowedTools "Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(gh issue comment:*)"
-            --disallowedTools "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
+            --allowedTools "${{ steps.tool-args-post-progress-comment.outputs.allowed-tools }}"
+            --disallowedTools "${{ steps.tool-args-post-progress-comment.outputs.disallowed-tools }}"
 
       # Progress-comment run's metrics. This invocation uploads no execution
       # artifact, so the metrics step anchors directly after the agent step
