@@ -83,6 +83,37 @@ on:
         type: string
         required: false
         default: spec-draft/
+      extra-allowed-tools:
+        description: >
+          Comma-separated tool list added to this stage's default allowed
+          tools (union, not replacement). Unset/empty = no addition
+          (specs/026-configurable-tool-lists).
+        type: string
+        required: false
+        default: ""
+      extra-disallowed-tools:
+        description: >
+          Comma-separated tool list added to this stage's default
+          disallowed tools (union, not replacement). Unset/empty = no
+          addition (specs/026-configurable-tool-lists).
+        type: string
+        required: false
+        default: ""
+      allowed-tools-override:
+        description: >
+          Replaces this stage's default allowed tools entirely when set to
+          any value other than the sentinel default (including ""), which
+          means "replace with nothing" (specs/026-configurable-tool-lists).
+        type: string
+        required: false
+        default: "__unset__"
+      disallowed-tools-override:
+        description: >
+          Same semantics as allowed-tools-override, for the disallowed
+          list (specs/026-configurable-tool-lists).
+        type: string
+        required: false
+        default: "__unset__"
     secrets:
       claude-code-oauth-token:
         description: "Claude OAuth token (claude setup-token) — one of the two credentials"
@@ -269,9 +300,21 @@ jobs:
           gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" --jq .user.login \
             > /tmp/wing-commander/clarification-author.txt
 
+      - name: Compose tool args (clarify)
+        id: tool-args-clarify
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
+        with:
+          default-allowed-tools: "Read,Edit,Write,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh pr edit:*)"
+          default-disallowed-tools: "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
+          extra-allowed-tools: ${{ inputs.extra-allowed-tools }}
+          extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
+          allowed-tools-override: ${{ inputs.allowed-tools-override }}
+          disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
+          step-label: "clarify"
+
       - name: Fold answers into the draft spec
         id: agent
-        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.tool-args-clarify.outputs.allowed-tools != ''
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -336,8 +379,8 @@ jobs:
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ inputs.max-turns }}
-            --allowedTools "Read,Edit,Write,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh pr edit:*)"
-            --disallowedTools "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
+            --allowedTools "${{ steps.tool-args-clarify.outputs.allowed-tools }}"
+            --disallowedTools "${{ steps.tool-args-clarify.outputs.disallowed-tools }}"
 
       # Deterministic kind decision (contracts/callout-points.md rows 3/4).
       # outcome=none covers the agent's early-STOP path (step 2: the reply

@@ -83,6 +83,37 @@ on:
         type: string
         required: false
         default: ""
+      extra-allowed-tools:
+        description: >
+          Comma-separated tool list added to this stage's default allowed
+          tools (union, not replacement). Unset/empty = no addition
+          (specs/026-configurable-tool-lists).
+        type: string
+        required: false
+        default: ""
+      extra-disallowed-tools:
+        description: >
+          Comma-separated tool list added to this stage's default
+          disallowed tools (union, not replacement). Unset/empty = no
+          addition (specs/026-configurable-tool-lists).
+        type: string
+        required: false
+        default: ""
+      allowed-tools-override:
+        description: >
+          Replaces this stage's default allowed tools entirely when set to
+          any value other than the sentinel default (including ""), which
+          means "replace with nothing" (specs/026-configurable-tool-lists).
+        type: string
+        required: false
+        default: "__unset__"
+      disallowed-tools-override:
+        description: >
+          Same semantics as allowed-tools-override, for the disallowed
+          list (specs/026-configurable-tool-lists).
+        type: string
+        required: false
+        default: "__unset__"
     secrets:
       claude-code-oauth-token:
         description: "Claude OAuth token (claude setup-token) — one of the two credentials"
@@ -472,9 +503,21 @@ jobs:
       # arbitrary Bash, no git commit/push, no gh — deterministic steps own
       # every publish and GitHub write. A hard failure here is caught by the
       # scope-check step below, not the job.
+      - name: Compose tool args (rebase)
+        id: tool-args-rebase
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
+        with:
+          default-allowed-tools: "Read,Edit,Grep,Glob,Bash(git status:*),Bash(git diff:*),Bash(git add:*),Bash(git rebase --continue:*),Bash(git rebase --abort:*)"
+          default-disallowed-tools: "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
+          extra-allowed-tools: ${{ inputs.extra-allowed-tools }}
+          extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
+          allowed-tools-override: ${{ inputs.allowed-tools-override }}
+          disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
+          step-label: "rebase"
+
       - name: Resolve conflicts
         id: agent
-        if: steps.attempt.outputs.outcome == 'conflict'
+        if: steps.attempt.outputs.outcome == 'conflict' && steps.tool-args-rebase.outputs.allowed-tools != ''
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
@@ -530,8 +573,8 @@ jobs:
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ inputs.max-turns }}
-            --allowedTools "Read,Edit,Grep,Glob,Bash(git status:*),Bash(git diff:*),Bash(git add:*),Bash(git rebase --continue:*),Bash(git rebase --abort:*)"
-            --disallowedTools "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
+            --allowedTools "${{ steps.tool-args-rebase.outputs.allowed-tools }}"
+            --disallowedTools "${{ steps.tool-args-rebase.outputs.disallowed-tools }}"
 
       - name: Upload Claude execution log
         if: always() && steps.agent.outcome != 'skipped'

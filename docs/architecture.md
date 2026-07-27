@@ -165,7 +165,15 @@ change to the tiering above.
   fetched by the agent (`gh issue view`) or staged into files via env-var
   indirection, and framed as untrusted data.
 - Web tools disabled in all issue/comment-driven stages; per-stage least-privilege
-  `--allowedTools`.
+  `--allowedTools`. Each stage ships those default allow/deny lists inline, but a
+  consumer can extend or replace them per stage without touching the pipeline:
+  `extra-allowed-tools`/`extra-disallowed-tools` *append* to the defaults
+  (union), while `allowed-tools-override`/`disallowed-tools-override` *replace* a
+  default list wholesale — the two are per-direction, mutually exclusive choices,
+  composed by the `wing-commander-tool-args` composite action before the agent
+  step runs (`specs/026-configurable-tool-lists/`). The per-stage default lists
+  are catalogued in
+  [stage-interfaces.md](../specs/010-reusable-pipeline/contracts/stage-interfaces.md#per-stage-default-tool-lists).
 - Only trusted refs are checked out (main, repo-local `spec*/` branches) — never
   fork PR heads.
 - Humans merge every PR into main. The bot cannot approve or merge.

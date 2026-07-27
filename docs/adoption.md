@@ -647,6 +647,21 @@ Common to every stage below:
   to match your `uses:` pin only if your calling job cannot grant
   `id-token: write`. `default-branch` (string, default `""` = derived via
   `gh repo view`) — stages never assume `main`.
+- **Tool-list inputs** (every agent-running stage): `extra-allowed-tools` /
+  `extra-disallowed-tools` (string, default `""`) *append* to that stage's
+  built-in default allow/deny tool lists (union — you don't restate the
+  defaults); `allowed-tools-override` / `disallowed-tools-override` (string,
+  default `__unset__`) *replace* the corresponding default list entirely (a
+  literal `""` replaces it with nothing). Append and replace are per-direction,
+  independent choices; supplying both for the same direction fails the stage
+  before any agent runs. Leaving all four unset reproduces today's behavior
+  byte-for-byte. On a multi-step stage (`implement`, whose cycle / retry /
+  post-progress-comment steps each have their own defaults), these inputs are
+  *stage-scoped* — the same values apply identically to every internal step,
+  each composed against that step's own defaults, so a replacement must include
+  everything each internal step needs. The per-stage default tool lists are
+  documented in
+  [stage-interfaces.md](../specs/010-reusable-pipeline/contracts/stage-interfaces.md#per-stage-default-tool-lists).
 - **Common secrets**: `claude-code-oauth-token` / `anthropic-api-key`
   (one-of, see [Credentials](#credentials)); `speckit-app-id` /
   `speckit-app-private-key` (required — the App writes pushes/PRs/comments);
