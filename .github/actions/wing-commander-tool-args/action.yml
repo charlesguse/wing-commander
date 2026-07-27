@@ -1,0 +1,173 @@
+# Composes each agent step's effective --allowedTools/--disallowedTools
+# from its hard-coded defaults and a stage's consumer-supplied append/
+# override inputs (specs/026-configurable-tool-lists, research.md D1/D4).
+# Pure shell — no agent, no network — runs before the agent step it feeds so
+# a conflicting configuration (FR-010) fails without exercising credentials,
+# mirroring wing-commander-preflight/action.yml's fail-fast position.
+#
+# Like every shared composite, this action is resolved from the pipeline
+# repository's own checkout at github.job_workflow_sha (see the header of
+# .github/actions/wing-commander-context/action.yml for the verified
+# snippet), so it must never assume it lives in the workspace-root
+# repository.
+name: wing-commander-tool-args
+description: >
+  Compose a stage's effective allowed/disallowed tool lists from its
+  hard-coded defaults plus consumer-supplied extra-allowed-tools/
+  extra-disallowed-tools (append) or allowed-tools-override/
+  disallowed-tools-override (replace) inputs, failing fast when append and
+  replace are both supplied for the same direction.
+
+inputs:
+  default-allowed-tools:
+    description: The step's existing hard-coded allowed list (literal, unchanged from today's inline value).
+    required: true
+  default-disallowed-tools:
+    description: The step's existing hard-coded disallowed list.
+    required: true
+  extra-allowed-tools:
+    description: Passthrough of the stage's extra-allowed-tools workflow_call input.
+    required: false
+    default: ""
+  extra-disallowed-tools:
+    description: Passthrough of the stage's extra-disallowed-tools workflow_call input.
+    required: false
+    default: ""
+  allowed-tools-override:
+    description: >
+      Passthrough of the stage's allowed-tools-override workflow_call input.
+      The literal string "__unset__" means "not provided" — distinct from
+      an explicit empty string, which means "replace with nothing".
+    required: false
+    default: "__unset__"
+  disallowed-tools-override:
+    description: Same semantics as allowed-tools-override, for the disallowed list.
+    required: false
+    default: "__unset__"
+  step-label:
+    description: >
+      Human-readable identifier for error messages, e.g. "implement.cycle",
+      "watchdog.diagnose" — lets one stage with multiple internal steps
+      name the specific step in a validation failure.
+    required: true
+
+outputs:
+  allowed-tools:
+    description: Composed, deduplicated, comma-joined effective allowed list.
+    value: ${{ steps.compose.outputs.allowed-tools }}
+  disallowed-tools:
+    description: Composed, deduplicated, comma-joined effective disallowed list.
+    value: ${{ steps.compose.outputs.disallowed-tools }}
+
+runs:
+  using: composite
+  steps:
+    - name: Compose tool args
+      id: compose
+      shell: bash
+      env:
+        STEP_LABEL: ${{ inputs.step-label }}
+        DEFAULT_ALLOWED: ${{ inputs.default-allowed-tools }}
+        DEFAULT_DISALLOWED: ${{ inputs.default-disallowed-tools }}
+        EXTRA_ALLOWED: ${{ inputs.extra-allowed-tools }}
+        EXTRA_DISALLOWED: ${{ inputs.extra-disallowed-tools }}
+        ALLOWED_OVERRIDE: ${{ inputs.allowed-tools-override }}
+        DISALLOWED_OVERRIDE: ${{ inputs.disallowed-tools-override }}
+      run: |
+        set -uo pipefail
+
+        SENTINEL="__unset__"
+
+        fail() {
+          echo "::error::wing-commander-tool-args ($STEP_LABEL): $1"
+          echo "❌ **wing-commander-tool-args ($STEP_LABEL) failed** — $1" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+        }
+
+        trim() {
+          local s="$1"
+          s="${s#"${s%%[![:space:]]*}"}"
+          s="${s%"${s##*[![:space:]]}"}"
+          printf '%s' "$s"
+        }
+
+        # 1. FR-010 validation: extra-* and a non-sentinel *-override for the
+        #    same direction is a conflict, checked independently per direction.
+        if [ -n "$EXTRA_ALLOWED" ] && [ "$ALLOWED_OVERRIDE" != "$SENTINEL" ]; then
+          fail "allowed: both extra-allowed-tools ('$EXTRA_ALLOWED') and allowed-tools-override ('$ALLOWED_OVERRIDE') were supplied for step '$STEP_LABEL' — choose one."
+        fi
+        if [ -n "$EXTRA_DISALLOWED" ] && [ "$DISALLOWED_OVERRIDE" != "$SENTINEL" ]; then
+          fail "disallowed: both extra-disallowed-tools ('$EXTRA_DISALLOWED') and disallowed-tools-override ('$DISALLOWED_OVERRIDE') were supplied for step '$STEP_LABEL' — choose one."
+        fi
+
+        # 2. Compose (research.md D4): override replaces wholesale; otherwise
+        #    append is a union with the defaults. explicit_allow is what an
+        #    explicit allow decision was made on (extra-allowed in append
+        #    mode, the full override list in override mode) — never the
+        #    unmodified default-allowed-tools — and is subtracted from the
+        #    disallowed side so explicit deny still beats default allow.
+        if [ "$ALLOWED_OVERRIDE" != "$SENTINEL" ]; then
+          raw_allowed="$ALLOWED_OVERRIDE"
+          explicit_allow="$ALLOWED_OVERRIDE"
+        else
+          if [ -n "$EXTRA_ALLOWED" ]; then
+            raw_allowed="$DEFAULT_ALLOWED,$EXTRA_ALLOWED"
+          else
+            raw_allowed="$DEFAULT_ALLOWED"
+          fi
+          explicit_allow="$EXTRA_ALLOWED"
+        fi
+
+        if [ "$DISALLOWED_OVERRIDE" != "$SENTINEL" ]; then
+          raw_disallowed="$DISALLOWED_OVERRIDE"
+        else
+          if [ -n "$EXTRA_DISALLOWED" ]; then
+            raw_disallowed="$DEFAULT_DISALLOWED,$EXTRA_DISALLOWED"
+          else
+            raw_disallowed="$DEFAULT_DISALLOWED"
+          fi
+        fi
+
+        declare -A explicit_allow_set=()
+        if [ -n "$explicit_allow" ]; then
+          IFS=',' read -ra allow_items <<< "$explicit_allow"
+          for item in "${allow_items[@]}"; do
+            item="$(trim "$item")"
+            [ -z "$item" ] && continue
+            explicit_allow_set["$item"]=1
+          done
+        fi
+
+        # 3. Dedupe (trim, drop exact duplicates, preserve first-seen order);
+        #    the disallowed pass additionally subtracts explicit_allow_set.
+        compose_list() {
+          local csv="$1" subtract="$2"
+          local result=""
+          declare -A seen=()
+          IFS=',' read -ra items <<< "$csv"
+          local item
+          for item in "${items[@]}"; do
+            item="$(trim "$item")"
+            [ -z "$item" ] && continue
+            if [ "$subtract" = "subtract" ] && [ -n "${explicit_allow_set[$item]+x}" ]; then
+              continue
+            fi
+            if [ -z "${seen[$item]+x}" ]; then
+              seen["$item"]=1
+              if [ -z "$result" ]; then
+                result="$item"
+              else
+                result="$result,$item"
+              fi
+            fi
+          done
+          printf '%s' "$result"
+        }
+
+        effective_allowed="$(compose_list "$raw_allowed" "")"
+        effective_disallowed="$(compose_list "$raw_disallowed" "subtract")"
+
+        # 4. Emit (only reached once validation in step 1 passes).
+        echo "allowed-tools=$effective_allowed" >> "$GITHUB_OUTPUT"
+        echo "disallowed-tools=$effective_disallowed" >> "$GITHUB_OUTPUT"
+        echo "✅ wing-commander-tool-args ($STEP_LABEL): composed tool lists." >> "$GITHUB_STEP_SUMMARY"
