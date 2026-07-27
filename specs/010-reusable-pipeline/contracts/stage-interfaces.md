@@ -27,6 +27,30 @@ Credential behavior: see [credentials.md](credentials.md).
 | `aws-role-arn` | string | `""` | IAM role ARN the stage assumes via OIDC for Bedrock. Required when `use-bedrock` is true. |
 | `aws-region` | string | `""` | AWS region for both credential configuration and the Bedrock endpoint. Required when `use-bedrock` is true. |
 | `spec-draft-prefix`, `spec-prefix`, `plan-prefix`, `tasks-prefix`, `impl-prefix` | string | per-branch-type: `spec-draft/`, `spec/`, `plan/`, `tasks/`, `impl/` | Optional per-branch-type overrides for the pipeline's branch-name prefixes, newly common across the CREATE-capable stages. Each defaults to its literal shown, so a consumer can override branch naming without touching the rest of the artifact contract. |
+| `extra-allowed-tools` | string | `""` | FR-001. Comma-separated tool list, same syntax as the pipeline's own `--allowedTools` values (e.g. `Bash(gh pr view:*),Read`). Added to the stage's default allowed tools — union, not replacement. Unset/empty = no addition (SC-005). ([specs/026-configurable-tool-lists](../../026-configurable-tool-lists/contracts/tool-list-inputs.md); default lists per stage below.) |
+| `extra-disallowed-tools` | string | `""` | FR-002. Comma-separated tool list. Added to the stage's default disallowed tools — union, not replacement. Unset/empty = no addition (SC-005). |
+| `allowed-tools-override` | string | `__unset__` (sentinel — see below) | FR-003. When set to any value other than the sentinel default (including `""`), replaces the stage's default allowed tools entirely. `""` means "replace with nothing" (an explicit, intentional empty list), distinct from leaving the input unset. |
+| `disallowed-tools-override` | string | `__unset__` (sentinel — see below) | FR-004. Same semantics as `allowed-tools-override`, for the disallowed list. |
+
+**Why a sentinel default instead of `""`** (for `allowed-tools-override`/
+`disallowed-tools-override`): GitHub Actions resolves an unset optional string
+`workflow_call` input to the same value as an explicitly-passed `""` — there is
+no native "not provided" for strings. FR-009 requires the pipeline to tell "not
+provided" (keep defaults) apart from "explicitly empty" (an intentional
+replace-with-nothing). `__unset__` is reserved for this purpose; it is not a
+legal tool name and a consumer should never pass it deliberately.
+
+**Append vs. replace** (evaluated independently per direction — a stage may
+append on `allowed` while replacing `disallowed`): `extra-*` layers onto the
+stage's built-in defaults (union); `*-override` discards those defaults and
+uses exactly the supplied list. Supplying both `extra-allowed-tools` and a
+non-sentinel `allowed-tools-override` (or the disallowed equivalent) is a
+conflict (FR-010) — the stage fails before any agent step runs, naming the
+stage, the direction, and both values. On multi-step stages (currently only
+`implement`), the four inputs are stage-scoped: they apply identically to
+*every* internal agent step, each composed against that step's own defaults
+(D5). See the per-stage default lists below and
+[specs/026-configurable-tool-lists](../../026-configurable-tool-lists/contracts/tool-list-inputs.md).
 
 **Universal behavior**:
 - `on:` is `workflow_call` **only**; stages never read `github.event` — all
@@ -164,3 +188,48 @@ and resolves `run-id`/`run-name` before calling this stage.
 | Preconditions | none as a refusal gate — spec-slug/lifecycle-issue resolution is best-effort (a run not tied to a spec is still inspected and reported against its own run URL). The credential invariant still applies to the two agent steps |
 | Behavior | `collect → diagnose → triage → act`: five deterministic FR-006 collectors into one `signals.json`; a read-only haiku diagnose step emits zero+ Findings; per-Finding fingerprint + `gh search issues` dedup + optional sonnet propose-fix + deterministic rung gate; act executes the selected rung and always reports to the lifecycle issue. Guardrails (`.specify/memory/watchdog-guardrails.json`, read-only), `vars.WING_COMMANDER_WATCHDOG_PAUSED`, and `vars.WING_COMMANDER_WATCHDOG_SELF_DISPATCH_CAP` (default `3`) gate every autonomous write; identical rules apply to self-inspection (FR-018/FR-021) |
 | Outputs | none (side effects only): a lifecycle-issue comment on every run (FR-022); at rung 2/3 a pipeline-defect issue (created/reused/reopened, fingerprint-marked); at rung 1/2 a fix PR to the default branch (`Refs #N`, never auto-closing) |
+
+## Per-stage default tool lists
+
+The `--allowedTools`/`--disallowedTools` values each agent-running stage ships
+today, and against which the `extra-*`/`*-override` common inputs above compose
+(specs/026-configurable-tool-lists, FR-013/SC-006). A consumer who sets none of
+those four inputs gets exactly these lists (SC-005). Multi-step stages
+(`plan`, `tasks`, `implement`, `watchdog`) list one row per internal agent
+step; the `step-label` is what a conflict/validation error names.
+
+Every list additionally carries `ScheduleWakeup`, `Monitor`, `SendMessage` in
+its disallowed set — interactive-resume tools a one-shot Action can never
+service, stripped regardless of consumer configuration (they stay functionally
+inert even if an `extra-allowed-tools`/override re-adds them) — **except**
+`watchdog.diagnose`, whose shipped disallowed literal omits those three (it is
+already read-only via its allowed list; see footnote).
+
+| Stage | Internal step (`step-label`) | Default allowed | Default disallowed |
+|---|---|---|---|
+| intake | `intake` | `Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git checkout:*),Bash(git switch:*),Bash(git push:*),Bash(git branch:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git ls-tree:*),Bash(echo:*),Bash(ls:*),Bash(mkdir:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue edit:*),Bash(gh issue comment:*),Bash(gh pr create:*),Bash(gh label create:*)` | `WebFetch,ScheduleWakeup,Monitor,SendMessage` |
+| clarify | `clarify` | `Read,Edit,Write,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh pr edit:*)` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
+| plan | `plan.direct-commit` | `Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git ls-tree:*),Bash(git branch:*),Bash(echo:*),Bash(ls:*),Bash(mkdir:*),Bash(cat:*),Bash(.specify/scripts/bash/setup-plan.sh:*),Bash(bash .specify/scripts/bash/setup-plan.sh:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(.specify/scripts/bash/update-agent-context.sh:*),Bash(bash .specify/scripts/bash/update-agent-context.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*)` | `WebFetch,ScheduleWakeup,Monitor,SendMessage` |
+| plan | `plan.pr` | same as `plan.direct-commit` plus `Bash(git checkout:*),Bash(git switch:*),Bash(gh pr create:*),Bash(gh pr list:*)` | `WebFetch,ScheduleWakeup,Monitor,SendMessage` |
+| tasks | `tasks.direct-commit` | `Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git ls-tree:*),Bash(git branch:*),Bash(echo:*),Bash(ls:*),Bash(cat:*),Bash(.specify/scripts/bash/setup-tasks.sh:*),Bash(bash .specify/scripts/bash/setup-tasks.sh:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*)` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
+| tasks | `tasks.pr` | same as `tasks.direct-commit` plus `Bash(git checkout:*),Bash(git switch:*),Bash(gh pr create:*),Bash(gh pr list:*)` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
+| implement (⟲ converge) | `implement.cycle` | `Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(git ls-tree:*),Bash(git branch:*),Bash(echo:*),Bash(git show:*),Bash(ls:*),Bash(cat:*),Bash(yamllint:*),Bash(actionlint:*),Bash(shellcheck:*),Bash(jq:*),Bash(mkdir:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh run view:*),Bash(gh run list:*)` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
+| implement (⟲ converge) | `implement.retry` | same as `implement.cycle` plus `Bash(git pull:*),Bash(git fetch:*),Bash(git reset:*)` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
+| implement (⟲ converge) | `implement.post-progress-comment` | `Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(gh issue comment:*)` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
+| finalize | `finalize` | `Read,Glob,Grep,Bash(git log:*),Bash(git diff:*),Bash(git show:*),Write` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
+| cleanup | `cleanup` | `Read,Glob,Grep,Bash(git log:*),Bash(git diff:*),Bash(git show:*),Write` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
+| rebase | `rebase` | `Read,Edit,Grep,Glob,Bash(git status:*),Bash(git diff:*),Bash(git add:*),Bash(git rebase --continue:*),Bash(git rebase --abort:*)` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
+| watchdog | `watchdog.diagnose` | `Read,Grep,Bash(gh:*),Bash(git log:*),Bash(git diff:*)` (deliberately read-only) | `WebSearch,WebFetch,Write,Edit,Bash(git commit:*),Bash(git push:*)` † |
+| watchdog | `watchdog.propose-fix` | `Read,Grep,Glob,Edit,Write` | `WebSearch,WebFetch,Bash,ScheduleWakeup,Monitor,SendMessage` |
+
+† `watchdog.diagnose`'s shipped disallowed literal omits `ScheduleWakeup,
+Monitor,SendMessage` (unlike every other stage). This is the actual inline
+value in `watchdog.yml` today; it is carried verbatim so a consumer who sets
+none of the four tool-list inputs gets a byte-for-byte identical list (SC-005).
+
+Sources: `.github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase,watchdog}.yml`
+(`claude_args:` blocks, now composed via the `wing-commander-tool-args`
+composite action). A future change that edits a stage's default list must
+update this table in the same change — the composite action reads these as
+literal call-site inputs, so drift here is a documentation bug, not a behavior
+bug.

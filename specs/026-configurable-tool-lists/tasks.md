@@ -116,12 +116,12 @@ Single-project CI/CD feature (GitHub Actions reusable workflows + one new shared
 
 **Purpose**: Documentation (FR-013, SC-006) and static validation across the whole feature.
 
-- [ ] T018 [P] Extend `specs/010-reusable-pipeline/contracts/stage-interfaces.md`'s "Common inputs" table with the four new inputs, carried over verbatim from `contracts/tool-list-inputs.md` (research.md D7), including the sentinel-default rationale for the two override inputs.
-- [ ] T019 [P] Add a new per-stage default tool list reference section/table to `specs/010-reusable-pipeline/contracts/stage-interfaces.md`, carried over verbatim from `contracts/stage-default-tool-lists.md` (research.md D7), reflecting the finished defaults confirmed in T001 and wired in T004/T009–T016.
-- [ ] T020 [P] In `docs/architecture.md`, add a pointer to `stage-interfaces.md`'s new tool-list section (T018/T019) and a short append-vs-replace explainer (FR-013).
-- [ ] T021 [P] In `docs/adoption.md`, add a pointer to the same reference alongside the existing per-stage prerequisites table, with the same short append-vs-replace explainer, and a note that `allowed-tools-override`/`disallowed-tools-override` on `implement.yml` (or any multi-step stage) apply identically to every internal step (research.md D5's documented consequence).
-- [ ] T022 Run `actionlint` and `yamllint` (per spec 025's CI gate) across every changed workflow file (`intake.yml`, `clarify.yml`, `plan.yml`, `tasks.yml`, `implement.yml`, `finalize.yml`, `cleanup.yml`, `rebase.yml`, `watchdog.yml`) and the new `.github/actions/wing-commander-tool-args/action.yml`, confirming zero errors.
-- [ ] T023 Walk `specs/026-configurable-tool-lists/quickstart.md`'s full scenario set (Static validation bullets, end-to-end checks 1–6, Documentation check) end-to-end against the finished implementation, recording in the PR body which were exercised via a live/dogfooded run versus desk-checked only.
+- [X] T018 [P] Extend `specs/010-reusable-pipeline/contracts/stage-interfaces.md`'s "Common inputs" table with the four new inputs, carried over verbatim from `contracts/tool-list-inputs.md` (research.md D7), including the sentinel-default rationale for the two override inputs.
+- [X] T019 [P] Add a new per-stage default tool list reference section/table to `specs/010-reusable-pipeline/contracts/stage-interfaces.md`, carried over verbatim from `contracts/stage-default-tool-lists.md` (research.md D7), reflecting the finished defaults confirmed in T001 and wired in T004/T009–T016.
+- [X] T020 [P] In `docs/architecture.md`, add a pointer to `stage-interfaces.md`'s new tool-list section (T018/T019) and a short append-vs-replace explainer (FR-013).
+- [X] T021 [P] In `docs/adoption.md`, add a pointer to the same reference alongside the existing per-stage prerequisites table, with the same short append-vs-replace explainer, and a note that `allowed-tools-override`/`disallowed-tools-override` on `implement.yml` (or any multi-step stage) apply identically to every internal step (research.md D5's documented consequence).
+- [X] T022 Run `actionlint` and `yamllint` (per spec 025's CI gate) across every changed workflow file (`intake.yml`, `clarify.yml`, `plan.yml`, `tasks.yml`, `implement.yml`, `finalize.yml`, `cleanup.yml`, `rebase.yml`, `watchdog.yml`) and the new `.github/actions/wing-commander-tool-args/action.yml`, confirming zero errors.
+- [X] T023 Walk `specs/026-configurable-tool-lists/quickstart.md`'s full scenario set (Static validation bullets, end-to-end checks 1–6, Documentation check) end-to-end against the finished implementation, recording in the PR body which were exercised via a live/dogfooded run versus desk-checked only.
 
 ---
 
