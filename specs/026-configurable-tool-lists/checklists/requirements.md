@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,9 +31,14 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain (FR-010, FR-011, FR-012), covering
-  append-vs-replace precedence, whether append can re-enable a default-denied
-  tool (security), and whether a core tool set survives full replacement. These
-  are posted to the lifecycle issue for the human to resolve; they do not block
-  drafting and are the only unresolved items.
-- Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.
+- All three [NEEDS CLARIFICATION] markers (FR-010, FR-011, FR-012) are resolved
+  from the answers on lifecycle issue #144:
+  - FR-010 (append-vs-replace precedence): supplying both append and replace for
+    the same list is rejected as a configuration error and the stage fails with a
+    clear message.
+  - FR-011 (append re-enabling a default-denied tool): the explicit append (allow)
+    wins and re-enables the tool; there is no protected subset of default denials.
+  - FR-012 (core tool set on full replacement): "replace" means literally the
+    consumer's list only; the pipeline does not silently re-add core tools, so the
+    consumer is responsible for including everything the stage needs.
+- No unresolved items remain.
