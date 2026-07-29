@@ -29,14 +29,28 @@ issue closed ◀──────────── [6 cleanup] ◀── branc
 
 ### Published stages & thin wrappers (`specs/010-reusable-pipeline/`)
 
+This section describes the **published contract** layer (constitution VII).
+
 Every stage body lives in a published stage workflow (`<stage>.yml`) whose only trigger is
-`workflow_call`. Stage workflows never read `github.event.*` or `vars.*` —
-every event fact (issue number, head/base refs, merged flag, comment id) and
+`workflow_call` — nine of them today. Stage workflows are *required* not to
+read `github.event.*` or `vars.*`; every event fact (issue number, head/base
+refs, merged flag, comment id) and
 every knob (model, max-turns, review mode, iteration cap, chaining targets)
 is a declared, typed input with a default matching the constitution's
 tiering. The **wrapper** owns the trigger, the security gates, and the
-event→input extraction; this repository's eight `wing-commander-*.yml` wrappers are
+event→input extraction; this repository's eleven `wing-commander-*.yml` wrappers are
 the worked example, and adopters write the same shape against a version tag.
+
+**One stage does not meet the rule.** `watchdog.yml` reads `vars.*` in 15
+places — branch prefixes, two model overrides, the self-dispatch cap, and a
+deprecated pause shim. It went unnoticed because `release.yml`'s Gate 1b
+greps a hardcoded eight-file list rather than every published stage, so the
+ninth was never examined; the count grew 2 → 9 → 15 across four tagged
+releases with the gate passing each time. Constitution VII requires a
+deviation like this to carry a registered, machine-checked exception. Neither
+the register nor the complete gate exists yet — [issue
+#149](https://github.com/charlesguse/wing-commander/issues/149) tracks both,
+and until it lands this paragraph *is* the exception record.
 
 Mechanics worth knowing:
 
