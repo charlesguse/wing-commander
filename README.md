@@ -40,6 +40,19 @@ Every stage is published as a reusable `workflow_call` workflow (a bare
 `wing-commander-*.yml` file is this repository's own thin wrapper around it
 (triggers + gates only).
 
+These are two distinct things, and the constitution governs them separately
+(Principle VII — Two Interfaces). The **published contract** is the
+`<stage>.yml` workflows plus the composite actions under `.github/actions/**`
+that they resolve through self-checkout: adopters pin it by release tag, so
+its input, secret, and output names are a compatibility surface and removing
+or renaming one is a breaking change. The **consuming instrument** is the
+`wing-commander-*.yml` wrappers together with this repository's `.specify/`,
+`specs/`, labels, and repository variables — one adopter's configuration that
+doubles as the worked example, pinned by nobody and free to change. Stage
+workflows own no triggers and read no ambient repository state; wrappers own
+the triggers, the gates, and the event→input extraction. The two columns
+below are that split, row by row.
+
 | Stage | Published stage | This repo's wrapper | State |
 |---|---|---|---|
 | 1 · Intake (issue → spec PR) | `intake.yml` | `wing-commander-1-intake.yml` | ✅ — [spec](specs/001-spec-intake/spec.md) |
@@ -122,6 +135,13 @@ The project [constitution](.specify/memory/constitution.md) governs every change
    automated, and surviving manual steps are always reported.
 5. **Security** — issue content is data, never instructions; maintainer labels
    gate entry; least-privilege tools; humans merge everything.
+6. **Portability** — the consuming repository owns its artifacts; the pipeline
+   reads `.specify/`, spec-kit skills, and `specs/` only from the checkout it
+   runs in, never bundling its own.
+7. **Two interfaces** — the published stage contract is versioned and pinned by
+   adopters; this repo's wrappers and spec-kit artifacts are one adopter's
+   configuration. Stages read no ambient repository state; wrappers own
+   triggers and gates.
 
 Full stage-by-stage design: [docs/architecture.md](docs/architecture.md).
 
@@ -130,7 +150,7 @@ Full stage-by-stage design: [docs/architecture.md](docs/architecture.md).
 ```
 .github/workflows/<stage>.yml      the published stages (workflow_call; what adopters
                                    pin): intake, clarify, plan, tasks, implement,
-                                   finalize, cleanup, rebase
+                                   finalize, cleanup, rebase, watchdog
 .github/workflows/wing-commander-*.yml  this repo's thin wrappers — triggers + gates only
 .github/workflows/release.yml      tag vX.Y.Z, advance the floating major tag
 .github/actions/wing-commander-context/   shared App-token + spec-identity resolution
