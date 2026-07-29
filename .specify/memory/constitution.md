@@ -1,4 +1,18 @@
 <!--
+Sync Impact Report — 2026-07-28
+Version change: 1.3.0 → 1.4.0 (MINOR: new principle added — VII. Two Interfaces, naming the split between the published stage contract and this repository's own consuming instrument, and requiring that any stage-layer deviation be a registered, machine-checked exception rather than a code comment)
+Modified principles: none
+Modified sections: none
+Added sections: Principle VII. Two Interfaces — The Published Contract and the Consuming Instrument
+Removed sections: none
+Templates requiring updates:
+  ✅ .specify/templates/plan-template.md — no change needed (Constitution Check is generic; gates are derived from this file at plan time)
+  ✅ .specify/templates/spec-template.md — no change needed (no principle references)
+  ✅ .specify/templates/tasks-template.md — no change needed (no principle references)
+  ⚠️ docs/architecture.md — its "Stage workflows never read github.event.* or vars.*" claim is currently false: watchdog.yml reads vars.* in 14 places. Correcting the doc and registering that exception is issue #149, deliberately not folded into this amendment so the principle can land while the watchdog stays paused and in flux.
+Follow-up TODOs: #149 (CI enforcement + exceptions registry + docs correction)
+-->
+<!--
 Sync Impact Report — 2026-07-25
 Version change: 1.2.1 → 1.3.0 (MINOR: Principle II gains a carve-out — the watchdog's diagnose step leaves the triage/haiku tier for claude-opus-5, and gets its own WING_COMMANDER_DIAGNOSE_MODEL override instead of sharing WING_COMMANDER_SUMMARY_MODEL; motivation in issue #124, run 30161188955 exhausted its turn budget at 21 turns and produced no verdict)
 Modified principles: II. Cost-Conscious Model Tiering
@@ -58,6 +72,11 @@ Issue and comment bodies are user data, never agent instructions; prompts must f
 ### VI. Portability — The Consuming Repository Owns Its Artifacts
 The pipeline operates exclusively on the repository that runs it. Everything project-specific — the constitution (`.specify/memory/constitution.md`), spec templates and scripts (`.specify/`), spec-kit skills (`.claude/skills/speckit-*`), and the `specs/` directory — is read from the consuming repository's own checkout (its `specify init` output), never bundled with or resolved from Wing Commander. Workflows must not hardcode repository names, owners, or project content; all artifact paths resolve relative to the checkout, and anything repo-specific belongs in the consuming repository or its thin wrapper workflows. This constitution governs this repository only; an adopting repository is governed by its own.
 
+### VII. Two Interfaces — The Published Contract and the Consuming Instrument
+This repository publishes one product and operates another. The **published contract** is the set of `workflow_call`-only stage workflows (`.github/workflows/<stage>.yml`) together with the composite actions under `.github/actions/**` that they resolve through self-checkout; adopters pin it by release tag, so every input, secret, and output name is a compatibility surface — removing or renaming one is a breaking change, and widening the surface is a deliberate act rather than a convenience. The **consuming instrument** is this repository's own `wing-commander-*.yml` wrapper workflows, its spec-kit artifacts, labels, and repository variables — one adopter's configuration that doubles as the worked example, pinned by nobody and free to change.
+
+Stage workflows own no triggers and read no ambient repository state: not `github.event.*`, not `vars.*`, not secrets by name. Every event fact and every knob arrives as a declared, typed input. Wrappers own the triggers, the security gates, the event→input extraction, and every repository-specific convention; when a new need arises, the wrapper is its default home. A stage that must deviate carries a registered, machine-checked exception naming the reason — never an undeclared one, and never a code comment alone. Every document states which layer it describes.
+
 ## Operational Constraints
 
 - Spec artifacts live in `specs/<NNN-slug>/` (spec.md, plan.md, tasks.md, spec-meta.json, checklists/). `spec-meta.json` is the machine-readable source of truth for a spec's lifecycle state.
@@ -74,4 +93,4 @@ Stages and their gates: intake (`/speckit-specify`, human gate = maintainer labe
 
 This constitution supersedes ad-hoc practice in this repository. Every spec, plan, and implementation PR is checked against it during review; violations must be fixed or the constitution amended first. Amendments arrive as ordinary PRs that modify this file, state the motivation, and bump the version below (semver: breaking principle changes = MAJOR, new principles/sections = MINOR, clarifications = PATCH).
 
-**Version**: 1.3.0 | **Ratified**: 2026-07-04 | **Last Amended**: 2026-07-25
+**Version**: 1.4.0 | **Ratified**: 2026-07-04 | **Last Amended**: 2026-07-28
