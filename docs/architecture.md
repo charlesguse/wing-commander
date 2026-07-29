@@ -460,10 +460,22 @@ FR-011's crisp, testable rule lives in deterministic bash/jq):
 **Guardrail/pause/self-dispatch knobs** — `.specify/memory/watchdog-guardrails.json`
 (consuming-repo-owned, read-only from the watchdog) defines the rung-1
 change-class allowlist and line caps; a missing file or class simply fails
-rung-1 eligibility, never invents a default. `vars.WING_COMMANDER_WATCHDOG_PAUSED`
-(`true` ⇒ report-only, every write at every rung suppressed) and
-`vars.WING_COMMANDER_WATCHDOG_SELF_DISPATCH_CAP` (default `3`) are the two
-operator switches; the cap counts the consecutive `workflow_run`-sourced
+rung-1 eligibility, never invents a default. There are two operator switches.
+`vars.WING_COMMANDER_WATCHDOG_PAUSED` (`true` ⇒ no watchdog job starts at all)
+is read **wrapper-side**, by `wing-commander-8-watchdog.yml` and
+`wing-commander-8b-watchdog-self.yml`; the published `watchdog.yml` stage
+reads no pause variable. It was originally read stage-side, in `act`'s
+write-suppression gate, which suppressed writes while still running collect,
+diagnose, and triage — so a "paused" watchdog kept paying for the diagnose
+and propose-fix agents and threw the verdict away. Gating the trigger is
+both cheaper and what "paused" plainly means; adopters gate their own
+wrappers the same way (constitution VII: the wrapper owns triggers, gates,
+and `vars.*`). Gating the 8b verifier is not optional — with stage 8's jobs
+skipped its run still completes with conclusion `skipped`, and
+`verify-watchdog-run.sh` fails any conclusion that is not `success`, so an
+ungated 8b would file a pipeline-defect issue per paused run.
+`vars.WING_COMMANDER_WATCHDOG_SELF_DISPATCH_CAP` (default `3`) remains
+stage-side in `act`; the cap counts the consecutive `workflow_run`-sourced
 self-inspection chain and, once reached, suppresses all writes so an
 unattended watchdog-inspects-watchdog loop is bounded (FR-018). (Since 8b
 went deterministic the agentic self-inspection path only arises from a

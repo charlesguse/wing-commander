@@ -44,6 +44,17 @@ jobs:
   # reads the workflow_run payload directly; the dispatch path resolves the
   # display name via the Actions API (contracts/watchdog-workflow.md).
   resolve:
+    # Kill switch, wrapper-side (constitution VII: the wrapper owns triggers,
+    # gates, and every vars.* read). watchdog.yml used to honour the same
+    # variable, but only in its `act` job — that suppressed WRITES while
+    # collect, diagnose, and triage still ran, so a "paused" watchdog billed for
+    # the diagnose agent (claude-opus-5, principle II carve-out) and
+    # propose-fix (claude-sonnet-5) on every run and threw the verdict away.
+    # Gating here means no job starts at all. This is now the ONLY place the
+    # pause is enforced: watchdog.yml's stage-side write suppression has been
+    # removed, because suppressing at the last write gate is what made a
+    # "paused" watchdog keep spending in the first place.
+    if: vars.WING_COMMANDER_WATCHDOG_PAUSED != 'true'
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -73,6 +84,10 @@ jobs:
 
   watchdog:
     needs: resolve
+    # Redundant with resolve's gate (a job needing a skipped job is skipped),
+    # but stated explicitly so the kill switch is visible at the job that
+    # actually spends money.
+    if: vars.WING_COMMANDER_WATCHDOG_PAUSED != 'true'
     # Must be a superset of watchdog.yml's workflow-level `permissions:` —
     # GitHub validates the grant against every job in the called workflow at
     # startup (including if-skipped ones) and fails the run with zero jobs if

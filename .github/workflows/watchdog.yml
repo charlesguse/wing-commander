@@ -867,8 +867,9 @@ jobs:
       # D4 (research.md): watchdog.yml is release.yml Gate 1b's documented
       # vars.*-read exception, so the repo-variable override for the
       # diagnose agent's tier is resolved directly here, the same way
-      # WING_COMMANDER_WATCHDOG_PAUSED/_SELF_DISPATCH_CAP are read above,
-      # rather than adding a wrapper-side resolve-model job.
+      # WING_COMMANDER_WATCHDOG_SELF_DISPATCH_CAP is read below, rather than
+      # adding a wrapper-side resolve-model job. (WING_COMMANDER_WATCHDOG_PAUSED
+      # was read here too until pause moved wrapper-side.)
       # WING_COMMANDER_DIAGNOSE_MODEL, not _SUMMARY_MODEL: diagnose used to
       # share the summary tier's variable, which meant any operator retuning
       # finalize/cleanup/implement's cheap summary agents silently retuned
@@ -1364,7 +1365,7 @@ jobs:
       # diagnose schema is compiled from, so the NEXT run is offered it as an
       # enum choice instead of inventing another synonym. Deliberately here
       # rather than in act: the vocabulary must grow even when act's writes
-      # are suppressed (WING_COMMANDER_WATCHDOG_PAUSED), otherwise a paused
+      # are suppressed (the self-dispatch cap), otherwise a suppressed
       # watchdog would keep re-proposing the same "new" class forever.
       - name: Register new finding class
         id: register-class
@@ -1692,11 +1693,13 @@ jobs:
       #   (c) changed-line count <= min(class.maxDiffLines, config.maxDiffLines).
       # All three pass ⇒ candidate rung 1; any single failure ⇒ rung 2
       # (FR-010: any ambiguity resolves toward the more human-involved rung).
-      # The remaining two rung-1 preconditions — not paused (FR-019) and
-      # under the self-dispatch cap (FR-018) — are enforced in the act job's
-      # write-suppression gate (T027/T030), which zeroes EVERY write at EVERY
-      # rung, so a rung-1 candidate under a pause/cap simply writes nothing,
-      # exactly as the table's "demote to rung 2 then suppress" would. The
+      # The remaining rung-1 precondition — under the self-dispatch cap
+      # (FR-018) — is enforced in the act job's write-suppression gate
+      # (T027/T030), which zeroes EVERY write at EVERY rung, so a rung-1
+      # candidate under the cap simply writes nothing, exactly as the table's
+      # "demote to rung 2 then suppress" would. FR-019's pause precondition
+      # is no longer enforced here or in act: pause is wrapper-side, so a
+      # paused watchdog never reaches this job at all. The
       # guardrails config is read-only here (FR-017/T033): a missing file or
       # an absent class fails condition (a); no default entry is invented.
       - name: Rung gate
@@ -1992,21 +1995,25 @@ jobs:
       # FR-019) share the identical short-circuit — collect/diagnose/triage
       # still ran and are still reported, only act's writes are suppressed,
       # for every Finding at every rung. Pause takes precedence in the
-      # reported reason (an operator flipping the kill switch wants that
-      # named first). The pause var is read here in act rather than in the
+      # The self-dispatch cap is enforced here in act rather than in the
       # triage rung gate because this is the single enforcement point every
-      # write path already funnels through (T027) — reading it here keeps one
-      # authority over "does any write happen," rather than two.
+      # write path already funnels through (T027) — one authority over "does
+      # any write happen," rather than two.
+      #
+      # The pause kill switch used to be read here too, and that was a
+      # mistake: reading it at the last write gate meant a "paused" watchdog
+      # still ran collect, diagnose, and triage — billing for the diagnose
+      # agent and propose-fix on every trigger and discarding the verdict.
+      # Pause now lives wrapper-side, where the trigger is (constitution VII),
+      # so a paused watchdog starts no jobs at all. This stage reads no
+      # pause variable; an adopter who wants a kill switch gates their own
+      # wrapper, exactly as wing-commander-8-watchdog.yml does.
       - name: Determine write suppression
         id: write-suppression
         env:
           CAPPED: ${{ steps.self-dispatch-depth.outputs.capped }}
-          PAUSED: ${{ vars.WING_COMMANDER_WATCHDOG_PAUSED }}
         run: |
-          if [ "$PAUSED" = "true" ]; then
-            echo "suppressed=true" >> "$GITHUB_OUTPUT"
-            echo "reason=paused" >> "$GITHUB_OUTPUT"
-          elif [ "$CAPPED" = "true" ]; then
+          if [ "$CAPPED" = "true" ]; then
             echo "suppressed=true"  >> "$GITHUB_OUTPUT"
             echo "reason=self-dispatch-cap" >> "$GITHUB_OUTPUT"
           else
@@ -2198,8 +2205,7 @@ jobs:
           gh issue comment "$ISSUE_NUMBER" --body "🐕 Opened $pr_url to fix this."
 
       # Rung 1 (T032): the finding's first occurrence (dedup found nothing),
-      # its diff passed every FR-011 guardrail, not paused, under the
-      # self-dispatch cap. Commit to a fresh branch and open a PR to the
+      # its diff passed every FR-011 guardrail, under the self-dispatch cap. Commit to a fresh branch and open a PR to the
       # default branch with a short "here's exactly what changed and why"
       # body — NO prior pipeline-defect issue is created or referenced
       # (research.md's rung-1 decision). A human still merges (constitution V,
@@ -2281,7 +2287,6 @@ jobs:
             elif [ "$WRITE_SUPPRESSED" = "true" ]; then
               case "$WRITE_SUPPRESS_REASON" in
                 self-dispatch-cap) echo "_Self-dispatch cap reached — reporting only, no autonomous action taken._" ;;
-                paused) echo "_Autonomous fixes are paused (\`WING_COMMANDER_WATCHDOG_PAUSED\`) — reporting only._" ;;
                 *) echo "_Autonomous action suppressed — reporting only._" ;;
               esac
             else
