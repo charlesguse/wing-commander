@@ -78,7 +78,7 @@ create them now so the stubs' documentation stays true):
 | `WING_COMMANDER_TASKS_PREFIX` | `tasks/` | Branch prefix for the tasks branch (default `tasks/`) |
 | `WING_COMMANDER_IMPL_PREFIX` | `impl/` | Branch prefix for the implement branch (default `impl/`) |
 | `WING_COMMANDER_MAX_ITERATIONS` | `5` | Cap on implement ⟲ converge loops per spec |
-| `WING_COMMANDER_WATCHDOG_PAUSED` | unset (not paused) | `true` = kill switch: the watchdog still inspects and reports, but performs **no** autonomous write (no PR, issue, comment, or reopen) at any rung until you clear it |
+| `WING_COMMANDER_WATCHDOG_PAUSED` | unset (not paused) | `true` = kill switch. Read in two places: the *wrapper* workflows (`wing-commander-8-watchdog.yml`, `wing-commander-8b-watchdog-self.yml`) gate on it so **no job starts at all** — nothing inspected, no agent invoked, nothing written; the published `watchdog.yml` stage also still suppresses every write, as a deprecated compatibility shim for adopters whose wrapper has no such gate. Gate your wrapper: the stage-side shim stops writes but not work, so the agents still run and bill. The shim is scheduled for removal in the watchdog rework's next major |
 | `WING_COMMANDER_WATCHDOG_SELF_DISPATCH_CAP` | `3` | Max consecutive watchdog-inspects-watchdog runs before the chain stops writing (bounds a self-inspection loop); the run is still inspected and reported |
 
 The watchdog also reads one consuming-repo-owned config file,

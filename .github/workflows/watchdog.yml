@@ -867,8 +867,9 @@ jobs:
       # D4 (research.md): watchdog.yml is release.yml Gate 1b's documented
       # vars.*-read exception, so the repo-variable override for the
       # diagnose agent's tier is resolved directly here, the same way
-      # WING_COMMANDER_WATCHDOG_PAUSED/_SELF_DISPATCH_CAP are read above,
-      # rather than adding a wrapper-side resolve-model job.
+      # WING_COMMANDER_WATCHDOG_SELF_DISPATCH_CAP and the deprecated
+      # WING_COMMANDER_WATCHDOG_PAUSED shim are read below, rather than
+      # adding a wrapper-side resolve-model job.
       # WING_COMMANDER_DIAGNOSE_MODEL, not _SUMMARY_MODEL: diagnose used to
       # share the summary tier's variable, which meant any operator retuning
       # finalize/cleanup/implement's cheap summary agents silently retuned
@@ -1364,8 +1365,9 @@ jobs:
       # diagnose schema is compiled from, so the NEXT run is offered it as an
       # enum choice instead of inventing another synonym. Deliberately here
       # rather than in act: the vocabulary must grow even when act's writes
-      # are suppressed (WING_COMMANDER_WATCHDOG_PAUSED), otherwise a paused
-      # watchdog would keep re-proposing the same "new" class forever.
+      # are suppressed (the self-dispatch cap, or the deprecated pause shim),
+      # otherwise a suppressed watchdog would keep re-proposing the same
+      # "new" class forever.
       - name: Register new finding class
         id: register-class
         if: steps.suppress.outputs.suppressed != 'true' && matrix.newClass
@@ -1696,7 +1698,10 @@ jobs:
       # under the self-dispatch cap (FR-018) — are enforced in the act job's
       # write-suppression gate (T027/T030), which zeroes EVERY write at EVERY
       # rung, so a rung-1 candidate under a pause/cap simply writes nothing,
-      # exactly as the table's "demote to rung 2 then suppress" would. The
+      # exactly as the table's "demote to rung 2 then suppress" would. In
+      # this repository a paused watchdog never reaches this job at all —
+      # the wrapper gates first — so the FR-019 arm is a compatibility shim
+      # for adopters whose wrapper does not (see act's comment). The
       # guardrails config is read-only here (FR-017/T033): a missing file or
       # an absent class fails condition (a); no default entry is invented.
       - name: Rung gate
@@ -1992,11 +1997,27 @@ jobs:
       # FR-019) share the identical short-circuit — collect/diagnose/triage
       # still ran and are still reported, only act's writes are suppressed,
       # for every Finding at every rung. Pause takes precedence in the
-      # reported reason (an operator flipping the kill switch wants that
-      # named first). The pause var is read here in act rather than in the
+      # The self-dispatch cap is enforced here in act rather than in the
       # triage rung gate because this is the single enforcement point every
-      # write path already funnels through (T027) — reading it here keeps one
-      # authority over "does any write happen," rather than two.
+      # write path already funnels through (T027) — one authority over "does
+      # any write happen," rather than two.
+      #
+      # DEPRECATED: the pause read below. Enforcing pause here — at the last
+      # gate before a write — stops writes without stopping work: collect,
+      # diagnose, and triage all still run, so a "paused" watchdog billed for
+      # the diagnose agent and propose-fix on every trigger and discarded the
+      # verdict. Pause is now enforced wrapper-side, where the trigger is
+      # (constitution VII), and wing-commander-8-watchdog.yml gates on it so
+      # no job starts at all.
+      #
+      # This read is kept ONLY as a compatibility shim for an adopter who set
+      # the variable and calls this stage from a wrapper without such a gate;
+      # removing it would silently re-enable autonomous writes for them,
+      # which is a breaking change this stage is not worth spending a major
+      # version on while 14 other vars.* reads still await the watchdog
+      # rework (#149's waiver). It is redundant whenever the caller gates its
+      # own wrapper, and is scheduled for removal in that rework's major,
+      # together with every other vars.* read here.
       - name: Determine write suppression
         id: write-suppression
         env:
@@ -2281,7 +2302,7 @@ jobs:
             elif [ "$WRITE_SUPPRESSED" = "true" ]; then
               case "$WRITE_SUPPRESS_REASON" in
                 self-dispatch-cap) echo "_Self-dispatch cap reached — reporting only, no autonomous action taken._" ;;
-                paused) echo "_Autonomous fixes are paused (\`WING_COMMANDER_WATCHDOG_PAUSED\`) — reporting only._" ;;
+                paused) echo "_Autonomous fixes are paused (\`WING_COMMANDER_WATCHDOG_PAUSED\`) — reporting only. Gate your wrapper on the same variable to stop the run entirely._" ;;
                 *) echo "_Autonomous action suppressed — reporting only._" ;;
               esac
             else

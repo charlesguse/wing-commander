@@ -41,6 +41,12 @@ permissions: {}
 
 jobs:
   verify:
+    # Paused means paused (constitution VII: wrapper-side gate). Required,
+    # not cosmetic: with stage 8's jobs gated off, its run still completes —
+    # with conclusion 'skipped'. verify-watchdog-run.sh check 1 fails on any
+    # conclusion that is not 'success', so an ungated 8b would file a
+    # pipeline-defect issue for every deliberately paused stage-8 run.
+    if: vars.WING_COMMANDER_WATCHDOG_PAUSED != 'true'
     runs-on: ubuntu-latest
     permissions:
       actions: read      # run/jobs/artifact reads
