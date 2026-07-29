@@ -9,8 +9,9 @@ Templates requiring updates:
   ✅ .specify/templates/plan-template.md — no change needed (Constitution Check is generic; gates are derived from this file at plan time)
   ✅ .specify/templates/spec-template.md — no change needed (no principle references)
   ✅ .specify/templates/tasks-template.md — no change needed (no principle references)
-  ⚠️ docs/architecture.md — its "Stage workflows never read github.event.* or vars.*" claim is currently false: watchdog.yml reads vars.* in 14 places. Correcting the doc and registering that exception is issue #149, deliberately not folded into this amendment so the principle can land while the watchdog stays paused and in flux.
-Follow-up TODOs: #149 (CI enforcement + exceptions registry + docs correction)
+  ⚠️ docs/architecture.md — its "Stage workflows never read github.event.* or vars.*" claim (line 33) is currently false: watchdog.yml reads vars.* in 14 places. PR #151 edited this file's operator-switch paragraph but deliberately did NOT fix line 33, which stays false while the waiver stands. Correcting the doc and registering the exception is issue #149, not folded into this amendment so the principle can land while the watchdog stays paused and in flux.
+Worked example: PR #151 (merged) applies this principle before it was ratified — the watchdog's pause kill switch moved from the published stage's write gate to the two wrapper workflows that own the trigger, taking watchdog.yml from 15 vars.* reads to 14. It is also the first change this principle would classify as breaking (constitution I: the repo is its own first example).
+Follow-up TODOs: #149 (extend the existing release.yml Gate 1b — move it to PR time, cover all nine stages, replace the brace-expansion omission with a declared waiver)
 -->
 <!--
 Sync Impact Report — 2026-07-25
