@@ -463,14 +463,18 @@ change-class allowlist and line caps; a missing file or class simply fails
 rung-1 eligibility, never invents a default. There are two operator switches.
 `vars.WING_COMMANDER_WATCHDOG_PAUSED` (`true` ⇒ no watchdog job starts at all)
 is read **wrapper-side**, by `wing-commander-8-watchdog.yml` and
-`wing-commander-8b-watchdog-self.yml`; the published `watchdog.yml` stage
-reads no pause variable. It was originally read stage-side, in `act`'s
-write-suppression gate, which suppressed writes while still running collect,
-diagnose, and triage — so a "paused" watchdog kept paying for the diagnose
-and propose-fix agents and threw the verdict away. Gating the trigger is
-both cheaper and what "paused" plainly means; adopters gate their own
-wrappers the same way (constitution VII: the wrapper owns triggers, gates,
-and `vars.*`). Gating the 8b verifier is not optional — with stage 8's jobs
+`wing-commander-8b-watchdog-self.yml`. It was originally read only
+stage-side, in `act`'s write-suppression gate, which suppressed writes while
+still running collect, diagnose, and triage — so a "paused" watchdog kept
+paying for the diagnose and propose-fix agents and threw the verdict away.
+Gating the trigger is both cheaper and what "paused" plainly means; adopters
+gate their own wrappers the same way (constitution VII: the wrapper owns
+triggers, gates, and `vars.*`). The stage-side read is retained as a
+**deprecated compatibility shim** so that removing it does not silently
+re-enable autonomous writes for an adopter who set the variable and gates
+nothing; it is scheduled for removal in the watchdog rework's next major,
+alongside the stage's other `vars.*` reads (#149). Gating the 8b verifier is
+not optional — with stage 8's jobs
 skipped its run still completes with conclusion `skipped`, and
 `verify-watchdog-run.sh` fails any conclusion that is not `success`, so an
 ungated 8b would file a pipeline-defect issue per paused run.
