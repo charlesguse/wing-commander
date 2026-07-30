@@ -1380,8 +1380,57 @@ jobs:
             echo "PR #$PR_NUMBER carries no wing-commander-auto-update-spec-kit marker — not this feature's PR, no-op." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - run: echo "skeleton — filled in by US3 (T019, T020)"
-        if: steps.guard.outputs.recognized == 'true'
+      # T019/T020: the issue is already closed by GitHub's own `Closes #N`
+      # keyword by the time this job runs (the sole close mechanism —
+      # this feature never calls `gh issue close` itself, avoiding a race
+      # with a human closing it manually). This posts the one additional
+      # rich summary SC-004 requires.
+      - name: Post closing summary (version-bump)
+        if: steps.guard.outputs.kind == 'version-bump'
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          PR_NUMBER: ${{ inputs.pr-number }}
+        run: |
+          set -uo pipefail
+          pr_json="$(gh pr view "$PR_NUMBER" --json title,body,url)"
+          title="$(printf '%s' "$pr_json" | jq -r '.title')"
+          body="$(printf '%s' "$pr_json" | jq -r '.body')"
+          url="$(printf '%s' "$pr_json" | jq -r '.url')"
+          version="$(printf '%s' "$title" | sed -n 's/^chore: bump Spec Kit to v\(.*\)$/\1/p')"
+          issue="$(printf '%s' "$body" | grep -oE 'Closes #[0-9]+' | head -1 | grep -oE '[0-9]+' || true)"
+          if [ -z "$issue" ]; then
+            echo "::warning::wing-commander auto-update-spec-kit pr-merged: could not parse a 'Closes #N' issue number from PR #$PR_NUMBER's body — no closing summary posted."
+            exit 0
+          fi
+          {
+            echo "✅ **Spec Kit v$version adopted** — $url merged."
+            echo ""
+            echo "This issue was closed automatically by the PR's own \`Closes #$issue\` keyword."
+          } > "$RUNNER_TEMP/pr-merged-summary.md"
+          gh issue comment "$issue" --body-file "$RUNNER_TEMP/pr-merged-summary.md"
+          echo "pr-merged: posted closing summary to #$issue for v$version." >> "$GITHUB_STEP_SUMMARY"
+
+      # A revert PR's merge does NOT close anything — its issue is the
+      # failure record and stays open per FR-010 (data-model.md).
+      - name: Post closing summary (revert)
+        if: steps.guard.outputs.kind == 'revert'
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          PR_NUMBER: ${{ inputs.pr-number }}
+        run: |
+          set -uo pipefail
+          pr_json="$(gh pr view "$PR_NUMBER" --json title,url)"
+          title="$(printf '%s' "$pr_json" | jq -r '.title')"
+          url="$(printf '%s' "$pr_json" | jq -r '.url')"
+          restored="$(printf '%s' "$title" | sed -n 's/.*restore v\(.*\)$/\1/p')"
+          issue="$(gh issue list --repo "$GITHUB_REPOSITORY" --label "auto-update:failed" --state open --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+          if [ -z "$issue" ]; then
+            echo "::warning::wing-commander auto-update-spec-kit pr-merged: revert PR #$PR_NUMBER merged but no open auto-update:failed issue was found to summarize on."
+            exit 0
+          fi
+          echo "🔙 **Spec Kit reverted to v$restored** — $url merged. This issue stays open and flagged (a rollback is itself the failure this feature wants visible)." > "$RUNNER_TEMP/pr-merged-summary.md"
+          gh issue comment "$issue" --body-file "$RUNNER_TEMP/pr-merged-summary.md"
+          echo "pr-merged: posted closing summary to #$issue for revert to v$restored." >> "$GITHUB_STEP_SUMMARY"
 
   # trigger == comment-reply entry point: resumes an ambiguous-options
   # question from a verified maintainer's reply.
