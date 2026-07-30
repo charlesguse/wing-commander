@@ -1,0 +1,203 @@
+# Maintenance stage-pair (unnumbered, like rebase.yml/watchdog.yml — no
+# per-spec identity) that keeps this repository's pinned Spec Kit version
+# (.specify/init-options.json's speckit_version, plus the matching
+# SPECKIT_SUPPORTED_VERSION constant in wing-commander-preflight/action.yml)
+# current with upstream github/spec-kit releases. on: workflow_call only.
+# Nine jobs:
+#   - health-check: re-verifies the CURRENTLY PINNED version first
+#     (scheduled/dispatch only); a failure here skips straight to act's
+#     rollback branch.
+#   - detect:       deterministic latest-eligible-release lookup + semver
+#                    classification (patch/minor/major).
+#   - settle:       issue-marker settle-tracking state machine — a freshly
+#                    detected candidate never adopts the same day it appears.
+#   - evaluate-path: one claude-sonnet-5 judgment step deciding clean-bump /
+#                    needs-migration / ambiguous-options.
+#   - prepare:      deterministic version-bump diff, no push yet.
+#   - verify:       tiered smoke test (lightweight always, +end-to-end for
+#                    minor/major) against the prepared candidate.
+#   - act:          opens the version-bump PR (pass), leaves the pin
+#                    unchanged and flags the issue (fail), or opens a revert
+#                    PR (health-check failure).
+#   - pr-merged:    posts a closing summary once a version-bump/revert PR
+#                    this feature opened is closed.
+#   - comment-reply: resumes an ambiguous-options question from a verified
+#                    maintainer's reply.
+# See specs/027-auto-update-spec-kit/contracts/auto-update-spec-kit-workflow.md
+# for the full contract this file implements.
+name: "reusable · auto-update-spec-kit"
+
+on:
+  workflow_call:
+    inputs:
+      trigger:
+        description: "scheduled | dispatch | pr-merged | comment-reply — resolved by the wrapper from github.event_name (constitution VII: the stage never reads github.event.* directly)"
+        type: string
+        required: true
+      pr-number:
+        description: "The closed PR's number. Only meaningful when trigger == pr-merged."
+        type: string
+        required: false
+        default: ""
+      pr-merged:
+        description: "Whether the closed PR was merged (vs. closed unmerged). Only meaningful when trigger == pr-merged."
+        type: boolean
+        required: false
+        default: false
+      issue-number:
+        description: "The commented-on issue's number. Only meaningful when trigger == comment-reply."
+        type: string
+        required: false
+        default: ""
+      comment-id:
+        description: "The triggering comment's id. Only meaningful when trigger == comment-reply."
+        type: string
+        required: false
+        default: ""
+      commenter-association:
+        description: "The commenter's author_association (OWNER/MEMBER/COLLABORATOR/...). Only meaningful when trigger == comment-reply."
+        type: string
+        required: false
+        default: ""
+      commenter-id:
+        description: "The commenter's numeric GitHub user id. Only meaningful when trigger == comment-reply."
+        type: string
+        required: false
+        default: ""
+      issue-author-id:
+        description: "The commented-on issue's author numeric GitHub user id. Only meaningful when trigger == comment-reply."
+        type: string
+        required: false
+        default: ""
+      stabilization-checks:
+        description: "Consecutive unchanged daily checks required before a settled candidate proceeds (FR-002 — no fixed calendar window)."
+        type: string
+        required: false
+        default: "1"
+      model:
+        description: "Model for the evaluate-path judgment agent (constitution II tiering: implementation-weight)."
+        type: string
+        required: false
+        default: claude-sonnet-5
+      pipeline-repo:
+        description: >
+          Repository to check out for the pipeline's shared composite actions
+          (research.md D3). Only forks that republish need to set it.
+        type: string
+        required: false
+        default: charlesguse/wing-commander
+      pipeline-ref:
+        description: >
+          Ref of the pipeline repository to check out for the shared
+          composite actions. Empty = the exact commit of the running
+          reusable workflow (github.job_workflow_sha, with an OIDC-claim
+          fallback) — set it only if your calling job cannot grant
+          id-token: write; then it MUST match your uses: pin.
+        type: string
+        required: false
+        default: ""
+      default-branch:
+        description: >
+          The consuming repository's default branch. Empty = derived via
+          `gh repo view` — the stage never assumes `main`.
+        type: string
+        required: false
+        default: ""
+    secrets:
+      claude-code-oauth-token:
+        description: "Claude OAuth token (claude setup-token) — one of the two credentials"
+        required: false
+      anthropic-api-key:
+        description: "Claude API key (Claude Console) — one of the two credentials"
+        required: false
+      speckit-app-id:
+        description: "GitHub App ID used for pushes/PRs/comments/issues/labels"
+        required: true
+      speckit-app-private-key:
+        description: "GitHub App private key"
+        required: true
+
+# Top-level (not per-job): every job needs the same write surface (issues for
+# the lifecycle issue, pull-requests/contents for the version-bump/revert
+# PRs), and only one concurrency group needs to span the whole file — there
+# is only ever one active upgrade cycle at a time (FR-015).
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: wing-commander-auto-update-spec-kit
+  cancel-in-progress: false
+
+jobs:
+  # Re-verifies the CURRENTLY PINNED version first (research.md: this is
+  # what makes FR-006's "already applied and found not to work" branch
+  # discoverable at all). Only runs for scheduled/dispatch — pr-merged and
+  # comment-reply are their own entry points.
+  health-check:
+    if: inputs.trigger == 'scheduled' || inputs.trigger == 'dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "skeleton — filled in by Foundational/US2 tasks"
+
+  # Deterministic latest-eligible-release lookup (gh api + semver compare).
+  detect:
+    needs: health-check
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "skeleton — filled in by US1"
+
+  # Settle-tracking state machine against the singular open lifecycle issue.
+  settle:
+    needs: detect
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "skeleton — filled in by US1"
+
+  # One claude-sonnet-5 judgment step: clean-bump / needs-migration /
+  # ambiguous-options. Re-entered directly by comment-reply's resume step.
+  evaluate-path:
+    needs: settle
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "skeleton — filled in by US1/US4"
+
+  # Deterministic version-bump diff, materialized locally — no push yet.
+  prepare:
+    needs: evaluate-path
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "skeleton — filled in by US1"
+
+  # Tiered smoke test against the prepared candidate.
+  verify:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "skeleton — filled in by US1/US2"
+
+  # Opens the version-bump PR (pass), or leaves the pin unchanged and flags
+  # the issue (fail); also the rollback destination when health-check fails.
+  act:
+    needs: [health-check, verify]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "skeleton — filled in by US1/US2"
+
+  # trigger == pr-merged entry point: posts a closing summary once a
+  # version-bump/revert PR this feature opened is closed.
+  pr-merged:
+    if: inputs.trigger == 'pr-merged'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "skeleton — filled in by US3"
+
+  # trigger == comment-reply entry point: resumes an ambiguous-options
+  # question from a verified maintainer's reply.
+  comment-reply:
+    if: inputs.trigger == 'comment-reply'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "skeleton — filled in by US4"
