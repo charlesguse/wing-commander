@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,9 +31,9 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain by design, within the maximum of 3:
-  - FR-002 — check cadence and any stabilization delay before a fresh release is eligible.
-  - FR-004 — scope of the verification "smoke test" (lightweight `.specify/` script check vs. representative end-to-end stage).
-  - FR-014 — which version jumps may auto-adopt on a passing smoke test vs. require explicit human review (e.g. major-version gating).
-- These are posted to the lifecycle issue for the requester to answer; the spec is otherwise complete and ready for planning once resolved.
-- Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.
+- All three [NEEDS CLARIFICATION] markers are now resolved from the requester's #153 reply:
+  - FR-002 — Q1 option C: check daily; adopt on passing verification, but only after any newer patch of the same minor has settled (no fixed calendar stabilization window; research may justify a longer one).
+  - FR-004 — Q2 option C: tiered verification — lightweight `.specify/` check always; representative end-to-end stage additionally for minor/major upgrades.
+  - FR-014 — Q3 option C: all version jumps (including major) auto-proceed to a reviewable PR on passing verification; the human PR review is the adoption gate.
+- One flagged tension: the requester also asked the version-bump PR to (optionally) auto-merge. This conflicts with Constitution Principle V (bot never merges to `main`), FR-017, and SC-006. The spec keeps human-merge and records the request as out of scope pending a constitution amendment; it is surfaced back to the requester rather than encoded as a requirement.
+- The spec is complete and ready for planning.
