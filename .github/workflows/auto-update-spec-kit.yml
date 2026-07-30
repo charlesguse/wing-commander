@@ -1155,9 +1155,84 @@ jobs:
           git fetch --no-tags --quiet origin "$db:refs/remotes/origin/$db"
           echo "name=$db" >> "$GITHUB_OUTPUT"
 
+      # research.md: "last known working version" is never a separate
+      # ledger — health-check already computed it from git history. Opens a
+      # revert PR (no Closes keyword — a rollback is itself the failure
+      # outcome FR-010 wants visible, not something that auto-closes
+      # anything) plus a flagged, reused-if-open issue.
       - name: Rollback (health-check failed)
         if: needs.health-check.outputs.pinned-ok == 'false'
-        run: echo "skeleton — filled in by US2 (T016)"
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          DB: ${{ steps.defbranch.outputs.name }}
+          ROLLBACK_TARGET: ${{ needs.health-check.outputs.rollback-target }}
+          PINNED_VERSION: ${{ needs.health-check.outputs.pinned-version }}
+          FAILURE_DETAIL: ${{ needs.health-check.outputs.failure-detail }}
+          BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
+        run: |
+          set -euo pipefail
+          gh label create "auto-update:failed" --color E99695 --description "Spec Kit upgrade blocked or rolled back; needs maintainer attention" --force
+
+          existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --label "auto-update:failed" --state open --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+
+          if [ -z "$ROLLBACK_TARGET" ]; then
+            echo "::error::wing-commander auto-update-spec-kit: pinned version v$PINNED_VERSION failed its health check, but no prior pinned version could be determined from git history — a maintainer must intervene manually."
+            {
+              echo "⚠️ **Pinned Spec Kit version v$PINNED_VERSION is failing its health check**, and no prior working version could be determined from git history (\`.specify/init-options.json\`). A maintainer needs to fix or manually roll back."
+              echo ""
+              echo "**What was detected:**"
+              echo ""
+              echo "$FAILURE_DETAIL"
+            } > "$RUNNER_TEMP/rollback-issue-body.md"
+            if [ -n "$existing" ]; then
+              gh issue comment "$existing" --body-file "$RUNNER_TEMP/rollback-issue-body.md"
+            else
+              gh issue create --repo "$GITHUB_REPOSITORY" --title "Spec Kit auto-update: v$PINNED_VERSION is broken, no rollback target found" --body-file "$RUNNER_TEMP/rollback-issue-body.md" --label "auto-update:failed"
+            fi
+            exit 0
+          fi
+
+          git config user.name "${BOT_SLUG}[bot]"
+          git config user.email "${BOT_SLUG}[bot]@users.noreply.github.com"
+
+          branch="auto-update-spec-kit/revert-v$ROLLBACK_TARGET"
+          git checkout -B "$branch" "refs/remotes/origin/$DB"
+          jq --arg v "$ROLLBACK_TARGET" '.speckit_version = $v' .specify/init-options.json > "$RUNNER_TEMP/init-options.json.tmp"
+          mv "$RUNNER_TEMP/init-options.json.tmp" .specify/init-options.json
+          sed -i -E "s/SPECKIT_SUPPORTED_VERSION: \"[^\"]+\"/SPECKIT_SUPPORTED_VERSION: \"$ROLLBACK_TARGET\"/" \
+            .github/actions/wing-commander-preflight/action.yml
+          git add -A
+          git commit -m "revert: Spec Kit v$PINNED_VERSION regression — restore v$ROLLBACK_TARGET" --quiet
+          git push origin "refs/heads/$branch:refs/heads/$branch"
+
+          {
+            echo "Restores this repository's pinned Spec Kit version to v$ROLLBACK_TARGET after v$PINNED_VERSION failed its routine health check."
+            echo ""
+            echo "**What the health check found:**"
+            echo ""
+            echo "$FAILURE_DETAIL"
+            echo ""
+            echo "<!-- wing-commander-auto-update-spec-kit: revert -->"
+          } > "$RUNNER_TEMP/revert-pr-body.md"
+          pr_url="$(gh pr create --repo "$GITHUB_REPOSITORY" --base "$DB" --head "$branch" \
+            --title "revert: Spec Kit v$PINNED_VERSION regression — restore v$ROLLBACK_TARGET" \
+            --body-file "$RUNNER_TEMP/revert-pr-body.md")"
+
+          {
+            echo "🔙 **Spec Kit v$PINNED_VERSION is regressing** — the routine health check on the currently pinned version failed."
+            echo ""
+            echo "**What was detected:**"
+            echo ""
+            echo "$FAILURE_DETAIL"
+            echo ""
+            echo "**Proposed:** restore v$ROLLBACK_TARGET via $pr_url (this feature never merges its own PR)."
+          } > "$RUNNER_TEMP/rollback-issue-body.md"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file "$RUNNER_TEMP/rollback-issue-body.md"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "Spec Kit auto-update: v$PINNED_VERSION regression" --body-file "$RUNNER_TEMP/rollback-issue-body.md" --label "auto-update:failed"
+          fi
+          echo "act: opened rollback PR $pr_url restoring v$ROLLBACK_TARGET." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Download prepared branch bundle
         if: needs.health-check.outputs.pinned-ok != 'false'
@@ -1203,9 +1278,35 @@ jobs:
           gh issue comment "$ISSUE" --body "Opened $url — awaiting review and merge (this feature never merges its own PR)."
           echo "act: opened $url for v$CANDIDATE." >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Verification failed — flag and leave pin unchanged
+      # T017: verification failed — .specify/init-options.json is left
+      # untouched (the prepared branch was never pushed to origin), the
+      # issue is flagged and stays open (FR-006/FR-010). T018's shared
+      # label-creation step: idempotent, safe to call every time.
+      - name: Label the issue as failed
         if: needs.health-check.outputs.pinned-ok != 'false' && needs.verify.outputs.passed != 'true'
-        run: echo "skeleton — filled in by US2 (T017, T018)"
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+        run: gh label create "auto-update:failed" --color E99695 --description "Spec Kit upgrade blocked or rolled back; needs maintainer attention" --force
+
+      - name: Comment verification failure on the issue
+        if: needs.health-check.outputs.pinned-ok != 'false' && needs.verify.outputs.passed != 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ needs.prepare.outputs.issue-number }}
+          kind: info
+          summary: "Verification failed — the candidate was not adopted"
+          body: ${{ needs.verify.outputs.failure-detail }}
+
+      - name: Apply the failed label
+        if: needs.health-check.outputs.pinned-ok != 'false' && needs.verify.outputs.passed != 'true'
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ISSUE: ${{ needs.prepare.outputs.issue-number }}
+        run: |
+          set -euo pipefail
+          gh issue edit "$ISSUE" --add-label "auto-update:failed"
+          echo "act: verification failed for #$ISSUE — flagged auto-update:failed, pin left unchanged." >> "$GITHUB_STEP_SUMMARY"
 
   # trigger == pr-merged entry point: posts a closing summary once a
   # version-bump/revert PR this feature opened is closed. Self-recognition
