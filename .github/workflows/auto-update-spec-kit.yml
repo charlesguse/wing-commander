@@ -135,69 +135,396 @@ jobs:
   # Re-verifies the CURRENTLY PINNED version first (research.md: this is
   # what makes FR-006's "already applied and found not to work" branch
   # discoverable at all). Only runs for scheduled/dispatch — pr-merged and
-  # comment-reply are their own entry points.
+  # comment-reply are their own entry points. Failure here routes `act`
+  # straight to its rollback branch and short-circuits detect/settle/
+  # evaluate-path/prepare/verify entirely for this run (T006).
   health-check:
     if: inputs.trigger == 'scheduled' || inputs.trigger == 'dispatch'
     runs-on: ubuntu-latest
+    outputs:
+      pinned-ok: ${{ steps.verify-pinned.outputs.passed }}
+      failure-detail: ${{ steps.verify-pinned.outputs.failure-detail }}
+      rollback-target: ${{ steps.rollback-target.outputs.version }}
+      pinned-version: ${{ steps.pinned-version.outputs.version }}
+      default-branch: ${{ steps.defbranch.outputs.name }}
     steps:
-      - run: echo "skeleton — filled in by Foundational/US2 tasks"
+      - name: Checkout consumer repository (bootstrap, default token)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # research.md D3: the composite checkout must pin the EXACT commit of
+      # the running reusable workflow. github.job_workflow_sha is empty for
+      # some remote call shapes, so fall back to the OIDC token's
+      # job_workflow_sha claim (requires id-token: write). Never fall back
+      # to a branch name — a silent default-branch checkout would break
+      # version pinning. (Identical to every other stage's own copy of this
+      # step — watchdog.yml, rebase.yml.)
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref" | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      - name: Preflight
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-preflight
+        with:
+          oauth-token: ${{ secrets.claude-code-oauth-token }}
+          api-key: ${{ secrets.anthropic-api-key }}
+          require-speckit: "true"
+
+      - name: Wing Commander context
+        id: ctx
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      # Never assume `main` (constitution VI).
+      - name: Resolve default branch
+        id: defbranch
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          DEFAULT_BRANCH: ${{ inputs.default-branch }}
+        run: |
+          db="${DEFAULT_BRANCH:-$(gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef --jq .defaultBranchRef.name)}"
+          echo "name=$db" >> "$GITHUB_OUTPUT"
+
+      - name: Read currently pinned version
+        id: pinned-version
+        env:
+          DB: ${{ steps.defbranch.outputs.name }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --quiet origin "$DB:refs/remotes/origin/$DB"
+          v="$(git show "refs/remotes/origin/$DB:.specify/init-options.json" | jq -r '.speckit_version')"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      # FR-004's lightweight tier (research.md's "no reusable smoke test
+      # exists yet" decision — T004): in an isolated temporary worktree
+      # (never the real working tree), run check-prerequisites.sh and
+      # create-new-feature.sh --json against a throwaway feature name and
+      # assert both exit 0 and produce the documented JSON shape. This same
+      # step shape runs again in `verify` against the prepared candidate
+      # branch (T013) — duplicated inline per this feature's two-file scope
+      # (plan.md), not factored into a new composite action.
+      - name: Lightweight verification (pinned version on ${{ steps.defbranch.outputs.name }})
+        id: verify-pinned
+        env:
+          TARGET_REF: refs/remotes/origin/${{ steps.defbranch.outputs.name }}
+        run: |
+          set -uo pipefail
+          worktree_dir="$RUNNER_TEMP/verify-pinned"
+          rm -rf "$worktree_dir"
+
+          pass=true
+          detail=""
+
+          if ! git worktree add --detach "$worktree_dir" "$TARGET_REF" >"$RUNNER_TEMP/verify-pinned-wt.log" 2>&1; then
+            pass=false
+            detail="could not create an isolated worktree for $TARGET_REF: $(tail -c 500 "$RUNNER_TEMP/verify-pinned-wt.log")"
+          fi
+
+          if [ "$pass" = "true" ]; then
+            cnf_out="$(cd "$worktree_dir" && bash .specify/scripts/bash/create-new-feature.sh --json "wing commander auto update verify scratch" 2>&1)" || {
+              pass=false
+              detail="create-new-feature.sh --json exited non-zero: $(printf '%s' "$cnf_out" | tail -c 500)"
+            }
+          fi
+          if [ "$pass" = "true" ]; then
+            branch="$(printf '%s' "$cnf_out" | tail -1 | jq -r '.BRANCH_NAME // empty' 2>/dev/null || true)"
+            spec_file="$(printf '%s' "$cnf_out" | tail -1 | jq -r '.SPEC_FILE // empty' 2>/dev/null || true)"
+            if [ -z "$branch" ] || [ -z "$spec_file" ]; then
+              pass=false
+              detail="create-new-feature.sh --json did not produce the documented BRANCH_NAME/SPEC_FILE shape: $(printf '%s' "$cnf_out" | tail -c 500)"
+            fi
+          fi
+          if [ "$pass" = "true" ]; then
+            cp_out="$(cd "$worktree_dir" && bash .specify/scripts/bash/check-prerequisites.sh --json 2>&1)" || {
+              pass=false
+              detail="check-prerequisites.sh --json exited non-zero: $(printf '%s' "$cp_out" | tail -c 500)"
+            }
+          fi
+          if [ "$pass" = "true" ]; then
+            feature_dir="$(printf '%s' "$cp_out" | tail -1 | jq -r '.FEATURE_DIR // empty' 2>/dev/null || true)"
+            if [ -z "$feature_dir" ]; then
+              pass=false
+              detail="check-prerequisites.sh --json did not produce the documented FEATURE_DIR shape: $(printf '%s' "$cp_out" | tail -c 500)"
+            fi
+          fi
+
+          git worktree remove --force "$worktree_dir" 2>/dev/null || rm -rf "$worktree_dir"
+
+          echo "passed=$pass" >> "$GITHUB_OUTPUT"
+          # Multi-line-safe output (failure-detail can contain newlines from
+          # captured script output).
+          {
+            echo "failure-detail<<AUTOUPDATE_EOF"
+            echo "$detail"
+            echo "AUTOUPDATE_EOF"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$pass" = "true" ]; then
+            echo "health-check: lightweight verification of the pinned version passed." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::wing-commander auto-update-spec-kit: pinned-version health check failed — $detail"
+            echo "health-check: lightweight verification of the pinned version **failed** — $detail" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # research.md: "last known working version" is never a separate
+      # ledger — read the prior pinned value from git history, walking
+      # backward from HEAD to the most recent commit that changed
+      # speckit_version, and reading the diff's removed line.
+      - name: Compute rollback target from git history
+        id: rollback-target
+        if: steps.verify-pinned.outputs.passed == 'false'
+        env:
+          DB: ${{ steps.defbranch.outputs.name }}
+        run: |
+          set -uo pipefail
+          version=""
+          version="$(git log -p --follow -- .specify/init-options.json "refs/remotes/origin/$DB" \
+            | grep -m1 -E '^-\s*"speckit_version":' \
+            | sed -E 's/^-\s*"speckit_version":\s*"([^"]+)".*/\1/' || true)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ -z "$version" ]; then
+            echo "::warning::wing-commander auto-update-spec-kit: could not determine a prior pinned speckit_version from git history — the rollback PR will need a maintainer to fill in the target version by hand."
+          fi
 
   # Deterministic latest-eligible-release lookup (gh api + semver compare).
+  # Skipped entirely (never routed through) when health-check ran and
+  # failed, or when this run's trigger isn't scheduled/dispatch at all
+  # (health-check itself skipped) — a custom `if:` disables the automatic
+  # success() check, so both cases must be named explicitly (T006).
   detect:
     needs: health-check
+    if: needs.health-check.result == 'success' && needs.health-check.outputs.pinned-ok != 'false'
     runs-on: ubuntu-latest
     steps:
-      - run: echo "skeleton — filled in by US1"
+      - run: echo "skeleton — filled in by US1 (T007)"
 
   # Settle-tracking state machine against the singular open lifecycle issue.
   settle:
     needs: detect
+    if: needs.detect.result == 'success' && needs.detect.outputs.newer == 'true'
     runs-on: ubuntu-latest
     steps:
-      - run: echo "skeleton — filled in by US1"
+      - run: echo "skeleton — filled in by US1 (T008-T010)"
 
   # One claude-sonnet-5 judgment step: clean-bump / needs-migration /
-  # ambiguous-options. Re-entered directly by comment-reply's resume step.
+  # ambiguous-options. Also the re-entry point for a resumed
+  # ambiguous-options decision (comment-reply, US4) — same job, two ways in.
   evaluate-path:
-    needs: settle
+    needs: [settle, comment-reply]
+    if: >-
+      always() &&
+      ((needs.settle.result == 'success' && needs.settle.outputs.settled == 'true') ||
+       (needs.comment-reply.result == 'success' && needs.comment-reply.outputs.resumed == 'true'))
     runs-on: ubuntu-latest
     steps:
-      - run: echo "skeleton — filled in by US1/US4"
+      - run: echo "skeleton — filled in by US1 (T011) / US4 (T022, T023)"
 
-  # Deterministic version-bump diff, materialized locally — no push yet.
+  # Deterministic version-bump diff, materialized locally — no push yet
+  # (the branch is handed to `verify`/`act` as a git-bundle artifact, since
+  # each job is a fresh runner and nothing is pushed to origin until `act`).
   prepare:
     needs: evaluate-path
+    if: needs.evaluate-path.result == 'success' && needs.evaluate-path.outputs.outcome == 'clean-bump'
     runs-on: ubuntu-latest
     steps:
-      - run: echo "skeleton — filled in by US1"
+      - run: echo "skeleton — filled in by US1 (T012)"
 
   # Tiered smoke test against the prepared candidate.
   verify:
     needs: prepare
+    if: needs.prepare.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      - run: echo "skeleton — filled in by US1/US2"
+      - run: echo "skeleton — filled in by US1 (T013) / US2 (T017)"
 
   # Opens the version-bump PR (pass), or leaves the pin unchanged and flags
   # the issue (fail); also the rollback destination when health-check fails.
+  # `always()` because this job must still run when upstream jobs were
+  # skipped by design (e.g. reached only via health-check's failure path).
   act:
-    needs: [health-check, verify]
+    needs: [health-check, evaluate-path, prepare, verify]
+    if: >-
+      always() &&
+      (needs.health-check.outputs.pinned-ok == 'false' ||
+       needs.verify.result == 'success' ||
+       needs.verify.result == 'failure')
     runs-on: ubuntu-latest
     steps:
-      - run: echo "skeleton — filled in by US1/US2"
+      - run: echo "skeleton — filled in by US1 (T014) / US2 (T016, T017)"
 
   # trigger == pr-merged entry point: posts a closing summary once a
-  # version-bump/revert PR this feature opened is closed.
+  # version-bump/revert PR this feature opened is closed. Self-recognition
+  # guard (T005): a pull_request(closed) event whose PR body lacks this
+  # feature's own marker is a no-op — never assume any other PR belongs to
+  # this feature.
   pr-merged:
-    if: inputs.trigger == 'pr-merged'
+    if: >-
+      inputs.trigger == 'pr-merged' &&
+      inputs.pr-merged
     runs-on: ubuntu-latest
     steps:
-      - run: echo "skeleton — filled in by US3"
+      - name: Checkout consumer repository (bootstrap, default token)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref" | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      - name: Wing Commander context
+        id: ctx
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      # Self-recognition guard (T005, contract's Self-recognition contract):
+      # never assume any other merged PR in the repository belongs to this
+      # feature.
+      - name: Verify this PR carries this feature's marker
+        id: guard
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          PR_NUMBER: ${{ inputs.pr-number }}
+        run: |
+          set -uo pipefail
+          body="$(gh pr view "$PR_NUMBER" --json body --jq .body 2>/dev/null || true)"
+          if printf '%s' "$body" | grep -qF '<!-- wing-commander-auto-update-spec-kit: version-bump -->'; then
+            echo "kind=version-bump" >> "$GITHUB_OUTPUT"
+            echo "recognized=true" >> "$GITHUB_OUTPUT"
+          elif printf '%s' "$body" | grep -qF '<!-- wing-commander-auto-update-spec-kit: revert -->'; then
+            echo "kind=revert" >> "$GITHUB_OUTPUT"
+            echo "recognized=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "recognized=false" >> "$GITHUB_OUTPUT"
+            echo "PR #$PR_NUMBER carries no wing-commander-auto-update-spec-kit marker — not this feature's PR, no-op." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - run: echo "skeleton — filled in by US3 (T019, T020)"
+        if: steps.guard.outputs.recognized == 'true'
 
   # trigger == comment-reply entry point: resumes an ambiguous-options
   # question from a verified maintainer's reply.
   comment-reply:
     if: inputs.trigger == 'comment-reply'
     runs-on: ubuntu-latest
+    outputs:
+      resumed: ${{ steps.body.outputs.resumed }}
+      issue-number: ${{ inputs.issue-number }}
     steps:
-      - run: echo "skeleton — filled in by US4"
+      - name: Checkout consumer repository (bootstrap, default token)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref" | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      - name: Preflight
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-preflight
+        with:
+          oauth-token: ${{ secrets.claude-code-oauth-token }}
+          api-key: ${{ secrets.anthropic-api-key }}
+          require-speckit: "true"
+
+      - name: Wing Commander context
+        id: ctx
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      # Self-recognition guard (T005): the issue must carry the
+      # settle-tracking marker at all — otherwise no-op, never assume any
+      # other commented-on issue belongs to this feature.
+      - name: Verify this issue carries the settle-tracking marker
+        id: body
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+        run: |
+          set -uo pipefail
+          body="$(gh issue view "$ISSUE_NUMBER" --json body --jq .body 2>/dev/null || true)"
+          if ! printf '%s' "$body" | grep -qF '<!-- wing-commander-auto-update-spec-kit: candidate='; then
+            echo "resumed=false" >> "$GITHUB_OUTPUT"
+            echo "Issue #$ISSUE_NUMBER carries no wing-commander-auto-update-spec-kit settle-tracking marker — not this feature's issue, no-op." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "marker-present=true" >> "$GITHUB_OUTPUT"
+
+      - run: echo "skeleton — filled in by US4 (T024-T027)"
+        if: steps.body.outputs.marker-present == 'true'
