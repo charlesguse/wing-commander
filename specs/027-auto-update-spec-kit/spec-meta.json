@@ -2,7 +2,7 @@
   "issue": 153,
   "spec_dir": "specs/027-auto-update-spec-kit",
   "feature_num": "027",
-  "stage": "spec",
-  "iteration": 0,
-  "spec_branch": null
+  "stage": "review",
+  "iteration": 1,
+  "spec_branch": "spec/027-auto-update-spec-kit"
 }

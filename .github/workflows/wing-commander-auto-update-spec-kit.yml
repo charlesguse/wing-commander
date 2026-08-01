@@ -1,0 +1,52 @@
+# Maintenance — Auto-Update Spec Kit (thin wrapper).
+# Four triggers multiplexed into one typed `trigger` input: the daily
+# schedule / on-demand workflow_dispatch (detect+adopt), pull_request(closed)
+# (post-merge summary), and issue_comment(created) (resume an
+# ambiguous-options question). Every job lives in auto-update-spec-kit.yml
+# (docs/architecture.md), called by local path — this wrapper only resolves
+# triggers, gates, and vars.* (constitution VII).
+name: "Wing Commander · auto-update-spec-kit"
+
+on:
+  schedule:
+    - cron: "13 7 * * *"
+  workflow_dispatch: {}
+  pull_request:
+    types: [closed]
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  auto-update-spec-kit:
+    # Pause kill-switch, wrapper-side (constitution VII; the lesson
+    # wing-commander-8-watchdog.yml already learned — a stage-side pause
+    # check still bills for steps before discovering it's paused).
+    if: vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_PAUSED != 'true'
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      id-token: write
+    uses: ./.github/workflows/auto-update-spec-kit.yml
+    with:
+      trigger: >-
+        ${{ github.event_name == 'schedule' && 'scheduled'
+            || github.event_name == 'workflow_dispatch' && 'dispatch'
+            || github.event_name == 'pull_request' && 'pr-merged'
+            || 'comment-reply' }}
+      pr-number: ${{ github.event.pull_request.number || '' }}
+      pr-merged: ${{ github.event.pull_request.merged || false }}
+      issue-number: ${{ github.event.issue.number || '' }}
+      comment-id: ${{ github.event.comment.id || '' }}
+      commenter-association: ${{ github.event.comment.author_association || '' }}
+      commenter-id: ${{ github.event.comment.user.id || '' }}
+      issue-author-id: ${{ github.event.issue.user.id || '' }}
+      stabilization-checks: ${{ vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_STABILIZATION_CHECKS || '1' }}
+      model: ${{ vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_MODEL || 'claude-sonnet-5' }}
+    secrets:
+      claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}

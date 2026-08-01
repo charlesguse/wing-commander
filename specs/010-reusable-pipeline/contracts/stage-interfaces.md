@@ -189,6 +189,22 @@ and resolves `run-id`/`run-name` before calling this stage.
 | Behavior | `collect → diagnose → triage → act`: five deterministic FR-006 collectors into one `signals.json`; a read-only haiku diagnose step emits zero+ Findings; per-Finding fingerprint + `gh search issues` dedup + optional sonnet propose-fix + deterministic rung gate; act executes the selected rung and always reports to the lifecycle issue. Guardrails (`.specify/memory/watchdog-guardrails.json`, read-only), `vars.WING_COMMANDER_WATCHDOG_PAUSED`, and `vars.WING_COMMANDER_WATCHDOG_SELF_DISPATCH_CAP` (default `3`) gate every autonomous write; identical rules apply to self-inspection (FR-018/FR-021) |
 | Outputs | none (side effects only): a lifecycle-issue comment on every run (FR-022); at rung 2/3 a pipeline-defect issue (created/reused/reopened, fingerprint-marked); at rung 1/2 a fix PR to the default branch (`Refs #N`, never auto-closing) |
 
+## reusable-auto-update-spec-kit.yml
+
+The Spec Kit version auto-updater (`specs/027-auto-update-spec-kit/`). Like
+`rebase` and `watchdog` it is an unnumbered maintenance stage with no
+per-spec identity. Its wrapper (`wing-commander-auto-update-spec-kit.yml`)
+owns the `schedule`/`workflow_dispatch`/`pull_request: [closed]`/`issue_comment:
+[created]` triggers and the `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_PAUSED` gate,
+resolving a single `trigger` input before calling this stage.
+
+| | |
+|---|---|
+| Inputs | `trigger` (string, required — `scheduled`\|`dispatch`\|`pr-merged`\|`comment-reply`); `pr-number` (string); `pr-merged` (boolean, default `false`); `issue-number` (string); `comment-id` (string); `commenter-association` (string); `commenter-id` (string); `issue-author-id` (string); `stabilization-checks` (string, default `1`); `model` (string, default `claude-sonnet-5`) |
+| Preconditions | none as a refusal gate — self-recognition is best-effort and marker-based (a `pull_request`/`issue_comment` event lacking this feature's PR/issue marker is a silent no-op; the `comment-reply` path additionally gates the commenter to a maintainer or the issue author). One `concurrency: wing-commander-auto-update-spec-kit` group serializes all cycles |
+| Behavior | `health-check → detect → settle → evaluate-path → prepare → verify → act` plus `pr-merged`/`comment-reply` entry jobs: re-verify the pinned version (rollback on failure); detect the latest eligible upstream release and classify the delta; run a consecutive-daily-check settle window in the lifecycle issue's body marker; one read-only agent decides clean-bump / needs-migration / ambiguous-options; prepare the version-bump diff; verify it (lightweight always, +end-to-end for minor/major) in an isolated worktree; open the version-bump PR (pass), flag the issue (fail), or open a revert PR (health-check failure) |
+| Outputs | none (side effects only): lifecycle-issue comments/label (`auto-update:failed` on any failure/rollback) and a version-bump/revert PR to the default branch — **never merged by this stage** (constitution V, FR-017); the success path closes its issue only via the PR's own `Closes #N` keyword on merge |
+
 ## Per-stage default tool lists
 
 The `--allowedTools`/`--disallowedTools` values each agent-running stage ships

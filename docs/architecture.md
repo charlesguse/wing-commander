@@ -502,6 +502,79 @@ fingerprinting, dedup, and reporting are identical whether the inspected run
 is a watchdog run or any other stage (FR-021) — the self-dispatch-depth count
 is the only place the stage looks at its own name.
 
+## Auto-Update Spec Kit (`auto-update-spec-kit.yml`, wrapper `wing-commander-auto-update-spec-kit.yml`)
+
+**Trigger**: daily `schedule` (`cron: "13 7 * * *"`) + manual
+`workflow_dispatch` (the routine adoption path), plus `pull_request:
+[closed]` and `issue_comment: [created]` (the self-managing lifecycle-issue
+and maintainer-reply paths). The wrapper resolves a single typed `trigger`
+input (`scheduled`/`dispatch`/`pr-merged`/`comment-reply`) from
+`github.event_name` and checks the `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_PAUSED`
+kill-switch in its own job-level `if:` (constitution VII); the stage never
+reads `github.event.*`/`vars.*`.
+
+**Design** — a seven-job upgrade chain plus two entry-point jobs, all under
+one `concurrency: wing-commander-auto-update-spec-kit` group so a scheduled
+run, a manual dispatch, and a comment-reply resume can never race (FR-015 —
+one active upgrade cycle at a time):
+
+- `health-check` (scheduled/dispatch only) re-verifies the **currently
+  pinned** version first — its failure short-circuits the chain straight to
+  `act`'s rollback branch, which is what makes an "already adopted and later
+  found broken" regression discoverable at all (FR-006).
+- `detect` deterministically reads `repos/github/spec-kit/releases`
+  (`prerelease == false`, semver-sorted), compares against
+  `.specify/init-options.json`'s `speckit_version`, and classifies the delta
+  as `patch`/`minor`/`major`. Not newer ⇒ no issue, no PR (SC-007).
+- `settle` runs a **settle-window** state machine: a freshly detected
+  candidate is never adopted the same day it appears — it must be observed
+  unchanged for `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_STABILIZATION_CHECKS`
+  (default `1`) **consecutive daily checks** (no fixed calendar window,
+  FR-002). State lives in one open lifecycle issue's body marker
+  (`<!-- wing-commander-auto-update-spec-kit: candidate=X.Y.Z observed=N -->`),
+  found via a quoted-phrase `gh search issues` (the same tokenization gotcha
+  `watchdog.yml` documents); a superseding candidate resets the count, and
+  more than one open marker is a data-integrity condition left for a human.
+- `evaluate-path` is the one agent step (`claude-sonnet-5`, read-only,
+  structured output) deciding `clean-bump` (⇒ `prepare`), `needs-migration`
+  (⇒ routed to a maintainer, no diff), or `ambiguous-options` (⇒ a
+  `kind: action` question posted, the marker flagged `awaiting-decision=true`,
+  the cycle paused). Fetched release notes are framed as untrusted data,
+  never instructions (constitution V).
+- `prepare` writes the version-bump diff (both `speckit_version` **and**
+  `wing-commander-preflight`'s `SPECKIT_SUPPORTED_VERSION` in one commit, plus
+  the candidate's own `.specify/` artifact regeneration) to a fresh branch —
+  bundled as an artifact, never pushed until `act`.
+- `verify` runs **tiered** verification against the prepared candidate in an
+  isolated worktree: a lightweight tier always (`check-prerequisites.sh` +
+  `create-new-feature.sh --json` exit 0 and produce the documented JSON
+  shape), plus an end-to-end tier for `minor`/`major` jumps (a disposable
+  spec generated and discarded — never touches the real `specs/` tree).
+- `act` opens the version-bump PR on a pass, leaves the pin untouched and
+  flags the issue on a fail, or opens the revert PR on a health-check
+  failure. It never merges its own PR (constitution V, FR-017).
+
+**Self-recognition** — the feature owns no `spec:<NNN>` identity and never
+assumes any other PR/issue is its own. PRs it opens carry a body marker
+(`<!-- wing-commander-auto-update-spec-kit: version-bump -->` or `: revert`);
+lifecycle issues carry the settle-tracking marker. The `pr-merged` entry job
+no-ops on any closed PR lacking the marker, and `comment-reply` no-ops on any
+commented-on issue lacking the settle marker or not carrying an outstanding
+`awaiting-decision=true` question. `comment-reply` additionally gates the
+commenter (`OWNER`/`MEMBER`/`COLLABORATOR` or the issue author — the same
+actor gate `wing-commander-2-clarify.yml` uses) and interprets the reply with
+a read-only `claude-haiku-4-5` step before re-entering `prepare` → `verify` →
+`act`.
+
+**Outcome recording** — the split mirrors this repo's existing convention: a
+successful adoption closes its lifecycle issue **only** via the version-bump
+PR's `Closes #N` keyword on merge (never a direct `gh issue close`, avoiding a
+race with a human), and the sole visible flag is the `auto-update:failed`
+label added on any verification failure or rollback — there is no busy label
+for the routine success path (SC-004). All routine narration posts through
+`wing-commander-callout` (`kind: info`); only the FR-012 ambiguous-options
+question and the "please reply more clearly" re-ask use `kind: action`.
+
 ---
 
 ## Reusability (current state — `specs/010-reusable-pipeline/`)
