@@ -7,9 +7,13 @@ mkopts() { printf '{\n  "ai": "claude",\n  "here": true,\n  "script": "sh",\n  "
 
 build() { # build -> echoes work repo path; history 0.11.0 -> 0.12.4 -> 0.13.0
   local base; base="$(mktemp -d)"
-  git init -q --bare "$base/origin.git"
+  # Name the branch explicitly rather than inheriting init.defaultBranch —
+  # the ambient default is `main` on some machines and `master` on stock git,
+  # and the steps under test read refs/remotes/origin/<db> by name.
+  git init -q -b main --bare "$base/origin.git"
   git clone -q "$base/origin.git" "$base/repo" 2>/dev/null
   cd "$base/repo"
+  git symbolic-ref HEAD refs/heads/main
   git config user.email t@t; git config user.name t
   mkdir -p .specify .github/actions/wing-commander-preflight
   printf 'inputs:\n  x:\n    default: y\nenv:\n  SPECKIT_SUPPORTED_VERSION: "0.11.0"\n' > .github/actions/wing-commander-preflight/action.yml
