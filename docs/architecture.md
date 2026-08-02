@@ -347,7 +347,12 @@ outcome's own target state doubles as its idempotency check — no separate
 
 ## Rebase (`rebase.yml`, wrapper `wing-commander-rebase.yml`)
 
-**Trigger**: `push` to main (skipping `*[bot]` actors) + nightly schedule.
+**Trigger**: `push` to main (skipping `*[bot]` actors) redispatches through
+`workflow_dispatch` — a `claude-code-action` step cannot run under `push`
+itself, so the wrapper's `redispatch` job fires a lightweight
+`gh workflow run` instead of calling the stage directly; the nightly
+schedule and manual `workflow_dispatch` reach the stage immediately, with no
+redispatch hop.
 
 **Design**: a `discover` job selects every in-flight `spec/NNN-slug` branch
 (reading each branch's *own* `spec-meta.json` tip, skipping `stalled` and
