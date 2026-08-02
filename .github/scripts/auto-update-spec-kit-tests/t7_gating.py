@@ -30,6 +30,13 @@ def load_ifs(path):
     return {name: str(job.get("if", "")).strip() for name, job in doc["jobs"].items()}
 
 
+def load_step_ifs(path, job):
+    """[(step name, if-expression)] for one job, in file order."""
+    doc = yaml.safe_load(open(path, encoding="utf-8"))
+    return [(s.get("name", "<unnamed>"), str(s.get("if", "")).strip())
+            for s in doc["jobs"][job]["steps"]]
+
+
 def evaluate(expr, ctx):
     """Translate the Actions expression subset to Python and evaluate it."""
     if not expr:
@@ -70,6 +77,68 @@ def scenario(label, ifs, ctx, expected):
             FAIL += 1
             FAILED.append("%s / %s" % (label, job))
             print("    FAIL %-14s runs=%-5s expected %s\n         if: %s" % (job, got, want, ifs[job]))
+
+
+def step_scenario(label, steps, ctx, expected_running):
+    """Assert the EXACT set of steps that run, by name.
+
+    Job-level gating alone is not enough for `act`: it is the one job with
+    four mutually exclusive arms (rollback / bump / verify-failed /
+    prepare-failed) selected entirely by step `if:`. Widening the job gate
+    to admit a new arm silently admits it to every pre-existing step too,
+    and the failure mode is ugly — download-artifact looking for a bundle a
+    failed prepare never uploaded, or a callout posting to an empty issue
+    number. Asserting the exact set (not a subset) also means a step added
+    later with no `if:` fails here rather than firing on every arm.
+    """
+    global PASS, FAIL
+    print("\n--- %s ---" % label)
+    got = {name for name, expr in steps if evaluate(expr, ctx)}
+    want = set(expected_running)
+    if got == want:
+        PASS += 1
+        print("    ok   %d step(s) run: %s" % (len(got), ", ".join(sorted(got))))
+    else:
+        FAIL += 1
+        FAILED.append(label)
+        print("    FAIL step set mismatch")
+        for extra in sorted(got - want):
+            print("         unexpectedly RUNS: %s" % extra)
+        for missing in sorted(want - got):
+            print("         unexpectedly SKIPPED: %s" % missing)
+
+
+# Steps with no `if:` at all — the shared bootstrap every act arm needs.
+ACT_ALWAYS = [
+    "Checkout consumer repository (bootstrap, default token)",
+    "Resolve pipeline ref",
+    "Checkout pipeline repository (shared composite actions)",
+    "Wing Commander context",
+    "Resolve default branch",
+]
+
+
+def act_steps(ifs_steps, ctx, arm):
+    step_scenario("act steps — %s" % arm, ifs_steps, ctx, ACT_ALWAYS + {
+        "prepare failed": [
+            "Label the issue as failed (prepare failed)",
+            "Comment the prepare failure on the issue",
+            "Apply the failed label (prepare failed)",
+        ],
+        "verify failed": [
+            "Download prepared branch bundle",
+            "Fetch prepared branch from bundle",
+            "Label the issue as failed",
+            "Comment verification failure on the issue",
+            "Apply the failed label",
+        ],
+        "verify passed": [
+            "Download prepared branch bundle",
+            "Fetch prepared branch from bundle",
+            "Open version-bump PR",
+        ],
+        "rollback": ["Rollback (health-check failed)"],
+    }[arm])
 
 
 def main():
@@ -216,8 +285,12 @@ def main():
         "needs.verify.result": "skipped",
     }, {"comment-reply": True, "evaluate-path": False, "prepare": False, "act": False})
 
-    # ---- prepare failure -----------------------------------------------
-    scenario("prepare FAILS (e.g. uvx/spec-kit CLI assumption wrong)", ifs, {
+    # ---- prepare failure (#157 defect 1) -------------------------------
+    # verify is gated on `prepare.result == 'success'`, so it stays skipped
+    # here — that is correct and unchanged. What must NOT happen is act
+    # skipping too: that was the silent-death path, where the lifecycle
+    # issue kept reading "waiting for the patch stream to settle" forever.
+    scenario("prepare FAILS (e.g. uvx/spec-kit CLI assumption wrong): act still reports", ifs, {
         "inputs.trigger": "scheduled",
         "needs.health-check.result": "success", "needs.health-check.outputs.pinned-ok": "true",
         "needs.detect.result": "success", "needs.detect.outputs.newer": "true",
@@ -225,7 +298,65 @@ def main():
         "needs.comment-reply.result": "skipped",
         "needs.evaluate-path.result": "success", "needs.evaluate-path.outputs.outcome": "clean-bump",
         "needs.prepare.result": "failure", "needs.verify.result": "skipped",
+    }, {"prepare": True, "verify": False, "act": True})
+
+    # Same, reached through the resumed-reply re-entry rather than the
+    # schedule: health-check is skipped there, so `pinned-ok` is the empty
+    # string and act's rollback arm must not be what carries it.
+    scenario("prepare FAILS after a resumed reply: act still reports", ifs, {
+        "inputs.trigger": "comment-reply", "inputs.commenter-association": "OWNER",
+        "inputs.commenter-id": "1", "inputs.issue-author-id": "1",
+        "needs.health-check.result": "skipped", "needs.health-check.outputs.pinned-ok": "",
+        "needs.detect.result": "skipped", "needs.settle.result": "skipped",
+        "needs.comment-reply.result": "success", "needs.comment-reply.outputs.resumed": "true",
+        "needs.evaluate-path.result": "success", "needs.evaluate-path.outputs.outcome": "clean-bump",
+        "needs.prepare.result": "failure", "needs.verify.result": "skipped",
+    }, {"evaluate-path": True, "prepare": True, "verify": False, "act": True})
+
+    # prepare CANCELLED is deliberately still a no-act path: a cancellation
+    # is a human stopping the run, not an outcome the issue needs narrating.
+    scenario("prepare CANCELLED: act does not run", ifs, {
+        "inputs.trigger": "scheduled",
+        "needs.health-check.result": "success", "needs.health-check.outputs.pinned-ok": "true",
+        "needs.detect.result": "success", "needs.detect.outputs.newer": "true",
+        "needs.settle.result": "success", "needs.settle.outputs.settled": "true",
+        "needs.comment-reply.result": "skipped",
+        "needs.evaluate-path.result": "success", "needs.evaluate-path.outputs.outcome": "clean-bump",
+        "needs.prepare.result": "cancelled", "needs.verify.result": "skipped",
     }, {"prepare": True, "verify": False, "act": False})
+
+    # ---- act's four arms, at step level --------------------------------
+    act = load_step_ifs(STAGE, "act")
+    print("\nact step gates (verbatim from the workflow):")
+    for name, expr in act:
+        print("  %-48s if: %s" % (name[:48], re.sub(r"\s+", " ", expr) or "(none)"))
+
+    act_steps(act, {
+        "needs.health-check.outputs.pinned-ok": "true",
+        "needs.prepare.result": "failure", "needs.verify.result": "skipped",
+        "needs.verify.outputs.passed": "",
+    }, "prepare failed")
+
+    act_steps(act, {
+        "needs.health-check.outputs.pinned-ok": "true",
+        "needs.prepare.result": "success", "needs.verify.result": "success",
+        "needs.verify.outputs.passed": "false",
+    }, "verify failed")
+
+    act_steps(act, {
+        "needs.health-check.outputs.pinned-ok": "true",
+        "needs.prepare.result": "success", "needs.verify.result": "success",
+        "needs.verify.outputs.passed": "true",
+    }, "verify passed")
+
+    # health-check failure short-circuits the whole chain, so prepare is
+    # skipped rather than successful — the rollback arm must not depend on
+    # any prepare-derived state.
+    act_steps(act, {
+        "needs.health-check.outputs.pinned-ok": "false",
+        "needs.prepare.result": "skipped", "needs.verify.result": "skipped",
+        "needs.verify.outputs.passed": "",
+    }, "rollback")
 
     # ---- wrapper pause kill-switch -------------------------------------
     global PASS, FAIL

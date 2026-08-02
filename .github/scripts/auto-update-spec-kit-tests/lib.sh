@@ -118,7 +118,18 @@ report() {
 # (NAME=VALUE pairs). Anything not listed renders empty, matching what Actions
 # does for a skipped job's outputs.
 run_step() { # run_step <step-file-glob>
-  local f
+  local f n
+  # An AMBIGUOUS glob is a failure, not a coin flip. This used to be
+  # `| head -1`, which silently picked the lowest-numbered match — so adding
+  # a step whose name extends an existing one (e.g. "Apply the failed label"
+  # -> "Apply the failed label (prepare failed)") left the suite green while
+  # the caller's intent had become undecidable. Ordering is not a contract.
+  n="$(ls "$STEPS"/$1 2>/dev/null | wc -l)"
+  if [ "$n" -gt 1 ]; then
+    echo "    FAIL: glob $1 is ambiguous — matches $n extracted steps:"
+    ls "$STEPS"/$1 | sed 's|.*/|      |'
+    FAIL=$((FAIL+1)); return 1
+  fi
   f="$(ls "$STEPS"/$1 2>/dev/null | head -1)"
   if [ -z "$f" ]; then
     echo "    FAIL: no extracted step matching $1"; FAIL=$((FAIL+1)); return 1
