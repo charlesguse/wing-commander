@@ -515,14 +515,36 @@ on:
     branches: [main]
   schedule:
     - cron: "17 4 * * *"
+  workflow_dispatch: {}   # redispatch target; push cannot reach
+                           # claude-code-action directly, so `redispatch`
+                           # below re-fires the run through this event
 
 permissions: {}
 
 jobs:
+  # push cannot reach claude-code-action directly — redispatch through
+  # workflow_dispatch, a supported event, instead of calling the reusable
+  # stage from here. Loop guard stays here: a push made by the pipeline's
+  # own App identity is skipped.
+  redispatch:
+    if: ${{ github.event_name == 'push' && !endsWith(github.actor, '[bot]') }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Redispatch via workflow_dispatch (a supported event for the conflict-resolution agent)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run wing-commander-rebase.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "${{ github.ref_name }}"
+
+  # schedule and workflow_dispatch (including this file's own redispatch,
+  # above) both reach claude-code-action successfully.
   rebase:
-    # Security gate: a push made by the pipeline's own App identity is
-    # skipped (loop guard); a scheduled run always proceeds.
-    if: ${{ !endsWith(github.actor, '[bot]') }}
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     permissions:
       contents: write
       issues: write
