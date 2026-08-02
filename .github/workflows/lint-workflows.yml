@@ -18,7 +18,14 @@ name: "lint · workflows"
 
 on:
   pull_request:
-    paths: [".github/workflows/**", ".github/actions/**"]
+    paths:
+      - ".github/workflows/**"
+      - ".github/actions/**"
+      - ".github/scripts/**"
+      # Gate 4 executes the pinned Spec Kit scripts, so a change to them can
+      # break the auto-update stage without touching a workflow file — that is
+      # exactly how the check-prerequisites.sh/plan.md defect got in.
+      - ".specify/scripts/**"
   # Gate 1 only — it reads how GitHub actually registered the workflows on
   # the default branch, which a PR's files cannot tell us.
   push:
@@ -182,6 +189,30 @@ jobs:
           print(f"Gate 3: checked every local reusable-workflow call; {failures} failure(s).")
           sys.exit(1 if failures else 0)
           PYEOF
+
+  # Gate 4 — behavioral tests for the auto-update-spec-kit stage pair. Gates
+  # 1-3 are static: they prove a workflow parses, registers, and is permitted
+  # to run. None of them can see that a step's shell logic is simply wrong.
+  # The auto-update stage shipped with three such defects — a `git log
+  # --follow` invocation that always fatally errored, a verification tier that
+  # could never pass because it called check-prerequisites.sh in a mode that
+  # requires a file the preceding step does not create, and an absolute path
+  # prefixed with its own parent — and every one of them would have fired on
+  # the first scheduled run while looking perfectly valid to gates 1-3.
+  #
+  # The harness EXTRACTS the shipped run: blocks and executes them against a
+  # gh stub and throwaway git repos, so it cannot drift from the workflow the
+  # way a hand-copied fixture can. See .github/scripts/auto-update-spec-kit-tests/.
+  auto-update-spec-kit:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Gate 4 — auto-update-spec-kit behavioral tests
+        run: bash .github/scripts/auto-update-spec-kit-tests/run-tests.sh
 
   # Gate 1 — the catch-all. When GitHub cannot parse a workflow file it
   # registers the workflow with its PATH as its name and creates a failed

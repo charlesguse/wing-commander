@@ -1,0 +1,110 @@
+# auto-update-spec-kit behavioral tests
+
+Executable coverage of `specs/027-auto-update-spec-kit/quickstart.md`'s
+15 scenarios, plus the job-level `if:` routing that decides which scenario a
+run actually takes.
+
+## Why this exists rather than a desk-check
+
+`quickstart.md` describes its scenarios as things a maintainer stages by hand
+against a scratch environment (a deliberately broken candidate, a simulated
+upstream release, a fork with a lowered pin). That is expensive enough that it
+was never done, and the three defects these tests were written to reproduce
+would all have fired on the stage's very first scheduled run:
+
+1. `health-check`'s rollback lookup passed its revision *after* `--`, so
+   `git log --follow` saw two pathspecs and exited
+   `fatal: --follow requires exactly one pathspec`. A trailing `|| true`
+   swallowed it, so a rollback target was never found and the revert PR that
+   FR-006/FR-007 promise could never open.
+2. The lightweight verification tier called `check-prerequisites.sh --json`
+   without `--paths-only`, which hard-requires `plan.md` — a file
+   `create-new-feature.sh` does not create. The tier could never pass, in
+   `health-check` *or* `verify`.
+3. The end-to-end tier prefixed an already-absolute `FEATURE_DIR` with
+   `$WORKTREE`, so its `cp` always failed on the doubled path.
+
+Defects 1 and 2 compound: `health-check` fails every scheduled run, the whole
+detect/settle/evaluate chain skips, `act` takes the rollback branch, finds no
+target, and files an `auto-update:failed` issue — daily, forever, while never
+being able to adopt anything.
+
+## Running them
+
+```sh
+bash .github/scripts/auto-update-spec-kit-tests/run-tests.sh          # all suites
+bash .github/scripts/auto-update-spec-kit-tests/run-tests.sh t2_settle # one suite
+```
+
+Requires `bash`, `git`, `jq`, and `python3` with PyYAML — all present on
+`ubuntu-latest`. On Windows, Git Bash plus a `jq.exe` on `PATH` works; the
+runner prints a download one-liner if `jq` is missing.
+
+Nothing here touches the network, the real repository, or GitHub. Exit code is
+non-zero if any assertion fails, so CI fails on a regression.
+
+## How it works
+
+The workflows keep all their logic in embedded `run:` blocks, so the tests
+execute those blocks directly rather than re-implementing them:
+
+- `extract.py` parses the two workflow YAMLs and writes every `run:` block to
+  its own `.sh` under a scratch dir. The scripts under test are therefore
+  always the shipped ones — this harness cannot drift from the workflow the
+  way `verify-denied-tool-collector.sh` drifted from `watchdog.yml`.
+- `subst.py` substitutes `${{ ... }}` expressions per scenario. Anything a
+  scenario leaves unset renders as the empty string, which is what Actions
+  does for a skipped job's outputs.
+- `gh_stub.py` is a `gh` replacement backed by a JSON state file, with real
+  issue/PR/label/comment semantics, so the settle state machine and the
+  act/comment-reply branches genuinely mutate state and can be asserted on.
+  It shells out to the real `jq` for `--jq` filters.
+- `lib.sh` gives each step a real `$GITHUB_OUTPUT` / `$GITHUB_STEP_SUMMARY` /
+  `$RUNNER_TEMP`, and `read_output.py` parses outputs the way the runner does,
+  including the `<<HEREDOC` multiline form these workflows use.
+- `t7_gating.py` reads the job-level `if:` expressions **verbatim from the
+  YAML** and evaluates them against each scenario's job-result matrix. It
+  never retypes an expression, so it cannot silently test a stale copy.
+
+Suites:
+
+| suite | covers |
+|---|---|
+| `t1_detect.sh` | Scenarios 1, 2, 7 — eligibility, semver ordering, prerelease exclusion, release-type classification, live upstream data |
+| `t2_settle.sh` | Scenarios 2, 3, 4, 11, 12 — the settle state machine's six branches |
+| `t3_healthcheck.sh` | Scenarios 6, 8 — lightweight tier against real `.specify` scripts, worktree isolation, rollback target from git history |
+| `t4_verify.sh` | Scenarios 5, 6, 7 — tier selection and result combination |
+| `t5_act.sh` | Scenarios 5, 6, 8, 10 — revert PR, version-bump PR, failure flagging, against a real git remote |
+| `t6_reply.sh` | Scenarios 9, 12, 13, 14, 15 — self-recognition, maintainer gate, fail-safe read-backs, prompt-injection safety |
+| `t7_gating.py` | every scenario's job routing, plus the wrapper's pause kill-switch |
+
+## Mutation results
+
+A suite that cannot fail is not a gate, so each assertion set was checked
+against a deliberately broken workflow. Every mutant below is caught:
+
+| mutant | caught by |
+|---|---|
+| rollback lookup's rev moved back after the `--` | `t3` (1) |
+| `--paths-only` dropped from `check-prerequisites.sh` | `t3` (3) |
+| absolute `FEATURE_DIR` re-prefixed with `$WORKTREE` | `t4` (2) |
+| `settle` stops incrementing the observed counter | `t2` (2) |
+| `act` merges its own PR (constitution V) | `t5` |
+| pr-merged self-recognition guard always matches | `t6` (5) |
+| maintainer gate widened to accept `NONE` | `t7` (1) |
+
+Re-run one with, e.g.:
+
+```sh
+sed -i 's/--json --paths-only/--json/' .github/workflows/auto-update-spec-kit.yml
+bash .github/scripts/auto-update-spec-kit-tests/run-tests.sh t3_healthcheck   # must fail
+git checkout .github/workflows/auto-update-spec-kit.yml
+```
+
+## Contract check on the pinned Spec Kit scripts
+
+`t3_healthcheck.sh` copies this repository's **real** `.specify/scripts/bash/`
+into its fixture, so it doubles as a contract check: if a future Spec Kit bump
+changes what `create-new-feature.sh` or `check-prerequisites.sh` emit, this
+suite fails on the PR that bumps it rather than at 07:13 UTC some morning.
+That is exactly the class of breakage defect 2 was.

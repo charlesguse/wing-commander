@@ -1,0 +1,1238 @@
+[
+  {
+    "tag_name": "v0.15.1",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.15.1",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.15.1\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.15.1\n- fix: escape Rich markup in `workflow resolve` output (#3879)\n- chore(deps): bump actions/stale from 10.4.0 to 11.0.0 (#3877)\n- chore(deps): bump actions/setup-python from 6.3.0 to 7.0.0 (#3876)\n- feat: support ta"
+  },
+  {
+    "tag_name": "v0.15.0",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.15.0",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.15.0\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.15.0\n- Add yolo to community workflow catalog (#3864)\n- fix(workflows): guard the shell step's timeout check against OverflowError (#3865)\n- Add Intent Reconciliation extension to community catalog (#3858)\n- fix(workflo"
+  },
+  {
+    "tag_name": "v0.14.4",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.14.4",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.14.4\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.14.4\n- fix(bundler): degrade non-UTF-8 config reads into BundlerError (#3784)\n- fix(workflows): escape the step-progress line so step ids render (and `/` stops failing the run) (#3783)\n- Update Agent Parity Governance p"
+  },
+  {
+    "tag_name": "v0.14.3",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.14.3",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.14.3\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.14.3\n- Update Intake Authoring Governance preset to v0.3.0 (#3788)\n- fix(copilot): honor preset command template overrides (#3592)\n- clarify: require real interrogatives, ban topic-label questions (#3745)\n- feat: Add Al"
+  },
+  {
+    "tag_name": "v0.14.2",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.14.2",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.14.2\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.14.2\n- Update Intake Review Governance preset to v0.1.1 (#3729)\n- Update Verify Review Ship extension to v0.3.0 (#3728)\n- Update Architecture Guard extension to v1.13.1 (#3724)\n- docs(upgrade): Claude Code files live in"
+  },
+  {
+    "tag_name": "v0.14.1",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.14.1",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.14.1\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.14.1\n- Update Agent Parity Governance preset to v0.4.0 (#3697)\n- fix(bundler): InstallResult.changed counts uninstalled as a change (#3692)\n- [preset] Update Cross-Platform Governance preset to v0.2.1 (#3695)\n- Update A"
+  },
+  {
+    "tag_name": "v0.14.0",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.14.0",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.14.0\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.14.0\n- docs: add spec-kit-copilot to community friends (#3675)\n- fix(integrations): recompute invoke_separator from retained parsed_options (#3664)\n- fix(workflows): preserve intra-overlay order for multiple insert_afte"
+  },
+  {
+    "tag_name": "v0.13.4",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.13.4",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.13.4\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.13.4\n- docs(concepts): document the spec-of-specs feature breakdown approach (#3648)\n- fix(scripts): git-ext PowerShell emits the '# To persist' SPECIFY_FEATURE hint (parity) (#3632)\n- fix(integrations): validate cached"
+  },
+  {
+    "tag_name": "v0.13.3",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.13.3",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.13.3\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.13.3\n- fix(integrations): escape Rich markup in --integration-options error messages (#3458)\n- docs: document __SPECKIT_COMMAND_ token for portable cross-command references (#3503)\n- [preset] Add Parallel Autonomous Run"
+  },
+  {
+    "tag_name": "v0.13.2",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.13.2",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.13.2\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.13.2\n- fix(workflows): reject a non-string 'command' in command-step (#3596)\n- fix(workflows): fail gate step loudly on a malformed 'options' (#3595)\n- fix(extensions): re-validate catalog URL after redirects (HTTPS par"
+  },
+  {
+    "tag_name": "v0.13.1",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.13.1",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.13.1\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.13.1\n- fix(integrations): catch OverflowError on a `priority: .inf` in add/remove (#3589)\n- fix(workflows): reject bool / .inf catalog priority in workflow & step catalog loaders (#3526)\n- fix(catalogs): 'priority: .inf"
+  },
+  {
+    "tag_name": "v0.13.0",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.13.0",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.13.0\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.13.0\n- fix(auth): Azure DevOps az-CLI token acquisition returns None on undecodable output (#3527)\n- feat(extensions): add assess idea assessment pipeline extension (#3568)\n- fix(bundle): surface a clean BundlerError on"
+  },
+  {
+    "tag_name": "v0.12.18",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.12.18",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.12.18\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.12.18\n- chore(deps): bump actions/setup-dotnet from 5.4.0 to 6.0.0 (#3574)\n- chore(deps): bump actions/stale from 10.3.0 to 10.4.0 (#3572)\n- chore(deps): bump actions/setup-node from 6.4.0 to 7.0.0 (#3570)\n- docs: weav"
+  },
+  {
+    "tag_name": "v0.12.17",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.12.17",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.12.17\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.12.17\n- fix(extensions): resolve __SPECKIT_COMMAND tokens in auto-registered skills (#3544)\n- fix(workflows): fail if/switch steps on non-list branch instead of crashing (#3515)\n- feat(integrations): add Grok Build ski"
+  },
+  {
+    "tag_name": "v0.12.16",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.12.16",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.12.16\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.12.16\n- fix(workflows): raise a clear error, not a cryptic crash, on non-string filter args (#3522)\n- feat(workflows): expose workflow source directory to steps (#3469)\n- fix(workflows): fan-out max_concurrency .inf fa"
+  },
+  {
+    "tag_name": "v0.12.15",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.12.15",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.12.15\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.12.15\n- Update Autonomous Run Governance preset to v0.1.4 (#3511)\n- fix(workflows): raise catalog error, not raw ValueError, on a malformed catalog URL (#3484)\n- fix(workflows): evaluate 'in'/'not in' safely on a non-i"
+  },
+  {
+    "tag_name": "v0.12.14",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.12.14",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.12.14\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.12.14\n- [extension] Add Spec Kit Memory extension to community catalog (#3455)\n- Add Test-First Governance preset to community catalog (#3504)\n- Add Autonomous Run Governance preset to community catalog (#3501)\n- fix(w"
+  },
+  {
+    "tag_name": "v0.12.13",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.12.13",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.12.13\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.12.13\n- fix(workflows): fail switch step on non-mapping cases instead of crashing (#3481)\n- Cleanup agent-file-template.md (#2579)\n- fix: mark Kiro integration as multi-install safe (#3472)\n- fix: rewrite extension-rel"
+  },
+  {
+    "tag_name": "v0.12.12",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.12.12",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.12.12\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.12.12\n- fix(extensions): set-priority repairs corrupted boolean priority (#3268)\n- fix(presets): set-priority repairs corrupted boolean priority (#3269)\n- fix(workflows): engine loop cap ignores bool max_iterations (#3"
+  },
+  {
+    "tag_name": "v0.12.11",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.12.11",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.12.11\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.12.11\n- fix(agent-context): discover nested plan.md in scoped layouts (#3024) (#3301)\n- fix(auth): return no matches, not raw ValueError, for a malformed URL (#3437)\n- fix(catalogs): raise catalog error, not raw ValueE"
+  },
+  {
+    "tag_name": "v0.12.10",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.12.10",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.12.10\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.12.10\n- chore(deps): bump astral-sh/setup-uv from 8.2.0 to 8.3.2 (#3439)\n- chore(deps): bump DavidAnson/markdownlint-cli2-action (#3438)\n- fix(templates): correct phase numbering in plan.md (#3416)\n- fix(git-ext): hono"
+  },
+  {
+    "tag_name": "v0.12.9",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.12.9",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.12.9\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.12.9\n- fix(integrations): skip Windows Store python3 alias stub in resolve_python_interpreter (#3385)\n- fix(integrations): escape control characters in SKILL.md frontmatter (#3399)\n- fix(workflows): apply chained expres"
+  },
+  {
+    "tag_name": "v0.12.8",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.12.8",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.12.8\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.12.8\n- [extension] Add LLM Wiki extension to community catalog (#3361)\n- Docs: Document missing CLI flags and integrations (#3182)\n- Docs: Remove Cursor from CLI check list in README (#3184)\n- feat(extensions): port upd"
+  },
+  {
+    "tag_name": "v0.12.7",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.12.7",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.12.7\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.12.7\n- fix(bundler): bundle update uninstalls components dropped by new version (#3353)\n- fix(workflows): route run/resume errors to stderr under --json (#3352)\n- fix(workflows): fan-in validate() rejects non-mapping ou"
+  },
+  {
+    "tag_name": "v0.12.6",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.12.6",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.12.6\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.12.6\n- fix(bundler): validate catalog URLs in `catalog add` (HTTPS-only, require host) (#3367)\n- Update Ralph Loop extension to v1.2.1 (#3365)\n- fix extension-local script path rewriting (#3364)\n- Add Charter extension "
+  },
+  {
+    "tag_name": "v0.12.5",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.12.5",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.12.5\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.12.5\n- fix(workflows): match gate reject option case-insensitively (#3335)\n- fix(bundler): reject host-less catalog URLs in adapters (use hostname, not netloc) (#3333)\n- fix(bundler): resolve catalog search at highest-p"
+  },
+  {
+    "tag_name": "v0.12.4",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.12.4",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.12.4\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.12.4\n- feat(cli): add `py` script type & Python interpreter resolution (#3278) (#3285)\n- fix: resolve GitHub release asset API URL for private repo bundle downloads (#3136)\n- [extension] Add Analytics extension to commu"
+  },
+  {
+    "tag_name": "v0.12.3",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.12.3",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.12.3\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.12.3\n- feat(copilot): warn before skills default rollout (#3256)\n- Add June 2026 newsletter (#3289)\n- docs(toc): add Bundles and Authentication to the Reference nav (#3267)\n- fix(integrations): add zed to discovery cata"
+  },
+  {
+    "tag_name": "v0.12.2",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.12.2",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.12.2\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.12.2\n- fix(scripts): portable uppercase for branch-name acronym retention (bash 3.2) (#3192)\n- chore: retire Windsurf integration — absorbed into Cognition Devin (#3168) (#3213)\n- [extension] Update Intake extension to "
+  },
+  {
+    "tag_name": "v0.12.1",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.12.1",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.12.1\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.12.1\n- chore: align CI Python matrix with devguide lifecycle + fix bash 3.2 portability (#3244)\n- fix: stop check-prerequisites --paths-only from writing feature.json (#3025) (#3190)\n- docs: document integration catalog"
+  },
+  {
+    "tag_name": "v0.12.0",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.12.0",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.12.0\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.12.0\n- feat: make agent-context extension a full opt-in (#3097)\n- docs(workflows): add the built-in 'init' step type to the Step Types table (#3234)\n- fix(workflows): gate validate() must not crash on non-string options"
+  },
+  {
+    "tag_name": "v0.11.10",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.11.10",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.11.10\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.11.10\n- fix(extensions): apply GHES auth and resolve release assets for `extension add --from` (#3217)\n- fix(pi): repoint install_url to @earendil-works/pi-coding-agent (#3169) (#3214)\n- fix(catalogs): reject host-less"
+  },
+  {
+    "tag_name": "v0.11.9",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.11.9",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.11.9\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.11.9\n- Docs: add cline and zcode to multi-install-safe table (#3180)\n- Docs: document missing flags --force and --refresh-shared-infra (#3179)\n- fix(claude): stop forking /speckit-analyze to prevent long-session freezes"
+  },
+  {
+    "tag_name": "v0.11.8",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.11.8",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.11.8\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.11.8\n- docs: add SpecKit Assistant npm package to Community Friends (#3142)\n- Require preset-usage README with Spec Kit CLI syntax in preset submissions (#3104)\n- [extension] Update Jira Integration (Sync Engine) extens"
+  },
+  {
+    "tag_name": "v0.11.7",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.11.7",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.11.7\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.11.7\n- feat(extensions): verify catalog archive sha256 before install (#3080)\n- fix(workflows): validate requires keys and reject phantom permissions gate (#3079)\n- fix(scripts): use case-sensitive match for acronym ret"
+  },
+  {
+    "tag_name": "v0.11.6",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.11.6",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.11.6\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.11.6\n- [extension] Update Spec Kit Preview extension to v1.1.0 and sync Firebender agent lists (#3116)\n- Add Spec Kit Discovery Extension to community catalog (#3119)\n- Update Architecture Workflow extension to v1.2.1 ("
+  },
+  {
+    "tag_name": "v0.11.5",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.11.5",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.11.5\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.11.5\n- fix: register enabled extensions for agent on integration use/upgrade (#2949)\n- Add SicarioSpec Core preset to community catalog (#3102)\n- Update Game Narrative Writing preset to v1.1.0 (#3099)\n- feat: add PyPI p"
+  },
+  {
+    "tag_name": "v0.11.4",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.11.4",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.11.4\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.11.4\n- [extension] Add Tasks to GitHub Project extension to community catalog (#3090)\n- Update Linear Integration extension to v0.7.0 (#3089)\n- fix: fail loudly on an unknown workflow expression filter (#3074)\n- fix: an"
+  },
+  {
+    "tag_name": "v0.11.3",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.11.3",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.11.3\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.11.3\n- docs: strengthen agent disclosure to cover commits and per-round comments (#3071)\n- fix: isolate per-extension failures so one bad extension can't drop the rest (#2951)\n- fix(taskstoissues): skip tasks that alrea"
+  },
+  {
+    "tag_name": "v0.11.2",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.11.2",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.11.2\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.11.2\n- Update Linear Integration extension to v0.6.0 (#3047)\n- fix: align community submission workflows with bug-assess label trigger (#3046)\n- fix(bug-assess): recompile lock so github guard repos is 'all' (#3036)\n- f"
+  },
+  {
+    "tag_name": "v0.11.1",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.11.1",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.11.1\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.11.1\n- chore: ignore Copilot dogfooding scaffolding in .gitignore (#3019)\n- docs: clarify Taskify specify command (#3016)\n- docs: document evolving specs in existing projects (#2902)\n- feat(workflows): opt-in output_for"
+  },
+  {
+    "tag_name": "v0.11.0",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.11.0",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.11.0\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.11.0\n- Add workflow step catalog — community-installable step types (#2394)\n- feat(dev): add integration scaffolder (#2685)\n- Add Command Density preset to community catalog (#3006)\n- fix(tests): don't run PowerShell te"
+  },
+  {
+    "tag_name": "v0.10.4",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.10.4",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.10.4\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.10.4\n- fix: fail loudly when a fan-out 'items' expression does not resolve to a list (#2957)\n- refactor: move preset command handlers to presets/_commands.py (PR-6/8) (#2826)\n- Update agent-parity-governance preset to v"
+  },
+  {
+    "tag_name": "v0.10.3",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.10.3",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.10.3\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.10.3\n- Update Superpowers Bridge extension to v1.6.0 (#2998)\n- Add Improve Extension to community catalog (#2997)\n- Update Product Forge extension to v1.7.0 (#2996)\n- Update Linear Integration extension to v0.5.0 (#2995"
+  },
+  {
+    "tag_name": "v0.10.2",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.10.2",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.10.2\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.10.2\n- Add Research Harness extension to community catalog (#2935)\n- Add Coding Standards Drift Control extension to community catalog (#2934)\n- Add Spec Trace extension to community catalog (#2527)\n- fix(extensions): p"
+  },
+  {
+    "tag_name": "v0.10.1",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.10.1",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.10.1\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.10.1\n- Update DocGuard — CDD Enforcement extension to v0.25.1 (#2909)\n- Update a11y-governance preset to v0.3.0 (#2867)\n- docs: document spec persistence models (#2856)\n- chore(catalog): bump Linear Integration to v0.3."
+  },
+  {
+    "tag_name": "v0.10.0",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.10.0",
+    "body": "## Install\r\n\r\n```bash\r\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.10.0\r\nspecify init my-project\r\n```\r\n\r\n### Migration\r\n\r\n- **Git extension is now opt-in.** The `--no-git` flag has been removed.\r\n  `specify init` no longer auto-installs the git extension. To add it,\r\n  run `specify extension add git` after init.\r\n- **Legacy AI flags removed.** `--ai`, `--ai-com"
+  },
+  {
+    "tag_name": "v0.9.5",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.9.5",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.9.5\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.9.5\n- feat(extensions): add bundled bug triage workflow extension (#2871)\n- fix: resolve GitHub release asset API URL for private repo preset and workflow downloads (#2855)\n- chore(deps): bump github/gh-aw-actions from 0"
+  },
+  {
+    "tag_name": "v0.9.4",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.9.4",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.9.4\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.9.4\n- feat(workflows): add JSON output for workflow run resume and status (#2814)\n- Update workflow-preset community catalog to v1.3.2 (#2841)\n- fix: recover active skills registration for extensions (#2803)\n- fix(cursor"
+  },
+  {
+    "tag_name": "v0.9.3",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.9.3",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.9.3\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.9.3\n- fix: render script command hints with active agent separator (#2649)\n- chore(tests): fix ruff lint violations in tests/ (#2827)\n- fix(workflows): validate run_id in RunState.load before touching the … (#2813)\n- fea"
+  },
+  {
+    "tag_name": "v0.9.2",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.9.2",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.9.2\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.9.2\n- Update agent parity governance preset catalog entry (#2777)\n- fix: resolve GitHub release asset API URL for private repo extension downloads (#2792)\n- fix: remove unsupported mode: frontmatter from Copilot skills m"
+  },
+  {
+    "tag_name": "v0.9.1",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.9.1",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.9.1\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.9.1\n- fix(cli): pin UTF-8 encoding on init-options and .extensionignore I/O (#2686)\n- docs: list Hermes in supported integrations table (#2768)\n- fix(copilot): resolve active spec template (#2765)\n- fix: add missing agen"
+  },
+  {
+    "tag_name": "v0.9.0",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.9.0",
+    "body": "## Install\r\n\r\n```bash\r\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.9.0\r\nspecify init my-project\r\n```\r\n\r\n## Notice\r\n\r\nWe have migrated agent context updates to the agent-context extension and currently auto-enable it to preserve existing behavior. This compatibility fallback is deprecated and will be removed in v0.12.0; after that, explicitly enable/configure ag"
+  },
+  {
+    "tag_name": "v0.8.18",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.8.18",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.8.18\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.8.18\n- Add support for SPECKIT_WORKFLOW_RUN_ID override (#2742)\n- feat: support SPECKIT_INTEGRATION_<KEY>_EXECUTABLE env var (#2743)\n- chore(deps): bump github/gh-aw-actions from 0.74.8 to 0.77.0 (#2754)\n- chore(deps): "
+  },
+  {
+    "tag_name": "v0.8.17",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.8.17",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.8.17\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.8.17\n- docs: consolidate Community sections in README (#2736)\n- Fix shared script command hints for integration separators (#2627)\n- docs: update security-governance preset to v0.4.0 (#2703)\n- feat(agy): enhance Google "
+  },
+  {
+    "tag_name": "v0.8.16",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.8.16",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.8.16\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.8.16\n- docs: update landing page stats and branch naming convention (#2727)\n- feat(workflows): expose {{ context.run_id }} template variable (#2664)\n- fix: resolve __SPECKIT_COMMAND_*__ refs in preset skill rendering (#"
+  },
+  {
+    "tag_name": "v0.8.15",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.8.15",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.8.15\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.8.15\n- Update Fiction Book Writing preset to v1.8.1 (#2714)\n- chore: update memorylint and superb to 1.4.0 (#2690)\n- fix: promote post-execution hook dispatch to H2 with directive language (#2713)\n- Add Token Budget ext"
+  },
+  {
+    "tag_name": "v0.8.14",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.8.14",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.8.14\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.8.14\n- Add util for windows sub-process (#2598)\n- refactor: create commands/ package and move init handler (PR-4/8) (#2615)\n- Add Product Spec Extension to community catalog (#2705)\n- fix init-options speckit version re"
+  },
+  {
+    "tag_name": "v0.8.13",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.8.13",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.8.13\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.8.13\n- fix: while/do-while loop condition reads stale iteration-0 step output (#2662)\n- docs: fix directory hierarchy in README examples (#2639)\n- fix(catalogs): reject boolean priority in extension and preset catalog r"
+  },
+  {
+    "tag_name": "v0.8.12",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.8.12",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.8.12\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.8.12\n- fix(codex): inject dot-to-hyphen hook command note in Codex skills (#2503)\n- Update Squad Bridge extension to v1.3.0 (#2645)\n- Update Superpowers Implementation Bridge extension to v0.5.0 (#2644)\n- Add Team Assig"
+  },
+  {
+    "tag_name": "v0.8.11",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.8.11",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.8.11\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.8.11\n- refactor: extract _version.py from __init__.py (PR-3/8) (#2550)\n- Add Time Machine extension to community catalog (#2580)\n- fix(powershell): ensure UTF-8 templates are written without BOM (#2280)\n- docs: document"
+  },
+  {
+    "tag_name": "v0.8.10",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.8.10",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.8.10\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.8.10\n- docs: streamline install section and add community overview (#2561)\n- Move community extensions table from README to docs site (#2560)\n- Add Agent Governance extension to community catalog (#2559)\n- Add Reqnroll "
+  },
+  {
+    "tag_name": "v0.8.9",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.8.9",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.8.9\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.8.9\n- docs: revamp landing page with four-pillar card layout (#2531)\n- feat(extensions): update governance ecosystem extensions to latest versions (#2514)\n- Add changelog extension (#2177)\n- Add install directory to docf"
+  },
+  {
+    "tag_name": "v0.8.8",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.8.8",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.8.8\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.8.8\n- chore(deps): bump actions/checkout from 4.3.1 to 6.0.2 (#2486)\n- feat(catalog): add Spec Kit Schedule (schedule) community extension (#2473)\n- fix(integration): refresh shared infra on `integration switch` (#2375)\n"
+  },
+  {
+    "tag_name": "v0.8.7",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.8.7",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.8.7\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.8.7\n- feat: add agent-orchestrator to community extension catalog (#2236)\n- chore: update extension versions in community catalog (#2468)\n- fix(goose): Declare args parameter in generated recipes (#2402)\n- feat: Add ling"
+  },
+  {
+    "tag_name": "v0.8.6",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.8.6",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.8.6\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.8.6\n- Load constitution context in `/speckit.implement` to enforce governance during implementation (#2460)\n- feat: improve catalog submission templates and CODEOWNERS (#2401)\n- fix: validate URL scheme in build_github_r"
+  },
+  {
+    "tag_name": "v0.8.5",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.8.5",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.8.5\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.8.5\n- feat(presets): add Spec2Cloud preset for Azure deployment workflow (#2413)\n- update security-review and memory-md extensions to latest versions (#2445)\n- fix: honor template overrides for tasks-template (#2278) (#2"
+  },
+  {
+    "tag_name": "v0.8.4",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.8.4",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.8.4\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.8.4\n- fix(specify): correct self-referencing step number in validation flow (#2152)\n- chore(deps): bump DavidAnson/markdownlint-cli2-action (#2425)\n- Add security-governance to community catalog (#2386)\n- Add cross-platf"
+  },
+  {
+    "tag_name": "v0.8.3",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.8.3",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.8.3\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.8.3\n- Add Work IQ extension to community catalog (#2415)\n- feat(integrations): add Devin for Terminal skills-based integration (#2364)\n- fix: include --from git+... in upgrade hint to avoid PyPI squat package (#2411)\n- f"
+  },
+  {
+    "tag_name": "v0.8.2",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.8.2",
+    "body": "## Install\r\n\r\n```bash\r\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.8.2\r\nspecify init my-project\r\n```\r\n\r\n## What's Changed\r\n\r\n- chore: bump version to 0.8.2\r\n- Add MarkItDown Document Converter extension to community catalog (#2390)\r\n- feat: Speckit preset fiction book v1.7 - Support for RAG (Chroma DB) offline semantic search (#2367)\r\n- fix(extensions): use exp"
+  },
+  {
+    "tag_name": "v0.8.1",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.8.1",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.8.1\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.8.1\n- fix(plan): use .specify/feature.json to allow /speckit.plan on custom git branches (#2305) (#2349)\n- feat(vibe): migrate to SkillsIntegration from the old prompts-based MarkdownIntegration (#2336)\n- docs: move comm"
+  },
+  {
+    "tag_name": "v0.8.0",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.8.0",
+    "body": "## Install\r\n\r\n```bash\r\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.8.0\r\n```\r\n\r\n## What's Changed\r\n\r\n- chore: bump version to 0.8.0\r\n- feat(presets): Composition strategies (prepend, append, wrap) for templates, commands, and scripts (#2133)\r\n- feat(copilot): support `--integration-options=\"--skills\"` for skills-based scaffolding (#2324)\r\n- docs(install): add pi"
+  },
+  {
+    "tag_name": "v0.7.5",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.7.5",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.7.5\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.7.5\n- fix: resolve skill placeholders for all SKILL.md agents, not just codex/kimi (#2313)\n- feat(cli): add specify self check and self upgrade stub (#2316)\n- Update version-guard to v1.1.0 (#2318)\n- docs: move community"
+  },
+  {
+    "tag_name": "v0.7.4",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.7.4",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.7.4\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.7.4\n- fix(copilot): use --yolo to grant all permissions in non-interactive mode (#2298)\n- feat: add CITATION.cff and .zenodo.json for academic citation support (#2291)\n- Add spec-validate to community catalog (#2274)\n- f"
+  },
+  {
+    "tag_name": "v0.7.3",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.7.3",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.7.3\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.7.3\n- fix: replace shell-based context updates with marker-based upsert (#2259)\n- Add Community Friends page to docs site (#2261)\n- Add Spec Scope extension to community catalog (#2172)\n- docs: add Community-maintained p"
+  },
+  {
+    "tag_name": "v0.7.2",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.7.2",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.7.2\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.7.2\n- docs: add core commands reference and simplify README CLI section (#2245)\n- docs: add workflows reference, reorganize into docs/reference/, and add --version flag (#2244)\n- docs: add presets reference page and rena"
+  },
+  {
+    "tag_name": "v0.7.1",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.7.1",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.7.1\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.7.1\n- ci: add windows-latest to test matrix (#2233)\n- docs: remove deprecated --skip-tls references from local-development guide (#2231)\n- fix: allow Claude to chain skills for hook execution (#2227)\n- docs: merge TESTIN"
+  },
+  {
+    "tag_name": "v0.7.0",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.7.0",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.7.0\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.7.0\n- Add workflow engine with catalog system (#2158)\n- docs(catalog): add claude-ask-questions to community preset catalog (#2191)\n- Add SFSpeckit — Salesforce SDD Extension (#2208)\n- feat(scripts): optional single-segm"
+  },
+  {
+    "tag_name": "v0.6.2",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.6.2",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.6.2\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.6.2\n- feat: Register \"What-if Analysis\" community extension (#2182)\n- feat: add GitHub Issues Integration to community catalog (#2188)\n- feat(agents): add Goose AI agent support (#2015)\n- Update ralph extension to v1.0.1"
+  },
+  {
+    "tag_name": "v0.6.1",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.6.1",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.6.1\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.6.1\n- feat: add bundled lean preset with minimal workflow commands (#2161)\n- Add Brownfield Bootstrap extension to community catalog (#2145)\n- Add CI Guard extension to community catalog (#2157)\n- Add SpecTest extension "
+  },
+  {
+    "tag_name": "v0.6.0",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.6.0",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.6.0\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.6.0\n- Add Bugfix Workflow community extension to catalog and README (#2135)\n- Add Worktree Isolation extension to community catalog (#2143)\n- Add multi-repo-branching preset to community catalog (#2139)\n- Readme clarity "
+  },
+  {
+    "tag_name": "v0.5.1",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.5.1",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.5.1\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.5.1\n- fix: pin typer>=0.24.0 and click>=8.2.1 to fix import crash (#2136)\n- feat: update fleet extension to v1.1.0 (#2029)\n- fix(forge): use hyphen notation in frontmatter name field (#2075)\n- fix(bash): sed replacement "
+  },
+  {
+    "tag_name": "v0.5.0",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.5.0",
+    "body": "## Install\r\n\r\n```bash\r\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.5.0\r\n```\r\n\r\n## Important Notice\r\n\r\nTemplate zip bundles are no longer shipped as the CLI itself now does the scaffolding as such you will not be able to use an older version of the CLI and expect to see zip bundles with any of the releases including and after this release. This is intentional so"
+  },
+  {
+    "tag_name": "v0.4.5",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.4.5",
+    "body": "## Install\n\n```bash\nuv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.4.5\nspecify init my-project\n```\n\n## What's Changed\n\n- chore: bump version to 0.4.5\n- Stage 6: Complete migration — remove legacy scaffold path (#1924) (#2063)\n- Install Claude Code as native skills and align preset/integration flows (#2051)\n- Add repoindex 0402 (#2062)\n- Stage 5: Skills, Generic & "
+  },
+  {
+    "tag_name": "v0.4.4",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.4.4",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\r\n\r\n## Changelog\r\n\r\n- chore: bump version to 0.4.4\r\n- Stage 2: Copilot integration — proof of concept with shared template primitives (#2035)\r\n- docs: sync AGENTS.md with AGENT_CONFIG for m"
+  },
+  {
+    "tag_name": "v0.4.3",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.4.3",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\r\n\r\n## Changelog\r\n\r\n- chore: bump version to 0.4.3\r\n- Unify Kimi/Codex skill naming and migrate legacy dotted Kimi dirs (#1971)\r\n- fix(ps1): replace null-conditional operator for PowerShell"
+  },
+  {
+    "tag_name": "v0.4.2",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.4.2",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- chore: bump version to 0.4.2\n- feat: Auto-register ai-skills for extensions whenever applicable (#1840)\n- docs: add manual testing guide for slash command validation (#195"
+  },
+  {
+    "tag_name": "v0.4.1",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.4.1",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\r\n\r\n## Changelog\r\n\r\n- chore: bump version to 0.4.1\r\n- Add checkpoint extension (#1947)\r\n- fix(scripts): prioritize .specify over git for repo root detection (#1933)\r\n- docs: add AIDE extens"
+  },
+  {
+    "tag_name": "v0.4.0",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.4.0",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\r\n\r\n## Changelog\r\n\r\n- chore: bump version to 0.4.0\r\n- fix(cli): add allow_unicode=True and encoding=\"utf-8\" to YAML I/O (#1936)\r\n- fix(codex): native skills fallback refresh + legacy prompt"
+  },
+  {
+    "tag_name": "v0.3.2",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.3.2",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\r\n\r\n## Changelog\r\n\r\n- chore: bump version to 0.3.2\r\n- Add conduct extension to community catalog (#1908)\r\n- feat(extensions): add verify-tasks extension to community catalog (#1871)\r\n- feat"
+  },
+  {
+    "tag_name": "v0.3.1",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.3.1",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\r\n\r\n## Changelog\r\n\r\n- chore: bump version to 0.3.1\r\n- docs: add greenfield Spring Boot pirate-speak preset demo to README (#1878)\r\n- fix(ai-skills): exclude non-speckit copilot agent markdo"
+  },
+  {
+    "tag_name": "v0.3.0",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.3.0",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\r\n\r\n## Changelog\r\n\r\n- chore: bump version to 0.3.0\r\n- feat(presets): Pluggable preset system with catalog, resolver, and skills propagation (#1787)\r\n- fix: match 'Last updated' timestamp wi"
+  },
+  {
+    "tag_name": "v0.2.1",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.2.1",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\r\n\r\n## Changelog\r\n\r\n- chore: bump version to 0.2.1\r\n- Added February 2026 newsletter (#1812)\r\n- feat: add Kimi Code CLI agent support (#1790)\r\n- docs: fix broken links in quickstart guide ("
+  },
+  {
+    "tag_name": "v0.2.0",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.2.0",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\r\n\r\n## Changelog\r\n\r\n- chore: bump version to 0.2.0\r\n- fix: sync agent list comments with actual supported agents (#1785)\r\n- feat(extensions): support multiple active catalogs simultaneously"
+  },
+  {
+    "tag_name": "v0.1.13",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.1.13",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\r\n\r\n## Changelog\r\n\r\n- chore: bump version to 0.1.13\r\n- feat: add kiro-cli and AGENT_CONFIG consistency coverage (#1690)\r\n- feat: add verify extension to community catalog (#1726)\r\n- Add Ret"
+  },
+  {
+    "tag_name": "v0.1.12",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.1.12",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- chore: bump version to 0.1.12\n- fix: use RELEASE_PAT so tag push triggers release workflow (#1736)\n- fix: release-trigger uses release branch + PR instead of direct push t"
+  },
+  {
+    "tag_name": "v0.1.10",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.1.10",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- fix: prepend YAML frontmatter to Cursor .mdc files (#1699)\n\n"
+  },
+  {
+    "tag_name": "v0.1.9",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.1.9",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- chore(deps): bump astral-sh/setup-uv from 6 to 7 (#1709)\n\n"
+  },
+  {
+    "tag_name": "v0.1.8",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.1.8",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- chore(deps): bump actions/setup-python from 5 to 6 (#1710)\n\n"
+  },
+  {
+    "tag_name": "v0.1.7",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.1.7",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- chore: Update outdated GitHub Actions versions (#1706)\n- docs: Document dual-catalog system for extensions (#1689)\n- Fix version command in documentation (#1685)\n- Add Cle"
+  },
+  {
+    "tag_name": "v0.1.6",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.1.6",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- Add Cleanup Extension to catalog (#1617)\n- Fix parameter ordering issues in CLI (#1669)\n- Update V-Model Extension Pack to v0.4.0 (#1665)\n- docs: Fix doc missing step (#14"
+  },
+  {
+    "tag_name": "v0.1.5",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.1.5",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- Fix #1658: Add commands_subdir field to support non-standard agent directory structures (#1660)\n- feat: add GitHub issue templates (#1655)\n- Update V-Model Extension Pack "
+  },
+  {
+    "tag_name": "v0.1.4",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.1.4",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- fix: rename Qoder AGENT_CONFIG key from 'qoder' to 'qodercli' to match actual CLI executable (#1651)\n\n"
+  },
+  {
+    "tag_name": "v0.1.3",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.1.3",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- Add generic agent support with customizable command directories (#1639)\n\n"
+  },
+  {
+    "tag_name": "v0.0.102",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.102",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- fix: include 'src/**' path in release workflow triggers (#1646)\n\n"
+  },
+  {
+    "tag_name": "v0.0.101",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.101",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- chore(deps): bump github/codeql-action from 3 to 4 (#1635)\n\n"
+  },
+  {
+    "tag_name": "v0.0.100",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.100",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- Add pytest and Python linting (ruff) to CI (#1637)\n- feat: add pull request template for better contribution guidelines (#1634)\n\n"
+  },
+  {
+    "tag_name": "v0.0.99",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.99",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- Feat/ai skills (#1632)\n\n"
+  },
+  {
+    "tag_name": "v0.0.98",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.98",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- chore(deps): bump actions/stale from 9 to 10 (#1623)\n- feat: add dependabot configuration for pip and GitHub Actions updates (#1622)\n\n"
+  },
+  {
+    "tag_name": "v0.0.97",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.97",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- Remove Maintainers section from README.md (#1618)\n\n"
+  },
+  {
+    "tag_name": "v0.0.96",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.96",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- fix: typo in plan-template.md (#1446)\n\n"
+  },
+  {
+    "tag_name": "v0.0.95",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.95",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- Feat: add a new agent: Google Anti Gravity (#1220)\n\n"
+  },
+  {
+    "tag_name": "v0.0.94",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.94",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- Add stale workflow for 180-day inactive issues and PRs (#1594)\n\n"
+  },
+  {
+    "tag_name": "v0.0.93",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.93",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- Add modular extension system (#1551)\n\n"
+  },
+  {
+    "tag_name": "v0.0.92",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.92",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- Fixes #1586 - .specify.specify path error (#1588)\n\n"
+  },
+  {
+    "tag_name": "v0.0.91",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.91",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- fix: preserve constitution.md during reinitialization (#1541) (#1553)\n- fix: resolve markdownlint errors across documentation (#1571)\n\n"
+  },
+  {
+    "tag_name": "v0.0.90",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.90",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- Merge pull request #1288 from github/localden/updates\n- Update Markdown formatting\n- Update Markdown formatting\n- Merge pull request #1286 from sdmcraft/docs/add-existing-"
+  },
+  {
+    "tag_name": "v0.0.89",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.89",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- Merge pull request #1237 from Mearman/fix/branch-number-collision-bug\n- Update scripts/bash/create-new-feature.sh\n- fix(scripts): prevent octal interpretation in feature n"
+  },
+  {
+    "tag_name": "v0.0.88",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.88",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- Merge pull request #1205 from luanzhiwow/main\n- fix the incorrect task-template file path\n\n"
+  },
+  {
+    "tag_name": "v0.0.87",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.87",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- Merge pull request #1122 from KUTEJiang/main\n- Merge pull request #1272 from dbirks/embiggen-logo\n- Limit width and height to 200px to match the small logo\n- docs: Switch "
+  },
+  {
+    "tag_name": "v0.0.86",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.86",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- Merge pull request #1133 from vburckhardt/add-ibm-bob-ide\n- feat: add bob to new update-agent-context.ps1 + consistency in comments\n- chore: merge main into feature branch"
+  },
+  {
+    "tag_name": "v0.0.85",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.85",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- Merge pull request #1039 from sgillis/fix-cdpath-issue\n- Unset CDPATH while getting SCRIPT_DIR\n\n"
+  },
+  {
+    "tag_name": "v0.0.84",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.84",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- Merge pull request #1070 from danwashusen/patch-1\n- Merge pull request #1135 from anchildress1/upgrade-spec-kit-docs\n- docs: fix broken link and improve agent reference\n- "
+  },
+  {
+    "tag_name": "v0.0.83",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.83",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- Merge pull request #1134 from eliasto/add-ovhcloud-shai-ai-agent\n- feat: Add OVHcloud SHAI AI Agent\n\n"
+  },
+  {
+    "tag_name": "v0.0.82",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.82",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- Merge pull request #1137 from lshgdut/pr\n- fix: incorrect logic to create release packages with subset AGENTS or SCRIPTS\n\n"
+  },
+  {
+    "tag_name": "v0.0.81",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.81",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- Merge pull request #1187 from devantler/fix-tasktoissues-tools\n- Fix tasktoissues.md to use the 'github/github-mcp-server/issue_write' tool\n\n"
+  },
+  {
+    "tag_name": "v0.0.80",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.80",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- Merge pull request #986 from github/localden/vscode\n- Merge branch 'localden/vscode' of https://github.com/github/spec-kit into localden/vscode\n- Refactor feature script l"
+  },
+  {
+    "tag_name": "v0.0.79",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.79",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- Merge pull request #1019 from sigent-amazon/feature/check-remote-branches-for-numbering\n- docs: restore important note about JSON output in specify command\n- fix: improve "
+  },
+  {
+    "tag_name": "v0.0.78",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.78",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- Merge pull request #1001 from TCoherence/fix/place-short-name-in-the-right-position\n- Merge pull request #1002 from harikrishnan83/local_testing_documentation\n- Update CON"
+  },
+  {
+    "tag_name": "v0.0.77",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.77",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n## Changelog\n\n- Merge pull request #795 from tinesoft/fix/gh-releases\n- fix: include the latest changelog in the `GitHub Release`'s  body\n\n"
+  },
+  {
+    "tag_name": "v0.0.76",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.76",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n"
+  },
+  {
+    "tag_name": "v0.0.75",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.75",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n"
+  },
+  {
+    "tag_name": "v0.0.74",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.74",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n"
+  },
+  {
+    "tag_name": "v0.0.73",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.73",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n"
+  },
+  {
+    "tag_name": "v0.0.72",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.72",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n"
+  },
+  {
+    "tag_name": "v0.0.71",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.71",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n"
+  },
+  {
+    "tag_name": "v0.0.70",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.70",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n"
+  },
+  {
+    "tag_name": "v0.0.69",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.69",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n"
+  },
+  {
+    "tag_name": "v0.0.68",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.68",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n"
+  },
+  {
+    "tag_name": "v0.0.67",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.67",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n"
+  },
+  {
+    "tag_name": "v0.0.66",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.66",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n"
+  },
+  {
+    "tag_name": "v0.0.65",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.65",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n"
+  },
+  {
+    "tag_name": "v0.0.64",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.64",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n"
+  },
+  {
+    "tag_name": "v0.0.63",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.63",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n"
+  },
+  {
+    "tag_name": "v0.0.62",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.62",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n"
+  },
+  {
+    "tag_name": "v0.0.61",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.61",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n"
+  },
+  {
+    "tag_name": "v0.0.60",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.60",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n"
+  },
+  {
+    "tag_name": "v0.0.59",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.59",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n"
+  },
+  {
+    "tag_name": "v0.0.58",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.58",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n"
+  },
+  {
+    "tag_name": "v0.0.57",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.57",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n"
+  },
+  {
+    "tag_name": "v0.0.56",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.56",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n"
+  },
+  {
+    "tag_name": "v0.0.55",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.55",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n"
+  },
+  {
+    "tag_name": "v0.0.54",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.54",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n"
+  },
+  {
+    "tag_name": "v0.0.53",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.53",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n"
+  },
+  {
+    "tag_name": "v0.0.52",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.52",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n"
+  },
+  {
+    "tag_name": "v0.0.51",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.51",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n"
+  },
+  {
+    "tag_name": "v0.0.50",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.50",
+    "body": "This is the latest set of releases that you can use with your agent of choice. We recommend using the Specify CLI to scaffold your projects, however you can download these independently and manage them yourself.\n\n"
+  },
+  {
+    "tag_name": "v0.0.49",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.49",
+    "body": "Template release v0.0.49\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, Gemini CLI, Cursor, Qwen, opencode, Windsurf, and Codex.\n\nNow includes per-script variants for POSIX shell (sh) and PowerShell (ps).\n\nDownload the template for your preferred AI assistant + script type:\n- spec-kit-template-copilot-sh-v0.0.49.zip\n- spec-kit-template-copilot-ps-v0.0.49.zip\n-"
+  },
+  {
+    "tag_name": "v0.0.48",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.48",
+    "body": "Template release v0.0.48\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, Gemini CLI, Cursor, Qwen, opencode, Windsurf, and Codex.\n\nNow includes per-script variants for POSIX shell (sh) and PowerShell (ps).\n\nDownload the template for your preferred AI assistant + script type:\n- spec-kit-template-copilot-sh-v0.0.48.zip\n- spec-kit-template-copilot-ps-v0.0.48.zip\n-"
+  },
+  {
+    "tag_name": "v0.0.47",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.47",
+    "body": "Template release v0.0.47\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, Gemini CLI, Cursor, Qwen, opencode, Windsurf, and Codex.\n\nNow includes per-script variants for POSIX shell (sh) and PowerShell (ps).\n\nDownload the template for your preferred AI assistant + script type:\n- spec-kit-template-copilot-sh-v0.0.47.zip\n- spec-kit-template-copilot-ps-v0.0.47.zip\n-"
+  },
+  {
+    "tag_name": "v0.0.46",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.46",
+    "body": "Template release v0.0.46\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, Gemini CLI, Cursor, Qwen, opencode, Windsurf, and Codex.\n\nNow includes per-script variants for POSIX shell (sh) and PowerShell (ps).\n\nDownload the template for your preferred AI assistant + script type:\n- spec-kit-template-copilot-sh-v0.0.46.zip\n- spec-kit-template-copilot-ps-v0.0.46.zip\n-"
+  },
+  {
+    "tag_name": "v0.0.45",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.45",
+    "body": "Template release v0.0.45\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, Gemini CLI, Cursor, Qwen, opencode, and Windsurf.\n\nNow includes per-script variants for POSIX shell (sh) and PowerShell (ps).\n\nDownload the template for your preferred AI assistant + script type:\n- spec-kit-template-copilot-sh-v0.0.45.zip\n- spec-kit-template-copilot-ps-v0.0.45.zip\n- spec-k"
+  },
+  {
+    "tag_name": "v0.0.44",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.44",
+    "body": "Template release v0.0.44\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, Gemini CLI, Cursor, Qwen, and opencode.\n\nNow includes per-script variants for POSIX shell (sh) and PowerShell (ps).\n\nDownload the template for your preferred AI assistant + script type:\n- spec-kit-template-copilot-sh-v0.0.44.zip\n- spec-kit-template-copilot-ps-v0.0.44.zip\n- spec-kit-templat"
+  },
+  {
+    "tag_name": "v0.0.43",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.43",
+    "body": "Template release v0.0.43\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, Gemini CLI, Cursor, Qwen, and opencode.\n\nNow includes per-script variants for POSIX shell (sh) and PowerShell (ps).\n\nDownload the template for your preferred AI assistant + script type:\n- spec-kit-template-copilot-sh-v0.0.43.zip\n- spec-kit-template-copilot-ps-v0.0.43.zip\n- spec-kit-templat"
+  },
+  {
+    "tag_name": "v0.0.42",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.42",
+    "body": "Template release v0.0.42\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, Gemini CLI, Cursor, Qwen, and opencode.\n\nNow includes per-script variants for POSIX shell (sh) and PowerShell (ps).\n\nDownload the template for your preferred AI assistant + script type:\n- spec-kit-template-copilot-sh-v0.0.42.zip\n- spec-kit-template-copilot-ps-v0.0.42.zip\n- spec-kit-templat"
+  },
+  {
+    "tag_name": "v0.0.41",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.41",
+    "body": "Template release v0.0.41\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, Gemini CLI, Cursor, Qwen, and opencode.\n\nNow includes per-script variants for POSIX shell (sh) and PowerShell (ps).\n\nDownload the template for your preferred AI assistant + script type:\n- spec-kit-template-copilot-sh-v0.0.41.zip\n- spec-kit-template-copilot-ps-v0.0.41.zip\n- spec-kit-templat"
+  },
+  {
+    "tag_name": "v0.0.40",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.40",
+    "body": "Template release v0.0.40\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, Gemini CLI, Cursor, Qwen, and opencode.\n\nNow includes per-script variants for POSIX shell (sh) and PowerShell (ps).\n\nDownload the template for your preferred AI assistant + script type:\n- spec-kit-template-copilot-sh-v0.0.40.zip\n- spec-kit-template-copilot-ps-v0.0.40.zip\n- spec-kit-templat"
+  },
+  {
+    "tag_name": "v0.0.39",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.39",
+    "body": "Template release v0.0.39\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, Gemini CLI, Cursor, Qwen, and opencode.\n\nNow includes per-script variants for POSIX shell (sh) and PowerShell (ps).\n\nDownload the template for your preferred AI assistant + script type:\n- spec-kit-template-copilot-sh-v0.0.39.zip\n- spec-kit-template-copilot-ps-v0.0.39.zip\n- spec-kit-templat"
+  },
+  {
+    "tag_name": "v0.0.38",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.38",
+    "body": "Template release v0.0.38\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, Gemini CLI, Cursor, Qwen, and opencode.\n\nNow includes per-script variants for POSIX shell (sh) and PowerShell (ps).\n\nDownload the template for your preferred AI assistant + script type:\n- spec-kit-template-copilot-sh-v0.0.38.zip\n- spec-kit-template-copilot-ps-v0.0.38.zip\n- spec-kit-templat"
+  },
+  {
+    "tag_name": "v0.0.37",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.37",
+    "body": "Template release v0.0.37\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, Gemini CLI, Cursor, Qwen, and opencode.\n\nNow includes per-script variants for POSIX shell (sh) and PowerShell (ps).\n\nDownload the template for your preferred AI assistant + script type:\n- spec-kit-template-copilot-sh-v0.0.37.zip\n- spec-kit-template-copilot-ps-v0.0.37.zip\n- spec-kit-templat"
+  },
+  {
+    "tag_name": "v0.0.36",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.36",
+    "body": "Template release v0.0.36\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, Gemini CLI, Cursor and opencode.\n\nNow includes per-script variants for POSIX shell (sh) and PowerShell (ps).\n\nDownload the template for your preferred AI assistant + script type:\n- spec-kit-template-copilot-sh-v0.0.36.zip\n- spec-kit-template-copilot-ps-v0.0.36.zip\n- spec-kit-template-claud"
+  },
+  {
+    "tag_name": "v0.0.35",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.35",
+    "body": "Template release v0.0.35\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, Gemini CLI, and Cursor.\n\nNow includes per-script variants for POSIX shell (sh) and PowerShell (ps).\n\nDownload the template for your preferred AI assistant + script type:\n- spec-kit-template-copilot-sh-v0.0.35.zip\n- spec-kit-template-copilot-ps-v0.0.35.zip\n- spec-kit-template-claude-sh-v0.0"
+  },
+  {
+    "tag_name": "v0.0.34",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.34",
+    "body": "Template release v0.0.34\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, Gemini CLI, and Cursor.\n\nNow includes per-script variants for POSIX shell (sh) and PowerShell (ps).\n\nDownload the template for your preferred AI assistant + script type:\n- spec-kit-template-copilot-sh-v0.0.34.zip\n- spec-kit-template-copilot-ps-v0.0.34.zip\n- spec-kit-template-claude-sh-v0.0"
+  },
+  {
+    "tag_name": "v0.0.33",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.33",
+    "body": "Template release v0.0.33\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, Gemini CLI, and Cursor.\n\nNow includes per-script variants for POSIX shell (sh) and PowerShell (ps).\n\nDownload the template for your preferred AI assistant + script type:\n- spec-kit-template-copilot-sh-v0.0.33.zip\n- spec-kit-template-copilot-ps-v0.0.33.zip\n- spec-kit-template-claude-sh-v0.0"
+  },
+  {
+    "tag_name": "v0.0.32",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.32",
+    "body": "Template release v0.0.32\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, Gemini CLI, and Cursor.\n\nNow includes per-script variants for POSIX shell (sh) and PowerShell (ps).\n\nDownload the template for your preferred AI assistant + script type:\n- spec-kit-template-copilot-sh-v0.0.32.zip\n- spec-kit-template-copilot-ps-v0.0.32.zip\n- spec-kit-template-claude-sh-v0.0"
+  },
+  {
+    "tag_name": "v0.0.31",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.31",
+    "body": "Template release v0.0.31\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, Gemini CLI, and Cursor.\n\nNow includes per-script variants for POSIX shell (sh) and PowerShell (ps).\n\nDownload the template for your preferred AI assistant + script type:\n- spec-kit-template-copilot-sh-v0.0.31.zip\n- spec-kit-template-copilot-ps-v0.0.31.zip\n- spec-kit-template-claude-sh-v0.0"
+  },
+  {
+    "tag_name": "v0.0.30",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.30",
+    "body": "Template release v0.0.30\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, Gemini CLI, and Cursor.\n\nNow includes per-script variants for POSIX shell (sh) and PowerShell (ps).\n\nDownload the template for your preferred AI assistant + script type:\n- spec-kit-template-copilot-sh-v0.0.30.zip\n- spec-kit-template-copilot-ps-v0.0.30.zip\n- spec-kit-template-claude-sh-v0.0"
+  },
+  {
+    "tag_name": "v0.0.29",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.29",
+    "body": "Template release v0.0.29\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, Gemini CLI, and Cursor.\n\nNow includes per-script variants for POSIX shell (sh) and PowerShell (ps).\n\nDownload the template for your preferred AI assistant + script type:\n- spec-kit-template-copilot-sh-v0.0.29.zip\n- spec-kit-template-copilot-ps-v0.0.29.zip\n- spec-kit-template-claude-sh-v0.0"
+  },
+  {
+    "tag_name": "v0.0.28",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.28",
+    "body": "Template release v0.0.28\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, Gemini CLI, and Cursor.\n\nNow includes per-script variants for POSIX shell (sh) and PowerShell (ps).\n\nDownload the template for your preferred AI assistant + script type:\n- spec-kit-template-copilot-sh-v0.0.28.zip\n- spec-kit-template-copilot-ps-v0.0.28.zip\n- spec-kit-template-claude-sh-v0.0"
+  },
+  {
+    "tag_name": "v0.0.27",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.27",
+    "body": "Template release v0.0.27\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, and Gemini CLI.\n\nNow includes per-script variants for POSIX shell (sh) and PowerShell (ps).\n\nDownload the template for your preferred AI assistant + script type:\n- spec-kit-template-copilot-sh-v0.0.27.zip\n- spec-kit-template-copilot-ps-v0.0.27.zip\n- spec-kit-template-claude-sh-v0.0.27.zip\n"
+  },
+  {
+    "tag_name": "v0.0.26",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.26",
+    "body": "Template release v0.0.26\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, and Gemini CLI.\n\nNow includes per-script variants for POSIX shell (sh) and PowerShell (ps).\n\nDownload the template for your preferred AI assistant + script type:\n- spec-kit-template-copilot-sh-v0.0.26.zip\n- spec-kit-template-copilot-ps-v0.0.26.zip\n- spec-kit-template-claude-sh-v0.0.26.zip\n"
+  },
+  {
+    "tag_name": "v0.0.25",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.25",
+    "body": "Template release v0.0.25\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, and Gemini CLI.\n\nNow includes per-script variants for POSIX shell (sh) and PowerShell (ps).\n\nDownload the template for your preferred AI assistant + script type:\n- spec-kit-template-copilot-sh-v0.0.25.zip\n- spec-kit-template-copilot-ps-v0.0.25.zip\n- spec-kit-template-claude-sh-v0.0.25.zip\n"
+  },
+  {
+    "tag_name": "v0.0.24",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.24",
+    "body": "Template release v0.0.24\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, and Gemini CLI.\n\nNow includes per-script variants for POSIX shell (sh) and PowerShell (ps).\n\nDownload the template for your preferred AI assistant + script type:\n- spec-kit-template-copilot-sh-v0.0.24.zip\n- spec-kit-template-copilot-ps-v0.0.24.zip\n- spec-kit-template-claude-sh-v0.0.24.zip\n"
+  },
+  {
+    "tag_name": "v0.0.23",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.23",
+    "body": "Template release v0.0.23\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, and Gemini CLI.\n\nNow includes per-script variants for POSIX shell (sh) and PowerShell (ps).\n\nDownload the template for your preferred AI assistant + script type:\n- spec-kit-template-copilot-sh-v0.0.23.zip\n- spec-kit-template-copilot-ps-v0.0.23.zip\n- spec-kit-template-claude-sh-v0.0.23.zip\n"
+  },
+  {
+    "tag_name": "v0.0.22",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.22",
+    "body": "Template release v0.0.22\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, and Gemini CLI.\n\nDownload the template for your preferred AI assistant:\n- spec-kit-template-copilot-v0.0.22.zip\n- spec-kit-template-claude-v0.0.22.zip\n- spec-kit-template-gemini-v0.0.22.zip  \n"
+  },
+  {
+    "tag_name": "v0.0.21",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.21",
+    "body": "Template release v0.0.21\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, and Gemini CLI.\n\nDownload the template for your preferred AI assistant:\n- spec-kit-template-copilot-v0.0.21.zip\n- spec-kit-template-claude-v0.0.21.zip\n- spec-kit-template-gemini-v0.0.21.zip  \n"
+  },
+  {
+    "tag_name": "v0.0.20",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.20",
+    "body": "Template release v0.0.20\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, and Gemini CLI.\n\nDownload the template for your preferred AI assistant:\n- spec-kit-template-copilot-v0.0.20.zip\n- spec-kit-template-claude-v0.0.20.zip\n- spec-kit-template-gemini-v0.0.20.zip  \n"
+  },
+  {
+    "tag_name": "v0.0.19",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.19",
+    "body": "Template release v0.0.19\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, and Gemini CLI.\n\nDownload the template for your preferred AI assistant:\n- spec-kit-template-copilot-v0.0.19.zip\n- spec-kit-template-claude-v0.0.19.zip\n- spec-kit-template-gemini-v0.0.19.zip  \n"
+  },
+  {
+    "tag_name": "v0.0.18",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.18",
+    "body": "Template release v0.0.18\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, and Gemini CLI.\n\nDownload the template for your preferred AI assistant:\n- spec-kit-template-copilot-v0.0.18.zip\n- spec-kit-template-claude-v0.0.18.zip\n- spec-kit-template-gemini-v0.0.18.zip  \n"
+  },
+  {
+    "tag_name": "v0.0.17",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.17",
+    "body": "Template release v0.0.17\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, and Gemini CLI.\n\nDownload the template for your preferred AI assistant:\n- spec-kit-template-copilot-v0.0.17.zip\n- spec-kit-template-claude-v0.0.17.zip\n- spec-kit-template-gemini-v0.0.17.zip  \n"
+  },
+  {
+    "tag_name": "v0.0.16",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.16",
+    "body": "Template release v0.0.16\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, and Gemini CLI.\n\nDownload the template for your preferred AI assistant:\n- spec-kit-template-copilot-v0.0.16.zip\n- spec-kit-template-claude-v0.0.16.zip\n- spec-kit-template-gemini-v0.0.16.zip  \n"
+  },
+  {
+    "tag_name": "v0.0.15",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.15",
+    "body": "Template release v0.0.15\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, and Gemini CLI.\n\nDownload the template for your preferred AI assistant:\n- spec-kit-template-copilot-v0.0.15.zip\n- spec-kit-template-claude-v0.0.15.zip\n- spec-kit-template-gemini-v0.0.15.zip  \n"
+  },
+  {
+    "tag_name": "v0.0.14",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.14",
+    "body": "Template release v0.0.14\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, and Gemini CLI.\n\nDownload the template for your preferred AI assistant:\n- spec-kit-template-copilot-v0.0.14.zip\n- spec-kit-template-claude-v0.0.14.zip\n- spec-kit-template-gemini-v0.0.14.zip  \n"
+  },
+  {
+    "tag_name": "v0.0.13",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.13",
+    "body": "Template release v0.0.13\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, and Gemini CLI.\n\nDownload the template for your preferred AI assistant:\n- spec-kit-template-copilot-v0.0.13.zip\n- spec-kit-template-claude-v0.0.13.zip\n- spec-kit-template-gemini-v0.0.13.zip  \n"
+  },
+  {
+    "tag_name": "v0.0.12",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.12",
+    "body": "Template release v0.0.12\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, and Gemini CLI.\n\nDownload the template for your preferred AI assistant:\n- spec-kit-template-copilot-v0.0.12.zip\n- spec-kit-template-claude-v0.0.12.zip\n- spec-kit-template-gemini-v0.0.12.zip  \n"
+  },
+  {
+    "tag_name": "v0.0.11",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.11",
+    "body": "Template release v0.0.11\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, and Gemini CLI.\n\nDownload the template for your preferred AI assistant:\n- spec-kit-template-copilot-v0.0.11.zip\n- spec-kit-template-claude-v0.0.11.zip\n- spec-kit-template-gemini-v0.0.11.zip  \n"
+  },
+  {
+    "tag_name": "v0.0.10",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.10",
+    "body": "Template release v0.0.10\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, and Gemini CLI.\n\nDownload the template for your preferred AI assistant:\n- spec-kit-template-copilot-v0.0.10.zip\n- spec-kit-template-claude-v0.0.10.zip\n- spec-kit-template-gemini-v0.0.10.zip  \n"
+  },
+  {
+    "tag_name": "v0.0.9",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.9",
+    "body": "Template release v0.0.9\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, and Gemini CLI.\n\nDownload the template for your preferred AI assistant:\n- spec-kit-template-copilot-v0.0.9.zip\n- spec-kit-template-claude-v0.0.9.zip\n- spec-kit-template-gemini-v0.0.9.zip  \n"
+  },
+  {
+    "tag_name": "v0.0.8",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.8",
+    "body": "Template release v0.0.8\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, and Gemini CLI.\n\nDownload the template for your preferred AI assistant:\n- spec-kit-template-copilot-v0.0.8.zip\n- spec-kit-template-claude-v0.0.8.zip\n- spec-kit-template-gemini-v0.0.8.zip  \n"
+  },
+  {
+    "tag_name": "v0.0.7",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.7",
+    "body": "Template release v0.0.7\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, and Gemini CLI.\n\nDownload the template for your preferred AI assistant:\n- spec-kit-template-copilot-v0.0.7.zip\n- spec-kit-template-claude-v0.0.7.zip\n- spec-kit-template-gemini-v0.0.7.zip  \n"
+  },
+  {
+    "tag_name": "v0.0.6",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.6",
+    "body": "Template release v0.0.6\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, and Gemini CLI.\n\nDownload the template for your preferred AI assistant:\n- spec-kit-template-copilot-v0.0.6.zip\n- spec-kit-template-claude-v0.0.6.zip\n- spec-kit-template-gemini-v0.0.6.zip  \n"
+  },
+  {
+    "tag_name": "v0.0.5",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.5",
+    "body": "Template release v0.0.5\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, and Gemini CLI.\n\nDownload the template for your preferred AI assistant:\n- spec-kit-template-copilot-v0.0.5.zip\n- spec-kit-template-claude-v0.0.5.zip\n- spec-kit-template-gemini-v0.0.5.zip  \n"
+  },
+  {
+    "tag_name": "v0.0.4",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.4",
+    "body": "Template release v0.0.4\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, and Gemini CLI.\n\nDownload the template for your preferred AI assistant:\n- spec-kit-template-copilot-v0.0.4.zip\n- spec-kit-template-claude-v0.0.4.zip\n- spec-kit-template-gemini-v0.0.4.zip  \n"
+  },
+  {
+    "tag_name": "v0.0.3",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.3",
+    "body": "Template release v0.0.3\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, and Gemini CLI.\n\nDownload the template for your preferred AI assistant:\n- spec-kit-template-copilot-v0.0.3.zip\n- spec-kit-template-claude-v0.0.3.zip\n- spec-kit-template-gemini-v0.0.3.zip  \n"
+  },
+  {
+    "tag_name": "v0.0.2",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.2",
+    "body": "Template release v0.0.2\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, and Gemini CLI.\n\nDownload the template for your preferred AI assistant:\n- spec-kit-template-copilot-v0.0.2.zip\n- spec-kit-template-claude-v0.0.2.zip\n- spec-kit-template-gemini-v0.0.2.zip  \n"
+  },
+  {
+    "tag_name": "v0.0.1",
+    "prerelease": false,
+    "html_url": "https://github.com/github/spec-kit/releases/tag/v0.0.1",
+    "body": "Template release v0.0.1\n\nUpdated specification-driven development templates for GitHub Copilot, Claude Code, and Gemini CLI.\n\nDownload the template for your preferred AI assistant:\n- spec-kit-template-copilot-v0.0.1.zip\n- spec-kit-template-claude-v0.0.1.zip\n- spec-kit-template-gemini-v0.0.1.zip  \n"
+  }
+]

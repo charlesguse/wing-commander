@@ -262,7 +262,14 @@ jobs:
             fi
           fi
           if [ "$pass" = "true" ]; then
-            cp_out="$(cd "$worktree_dir" && bash .specify/scripts/bash/check-prerequisites.sh --json 2>&1)" || {
+            # --paths-only is required: without it check-prerequisites.sh
+            # VALIDATES the feature, and that validation hard-requires plan.md
+            # ("Run /speckit-plan first", exit 1). create-new-feature.sh above
+            # only writes spec.md, so the unqualified --json form can never
+            # succeed here and this whole tier would always report a failure.
+            # --paths-only is the pure-resolution mode and still emits
+            # FEATURE_DIR, which is all this check asserts on.
+            cp_out="$(cd "$worktree_dir" && bash .specify/scripts/bash/check-prerequisites.sh --json --paths-only 2>&1)" || {
               pass=false
               detail="check-prerequisites.sh --json exited non-zero: $(printf '%s' "$cp_out" | tail -c 500)"
             }
@@ -304,7 +311,12 @@ jobs:
         run: |
           set -uo pipefail
           version=""
-          version="$(git log -p --follow -- .specify/init-options.json "refs/remotes/origin/$DB" \
+          # The revision MUST come BEFORE the `--`: everything after `--` is a
+          # pathspec, so passing the ref there gives --follow two pathspecs and
+          # git exits with "fatal: --follow requires exactly one pathspec". The
+          # trailing `|| true` then hid it, leaving version empty on every run
+          # and making the rollback branch permanently unable to find a target.
+          version="$(git log -p --follow "refs/remotes/origin/$DB" -- .specify/init-options.json \
             | grep -m1 -E '^-\s*"speckit_version":' \
             | sed -E 's/^-\s*"speckit_version":\s*"([^"]+)".*/\1/' || true)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -1078,7 +1090,14 @@ jobs:
             fi
           fi
           if [ "$pass" = "true" ]; then
-            cp_out="$(cd "$worktree_dir" && bash .specify/scripts/bash/check-prerequisites.sh --json 2>&1)" || {
+            # --paths-only is required: without it check-prerequisites.sh
+            # VALIDATES the feature, and that validation hard-requires plan.md
+            # ("Run /speckit-plan first", exit 1). create-new-feature.sh above
+            # only writes spec.md, so the unqualified --json form can never
+            # succeed here and this whole tier would always report a failure.
+            # --paths-only is the pure-resolution mode and still emits
+            # FEATURE_DIR, which is all this check asserts on.
+            cp_out="$(cd "$worktree_dir" && bash .specify/scripts/bash/check-prerequisites.sh --json --paths-only 2>&1)" || {
               pass=false
               detail="check-prerequisites.sh --json exited non-zero: $(printf '%s' "$cp_out" | tail -c 500)"
             }
@@ -1117,7 +1136,12 @@ jobs:
           pass=true
           detail=""
           template="$WORKTREE/.specify/templates/spec-template.md"
-          target="$WORKTREE/$FEATURE_DIR/spec.md"
+          # FEATURE_DIR comes from check-prerequisites.sh already ABSOLUTE —
+          # prefixing it with $WORKTREE again produced a path like
+          # /tmp/wt//tmp/wt/specs/NNN, so the cp below always failed and this
+          # tier reported the misleading "spec.md never landed" for every
+          # minor/major candidate.
+          target="$FEATURE_DIR/spec.md"
           if [ -f "$template" ]; then
             cp "$template" "$target"
           else
