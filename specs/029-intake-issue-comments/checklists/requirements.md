@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,9 +31,8 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain, at the maximum allowed cap, each on a decision the request itself frames as genuinely open with no safe default:
-  - **FR-002 — trust scope**: the request calls comment authorship gating "the crux" and offers two concrete variants (author-inclusive vs collaborator-only) with different security implications; no default is safe to assume.
-  - **FR-006 — conflict handling**: raised verbatim as an open question in the request (last-writer-wins vs surfacing the conflict as a clarification marker).
-  - **FR-008 — visibility of excluded comments**: the request presents a detect-and-notify direction as a real alternative; whether this feature must include a visible notice, or leaves that to a separate change, materially changes scope.
-- Decisions with a defensible default were resolved as assumptions rather than markers to stay within the cap: bot exclusion (fixed), comment ordering (by creation time), edit history (out of scope), and reuse of the clarify stage's existing patterns.
-- Clarification questions for the three markers are posted to the lifecycle issue; the markers remain in the spec until answered.
+- All three [NEEDS CLARIFICATION] markers have been resolved from maintainer answers on lifecycle issue #159:
+  - **FR-002 — trust scope**: resolved to author-inclusive — OWNER/MEMBER/COLLABORATOR plus the original issue author, matching the clarify stage's author gate.
+  - **FR-006 — conflict handling**: resolved to surface a conflict between a qualifying comment and the body (or an earlier comment) as a [NEEDS CLARIFICATION] marker in the generated specification rather than silently picking a side.
+  - **FR-008 — visibility of excluded comments**: resolved to in scope — a visible notice (e.g. on the lifecycle issue) is required when substantive comments exist but none qualify.
+- Decisions with a defensible default were resolved as assumptions: bot exclusion (fixed), comment ordering (by creation time), edit history (out of scope), and reuse of the clarify stage's existing patterns.

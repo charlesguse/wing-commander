@@ -32,7 +32,7 @@ The entry-gate label is a maintainer-only approval. Anyone can comment on a publ
 
 **Why this priority**: This is the crux of the feature and the reason a naive "feed all comments" approach is unsafe. If ungated comment content could reach the specification, the label would no longer gate what it appears to gate: a non-maintainer could place content into a spec the maintainer believes they approved by reading the body. Getting the trust boundary right is as important as reading the comments at all — hence also P1.
 
-**Independent Test**: Add a substantive comment from a user who is not a maintainer (and not the issue author, depending on the resolved trust scope), then run intake. Confirm that comment's content does not appear in or influence the specification.
+**Independent Test**: Add a substantive comment from a user who is neither a maintainer (OWNER/MEMBER/COLLABORATOR) nor the original issue author, then run intake. Confirm that comment's content does not appear in or influence the specification.
 
 **Acceptance Scenarios**:
 
@@ -62,7 +62,7 @@ Comments — even from maintainers — may contain text that looks like instruct
 - **No comments**: intake behaves exactly as it does today (body-only).
 - **Only bot comments**: all excluded; intake is body-only.
 - **Mixed authorship**: qualifying comments are incorporated; non-qualifying and bot comments are ignored, in the same pass.
-- **A comment contradicts the body**: resolution behavior is governed by the conflict-handling requirement (see FR-006).
+- **A comment contradicts the body**: intake surfaces the conflict as a [NEEDS CLARIFICATION] marker rather than silently picking a side (see FR-006).
 - **A very long discussion thread**: the composite input can be far larger than a single body; the specification must still respect the maximum-3 clarification-marker cap.
 - **Substantive comments exist but are all excluded by the trust gate**: the maintainer should not silently believe the discussion was used (see FR-008).
 - **Edited comments or an edited body**: only current text is available; edit history is not fetched (see Assumptions).
@@ -73,13 +73,13 @@ Comments — even from maintainers — may contain text that looks like instruct
 ### Functional Requirements
 
 - **FR-001**: Intake MUST retrieve the follow-up comments on the lifecycle issue in addition to its title, body, and author.
-- **FR-002**: Intake MUST incorporate a comment into the feature description only when the comment's author association qualifies under the stage's trust gate. [NEEDS CLARIFICATION: which associations qualify — (a) OWNER/MEMBER/COLLABORATOR plus the original issue author, matching the clarify stage; or (b) OWNER/MEMBER/COLLABORATOR only, so the input set exactly matches the people who could have applied the entry-gate label themselves?]
+- **FR-002**: Intake MUST incorporate a comment into the feature description only when the comment's author association qualifies under the stage's trust gate. The qualifying authors are those with an OWNER, MEMBER, or COLLABORATOR association, plus the original issue author — matching the clarify stage's author gate.
 - **FR-003**: Intake MUST exclude comments authored by bots, regardless of the bot account's association (pipeline stages and the watchdog comment on lifecycle issues, and none of that is feature description).
 - **FR-004**: Intake MUST treat every ingested comment body as untrusted user data — it MUST NOT execute, shell-interpolate, or paste comment text into the prompt as trusted instructions; comment bodies MUST be handled as data (for example fetched from the API and staged to a data file), mirroring the clarify stage's untrusted-comment handling.
 - **FR-005**: Intake MUST assemble the feature description from the issue body together with the qualifying comments, so that the specification reflects the full settled discussion rather than the body alone.
-- **FR-006**: When a qualifying comment conflicts with the issue body (or with an earlier comment), intake MUST resolve the conflict deterministically. [NEEDS CLARIFICATION: last-writer-wins — later comments take precedence over the body and earlier comments, matching the actual semantics of a discussion; OR surface the conflict as a [NEEDS CLARIFICATION] marker in the spec rather than silently picking a side?]
+- **FR-006**: When a qualifying comment conflicts with the issue body (or with an earlier comment), intake MUST surface the conflict as a [NEEDS CLARIFICATION] marker in the generated specification rather than silently picking a side, subject to the three-marker cap.
 - **FR-007**: When no qualifying comments exist, intake MUST produce the same specification it produces today from the title and body alone.
-- **FR-008**: When substantive comments exist on the issue but none qualify for incorporation (excluded by the trust gate or as bots), intake MUST make that visible rather than silent. [NEEDS CLARIFICATION: is a visible notice required for this feature — e.g. a note on the lifecycle issue that non-qualifying comments were not used and the body may need updating first — or is that a separate/out-of-scope enhancement, leaving silent exclusion acceptable for now?]
+- **FR-008**: When substantive comments exist on the issue but none qualify for incorporation (excluded by the trust gate or as bots), intake MUST make that visible rather than silent — for example, a note on the lifecycle issue that non-qualifying comments were not used and the body may need updating first. This visible notice is in scope for this feature.
 - **FR-009**: The entry-gate label's meaning MUST be preserved: no content originating from a non-qualifying author may influence a specification that a maintainer approved by applying the label.
 
 ### Key Entities *(include if feature involves data)*
