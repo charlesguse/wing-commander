@@ -264,6 +264,9 @@ jobs:
       # (push reaching claude-code-action through wing-commander-rebase.yml)
       # and is forward-looking: it flags ANY future unsupported event, not
       # just push, via a set difference against a maintained allow-list.
+      # "Resolved stage" means the whole local `uses:` chain, not just the
+      # workflow a wrapper names directly — one intermediate hop would
+      # otherwise hide the agent step from this gate completely.
       - name: Gate 6 — agent-bearing wrapper reaches its stage only under a supported event
         run: |
           python3 - <<'PYEOF'
@@ -278,17 +281,44 @@ jobs:
 
           CLAUDE_ACTION_PREFIX = "anthropics/claude-code-action"
 
+          # `workflow_call` is NOT an event any agent step observes: a called
+          # workflow runs under its CALLER's event. Enumerating it as a
+          # trigger would flag every intermediate wrapper spuriously while
+          # still missing the caller-side defect, so it is dropped from each
+          # file's event set and the call graph is walked instead.
+          NON_TRIGGER_EVENTS = {"workflow_call"}
+
           docs = {}
-          for f in sorted(glob.glob(".github/workflows/*.yml")):
+          for f in sorted(glob.glob(".github/workflows/*.yml")
+                          + glob.glob(".github/workflows/*.yaml")):
               docs[os.path.basename(f)] = yaml.safe_load(open(f, encoding="utf-8")) or {}
 
-          def is_agent_bearing(wf):
+          def local_calls(wf):
+              """(job-name, job, uses, callee-basename) per local stage call."""
+              out = []
+              for jname, job in (wf.get("jobs") or {}).items():
+                  uses = (job or {}).get("uses", "")
+                  if uses.startswith("./.github/workflows/"):
+                      out.append((jname, job or {}, uses, os.path.basename(uses)))
+              return out
+
+          def is_agent_bearing(name, seen=None):
+              """Agent-bearing = runs claude-code-action itself, OR calls (at
+              any depth) a local workflow that does. Checking only direct
+              steps lets one intermediate `uses:` hop hide the agent from
+              this gate entirely."""
+              seen = set() if seen is None else seen
+              if name in seen:
+                  return False   # cycle guard
+              seen.add(name)
+              wf = docs.get(name)
+              if wf is None:
+                  return False
               for job in (wf.get("jobs") or {}).values():
                   for step in (job or {}).get("steps") or []:
-                      uses = (step or {}).get("uses", "")
-                      if uses.startswith(CLAUDE_ACTION_PREFIX):
+                      if (step or {}).get("uses", "").startswith(CLAUDE_ACTION_PREFIX):
                           return True
-              return False
+              return any(is_agent_bearing(b, seen) for _, _, _, b in local_calls(wf))
 
           def reachable_events(if_expr, wrapper_events):
               if not if_expr:
@@ -304,23 +334,37 @@ jobs:
           failures = 0
           for fname, wf in docs.items():
               on = wf.get(True, wf.get("on"))
-              wrapper_events = set(on.keys()) if isinstance(on, dict) else set(on or []) if isinstance(on, list) else set()
+              if isinstance(on, dict):
+                  wrapper_events = set(on.keys())
+              elif isinstance(on, list):
+                  wrapper_events = set(on)
+              elif isinstance(on, str):
+                  wrapper_events = {on}          # bare `on: push`
+              else:
+                  wrapper_events = set()
+              wrapper_events -= NON_TRIGGER_EVENTS
               if not wrapper_events:
                   continue
 
-              for jname, job in (wf.get("jobs") or {}).items():
-                  uses = (job or {}).get("uses", "")
-                  if not uses.startswith("./.github/workflows/"):
+              for jname, job, uses, base in local_calls(wf):
+                  if base not in docs:
+                      # Silently skipping an unresolvable callee would let a
+                      # typo'd or renamed path read as "nothing to check."
+                      print(f"::error file=.github/workflows/{fname}::job {jname!r} calls "
+                            f"{uses}, which does not exist in this repository — Gate 6 "
+                            f"cannot tell whether it reaches an agent step under a "
+                            f"supported event.")
+                      failures += 1
                       continue
-                  called = docs.get(os.path.basename(uses))
-                  if called is None or not is_agent_bearing(called):
+                  if not is_agent_bearing(base):
                       continue
 
                   reachable = reachable_events(job.get("if", ""), wrapper_events)
                   flagged = sorted(reachable - SUPPORTED_EVENTS)
                   if flagged:
                       print(f"::error file=.github/workflows/{fname}::job {jname!r} calls "
-                            f"{uses}, whose resolved stage runs a claude-code-action step, "
+                            f"{uses}, which resolves (directly or through a nested "
+                            f"call) to a claude-code-action step, "
                             f"under event(s) {flagged} — that agent does not support "
                             f"{'this event' if len(flagged) == 1 else 'these events'}. "
                             f"Supported: {sorted(SUPPORTED_EVENTS)}.")
@@ -329,6 +373,16 @@ jobs:
           print(f"Gate 6: checked every agent-bearing wrapper↔stage pair; {failures} failure(s).")
           sys.exit(1 if failures else 0)
           PYEOF
+
+      # Gate 6 is a detector, and a detector that never fires looks exactly
+      # like one that cannot fire — the fleet above is (and should stay)
+      # healthy, so the step before this one prints "0 failure(s)" whether
+      # its logic works or not. Gate 5 exists because that failure mode
+      # already bit this repository once. This runs the SHIPPED gate
+      # (extracted from this file, not a copy) against synthetic trees with
+      # known defects and asserts the verdict and the error text.
+      - name: Gate 6 self-test — the detector actually detects
+        run: python3 .github/scripts/verify-gate-6.py
 
   # Gate 4 — behavioral tests for the auto-update-spec-kit stage pair. Gates
   # 1-3 are static: they prove a workflow parses, registers, and is permitted

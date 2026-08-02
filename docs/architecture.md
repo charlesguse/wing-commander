@@ -354,6 +354,17 @@ itself, so the wrapper's `redispatch` job fires a lightweight
 schedule and manual `workflow_dispatch` reach the stage immediately, with no
 redispatch hop.
 
+`lint-workflows.yml` gate 6 keeps that property from regressing: it walks
+every wrapper's declared events through the local `uses:` call graph and
+fails the PR if an event the agent does not support can reach a
+`claude-code-action` step. The unsupported-event failure surfaces *at the
+agent step of a real conflict*, long after merge, so nothing else in CI
+sees it. Because a detector on a healthy fleet prints the same "0
+failure(s)" whether or not it works,
+`.github/scripts/verify-gate-6.py` runs the shipped gate — extracted from
+`lint-workflows.yml`, not copied — against synthetic trees carrying known
+defects and asserts both the verdict and the error text.
+
 **Design**: a `discover` job selects every in-flight `spec/NNN-slug` branch
 (reading each branch's *own* `spec-meta.json` tip, skipping `stalled` and
 unidentifiable ones), then fans out one isolated `rebase` matrix job per
