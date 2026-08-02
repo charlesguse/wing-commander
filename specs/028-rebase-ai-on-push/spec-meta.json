@@ -2,7 +2,7 @@
   "issue": 72,
   "spec_dir": "specs/028-rebase-ai-on-push",
   "feature_num": "028",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 1,
   "spec_branch": "spec/028-rebase-ai-on-push"
 }
