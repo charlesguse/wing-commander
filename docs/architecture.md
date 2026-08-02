@@ -414,15 +414,35 @@ Two constraints the wrappers must hold, both enforced by
   sources — execution-output denied-tool counts, branch drift (zero pushed
   commits on a push-expected stage), `spec-meta.json` stage vs. expected,
   step-summary sentinels, and check-run annotations — merge into one
-  normalized `signals.json`. The denied-tool collector reports a per-tool
-  `denials` count that equals the true number of denial-shaped `tool_result`
-  entries (no silent single-tool drop) and records each denial's array
-  position under `record-index`, not `turn` (spec 022, FR-008/FR-010:
-  `record-index` is a raw SDK-message-array position that can exceed the run's
-  own `num_turns` and must never be presented as a conversation turn); it
-  prefers a terminal result record's own permission-denials count if a future
-  SDK version supplies one, falling back to the (explicitly non-authoritative)
-  log scan otherwise. Best-effort spec-slug/lifecycle-issue
+  normalized `signals.json`.
+
+  The denied-tool collector has two paths. The **authoritative** one reads
+  the terminal result record's `permission_denials`, whose elements are one
+  denial each — `{tool_name, tool_use_id, tool_input:{command, …}}` — and
+  groups them by `tool_name`, carrying up to five distinct denied commands
+  as `denied-commands` so a Finding can name what was refused. (Spec 022
+  believed this field did not exist and guessed its shape as `{tool, count}`;
+  both halves were wrong, and because this is the branch actually taken,
+  every `denied-tool` finding filed before PR #137 carried
+  `{tool: null, denials: null}`.) The **fallback** log scan runs only when no
+  result record carries the field: it requires a `tool_result` to be both
+  `is_error` *and* to carry permission-denial text, because `is_error` alone
+  is set for any failing call — an `actionlint` exit 1 counted as a denial
+  and inflated 8 real denials into 20 on a live artifact. It records each
+  denial's array position under `record-index`, not `turn` (spec 022,
+  FR-008/FR-010: a raw SDK-message-array position that can exceed the run's
+  own `num_turns` and must never be presented as a conversation turn).
+
+  `.github/scripts/verify-denied-tool-collector.sh` holds both paths to
+  fixtures — including one run described both ways, where the two paths must
+  agree on the per-tool counts — and `lint-workflows.yml` gate 5 runs it on
+  every PR *and* diffs its copy of the filter against watchdog.yml's. Both
+  halves are load-bearing: the previous keep-in-sync-by-comment arrangement
+  failed silently the first time the collector changed, and because no
+  fixture exercised the authoritative path, the check stayed green while
+  verifying a filter that no longer shipped.
+
+  Best-effort spec-slug/lifecycle-issue
   resolution: a run that can't be tied to a spec (e.g. a `main`-based
   cleanup) is still inspected and reported against its own run URL. Only if
   *every* collector errors outright does it flip `evidence-available: false`
