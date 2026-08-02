@@ -112,8 +112,9 @@ R5="$(build)"; new_step_env; cd "$R5"
 printf '{"issues":{"42":{"number":42,"state":"open","body":"watching","labels":[],"comments":[]}},"prs":{},"labels":[],"next_issue":50,"next_pr":70,"default_branch":"main"}' > "$GH_STATE"
 GHA_SUBST=("steps.ctx.outputs.token=stub" "needs.prepare.outputs.issue-number=42")
 export GH_TOKEN=stub ISSUE=42
-run_step 'auto-update-spec-kit__act__*label-the-issue-as-failed*.sh' >/dev/null 2>&1
-run_step 'auto-update-spec-kit__act__*apply-the-failed-label*.sh' >/dev/null 2>&1
+# Globs must exclude the prepare-failed twins, whose names extend these.
+run_step 'auto-update-spec-kit__act__*-label-the-issue-as-failed.sh' >/dev/null 2>&1
+run_step 'auto-update-spec-kit__act__*-apply-the-failed-label.sh' >/dev/null 2>&1
 S="$(cat "$GH_STATE")"
 check "S6 label exists" "$("$PY" -c "import json,os;print('auto-update:failed' in json.load(open(os.environ['GH_STATE']))['labels'])")" "True"
 check "S10 issue carries auto-update:failed" "$("$PY" -c "import json,os;s=json.load(open(os.environ['GH_STATE']));print('auto-update:failed' in s['issues']['42']['labels'])")" "True"
@@ -122,6 +123,27 @@ check "S6 no PR opened" "$("$PY" -c "import json,os;print(len(json.load(open(os.
 check "S6 nothing pushed to origin" "$(git ls-remote origin 'refs/heads/auto-update-spec-kit/*' | wc -l)" "0"
 check "S6 pin unchanged" "$(git show main:.specify/init-options.json | jq -r .speckit_version)" "0.13.0"
 check "S6/S10 issue never closed" "$(grep -c 'issue close' "$GH_CALLS")" "0"
+cd - >/dev/null
+
+echo
+echo "=== #157: prepare FAILED -> issue flagged and left open, nothing adopted ==="
+# The silent-death path. prepare failing skipped verify, which skipped act,
+# which left the lifecycle issue reading "waiting for the patch stream to
+# settle" forever (SC-004/FR-010). The remediation must match the
+# verification-failure arm: flag, stay open, touch nothing.
+R6="$(build)"; new_step_env; cd "$R6"
+printf '{"issues":{"42":{"number":42,"state":"open","body":"Waiting for the patch stream to settle","labels":[],"comments":[]}},"prs":{},"labels":[],"next_issue":50,"next_pr":70,"default_branch":"main"}' > "$GH_STATE"
+GHA_SUBST=("steps.ctx.outputs.token=stub" "needs.evaluate-path.outputs.issue-number=42")
+export GH_TOKEN=stub ISSUE=42 CANDIDATE=0.15.1
+run_step 'auto-update-spec-kit__act__*-label-the-issue-as-failed-prepare-failed.sh' >/dev/null 2>&1
+run_step 'auto-update-spec-kit__act__*-apply-the-failed-label-prepare-failed.sh' >"$WORK/act6.log" 2>&1 || echo "    (exit $?)"
+check "P1 label exists" "$("$PY" -c "import json,os;print('auto-update:failed' in json.load(open(os.environ['GH_STATE']))['labels'])")" "True"
+check "P1 issue carries auto-update:failed" "$("$PY" -c "import json,os;s=json.load(open(os.environ['GH_STATE']));print('auto-update:failed' in s['issues']['42']['labels'])")" "True"
+check "P1 issue stays OPEN for the maintainer" "$("$PY" -c "import json,os;s=json.load(open(os.environ['GH_STATE']));print(s['issues']['42']['state'])")" "open"
+check "P1 issue never closed" "$(grep -c 'issue close' "$GH_CALLS")" "0"
+check "P1 no PR opened" "$("$PY" -c "import json,os;print(len(json.load(open(os.environ['GH_STATE']))['prs']))")" "0"
+check "P1 nothing pushed to origin" "$(git ls-remote origin 'refs/heads/auto-update-spec-kit/*' | wc -l)" "0"
+check "P1 pin left untouched" "$(git show main:.specify/init-options.json | jq -r .speckit_version)" "0.13.0"
 cd - >/dev/null
 
 report "T5 act"

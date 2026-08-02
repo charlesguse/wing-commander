@@ -1205,9 +1205,19 @@ jobs:
   # skipped by design (e.g. reached only via health-check's failure path).
   act:
     needs: [health-check, evaluate-path, prepare, verify]
+    # The prepare-failure arm (#157) is load-bearing, not defensive. verify
+    # requires `needs.prepare.result == 'success'`, so a failed prepare
+    # skips verify, which used to skip act too — leaving the lifecycle issue
+    # still reading "waiting for the patch stream to settle" while the cycle
+    # was already dead (SC-004, FR-010: the issue text alone must convey the
+    # outcome; a red run in the Actions tab is not that). prepare's core
+    # step is the `specify init --force` invocation research.md flags as an
+    # unverified upstream assumption, so this is the arm most likely to fire
+    # on a real minor/major jump.
     if: >-
       always() &&
       (needs.health-check.outputs.pinned-ok == 'false' ||
+       needs.prepare.result == 'failure' ||
        needs.verify.result == 'success' ||
        needs.verify.result == 'failure')
     runs-on: ubuntu-latest
@@ -1342,15 +1352,20 @@ jobs:
           fi
           echo "act: opened rollback PR $pr_url restoring v$ROLLBACK_TARGET." >> "$GITHUB_STEP_SUMMARY"
 
+      # Every step from here to the end of the job consumes prepare's bundle
+      # or its outputs, so each one carries `prepare.result == 'success'`
+      # alongside the pinned-ok guard: act now also runs when prepare
+      # FAILED, and on that path there is no bundle to download and no
+      # verify verdict to report.
       - name: Download prepared branch bundle
-        if: needs.health-check.outputs.pinned-ok != 'false'
+        if: needs.health-check.outputs.pinned-ok != 'false' && needs.prepare.result == 'success'
         uses: actions/download-artifact@v4
         with:
           name: auto-update-spec-kit-prepare-bundle
           path: ${{ runner.temp }}/prepare-bundle
 
       - name: Fetch prepared branch from bundle
-        if: needs.health-check.outputs.pinned-ok != 'false'
+        if: needs.health-check.outputs.pinned-ok != 'false' && needs.prepare.result == 'success'
         env:
           BRANCH: ${{ needs.prepare.outputs.branch }}
         run: |
@@ -1361,7 +1376,7 @@ jobs:
       # open a version-bump PR. This feature never merges it itself
       # (constitution V, FR-017).
       - name: Open version-bump PR
-        if: needs.health-check.outputs.pinned-ok != 'false' && needs.verify.outputs.passed == 'true'
+        if: needs.health-check.outputs.pinned-ok != 'false' && needs.prepare.result == 'success' && needs.verify.outputs.passed == 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           BRANCH: ${{ needs.prepare.outputs.branch }}
@@ -1391,13 +1406,13 @@ jobs:
       # issue is flagged and stays open (FR-006/FR-010). T018's shared
       # label-creation step: idempotent, safe to call every time.
       - name: Label the issue as failed
-        if: needs.health-check.outputs.pinned-ok != 'false' && needs.verify.outputs.passed != 'true'
+        if: needs.health-check.outputs.pinned-ok != 'false' && needs.prepare.result == 'success' && needs.verify.outputs.passed != 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
         run: gh label create "auto-update:failed" --color E99695 --description "Spec Kit upgrade blocked or rolled back; needs maintainer attention" --force
 
       - name: Comment verification failure on the issue
-        if: needs.health-check.outputs.pinned-ok != 'false' && needs.verify.outputs.passed != 'true'
+        if: needs.health-check.outputs.pinned-ok != 'false' && needs.prepare.result == 'success' && needs.verify.outputs.passed != 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ steps.ctx.outputs.token }}
@@ -1407,7 +1422,7 @@ jobs:
           body: ${{ needs.verify.outputs.failure-detail }}
 
       - name: Apply the failed label
-        if: needs.health-check.outputs.pinned-ok != 'false' && needs.verify.outputs.passed != 'true'
+        if: needs.health-check.outputs.pinned-ok != 'false' && needs.prepare.result == 'success' && needs.verify.outputs.passed != 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ISSUE: ${{ needs.prepare.outputs.issue-number }}
@@ -1415,6 +1430,54 @@ jobs:
           set -euo pipefail
           gh issue edit "$ISSUE" --add-label "auto-update:failed"
           echo "act: verification failed for #$ISSUE — flagged auto-update:failed, pin left unchanged." >> "$GITHUB_STEP_SUMMARY"
+
+      # #157 defect 1: prepare FAILED — verify never ran, so there is no
+      # verdict to report and no bundle to push. Nothing was written to
+      # origin (prepare's branch only ever existed inside its own runner and
+      # an artifact bundle) and .specify/init-options.json is untouched, so
+      # the remediation is identical to the verification-failure arm: flag
+      # the issue, leave it open, leave the pin alone.
+      #
+      # issue-number is read from evaluate-path rather than prepare: prepare
+      # merely forwards it, and reading the job that is known to have
+      # succeeded avoids depending on how a failed job's outputs resolve.
+      - name: Label the issue as failed (prepare failed)
+        if: needs.health-check.outputs.pinned-ok != 'false' && needs.prepare.result == 'failure'
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+        run: gh label create "auto-update:failed" --color E99695 --description "Spec Kit upgrade blocked or rolled back; needs maintainer attention" --force
+
+      - name: Comment the prepare failure on the issue
+        if: needs.health-check.outputs.pinned-ok != 'false' && needs.prepare.result == 'failure'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ needs.evaluate-path.outputs.issue-number }}
+          kind: info
+          summary: "Preparing the upgrade failed — the candidate was not adopted"
+          body: >-
+            The `prepare` job failed while applying Spec Kit
+            v${{ needs.evaluate-path.outputs.candidate-version }}
+            (${{ needs.evaluate-path.outputs.release-type }} from
+            v${{ needs.evaluate-path.outputs.pinned-version }}), so the
+            candidate was never verified and no version-bump PR was opened.
+            This repository's pinned version is unchanged and nothing was
+            pushed. The most likely cause is the upgrade command itself —
+            `specify init . --force` against the candidate tag — whose shape
+            is an unverified upstream assumption (`research.md`). See the
+            job log for the failing step:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Apply the failed label (prepare failed)
+        if: needs.health-check.outputs.pinned-ok != 'false' && needs.prepare.result == 'failure'
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ISSUE: ${{ needs.evaluate-path.outputs.issue-number }}
+          CANDIDATE: ${{ needs.evaluate-path.outputs.candidate-version }}
+        run: |
+          set -euo pipefail
+          gh issue edit "$ISSUE" --add-label "auto-update:failed"
+          echo "act: prepare failed for v$CANDIDATE on #$ISSUE — flagged auto-update:failed, pin left unchanged." >> "$GITHUB_STEP_SUMMARY"
 
   # trigger == pr-merged entry point: posts a closing summary once a
   # version-bump/revert PR this feature opened is closed. Self-recognition
