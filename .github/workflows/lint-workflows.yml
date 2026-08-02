@@ -21,10 +21,11 @@ on:
     paths:
       - ".github/workflows/**"
       - ".github/actions/**"
+      # Gates 4 and 5 execute scripts out of these two trees, so a change to
+      # one can break a stage without touching a workflow file — that is how
+      # both the check-prerequisites.sh/plan.md defect and the drifted
+      # collector fixture got in.
       - ".github/scripts/**"
-      # Gate 4 executes the pinned Spec Kit scripts, so a change to them can
-      # break the auto-update stage without touching a workflow file — that is
-      # exactly how the check-prerequisites.sh/plan.md defect got in.
       - ".specify/scripts/**"
   # Gate 1 only — it reads how GitHub actually registered the workflows on
   # the default branch, which a PR's files cannot tell us.
@@ -188,6 +189,71 @@ jobs:
                       failures += 1
           print(f"Gate 3: checked every local reusable-workflow call; {failures} failure(s).")
           sys.exit(1 if failures else 0)
+          PYEOF
+
+      # Gate 5 — the denied-tool collector is the one piece of watchdog
+      # evidence-gathering with its own executable fixture check. That check
+      # was merged and then run by nothing, so when PR #137 rewrote the
+      # collector the fixtures kept asserting against the old filter —
+      # including the exact {tool: .tool, denials: .count} bug #137 existed
+      # to fix — and kept reporting "all assertions passed" the whole time.
+      #
+      # Two halves, and both are needed. Running the script proves the
+      # filter it holds is correct; diffing that filter against the real one
+      # in watchdog.yml proves the script still describes the shipped
+      # collector. Either half alone can be green while the collector that
+      # actually runs is broken, which is precisely what happened.
+      #
+      # Lives in the lint job rather than beside gate 4 below: it needs only
+      # the checkout the other static gates already have, and it is a
+      # sub-second jq/python check rather than a behavioral suite.
+      - name: Gate 5 — the denied-tool collector's fixture check, and its filter is in sync
+        run: |
+          set -uo pipefail
+          bash .github/scripts/verify-denied-tool-collector.sh || exit 1
+
+          python3 - <<'PYEOF'
+          import io, re, sys, yaml
+
+          SCRIPT = ".github/scripts/verify-denied-tool-collector.sh"
+          WORKFLOW = ".github/workflows/watchdog.yml"
+
+          def norm(s):
+              # jq is whitespace-insensitive, and the two copies sit at
+              # different indentation (a YAML block scalar vs a shell
+              # assignment). Comparing raw text would force cosmetic sync
+              # and get worked around; compare the program instead.
+              return "\n".join(ln.strip() for ln in s.strip().splitlines() if ln.strip())
+
+          wf = yaml.safe_load(io.open(WORKFLOW, encoding="utf-8"))
+          run = None
+          for job in (wf.get("jobs") or {}).values():
+              for step in (job or {}).get("steps") or []:
+                  if (step or {}).get("id") == "collect-execution-output":
+                      run = step.get("run")
+          if run is None:
+              print(f"::error file={WORKFLOW}::gate 5 could not find the step with "
+                    f"id: collect-execution-output. If it was renamed, update this gate "
+                    f"and {SCRIPT} together.")
+              sys.exit(1)
+
+          shipped = re.search(r"\n\s*filter='(.*?)'\n", run, re.S)
+          script = io.open(SCRIPT, encoding="utf-8").read()
+          copied = re.search(r"\nFILTER='(.*?)'\n", script, re.S)
+          if not shipped or not copied:
+              missing = WORKFLOW if not shipped else SCRIPT
+              print(f"::error::gate 5 could not extract the jq filter from {missing} — "
+                    f"the single-quoted filter='...' / FILTER='...' assignment it keys on "
+                    f"has changed shape.")
+              sys.exit(1)
+
+          if norm(shipped.group(1)) != norm(copied.group(1)):
+              print(f"::error file={SCRIPT}::the fixture check's FILTER no longer matches "
+                    f"{WORKFLOW}'s collect-execution-output filter, so it is verifying a "
+                    f"collector that is not the one that ships. Copy the filter across and "
+                    f"extend the fixtures to cover whatever changed.")
+              sys.exit(1)
+          print(f"Gate 5: fixture check passed and its filter matches {WORKFLOW}.")
           PYEOF
 
   # Gate 4 — behavioral tests for the auto-update-spec-kit stage pair. Gates

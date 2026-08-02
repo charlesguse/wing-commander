@@ -414,15 +414,55 @@ Two constraints the wrappers must hold, both enforced by
   sources — execution-output denied-tool counts, branch drift (zero pushed
   commits on a push-expected stage), `spec-meta.json` stage vs. expected,
   step-summary sentinels, and check-run annotations — merge into one
-  normalized `signals.json`. The denied-tool collector reports a per-tool
-  `denials` count that equals the true number of denial-shaped `tool_result`
-  entries (no silent single-tool drop) and records each denial's array
-  position under `record-index`, not `turn` (spec 022, FR-008/FR-010:
-  `record-index` is a raw SDK-message-array position that can exceed the run's
-  own `num_turns` and must never be presented as a conversation turn); it
-  prefers a terminal result record's own permission-denials count if a future
-  SDK version supplies one, falling back to the (explicitly non-authoritative)
-  log scan otherwise. Best-effort spec-slug/lifecycle-issue
+  normalized `signals.json`.
+
+  The denied-tool collector has two paths. The **authoritative** one reads
+  the terminal result record's `permission_denials`, whose elements are one
+  denial each — `{tool_name, tool_use_id, tool_input:{command, …}}` — and
+  groups them by `tool_name`, carrying up to five distinct denied commands
+  as `denied-commands` so a Finding can name what was refused. (Spec 022
+  believed this field did not exist and guessed its shape as `{tool, count}`;
+  both halves were wrong, and because this is the branch actually taken,
+  every `denied-tool` finding filed before PR #137 carried
+  `{tool: null, denials: null}`.) The **fallback** log scan runs only when no
+  result record carries the field: it requires a `tool_result` to be both
+  `is_error` *and* to carry permission-denial text, because `is_error` alone
+  is set for any failing call — an `actionlint` exit 1 counted as a denial
+  and inflated 8 real denials into 20 on a live artifact. It records each
+  denial's array position under `record-index`, not `turn` (spec 022,
+  FR-008/FR-010: a raw SDK-message-array position that can exceed the run's
+  own `num_turns` and must never be presented as a conversation turn).
+
+  `.github/scripts/verify-denied-tool-collector.sh` holds both paths to
+  fixtures — including one run described both ways, where the two paths must
+  agree on the per-tool counts — and `lint-workflows.yml` gate 5 runs it on
+  every PR *and* diffs its copy of the filter against watchdog.yml's. Both
+  halves are load-bearing: the previous keep-in-sync-by-comment arrangement
+  failed silently the first time the collector changed, and because no
+  fixture exercised the authoritative path, the check stayed green while
+  verifying a filter that no longer shipped.
+
+  **A collector stays silent when the run was never in a position to cause
+  the condition.** Both run-attribution guards were added after the watchdog
+  filed confident findings against runs that had done nothing wrong, and both
+  are deterministic on purpose — the condition is fully settled by the run's
+  own metadata, so it is decided here rather than left for the agent to
+  reason around:
+
+  - `branch-drift` and `spec-meta` emit nothing when the inspected run's
+    conclusion is `skipped` or `cancelled`. It executed nothing, so it owes
+    no commits and no stage transition. A `plan` run correctly skipped for a
+    stalled spec was reported as a stage-mismatch defect — issue #125.
+  - `branch-drift` additionally emits nothing when the run's head branch is
+    not the branch that stage pushes to. `plan` and `tasks` are
+    `pull_request`-triggered, so they report the *draft* branch as head while
+    committing to the persistent spec branch; counting commits on the head
+    branch measures a branch the stage never promised to touch, and zero is
+    the correct answer. Issue #112: a run was filed as `lost-progress`
+    against `spec-draft/022-…` while that same run pushed `e97b9b6` to
+    `spec/022-…` inside its own measurement window.
+
+  Best-effort spec-slug/lifecycle-issue
   resolution: a run that can't be tied to a spec (e.g. a `main`-based
   cleanup) is still inspected and reported against its own run URL. Only if
   *every* collector errors outright does it flip `evidence-available: false`
@@ -433,14 +473,51 @@ Two constraints the wrappers must hold, both enforced by
   more Findings. `signals.json` and anything read is framed as untrusted
   data, never instructions (FR-023). Zero Findings ⇒ "passed inspection"
   (FR-004) and nothing is filed.
+
+  A Finding's `class` is half the dedup fingerprint, so it is **not** free
+  text. The vocabulary lives in GitHub labels (`🐕 · <type>`), is queried at
+  run time and compiled into the structured-output schema as an enum the
+  model cannot step outside; `signalId` is likewise enum-constrained to the
+  ids this run actually emitted, so citing evidence is selection from a fixed
+  list rather than free-text authorship. Asking the prompt for stable names
+  was tried first and did not hold — one rebase-discover defect arrived as
+  `missing-spec-metadata`, `missing-spec-artifact` and
+  `spec-excluded-missing-meta` across three runs (#118, #120, #122). A
+  genuinely novel type goes through `"__new__"` plus a `proposedClass`, which
+  a deterministic step (never the agent) kebab-cases and registers as a
+  label, so the vocabulary self-heals after one occurrence and a new problem
+  type needs a label rather than a code change. Keeping the registry in
+  labels also makes the classes usable as issue triage facets.
 - `triage` — one matrix entry per Finding: coexistence-suppression check
   (a Finding already handled by `implement.yml`'s stalled job or
-  `cleanup.yml`'s `mark-stalled` is reported, not re-acted, FR-024),
-  deterministic `sha256(class + "|" + canonical(normalizedFacts))`
-  fingerprint (the `rebase.yml` marker-dedup convention), `gh search issues`
-  dedup over the marker (`--state all`), an optional `claude-sonnet-5`
-  propose-fix step scoped to `.github/**`/`docs/**` for known-remediable
-  classes, and the deterministic **rung gate**.
+  `cleanup.yml`'s `mark-stalled` is reported, not re-acted, FR-024), the
+  dedup fingerprint, `gh search issues` dedup over the marker
+  (`--state all`), an optional `claude-sonnet-5` propose-fix step scoped to
+  `.github/**`/`docs/**` for known-remediable classes, and the deterministic
+  **rung gate**.
+
+  The fingerprint is `sha256(class + "|signals:" + <the sorted ids of the
+  collector signals the Finding cites>)` whenever the Finding cites signals
+  this run actually emitted — which makes it derivable from deterministic
+  collector output rather than from model prose. It was originally hashed
+  over the model's own `normalizedFacts`, and FR-016 asks for a *stable*
+  fingerprint without requiring a *deterministic* one: every occurrence of a
+  recurring defect drew a fresh hash, and 9 of the watchdog's first 19 issues
+  were duplicates (#118). Four distinct drift axes were found and closed in
+  turn before the basis moved to signals outright — an unconstrained key set,
+  keys that did not discriminate, unnormalized values (`spec/012-x` vs
+  `012-x`), and one identity arriving under a different key (`spec` vs
+  `branch`). Two `claude-opus-5` runs over the *identical* finding emitted
+  `{"actual","expected"}` and `{"actual","expected","stage","workflow"}` —
+  both legal under the schema, both different hashes.
+
+  The `normalizedFacts` fallback survives for Findings that cite no usable
+  signal, and still carries those lessons: it projects to the minimum
+  discriminating key set per class, lowercases, strips known branch prefixes,
+  reduces `file` to its basename, and folds `spec` into `branch`. Every extra
+  key is drift surface rather than precision. Both the fallback itself and an
+  unrecognized class within it emit `::warning::`, because degraded dedup
+  should be visible rather than quietly wrong.
 - `act` — one matrix entry per non-suppressed Finding: executes exactly what
   the rung gate selected and always appends a per-Finding report to the
   lifecycle issue (FR-022).
@@ -501,6 +578,35 @@ manual stage-8 dispatch at a watchdog run; the cap remains as its bound.) Detect
 fingerprinting, dedup, and reporting are identical whether the inspected run
 is a watchdog run or any other stage (FR-021) — the self-dispatch-depth count
 is the only place the stage looks at its own name.
+
+**Triaging a watchdog-filed issue.** Treat one as a lead, not a verdict.
+Across the watchdog's first ~200 runs it filed 19 issues, which reduced to 10
+distinct findings: 5 were false positives, 3 correctly identified a
+deliberately injected test failure, and 2 were genuine unknown problems. Both
+genuine ones came from a deterministic component (the 8b verify script and a
+collector signal). Every false positive was a bad collector signal faithfully
+reported by `diagnose`, which sees only `signals.json` and cannot check a
+signal against the world — so the collectors, not the agent, are where a
+suspect finding is usually resolved. In rough order of cost:
+
+1. **Open the inspected run before reading the issue's argument.** All five
+   false positives were internally coherent and cited real evidence.
+2. **Check the run's conclusion.** `skipped` or `cancelled` means it executed
+   nothing. `branch-drift` and `spec-meta` now guard this; other collectors
+   do not.
+3. **Check which branch the run pushed to versus which one was measured** —
+   `git log --since` on the spec branch inside the run's own time window.
+   Two separate false positives were exactly this.
+4. **Check whether the cited facts are non-empty.** `{tool: null}`-shaped
+   facts mean a collector is reading a field that does not exist, which is a
+   defect in the watchdog rather than in the inspected run.
+5. **Search for the fingerprint marker before filing anything by hand.** The
+   watchdog files its own duplicates, and a hand-written report alongside
+   them splits one defect's history across two issues.
+
+Rungs 1 and 2 have never fired in production; every finding so far has landed
+on rung 3, the report-only one. That is the intended conservative default,
+not evidence that rungs 1 and 2 work — they have not been exercised.
 
 ## Auto-Update Spec Kit (`auto-update-spec-kit.yml`, wrapper `wing-commander-auto-update-spec-kit.yml`)
 
