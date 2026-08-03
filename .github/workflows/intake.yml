@@ -348,6 +348,53 @@ jobs:
         run: |
           gh issue comment "$ISSUE" --body "📝 **Wing Commander · intake** — specification drafting started ([run]($RUN_URL), triggered by \`$ACTOR\`)."
 
+      # Foundational filter (specs/029-intake-issue-comments): fetch the
+      # issue author and every comment, apply the same association/author-id/
+      # bot rule wing-commander-2-clarify.yml's wrapper already applies to
+      # its single triggering comment, and stage only the qualifying
+      # comments — ordered oldest to newest — for the agent step to read.
+      # Comment bodies move only between gh api/jq and files, never through
+      # a shell variable (contracts/comment-staging-format.md).
+      - name: Compute comment trust gate
+        id: comment-trust-gate
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ISSUE: ${{ inputs.issue-number }}
+        run: |
+          mkdir -p /tmp/wing-commander
+
+          AUTHOR_ID=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE}" --jq '.user.id')
+
+          gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE}/comments" --paginate --jq '.[]' \
+            | jq -s '.' > /tmp/wing-commander/intake-comments-raw.json
+
+          TOTAL_COUNT=$(jq 'length' /tmp/wing-commander/intake-comments-raw.json)
+          QUALIFYING_COUNT=$(jq --argjson aid "$AUTHOR_ID" \
+            '[.[] | select(.user.type != "Bot") | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR" or .user.id == $aid)] | length' \
+            /tmp/wing-commander/intake-comments-raw.json)
+          EXCLUDED_HUMAN_COUNT=$(jq --argjson aid "$AUTHOR_ID" \
+            '[.[] | select(.user.type != "Bot") | select((.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR" or .user.id == $aid) | not)] | length' \
+            /tmp/wing-commander/intake-comments-raw.json)
+
+          {
+            echo "total-count=$TOTAL_COUNT"
+            echo "qualifying-count=$QUALIFYING_COUNT"
+            echo "excluded-human-count=$EXCLUDED_HUMAN_COUNT"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ "$QUALIFYING_COUNT" -gt 0 ]; then
+            jq -r --argjson aid "$AUTHOR_ID" \
+              '[.[] | select(.user.type != "Bot") | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR" or .user.id == $aid)] | sort_by(.created_at) | .[] | "## Comment by @\(.user.login) (\(.created_at))\n\n\(.body)\n"' \
+              /tmp/wing-commander/intake-comments-raw.json \
+              > /tmp/wing-commander/intake-comments.md
+            echo "comments-file=/tmp/wing-commander/intake-comments.md" >> "$GITHUB_OUTPUT"
+          else
+            echo "comments-file=" >> "$GITHUB_OUTPUT"
+          fi
+
+          rm -f /tmp/wing-commander/intake-comments-raw.json
+
       - name: Compose tool args (intake)
         id: tool-args-intake
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
