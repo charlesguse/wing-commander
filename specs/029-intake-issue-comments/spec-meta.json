@@ -2,7 +2,7 @@
   "issue": 159,
   "spec_dir": "specs/029-intake-issue-comments",
   "feature_num": "029",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 1,
   "spec_branch": "spec/029-intake-issue-comments"
 }
