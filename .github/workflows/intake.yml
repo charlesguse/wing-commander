@@ -395,6 +395,26 @@ jobs:
 
           rm -f /tmp/wing-commander/intake-comments-raw.json
 
+      # Deterministic notice (contracts/notice-callout.md, FR-008): fires
+      # only when substantive human discussion existed but none of it
+      # qualified, so a maintainer never silently believes unused comments
+      # were incorporated. Posted before the agent step — the condition
+      # needs nothing it produces.
+      - name: Post excluded-comments notice
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.comment-trust-gate.outputs.qualifying-count == '0' && steps.comment-trust-gate.outputs.excluded-human-count != '0'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: action
+          summary: "Confirm the issue body reflects the discussion before relying on this spec"
+          body: >
+            ${{ steps.comment-trust-gate.outputs.excluded-human-count }} comment(s) on
+            this issue did not qualify for the specification (not from a
+            maintainer or the original reporter) and were not used. If the
+            discussion actually settled something the body doesn't capture,
+            update the body before this spec is finalized.
+
       - name: Compose tool args (intake)
         id: tool-args-intake
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
