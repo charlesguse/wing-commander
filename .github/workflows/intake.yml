@@ -484,8 +484,9 @@ jobs:
                on the issue explaining that intake could not produce a specification
                and what is missing, then STOP. Do not create files or branches.
             3. Run the /speckit-specify skill (.claude/skills/speckit-specify/SKILL.md)
-               using the issue title + body as the feature description. Follow the
-               skill completely (spec directory under specs/, quality checklist,
+               using the feature description assembled in step 1 (title + body,
+               plus any qualifying comments folded in). Follow the skill
+               completely (spec directory under specs/, quality checklist,
                max 3 [NEEDS CLARIFICATION] markers).
                DEVIATIONS for CI:
                - The skill says to present clarification questions and wait for
