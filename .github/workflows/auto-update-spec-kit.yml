@@ -443,9 +443,8 @@ jobs:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
 
-      # data-model.md's settle-tracking marker + research.md's decision:
-      # quoted-phrase search, no --state (must see both open and closed so a
-      # single open match can be told apart from zero/many).
+      # data-model.md's settle-tracking marker. The lookup that finds the
+      # marker is deliberately INDEX-FREE — see the long note in the step.
       - name: Settle-tracking state machine
         id: state
         env:
@@ -454,10 +453,83 @@ jobs:
           LATEST_URL: ${{ needs.detect.outputs.latest-upstream-url }}
           RELEASE_TYPE: ${{ needs.detect.outputs.release-type }}
           STABILIZATION_CHECKS: ${{ inputs.stabilization-checks }}
+          TRACKING_LABEL: auto-update:tracking
+          MIGRATION_SCAN_LIMIT: "200"
         run: |
           set -uo pipefail
-          matches_json="$(gh search issues --repo "$GITHUB_REPOSITORY" "\"wing-commander-auto-update-spec-kit:\" in:body" --json number,state,body 2>/dev/null || echo '[]')"
-          open_json="$(printf '%s' "$matches_json" | jq -c '[.[] | select((.state // "" | ascii_downcase) == "open")]')"
+
+          # How this job finds its own state, and why it is not a search.
+          #
+          # This state machine's only pointer to itself is a marker in an
+          # issue body. It used to locate that issue with a single
+          #   gh search issues ... 2>/dev/null || echo '[]'
+          # which is wrong twice over:
+          #
+          #   1. `2>/dev/null || echo '[]'` makes "the search broke" and "no
+          #      issue exists" the SAME VALUE — and the second one opens an
+          #      issue. On 2026-08-03 that opened #167, an exact duplicate of
+          #      #162, and would have opened one more every day. watchdog.yml
+          #      carries the identical warning from #118: reporting "none" on
+          #      a broken search is how this goes unnoticed for months.
+          #   2. `gh search issues` is an eventually-consistent full-text
+          #      index. The watchdog needs it — arbitrary fingerprints, an
+          #      unbounded set. This job does not: there is at most ONE
+          #      tracking issue at a time. Using a search engine to find a
+          #      singleton buys nothing and costs the failure mode above.
+          #
+          # `gh issue list` is a direct, strongly-consistent read. The label
+          # query IS the whole lookup once a tracking issue carries the
+          # label; the unlabelled body scan below is a one-time migration for
+          # issues opened before the label existed (#162, #167).
+          #
+          # Any failure of either read means WE DO NOT KNOW whether a
+          # tracking issue exists — and the recovery for "don't know" is to
+          # do nothing, never to open one.
+          lookup_ok=true
+          label_ok=true
+          lookup_err="$RUNNER_TEMP/settle-lookup-err.txt"
+
+          if ! open_json="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+                --label "$TRACKING_LABEL" --limit 100 --json number,body,labels 2>"$lookup_err")"; then
+            # Annotated but NOT fatal: the body scan below is a superset of
+            # this query, so a dead cheap path degrades rather than skipping
+            # the cycle. It still has to be visible — silently falling back
+            # forever is how a broken read goes unnoticed.
+            echo "::warning::wing-commander auto-update-spec-kit: could not list issues labelled '$TRACKING_LABEL' ($(tr -d '\n' < "$lookup_err" | head -c 200)) — falling back to the full open-issue scan."
+            label_ok=false
+            open_json='[]'
+          fi
+
+          if [ "$label_ok" != "true" ] || [ "$(printf '%s' "$open_json" | jq 'length')" -eq 0 ]; then
+            # Migration scan: no labelled tracking issue. Either there is
+            # genuinely none (the common first-sighting case), or one predates
+            # the label. Read open issues directly and match the marker here,
+            # in shell, rather than asking an index to do it.
+            if ! recent_json="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+                  --limit "$MIGRATION_SCAN_LIMIT" --json number,body,labels 2>"$lookup_err")"; then
+              echo "::warning::wing-commander auto-update-spec-kit: could not list open issues for the settle-tracking migration scan ($(tr -d '\n' < "$lookup_err" | head -c 200))."
+              lookup_ok=false
+              recent_json='[]'
+            fi
+            open_json="$(printf '%s' "$recent_json" | jq -c '[.[] | select((.body // "") | contains("<!-- wing-commander-auto-update-spec-kit:"))]')"
+            # Truncation is a warning, not a block: blocking here would wedge
+            # first-sighting forever on any repo with more open issues than
+            # the scan window. Once a tracking issue carries the label the
+            # scan is never reached again.
+            if [ "$(printf '%s' "$recent_json" | jq 'length')" -ge "$MIGRATION_SCAN_LIMIT" ] \
+               && [ "$(printf '%s' "$open_json" | jq 'length')" -eq 0 ]; then
+              echo "::warning::wing-commander auto-update-spec-kit: the settle-tracking migration scan hit its $MIGRATION_SCAN_LIMIT-issue window without finding a marker; an older unlabelled tracking issue could be beyond it."
+            fi
+          fi
+
+          if [ "$lookup_ok" != "true" ]; then
+            echo "::warning::wing-commander auto-update-spec-kit: the settle-tracking lookup failed, so whether a tracking issue exists is UNKNOWN — doing nothing this cycle rather than risk opening a duplicate (#167)."
+            echo "settle: tracking-issue lookup failed — no issue opened, no state advanced. Nothing is lost; the next scheduled run retries." >> "$GITHUB_STEP_SUMMARY"
+            echo "settled=false" >> "$GITHUB_OUTPUT"
+            echo "issue-number=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           count="$(printf '%s' "$open_json" | jq 'length')"
 
           settled=false
@@ -475,16 +547,30 @@ jobs:
               echo ""
               echo "$marker"
             } > "$RUNNER_TEMP/settle-body.md"
-            url="$(gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file "$RUNNER_TEMP/settle-body.md")"
+            # The label is what makes the next run's lookup a direct read
+            # instead of a search. Created --force so a pre-existing label
+            # (any colour) is fine and this is idempotent.
+            gh label create "$TRACKING_LABEL" --color 1D76DB --description "Auto-update Spec Kit: the open settle-tracking issue" --force
+            url="$(gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --label "$TRACKING_LABEL" --body-file "$RUNNER_TEMP/settle-body.md")"
             issue_number="${url##*/}"
             echo "settle: opened #$issue_number watching v$LATEST (observed=1)." >> "$GITHUB_STEP_SUMMARY"
           elif [ "$count" -gt 1 ]; then
             nums="$(printf '%s' "$open_json" | jq -r '[.[].number] | join(", ")')"
-            echo "::warning::wing-commander auto-update-spec-kit: $count open issues carry the settle-tracking marker ($nums) — data-integrity condition, never auto-resolved."
-            echo "settle: $count open issues carry the auto-update-spec-kit marker ($nums) — data-integrity condition, left for a human." >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::wing-commander auto-update-spec-kit: $count open issues carry the settle-tracking marker ($nums) — data-integrity condition, never auto-resolved. Close all but one to resume."
+            echo "settle: $count open issues carry the auto-update-spec-kit marker ($nums) — data-integrity condition, left for a human. Close all but one (keep the oldest) and the next run resumes on it." >> "$GITHUB_STEP_SUMMARY"
           else
             issue_num="$(printf '%s' "$open_json" | jq -r '.[0].number')"
             issue_body="$(printf '%s' "$open_json" | jq -r '.[0].body')"
+
+            # Self-heal: a tracking issue found by the migration scan has no
+            # label yet. Stamp it so every subsequent run takes the direct
+            # label read and the scan is never needed again.
+            if [ "$(printf '%s' "$open_json" | jq -r --arg l "$TRACKING_LABEL" '[.[0].labels[]?.name] | index($l) != null')" != "true" ]; then
+              gh label create "$TRACKING_LABEL" --color 1D76DB --description "Auto-update Spec Kit: the open settle-tracking issue" --force
+              gh issue edit "$issue_num" --add-label "$TRACKING_LABEL"
+              echo "settle: adopted pre-existing tracking issue #$issue_num and labelled it '$TRACKING_LABEL'." >> "$GITHUB_STEP_SUMMARY"
+            fi
+
             marker_line="$(printf '%s' "$issue_body" | grep -o '<!-- wing-commander-auto-update-spec-kit:[^>]*-->' | head -1)"
             candidate="$(printf '%s' "$marker_line" | sed -n 's/.*candidate=\([0-9.]*\).*/\1/p')"
             observed="$(printf '%s' "$marker_line" | sed -n 's/.*observed=\([0-9]*\).*/\1/p')"

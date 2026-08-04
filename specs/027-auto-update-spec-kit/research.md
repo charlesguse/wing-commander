@@ -120,6 +120,42 @@ stage mirroring `clarify.yml`'s split from `intake.yml` — rejected as
 premature file-count growth for a feature this narrow; revisit if a
 future spec adds enough resume-path complexity to justify it.
 
+## Decision (superseded 2026-08-03): the tracking issue is found by listing, not by searching
+
+The decision below chose `gh search issues` for the lookup, by analogy with
+`watchdog.yml`. **The analogy was wrong and it shipped a defect.**
+
+On 2026-08-03 the search returned empty, `settle` read that as "no tracking
+issue exists," and opened #167 — a duplicate of #162, which had been open
+for a day. It would have opened one more every day. The same query returns
+#162 correctly from a PAT, from the raw REST endpoint, and unauthenticated;
+the only untested identity is the App installation token the stage actually
+runs as. Which of those it was cannot be recovered from the logs, because
+`2>/dev/null || echo '[]'` had already erased the difference between "the
+search failed" and "there is nothing to find" — the exact failure the
+watchdog's own comment (from #118) warns about, reintroduced here.
+
+Two corrections, both now implemented in the `settle` job:
+
+1. **The lookup is index-free.** The watchdog *needs* search: it dedups by
+   fingerprint, an unbounded key space. This state machine does not — there
+   is at most one tracking issue, ever. `gh issue list --label
+   auto-update:tracking` is a strongly-consistent direct read, and a full
+   open-issue scan matching the marker in shell covers issues that predate
+   the label. Using a search index to find a singleton bought nothing and
+   cost the failure above.
+2. **An unusable lookup means "unknown," and the recovery for unknown is to
+   do nothing.** Not "assume none," which creates. The optimistic default is
+   only safe when the failure mode is cheap; here the failure mode is
+   unbounded issue creation.
+
+Both are pinned by `t2_settle.sh` scenarios 13–16 with injected read
+failures (`GH_STUB_FAIL`), which is the tier that was missing: the test
+harness had modelled `gh search issues` as a call that cannot fail, so the
+branch that decides whether a duplicate gets filed had never been executed.
+
+The original decision follows, unedited, for the record.
+
 ## Decision: settle-window tracking lives in the lifecycle issue, not a new state file
 
 **Decision**: "Has the same-minor patch stream settled" (FR-002) is
