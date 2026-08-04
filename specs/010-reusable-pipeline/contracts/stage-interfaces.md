@@ -106,7 +106,7 @@ docs/adoption.md's wrapper examples MUST show these signatures verbatim.
 |---|---|
 | Inputs | `issue-number` (number, required); `model` (string, default `claude-opus-4-8`); `max-turns` (number, default `50`) |
 | Preconditions | spec-kit present in consumer checkout |
-| Behavior | Allocate next feature number (scans `specs/` + open pipeline branches), run `/speckit-specify` against the issue, create `spec-draft/NNN-slug` + draft spec PR to the default branch, write `spec-meta.json`, label issue (`spec:NNN-slug`, `stage:spec`), post clarification questions or ready-for-review comment |
+| Behavior | Allocate next feature number (scans `specs/` + open pipeline branches); fetch the issue's comments and stage only those from OWNER/MEMBER/COLLABORATOR accounts or the original issue author (never bots) to a data file, posting a visible notice if substantive comments existed but none qualified (specs/029-intake-issue-comments); run `/speckit-specify` against the issue title, body, and staged qualifying comments; create `spec-draft/NNN-slug` + draft spec PR to the default branch, write `spec-meta.json`, label issue (`spec:NNN-slug`, `stage:spec`), post clarification questions or ready-for-review comment |
 | Outputs | `spec-dir`, `feature-num` |
 
 ## reusable-clarify.yml
