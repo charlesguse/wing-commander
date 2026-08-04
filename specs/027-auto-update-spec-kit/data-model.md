@@ -45,13 +45,17 @@ version and `latest_upstream` (research.md) — never model-assigned.
 | `candidate` | The upstream version currently being watched/prepared |
 | `observed` | Count of consecutive daily checks that found this exact `candidate` as `latest_upstream` |
 
-Discovered via `gh search issues --repo "$GITHUB_REPOSITORY" "\"wing-commander-auto-update-spec-kit:\" in:body"`
-(no `--state` — the marker text must appear as a quoted phrase or GitHub
-tokenizes and over-matches; the same gotcha `watchdog.yml` already
-documents for its own fingerprint marker). At most one open issue may
-carry this marker at a time (FR-015); more than one match is a
-data-integrity condition, reported and left for a human, never
-auto-resolved.
+Discovered via `gh issue list` — see the superseding note in
+[research.md](./research.md#decision-superseded-2026-08-03-the-tracking-issue-is-found-by-listing-not-by-searching).
+The tracking issue also carries the `auto-update:tracking` label, which is
+what makes that lookup a bounded direct read.
+
+~~Discovered via `gh search issues --repo "$GITHUB_REPOSITORY" "\"wing-commander-auto-update-spec-kit:\" in:body"`~~
+(superseded — it opened duplicate issues #162/#167.)
+
+At most one open issue may carry this marker at a time (FR-015); more than
+one match is a data-integrity condition, reported and left for a human,
+never auto-resolved.
 
 ## Verification (smoke test) result (ephemeral, produced by `verify`, consumed by `act`)
 
