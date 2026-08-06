@@ -151,13 +151,17 @@ environment.
   that land during a long review pause are silently dropped, not deferred.
   *(Corrected 2026-08-06: this originally said other work "queues behind" the
   unapproved run.)*
-- **Environment secrets do not work here** (out of scope, documented): The stage's
-  secret contract is kebab-case and GitHub environment-secret names cannot contain
-  hyphens, so the stage's declared secrets can never *be* environment secrets; and
-  an adopter's wrapper resolves `secrets.*` in the calling job, which has no
+- **Environment secrets do not work here** (out of scope, documented): An
+  adopter's wrapper resolves `secrets.*` in its own calling job, which has no
   environment, so an environment-scoped credential resolves empty and preflight
-  fails with an unexplained "no credential" error. Because the failure is silent,
-  this must be a documented non-goal, not merely an omission.
+  fails with an unexplained "no credential" error. GitHub does not allow the
+  caller to bridge this — `on.workflow_call` has no `environment` keyword.
+  Because the failure is silent, this must be a documented non-goal, not merely
+  an omission.
+  *(Corrected 2026-08-06: this originally gave the reason as the stages'
+  kebab-case secret names, which are `workflow_call` parameter names, not
+  stored-secret names — a different namespace from the one whose names cannot
+  contain hyphens.)*
 - **Lifecycle reporting is unchanged**: A pending gate is silent — it must not
   surface on the lifecycle issue as a stage failure or otherwise be reported as
   "waiting for approval". This can resemble a hung pipeline and is deliberate for
@@ -284,9 +288,10 @@ environment.
 
 ## Out of Scope / Non-Goals
 
-- **Environment secrets.** They cannot work here (kebab-case secret names cannot be
-  environment secrets; wrapper-resolved `secrets.*` evaluate in the environment-less
-  calling job), and the failure is silent, so this is a documented non-goal.
+- **Environment secrets.** They cannot work here (wrapper-resolved `secrets.*`
+  evaluate in the environment-less calling job, and `on.workflow_call` has no
+  `environment` keyword for the caller to bridge with), and the failure is silent,
+  so this is a documented non-goal.
 - **Validating that the named environment exists, or preventing create-on-reference.**
   Pass-through matches Actions' behavior everywhere else and is the least surprising;
   the consequence is documented, not coded around.

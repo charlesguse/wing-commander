@@ -166,17 +166,37 @@ comparison in `lint-workflows.yml` Gate 1, which reads the **default branch**,
 i.e. post-merge. `release.yml` Gate 1a's diagnostic counting is a check on
 *actionlint's* schema, not on GitHub's. See research D8.
 
+What *is* checkable at PR time is the shape of the binding in the checkout,
+and `lint-workflows.yml` **Gate 7** (added 2026-08-06, code review) does it:
+for every workflow declaring `on.workflow_call` — derived, never listed, so a
+new stage file cannot be born exempt — it asserts that both inputs are
+declared with their contract types and defaults, and that *every* job carries
+the mapping form forwarding both sub-keys verbatim. This is the uniformity
+half of FR-004, which nothing else covers: Gate 1a counts the bindings it can
+see and so cannot notice a job that has none, and the 30 bindings were placed
+by hand. `.github/scripts/verify-gate-7.py` runs the shipped gate (extracted
+from the workflow, not copied) against synthetic stages carrying one known
+defect each, so a green Gate 7 on a uniform fleet still means something.
+
 ## Non-goals (unchanged from the spec's Out of Scope section, restated for
 this contract's boundary)
 
-- **Environment secrets.** The stage's secret contract is kebab-case
-  (`anthropic-api-key`, `speckit-app-private-key`); GitHub environment-secret
-  names cannot contain hyphens, so the stage's declared secrets can never
-  *be* environment secrets. An adopter's wrapper resolves `secrets.*` in the
-  calling job, which has no environment, so an environment-scoped credential
-  resolves empty and preflight fails with an unrelated-looking "no
-  credential" error. This is a documented adopter-facing caveat (FR-012), not
-  a code behavior this contract, or any future one, can fix.
+- **Environment secrets.** An adopter's wrapper resolves `secrets.*` in its
+  own calling job, which has no environment — the binding is on the stage's
+  jobs, one level down — so an environment-scoped credential resolves empty
+  and preflight fails with an unrelated-looking "no credential" error.
+  GitHub states the boundary directly: "Environment secrets cannot be passed
+  from the caller workflow as `on.workflow_call` does not support the
+  `environment` keyword"
+  ([reusing workflows](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows)).
+  The stages' kebab-case secret names (`anthropic-api-key`,
+  `speckit-app-private-key`) are irrelevant to this: they are `workflow_call`
+  parameter names, not stored-secret names, so no renaming makes an
+  environment secret reachable. This is a documented adopter-facing caveat
+  (FR-012), not a code behavior this contract, or any future one, can fix.
+  *(Corrected 2026-08-06: this originally gave the reason as GitHub
+  environment-secret names not accepting hyphens, which conflates the
+  stored-secret namespace with the `workflow_call` parameter namespace.)*
 - **Validating that the named environment exists, or preventing
   create-on-reference.** Pass-through matches Actions' behavior everywhere
   else; the consequence is documented, not coded around.

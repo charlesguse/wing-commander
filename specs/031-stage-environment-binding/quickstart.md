@@ -16,10 +16,14 @@ repository, per the spec's stated acceptance vehicle. See
   implementation applied (new `environment`/`environment-deployment` inputs
   and the `environment:` mapping block on every job of all ten published
   stage workflows — see `contracts/environment-binding.md`).
-- For the manual scenarios only: a scratch **public** GitHub repository
-  (private repos need GitHub Team/Pro — spec edge case) that can call this
-  pipeline's stages by `uses:`, with permission to create deployment
-  environments in its own Settings.
+- For the manual scenarios only: a scratch **public** GitHub repository that
+  can call this pipeline's stages by `uses:`, with permission to create
+  deployment environments in its own Settings. Public is not incidental: on a
+  private or internal repository the environment itself needs GitHub Pro,
+  Team, or Enterprise, and the two rules these scenarios exercise — required
+  reviewers and wait timers — need **Enterprise** (spec edge case). Below the
+  required tier nothing errors, the rule simply never fires, which is
+  indistinguishable from a scenario that passed.
 
 ## Scenario 1 — Default path is unchanged (Story 2, SC-001)
 

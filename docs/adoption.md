@@ -713,13 +713,19 @@ things to know before you bind one:
   `configure-aws-credentials` with an `AssumeRoleWithWebIdentity` denial that
   mentions nothing about environments. Add the `environment:` subject form to
   the trust policy's condition *before* you bind.
-- **Environment secrets don't work with this pipeline.** GitHub environment
-  secret names cannot contain hyphens, but every stage's declared secrets are
-  kebab-case (`anthropic-api-key`, `speckit-app-private-key`) — they can never
-  *be* environment secrets. Your wrapper resolves `secrets.*` in the calling
-  job, which has no environment, so pointing a secret at an environment-scoped
-  value resolves empty and preflight fails with an unrelated-looking "no
-  credential" error, not an "environment secret not found" error.
+- **Environment secrets don't work with this pipeline.** Your wrapper resolves
+  `secrets.*` in its own calling job, and that job has no environment — the
+  binding lives on the stage's jobs, one level down. GitHub is explicit that
+  this cannot be bridged: "Environment secrets cannot be passed from the caller
+  workflow as `on.workflow_call` does not support the `environment` keyword"
+  ([reusing workflows](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows)).
+  So pointing a stage's secret at an environment-scoped value resolves empty
+  and preflight fails with an unrelated-looking "no credential" error, not an
+  "environment secret not found" error. Note this is not about the stages'
+  kebab-case secret names (`anthropic-api-key`, `speckit-app-private-key`):
+  those are `workflow_call` parameter names, not stored-secret names, so
+  renaming them changes nothing — the value still comes from wherever your
+  wrapper's `secrets.*` resolves.
 - **A typo silently creates a new, unprotected environment.** GitHub creates
   an environment on first reference if the name doesn't already exist, with
   no protection rules — a misspelled `environment` value doesn't fail, it

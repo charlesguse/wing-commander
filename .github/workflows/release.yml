@@ -1,7 +1,11 @@
 # Release automation (contracts/versioning.md).
 # Manually triggered — tag creation is deliberate, not per-merge:
-#   1. Lint gate: actionlint over the 8 published stage workflows ({intake,clarify,plan,tasks,implement,finalize,cleanup,rebase}.yml) + published-stage
-#      invariant greps must pass.
+#   1. Lint gate: actionlint over all 10 published stage workflows
+#      (schema/syntax), plus the embedded shellcheck/pyflakes pass and the
+#      published-stage invariant greps over the 8
+#      ({intake,clarify,plan,tasks,implement,finalize,cleanup,rebase}.yml)
+#      those two have always covered — see Gate 1a/1b below for why the
+#      subsets differ.
 #   2. Create annotated tag vX.Y.Z at the default branch head.
 #   3. Create-or-advance the floating major tag for the release's OWN major:
 #      force-move vX for a non-breaking release; create it when the release
@@ -91,18 +95,21 @@ jobs:
           known='unexpected key "deployment" for "environment" section'
           fail=0
 
-          # Pass 1 — schema/syntax over every stage file.
+          # Pass 1 — schema/syntax over every stage file. Written under
+          # /tmp (like actionlint itself, above): $GITHUB_WORKSPACE is the
+          # checkout this release is about to tag, and a lint gate has no
+          # business leaving a file in it.
           /tmp/actionlint -no-color -oneline -shellcheck= -pyflakes= \
             -ignore 'property "job_workflow_sha" is not defined' \
-            "${all_stages[@]}" > pass1.out 2>&1 || true
-          cat pass1.out
+            "${all_stages[@]}" > /tmp/pass1.out 2>&1 || true
+          cat /tmp/pass1.out
 
           # Matched on the key's own line rather than the full binding, so
           # this script never contains a literal GitHub expression that
           # Actions would interpolate before bash ever sees it.
           bindings=$(grep -Ec '^[[:space:]]{6}deployment:' "${all_stages[@]}" | awk -F: '{ s += $NF } END { print s + 0 }')
-          seen=$(grep -Fc "$known" pass1.out || true)
-          other=$(grep -Fv "$known" pass1.out | grep -c . || true)
+          seen=$(grep -Fc "$known" /tmp/pass1.out || true)
+          other=$(grep -Fv "$known" /tmp/pass1.out | grep -c . || true)
 
           if [ "$other" -gt 0 ]; then
             echo "::error::actionlint reported $other diagnostic(s) beyond the known environment.deployment schema gap."
