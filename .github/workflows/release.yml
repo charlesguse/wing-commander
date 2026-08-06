@@ -49,6 +49,12 @@ jobs:
       # Gate 1a: actionlint over the published stages (and this workflow's
       # own siblings). -ignore: actionlint 1.7.7 does not yet know the
       # documented github.job_workflow_sha context property (research.md D3).
+      # A second -ignore covers the job-level environment: mapping's
+      # deployment sub-key (specs/031-stage-environment-binding research.md
+      # D8): actionlint 1.7.7's schema recognizes only "name"/"url" under
+      # environment:, so it flags "deployment" even though GitHub itself
+      # accepts and behaves on the key (contracts/environment-binding.md,
+      # empirically verified 2026-08-05, charlesguse/wc-env-probe).
       # SHELLCHECK_OPTS: the gate blocks on real problems (warning+), not
       # style/info nits — actionlint forwards the variable to its embedded
       # shellcheck pass.
@@ -59,6 +65,7 @@ jobs:
           bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) 1.7.7 /tmp
           /tmp/actionlint -no-color \
             -ignore 'property "job_workflow_sha" is not defined' \
+            -ignore 'unexpected key "deployment" for "environment" section' \
             .github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase}.yml .github/workflows/release.yml
 
       # Gate 1b: published-stage invariants (research.md D2/D5, FR-005,
