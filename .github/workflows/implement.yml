@@ -159,6 +159,26 @@ on:
         type: string
         required: false
         default: "__unset__"
+      environment:
+        description: >
+          Name of a GitHub deployment environment (in the consuming
+          repository) to bind every job in this stage to, applying its
+          protection rules before any step in the job runs. Empty (default)
+          is a verified true no-op — no environment applied, no gate, no
+          deployment record (FR-001, FR-003).
+        type: string
+        required: false
+        default: ""
+      environment-deployment:
+        description: >
+          Whether binding to `environment` creates a GitHub deployment
+          record. true (default) mirrors GitHub's own default, so every
+          protection-rule type — including custom App rules that require
+          the deployment object — works out of the box; false keeps the
+          gate but suppresses the deployment record (FR-002, FR-008).
+        type: boolean
+        required: false
+        default: true
     secrets:
       claude-code-oauth-token:
         description: "Claude OAuth token (claude setup-token) — one of the two credentials"
@@ -185,6 +205,16 @@ permissions: {}
 jobs:
   implement:
     runs-on: ubuntu-latest
+    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
+    # form accepts an expression in both name and deployment, and a
+    # rendered deployment value is coerced as a boolean, so false really
+    # does suppress the deployment record while keeping the gate; an
+    # unknown name is created on reference. Not part of GitHub's
+    # published schema (FR-013) — see contracts/environment-binding.md.
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
     # One cycle per spec at a time, shared with the finalize stage's group so
     # the two never overlap for the same spec. A duplicate dispatch queues
     # behind the first and then no-ops on the idempotency guard.
@@ -1084,6 +1114,16 @@ jobs:
     needs: implement
     if: needs.implement.outputs.final-ok == 'false'
     runs-on: ubuntu-latest
+    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
+    # form accepts an expression in both name and deployment, and a
+    # rendered deployment value is coerced as a boolean, so false really
+    # does suppress the deployment record while keeping the gate; an
+    # unknown name is created on reference. Not part of GitHub's
+    # published schema (FR-013) — see contracts/environment-binding.md.
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
     concurrency:
       group: wing-commander-${{ inputs.spec-dir }}
       cancel-in-progress: false

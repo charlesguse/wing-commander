@@ -1,7 +1,11 @@
 # Release automation (contracts/versioning.md).
 # Manually triggered — tag creation is deliberate, not per-merge:
-#   1. Lint gate: actionlint over the 8 published stage workflows ({intake,clarify,plan,tasks,implement,finalize,cleanup,rebase}.yml) + published-stage
-#      invariant greps must pass.
+#   1. Lint gate: actionlint over all 10 published stage workflows
+#      (schema/syntax), plus the embedded shellcheck/pyflakes pass and the
+#      published-stage invariant greps over the 8
+#      ({intake,clarify,plan,tasks,implement,finalize,cleanup,rebase}.yml)
+#      those two have always covered — see Gate 1a/1b below for why the
+#      subsets differ.
 #   2. Create annotated tag vX.Y.Z at the default branch head.
 #   3. Create-or-advance the floating major tag for the release's OWN major:
 #      force-move vX for a non-breaking release; create it when the release
@@ -47,8 +51,35 @@ jobs:
           fetch-depth: 0
 
       # Gate 1a: actionlint over the published stages (and this workflow's
-      # own siblings). -ignore: actionlint 1.7.7 does not yet know the
-      # documented github.job_workflow_sha context property (research.md D3).
+      # own siblings), in two passes.
+      #
+      # -ignore: actionlint 1.7.7 does not yet know the documented
+      # github.job_workflow_sha context property (research.md D3).
+      #
+      # The job-level environment: mapping's deployment sub-key is
+      # deliberately NOT blanket-ignored. actionlint 1.7.7's schema knows
+      # only name/url there, so it flags every binding; an -ignore would
+      # equally swallow any *other* diagnostic phrased that way, and would go
+      # stale in silence the day actionlint learns the key. Pass 1 counts the
+      # diagnostics instead: exactly one per binding, and nothing else.
+      # GitHub itself accepts and acts on the key
+      # (specs/031-stage-environment-binding/contracts/environment-binding.md,
+      # empirically verified 2026-08-05/06 in charlesguse/wc-env-probe).
+      #
+      # That counting is the only pre-release signal on the key, and it is a
+      # signal about actionlint, not about GitHub. GitHub's own parser cannot
+      # be asked about a branch's files at all — the dispatches endpoint
+      # answers "no workflow_dispatch trigger" for a workflow_call-only file
+      # whether or not it parses (031 research.md D8) — so the registration
+      # assertion in lint-workflows.yml Gate 1 is the only thing that can
+      # detect GitHub rejecting the key, and it sees main only, post-merge.
+      #
+      # Pass 1 also covers all TEN stage files, with shellcheck/pyflakes off:
+      # watchdog.yml and auto-update-spec-kit.yml carry 14 of the 30 bindings
+      # and are absent from pass 2's hardcoded list (issue #149), so without
+      # this pass nothing would lint them. Their run: blocks stay out of the
+      # shellcheck pass until #149 lands.
+      #
       # SHELLCHECK_OPTS: the gate blocks on real problems (warning+), not
       # style/info nits — actionlint forwards the variable to its embedded
       # shellcheck pass.
@@ -56,10 +87,52 @@ jobs:
         env:
           SHELLCHECK_OPTS: "--severity=warning"
         run: |
+          set -uo pipefail
           bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) 1.7.7 /tmp
+
+          all_stages=(.github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase,watchdog,auto-update-spec-kit}.yml)
+          shell_linted=(.github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase}.yml .github/workflows/release.yml)
+          known='unexpected key "deployment" for "environment" section'
+          fail=0
+
+          # Pass 1 — schema/syntax over every stage file. Written under
+          # /tmp (like actionlint itself, above): $GITHUB_WORKSPACE is the
+          # checkout this release is about to tag, and a lint gate has no
+          # business leaving a file in it.
+          /tmp/actionlint -no-color -oneline -shellcheck= -pyflakes= \
+            -ignore 'property "job_workflow_sha" is not defined' \
+            "${all_stages[@]}" > /tmp/pass1.out 2>&1 || true
+          cat /tmp/pass1.out
+
+          # Matched on the key's own line rather than the full binding, so
+          # this script never contains a literal GitHub expression that
+          # Actions would interpolate before bash ever sees it.
+          bindings=$(grep -Ec '^[[:space:]]{6}deployment:' "${all_stages[@]}" | awk -F: '{ s += $NF } END { print s + 0 }')
+          seen=$(grep -Fc "$known" /tmp/pass1.out || true)
+          other=$(grep -Fv "$known" /tmp/pass1.out | grep -c . || true)
+
+          if [ "$other" -gt 0 ]; then
+            echo "::error::actionlint reported $other diagnostic(s) beyond the known environment.deployment schema gap."
+            fail=1
+          fi
+          if [ "$bindings" -gt 0 ] && [ "$seen" -eq 0 ]; then
+            echo "::error::actionlint no longer flags environment.deployment ($bindings binding(s), 0 diagnostics) — its schema has learned the key. Delete this allowance and the counting around it."
+            fail=1
+          elif [ "$seen" -ne "$bindings" ]; then
+            echo "::error::expected one environment.deployment diagnostic per binding ($bindings), saw $seen — either a binding is going unlinted or an unrelated diagnostic is being counted as known."
+            fail=1
+          fi
+          echo "Gate 1a pass 1: ${#all_stages[@]} stage files, $bindings binding(s), $seen accounted diagnostic(s), $other other."
+
+          # Pass 2 — the full lint (shellcheck/pyflakes on) over the subset
+          # this gate has always covered. The deployment key is ignored here
+          # because pass 1 is what accounts for it.
           /tmp/actionlint -no-color \
             -ignore 'property "job_workflow_sha" is not defined' \
-            .github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase}.yml .github/workflows/release.yml
+            -ignore "$known" \
+            "${shell_linted[@]}" || fail=1
+
+          exit "$fail"
 
       # Gate 1b: published-stage invariants (research.md D2/D5, FR-005,
       # constitution II, spec edge case 3). Interface rules that actionlint

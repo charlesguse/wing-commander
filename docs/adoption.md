@@ -655,6 +655,90 @@ doesn't (both verified against a private publisher):
    not a pipeline identity (the pipeline's acting identity remains your
    GitHub App).
 
+## Deployment environments
+
+Every stage accepts `environment` (string, default `""`) and
+`environment-deployment` (boolean, default `true`) so you can gate an
+expensive stage behind a
+[GitHub deployment environment](https://docs.github.com/en/actions/deploying-with-github-actions/managing-environments-for-deployment)'s
+protection rules (required reviewer, wait timer, branch/tag policy, custom
+App rule) — see [Stage reference](#stage-reference) below for the full
+per-stage input list. Leaving `environment` unset (the default) changes
+nothing: no gate, no deployment record, no phantom environment created. Seven
+things to know before you bind one:
+
+- **Approval is per job, not per stage call.** `environment` binds *every* job
+  in the stage file, and each bound job that actually runs gates
+  independently — a required reviewer is prompted once per job, and a wait
+  timer is paid once per job, not once per call. A job skipped by its own
+  `if:` never prompts. Counting the jobs that do run:
+
+  | Stage call | Jobs that run | Prompts per call |
+  |---|---|---|
+  | `intake`, `clarify`, `finalize` | 1 | 1 |
+  | `implement` | `implement` (plus `stalled` only on failure) | 1 |
+  | `plan` | `resolve-spec` → `plan` | 2 |
+  | `tasks` (`generate` or `approved`) | `resolve-spec` → one mode job | 2 |
+  | `cleanup` | `select` → one outcome job | 2 |
+  | `rebase` | `discover` → one matrix leg per branch | 1 + N |
+  | `watchdog` | `collect`, `diagnose`, `report-unhandled-failure` + one `triage` and one `act` leg per finding | 3 + 2N |
+  | `auto-update-spec-kit` (scheduled) | `health-check` → `detect` → `settle` → `evaluate-path` → `prepare` → `verify` → `act` | 7, sequentially |
+
+  So the cheapest possible gate is a one-job stage (`intake`, `clarify`,
+  `finalize`), and `auto-update-spec-kit` is the most expensive by an order of
+  magnitude — seven serial approvals, each blocking the next.
+- **Approval is also per run, not per feature.** A required reviewer prompts
+  on every iteration of a looping stage (`implement`, once per cycle) — there
+  is no pipeline-side dedup or memory of a prior approval. For a single
+  approval per feature, prefer a once-per-feature stage over one that
+  re-dispatches itself; note from the table above that even those cost two
+  prompts, not one.
+- **A pending job holds its concurrency slot, and only one call can wait.**
+  Stages serialize per spec via a job-level `concurrency:` group; a job
+  waiting on environment approval occupies that group for as long as it stays
+  pending. GitHub keeps at most **one** pending run per concurrency group: if
+  a third call arrives while one is running and one is already waiting, the
+  waiting one is **cancelled**, not queued behind it (observed directly in
+  this pipeline's own rebase serialization work,
+  `specs/013-serialize-rebase-stages` research D4). Retriggers that arrive
+  during a long review pause are therefore silently dropped — the longer you
+  hold an approval, the more iterations you can lose.
+- **Binding rewrites the OIDC subject, which breaks Bedrock trust policies.**
+  A bound job's OIDC token carries `sub:
+  repo:OWNER/REPO:environment:<name>` *instead of* the `ref:refs/heads/...`
+  form an unbound job gets. If you run agents on Bedrock, the stage assumes
+  your role via OIDC ([AWS Bedrock](#aws-bedrock) above), and a trust policy
+  whose condition matches `repo:OWNER/REPO:ref:refs/heads/*` stops matching
+  the instant you set `environment` — every Bedrock stage then fails at
+  `configure-aws-credentials` with an `AssumeRoleWithWebIdentity` denial that
+  mentions nothing about environments. Add the `environment:` subject form to
+  the trust policy's condition *before* you bind.
+- **Environment secrets don't work with this pipeline.** Your wrapper resolves
+  `secrets.*` in its own calling job, and that job has no environment — the
+  binding lives on the stage's jobs, one level down. GitHub is explicit that
+  this cannot be bridged: "Environment secrets cannot be passed from the caller
+  workflow as `on.workflow_call` does not support the `environment` keyword"
+  ([reusing workflows](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows)).
+  So pointing a stage's secret at an environment-scoped value resolves empty
+  and preflight fails with an unrelated-looking "no credential" error, not an
+  "environment secret not found" error. Note this is not about the stages'
+  kebab-case secret names (`anthropic-api-key`, `speckit-app-private-key`):
+  those are `workflow_call` parameter names, not stored-secret names, so
+  renaming them changes nothing — the value still comes from wherever your
+  wrapper's `secrets.*` resolves.
+- **A typo silently creates a new, unprotected environment.** GitHub creates
+  an environment on first reference if the name doesn't already exist, with
+  no protection rules — a misspelled `environment` value doesn't fail, it
+  just doesn't gate anything.
+- **On a private repository, the rules worth having are Enterprise-only.**
+  Public repositories get all of this on every plan. On a private or internal
+  repository, environments, environment secrets, and deployment branch
+  policies need GitHub Pro, Team, or Enterprise — but **required reviewers and
+  wait timers, the two rules that actually gate an expensive stage, need
+  Enterprise**. Being on the wrong plan is not an error: the environment
+  exists, the binding works, and the rule simply never fires (see
+  [docs/setup.md](setup.md)).
+
 ## Stage reference
 
 Common to every stage below:
@@ -668,7 +752,10 @@ Common to every stage below:
   commit, resolved via `github.job_workflow_sha` or the OIDC token) — set it
   to match your `uses:` pin only if your calling job cannot grant
   `id-token: write`. `default-branch` (string, default `""` = derived via
-  `gh repo view`) — stages never assume `main`.
+  `gh repo view`) — stages never assume `main`. `environment` (string,
+  default `""`) / `environment-deployment` (boolean, default `true`) — bind
+  every job in the stage to a deployment environment; see
+  [Deployment environments](#deployment-environments) above.
 - **Tool-list inputs** (every agent-running stage): `extra-allowed-tools` /
   `extra-disallowed-tools` (string, default `""`) *append* to that stage's
   built-in default allow/deny tool lists (union — you don't restate the

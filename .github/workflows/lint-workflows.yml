@@ -370,7 +370,10 @@ jobs:
                             f"Supported: {sorted(SUPPORTED_EVENTS)}.")
                       failures += 1
 
-          print(f"Gate 6: checked every agent-bearing wrapper↔stage pair; {failures} failure(s).")
+          # ASCII only: this line also runs on a maintainer's Windows shell,
+          # where a cp1252 stdout cannot encode arrows and the gate dies in
+          # the print instead of reporting its verdict.
+          print(f"Gate 6: checked every agent-bearing wrapper/stage pair; {failures} failure(s).")
           sys.exit(1 if failures else 0)
           PYEOF
 
@@ -383,6 +386,145 @@ jobs:
       # known defects and asserts the verdict and the error text.
       - name: Gate 6 self-test — the detector actually detects
         run: python3 .github/scripts/verify-gate-6.py
+
+      # Gate 7 — an adopter binds a whole stage with one `environment` input,
+      # and specs/031-stage-environment-binding FR-004 is that the binding is
+      # uniform: EVERY job in the stage gates, with no hidden per-job
+      # selector. A job that silently lacks the block is the worst possible
+      # shape of that defect — the adopter sees approvals happening and has
+      # no way to notice that one job of the stage ran ungated. The 30
+      # bindings were placed by hand and only ever verified by hand.
+      #
+      # release.yml Gate 1a counts `deployment:` lines, which is a check on
+      # actionlint's schema, not on coverage: it cannot tell that a job was
+      # missed, only that the bindings it can see are all flagged. This is
+      # the coverage half, and it runs at PR time rather than at release.
+      #
+      # The stage set is DERIVED (any workflow declaring on.workflow_call),
+      # not listed: a hardcoded list is how watchdog.yml and
+      # auto-update-spec-kit.yml went unlinted by Gate 1a for a whole
+      # release (issue #149), and it would mean a new stage file is born
+      # exempt from this gate.
+      - name: Gate 7 — every job of every published stage carries the environment binding
+        run: |
+          python3 - <<'PYEOF'
+          import glob, sys, yaml
+
+          # sub-key -> the workflow_call input it must forward.
+          BINDINGS = {"name": "environment", "deployment": "environment-deployment"}
+          # input -> (type, default). The defaults ARE the contract: an
+          # empty name is the verified no-op that keeps unbound adopters
+          # unaffected, and deployment true mirrors GitHub's own default.
+          DECLARED = {"environment": ("string", ""),
+                      "environment-deployment": ("boolean", True)}
+
+          # Assembled rather than written out: Actions expands expression
+          # syntax in a run: block before bash, let alone python, sees it.
+          OPEN, CLOSE = "${" + "{", "}" + "}"
+
+          def input_ref(value):
+              """The input name this binding value forwards, or None."""
+              if not isinstance(value, str):
+                  return None
+              s = value.strip()
+              if not (s.startswith(OPEN) and s.endswith(CLOSE)):
+                  return None
+              inner = s[len(OPEN):-len(CLOSE)].strip()
+              if not inner.startswith("inputs."):
+                  return None
+              return inner[len("inputs."):].strip()
+
+          failures = 0
+          stages = bound = 0
+          for f in sorted(glob.glob(".github/workflows/*.yml")
+                          + glob.glob(".github/workflows/*.yaml")):
+              wf = yaml.safe_load(open(f, encoding="utf-8")) or {}
+              # PyYAML resolves the bare key `on` to the boolean True (YAML
+              # 1.1); quoted "on" stays a string. Accept either.
+              on = wf.get(True, wf.get("on"))
+              # Membership, not truthiness: a bare `workflow_call:` parses to
+              # None, and a stage with no inputs yet is still a stage — it
+              # must fail this gate, not slip past it as "not a stage".
+              if isinstance(on, dict) and "workflow_call" in on:
+                  call = on.get("workflow_call") or {}
+              elif isinstance(on, list) and "workflow_call" in on:
+                  call = {}
+              else:
+                  continue          # not a published stage
+              stages += 1
+
+              inputs = (call.get("inputs") or {}) if isinstance(call, dict) else {}
+              for iname, (itype, idefault) in DECLARED.items():
+                  spec = inputs.get(iname)
+                  if not isinstance(spec, dict):
+                      print(f"::error file={f}::published stage does not declare the "
+                            f"{iname!r} workflow_call input, so an adopter cannot bind "
+                            f"this stage the way every other stage binds (FR-001/FR-002).")
+                      failures += 1
+                      continue
+                  if spec.get("type") != itype or spec.get("default") != idefault:
+                      print(f"::error file={f}::input {iname!r} is declared "
+                            f"type={spec.get('type')!r} default={spec.get('default')!r}; "
+                            f"the contract is type={itype!r} default={idefault!r}. The "
+                            f"defaults are load-bearing — they are what makes an unbound "
+                            f"adopter's behavior identical to before the feature.")
+                      failures += 1
+
+              for jname, job in (wf.get("jobs") or {}).items():
+                  job = job or {}
+                  if "uses" in job:
+                      # A job that calls another workflow runs that
+                      # workflow's jobs; the binding belongs to them.
+                      print(f"note: {f}: job {jname!r} is a workflow call, not a "
+                            f"bindable job — skipped.")
+                      continue
+
+                  env = job.get("environment")
+                  if env is None:
+                      print(f"::error file={f}::job {jname!r} has no environment: block. "
+                            f"An adopter who binds this stage gets a gate on every OTHER "
+                            f"job and none on this one — the stage looks gated while this "
+                            f"job runs ungated, with nothing to see in the UI (FR-004).")
+                      failures += 1
+                      continue
+                  if not isinstance(env, dict):
+                      print(f"::error file={f}::job {jname!r} uses the shorthand "
+                            f"environment: form, which cannot carry the deployment "
+                            f"sub-key, so environment-deployment: false would be silently "
+                            f"ignored for this job. Use the mapping form.")
+                      failures += 1
+                      continue
+
+                  ok = True
+                  for subkey, iname in BINDINGS.items():
+                      got = input_ref(env.get(subkey))
+                      if got != iname:
+                          print(f"::error file={f}::job {jname!r} wires environment."
+                                f"{subkey} to {env.get(subkey)!r}; every job must forward "
+                                f"the stage's {iname!r} input verbatim, or this job gates "
+                                f"differently from the rest of its own stage.")
+                          failures += 1
+                          ok = False
+                  bound += ok
+
+          print(f"Gate 7: {stages} published stage(s), {bound} bound job(s); "
+                f"{failures} failure(s).")
+          if stages == 0:
+              # Every stage file vanishing (or an `on:` shape this gate no
+              # longer recognizes) must not read as a pass.
+              print("::error::Gate 7 found no workflow declaring on.workflow_call — it "
+                    "checked nothing. Either the published stages moved or this gate's "
+                    "detection of them has broken.")
+              sys.exit(1)
+          sys.exit(1 if failures else 0)
+          PYEOF
+
+      # Same reasoning as Gate 6's self-test: this gate's whole value is
+      # firing on a defect that nobody has made yet, and the fleet it runs
+      # against is (and should stay) uniform, so a green Gate 7 says nothing
+      # about whether Gate 7 works.
+      - name: Gate 7 self-test — the detector actually detects
+        run: python3 .github/scripts/verify-gate-7.py
 
   # Gate 4 — behavioral tests for the auto-update-spec-kit stage pair. Gates
   # 1-3 are static: they prove a workflow parses, registers, and is permitted

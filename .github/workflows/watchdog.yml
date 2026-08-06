@@ -135,6 +135,26 @@ on:
         type: string
         required: false
         default: "__unset__"
+      environment:
+        description: >
+          Name of a GitHub deployment environment (in the consuming
+          repository) to bind every job in this stage to, applying its
+          protection rules before any step in the job runs. Empty (default)
+          is a verified true no-op — no environment applied, no gate, no
+          deployment record (FR-001, FR-003).
+        type: string
+        required: false
+        default: ""
+      environment-deployment:
+        description: >
+          Whether binding to `environment` creates a GitHub deployment
+          record. true (default) mirrors GitHub's own default, so every
+          protection-rule type — including custom App rules that require
+          the deployment object — works out of the box; false keeps the
+          gate but suppresses the deployment record (FR-002, FR-008).
+        type: boolean
+        required: false
+        default: true
     secrets:
       claude-code-oauth-token:
         description: "Claude OAuth token (claude setup-token) — one of the two credentials"
@@ -172,6 +192,16 @@ jobs:
   # normalized signals.json. No agent step in this job (research.md).
   collect:
     runs-on: ubuntu-latest
+    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
+    # form accepts an expression in both name and deployment, and a
+    # rendered deployment value is coerced as a boolean, so false really
+    # does suppress the deployment record while keeping the gate; an
+    # unknown name is created on reference. Not part of GitHub's
+    # published schema (FR-013) — see contracts/environment-binding.md.
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
     # Every job here carries a timeout: a diagnose agent once stalled for 44
     # minutes (run 30137720127) and, with no timeout anywhere in this file,
     # would have burned the runner for GitHub's 6-hour default. Job-level
@@ -772,6 +802,16 @@ jobs:
     needs: collect
     if: needs.collect.outputs.evidence-available != 'false'
     runs-on: ubuntu-latest
+    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
+    # form accepts an expression in both name and deployment, and a
+    # rendered deployment value is coerced as a boolean, so false really
+    # does suppress the deployment record while keeping the gate; an
+    # unknown name is created on reference. Not part of GitHub's
+    # published schema (FR-013) — see contracts/environment-binding.md.
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
     # Backstop only — the Diagnose step's own timeout-minutes fires first so
     # a stalled agent takes the graceful diagnose-failed path.
     timeout-minutes: 20
@@ -1281,6 +1321,20 @@ jobs:
       matrix:
         include: ${{ fromJson(needs.diagnose.outputs.findings) }}
     runs-on: ubuntu-latest
+    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
+    # form accepts an expression in both name and deployment, and a
+    # rendered deployment value is coerced as a boolean, so false really
+    # does suppress the deployment record while keeping the gate; an
+    # unknown name is created on reference. Not part of GitHub's
+    # published schema (FR-013) — see contracts/environment-binding.md.
+    #
+    # Note: matrix is an available context for this key and every leg
+    # gates independently, so N legs mean N separate approvals and N
+    # deployment records — not one gate for the job as a whole.
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v4
@@ -1856,6 +1910,20 @@ jobs:
       matrix:
         include: ${{ fromJson(needs.diagnose.outputs.findings) }}
     runs-on: ubuntu-latest
+    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
+    # form accepts an expression in both name and deployment, and a
+    # rendered deployment value is coerced as a boolean, so false really
+    # does suppress the deployment record while keeping the gate; an
+    # unknown name is created on reference. Not part of GitHub's
+    # published schema (FR-013) — see contracts/environment-binding.md.
+    #
+    # Note: matrix is an available context for this key and every leg
+    # gates independently, so N legs mean N separate approvals and N
+    # deployment records — not one gate for the job as a whole.
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v4
@@ -2344,6 +2412,16 @@ jobs:
     needs: [collect, diagnose, triage, act]
     if: always()
     runs-on: ubuntu-latest
+    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
+    # form accepts an expression in both name and deployment, and a
+    # rendered deployment value is coerced as a boolean, so false really
+    # does suppress the deployment record while keeping the gate; an
+    # unknown name is created on reference. Not part of GitHub's
+    # published schema (FR-013) — see contracts/environment-binding.md.
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
     timeout-minutes: 10
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
