@@ -2,7 +2,7 @@
   "issue": 171,
   "spec_dir": "specs/031-stage-environment-binding",
   "feature_num": "031",
-  "stage": "spec",
+  "stage": "plan",
   "iteration": 0,
-  "spec_branch": null
+  "spec_branch": "spec/031-stage-environment-binding"
 }
