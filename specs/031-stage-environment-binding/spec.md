@@ -139,11 +139,18 @@ environment.
 - **Per-run rather than per-feature approval**: Each `implement` cycle is a fresh
   dispatch, so a required reviewer on the implement stage produces one approval
   prompt per iteration (up to the iteration cap, default 5), serially; a wait timer
-  multiplies the same way. Adopters wanting a single approval per feature bind a
-  once-per-feature stage (plan, or the tasks-generate call) instead of implement.
-- **Pending job holds its concurrency slot**: A stage awaiting approval keeps its
-  per-spec concurrency slot, so other work for the same spec queues behind the
-  unapproved run until it is approved or GitHub's 30-day pending limit expires.
+  multiplies the same way. Adopters wanting fewer approvals per feature bind a
+  once-per-feature stage (plan, or the tasks-generate call) instead of implement
+  — noting that approval is per *job*, so those cost two prompts each rather than
+  one; only the single-job stages (intake, clarify, finalize) cost one.
+- **Pending job holds its concurrency slot, and only one call can wait**: A stage
+  awaiting approval keeps its per-spec concurrency slot until it is approved or
+  GitHub's 30-day pending limit expires. Work for the same spec does *not* queue
+  up behind it: GitHub holds at most one pending run per concurrency group and
+  **cancels** the previously pending one when a newer call arrives, so retriggers
+  that land during a long review pause are silently dropped, not deferred.
+  *(Corrected 2026-08-06: this originally said other work "queues behind" the
+  unapproved run.)*
 - **Environment secrets do not work here** (out of scope, documented): The stage's
   secret contract is kebab-case and GitHub environment-secret names cannot contain
   hyphens, so the stage's declared secrets can never *be* environment secrets; and
@@ -155,9 +162,14 @@ environment.
   surface on the lifecycle issue as a stage failure or otherwise be reported as
   "waiting for approval". This can resemble a hung pipeline and is deliberate for
   now.
-- **Private-repo plan requirement**: Deployment environments in private repositories
-  require a paid GitHub plan (Team or Pro); free private-plan adopters cannot use
-  this feature at all. This is a documented prerequisite, not a code behavior.
+- **Private-repo plan requirement**: On a private or internal repository,
+  environments require a paid GitHub plan (Pro, Team, or Enterprise), and the
+  protection rules that make this feature worth using — required reviewers and
+  wait timers — require Enterprise. Public repositories get all of it on every
+  plan. Below the required tier nothing errors; the rule is simply never
+  enforced. This is a documented prerequisite, not a code behavior.
+  *(Corrected 2026-08-06: this originally read "Team or Pro", which is the
+  tier for environments themselves, not for the protection rules.)*
 
 ## Requirements *(mandatory)*
 
@@ -196,13 +208,19 @@ environment.
 - **FR-011**: The environment name MUST be the sole source of the binding — a stage
   MUST NOT supply a default environment name, look one up from a repository variable,
   or otherwise derive it from ambient repository state.
-- **FR-012**: Adopter documentation MUST record: the per-iteration (per-run)
+- **FR-012**: Adopter documentation MUST record: the per-job approval multiplier
+  (including per matrix leg) with the per-stage counts; the per-iteration (per-run)
   approval behavior and the once-per-feature-stage workaround; the concurrency-slot
-  interaction; the environment-secrets non-goal and why it fails silently; the
-  create-on-reference caveat (a typo yields an ungated run, so the name is worth
-  copying rather than typing); and the private-repo paid-plan prerequisite.
+  interaction, including that a newer call cancels the pending one rather than
+  queueing behind it; the environment-secrets non-goal and why it fails silently;
+  the create-on-reference caveat (a typo yields an ungated run, so the name is worth
+  copying rather than typing); the OIDC subject-claim change and its effect on
+  Bedrock adopters' AWS trust policies; and the private-repo plan tiers.
+  *(The first, sixth, and the cancellation clause were added 2026-08-06 from code
+  review of the implementation PR; the original list had five items.)*
 - **FR-013**: The empirically verified GitHub behaviors this feature depends on
-  (empty-name no-op, mapping-form expression binding, deployment-suppression key,
+  (empty-name no-op, mapping-form expression binding, deployment-suppression key
+  both as a literal and rendered from an expression,
   create-on-reference) MUST be traceable — anything in the implementation that
   depends on them carries a pointer back to the recorded evidence, so a silent
   upstream change is detectable.

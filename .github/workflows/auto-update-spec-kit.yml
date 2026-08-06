@@ -161,12 +161,13 @@ jobs:
   health-check:
     if: inputs.trigger == 'scheduled' || inputs.trigger == 'dispatch'
     runs-on: ubuntu-latest
-    # Empirically verified 2026-08-05 against GitHub-hosted runners
-    # (charlesguse/wc-env-probe): empty name is a true no-op; mapping
-    # form accepts an expression; deployment: false suppresses the
-    # deployment record while keeping the gate; an unknown name is
-    # created on reference. Not part of GitHub's published schema
-    # (FR-013) — see contracts/environment-binding.md.
+    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
+    # form accepts an expression in both name and deployment, and a
+    # rendered deployment value is coerced as a boolean, so false really
+    # does suppress the deployment record while keeping the gate; an
+    # unknown name is created on reference. Not part of GitHub's
+    # published schema (FR-013) — see contracts/environment-binding.md.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -362,12 +363,13 @@ jobs:
     needs: health-check
     if: needs.health-check.result == 'success' && needs.health-check.outputs.pinned-ok != 'false'
     runs-on: ubuntu-latest
-    # Empirically verified 2026-08-05 against GitHub-hosted runners
-    # (charlesguse/wc-env-probe): empty name is a true no-op; mapping
-    # form accepts an expression; deployment: false suppresses the
-    # deployment record while keeping the gate; an unknown name is
-    # created on reference. Not part of GitHub's published schema
-    # (FR-013) — see contracts/environment-binding.md.
+    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
+    # form accepts an expression in both name and deployment, and a
+    # rendered deployment value is coerced as a boolean, so false really
+    # does suppress the deployment record while keeping the gate; an
+    # unknown name is created on reference. Not part of GitHub's
+    # published schema (FR-013) — see contracts/environment-binding.md.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -438,12 +440,13 @@ jobs:
     needs: detect
     if: needs.detect.result == 'success' && needs.detect.outputs.newer == 'true'
     runs-on: ubuntu-latest
-    # Empirically verified 2026-08-05 against GitHub-hosted runners
-    # (charlesguse/wc-env-probe): empty name is a true no-op; mapping
-    # form accepts an expression; deployment: false suppresses the
-    # deployment record while keeping the gate; an unknown name is
-    # created on reference. Not part of GitHub's published schema
-    # (FR-013) — see contracts/environment-binding.md.
+    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
+    # form accepts an expression in both name and deployment, and a
+    # rendered deployment value is coerced as a boolean, so false really
+    # does suppress the deployment record while keeping the gate; an
+    # unknown name is created on reference. Not part of GitHub's
+    # published schema (FR-013) — see contracts/environment-binding.md.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -663,12 +666,13 @@ jobs:
       ((needs.settle.result == 'success' && needs.settle.outputs.settled == 'true') ||
        (needs.comment-reply.result == 'success' && needs.comment-reply.outputs.resumed == 'true'))
     runs-on: ubuntu-latest
-    # Empirically verified 2026-08-05 against GitHub-hosted runners
-    # (charlesguse/wc-env-probe): empty name is a true no-op; mapping
-    # form accepts an expression; deployment: false suppresses the
-    # deployment record while keeping the gate; an unknown name is
-    # created on reference. Not part of GitHub's published schema
-    # (FR-013) — see contracts/environment-binding.md.
+    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
+    # form accepts an expression in both name and deployment, and a
+    # rendered deployment value is coerced as a boolean, so false really
+    # does suppress the deployment record while keeping the gate; an
+    # unknown name is created on reference. Not part of GitHub's
+    # published schema (FR-013) — see contracts/environment-binding.md.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -1022,12 +1026,13 @@ jobs:
     needs: evaluate-path
     if: needs.evaluate-path.result == 'success' && needs.evaluate-path.outputs.outcome == 'clean-bump'
     runs-on: ubuntu-latest
-    # Empirically verified 2026-08-05 against GitHub-hosted runners
-    # (charlesguse/wc-env-probe): empty name is a true no-op; mapping
-    # form accepts an expression; deployment: false suppresses the
-    # deployment record while keeping the gate; an unknown name is
-    # created on reference. Not part of GitHub's published schema
-    # (FR-013) — see contracts/environment-binding.md.
+    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
+    # form accepts an expression in both name and deployment, and a
+    # rendered deployment value is coerced as a boolean, so false really
+    # does suppress the deployment record while keeping the gate; an
+    # unknown name is created on reference. Not part of GitHub's
+    # published schema (FR-013) — see contracts/environment-binding.md.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -1149,12 +1154,13 @@ jobs:
     needs: prepare
     if: needs.prepare.result == 'success'
     runs-on: ubuntu-latest
-    # Empirically verified 2026-08-05 against GitHub-hosted runners
-    # (charlesguse/wc-env-probe): empty name is a true no-op; mapping
-    # form accepts an expression; deployment: false suppresses the
-    # deployment record while keeping the gate; an unknown name is
-    # created on reference. Not part of GitHub's published schema
-    # (FR-013) — see contracts/environment-binding.md.
+    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
+    # form accepts an expression in both name and deployment, and a
+    # rendered deployment value is coerced as a boolean, so false really
+    # does suppress the deployment record while keeping the gate; an
+    # unknown name is created on reference. Not part of GitHub's
+    # published schema (FR-013) — see contracts/environment-binding.md.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -1381,12 +1387,13 @@ jobs:
        needs.verify.result == 'success' ||
        needs.verify.result == 'failure')
     runs-on: ubuntu-latest
-    # Empirically verified 2026-08-05 against GitHub-hosted runners
-    # (charlesguse/wc-env-probe): empty name is a true no-op; mapping
-    # form accepts an expression; deployment: false suppresses the
-    # deployment record while keeping the gate; an unknown name is
-    # created on reference. Not part of GitHub's published schema
-    # (FR-013) — see contracts/environment-binding.md.
+    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
+    # form accepts an expression in both name and deployment, and a
+    # rendered deployment value is coerced as a boolean, so false really
+    # does suppress the deployment record while keeping the gate; an
+    # unknown name is created on reference. Not part of GitHub's
+    # published schema (FR-013) — see contracts/environment-binding.md.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -1658,12 +1665,13 @@ jobs:
       inputs.trigger == 'pr-merged' &&
       inputs.pr-merged
     runs-on: ubuntu-latest
-    # Empirically verified 2026-08-05 against GitHub-hosted runners
-    # (charlesguse/wc-env-probe): empty name is a true no-op; mapping
-    # form accepts an expression; deployment: false suppresses the
-    # deployment record while keeping the gate; an unknown name is
-    # created on reference. Not part of GitHub's published schema
-    # (FR-013) — see contracts/environment-binding.md.
+    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
+    # form accepts an expression in both name and deployment, and a
+    # rendered deployment value is coerced as a boolean, so false really
+    # does suppress the deployment record while keeping the gate; an
+    # unknown name is created on reference. Not part of GitHub's
+    # published schema (FR-013) — see contracts/environment-binding.md.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -1795,12 +1803,13 @@ jobs:
       inputs.trigger == 'comment-reply' &&
       (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), inputs.commenter-association) || inputs.commenter-id == inputs.issue-author-id)
     runs-on: ubuntu-latest
-    # Empirically verified 2026-08-05 against GitHub-hosted runners
-    # (charlesguse/wc-env-probe): empty name is a true no-op; mapping
-    # form accepts an expression; deployment: false suppresses the
-    # deployment record while keeping the gate; an unknown name is
-    # created on reference. Not part of GitHub's published schema
-    # (FR-013) — see contracts/environment-binding.md.
+    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
+    # form accepts an expression in both name and deployment, and a
+    # rendered deployment value is coerced as a boolean, so false really
+    # does suppress the deployment record while keeping the gate; an
+    # unknown name is created on reference. Not part of GitHub's
+    # published schema (FR-013) — see contracts/environment-binding.md.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}

@@ -86,8 +86,9 @@ environment:
 No `permissions:` block changes anywhere, no new composite action, no
 reordering of existing steps.
 
-**Rationale** — four empirically probed GitHub behaviors, all verified
-2026-08-05 against GitHub-hosted runners on a public repo
+**Rationale** — six empirically probed GitHub behaviors, verified 2026-08-05
+(items 1–4) and 2026-08-06 (items 5–6) against GitHub-hosted runners on a
+public repo
 ([charlesguse/wc-env-probe](https://github.com/charlesguse/wc-env-probe),
 workflows/run IDs/recreate script in that repo's README, per issue #171):
 
@@ -114,8 +115,25 @@ workflows/run IDs/recreate script in that repo's README, per issue #171):
    with no protection rules — confirms FR-007's pass-through-unvalidated
    requirement needs no pipeline-side existence check; GitHub already
    behaves exactly as the spec requires.
+5. **`deployment` accepts an expression, and the rendered value is coerced as
+   a boolean.** Item 3 verified only a YAML literal, but the block above
+   ships `deployment: ${{ inputs.environment-deployment }}` — a rendered
+   `false` read as a truthy non-empty string would have kept creating
+   deployment records while every stage file still looked correct, defeating
+   FR-008/User Story 3 with no adopter-visible error. Probed directly: three
+   call sites differing only in how the value arrives (literal `true`,
+   literal `false`, input default) all bound to the environment, and exactly
+   the two `true` ones produced a record.
+6. **A `workflow_dispatch` boolean forwards into a `workflow_call` boolean
+   input** and on into `deployment` without a type rejection — the shape an
+   adopter's wrapper will actually use.
 
-Because none of these four is part of GitHub's officially published Actions
+Items 5 and 6 were probed on 2026-08-06 after code review of the
+implementation PR observed that the shipped construct was an untested
+*combination* of items 2 and 3 rather than something either one covered. They
+did not change the decision; the mechanism is unchanged.
+
+Because none of these six is part of GitHub's officially published Actions
 workflow syntax reference as of this planning pass (probed and inferred
 behavior, not a documented public contract), FR-013 requires every place in
 the implementation that depends on them to carry a comment pointing back to
@@ -275,7 +293,56 @@ convention (`docs/adoption.md`'s wrapper 4 example) combined with FR-004; no
 new mechanism is needed, only confirmation that the existing two-call shape
 already gives adopters the granularity the story asks for.
 
-### D8: Actionlint coverage risk for the new `environment:`/`deployment` key — flagged, not resolved, in this planning pass
+### D8: Actionlint coverage risk for the new `environment:`/`deployment` key — resolved at implementation time
+
+**Outcome** (2026-08-06, after code review of the implementation PR). The
+guess this decision refused to make came out on the strict side: actionlint
+1.7.7 **does** reject the key —
+
+```
+unexpected key "deployment" for "environment" section. expected one of "name", "url" [syntax-check]
+```
+
+— one diagnostic per binding, 30 in total, and none of the ten stage files
+produces any other diagnostic. The first fix followed the `job_workflow_sha`
+precedent literally and added a second `-ignore` to Gate 1a. Review rejected
+that: it suppressed the only automated signal that exists about the key,
+would equally have swallowed any *other* diagnostic phrased that way, and
+would have gone stale in silence the day actionlint's schema learns the key.
+
+Gate 1a now **counts** the diagnostics instead of ignoring them, in two
+passes:
+
+- Pass 1 (schema/syntax only, `-shellcheck= -pyflakes=`) runs over **all ten**
+  stage files and requires exactly one `deployment` diagnostic per binding
+  present in those files and no other diagnostic at all. Zero diagnostics with
+  bindings present is itself a failure — that is the stale-allowance alarm.
+  This pass is also the only lint of any kind covering `watchdog.yml` and
+  `auto-update-spec-kit.yml`, which hold 14 of the 30 bindings and remain
+  outside the shellcheck pass's hardcoded list (issue #149).
+- Pass 2 is the pre-existing full lint (shellcheck on) over the eight-file
+  subset, with the key ignored there because pass 1 accounts for it.
+
+**What this does and does not detect.** It is a check on *actionlint's*
+schema, not on GitHub's. The complementary question — "does GitHub still
+accept the key?" — has no PR-time answer, and the obvious route was probed
+and disproved on 2026-08-06: `POST /actions/workflows/<path>/dispatches`
+returns *"Workflow does not have 'workflow_dispatch' trigger"* for a
+`workflow_call`-only file **whether or not it parses**. A deliberately
+invalid control (probe H, which registers under its path, proving GitHub
+rejected it) and two valid files returned byte-identical 422s. The trigger
+check short-circuits ahead of the parser, so the endpoint cannot be used as a
+parse gate for reusable workflows — despite being exactly how the
+`job_workflow_sha`-era parser messages were originally extracted, which is
+what made the idea look sound.
+
+The only detector that works is the registered-name comparison in
+`lint-workflows.yml` Gate 1, which reads how GitHub registered each file on
+the **default branch** — post-merge, plus nightly. That is a real limit of
+this feature's verifiability, not an oversight: no gate can vet these ten
+files against GitHub's parser before they land on main.
+
+**Original risk assessment, retained for context:**
 
 **Risk**: `release.yml`'s Gate 1a runs `actionlint` (pinned 1.7.7) over 8 of
 the 10 published stage files (the pre-existing hardcoded-list gap from D1's
@@ -289,8 +356,8 @@ file outright the way `release.yml`'s existing `-ignore
 'property "job_workflow_sha" is not defined'` flag suggests actionlint *can*
 be strict about schema surface it doesn't recognize.
 
-**Decision**: Flagged as an implementation-time verification step, not
-resolved here (this planning pass has no outbound network access to run
+**Planning-time decision**: Flagged as an implementation-time verification
+step, not resolved here (this planning pass has no outbound network access to run
 actionlint against a draft workflow file). **Action for implementation**: the
 first task that adds the `environment:` block to a stage file must run it
 through the pinned actionlint 1.7.7 (the same tool/version `release.yml`

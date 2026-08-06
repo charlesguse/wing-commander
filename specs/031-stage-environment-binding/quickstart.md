@@ -43,10 +43,27 @@ repository, per the spec's stated acceptance vehicle. See
 3. Run `.github/workflows/lint-workflows.yml`'s checks (YAML-parse +
    `bash -n`) over the changed files — must pass unchanged.
 4. Run the pinned `actionlint` (1.7.7, matching `release.yml` Gate 1a) over
-   at least the 8 files that gate already covers — confirms the
-   `environment:`/`deployment` mapping parses cleanly (research D8 risk); if
-   it does not, resolve per research D8's documented fallback before
-   considering the change done.
+   all ten files, schema-only:
+
+   ```sh
+   actionlint -no-color -oneline -shellcheck= -pyflakes= \
+     -ignore 'property "job_workflow_sha" is not defined' \
+     .github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase,watchdog,auto-update-spec-kit}.yml
+   ```
+
+   **Expected**: exactly one
+   `unexpected key "deployment" for "environment" section` per binding (30
+   today) and *no other diagnostic*. That is actionlint's schema gap, not a
+   defect — GitHub accepts the key (research D2 items 3 and 5) — and Gate 1a
+   asserts this same count rather than suppressing it (research D8). Zero such
+   diagnostics means actionlint has learned the key and Gate 1a's counting
+   should be deleted; any other diagnostic is a real finding.
+5. Note what this cannot tell you: whether *GitHub* still accepts the key.
+   There is no PR-time answer — the dispatches endpoint reports a missing
+   `workflow_dispatch` trigger for a `workflow_call`-only file regardless of
+   whether it parses (research D8). The registered-name assertion in
+   `lint-workflows.yml` Gate 1 is the only detector, and it reads the default
+   branch after merge.
 
 ## Scenario 3 — Required reviewer gates the run before any agent cost (Story 1, SC-002; manual, scratch repo)
 

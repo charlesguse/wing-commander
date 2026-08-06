@@ -223,12 +223,13 @@ jobs:
   # `plan` job's `concurrency:` block is evaluated (contracts/concurrency-groups.md).
   resolve-spec:
     runs-on: ubuntu-latest
-    # Empirically verified 2026-08-05 against GitHub-hosted runners
-    # (charlesguse/wc-env-probe): empty name is a true no-op; mapping
-    # form accepts an expression; deployment: false suppresses the
-    # deployment record while keeping the gate; an unknown name is
-    # created on reference. Not part of GitHub's published schema
-    # (FR-013) — see contracts/environment-binding.md.
+    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
+    # form accepts an expression in both name and deployment, and a
+    # rendered deployment value is coerced as a boolean, so false really
+    # does suppress the deployment record while keeping the gate; an
+    # unknown name is created on reference. Not part of GitHub's
+    # published schema (FR-013) — see contracts/environment-binding.md.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -260,12 +261,13 @@ jobs:
     # An unmerged close is not a planning trigger — no-op by design.
     if: inputs.merged
     runs-on: ubuntu-latest
-    # Empirically verified 2026-08-05 against GitHub-hosted runners
-    # (charlesguse/wc-env-probe): empty name is a true no-op; mapping
-    # form accepts an expression; deployment: false suppresses the
-    # deployment record while keeping the gate; an unknown name is
-    # created on reference. Not part of GitHub's published schema
-    # (FR-013) — see contracts/environment-binding.md.
+    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
+    # form accepts an expression in both name and deployment, and a
+    # rendered deployment value is coerced as a boolean, so false really
+    # does suppress the deployment record while keeping the gate; an
+    # unknown name is created on reference. Not part of GitHub's
+    # published schema (FR-013) — see contracts/environment-binding.md.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}

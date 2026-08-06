@@ -157,12 +157,13 @@ jobs:
   # Compute the branch set once per call.
   discover:
     runs-on: ubuntu-latest
-    # Empirically verified 2026-08-05 against GitHub-hosted runners
-    # (charlesguse/wc-env-probe): empty name is a true no-op; mapping
-    # form accepts an expression; deployment: false suppresses the
-    # deployment record while keeping the gate; an unknown name is
-    # created on reference. Not part of GitHub's published schema
-    # (FR-013) — see contracts/environment-binding.md.
+    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
+    # form accepts an expression in both name and deployment, and a
+    # rendered deployment value is coerced as a boolean, so false really
+    # does suppress the deployment record while keeping the gate; an
+    # unknown name is created on reference. Not part of GitHub's
+    # published schema (FR-013) — see contracts/environment-binding.md.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -379,13 +380,17 @@ jobs:
       group: wing-commander-${{ matrix.spec_dir }}
       cancel-in-progress: false
     runs-on: ubuntu-latest
-    # Empirically verified 2026-08-05 against GitHub-hosted runners
-    # (charlesguse/wc-env-probe): empty name is a true no-op; mapping
-    # form accepts an expression; deployment: false suppresses the
-    # deployment record while keeping the gate; an unknown name is
-    # created on reference. Not part of GitHub's published schema
-    # (FR-013) — see contracts/environment-binding.md. Note: this key is
-    # evaluated once per job, not per matrix leg.
+    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
+    # form accepts an expression in both name and deployment, and a
+    # rendered deployment value is coerced as a boolean, so false really
+    # does suppress the deployment record while keeping the gate; an
+    # unknown name is created on reference. Not part of GitHub's
+    # published schema (FR-013) — see contracts/environment-binding.md.
+    #
+    # Note: matrix is an available context for this key and every leg
+    # gates independently, so N legs mean N separate approvals and N
+    # deployment records — not one gate for the job as a whole.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}

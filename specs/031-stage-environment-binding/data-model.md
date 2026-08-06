@@ -64,7 +64,7 @@ GitHub deployment record.
 | Attribute | Type | Values | Notes |
 |---|---|---|---|
 | `environment-deployment` | boolean (`workflow_call` input, all 10 published stages) | `true` \| `false` | Default `true` (FR-002), mirroring GitHub's own default for a bound job. |
-| Deployment record created? | derived, not stored | yes \| no | `true` (default) → yes, every protection-rule type works including custom App rules that require the deployment object (FR-002). `false` → no, but the environment's protection rules still apply (FR-008) — GitHub's own `deployment: false` mapping key (research D2 item 3), not pipeline logic. |
+| Deployment record created? | derived, not stored | yes \| no | `true` (default) → yes, every protection-rule type works including custom App rules that require the deployment object (FR-002). `false` → no, but the environment's protection rules still apply (FR-008) — GitHub's own `deployment: false` mapping key (research D2 items 3 and 5 — item 5 covers the expression form actually emitted), not pipeline logic. |
 
 **Validation rules**: none on the input itself (a boolean). Its only effect
 is meaningful when `environment` is non-empty; when `environment == ""` the
