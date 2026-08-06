@@ -32,7 +32,7 @@ issue closed ◀──────────── [6 cleanup] ◀── branc
 This section describes the **published contract** layer (constitution VII).
 
 Every stage body lives in a published stage workflow (`<stage>.yml`) whose only trigger is
-`workflow_call` — nine of them today. Stage workflows are *required* not to
+`workflow_call` — ten of them today. Stage workflows are *required* not to
 read `github.event.*` or `vars.*`; every event fact (issue number, head/base
 refs, merged flag, comment id) and
 every knob (model, max-turns, review mode, iteration cap, chaining targets)
@@ -51,6 +51,17 @@ deviation like this to carry a registered, machine-checked exception. Neither
 the register nor the complete gate exists yet — [issue
 #149](https://github.com/charlesguse/wing-commander/issues/149) tracks both,
 and until it lands this paragraph *is* the exception record.
+
+**A second, deliberate deviation**: `specs/031-stage-environment-binding`
+binds every job in every published stage to a deployment environment
+(`environment`/`environment-deployment` `workflow_call` inputs, job-level
+`environment:` mapping) — a security gate that, per the rule above, should
+live in the wrapper, not the stage. It can't: GitHub rejects
+`jobs.<job_id>.environment` outright on a job whose body is `uses: <reusable
+workflow>`, and `on.workflow_call.inputs` has no mechanism to accept or
+forward it either. There is no wrapper-side syntax to reject in favor of, so
+the gate is published-contract surface instead — registered here, not
+silently absorbed, per constitution VII's registration requirement.
 
 Mechanics worth knowing:
 

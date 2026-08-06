@@ -57,6 +57,16 @@ secret names, before any agent cost. Details:
 > long-lived AWS secrets to add here. See
 > [docs/adoption.md#credentials](adoption.md#credentials) for the full setup.
 
+> **Gating a stage behind a deployment environment?** Every stage accepts an
+> `environment` `workflow_call` input (set in your wrapper's `with:` block),
+> not a repository secret or variable. If this repository is **private**,
+> deployment environments with protection rules require GitHub **Team or
+> Pro** — a repository on the Free plan can create an environment, but its
+> protection rules (required reviewer, wait timer, branch/tag policy) are
+> silently not enforced. See
+> [docs/adoption.md#deployment-environments](adoption.md#deployment-environments)
+> for the full setup and caveats.
+
 ## 3. Repository variables
 
 Settings → Secrets and variables → Actions → **Variables** (used by later stages;

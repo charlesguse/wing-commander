@@ -655,6 +655,43 @@ doesn't (both verified against a private publisher):
    not a pipeline identity (the pipeline's acting identity remains your
    GitHub App).
 
+## Deployment environments
+
+Every stage accepts `environment` (string, default `""`) and
+`environment-deployment` (boolean, default `true`) so you can gate an
+expensive stage behind a
+[GitHub deployment environment](https://docs.github.com/en/actions/deploying-with-github-actions/managing-environments-for-deployment)'s
+protection rules (required reviewer, wait timer, branch/tag policy, custom
+App rule) — see [Stage reference](#stage-reference) below for the full
+per-stage input list. Leaving `environment` unset (the default) changes
+nothing: no gate, no deployment record, no phantom environment created. Five
+things to know before you bind one:
+
+- **Approval is per run, not per feature.** A required reviewer prompts on
+  every iteration of a looping stage (e.g. `implement`, once per cycle) —
+  there is no pipeline-side dedup or memory of a prior approval. If you want
+  a single approval per feature, bind a once-per-feature stage instead (e.g.
+  `plan`, or the `tasks` `generate` call) rather than a stage that re-dispatches
+  itself.
+- **A pending job holds its concurrency slot.** Stages serialize per spec via
+  a job-level `concurrency:` group; a job waiting on environment approval
+  occupies that group the whole time it's pending, so other stage calls for
+  the same spec queue behind it until the gate resolves.
+- **Environment secrets don't work with this pipeline.** GitHub environment
+  secret names cannot contain hyphens, but every stage's declared secrets are
+  kebab-case (`anthropic-api-key`, `speckit-app-private-key`) — they can never
+  *be* environment secrets. Your wrapper resolves `secrets.*` in the calling
+  job, which has no environment, so pointing a secret at an environment-scoped
+  value resolves empty and preflight fails with an unrelated-looking "no
+  credential" error, not an "environment secret not found" error.
+- **A typo silently creates a new, unprotected environment.** GitHub creates
+  an environment on first reference if the name doesn't already exist, with
+  no protection rules — a misspelled `environment` value doesn't fail, it
+  just doesn't gate anything.
+- **Private repositories need GitHub Team or Pro.** Deployment environments
+  with protection rules are a paid-plan feature on private repositories (see
+  [docs/setup.md](setup.md)).
+
 ## Stage reference
 
 Common to every stage below:
@@ -668,7 +705,10 @@ Common to every stage below:
   commit, resolved via `github.job_workflow_sha` or the OIDC token) — set it
   to match your `uses:` pin only if your calling job cannot grant
   `id-token: write`. `default-branch` (string, default `""` = derived via
-  `gh repo view`) — stages never assume `main`.
+  `gh repo view`) — stages never assume `main`. `environment` (string,
+  default `""`) / `environment-deployment` (boolean, default `true`) — bind
+  every job in the stage to a deployment environment; see
+  [Deployment environments](#deployment-environments) above.
 - **Tool-list inputs** (every agent-running stage): `extra-allowed-tools` /
   `extra-disallowed-tools` (string, default `""`) *append* to that stage's
   built-in default allow/deny tool lists (union — you don't restate the
