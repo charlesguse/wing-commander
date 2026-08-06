@@ -103,6 +103,26 @@ on:
         type: string
         required: false
         default: ""
+      environment:
+        description: >
+          Name of a GitHub deployment environment (in the consuming
+          repository) to bind every job in this stage to, applying its
+          protection rules before any step in the job runs. Empty (default)
+          is a verified true no-op — no environment applied, no gate, no
+          deployment record (FR-001, FR-003).
+        type: string
+        required: false
+        default: ""
+      environment-deployment:
+        description: >
+          Whether binding to `environment` creates a GitHub deployment
+          record. true (default) mirrors GitHub's own default, so every
+          protection-rule type — including custom App rules that require
+          the deployment object — works out of the box; false keeps the
+          gate but suppresses the deployment record (FR-002, FR-008).
+        type: boolean
+        required: false
+        default: true
     secrets:
       claude-code-oauth-token:
         description: "Claude OAuth token (claude setup-token) — one of the two credentials"
@@ -141,6 +161,15 @@ jobs:
   health-check:
     if: inputs.trigger == 'scheduled' || inputs.trigger == 'dispatch'
     runs-on: ubuntu-latest
+    # Empirically verified 2026-08-05 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; mapping
+    # form accepts an expression; deployment: false suppresses the
+    # deployment record while keeping the gate; an unknown name is
+    # created on reference. Not part of GitHub's published schema
+    # (FR-013) — see contracts/environment-binding.md.
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
     outputs:
       pinned-ok: ${{ steps.verify-pinned.outputs.passed }}
       failure-detail: ${{ steps.verify-pinned.outputs.failure-detail }}
@@ -333,6 +362,15 @@ jobs:
     needs: health-check
     if: needs.health-check.result == 'success' && needs.health-check.outputs.pinned-ok != 'false'
     runs-on: ubuntu-latest
+    # Empirically verified 2026-08-05 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; mapping
+    # form accepts an expression; deployment: false suppresses the
+    # deployment record while keeping the gate; an unknown name is
+    # created on reference. Not part of GitHub's published schema
+    # (FR-013) — see contracts/environment-binding.md.
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
     outputs:
       newer: ${{ steps.compare.outputs.newer }}
       latest-upstream: ${{ steps.compare.outputs.latest-upstream }}
@@ -400,6 +438,15 @@ jobs:
     needs: detect
     if: needs.detect.result == 'success' && needs.detect.outputs.newer == 'true'
     runs-on: ubuntu-latest
+    # Empirically verified 2026-08-05 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; mapping
+    # form accepts an expression; deployment: false suppresses the
+    # deployment record while keeping the gate; an unknown name is
+    # created on reference. Not part of GitHub's published schema
+    # (FR-013) — see contracts/environment-binding.md.
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
     outputs:
       settled: ${{ steps.state.outputs.settled }}
       issue-number: ${{ steps.state.outputs.issue-number }}
@@ -616,6 +663,15 @@ jobs:
       ((needs.settle.result == 'success' && needs.settle.outputs.settled == 'true') ||
        (needs.comment-reply.result == 'success' && needs.comment-reply.outputs.resumed == 'true'))
     runs-on: ubuntu-latest
+    # Empirically verified 2026-08-05 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; mapping
+    # form accepts an expression; deployment: false suppresses the
+    # deployment record while keeping the gate; an unknown name is
+    # created on reference. Not part of GitHub's published schema
+    # (FR-013) — see contracts/environment-binding.md.
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
     outputs:
       outcome: ${{ steps.decide-outcome.outputs.outcome }}
       issue-number: ${{ steps.entry.outputs.issue-number }}
@@ -966,6 +1022,15 @@ jobs:
     needs: evaluate-path
     if: needs.evaluate-path.result == 'success' && needs.evaluate-path.outputs.outcome == 'clean-bump'
     runs-on: ubuntu-latest
+    # Empirically verified 2026-08-05 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; mapping
+    # form accepts an expression; deployment: false suppresses the
+    # deployment record while keeping the gate; an unknown name is
+    # created on reference. Not part of GitHub's published schema
+    # (FR-013) — see contracts/environment-binding.md.
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
     outputs:
       branch: ${{ steps.diff.outputs.branch }}
       candidate-version: ${{ needs.evaluate-path.outputs.candidate-version }}
@@ -1084,6 +1149,15 @@ jobs:
     needs: prepare
     if: needs.prepare.result == 'success'
     runs-on: ubuntu-latest
+    # Empirically verified 2026-08-05 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; mapping
+    # form accepts an expression; deployment: false suppresses the
+    # deployment record while keeping the gate; an unknown name is
+    # created on reference. Not part of GitHub's published schema
+    # (FR-013) — see contracts/environment-binding.md.
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
     outputs:
       passed: ${{ steps.result.outputs.passed }}
       failure-detail: ${{ steps.result.outputs.failure-detail }}
@@ -1307,6 +1381,15 @@ jobs:
        needs.verify.result == 'success' ||
        needs.verify.result == 'failure')
     runs-on: ubuntu-latest
+    # Empirically verified 2026-08-05 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; mapping
+    # form accepts an expression; deployment: false suppresses the
+    # deployment record while keeping the gate; an unknown name is
+    # created on reference. Not part of GitHub's published schema
+    # (FR-013) — see contracts/environment-binding.md.
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v4
@@ -1575,6 +1658,15 @@ jobs:
       inputs.trigger == 'pr-merged' &&
       inputs.pr-merged
     runs-on: ubuntu-latest
+    # Empirically verified 2026-08-05 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; mapping
+    # form accepts an expression; deployment: false suppresses the
+    # deployment record while keeping the gate; an unknown name is
+    # created on reference. Not part of GitHub's published schema
+    # (FR-013) — see contracts/environment-binding.md.
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v4
@@ -1703,6 +1795,15 @@ jobs:
       inputs.trigger == 'comment-reply' &&
       (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), inputs.commenter-association) || inputs.commenter-id == inputs.issue-author-id)
     runs-on: ubuntu-latest
+    # Empirically verified 2026-08-05 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; mapping
+    # form accepts an expression; deployment: false suppresses the
+    # deployment record while keeping the gate; an unknown name is
+    # created on reference. Not part of GitHub's published schema
+    # (FR-013) — see contracts/environment-binding.md.
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
     outputs:
       resumed: ${{ steps.resume.outputs.resumed }}
       issue-number: ${{ inputs.issue-number }}

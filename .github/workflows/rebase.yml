@@ -114,6 +114,26 @@ on:
         type: string
         required: false
         default: "__unset__"
+      environment:
+        description: >
+          Name of a GitHub deployment environment (in the consuming
+          repository) to bind every job in this stage to, applying its
+          protection rules before any step in the job runs. Empty (default)
+          is a verified true no-op — no environment applied, no gate, no
+          deployment record (FR-001, FR-003).
+        type: string
+        required: false
+        default: ""
+      environment-deployment:
+        description: >
+          Whether binding to `environment` creates a GitHub deployment
+          record. true (default) mirrors GitHub's own default, so every
+          protection-rule type — including custom App rules that require
+          the deployment object — works out of the box; false keeps the
+          gate but suppresses the deployment record (FR-002, FR-008).
+        type: boolean
+        required: false
+        default: true
     secrets:
       claude-code-oauth-token:
         description: "Claude OAuth token (claude setup-token) — one of the two credentials"
@@ -137,6 +157,15 @@ jobs:
   # Compute the branch set once per call.
   discover:
     runs-on: ubuntu-latest
+    # Empirically verified 2026-08-05 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; mapping
+    # form accepts an expression; deployment: false suppresses the
+    # deployment record while keeping the gate; an unknown name is
+    # created on reference. Not part of GitHub's published schema
+    # (FR-013) — see contracts/environment-binding.md.
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
     permissions:
       contents: read
       issues: read
@@ -350,6 +379,16 @@ jobs:
       group: wing-commander-${{ matrix.spec_dir }}
       cancel-in-progress: false
     runs-on: ubuntu-latest
+    # Empirically verified 2026-08-05 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; mapping
+    # form accepts an expression; deployment: false suppresses the
+    # deployment record while keeping the gate; an unknown name is
+    # created on reference. Not part of GitHub's published schema
+    # (FR-013) — see contracts/environment-binding.md. Note: this key is
+    # evaluated once per job, not per matrix leg.
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
     permissions:
       contents: write
       issues: write
