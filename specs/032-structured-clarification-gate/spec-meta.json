@@ -1,1 +1,8 @@
-{"issue": 111, "spec_dir": "specs/032-structured-clarification-gate", "feature_num": "032", "stage": "implement", "iteration": 1, "spec_branch": "spec/032-structured-clarification-gate"}
+{
+  "issue": 111,
+  "spec_dir": "specs/032-structured-clarification-gate",
+  "feature_num": "032",
+  "stage": "review",
+  "iteration": 1,
+  "spec_branch": "spec/032-structured-clarification-gate"
+}
