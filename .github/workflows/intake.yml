@@ -543,14 +543,15 @@ jobs:
                - Create the spec identity label first (adding a nonexistent label fails):
                  gh label create "spec:<NNN-slug>" --color C5DEF5 --description "Lifecycle: <spec-dir>" --force
                - gh issue edit --add-label "spec:<NNN-slug>,stage:spec"
-               - If spec.md still contains [NEEDS CLARIFICATION] markers: write
-                 each question, in the skill's "## Question N" format (context,
-                 question, suggested-answer option table), to
-                 ${{ runner.temp }}/intake-clarification.md. A deterministic
-                 step after this one posts them to the issue — do not comment
-                 on the issue yourself.
-               - Otherwise: write nothing to that file — a deterministic step
-                 after this one announces the spec PR is ready for review.
+               - Return your final result as the `clarifications` array required
+                 by the provided schema: one entry per open question you were
+                 unable to resolve while specifying, each with `question`
+                 (required), `context` (the relevant spec section, optional),
+                 and `options` (your suggested answers, optional — each with
+                 `answer` and, optionally, `implications`). An empty array
+                 means the spec has no open questions. Do not also write a
+                 questions file yourself — a deterministic step renders and
+                 posts them from this array.
 
             Constraints: create at most one spec directory; never edit files outside
             it; never merge or approve anything; never force-push.
@@ -575,8 +576,38 @@ jobs:
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ inputs.max-turns }}
+            --json-schema '{"type":"object","properties":{"clarifications":{"type":"array","items":{"type":"object","properties":{"question":{"type":"string"},"context":{"type":["string","null"]},"options":{"type":"array","items":{"type":"object","properties":{"answer":{"type":"string"},"implications":{"type":["string","null"]}},"required":["answer"]}}},"required":["question"]}}},"required":["clarifications"]}'
             --allowedTools "${{ steps.tool-args-intake.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-intake.outputs.disallowed-tools }}"
+
+      # The action exits zero even when the agent run itself errored (e.g. a
+      # 401 from an invalid credential — observed live, run 29181108490), and
+      # this stage's no-spec path is deliberately green (a completed-but-
+      # underdelivering agent is a report-and-stop, not a failure). An agent
+      # that ERRORED, or one whose terminal result is missing/malformed/
+      # non-success, is different: fail loudly, or a credential/API outage or
+      # a dropped structured result reads as "intake ran fine and produced
+      # nothing" (contracts/credentials.md; contracts/clarification-schema.md
+      # FR-002). Runs before "Check whether the spec still needs
+      # clarification" so that step never computes `needed` from a
+      # coerced-empty array.
+      - name: Fail on agent API error
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent.outcome == 'success'
+        run: |
+          f="$RUNNER_TEMP/claude-execution-output.json"
+          agent_ok="$(jq -r '([.[] | select(.type=="result")] | last) as $r
+            | if $r != null and $r.is_error == false and $r.subtype == "success"
+              then "true" else "false" end' "$f" 2>/dev/null || echo false)"
+          if [ "$agent_ok" != "true" ]; then
+            err=$(jq -r '[.[] | select(.type=="result")] | last | .result // "missing or invalid terminal result"' "$f" 2>/dev/null || echo "missing execution output file")
+            echo "::error::wing-commander intake stage: the agent run did not complete with a valid result — $err"
+            exit 1
+          fi
+          raw="$(jq -r '[.[] | select(.type=="result")] | last | .result // empty' "$f" 2>/dev/null || true)"
+          if ! printf '%s' "$raw" | jq -e 'type=="object" and (.clarifications|type)=="array"' >/dev/null 2>&1; then
+            echo "::error::wing-commander intake stage: the agent's structured result is missing a valid clarifications array."
+            exit 1
+          fi
 
       # Deterministic read-back of what intake produced — feeds the stage's
       # declared outputs (the agent may have legitimately stopped without a
@@ -603,16 +634,47 @@ jobs:
       - name: Check whether the spec still needs clarification
         id: clarification
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.created.outputs.spec-dir != ''
-        env:
-          SPEC_DIR: ${{ steps.created.outputs.spec-dir }}
         run: |
-          # No closing \]: real markers are '[NEEDS CLARIFICATION: <question>]'
-          # (spec-template.md) — the bare-bracket literal never matched one.
-          if grep -q '\[NEEDS CLARIFICATION' "$SPEC_DIR/spec.md"; then
+          f="$RUNNER_TEMP/claude-execution-output.json"
+          raw="$(jq -r '[.[] | select(.type=="result")] | last | .result // empty' "$f" 2>/dev/null || true)"
+          count="$(printf '%s' "$raw" | jq 'if type=="object" and (.clarifications|type)=="array" then (.clarifications|length) else 0 end' 2>/dev/null || echo 0)"
+          if [ "$count" -gt 0 ]; then
             echo "needed=true" >> "$GITHUB_OUTPUT"
           else
             echo "needed=false" >> "$GITHUB_OUTPUT"
           fi
+
+      # Deterministic render (contracts/clarification-schema.md): turns the
+      # structured `clarifications` array into the unchanged `## Question N`
+      # markdown, so the posted content and the `needed` decision above
+      # always come from the same read of the same artifact.
+      - name: Render clarification questionnaire
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'true'
+        run: |
+          f="$RUNNER_TEMP/claude-execution-output.json"
+          raw="$(jq -r '[.[] | select(.type=="result")] | last | .result // empty' "$f" 2>/dev/null || true)"
+          printf '%s' "$raw" | jq -r '
+            (if type=="object" and (.clarifications|type)=="array" then .clarifications else [] end)
+            | to_entries
+            | map(
+                "## Question \(.key + 1)\n\n"
+                + (if (.value.context // null) != null then "**Context**: \(.value.context)\n\n" else "" end)
+                + "**What we need to know**: \(.value.question)\n\n"
+                + "**Suggested Answers**:\n\n"
+                + "| Option | Answer | Implications |\n"
+                + "|--------|--------|--------------|\n"
+                + (
+                    (.value.options // [])
+                    | to_entries
+                    | map("| \(["A","B","C","D","E","F","G","H","I","J"][.key]) | \(.value.answer) | \(.value.implications // "—") |")
+                    | join("\n")
+                    | (if length > 0 then . + "\n" else . end)
+                  )
+                + "| Custom | Provide your own answer | Reply on this issue with your own answer |\n\n"
+                + "**Your choice**: _Reply on this issue_\n"
+              )
+            | join("\n")
+          ' > "${{ runner.temp }}/intake-clarification.md"
 
       - name: Announce clarification needed
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'true'
@@ -696,22 +758,3 @@ jobs:
         with:
           model: ${{ inputs.model }}
           max-turns: ${{ inputs.max-turns }}
-
-      # The action exits zero even when the agent run itself errored (e.g. a
-      # 401 from an invalid credential — observed live, run 29181108490), and
-      # this stage's no-spec path is deliberately green (a completed-but-
-      # underdelivering agent is a report-and-stop, not a failure). An agent
-      # that ERRORED is different: fail loudly, or a credential/API outage
-      # reads as "intake ran fine and produced nothing"
-      # (contracts/credentials.md: invalid credential fails at the first
-      # agent call).
-      - name: Fail on agent API error
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent.outcome == 'success'
-        run: |
-          f="$RUNNER_TEMP/claude-execution-output.json"
-          [ -f "$f" ] || exit 0
-          err=$(jq -r '[.[] | select(.type=="result")] | last | select(.is_error == true) | .result // "unknown agent error"' "$f")
-          if [ -n "$err" ]; then
-            echo "::error::wing-commander intake stage: the agent run errored before completing — $err"
-            exit 1
-          fi
