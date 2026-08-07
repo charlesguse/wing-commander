@@ -615,7 +615,7 @@ jobs:
           RUN_ID: ${{ inputs.run-id }}
         run: |
           set -uo pipefail
-          sentinels='stalled|rejected|turn budget warning|could not inspect|denied|abandon'
+          sentinels='stalled|rejected|turn budget warning|could not inspect|denied|abandon|clarification-mismatch'
           jobs_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" --paginate 2>/dev/null || echo '{"jobs":[]}')"
           entries='[]'
           for job_id in $(printf '%s' "$jobs_json" | jq -r '.jobs[]?.id // empty'); do

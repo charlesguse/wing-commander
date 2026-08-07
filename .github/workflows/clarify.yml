@@ -452,6 +452,8 @@ jobs:
       - name: Determine clarification follow-up outcome
         id: clarification
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent.outcome == 'success'
+        env:
+          SPEC_DIR: ${{ steps.ctx.outputs.spec-dir }}
         run: |
           f="$RUNNER_TEMP/claude-execution-output.json"
           raw="$(jq -r '[.[] | select(.type=="result")] | last | .result // empty' "$f" 2>/dev/null || true)"
@@ -462,8 +464,25 @@ jobs:
             count="$(printf '%s' "$raw" | jq 'if (.clarifications|type)=="array" then (.clarifications|length) else 0 end' 2>/dev/null || echo 0)"
             if [ "$count" -gt 0 ]; then
               echo "outcome=needs-clarification" >> "$GITHUB_OUTPUT"
+              structured=true
             else
               echo "outcome=ready" >> "$GITHUB_OUTPUT"
+              structured=false
+            fi
+
+            # Colon-form marker cross-check (FR-004–FR-008), read-only: never
+            # feeds `outcome` above. Scoped to answered == true only
+            # (research.md's cross-check-scope decision) — run against the
+            # post-agent-edit spec.md, which this checkout already reflects.
+            if grep -q '\[NEEDS CLARIFICATION:' "$SPEC_DIR/spec.md"; then
+              marker=true
+            else
+              marker=false
+            fi
+            if [ "$structured" != "$marker" ]; then
+              empty_or_not=$([ "$structured" = "true" ] && echo "non-empty" || echo "empty")
+              match_or_not=$([ "$marker" = "true" ] && echo "a match" || echo "no match")
+              echo "⚠️ clarification-mismatch: structured output reported clarifications=$empty_or_not but the colon-form marker scan found $match_or_not in $SPEC_DIR/spec.md." >> "$GITHUB_STEP_SUMMARY"
             fi
           fi
 
