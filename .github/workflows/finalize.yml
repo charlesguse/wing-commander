@@ -703,13 +703,24 @@ jobs:
           summary: "No manual work remains."
 
       # The last write this run performs — the lifecycle issue's advance to
-      # the review stage.
+      # the review stage, and the same labels mirrored onto the final PR.
       - name: Flip stage label
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ISSUE: ${{ inputs.issue-number }}
+          PR: ${{ steps.verify-pr.outputs.pr-number }}
         run: |
           gh label create "stage:review" --color FBCA04 --description "Final PR awaiting review" --force
           gh issue edit "$ISSUE" --add-label "stage:review"
           gh issue edit "$ISSUE" --remove-label "stage:implement" 2>/dev/null || true
+          # Pipeline PRs carry the same labels as their lifecycle issue so PR
+          # lists are filterable by spec (after the stage flip so the PR
+          # snapshots the stage it belongs to) — the same step intake, plan
+          # and tasks each run for the PR they open. "Verify the final pull
+          # request was created" hard-fails when the PR is missing, so
+          # reaching this line means $PR resolved.
+          labels=$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name] | join(",")')
+          if [ -n "$labels" ]; then
+            gh pr edit "$PR" --add-label "$labels" || true
+          fi
