@@ -35,8 +35,10 @@ and decides the callout branch from the array's emptiness alone — content
 and decision now come from one artifact (FR-003). The marker grep is kept,
 tightened to the colon form `[NEEDS CLARIFICATION:` (FR-008 — not
 previously shipped, `research.md` current-state audit), demoted to a
-cross-check that writes a `clarification-mismatch` step-summary warning on
-disagreement without ever selecting the branch (FR-004–FR-006), and added to
+cross-check that writes a `clarification-mismatch` warning to the step
+summary and the job log on disagreement (the log copy is what the
+watchdog's collector actually reads) without ever selecting the branch
+(FR-004–FR-006), and added to
 `watchdog.yml`'s one-line sentinel alternation (FR-012) so a recurrence
 surfaces as a finding. No fallback questionnaire is ever synthesized from
 marker text (FR-007) — this is a negative requirement satisfied by omission,

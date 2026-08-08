@@ -106,12 +106,26 @@ raw="$(jq -r '[.[] | select(.type=="result")] | last | .result // empty' "$file"
 
 `agent_ok != "true"` (step outcome not `success`, missing file, missing
 terminal `result` record, or a non-`success` subtype) is a **validation
-failure** (FR-002): the workflow step MUST surface this as a run failure
-(`::error::` + `exit 1`), matching the existing "Fail on agent API error"
-convention both `intake.yml` and `clarify.yml` already apply after their
-agent step, extended to also catch a structurally invalid/missing
+failure** (FR-002): the workflow MUST surface this as a run failure
+(`::error::` + a non-zero exit), matching the existing "Fail on agent API
+error" convention both `intake.yml` and `clarify.yml` already apply after
+their agent step, extended to also catch a structurally invalid/missing
 schema result here — never silently posting nothing while reporting
 success.
+
+The verdict MUST be computed before any step that would otherwise read a
+coerced-empty `clarifications` array, but the `exit 1` itself MAY be
+deferred to a later step when earlier side effects have to complete first.
+`intake.yml` does defer it: an agent can create the spec directory, branch
+and PR and still lose its terminal result, and failing at the point of
+detection would skip "Resolve created spec" and "Label spec PR to match the
+issue", leaving an unlabeled orphan PR behind a red job. So intake splits
+the contract across two steps — "Validate agent result" (emits the
+`::error::`, publishes `valid=true|false`, exits 0) and "Fail on invalid
+agent result" (the job's last step, `exit 1` when `valid != 'true'`) — with
+the clarification decision step gated on `valid == 'true'` so the
+coerced-empty read is still impossible. `clarify.yml` has no such
+downstream side effects and keeps the single in-place `exit 1`.
 
 ## Render algorithm
 
@@ -146,6 +160,17 @@ temp file:
   always appended last regardless of how many (including zero) options
   were provided (spec.md Edge Case "Question with no options and no
   context": the block is still well-formed with only the `Custom` row).
+- The schema sets no `maxItems` on `options`, so the label sequence MUST
+  have a defined value past its last letter: the renderer indexes A–Z and
+  falls back to the 1-based ordinal (`27`, `28`, ...) beyond it. Indexing a
+  short letter array yields `null`, which jq interpolates as the literal
+  string `null` — a silently malformed row.
+- `answer` and `implications` are agent-authored free text landing in
+  markdown table cells, so the renderer MUST escape them: `|` → `\|` (an
+  unescaped pipe opens a new column and shifts the rest of the row) and any
+  run of newlines → `<br>` (a raw newline terminates the table early).
+  `question` and `context` are rendered outside the table and need no
+  escaping.
 - `context` absent (`null` or key omitted) → the `**Context**:` line is
   omitted entirely, not rendered empty.
 - This reproduces `.claude/skills/speckit-specify/SKILL.md`'s existing
@@ -180,10 +205,15 @@ else
 fi
 ```
 
+The cross-check needs a `spec.md` on disk, so it is skipped entirely when
+the stage resolved no spec directory (intake's no-spec path) — it never
+gates the branch decision, which is computed from the structured output
+alone and therefore runs whether or not a spec branch was discoverable.
+
 `structured` is derived per `data-model.md`'s Stage outcome table. When
 `structured != marker` (and, for clarify, only when the outcome is not
-`none` — `research.md`'s cross-check-scope decision), the step appends to
-`$GITHUB_STEP_SUMMARY`:
+`none` — `research.md`'s cross-check-scope decision), the step writes this
+line to **both** stdout and `$GITHUB_STEP_SUMMARY`:
 
 ```text
 ⚠️ clarification-mismatch: structured output reported clarifications=<empty|non-empty> but the colon-form marker scan found <a match|no match> in <spec-dir>/spec.md.
@@ -191,6 +221,8 @@ fi
 
 The literal token `clarification-mismatch` MUST appear verbatim in that
 line — it is what `contracts/watchdog-sentinel.md`'s alternation matches
-against. `marker`'s value is never used for anything else (FR-004): the
+against. The stdout copy is not optional: the watchdog collector greps job
+logs, and `$GITHUB_STEP_SUMMARY` is a file that GitHub never mirrors into
+the job log, so a summary-only write leaves the sentinel unreachable. `marker`'s value is never used for anything else (FR-004): the
 branch selection in `contracts/decision-points.md` reads only
 `structured`.

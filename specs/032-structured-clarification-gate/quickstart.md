@@ -55,9 +55,15 @@ grep -n "clarifications" .github/workflows/clarify.yml
 
 **Expected**: Both files contain a read-back step that checks
 `agent_ok`/schema-conformance (per `contracts/clarification-schema.md`'s
-read-back idiom) and a corresponding `::error::`/`exit 1` path, positioned
-before the "Announce clarification needed" / "Announce spec PR ready"
-steps in the job's step order. Live confirmation (optional, requires
+read-back idiom) and a corresponding `::error::` + non-zero-exit path that
+no "Announce clarification needed" / "Announce spec PR ready" step can run
+past. In `clarify.yml` that is one step ("Fail on agent API error",
+`exit 1` in place, before the announce steps). In `intake.yml` it is split
+— "Validate agent result" emits the `::error::` and publishes `valid`
+before the decision step, which is gated on `valid == 'true'` so neither
+announce branch can fire; "Fail on invalid agent result" is the job's last
+step and turns that verdict into `exit 1`, after the PR-labelling side
+effects have run (`contracts/clarification-schema.md`). Live confirmation (optional, requires
 simulating a schema violation — not practical to force from a normal run):
 inspect a run where `steps.agent.outcome` is not `success`, and confirm the
 run itself shows as failed in `gh run view`, not green with an absent
@@ -93,7 +99,9 @@ gh issue view <issue-number> --json comments \
 
 **Expected**: The first is `1` (spec-PR-ready callout posted with its PR
 link), the second is `0` — the #159 class is eliminated. Confirm the
-cross-check still noticed the token by checking the run's step summary:
+cross-check still noticed the token by checking the run log (the emitting
+step writes the line to both stdout and the step summary — only the stdout
+copy is greppable here, and it is what the watchdog collector reads):
 
 ```bash
 gh run view <run-id> --log | grep -c "clarification-mismatch"
@@ -203,7 +211,9 @@ least one open question, reply to resolve it, and let the spec proceed.
    posted follow-up (or `ready`/`none` outcome) matches Scenarios 6/7.
 3. No `clarification-mismatch` step-summary line appears on this ordinary,
    well-behaved run (Scenario 5 is the disagreement case, not the norm).
-4. The reader-facing `## Question N` blocks look byte-for-byte like they
-   did before this feature (FR-010) — a maintainer unfamiliar with this
-   feature's internals should notice no difference in what they read,
-   only that the pipeline is now more reliable about when it appears.
+4. The reader-facing `## Question N` blocks match the pre-feature shape
+   (FR-010) — a maintainer unfamiliar with this feature's internals should
+   notice no difference in what they read, only that the pipeline is now
+   more reliable about when it appears. One documented deviation: the
+   heading drops the skill's `: [Topic]` suffix, because the schema carries
+   no `topic` field (`contracts/clarification-schema.md`).

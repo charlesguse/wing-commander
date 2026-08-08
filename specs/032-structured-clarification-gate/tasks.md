@@ -177,3 +177,48 @@ Task: "Rewrite clarify.yml's agent step (--json-schema with answered, prompt) an
 ### Why User Story 1 alone is the MVP
 
 FR-001/FR-002/FR-003/SC-001 together name the dropped-questionnaire failure (#109) as the confirmed, currently-live core defect this feature exists to close, and closing it (by construction, per this feature's single-artifact design) simultaneously removes the grep as a gating mechanism at all — which is what User Story 2 needs, and what makes User Story 4's three-way split expressible in the first place. User Stories 2, 3, and 4 make that fix *provable* (regression scenario, disagreement visibility, outcome-split proof) and *durable against recurrence* (the watchdog sentinel), which matters, but does not on its own change what a maintainer sees on the happy path.
+
+## Post-review corrections (code review of PR #175)
+
+Six findings against the shipped implementation, fixed on this branch. Each
+supersedes the corresponding "Headless status" claim above where they
+disagree.
+
+- **T005/T006 + `contracts/watchdog-sentinel.md` (highest severity):** the
+  `clarification-mismatch` line was written only to `$GITHUB_STEP_SUMMARY`,
+  but `watchdog.yml`'s `Collect: step summaries` greps **job logs**, and
+  GitHub does not mirror the summary file into the log. The one-token
+  sentinel addition therefore matched nothing that is ever written, leaving
+  User Story 3 / FR-012 / SC-004 inert. Both stages now `echo` the identical
+  line to stdout as well; the contract's "GitHub mirrors step-summary writes
+  into the log" justification was false and has been replaced.
+- **T002:** intake's relocated validation gate exited before "Resolve
+  created spec" and "Label spec PR to match the issue", so an agent that
+  created the spec, branch and PR but lost its terminal result left an
+  unlabeled orphan PR and posted no callout. Split into "Validate agent
+  result" (runs where the gate was, publishes `valid`, exits 0) and "Fail on
+  invalid agent result" (the job's last step, `exit 1`). The clarification
+  step is now gated on `valid == 'true'`, so the coerced-empty read FR-002
+  guards against is still impossible. `clarify.yml` has no side effects
+  after its gate and keeps the single in-place `exit 1`.
+- **T002:** "Check whether the spec still needs clarification" was still
+  gated on `steps.created.outputs.spec-dir != ''`, inherited from when the
+  decision read `spec.md`. A failed branch push made `needed` empty and
+  dropped an authored questionnaire silently — the exact failure class this
+  feature exists to remove. The gate is gone; only the cross-check (which
+  reads a file) is guarded on a spec dir, and the spec-PR-ready callout
+  gains its own `spec-dir != ''` so the no-spec path stays callout-free.
+- **T002/T003 render algorithm:** `["A"…"J"][.key]` yields `null` past the
+  10th option and jq interpolates it as the literal string `null`. The
+  schema sets no `maxItems`, so the letter table now runs A–Z with an
+  ordinal fallback beyond it.
+- **T002/T003 render algorithm:** `answer` and `implications` were
+  interpolated into markdown table cells unescaped — a `|` in an answer
+  shifts the row's columns and a newline in `implications` truncates the
+  table. Both are now escaped (`|` → `\|`, newline runs → `<br>`).
+  `question` and `context` render outside the table and are untouched.
+- **Not a code change (T010, Scenario 10):** the PR body's "byte-for-byte
+  unchanged `## Question N` blocks" claim is slightly stronger than what
+  ships — the heading drops the skill's `: [Topic]` suffix, a deviation
+  `contracts/clarification-schema.md` documents and justifies (the schema
+  carries no `topic` field).

@@ -23,12 +23,17 @@ against a step's own script text) for a case-insensitive match against the
 `sentinels` alternation, and forwards a matching line as a `step-summary`
 Signal with `matched-sentinel` and `matched-line` facts. `contracts/
 clarification-schema.md`'s cross-check step writes a line containing the
-literal token `clarification-mismatch` to `$GITHUB_STEP_SUMMARY` — GitHub
-Actions mirrors `$GITHUB_STEP_SUMMARY` writes into the step's own log
-output, so no separate `echo` to stdout is needed; the sentinel scan finds
-it the same way it already finds every other sentinel today (FR-006's
-step-summary requirement and FR-012's watchdog requirement are satisfied by
-the same single write).
+literal token `clarification-mismatch` **both** to `$GITHUB_STEP_SUMMARY`
+and to stdout, and the stdout copy is what makes this contract hold:
+`$GITHUB_STEP_SUMMARY` is a file rendered on the run summary page, and
+GitHub does NOT mirror writes to it into the job log. A summary-only write
+would be invisible to the collector — doubly so because the collector
+strips `##[group]`/`##[endgroup]` blocks, which is the only place the step's
+own script source (and therefore the literal token) would otherwise appear
+in the log. With the stdout copy, the sentinel scan finds the line the same
+way it already finds every other sentinel today (FR-006's step-summary
+requirement is satisfied by the summary write, FR-012's watchdog
+requirement by the stdout write; both carry the identical text).
 
 No change is needed to:
 - The `Stamp signal ids` step's `step-summary` signal-kind mapping
@@ -54,8 +59,8 @@ No change is needed to:
 
 ## Acceptance (User Story 3, SC-004)
 
-Given a run of `intake.yml` or `clarify.yml` that wrote a
-`clarification-mismatch` step-summary line (`contracts/
+Given a run of `intake.yml` or `clarify.yml` that emitted a
+`clarification-mismatch` line to stdout and the step summary (`contracts/
 clarification-schema.md`), a subsequent `watchdog.yml` pass over that run:
 
 1. `Collect: step summaries` matches the sentinel and produces a Signal

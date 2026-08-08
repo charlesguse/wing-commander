@@ -86,7 +86,11 @@ section of the plan-completion issue comment.
   audit) for a match. Adding `clarification-mismatch` here is a one-token
   change to that alternation; no other sentinel-handling code needs to
   change (the fingerprinting/dedup machinery downstream keys off whichever
-  word matched, generically).
+  word matched, generically). Because that collector reads the **job log**
+  and `$GITHUB_STEP_SUMMARY` is a file GitHub never mirrors into the log,
+  the emitting step must `echo` the mismatch line to stdout in addition to
+  appending it to the summary — otherwise the sentinel addition matches
+  nothing that is ever written (`contracts/watchdog-sentinel.md`).
 
 ## Decision: Resolve FR-008 — the colon-form cross-check ships as part of this feature
 
@@ -206,9 +210,12 @@ CLI mechanism.
 **Decision**: For intake, the cross-check always runs (there is no `none`
 equivalent there): `structured = (clarifications array non-empty)`,
 `marker = (colon-form grep matches)`; a mismatch (`structured != marker`)
-writes `clarification-mismatch` to `$GITHUB_STEP_SUMMARY` (FR-006), citing
-both booleans and the spec path, but `structured` alone still selects the
-branch (FR-004). For clarify, the same comparison runs only when
+writes `clarification-mismatch` to `$GITHUB_STEP_SUMMARY` (FR-006) and to
+stdout (so FR-012's log-reading collector can see it), citing both booleans
+and the spec path, but `structured` alone still selects the branch
+(FR-004). The comparison needs a `spec.md`, so it is skipped when intake
+resolved no spec directory — the branch decision itself is not, since it
+reads only the structured output. For clarify, the same comparison runs only when
 `answered == true` — when `answered == false` (`none`), no clarification
 callout is posted in either direction (FR-009's own Edge Case), so there is
 no post/don't-post decision for a marker disagreement to be *about*; running

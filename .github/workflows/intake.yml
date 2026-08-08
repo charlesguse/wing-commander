@@ -588,10 +588,14 @@ jobs:
       # non-success, is different: fail loudly, or a credential/API outage or
       # a dropped structured result reads as "intake ran fine and produced
       # nothing" (contracts/credentials.md; contracts/clarification-schema.md
-      # FR-002). Runs before "Check whether the spec still needs
-      # clarification" so that step never computes `needed` from a
-      # coerced-empty array.
-      - name: Fail on agent API error
+      # FR-002). The verdict is recorded here — ahead of "Check whether the
+      # spec still needs clarification", so that step never computes `needed`
+      # from a coerced-empty array — but the run is failed by the job's last
+      # step, so an agent that DID create the spec, branch and PR before its
+      # terminal result went missing still gets that PR resolved and labeled
+      # instead of leaving orphaned pipeline state behind a red job.
+      - name: Validate agent result
+        id: agent-result
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent.outcome == 'success'
         run: |
           f="$RUNNER_TEMP/claude-execution-output.json"
@@ -601,13 +605,16 @@ jobs:
           if [ "$agent_ok" != "true" ]; then
             err=$(jq -r '[.[] | select(.type=="result")] | last | .result // "missing or invalid terminal result"' "$f" 2>/dev/null || echo "missing execution output file")
             echo "::error::wing-commander intake stage: the agent run did not complete with a valid result — $err"
-            exit 1
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           raw="$(jq -r '[.[] | select(.type=="result")] | last | .result // empty' "$f" 2>/dev/null || true)"
           if ! printf '%s' "$raw" | jq -e 'type=="object" and (.clarifications|type)=="array"' >/dev/null 2>&1; then
             echo "::error::wing-commander intake stage: the agent's structured result is missing a valid clarifications array."
-            exit 1
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          echo "valid=true" >> "$GITHUB_OUTPUT"
 
       # Deterministic read-back of what intake produced — feeds the stage's
       # declared outputs (the agent may have legitimately stopped without a
@@ -631,9 +638,15 @@ jobs:
       # Deterministic kind decision (contracts/callout-points.md rows 1/2):
       # the agent never decides whether to post an action-required callout,
       # it only authors the clarification-question content when needed.
+      # Deliberately NOT gated on a discoverable spec branch: the decision
+      # now comes from the structured output, which exists whether or not
+      # "Resolve created spec" found the branch, and an authored
+      # questionnaire dropped because a push failed is exactly the silent
+      # loss this feature exists to eliminate. Only the marker cross-check
+      # below needs a spec dir, so only it is guarded on one.
       - name: Check whether the spec still needs clarification
         id: clarification
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.created.outputs.spec-dir != ''
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent-result.outputs.valid == 'true'
         env:
           SPEC_DIR: ${{ steps.created.outputs.spec-dir }}
         run: |
@@ -652,16 +665,29 @@ jobs:
           # feeds `needed` above. Real markers are
           # '[NEEDS CLARIFICATION: <question>]' (spec-template.md); the
           # colon distinguishes a genuine marker from a prose mention of the
-          # bare token (#159).
-          if grep -q '\[NEEDS CLARIFICATION:' "$SPEC_DIR/spec.md"; then
-            marker=true
-          else
-            marker=false
-          fi
-          if [ "$structured" != "$marker" ]; then
-            empty_or_not=$([ "$structured" = "true" ] && echo "non-empty" || echo "empty")
-            match_or_not=$([ "$marker" = "true" ] && echo "a match" || echo "no match")
-            echo "⚠️ clarification-mismatch: structured output reported clarifications=$empty_or_not but the colon-form marker scan found $match_or_not in $SPEC_DIR/spec.md." >> "$GITHUB_STEP_SUMMARY"
+          # bare token (#159). Needs a spec on disk, so it is skipped when
+          # intake produced no discoverable spec.
+          if [ -n "$SPEC_DIR" ] && [ -f "$SPEC_DIR/spec.md" ]; then
+            if grep -q '\[NEEDS CLARIFICATION:' "$SPEC_DIR/spec.md"; then
+              marker=true
+            else
+              marker=false
+            fi
+            if [ "$structured" != "$marker" ]; then
+              empty_or_not=$([ "$structured" = "true" ] && echo "non-empty" || echo "empty")
+              match_or_not=$([ "$marker" = "true" ] && echo "a match" || echo "no match")
+              # Written to BOTH the step summary and stdout on purpose:
+              # $GITHUB_STEP_SUMMARY is a file rendered on the run summary
+              # page and is never mirrored into the job log, and
+              # watchdog.yml's "Collect: step summaries" step greps job
+              # logs (with ##[group] blocks — the only place this script's
+              # own source appears — stripped). Summary-only would make the
+              # `clarification-mismatch` sentinel unreachable
+              # (contracts/watchdog-sentinel.md).
+              msg="⚠️ clarification-mismatch: structured output reported clarifications=$empty_or_not but the colon-form marker scan found $match_or_not in $SPEC_DIR/spec.md."
+              echo "$msg"
+              echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+            fi
           fi
 
       # Deterministic render (contracts/clarification-schema.md): turns the
@@ -674,7 +700,16 @@ jobs:
           f="$RUNNER_TEMP/claude-execution-output.json"
           raw="$(jq -r '[.[] | select(.type=="result")] | last | .result // empty' "$f" 2>/dev/null || true)"
           printf '%s' "$raw" | jq -r '
-            (if type=="object" and (.clarifications|type)=="array" then .clarifications else [] end)
+            # Agent-authored text lands in markdown table cells, where a bare
+            # "|" opens a column and a newline ends the table — escape both
+            # rather than trusting the agent to have done it.
+            def cell: tostring | gsub("\\|"; "\\|") | gsub("[\r\n]+"; "<br>");
+            # The schema places no maxItems on options; past the last letter
+            # fall back to the ordinal so an 11th option cannot render the
+            # literal string "null" as its label.
+            ["A","B","C","D","E","F","G","H","I","J","K","L","M",
+             "N","O","P","Q","R","S","T","U","V","W","X","Y","Z"] as $letters
+            | (if type=="object" and (.clarifications|type)=="array" then .clarifications else [] end)
             | to_entries
             | map(
                 "## Question \(.key + 1)\n\n"
@@ -686,7 +721,7 @@ jobs:
                 + (
                     (.value.options // [])
                     | to_entries
-                    | map("| \(["A","B","C","D","E","F","G","H","I","J"][.key]) | \(.value.answer) | \(.value.implications // "—") |")
+                    | map("| \($letters[.key] // ((.key + 1) | tostring)) | \(.value.answer | cell) | \((.value.implications // "—") | cell) |")
                     | join("\n")
                     | (if length > 0 then . + "\n" else . end)
                   )
@@ -710,9 +745,13 @@ jobs:
       # already uses below — gh pr list --head takes an exact branch name,
       # not a glob, so the NNN-slug suffix (unknown at this point) must be
       # matched client-side.
+      # The spec-dir guard keeps the no-spec path callout-free: the
+      # clarification decision no longer requires a discoverable spec
+      # branch, so `needed == 'false'` alone would otherwise announce a spec
+      # PR that does not exist.
       - name: Resolve spec PR URL
         id: spec-pr
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'false'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'false' && steps.created.outputs.spec-dir != ''
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           NUM: ${{ steps.num.outputs.num }}
@@ -723,7 +762,7 @@ jobs:
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
       - name: Announce spec PR ready for review
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'false'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'false' && steps.created.outputs.spec-dir != ''
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ steps.ctx.outputs.token }}
@@ -778,3 +817,14 @@ jobs:
         with:
           model: ${{ inputs.model }}
           max-turns: ${{ inputs.max-turns }}
+
+      # FR-002's loud failure, deferred to the job's last step so everything
+      # above still runs (spec resolution, PR labelling, transcript upload,
+      # metrics). "Validate agent result" already emitted the ::error::
+      # annotation describing what was wrong; this step only turns that
+      # verdict into the red run.
+      - name: Fail on invalid agent result
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent.outcome == 'success' && steps.agent-result.outputs.valid != 'true'
+        run: |
+          echo "::error::wing-commander intake stage: failing the run — the agent result did not validate (see the error above)."
+          exit 1
