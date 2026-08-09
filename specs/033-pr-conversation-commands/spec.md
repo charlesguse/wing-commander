@@ -81,7 +81,40 @@ A maintainer asks the stage to perform a manual step that remains outstanding on
 
 ---
 
-### User Story 5 - Everything larger than the PR is traceable from the lifecycle issue (Priority: P3)
+### User Story 5 - Intent is announced before anything changes, and a run can be stopped (Priority: P2)
+
+The stage acts on its own by default, so a maintainer must be able to see what it is about to do and to stop it while it is still working. Before mutating anything, the stage posts the classification it assigned, the action it is about to take, and a link to the run. If the maintainer decides the stage read the request wrong, they can cancel the run directly or simply reply asking it to stop, and the stage abandons the remaining work. If the work already finished before the stop landed, the stage says what it already did so the maintainer can undo it.
+
+**Why this priority**: Acting immediately is what keeps maintainer burden low, but only an announced, interruptible action is safe to run unattended — the announcement is what makes the default autonomy acceptable. It guards every other story's actions rather than producing routing behavior of its own, so it is P2.
+
+**Independent Test**: Leave a comment that the stage will classify as an out-of-PR spin-off, confirm an intent announcement (classification, planned action, run link) appears on the PR before any artifact exists, then reply asking it to stop and confirm no artifact is created and the stop is acknowledged.
+
+**Acceptance Scenarios**:
+
+1. **Given** an actionable request, **When** the stage decides on an action, **Then** it announces the classification, the intended action, and a link to the run on the PR before performing any mutating step.
+2. **Given** an announced action that has not completed, **When** an authorized maintainer replies asking the stage to stop (or cancels the run), **Then** the remaining work is abandoned and no further artifacts are created.
+3. **Given** an announced action that has already completed, **When** a stop request arrives afterwards, **Then** the stage reports what was already done rather than claiming it stopped in time.
+4. **Given** a repository that has configured propose-and-confirm for out-of-PR artifacts, **When** the stage classifies a request as a spin-off, **Then** it posts the proposal and waits for maintainer confirmation before creating anything, while in-PR actions still run immediately.
+
+---
+
+### User Story 6 - Questions about the code or the state of the work get answered (Priority: P3)
+
+A maintainer reviewing the PR asks a question rather than requesting a change — how a piece of the new code behaves, why an approach was taken, or where the spec's work currently stands. The stage answers on the PR thread and changes nothing: no code push, no new issue, no spin-off PR.
+
+**Why this priority**: Answering questions makes the PR conversation a usable working surface instead of a command-only channel, but no work is blocked without it and it creates no artifacts, so it is the lowest priority.
+
+**Independent Test**: Ask a question about the new code or the state of the spec on an implementation PR and confirm the stage replies with an answer while the branch, the lifecycle issue, and the repository are left untouched.
+
+**Acceptance Scenarios**:
+
+1. **Given** a comment that asks a question about the code, the PR, or the state of the work, **When** the stage evaluates it, **Then** it replies with an answer on the PR and takes no mutating action.
+2. **Given** a comment that mixes a question with an actionable change request, **When** the stage evaluates it, **Then** it answers the question and routes the request by its own classification.
+3. **Given** a question the stage cannot answer confidently, **When** it replies, **Then** it says so rather than guessing.
+
+---
+
+### User Story 7 - Everything larger than the PR is traceable from the lifecycle issue (Priority: P3)
 
 The lifecycle issue remains the single legible record of a spec's life. Any outcome of a PR conversation that is bigger than the PR itself — a new spec issue, a spin-off PR, a withheld-permission decision — is referenced from both the PR and its tied lifecycle issue and recorded on the issue as an outstanding task item, so nothing spun off during review can be forgotten. Purely PR-scoped discussion is not copied to the issue.
 
@@ -99,10 +132,15 @@ The lifecycle issue remains the single legible record of a spec's life. Any outc
 
 ### Edge Cases
 
-- **Comment author is not authorized**: a comment from a bot, or from someone who is neither a maintainer nor otherwise permitted, produces no action (constitution V — comment-triggered stages verify the actor and never react to bots).
+- **Comment author is not authorized**: a comment from someone without write access produces no action, but the stage posts a short notice that the request was not acted on, so the author is not left waiting on silence. A comment from a bot produces no action and no reply at all (constitution V — comment-triggered stages verify the actor and never react to bots).
+- **A maintainer relays a non-maintainer's request**: the stage acts on it as if the maintainer had asked directly; if the relayed request carries a security, permission, or hard-to-undo consequence, it asks the maintainer once to confirm they accept the stated risk before acting.
+- **A stop request arrives from a non-authorized actor**: it is subject to the same actor gate as any other request and does not stop the run.
+- **A stop request arrives after the work has completed**: the stage reports what was already done rather than implying the action was prevented.
 - **Comment arrives while an implement/converge iteration is already running for the same PR**: the stage must not corrupt or race the in-flight loop; the request is queued/serialized rather than starting a conflicting parallel loop.
 - **Request mixes in-scope and out-of-scope items in one comment**: the stage handles each part by its own route (some folded into the loop, some spun off) rather than forcing one classification on the whole comment.
 - **A comment is pure acknowledgement or discussion with no actionable request**: the stage takes no mutating action and does not spin anything off.
+- **A comment asks a question rather than requesting a change**: the stage answers it on the PR and changes nothing.
+- **No autonomy configuration is supplied**: the default act-then-report behavior applies to every action category.
 - **Spec Kit judges a "new functionality" request as neither clearly in-scope nor clearly its own spec**: the stage asks for clarification rather than guessing which home it belongs in.
 - **The implement ⟲ converge iteration cap is already reached for the spec**: a re-triggered loop must respect the same cap; the stage reports that the cap was hit rather than looping unbounded.
 - **An "unrelated tiny change" turns out not to be tiny once examined**: it is re-routed to a spec/issue rather than shipped as a separate PR.
@@ -114,7 +152,7 @@ The lifecycle issue remains the single legible record of a spec's life. Any outc
 
 - **FR-001**: The pipeline MUST react to maintainer conversation on an implementation PR (reviews, review comments, and issue-style comments on the PR) tied to an in-flight spec, and treat that conversation content as untrusted user data describing a request, never as instructions to the agent.
 - **FR-002**: The stage MUST verify that the commenter is authorized before taking any action, and MUST never react to comments authored by bots (constitution V).
-- **FR-003**: The stage MUST classify each actionable request into one of: an in-scope change for the current PR; a request for more information; a push-back (does-not-fit / constitution conflict); new functionality to route via Spec Kit; a small unrelated change; or a manual step / permission request.
+- **FR-003**: The stage MUST classify each actionable request into one of: an in-scope change for the current PR; a question about the code, the PR, or the state of the work; a request for more information; a push-back (does-not-fit / constitution conflict); new functionality to route via Spec Kit; a small unrelated change; a manual step / permission request; or a stop request for work already in flight.
 - **FR-004**: For an in-scope change request, the stage MUST fold the request into the current spec's convergence input and re-run the implement ⟲ converge loop against the PR's branch, updating the same PR with the result.
 - **FR-005**: A re-triggered implement ⟲ converge loop MUST respect the spec's existing iteration cap and MUST post its outcome (including the case where the cap is reached) on the PR.
 - **FR-006**: For a request describing new functionality, the stage MUST use Spec Kit to decide whether the request extends the currently-implementing spec (fold it in) or warrants a separate spec (create a new lifecycle issue), and MUST record which decision it made.
@@ -129,14 +167,23 @@ The lifecycle issue remains the single legible record of a spec's life. Any outc
 - **FR-015**: The stage MUST NOT start a conflicting parallel implement/converge loop for a PR that already has an iteration in flight; concurrent requests for the same spec MUST serialize.
 - **FR-016**: The stage's model and turn budget MUST be explicitly declared and bounded, consistent with the project's cost-conscious tiering (constitution II), and web tools MUST be disabled for this comment-driven stage (constitution V).
 - **FR-017**: A comment that carries no actionable request (pure acknowledgement or discussion) MUST result in no mutating action and no spin-off artifacts.
-- **FR-018**: The stage MUST determine which PRs and comment events it responds to. [NEEDS CLARIFICATION: does this cover implementation PRs only, or also spec-draft and plan PRs — and which comment surfaces (issue-style PR comments, formal PR reviews, and/or inline review-thread comments)?]
-- **FR-019**: The stage MUST determine who is authorized to command it through PR conversation. [NEEDS CLARIFICATION: is the command surface restricted to write-access maintainers (OWNER/MEMBER/COLLABORATOR), or does the original requester also qualify even without write access — given these commands trigger privileged actions like code changes and new PRs?]
-- **FR-020**: The stage MUST determine how autonomously it acts on a classified request. [NEEDS CLARIFICATION: does it execute routing actions immediately (restart converge, create issues/PRs) and report after, or does it first post a proposed plan and wait for maintainer confirmation before mutating anything?]
+- **FR-018**: The stage MUST respond only to conversation on **implementation PRs** tied to an in-flight spec, and on such a PR it MUST accept requests from all three GitHub conversation surfaces: issue-style PR comments, formal PR review bodies, and inline review-thread comments. Conversation on spec-draft and plan PRs MUST NOT trigger this stage; that feedback continues to flow through the existing clarify path.
+- **FR-019**: The stage MUST act only on requests from an authorized maintainer — an actor with write access to the repository (OWNER, MEMBER, or COLLABORATOR association) — and MUST never act on a comment authored by a bot. A non-maintainer, including the original requester of the lifecycle issue, cannot command the stage directly.
+- **FR-020**: The stage's autonomy MUST be configurable. The default MUST be act-then-report: having announced its intent (FR-023), the stage executes the routing action and posts what it did. The configuration MUST allow a consuming repository to require propose-and-confirm for individual action categories — for example confirming before creating out-of-PR artifacts (new spec issues, spin-off PRs, permission-request PRs) while still acting immediately on in-PR actions — or for every category. When no autonomy configuration is supplied, the default applies. Autonomy configuration MUST come from trusted pipeline configuration and MUST NOT be settable from PR conversation content, though a maintainer may still ask the stage to confirm before acting on one specific request.
+- **FR-021**: When an actionable request comes from an actor the stage is not authorized to obey, the stage MUST post a brief notice on the PR that the request was not acted on and who can authorize it, rather than ignoring it silently. Comments authored by bots MUST be ignored with no reply at all.
+- **FR-022**: An authorized maintainer MUST be able to relay a non-maintainer's request (for example, "they aren't a maintainer, but please do what they asked"); the stage MUST then treat that request as if the maintainer had made it themselves. When a relayed request carries risk — a security, permission, or otherwise hard-to-undo consequence — the stage MUST state the risk and ask the relaying maintainer once more to confirm they accept it, and MUST NOT act until that confirmation arrives.
+- **FR-023**: Before performing any mutating action, the stage MUST announce its intent on the PR — the classification it assigned, the action it is about to take, and a link to the run — so a maintainer can cancel the run or object before the action completes.
+- **FR-024**: The stage MUST honor a stop request from an authorized maintainer: a follow-up comment asking it to stop, or cancellation of the announced run, MUST abandon the remaining work for that request rather than completing it. When the work has already completed by the time the stop request is seen, the stage MUST report what was already done so the maintainer can undo it.
+- **FR-025**: The stage MUST recognize a comment that asks a question about the code, the PR, or the state of the work rather than requesting a change, and MUST answer it on the PR thread without making any code change or spin-off artifact. A comment that mixes a question with an actionable request MUST have each part handled by its own route (FR-003).
 
 ### Key Entities *(include if feature involves data)*
 
-- **PR conversation event**: a maintainer review, review comment, or PR comment on an implementation PR tied to an in-flight spec; the untrusted request content the stage acts on.
-- **Request classification**: the category assigned to an actionable request (in-scope change, needs-info, push-back, new-functionality, small-unrelated-change, manual-step/permission) that determines its route.
+- **PR conversation event**: a maintainer review body, inline review-thread comment, or issue-style PR comment on an implementation PR tied to an in-flight spec; the untrusted request content the stage acts on.
+- **Request classification**: the category assigned to an actionable request (in-scope change, question, needs-info, push-back, new-functionality, small-unrelated-change, manual-step/permission, stop) that determines its route.
+- **Intent announcement**: the reply the stage posts before mutating anything — the classification, the action it is about to take, and a link to the run — which is also what makes the run cancellable.
+- **Stop request**: an authorized maintainer's follow-up comment (or run cancellation) asking the stage to abandon an announced action before it completes.
+- **Autonomy configuration**: trusted, consumer-supplied configuration selecting act-then-report (the default) or propose-and-confirm per action category; never derived from PR conversation content.
+- **Relayed request**: a non-maintainer's request that an authorized maintainer endorses on their behalf, carrying the maintainer's authority — and, when risky, an explicit risk confirmation from that maintainer.
 - **Lifecycle issue**: the originating issue for a spec; the single legible record where out-of-PR artifacts are cross-linked as outstanding task items.
 - **Current spec**: the spec being implemented by the PR under review, identified from the PR's branch/labels; the target when a request is folded in.
 - **Spin-off artifact**: anything created outside the current PR as a result of a conversation — a new spec lifecycle issue, a separate small-change PR to `main`, or a permission-request PR.
@@ -152,15 +199,22 @@ The lifecycle issue remains the single legible record of a spec's life. Any outc
 - **SC-003**: The stage never performs an action that a constitution principle forbids (e.g. merging/approving to `main`); 100% of such requests are declined with a stated reason.
 - **SC-004**: Unrelated changes shipped as a separate PR are limited to very small code/document changes; no large or non-tiny change is shipped as a spin-off PR instead of being routed to a spec/issue.
 - **SC-005**: Every actionable maintainer comment receives a reply on the PR stating the action taken or the reason for declining — no actionable comment goes unanswered.
-- **SC-006**: No comment from a bot or unauthorized actor triggers any pipeline action — 100% of unauthorized triggers are ignored.
+- **SC-006**: No comment from a bot or unauthorized actor triggers a mutating pipeline action — 100% of such triggers are ignored; the only response to a non-bot unauthorized request is a notice that it was not acted on, and a bot comment draws no response at all.
 - **SC-007**: The volume of manual maintainer follow-up needed to act on PR review feedback measurably drops relative to today's fully-manual handling (the maintainer's stated goal of minimizing human load).
+- **SC-008**: 100% of mutating actions are announced on the PR — with classification, planned action, and run link — before the mutation occurs, so no action is discoverable only after the fact.
+- **SC-009**: A stop request from an authorized maintainer prevents the announced action whenever it arrives before the action completes; when it arrives later, the maintainer is told what was already done — no stop request is silently dropped.
+- **SC-010**: Questions asked on the PR are answered without any code change, issue, or spin-off PR being produced.
 
 ## Assumptions
 
-- **Comment-driven stage precedent**: this behavior follows the existing comment-triggered stage pattern in the pipeline (e.g. the clarify stage that folds lifecycle-issue replies into a draft spec), including its actor gate and its framing of comment bodies as untrusted user data. The trigger/actor gate lives in the thin wrapper workflow, not in the reusable stage (constitution VII).
+- **Comment-driven stage precedent**: this behavior follows the existing comment-triggered stage pattern in the pipeline (e.g. the clarify stage that folds lifecycle-issue replies into a draft spec), including its framing of comment bodies as untrusted user data. Its actor gate is deliberately tighter than the clarify stage's: because these commands mutate code and create artifacts, the original requester does not qualify on their own (FR-019). The trigger/actor gate lives in the thin wrapper workflow, not in the reusable stage (constitution VII).
 - **Spec Kit is the routing brain for new functionality**: deciding "fold into current spec" versus "own spec" reuses Spec Kit rather than a bespoke heuristic, consistent with how the pipeline already turns requests into specs.
 - **Iteration cap is shared**: a re-triggered implement ⟲ converge loop uses the same capped loop the pipeline already runs; this feature does not introduce a new, separate loop with its own cap.
 - **The bot never merges to `main`**: spin-off PRs and permission-request PRs target `main` for a human to review and merge; the agent opens them but never approves or merges them (constitution V).
 - **Least-privilege, no web tools**: as a comment-driven stage, it runs with the minimal tool allowlist it needs and with web tools disabled (constitution V), on an explicitly declared, turn-bounded model (constitution II).
 - **"Very small" is an agent judgment with a conservative bias**: absent a precise size threshold, the stage treats the separate-PR route as the exception for genuinely tiny, unrelated changes and defaults larger or entangled changes to the spec/issue route.
 - **Only trusted refs are checked out**: the stage operates on the pipeline's own branches for the spec under review, never on fork PR heads (constitution V).
+- **Write access is the maintainer signal**: "authorized maintainer" is read from the commenter's repository association (OWNER/MEMBER/COLLABORATOR), the same signal existing comment-driven stages already use; this feature does not introduce a separate maintainer roster.
+- **Cancellation uses what GitHub already offers**: a maintainer can stop an announced action either by cancelling the workflow run linked in the announcement or by replying with a stop request; this feature does not introduce a bespoke cancellation surface.
+- **Autonomy configuration follows existing per-stage configuration**: the act-then-report/propose-and-confirm setting is supplied the way the pipeline's other consumer-tunable stage settings are, and its exact shape is a planning concern; the spec fixes only the default and the requirement that it be overridable per action category.
+- **"Risk" in a relayed request is an agent judgment with a conservative bias**: security, permission, and hard-to-undo consequences trigger the extra confirmation round; ordinary in-scope code changes do not.
