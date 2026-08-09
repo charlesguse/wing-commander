@@ -715,46 +715,61 @@ jobs:
           # colon distinguishes a genuine marker from a prose mention of the
           # bare token (#159). Needs a spec on disk, so it is skipped when
           # intake produced no discoverable spec.
+          #
+          # The two operands come from DIFFERENT places and can disagree:
+          # $SPEC_DIR is derived from `git ls-remote` (a read of the REMOTE,
+          # see "Resolve created spec"), while -f tests the LOCAL workspace.
+          # An agent that pushed the spec branch but left the working tree
+          # somewhere else yields a non-empty SPEC_DIR and no local spec.md.
+          # Skipping silently there would retire the veto in exactly the
+          # situation it exists for and announce "Review the spec PR" over a
+          # spec.md that still carries markers — a verifier sitting green
+          # while the path it guards is not the path that ran. So the skip
+          # is always SAID, matching clarify.yml.
           if [ -n "$SPEC_DIR" ] && [ -f "$SPEC_DIR/spec.md" ]; then
             if grep -q '\[NEEDS CLARIFICATION:' "$SPEC_DIR/spec.md"; then
               marker=true
             else
               marker=false
             fi
-            if [ "$structured" != "$marker" ]; then
-              empty_or_not=$([ "$structured" = "true" ] && echo "non-empty" || echo "empty")
-              match_or_not=$([ "$marker" = "true" ] && echo "a match" || echo "no match")
-              # Written to BOTH the step summary and stdout on purpose:
-              # $GITHUB_STEP_SUMMARY is a file rendered on the run summary
-              # page and is never mirrored into the job log, and
-              # watchdog.yml's "Collect: step summaries" step greps job
-              # logs (with ##[group] blocks — the only place this script's
-              # own source appears — stripped). Summary-only would make the
-              # sentinel unreachable (contracts/watchdog-sentinel.md).
-              msg="⚠️ WC-SENTINEL: clarification-mismatch — structured output reported clarifications=$empty_or_not but the colon-form marker scan found $match_or_not in $SPEC_DIR/spec.md."
-              echo "$msg"
-              echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          else
+            marker="$structured"   # nothing to compare against; never a mismatch
+            echo "Cross-check skipped: no readable ${SPEC_DIR:-<unset>}/spec.md." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
-              # The cross-check gets a VETO, never a vote. Only one direction
-              # of disagreement is dangerous:
-              #   structured empty + markers present -> "Review the spec PR"
-              #     is about to be announced for a spec that visibly still
-              #     carries unresolved questions, and whoever merges that PR
-              #     merges the markers with it. That is the silent-loss class
-              #     this whole feature exists to close, and a watchdog
-              #     sentinel is a report, not a gate.
-              #   structured non-empty + no marker -> the questionnaire posts
-              #     with real, answerable questions. A warning is enough.
-              # Blocking is not a third callout branch competing with the
-              # other two: it posts nothing and fails the run, so `needed`
-              # remains the single source deciding WHICH callout fires
-              # (FR-004) and the two posting steps stay mutually exclusive
-              # (#159's structural property). The cross-check still never
-              # synthesizes a question from marker text (FR-007).
-              if [ "$structured" = "false" ] && [ "$marker" = "true" ]; then
-                echo "blocked=true" >> "$GITHUB_OUTPUT"
-                echo "::error::wing-commander intake stage: refusing to announce the spec PR as ready — the structured result reported no open questions but $SPEC_DIR/spec.md still contains colon-form [NEEDS CLARIFICATION: markers. Resolve the markers or fix the agent's result; do not merge this spec PR as-is."
-              fi
+          if [ "$structured" != "$marker" ]; then
+            empty_or_not=$([ "$structured" = "true" ] && echo "non-empty" || echo "empty")
+            match_or_not=$([ "$marker" = "true" ] && echo "a match" || echo "no match")
+            # Written to BOTH the step summary and stdout on purpose:
+            # $GITHUB_STEP_SUMMARY is a file rendered on the run summary
+            # page and is never mirrored into the job log, and
+            # watchdog.yml's "Collect: step summaries" step greps job
+            # logs (with ##[group] blocks — the only place this script's
+            # own source appears — stripped). Summary-only would make the
+            # sentinel unreachable (contracts/watchdog-sentinel.md).
+            msg="⚠️ WC-SENTINEL: clarification-mismatch — structured output reported clarifications=$empty_or_not but the colon-form marker scan found $match_or_not in $SPEC_DIR/spec.md."
+            echo "$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+
+            # The cross-check gets a VETO, never a vote. Only one direction
+            # of disagreement is dangerous:
+            #   structured empty + markers present -> "Review the spec PR"
+            #     is about to be announced for a spec that visibly still
+            #     carries unresolved questions, and whoever merges that PR
+            #     merges the markers with it. That is the silent-loss class
+            #     this whole feature exists to close, and a watchdog
+            #     sentinel is a report, not a gate.
+            #   structured non-empty + no marker -> the questionnaire posts
+            #     with real, answerable questions. A warning is enough.
+            # Blocking is not a third callout branch competing with the
+            # other two: it posts nothing and fails the run, so `needed`
+            # remains the single source deciding WHICH callout fires
+            # (FR-004) and the two posting steps stay mutually exclusive
+            # (#159's structural property). The cross-check still never
+            # synthesizes a question from marker text (FR-007).
+            if [ "$structured" = "false" ] && [ "$marker" = "true" ]; then
+              echo "blocked=true" >> "$GITHUB_OUTPUT"
+              echo "::error::wing-commander intake stage: refusing to announce the spec PR as ready — the structured result reported no open questions but $SPEC_DIR/spec.md still contains colon-form [NEEDS CLARIFICATION: markers. Resolve the markers or fix the agent's result; do not merge this spec PR as-is."
             fi
           fi
 

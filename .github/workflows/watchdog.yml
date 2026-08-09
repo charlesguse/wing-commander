@@ -666,7 +666,20 @@ jobs:
             done
 
             # Legacy bare-word pass: still first-match-wins, deliberately.
-            match_line="$(printf '%s' "$runtime" | grep -Eim1 "$sentinels" || true)"
+            #
+            # Emitted-token lines are removed FIRST so the two passes are
+            # disjoint. docs/agent-friendly-workflows.md recommends writing
+            # sentinels as "WC-SENTINEL: stalled", and `stalled`, `rejected`,
+            # `denied` and `abandon` are all in the alternation above — so a
+            # line in the recommended form matched BOTH passes. That cost
+            # twice: it emitted two signals with the same {job, sentinel}
+            # identity and therefore the same id (one event, duplicated
+            # evidence), and it spent this pass's single -m1 match on a line
+            # already reported, masking any unrelated genuine stall word
+            # later in the same job. Masking is the exact failure the token
+            # pass was introduced to escape; re-creating it here for the
+            # legacy pass would just move the blind spot.
+            match_line="$(printf '%s' "$runtime" | grep -Fv 'WC-SENTINEL: ' | grep -Eim1 "$sentinels" || true)"
             [ -n "$match_line" ] || continue
             match="$(printf '%s' "$match_line" | grep -Eio "$sentinels" | head -1)"
             # Carry the matched line and the job's own conclusion so the

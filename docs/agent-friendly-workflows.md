@@ -77,6 +77,14 @@ narratives about jobs that had succeeded in 9 seconds.
 - **Never grep raw job logs.** Strip the `##[group]…##[endgroup]` echo blocks
   first, or better, match only an unmistakable emitted token
   (`WC-SENTINEL: stalled`) that cannot appear in unexecuted source text.
+- **Keep a token pass and a bare-word pass disjoint.** Recommending the token
+  form above while a legacy alternation still matched `stalled`, `rejected`,
+  `denied` and `abandon` meant a line written exactly as advised matched
+  *both* — emitting two signals with one identity, and spending the bare-word
+  pass's one-match-per-job budget on an event already reported, so an
+  unrelated genuine stall word later in the same log was never collected. Two
+  scanners over one text need an explicit rule about which owns a line; here
+  the token pass wins and the legacy pass filters those lines out first.
 - **Give the judge the contradicting fact.** A signal that says "job X
   stalled" must carry job X's own conclusion and duration plus the quotable
   matched line — and the agent must be told a stall claim about a

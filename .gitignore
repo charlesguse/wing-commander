@@ -4,3 +4,8 @@
 # Claude Code local settings/credentials — never commit agent-local state
 .claude/settings.local.json
 .claude/.credentials.json
+
+# Byte-cache from the verifier scripts importing wc_shell_harness. Generated
+# on every local gate run; only ever debris in a commit.
+__pycache__/
+*.pyc

@@ -74,11 +74,29 @@ jobs:
       # assertion in lint-workflows.yml Gate 1 is the only thing that can
       # detect GitHub rejecting the key, and it sees main only, post-merge.
       #
-      # Pass 1 also covers all TEN stage files, with shellcheck/pyflakes off:
+      # Pass 1 covers every published stage with shellcheck/pyflakes off:
       # watchdog.yml and auto-update-spec-kit.yml carry 14 of the 30 bindings
-      # and are absent from pass 2's hardcoded list (issue #149), so without
-      # this pass nothing would lint them. Their run: blocks stay out of the
-      # shellcheck pass until #149 lands.
+      # and are absent from pass 2's list (issue #149), so without this pass
+      # nothing would lint them. Their run: blocks stay out of the shellcheck
+      # pass until #149 lands.
+      #
+      # The pass-1 stage set is DERIVED, not listed. A hardcoded list is what
+      # caused #149 in the first place, and a list here would mean the 11th
+      # stage a future spec adds is born exempt from the only schema/syntax
+      # lint it gets before release — silently, since its bindings would go
+      # uncounted too and the seen-vs-bindings check would still balance.
+      # The derivation is shared with lint-workflows.yml gate 7 rather than
+      # re-approximated here: .github/scripts/wc_published_stages.py, whose
+      # agreement with gate 7's inline copy verify-gate-7.py asserts on every
+      # PR. It parses the YAML rather than grepping for the key, because a
+      # grep silently misses a stage written in flow style or at a different
+      # indentation — and such a stage's `deployment:` lines would go
+      # uncounted too, so the diagnostics-vs-bindings balance below would
+      # still come out even. That is #149 again wearing a different hat.
+      #
+      # Pass 2's list stays explicit — it is an opt-IN to shellcheck, and
+      # #149 is the ticket for widening it — but the exemption is now stated
+      # rather than implied, and a new stage cannot join it by omission.
       #
       # SHELLCHECK_OPTS: the gate blocks on real problems (warning+), not
       # style/info nits — actionlint forwards the variable to its embedded
@@ -90,10 +108,32 @@ jobs:
           set -uo pipefail
           bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) 1.7.7 /tmp
 
-          all_stages=(.github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase,watchdog,auto-update-spec-kit}.yml)
+          if ! mapfile -t all_stages < <(python3 .github/scripts/wc_published_stages.py); then
+            echo "::error::could not derive the published stage set; pass 1 has nothing to lint."
+            exit 1
+          fi
           shell_linted=(.github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase}.yml .github/workflows/release.yml)
+          # Stages knowingly outside pass 2 (issue #149). Anything published
+          # and NOT in shell_linted must be listed here, so the exemption is
+          # a decision someone wrote down rather than a file nobody added.
+          shell_exempt=(.github/workflows/watchdog.yml .github/workflows/auto-update-spec-kit.yml)
           known='unexpected key "deployment" for "environment" section'
           fail=0
+
+          # Deriving the set means an empty derivation must not read as a
+          # clean pass — the same reasoning as gate 7's stages == 0 guard.
+          if [ "${#all_stages[@]}" -eq 0 ]; then
+            echo "::error::no workflow declares on.workflow_call — pass 1 linted nothing. Either the published stages moved or this derivation has broken."
+            exit 1
+          fi
+
+          for f in "${all_stages[@]}"; do
+            case " ${shell_linted[*]} ${shell_exempt[*]} " in
+              *" $f "*) ;;
+              *) echo "::error::$f is a published stage but is in neither the shellcheck list nor the declared exemption list. Add it to shell_linted, or to shell_exempt with a note on the tracking issue — a new stage must not become exempt by being forgotten (#149)."
+                 fail=1 ;;
+            esac
+          done
 
           # Pass 1 — schema/syntax over every stage file. Written under
           # /tmp (like actionlint itself, above): $GITHUB_WORKSPACE is the

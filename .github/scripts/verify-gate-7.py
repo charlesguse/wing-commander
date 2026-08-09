@@ -23,6 +23,7 @@ Usage: python3 .github/scripts/verify-gate-7.py
 """
 import io
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -209,6 +210,54 @@ CASES = [
 ]
 
 
+def check_derivations_agree(gate_path):
+    """Gate 7's inline stage detection vs the one release.yml uses.
+
+    Two places need to know which workflows are published stages: this gate
+    (which checks their bindings on every PR) and release.yml's actionlint
+    pass (which is the only pre-release lint watchdog.yml and
+    auto-update-spec-kit.yml get). They must not answer differently — a
+    stage visible to one and invisible to the other is exactly issue #149,
+    where a file went unlinted for a whole release while the gate reported
+    success.
+
+    So release.yml calls wc_published_stages.py, and this asserts that module
+    still agrees with the gate's own inline logic on the real repository.
+    Comparing on the real fleet rather than on a fixture is deliberate: a
+    fixture would only ever exercise the shapes someone thought to write
+    down, and the shapes nobody thought of are the whole risk.
+    """
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    try:
+        from wc_published_stages import published_stages
+    except ImportError as exc:
+        return [("shared stage derivation", [f"cannot import "
+                 f"wc_published_stages ({exc}); release.yml's pass 1 depends "
+                 f"on it"], "")]
+
+    module_stages = published_stages()
+    proc = subprocess.run([sys.executable, gate_path], cwd=".",
+                          capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
+    out = (proc.stdout or "") + (proc.stderr or "")
+    m = re.search(r"Gate 7: (\d+) published stage\(s\)", out)
+    if not m:
+        return [("shared stage derivation",
+                 ["could not read the stage count out of Gate 7's own output; "
+                  "its summary line has changed shape"], out.strip())]
+
+    gate_count = int(m.group(1))
+    if gate_count != len(module_stages):
+        return [("shared stage derivation", [
+            f"Gate 7 sees {gate_count} published stage(s) but "
+            f"wc_published_stages.py (which release.yml's actionlint pass "
+            f"uses) sees {len(module_stages)}: {module_stages}. One of them "
+            f"is about to check a file the other does not know exists."], "")]
+    print(f"ok    the shared stage derivation agrees with Gate 7 "
+          f"({gate_count} published stages)")
+    return []
+
+
 def main():
     if not os.path.isfile(LINT_WORKFLOW):
         sys.exit(f"::error::run this from the repository root; {LINT_WORKFLOW} not found.")
@@ -219,6 +268,7 @@ def main():
     io.open(gate_path, "w", encoding="utf-8").write(gate_src)
 
     failures = []
+    failures += check_derivations_agree(gate_path)
     try:
         for name, files, expect_fail, must_mention in CASES:
             case_dir = tempfile.mkdtemp(prefix="case_", dir=root)

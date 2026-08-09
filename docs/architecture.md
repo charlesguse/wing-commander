@@ -239,7 +239,19 @@ The two rules worth carrying in your head:
 
 `.github/scripts/verify-clarification-gating.py` (lint-workflows Gate 8)
 executes the shipped decision shell against synthetic agent transcripts and
-asserts which callouts fire on every path.
+asserts which callouts fire on every path — and, separately, that the run
+goes red when the cross-check vetoes. Blocking both callouts without failing
+the run is the worse half of that defect: the requester sees only the
+run-started comment while a marker-carrying spec PR sits in the review queue.
+
+`.github/scripts/verify-sentinel-collector.py` (lint-workflows Gate 9) does
+the same for the other end of the loop — watchdog.yml's `Collect: step
+summaries`, which is what turns the sentinels these stages emit into signals
+the watchdog can reason about.
+
+Both import `.github/scripts/wc_shell_harness.py`, which holds the mechanics
+of running an extracted `run:` block the way the runner would (see its
+docstring for the three ways that goes wrong off ubuntu).
 
 ---
 
