@@ -569,6 +569,25 @@ jobs:
       - name: Gate 9 — the watchdog's sentinel collector sees what stages emit
         run: python3 .github/scripts/verify-sentinel-collector.py
 
+      # Gate 10 — the gates themselves are wired up. Every gate above is a
+      # file in .github/scripts that some `run:` line has to name, and
+      # verify-denied-tool-collector.sh has already shown what happens when
+      # one is not named: it sat orphaned for weeks, drifted out of sync with
+      # the filter it checked, and still printed "all assertions passed" when
+      # run by hand, so it read as evidence while proving nothing. PR #158
+      # wired that one script up; this stops the next one landing the same
+      # way, and also catches the reverse — a gate step pointing at a file
+      # that has been moved or renamed, whose name in the job list implies a
+      # check that is not happening.
+      #
+      # The rule is a naming convention read off the directory, not a list of
+      # gate names: a list is what #149 was, where forgetting to add a file is
+      # invisible and a new one is born exempt. Mentioning a script in a
+      # comment does not count as running it — that is how an orphan would
+      # hide from this check.
+      - name: Gate 10 — every check is wired to a workflow, and every wire lands
+        run: python3 .github/scripts/verify-gate-wiring.py
+
   # Gate 4 — behavioral tests for the auto-update-spec-kit stage pair. Gates
   # 1-3 are static: they prove a workflow parses, registers, and is permitted
   # to run. None of them can see that a step's shell logic is simply wrong.
