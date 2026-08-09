@@ -31,14 +31,14 @@ permissions: {}
 jobs:
   # Default tier from vars.WING_COMMANDER_IMPLEMENT_MODEL (claude-sonnet-5 when
   # unset); the model:opus label on the lifecycle issue escalates to
-  # claude-opus-4-8 regardless of the variable.
+  # claude-opus-5 regardless of the variable.
   resolve-model:
     runs-on: ubuntu-latest
     permissions:
       issues: read
     outputs:
       model: ${{ steps.tier.outputs.tier }}
-      escalation-model: ${{ vars.WING_COMMANDER_IMPLEMENT_ESCALATION_MODEL || 'claude-opus-4-8' }}
+      escalation-model: ${{ vars.WING_COMMANDER_IMPLEMENT_ESCALATION_MODEL || 'claude-opus-5' }}
       summary-model: ${{ vars.WING_COMMANDER_SUMMARY_MODEL || 'claude-haiku-4-5' }}
     steps:
       - name: Resolve model tier
@@ -50,7 +50,7 @@ jobs:
         run: |
           tier="${MODEL_VAR:-claude-sonnet-5}"
           if gh issue view "$ISSUE" -R "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name' | grep -qx 'model:opus'; then
-            tier="claude-opus-4-8"
+            tier="claude-opus-5"
           fi
           echo "tier=$tier" >> "$GITHUB_OUTPUT"
           echo "Implementation model for this cycle: $tier" >> "$GITHUB_STEP_SUMMARY"

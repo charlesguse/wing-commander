@@ -7,7 +7,7 @@
 # dispatch next-workflow (converged=true); one present ⇒ not converged ⇒
 # re-dispatch self-workflow with iteration+1, or at the max-iterations cap
 # post the remaining work and dispatch next-workflow (converged=false). An
-# outright pass failure retries the same iteration once on claude-opus-4-8;
+# outright pass failure retries the same iteration once on claude-opus-5;
 # if the retry also fails (or the pass already ran on opus) the spec is
 # marked stalled. Empty chaining inputs ⇒ report to the issue and stop —
 # any stage runs standalone (FR-002).
@@ -54,7 +54,7 @@ on:
         description: "Model for the one-tier-up retry after a failed attempt (constitution II escalation default)"
         type: string
         required: false
-        default: claude-opus-4-8
+        default: claude-opus-5
       summary-model:
         description: "Model for the progress-comment and metrics-summary steps (constitution II tiering default)"
         type: string

@@ -165,7 +165,7 @@ serialize, different specs run in parallel. Intake serializes globally
 |---|---|
 | Triage, diff summaries, labels | `claude-haiku-4-5` |
 | Watchdog diagnosis | `claude-opus-5` (evidence adjudication under a strict schema — not the triage tier; see issue #124) |
-| specify / clarify | `claude-opus-4-8` (constitution v1.1.0: spec quality is bought up front) |
+| specify / clarify | `claude-opus-5` (constitution v1.1.0: spec quality is bought up front) |
 | plan / tasks | `claude-sonnet-5` |
 | implement / converge | stage `model` input (default `claude-sonnet-5`); this repo's wrapper wires `vars.WING_COMMANDER_IMPLEMENT_MODEL` and the `model:opus` label opt-in into it |
 
@@ -375,7 +375,7 @@ vars.WING_COMMANDER_MAX_ITERATIONS`).
 5. **Failure ≠ non-convergence** (FR-013): an outright pass failure (step
    fails, or `spec-meta.json` didn't advance as instructed) auto-retries the
    same iteration once, one model tier up (`claude-sonnet-5` →
-   `claude-opus-4-8`). A failed retry — or a failure already on the top
+   `claude-opus-5`). A failed retry — or a failure already on the top
    tier — marks the spec `stalled` (label, `spec-meta.json`, issue comment);
    restart is manual: re-dispatch the workflow with the same iteration.
 

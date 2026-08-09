@@ -805,7 +805,7 @@ Common to every stage below:
 
 | | |
 |---|---|
-| Inputs | `issue-number` (number, required); `model` (string, `claude-opus-4-8`); `max-turns` (number, `50`) |
+| Inputs | `issue-number` (number, required); `model` (string, `claude-opus-5`); `max-turns` (number, `50`) |
 | Secrets | credentials + App (all stages; omitted below) |
 | Preconditions | spec-kit present in your checkout |
 | Side effects | `spec-draft/NNN-slug` branch (prefix configurable via `WING_COMMANDER_SPEC_DRAFT_PREFIX`, default `spec-draft/`) + draft spec PR to your default branch; `specs/NNN-slug/` with `spec.md`, `spec-meta.json`; `spec:NNN-slug` + `stage:spec` labels; clarification-questions or ready-for-review comment |
@@ -837,7 +837,7 @@ jobs:
 
 | | |
 |---|---|
-| Inputs | `issue-number` (number, required); `comment-id` (number, required); `model` (string, `claude-opus-4-8`); `max-turns` (number, `40`) |
+| Inputs | `issue-number` (number, required); `comment-id` (number, required); `model` (string, `claude-opus-5`); `max-turns` (number, `40`) |
 | Preconditions | spec-kit present; issue carries a `spec:NNN-slug` label; open `spec-draft/NNN-slug` branch (prefix configurable via `WING_COMMANDER_SPEC_DRAFT_PREFIX`, default `spec-draft/`) |
 | Side effects | commits to the draft branch (PR updates automatically); 👀 reaction on the comment; updated PR body; status comment on the issue |
 | Outputs | none |
@@ -895,7 +895,7 @@ itself.
 |---|---|
 | Inputs | `spec-dir` (string, required); `issue-number` (number, required); `iteration` (number, required); `model` (string, `claude-sonnet-5`); `max-turns` (number, `180`); `max-iterations` (number, `5`); `self-workflow` (string, `""`); `next-workflow` (string, `""`) |
 | Preconditions | `spec.md`/`plan.md`/`tasks.md`/`spec-meta.json` on the `spec/NNN-slug` branch; spec-meta agrees with the inputs; `(stage, iteration)` is the next expected step |
-| Side effects | ONE implement ⟲ converge cycle committed to the spec branch; per-cycle progress comment; tier-up retry on failure (→ `claude-opus-4-8`); stall marking + runbook comment on exhausted retry; dispatches `self-workflow` (next iteration) or `next-workflow` (finalize) when configured, otherwise reports to the issue and stops |
+| Side effects | ONE implement ⟲ converge cycle committed to the spec branch; per-cycle progress comment; tier-up retry on failure (→ `claude-opus-5`); stall marking + runbook comment on exhausted retry; dispatches `self-workflow` (next iteration) or `next-workflow` (finalize) when configured, otherwise reports to the issue and stops |
 | Outputs | `converged` (boolean; empty on failure/skip) |
 
 One call = one cycle. The loop exists only through `self-workflow`

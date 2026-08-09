@@ -78,12 +78,12 @@ create them now so the stubs' documentation stays true):
 |---|---|---|
 | `WING_COMMANDER_PLAN_REVIEW` | `pr` | `pr` = open a plan PR and wait for a human merge; `auto` = commit the plan directly and dispatch the tasks stage |
 | `WING_COMMANDER_TASKS_REVIEW` | `auto` | `auto` = commit tasks.md straight to the spec branch; `pr` = open a tasks PR |
-| `WING_COMMANDER_IMPLEMENT_MODEL` | `claude-sonnet-5` | Model for implement/converge; set `claude-opus-4-8` for hard specs |
-| `WING_COMMANDER_SPEC_MODEL` | `claude-opus-4-8` | Model for the spec/clarify tier (intake and clarify stages) |
+| `WING_COMMANDER_IMPLEMENT_MODEL` | `claude-sonnet-5` | Model for implement/converge; set `claude-opus-5` for hard specs |
+| `WING_COMMANDER_SPEC_MODEL` | `claude-opus-5` | Model for the spec/clarify tier (intake and clarify stages) |
 | `WING_COMMANDER_PLAN_MODEL` | `claude-sonnet-5` | Model for the plan/tasks tier (plan, tasks, and rebase stages) |
 | `WING_COMMANDER_SUMMARY_MODEL` | `claude-haiku-4-5` | Model for the triage/summary tier (finalize, cleanup, and implement's progress comments) |
 | `WING_COMMANDER_DIAGNOSE_MODEL` | `claude-opus-5` | Model for the watchdog's diagnose step. Its own knob, not the summary tier's — diagnose adjudicates multi-signal evidence against a strict schema and needs the headroom |
-| `WING_COMMANDER_IMPLEMENT_ESCALATION_MODEL` | `claude-opus-4-8` | Model for implement's one-tier-up retry after a failed attempt |
+| `WING_COMMANDER_IMPLEMENT_ESCALATION_MODEL` | `claude-opus-5` | Model for implement's one-tier-up retry after a failed attempt |
 | `WING_COMMANDER_SPEC_DRAFT_PREFIX` | `spec-draft/` | Branch prefix for the draft spec branch (default `spec-draft/`) |
 | `WING_COMMANDER_SPEC_PREFIX` | `spec/` | Branch prefix for the persistent spec branch (default `spec/`) |
 | `WING_COMMANDER_PLAN_PREFIX` | `plan/` | Branch prefix for the plan branch (default `plan/`) |
@@ -120,7 +120,7 @@ Create these labels (Issues → Labels):
 | `stage:implement` | Implement ⟲ converge loop running |
 | `stage:review` | Final PR awaiting human review |
 | `stage:done` | Lifecycle complete |
-| `model:opus` | Opt this spec's implementation into `claude-opus-4-8` |
+| `model:opus` | Opt this spec's implementation into `claude-opus-5` |
 
 `spec:<NNN-slug>` and `stage:stalled` labels are created on the fly by the
 pipeline — no need to pre-create those.
@@ -136,7 +136,7 @@ gh label create stage:tasks     --color 1D76DB --description "Tasks being genera
 gh label create stage:implement --color 1D76DB --description "Implement/converge loop running"
 gh label create stage:review    --color FBCA04 --description "Final PR awaiting review"
 gh label create stage:done      --color 5319E7 --description "Lifecycle complete"
-gh label create model:opus      --color D93F0B --description "Use claude-opus-4-8 for implementation"
+gh label create model:opus      --color D93F0B --description "Use claude-opus-5 for implementation"
 ```
 
 ## 5. Smoke test
