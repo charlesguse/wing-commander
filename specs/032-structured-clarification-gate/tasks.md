@@ -208,6 +208,67 @@ disagree.
   feature exists to remove. The gate is gone; only the cross-check (which
   reads a file) is guarded on a spec dir, and the spec-PR-ready callout
   gains its own `spec-dir != ''` so the no-spec path stays callout-free.
+- **T002 follow-up (2026-08-08), correcting the entry above.** "so the
+  no-spec path stays callout-free" was wrong: the guard was re-added to the
+  `needed == 'false'` arm only, leaving the questionnaire arm ungated. The
+  "no discernible feature request" STOP (prompt step 2) still returns a
+  schema-conforming result — `--json-schema` guarantees it — and a non-empty
+  `clarifications` there is plausible, so intake could post "Answer the open
+  clarification questions" on an issue with no `spec:` label, where
+  `wing-commander-2-clarify.yml` can never fire on the reply. A dead-end
+  callout. Re-adding `spec-dir != ''` to the questionnaire arm would have
+  simply restored the silent drop this entry describes, because an empty
+  `spec-dir` means *either* "no spec attempted" *or* "spec attempted, push
+  failed" and no deterministic step can tell them apart. Fixed by giving
+  intake's schema the `specified` boolean (the counterpart to clarify's
+  `answered`, which `research.md` had rejected on the now-corrected premise
+  that this path was already gated out): `needed = specified && count > 0`,
+  the spec-PR arm additionally takes `specified == 'true'`, and the
+  questionnaire arm stays free of any `spec-dir` test. Regression-tested by
+  `.github/scripts/verify-clarification-gating.py` (lint-workflows Gate 8),
+  whose mutation check reintroduces this exact defect and asserts the suite
+  fails.
+- **Second review pass (2026-08-08), four more defects of the same family.**
+  All four were invisible to gates 1-3 and are now covered by Gate 8's
+  scenario table and its four mutation checks:
+  1. *The sentinel could never fire.* `clarification-mismatch` was added to
+     `watchdog.yml`'s bare-word `sentinels=` alternation, which is scanned
+     `grep -Eim1` — one match per job. `denied` is in that same alternation
+     and the intake prompt actively coaches the agent through permission
+     denials, so any such line earlier in the job masked the clarification
+     signal permanently. Moved to an emitted-token pass
+     (`WC-SENTINEL: <token>`, one signal per distinct token per job), which
+     `docs/agent-friendly-workflows.md` had prescribed all along.
+  2. *The cross-check logged and proceeded.* An agent that left colon-form
+     markers in the committed `spec.md` (prompt step 3 tells it to) while
+     returning `clarifications: []` got "Review the spec PR" announced and
+     the markers merged. The cross-check now holds a **veto** in that one
+     direction: `blocked=true`, both readiness steps suppressed, run red.
+     It still never chooses a callout, so FR-004 and #159's structural
+     property hold — a veto is strictly less power than a vote.
+  3. *`clarify.yml` grepped `$SPEC_DIR/spec.md` with no existence guard*
+     while `intake.yml` had one. An unreadable file yielded `marker=false`
+     and a spurious mismatch on every run that legitimately had open
+     questions. Guard added; the asymmetry was unintentional.
+  4. *jq's `//` treated `""` as present.* The schema permits `context` and
+     `implications` to be empty strings, so a callout could carry a bare
+     `**Context**:` header and an empty Implications cell. Replaced with a
+     `blank` helper covering null/absent/empty/whitespace.
+- **Declined, with reasoning recorded in `contracts/clarification-schema.md`:**
+  accepting a bare `clarifications` array the way `watchdog.yml`'s diagnose
+  read-back does. That precedent's payload carries no discriminator, so
+  unwrapping loses nothing; here it would mean fabricating
+  `specified`/`answered` — the exact field whose absence caused the
+  dead-end-callout defect. Degrade a payload, never a discriminator. The
+  error message now names the shape received (`received: array`) so the
+  red run is quick to act on.
+- **Corrected, not code:** `clarify.yml`'s "no side effects after this gate"
+  justification for its in-place `exit 1`. The fold is already committed,
+  pushed, and the PR body rewritten by that point — those are *upstream*, so
+  failing in place cannot strand them. Intake splits its exit because intake
+  has remaining *steps* whose work would be skipped. The real residue is
+  user-facing (the requester sees only the 👀 reaction), which the error
+  message now states explicitly.
 - **T002/T003 render algorithm:** `["A"…"J"][.key]` yields `null` past the
   10th option and jq interpolates it as the literal string `null`. The
   schema sets no `maxItems`, so the letter table now runs A–Z with an

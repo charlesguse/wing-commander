@@ -205,6 +205,44 @@ change to the tiering above.
 
 ---
 
+## Stage 1 / 1b — Intake & clarify (`intake.yml`, `clarify.yml`)
+
+Specified in [`specs/001-spec-intake/`](../specs/001-spec-intake/spec.md),
+[`specs/004-clarify-on-pr/`](../specs/004-clarify-on-pr/spec.md) and
+[`specs/032-structured-clarification-gate/`](../specs/032-structured-clarification-gate/spec.md).
+
+**Trigger**: maintainer applies the `spec-request` label to an issue (intake);
+a reply on that issue from a maintainer or the original requester, while it
+carries a `spec:` label plus `stage:spec` or `stage:clarify` (clarify).
+
+Intake runs the specify skill, opens the spec PR, and then makes one
+either/or decision: post **"Answer the open clarification questions"** (the
+requester replies, and 1b picks the reply up) or **"Review the spec PR"**.
+Getting that split wrong has been this pipeline's most repeated bug class —
+a marker grep that could never match (#159), and a guard re-added to only one
+arm of the split, which let intake ask for a reply on an issue whose labels
+made 1b's trigger unable to fire. Both were invisible to the workflow linter,
+because both are valid YAML and valid bash.
+
+The decision, every gate on it, and what each gate buys are drawn out in
+**[contracts/decision-points.md § Flow: how intake decides what to post](../specs/032-structured-clarification-gate/contracts/decision-points.md#flow-how-intake-decides-what-to-post)**.
+The two rules worth carrying in your head:
+
+- Both callouts key off a single output derived from one read of the agent's
+  schema-validated result — never two independently computed conditions. That
+  is the structural fix for #159.
+- **A callout that asks for a reply must only fire where a reply can be
+  acted on.** `wing-commander-2-clarify.yml` needs a `spec:` label plus
+  `stage:spec|clarify`; the agent's `specified` discriminator is what keeps
+  the questionnaire off the "no discernible feature request" path, where none
+  of those labels exist.
+
+`.github/scripts/verify-clarification-gating.py` (lint-workflows Gate 8)
+executes the shipped decision shell against synthetic agent transcripts and
+asserts which callouts fire on every path.
+
+---
+
 ## Stage 2 — Plan (`plan.yml`, wrapper `wing-commander-3-plan.yml`)
 
 Specified in [`specs/002-plan-stage/`](../specs/002-plan-stage/spec.md).

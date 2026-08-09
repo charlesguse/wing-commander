@@ -526,6 +526,27 @@ jobs:
       - name: Gate 7 self-test — the detector actually detects
         run: python3 .github/scripts/verify-gate-7.py
 
+      # Gate 8 — behavioral, not static. Gates 1-3 prove intake.yml and
+      # clarify.yml parse, register and are permitted to run; none of them can
+      # see that the two-way callout split each stage ends in sends a
+      # requester somewhere they cannot act, or announces a spec as ready when
+      # it visibly is not. Four defects of that class have shipped: #159's
+      # unmatchable marker grep, a `spec-dir` guard re-added to only ONE arm
+      # of the split (so the questionnaire could post on the "no discernible
+      # feature request" path, where no spec: label exists and no reply can
+      # reach wing-commander-2-clarify.yml), a cross-check that logged a
+      # mismatch and announced readiness anyway, and a missing existence guard
+      # that made the cross-check cry wolf about its own unreadable file.
+      #
+      # The harness EXECUTES the shipped decision shell against synthetic agent
+      # transcripts and evaluates the shipped `if:` expressions against the
+      # outputs it really produced, so it cannot drift from the workflows. It
+      # ends with mutation checks that reintroduce each defect and assert the
+      # suite fails — the same discipline as gates 6 and 7's self-tests, and
+      # the reason gate 5 exists at all.
+      - name: Gate 8 — clarification callouts are reachable and honest
+        run: python3 .github/scripts/verify-clarification-gating.py
+
   # Gate 4 — behavioral tests for the auto-update-spec-kit stage pair. Gates
   # 1-3 are static: they prove a workflow parses, registers, and is permitted
   # to run. None of them can see that a step's shell logic is simply wrong.

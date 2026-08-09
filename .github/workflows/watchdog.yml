@@ -615,7 +615,23 @@ jobs:
           RUN_ID: ${{ inputs.run-id }}
         run: |
           set -uo pipefail
-          sentinels='stalled|rejected|turn budget warning|could not inspect|denied|abandon|clarification-mismatch'
+          # Legacy bare-word sentinels. These are ordinary English words that
+          # occur incidentally in agent output, so they stay capped at ONE
+          # match per job (see the -m1 below) to bound signal volume.
+          sentinels='stalled|rejected|turn budget warning|could not inspect|denied|abandon'
+          # Emitted-token sentinels (docs/agent-friendly-workflows.md: "match
+          # only an unmistakable emitted token that cannot appear in
+          # unexecuted source text"). These are NOT in the alternation above
+          # and are NOT subject to its first-match-wins cap.
+          #
+          # They were, briefly, and it made them unreachable: -m1 takes the
+          # first match in the WHOLE job log, the clarification steps run at
+          # the very END of their job, and `denied` matches anything the
+          # agent says about a permission denial — which the intake prompt
+          # actively coaches it to discuss. Any such line earlier in the job
+          # permanently masked every clarification signal. A sentinel that
+          # another sentinel can silence is not a safety net.
+          token_re='WC-SENTINEL: [a-z][a-z0-9-]*'
           jobs_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" --paginate 2>/dev/null || echo '{"jobs":[]}')"
           entries='[]'
           for job_id in $(printf '%s' "$jobs_json" | jq -r '.jobs[]?.id // empty'); do
@@ -632,6 +648,24 @@ jobs:
             # traced 7 false findings, one of them a real filed issue, to
             # exactly this.
             runtime="$(printf '%s' "$log" | awk '/##\[group\]/{echo_block=1} /##\[endgroup\]/{echo_block=0; next} !echo_block')"
+
+            # Emitted-token pass: one signal per DISTINCT token per job, so
+            # no token can mask another. Bounded by the number of distinct
+            # tokens the pipeline defines, not by how chatty the job was.
+            for tok in $(printf '%s' "$runtime" | grep -Eo "$token_re" | sed -E 's/^WC-SENTINEL: //' | sort -u); do
+              # Trailing boundary so a token that is a prefix of another
+              # ("clarification-mismatch" vs "...-mismatched") cannot borrow
+              # the longer one's line as its excerpt. $tok comes from the
+              # token_re match above, so it is [a-z0-9-] only and safe to
+              # interpolate into a regex.
+              tok_line="$(printf '%s' "$runtime" | grep -E -m1 "WC-SENTINEL: ${tok}([^a-z0-9-]|\$)" || true)"
+              [ -n "$tok_line" ] || continue
+              tok_excerpt="$(printf '%s' "$tok_line" | sed -E 's/^[0-9][0-9T:.Z-]* //' | cut -c1-240)"
+              entries="$(printf '%s' "$entries" | jq -c --arg job "$job_name" --arg m "$tok" --arg c "$job_conclusion" --arg x "$tok_excerpt" \
+                '. + [{source:"step-summary","class-hint":null,facts:{job:$job,"matched-sentinel":$m,"job-conclusion":$c,"matched-line":$x}}]')"
+            done
+
+            # Legacy bare-word pass: still first-match-wins, deliberately.
             match_line="$(printf '%s' "$runtime" | grep -Eim1 "$sentinels" || true)"
             [ -n "$match_line" ] || continue
             match="$(printf '%s' "$match_line" | grep -Eio "$sentinels" | head -1)"

@@ -54,16 +54,33 @@ Entities). Wrapped in a top-level object per the diagnose precedent's
 
 | Field | Description | Required |
 |---|---|---|
+| `specified` | Whether the agent attempted a specification at all. `false` is the prompt's step 2 STOP — "no discernible feature request" | yes |
 | `clarifications` | Array of Clarification question | yes (may be empty) |
 
 **Validation rules**:
 - An empty array is the deciding signal for "no open questions" (FR-001) —
   distinct from a missing/malformed structured result, which is a
   validation failure (FR-002), never coerced to empty.
-- This is the sole schema for `intake.yml`; intake has no `none`-equivalent
-  outcome once a spec directory exists (its own early-stop, "no discernible
-  feature request," happens before this step is reached and is unaffected
-  by this feature — `research.md`).
+- `specified` is intake's `none`-discriminator, the counterpart to clarify's
+  `answered`. `--json-schema` forces a conforming terminal result wherever
+  the agent stopped, so the step 2 STOP path still returns one, and a
+  non-empty `clarifications` there is plausible (the agent has just finished
+  enumerating what the issue is missing). Without the discriminator that
+  array is indistinguishable from a real questionnaire.
+- `needed` is `specified == true AND clarifications non-empty`. Both
+  conjuncts are load-bearing: on the STOP path no spec, branch, or
+  `spec:`/`stage:` label exists, so a questionnaire callout is a dead end —
+  `wing-commander-2-clarify.yml` requires a `spec:` label plus
+  `stage:spec|clarify` and can never fire on the reply.
+- A missing or non-boolean `specified` is a validation failure (FR-002),
+  never defaulted. Defaulting it to `false` would make a dropped field
+  indistinguishable from the STOP path; defaulting to `true` would restore
+  the dead-end callout. Only a loud failure is correct.
+- `specified == false` is **not** a proxy for an empty `spec-dir`, and vice
+  versa. An empty `spec-dir` also occurs when a spec *was* authored but its
+  push or `ls-remote` read-back failed — where the questions are real and
+  must still post. `research.md` records why conflating the two was the
+  original defect.
 
 ## Entity: Clarify read-back envelope (clarify structured output)
 

@@ -171,17 +171,80 @@ triggering `clarify.yml`; separately, post a reply that resolves only some.
 the still-open questions (compare against the structured `clarifications`
 array the same way Scenario 1 does), no spec-PR-ready callout.
 
-## Scenario 8 — Watchdog sentinel present exactly once, correctly placed (contracts/watchdog-sentinel.md)
+## Scenario 6b — Intake's `specified: false` path posts no callout at all (FR-002, `contracts/decision-points.md`)
+
+Intake's counterpart to Scenario 6, and the regression test for the
+dead-end callout: the "no discernible feature request" STOP must post
+neither callout **even when the agent returns a non-empty `clarifications`
+array**, because no spec, branch or `spec:`/`stage:` label exists and
+`wing-commander-2-clarify.yml` can therefore never fire on a reply.
+
+**Steps**: Apply `spec-request` to an issue with no discernible feature
+request (e.g. title "thoughts?", empty body), triggering `intake.yml`.
+
+**Expected**:
+```bash
+gh issue view <issue-number> --json comments \
+  --jq '[.comments[] | select(.body | test("Answer the open clarification questions|Review the spec PR"))] | length'
+```
+**Expected output**: `0` from BOTH deterministic callouts. The agent's own
+"intake could not produce a specification" comment is the only issue-facing
+output:
+```bash
+gh issue view <issue-number> --json labels --jq '[.labels[].name]'
+```
+**Expected output**: no `spec:` and no `stage:` label — which is exactly
+why a questionnaire here would be unanswerable.
+
+If the agent returned questions anyway, the run summary must say the
+questionnaire was suppressed and why (grep the run summary for `dead end`).
+
+**Automated equivalent**: this path, plus the five others in the flow, is
+asserted without a live run by
+`python3 .github/scripts/verify-clarification-gating.py` (lint-workflows
+Gate 8), which also mutation-checks itself.
+
+## Scenario 6c — A spec that still carries markers is never announced as ready (contracts/decision-points.md, the cross-check veto)
+
+The regression test for the dangerous direction of disagreement.
+
+**Steps**: On a run where the agent left colon-form
+`[NEEDS CLARIFICATION: …]` markers in the committed `spec.md` but returned
+`clarifications: []`:
+
+```bash
+gh issue view <issue-number> --json comments \
+  --jq '[.comments[] | select(.body | test("Review the spec PR"))] | length'
+```
+**Expected output**: `0` — the readiness callout is suppressed.
+
+**Expected**: the run is RED, its log carries
+`WC-SENTINEL: clarification-mismatch`, and the `::error::` names the spec
+file. Merging that PR would have merged the markers.
+
+The opposite direction (questions returned, no markers in `spec.md`) is
+warn-only: the sentinel is emitted, the questionnaire still posts, the run
+stays green.
+
+## Scenario 8 — Watchdog sentinels are emitted tokens, not bare words (contracts/watchdog-sentinel.md)
 
 **Steps**:
 ```bash
-grep -n "sentinels=" .github/workflows/watchdog.yml
+grep -n "sentinels=\|token_re=" .github/workflows/watchdog.yml
+grep -rn "WC-SENTINEL" .github/workflows/intake.yml .github/workflows/clarify.yml
 ```
 
-**Expected**: Exactly one match, containing
-`clarification-mismatch` as the last alternative in the existing
-alternation (`contracts/watchdog-sentinel.md`'s diff) — no duplicate
-sentinel definitions introduced elsewhere.
+**Expected**: the `sentinels=` alternation does **not** contain
+`clarification-mismatch` or `clarification-orphaned`. Putting them there
+made them unreachable: that pass is `grep -Eim1` (one match per job) and
+`denied` — which the intake prompt coaches the agent to discuss — matches
+earlier in the log than the clarification steps run. Instead there is a
+`token_re='WC-SENTINEL: [a-z][a-z0-9-]*'` pass emitting one signal per
+distinct token per job, and both stages emit
+`⚠️ WC-SENTINEL: <token> — <detail>` to stdout and the step summary.
+
+**Also expected**: `token_re` does not self-match its own source line (after
+`WC-SENTINEL: ` it requires `[a-z]`; the source has `[`).
 
 ## Scenario 9 — No questionnaire is ever synthesized from marker text (FR-007, SC-005)
 

@@ -42,8 +42,20 @@ argument is a single JSON literal with no `$ref` resolution assumed
 the item shape is inlined directly:
 
 ```json
-{"type":"object","properties":{"clarifications":{"type":"array","items":{"type":"object","properties":{"question":{"type":"string"},"context":{"type":["string","null"]},"options":{"type":"array","items":{"type":"object","properties":{"answer":{"type":"string"},"implications":{"type":["string","null"]}},"required":["answer"]}}},"required":["question"]}}},"required":["clarifications"]}
+{"type":"object","properties":{"specified":{"type":"boolean"},"clarifications":{"type":"array","items":{"type":"object","properties":{"question":{"type":"string"},"context":{"type":["string","null"]},"options":{"type":"array","items":{"type":"object","properties":{"answer":{"type":"string"},"implications":{"type":["string","null"]}},"required":["answer"]}}},"required":["question"]}}},"required":["specified","clarifications"]}
 ```
+
+`specified` is intake's discriminator, the counterpart to clarify's
+`answered`: `false` means the agent took the prompt's step 2 STOP ("the
+issue does not contain a discernible feature request") and never attempted
+a specification. It is required because `--json-schema` forces a conforming
+terminal result no matter where the agent stopped — without it, a step 2
+STOP that returns a populated `clarifications` array (entirely plausible;
+the agent has just enumerated what the issue is missing) is
+indistinguishable from a genuine questionnaire, and intake posts a
+reply-here callout on an issue whose missing `spec:` label means
+`wing-commander-2-clarify.yml` can never fire on the reply. See
+`contracts/decision-points.md`'s flow diagram.
 
 Composed as a static literal directly in the `claude_args:` block (no prior
 `run:` step needs to build it — unlike `watchdog.yml`'s `class-vocab`, this
@@ -64,9 +76,18 @@ Adds the `answered` discriminator (FR-009 decision, `research.md`):
 Both prompts replace their existing "write questionnaire prose to a file"
 instruction with:
 
+- Intake step 2 (appended to the existing early-STOP instruction):
+  "STOPPING HERE MEANS returning `{"specified": false, "clarifications":
+  []}` as your final result. Your comment is the only thing the requester
+  should see for this run — put whatever is missing in it, NOT in
+  `clarifications`. `specified: false` is what tells the pipeline no spec
+  was ever attempted, so it must not post a follow-up questionnaire on top
+  of your comment."
 - Intake step 7 (replacing the current `[NEEDS CLARIFICATION]`-marker
-  instruction): "Return your final result as the `clarifications` array
-  required by the provided schema: one entry per open question you were
+  instruction): "Return your final result in the shape the provided schema
+  requires: `specified: true` (you reached this step, so a spec was
+  authored — only the step 2 STOP path returns false), plus a
+  `clarifications` array with one entry per open question you were
   unable to resolve while specifying, each with `question` (required),
   `context` (the relevant spec section, optional), and `options` (your
   suggested answers, optional — each with `answer` and, optionally,
@@ -113,6 +134,49 @@ their agent step, extended to also catch a structurally invalid/missing
 schema result here — never silently posting nothing while reporting
 success.
 
+"Structurally invalid" means **every** key the stage's schema marks
+`required`, not just `clarifications`:
+
+```bash
+# intake.yml
+jq -e 'type=="object" and (.clarifications|type)=="array" and (.specified|type)=="boolean"'
+# clarify.yml
+jq -e 'type=="object" and (.clarifications|type)=="array" and (.answered|type)=="boolean"'
+```
+
+The discriminator MUST NOT be defaulted when absent. Defaulting intake's
+`specified` to `false` would make a dropped field indistinguishable from a
+genuine step 2 STOP and silently discard a real questionnaire; defaulting it
+to `true` would restore the dead-end callout on the STOP path. Only the loud
+failure above is correct — the same reasoning FR-002 already applies to a
+coerced-empty `clarifications`.
+
+### Why a bare array is rejected here but accepted by the diagnose precedent
+
+`watchdog.yml`'s `Read back diagnose outcome` deliberately degrades:
+
+```bash
+jq -c 'if type=="object" and (.findings|type)=="array" then .findings
+       elif type=="array" then . else [] end'
+```
+
+so a result that skipped the schema tool still yields Findings. These two
+steps do **not** copy that `elif`, and the difference is not an oversight.
+
+The diagnose payload has no discriminator: unwrapping a bare array loses
+nothing, so degrading is strictly better than failing. Here the wrapper
+object carries `specified`/`answered`, and a bare array cannot express
+either. Accepting one would force a guess about the exact field whose
+absence caused the dead-end-callout defect — guess `true` and the STOP path
+posts an unanswerable questionnaire again; guess `false` and a real
+questionnaire is discarded. A red run with the `::error::` naming the
+received shape (`received: array`) is worse than a clean pass and better
+than a fabricated discriminator, and it is recoverable: intake's deferred
+exit means the spec, branch, PR and labels are all still in place, so only
+the callout is missing.
+
+Rule of thumb: **degrade a payload, never a discriminator.**
+
 The verdict MUST be computed before any step that would otherwise read a
 coerced-empty `clarifications` array, but the `exit 1` itself MAY be
 deferred to a later step when earlier side effects have to complete first.
@@ -140,7 +204,7 @@ temp file:
 ```markdown
 ## Question <N>
 
-**Context**: <context, or this line omitted entirely if context is null/absent>
+**Context**: <context, or this line omitted entirely if context is blank>
 
 **What we need to know**: <question>
 
@@ -148,8 +212,8 @@ temp file:
 
 | Option | Answer | Implications |
 |--------|--------|--------------|
-| A      | <options[0].answer> | <options[0].implications, or "—" if absent> |
-| B      | <options[1].answer> | <options[1].implications, or "—" if absent> |
+| A      | <options[0].answer> | <options[0].implications, or "—" if blank> |
+| B      | <options[1].answer> | <options[1].implications, or "—" if blank> |
 ...
 | Custom | Provide your own answer | Reply on this issue with your own answer |
 
@@ -169,6 +233,18 @@ temp file:
   markdown table cells, so the renderer MUST escape them: `|` → `\|` (an
   unescaped pipe opens a new column and shifts the rest of the row) and any
   run of newlines → `<br>` (a raw newline terminates the table early).
+- **"Blank" means null, absent, empty, or all-whitespace** — not just null.
+  Both optional fields are typed `["string","null"]`, so `""` is schema-valid
+  and jq's `//` will NOT fall through on it (`//` only does so for `null` and
+  `false`). Testing with `//` alone put a bare `**Context**:` header with
+  nothing under it, and an empty Implications cell, into a callout posted to
+  a human. The renderer defines a `blank` helper and uses it for both fields.
+- **The render program contains no apostrophes.** It is single-quoted in the
+  shell (`jq -r '…'`), so one apostrophe — including in an ordinary English
+  contraction inside a jq `#` comment — ends the program early and the step
+  dies with a pile of `Could not open file` errors. Gate 8 executes the real
+  `run:` block through `bash`, so it catches this; extracting the jq source
+  and running it directly does not.
   `question` and `context` are rendered outside the table and need no
   escaping.
 - `context` absent (`null` or key omitted) → the `**Context**:` line is

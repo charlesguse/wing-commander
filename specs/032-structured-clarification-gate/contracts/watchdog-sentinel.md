@@ -9,10 +9,49 @@ provides — no other watchdog code changes.
 `.github/workflows/watchdog.yml`, `Collect: step summaries` step
 (`id: collect-step-summary`, ~line 618):
 
+**Superseded 2026-08-08 — do NOT extend the `sentinels=` alternation.** The
+original edit added `clarification-mismatch` to that bare-word list, and
+that made the signal unreachable:
+
+```
+match_line="$(printf '%s' "$runtime" | grep -Eim1 "$sentinels" || true)"
+                                            ^^^ first match in the WHOLE job log
+```
+
+`-m1` yields **one** sentinel line per job. The clarification steps run at
+the very end of their job, and `denied` — already in the alternation — matches
+any line where the agent discusses a permission denial, which `intake.yml`'s
+prompt actively coaches it to do. Any such line earlier in the job masked
+the clarification signal permanently. A sentinel another sentinel can
+silence is not a safety net.
+
+`docs/agent-friendly-workflows.md` already prescribed the fix: *"match only
+an unmistakable emitted token (`WC-SENTINEL: stalled`) that cannot appear in
+unexecuted source text."* So these two are **emitted-token** sentinels, kept
+out of the bare-word alternation entirely:
+
 ```diff
 - sentinels='stalled|rejected|turn budget warning|could not inspect|denied|abandon'
-+ sentinels='stalled|rejected|turn budget warning|could not inspect|denied|abandon|clarification-mismatch'
++ sentinels='stalled|rejected|turn budget warning|could not inspect|denied|abandon'
++ token_re='WC-SENTINEL: [a-z][a-z0-9-]*'
 ```
+
+with a second pass in the same loop emitting **one signal per distinct
+token per job**, so no token can mask another. The bare-word pass keeps its
+`-m1` cap: those are ordinary English words that occur incidentally in agent
+output, and uncapping them would flood the diagnose step.
+
+Note `token_re` cannot self-match its own source line — after
+`WC-SENTINEL: ` it requires `[a-z]`, and the source has `[`. That property is
+deliberate and matches the care the surrounding collector already takes.
+
+| Token | Emitted when | Means |
+|---|---|---|
+| `clarification-mismatch` | The structured decision and the colon-form `[NEEDS CLARIFICATION:` marker scan disagree about the same `spec.md` | One of the two views of "does this spec have open questions" is wrong. In the dangerous direction (structured empty, markers present) the emitting step ALSO sets `blocked=true` and fails the run — the sentinel reports, the veto acts |
+| `clarification-orphaned` | `specified == true` and `clarifications` is non-empty, but "Resolve created spec" found no `spec-draft/NNN-*` branch | The questionnaire is posted (deliberately — dropping it is the silent loss this feature removes) against a spec the rest of the pipeline cannot resolve, so the clarify loop that should consume the reply may not be reachable |
+
+Both are emitted by the same step under the same stdout+summary discipline,
+in the form `⚠️ WC-SENTINEL: <token> — <human-readable detail>`.
 
 ## Why this is sufficient
 

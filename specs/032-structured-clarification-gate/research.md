@@ -181,7 +181,7 @@ rather than inventing a new pattern.
 "options": [{"answer": string (required), "implications": string|null
 (optional)}] (optional)}`, wrapped in a top-level object per the diagnose
 precedent's `input_schema.type` constraint. Intake's schema is
-`{"type":"object","properties":{"clarifications":{...}},"required":["clarifications"]}`.
+`{"type":"object","properties":{"specified":{"type":"boolean"},"clarifications":{...}},"required":["specified","clarifications"]}`.
 Clarify's schema adds the `answered` boolean (previous decision):
 `{"type":"object","properties":{"answered":{"type":"boolean"},"clarifications":{...}},"required":["answered","clarifications"]}`.
 Full definitions live in `contracts/clarification-schema.md`.
@@ -189,21 +189,57 @@ Full definitions live in `contracts/clarification-schema.md`.
 **Rationale**: FR-001 requires "at minimum a question and optionally
 supporting context and a list of answer options" for both call sites — a
 shared item shape avoids two divergent renderers for the same
-`## Question N` format (FR-010). Intake has no early-STOP-before-schema
-path analogous to clarify's (its own early-stop, "the issue does not
-contain a discernible feature request," happens *before* a spec directory
-exists at all, and is already gated out via `steps.created.outputs.spec-dir
-!= ''` — untouched by this feature), so intake's schema does not need the
-`answered` discriminator.
+`## Question N` format (FR-010). Both schemas carry a boolean discriminator
+for the same reason: `--json-schema` forces a conforming terminal result no
+matter *where* in the prompt the agent stopped, so "the agent completed and
+produced a structured result" is not the same claim as "the agent did the
+work the questionnaire branch presupposes."
 
-**Alternatives considered**: A single shared schema for both call sites,
-with intake simply never setting `answered: false`. Rejected — it would let
-intake's read-back silently accept a shape it structurally cannot produce a
-meaningful `false` for, and would force intake's prompt to explain a field
-that has no possible legitimate value there; two purpose-fit schemas, one
-shared item shape, is clearer and matches how the diagnose/auto-update
-precedents each define their own top-level schema while reusing the same
-CLI mechanism.
+**Corrected 2026-08-08.** This decision originally gave intake no
+discriminator, reasoning that its early-stop ("the issue does not contain a
+discernible feature request") "happens before a spec directory exists at
+all, and is already gated out via `steps.created.outputs.spec-dir != ''`."
+That premise was **false as implemented**: the same feature removed the
+`spec-dir` guard from the decision step (correctly — see the FR-002 decision
+— because a failed push must not swallow an authored questionnaire) and
+re-added it to only the `needed == 'false'` arm. The `needed == 'true'` arm
+was left ungated, so the early-stop path could post "Answer the open
+clarification questions" on an issue carrying no `spec:` label — where
+`wing-commander-2-clarify.yml`'s trigger can never fire on the reply. A
+dead-end callout.
+
+The deeper error was treating `spec-dir != ''` as a proxy for "the agent
+attempted a spec." It is not: an empty `spec-dir` means *either* the
+early-stop (no spec intended, questionnaire is a dead end) *or* a failed
+push/read-back (spec authored, questions real, questionnaire must post).
+Those need opposite handling and no deterministic step downstream of the
+agent can tell them apart. Only the agent knows, so only the agent can say —
+hence `specified`.
+
+**Alternatives considered**:
+- *A single shared schema for both call sites, with intake simply never
+  setting `answered: false`.* Rejected — it would let intake's read-back
+  silently accept a shape it structurally cannot produce a meaningful
+  `false` for, and would force intake's prompt to explain a field that has
+  no possible legitimate value there; two purpose-fit schemas, one shared
+  item shape, is clearer and matches how the diagnose/auto-update precedents
+  each define their own top-level schema while reusing the same CLI
+  mechanism. (Intake now *does* have a legitimate `false`, so this rejection
+  stands only on the naming: `specified` and `answered` describe different
+  facts about different stages, and collapsing them into one field name
+  would make each stage's prompt harder to write, not easier.)
+- *Restore `spec-dir != ''` on the questionnaire callout too.* Rejected —
+  it is the blunt instrument the paragraph above describes. It closes the
+  dead end by reintroducing the silent questionnaire drop this feature
+  exists to eliminate, trading one failure for the other.
+- *Gate the callout on the issue carrying a `spec:` label*, read back with
+  `gh issue view --json labels` — i.e. test the clarify trigger's own
+  precondition directly. Genuinely attractive, and deterministic rather than
+  agent-reported. Rejected as the primary mechanism because it fails
+  path (b) the same way `spec-dir` does: an agent whose push failed at
+  prompt step 5 never reaches step 7's labelling either, so the questions
+  would be dropped exactly when they matter. Kept in reserve as a possible
+  future *refinement* of the callout body, not its gate.
 
 ## Decision: The marker cross-check compares against the same boolean the structured output would have decided, and is skipped when no post/don't-post decision is being made
 

@@ -426,6 +426,22 @@ jobs:
       # failure (contracts/credentials.md; contracts/clarification-schema.md
       # FR-002). Runs before "Determine clarification follow-up outcome" so
       # that step never computes `outcome` from a coerced-empty result.
+      #
+      # Why this exits in place while intake defers its exit to the job's
+      # last step: intake has REMAINING steps whose work would be skipped
+      # ("Resolve created spec", "Label spec PR to match the issue"), leaving
+      # an unlabeled orphan PR. Clarify has no such steps.
+      #
+      # That is NOT the same as "no side effects" — and the earlier wording
+      # here claimed as much, wrongly. By this point the agent has already
+      # folded the answers into spec.md, committed, pushed, and rewritten the
+      # PR body; those are simply UPSTREAM of this gate, so failing here
+      # cannot strand them, only leave them unannounced. The residue is
+      # user-facing, not repo-state: the requester sees the 👀 reaction and
+      # nothing else, so a further reply re-enters clarify against questions
+      # that were in fact already resolved. The error message below therefore
+      # says the fold may already be committed, so whoever reads the red run
+      # checks the PR rather than assuming nothing happened.
       - name: Fail on agent API error
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent.outcome == 'success'
         run: |
@@ -440,7 +456,11 @@ jobs:
           fi
           raw="$(jq -r '[.[] | select(.type=="result")] | last | .result // empty' "$f" 2>/dev/null || true)"
           if ! printf '%s' "$raw" | jq -e 'type=="object" and (.answered|type)=="boolean" and (.clarifications|type)=="array"' >/dev/null 2>&1; then
-            echo "::error::wing-commander clarify stage: the agent's structured result is missing a valid answered/clarifications shape."
+            # Name the shape actually received: the fix is different for a
+            # bare array (agent skipped the schema wrapper) than for prose,
+            # and this is the only place that distinction is visible.
+            got="$(printf '%s' "$raw" | jq -r 'type' 2>/dev/null || echo 'not JSON')"
+            echo "::error::wing-commander clarify stage: the agent's structured result is missing a valid answered/clarifications shape (received: $got). The fold may ALREADY be committed and pushed to the spec PR — check the PR before re-running; no callout was posted for it."
             exit 1
           fi
 
@@ -470,14 +490,25 @@ jobs:
               structured=false
             fi
 
-            # Colon-form marker cross-check (FR-004–FR-008), read-only: never
-            # feeds `outcome` above. Scoped to answered == true only
-            # (research.md's cross-check-scope decision) — run against the
-            # post-agent-edit spec.md, which this checkout already reflects.
-            if grep -q '\[NEEDS CLARIFICATION:' "$SPEC_DIR/spec.md"; then
-              marker=true
+            # Colon-form marker cross-check (FR-004–FR-008). Scoped to
+            # answered == true only (research.md's cross-check-scope
+            # decision) — run against the post-agent-edit spec.md, which this
+            # checkout already reflects.
+            #
+            # The existence guard matches intake's. Without it a missing or
+            # unresolvable spec.md makes grep fail, marker=false, and every
+            # run that legitimately still has open questions reports a
+            # spurious mismatch — the cross-check crying wolf about its own
+            # inability to read the file.
+            if [ -n "$SPEC_DIR" ] && [ -f "$SPEC_DIR/spec.md" ]; then
+              if grep -q '\[NEEDS CLARIFICATION:' "$SPEC_DIR/spec.md"; then
+                marker=true
+              else
+                marker=false
+              fi
             else
-              marker=false
+              marker="$structured"   # nothing to compare against; never a mismatch
+              echo "Cross-check skipped: no readable ${SPEC_DIR:-<unset>}/spec.md." >> "$GITHUB_STEP_SUMMARY"
             fi
             if [ "$structured" != "$marker" ]; then
               empty_or_not=$([ "$structured" = "true" ] && echo "non-empty" || echo "empty")
@@ -488,11 +519,31 @@ jobs:
               # watchdog.yml's "Collect: step summaries" step greps job logs
               # (with ##[group] blocks — the only place this script's own
               # source appears — stripped). Summary-only would make the
-              # `clarification-mismatch` sentinel unreachable
-              # (contracts/watchdog-sentinel.md).
-              msg="⚠️ clarification-mismatch: structured output reported clarifications=$empty_or_not but the colon-form marker scan found $match_or_not in $SPEC_DIR/spec.md."
+              # sentinel unreachable (contracts/watchdog-sentinel.md).
+              msg="⚠️ WC-SENTINEL: clarification-mismatch — structured output reported clarifications=$empty_or_not but the colon-form marker scan found $match_or_not in $SPEC_DIR/spec.md."
               echo "$msg"
               echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+
+              # Only ONE direction of disagreement is dangerous, and it is
+              # not symmetric with the other:
+              #   structured empty + markers present -> we are about to
+              #     announce "Review the spec PR" for a spec that visibly
+              #     still carries unresolved questions, and a human merging
+              #     that PR merges the markers. Silent loss, the exact class
+              #     this feature exists to close.
+              #   structured non-empty + no marker -> the questionnaire posts
+              #     with real, answerable questions. A warning is enough.
+              # So the cross-check gets a VETO, never a vote: it can block
+              # the readiness claim and fail the run, but it can never pick a
+              # callout or synthesize a question (FR-004, FR-007). The
+              # posting branches stay mutually exclusive and single-sourced —
+              # #159's structural property is untouched, because "post
+              # nothing and go red" is not a third branch competing for the
+              # same decision.
+              if [ "$structured" = "false" ] && [ "$marker" = "true" ]; then
+                echo "blocked=true" >> "$GITHUB_OUTPUT"
+                echo "::error::wing-commander clarify stage: refusing to announce the spec PR as ready — the structured result reported no open questions but $SPEC_DIR/spec.md still contains colon-form [NEEDS CLARIFICATION: markers. Resolve the markers or fix the agent's result; do not merge this spec PR as-is."
+              fi
             fi
           fi
 
@@ -510,6 +561,14 @@ jobs:
             # "|" opens a column and a newline ends the table — escape both
             # rather than trusting the agent to have done it.
             def cell: tostring | gsub("\\|"; "\\|") | gsub("[\r\n]+"; "<br>");
+            # NOTE: no apostrophes anywhere in this jq program — it is
+            # single-quoted in the shell, so one would end the program.
+            # The // operator falls through on null and false ONLY, so an
+            # empty or all-whitespace string counts as present. The schema
+            # permits context and implications to be "", which made the old
+            # `// null` render a bare "**Context**:" line with nothing under
+            # it, and `// "—"` render an empty Implications cell.
+            def blank: . == null or (type == "string" and (gsub("^\\s+|\\s+$"; "") == ""));
             # The schema places no maxItems on options; past the last letter
             # fall back to the ordinal so an 11th option cannot render the
             # literal string "null" as its label.
@@ -519,7 +578,7 @@ jobs:
             | to_entries
             | map(
                 "## Question \(.key + 1)\n\n"
-                + (if (.value.context // null) != null then "**Context**: \(.value.context)\n\n" else "" end)
+                + (if (.value.context | blank) then "" else "**Context**: \(.value.context)\n\n" end)
                 + "**What we need to know**: \(.value.question)\n\n"
                 + "**Suggested Answers**:\n\n"
                 + "| Option | Answer | Implications |\n"
@@ -527,7 +586,7 @@ jobs:
                 + (
                     (.value.options // [])
                     | to_entries
-                    | map("| \($letters[.key] // ((.key + 1) | tostring)) | \(.value.answer | cell) | \((.value.implications // "—") | cell) |")
+                    | map("| \($letters[.key] // ((.key + 1) | tostring)) | \(.value.answer | cell) | \(if (.value.implications | blank) then "—" else (.value.implications | cell) end) |")
                     | join("\n")
                     | (if length > 0 then . + "\n" else . end)
                   )
@@ -553,7 +612,7 @@ jobs:
       # where the NNN-slug suffix isn't known until this same run.
       - name: Resolve spec PR URL
         id: spec-pr
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.outcome == 'ready'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.outcome == 'ready' && steps.clarification.outputs.blocked != 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
         run: |
@@ -561,7 +620,7 @@ jobs:
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
       - name: Announce spec PR ready for review
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.outcome == 'ready'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.outcome == 'ready' && steps.clarification.outputs.blocked != 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ steps.ctx.outputs.token }}
@@ -592,3 +651,15 @@ jobs:
         with:
           model: ${{ inputs.model }}
           max-turns: ${{ inputs.max-turns }}
+
+      # The cross-check's veto, turned into the red run (see the identical
+      # step in intake.yml). Deferred to last so the transcript upload and
+      # metrics still run; the fold itself is already committed and pushed,
+      # and stays that way — it is only the "ready for review" CLAIM that is
+      # refused, because a spec.md still carrying colon-form markers is not
+      # ready and a human invited to merge it would merge them.
+      - name: Fail on unresolved clarification markers
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.blocked == 'true'
+        run: |
+          echo "::error::wing-commander clarify stage: failing the run — the spec still carries colon-form [NEEDS CLARIFICATION: markers while the structured result reported none (see the error above). No readiness callout was posted."
+          exit 1
