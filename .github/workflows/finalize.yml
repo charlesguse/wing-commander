@@ -637,6 +637,42 @@ jobs:
           kind: action
           summary: "wing-commander finalize stage: gh pr create did not result in a verifiable open pull request from ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }} to ${{ steps.defbranch.outputs.name }}. spec-meta.json was left untouched; retrigger the finalize stage to retry."
 
+      # Both label writes happen here, ahead of the announce and metadata
+      # steps rather than after them: everything below this can fail (the
+      # metadata push most plausibly — rebase.yml force-pushes the same spec
+      # branch), and "Check for an existing final pull request" skips the
+      # whole tail of this job once a final PR exists, so a re-dispatch never
+      # gets a second chance at these labels. A label not written here is
+      # never written. For the same reason neither the read nor the write
+      # below may fail the job: the stage's real work is already done.
+      - name: Flip stage label
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ISSUE: ${{ inputs.issue-number }}
+          PR: ${{ steps.verify-pr.outputs.pr-number }}
+        run: |
+          gh label create "stage:review" --color FBCA04 --description "Final PR awaiting review" --force
+          gh issue edit "$ISSUE" --add-label "stage:review"
+          # Every other stage:* goes, not stage:implement alone — a finalize
+          # hand-dispatched after a stalled implement finds stage:stalled on
+          # the issue, which the mirror below would otherwise copy onto the
+          # PR next to stage:review. Same sweep cleanup.yml already runs.
+          stale=$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name | select(startswith("stage:") and . != "stage:review")] | .[]' || true)
+          for l in $stale; do
+            gh issue edit "$ISSUE" --remove-label "$l" 2>/dev/null || true
+          done
+          # Pipeline PRs carry the same labels as their lifecycle issue so PR
+          # lists are filterable by spec (after the stage flip so the PR
+          # snapshots the stage it belongs to) — the same step intake, plan
+          # and tasks each run for the PR they open. "Verify the final pull
+          # request was created" hard-fails when the PR is missing, so
+          # reaching this line means $PR resolved.
+          labels=$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name] | join(",")' || true)
+          if [ -n "$labels" ]; then
+            gh pr edit "$PR" --add-label "$labels" || true
+          fi
+
       # User Story 1's core fix (contracts/callout-points.md row 5): today
       # this moment posts no comment at all — a customer-visible silent
       # stall until a human happens to notice the PR.
@@ -701,15 +737,3 @@ jobs:
           issue-number: ${{ inputs.issue-number }}
           kind: info
           summary: "No manual work remains."
-
-      # The last write this run performs — the lifecycle issue's advance to
-      # the review stage.
-      - name: Flip stage label
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
-        env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
-          ISSUE: ${{ inputs.issue-number }}
-        run: |
-          gh label create "stage:review" --color FBCA04 --description "Final PR awaiting review" --force
-          gh issue edit "$ISSUE" --add-label "stage:review"
-          gh issue edit "$ISSUE" --remove-label "stage:implement" 2>/dev/null || true

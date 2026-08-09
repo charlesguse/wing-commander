@@ -552,6 +552,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ISSUE: ${{ steps.meta.outputs.issue }}
+          PR_NUMBER: ${{ inputs.pr-number }}
         run: |
           gh issue close "$ISSUE" --comment "$(cat "${{ steps.summary.outputs.summary-file }}")"
           gh label create "stage:done" --color 5319E7 --description "Lifecycle complete" --force
@@ -559,6 +560,19 @@ jobs:
           stale=$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name | select(startswith("stage:") and . != "stage:done")] | .[]')
           for l in $stale; do
             gh issue edit "$ISSUE" --remove-label "$l"
+          done
+          # The final PR carries the issue's labels — finalize mirrors them
+          # when it opens the PR at stage:review — so it has to advance with
+          # the issue, or every merged PR reads stage:review forever and a
+          # stage-filtered PR list shows finished work as still awaiting
+          # review. This outcome only fires for a merged spec-branch PR into
+          # the default branch, so $PR_NUMBER is that final PR. Guarded: the
+          # lifecycle issue is already closed above and the branch deletion
+          # below still has to run, so a label API hiccup must not fail here.
+          gh pr edit "$PR_NUMBER" --add-label "stage:done" || true
+          pr_stale=$(gh pr view "$PR_NUMBER" --json labels --jq '[.labels[].name | select(startswith("stage:") and . != "stage:done")] | .[]' || true)
+          for l in $pr_stale; do
+            gh pr edit "$PR_NUMBER" --remove-label "$l" 2>/dev/null || true
           done
 
       # Always attempted, independent of the idempotency skip above — an
