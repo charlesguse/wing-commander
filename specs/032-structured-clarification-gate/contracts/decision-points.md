@@ -15,7 +15,7 @@ feature — every row below keeps its existing invocation shape, only the
 | Step (current name) | Current behavior | New behavior |
 |---|---|---|
 | "Create spec from issue" (agent step) | Step 7 instructs the agent to write `## Question N` prose to `${{ runner.temp }}/intake-clarification.md` when markers remain, or nothing otherwise | Gains `--json-schema` (intake schema, `contracts/clarification-schema.md`); step 7 instructs the agent to return `{specified: true, clarifications}` instead of writing a file, and step 2's STOP path is instructed to return `{specified: false, clarifications: []}` |
-| "Check whether the spec still needs clarification" (`id: clarification`) | `grep -q '\[NEEDS CLARIFICATION' "$SPEC_DIR/spec.md"` → `needed=true\|false`, gated on a discoverable spec dir | Reads back the agent step's structured result (`contracts/clarification-schema.md`'s read-back idiom); `needed` = `specified == true AND clarifications non-empty`. Gated on `valid == 'true'` instead of on a discoverable spec dir — the decision no longer reads `spec.md`, and skipping it when the branch push failed would silently drop an authored questionnaire. Publishes `specified` as a second output. Runs the colon-form cross-check against post-agent `spec.md` when a spec dir exists; on mismatch, writes the `clarification-mismatch` line to stdout AND `$GITHUB_STEP_SUMMARY`; when questions exist but no spec dir was resolved, writes `clarification-orphaned` the same way. `needed` is decided ONLY by the structured result (FR-004) |
+| "Check whether the spec still needs clarification" (`id: clarification`) | `grep -q '\[NEEDS CLARIFICATION' "$SPEC_DIR/spec.md"` → `needed=true\|false`, gated on a discoverable spec dir | Reads back the agent step's structured result (`contracts/clarification-schema.md`'s read-back idiom); `needed` = `specified == true AND clarifications non-empty`. Gated on `valid == 'true'` instead of on a discoverable spec dir — the decision no longer reads `spec.md`, and skipping it when the branch push failed would silently drop an authored questionnaire. Publishes `specified` as a second output. Runs the colon-form cross-check against post-agent `spec.md` when a spec dir exists; on mismatch, writes the `clarification-mismatch` line to stdout AND `$GITHUB_STEP_SUMMARY`; when questions exist but no spec dir was resolved, writes `clarification-orphaned` the same way; when `specified == false` but a spec dir WAS resolved — the combination that suppresses both callout arms — writes `clarification-unclaimed-spec` the same way. `needed` is decided ONLY by the structured result (FR-004) |
 | *(new)* "Render clarification questionnaire" | — | New step, gated on `needed == 'true'`: renders `${{ runner.temp }}/intake-clarification.md` from the structured `clarifications` array per `contracts/clarification-schema.md`'s render algorithm, replacing the file the agent used to author itself |
 | "Announce clarification needed" | `if: steps.clarification.outputs.needed == 'true'`, `body-file: ${{ runner.temp }}/intake-clarification.md` | Unchanged invocation shape; `if:` condition unchanged (still keys off `needed`); the file it reads is now deterministically rendered, not agent-authored. `needed` folding in `specified` is what keeps this callout off the step 2 STOP path, where no `spec:` label exists and a reply could never reach the clarify loop |
 | "Announce spec PR ready for review" | `if: steps.clarification.outputs.needed == 'false'` | Still the negation of the same `needed` output, so it can never be suppressed by an independently-computed condition (closing the #159 mutual-exclusivity failure mode); `&& steps.clarification.outputs.specified == 'true' && steps.created.outputs.spec-dir != ''` is added because `needed == 'false'` is also true on the no-spec path. Both extra conjuncts are required and neither implies the other: `specified` excludes the step 2 STOP (where a stale `spec-draft/NNN-*` branch from an earlier run could otherwise be mistaken for this run's output), `spec-dir` excludes an attempted spec whose branch is not discoverable. `"Resolve spec PR URL"` carries the identical condition |
@@ -103,7 +103,10 @@ flowchart TD
 
     V -->|"yes"| D{"specified?"}
 
-    D -->|"false<br/>step 2 STOP:<br/>no discernible<br/>feature request"| N1{"clarifications<br/>non-empty?"}
+    D -->|"false<br/>step 2 STOP:<br/>no discernible<br/>feature request"| U{"spec-dir<br/>resolved?"}
+    U -->|"yes — contradiction:<br/>a spec exists for an issue<br/>the agent called undiscernible"| UNC["stdout + summary:<br/>clarification-unclaimed-spec<br/>(watchdog sentinel).<br/>If that spec.md also carries<br/>markers, the cross-check<br/>vetoes and the run goes RED"]
+    UNC --> N1
+    U -->|"no"| N1{"clarifications<br/>non-empty?"}
     N1 -->|"no"| Q1(["No callout.<br/>The agent's own issue<br/>comment is the output"])
     N1 -->|"yes"| Q2(["No callout, and say so in<br/>the step summary: questions<br/>with no spec: label are a<br/>DEAD END — clarify.yml's<br/>trigger can never fire"])
 
@@ -130,7 +133,7 @@ flowchart TD
     classDef note fill:#4a4a52,stroke:#8a8a95,color:#ffffff
     class RED,Q1,Q2,Q3,BLK stop
     class AC,AP good
-    class X note
+    class X,UNC,ORPH note
 ```
 
 ### What each gate buys
@@ -140,6 +143,7 @@ flowchart TD
 | `valid == 'true'` on the decision step | A dropped or malformed terminal result reads as an empty `clarifications` array — "intake ran fine and found nothing to ask" — and the run stays green (FR-002) |
 | `specified` folded into `needed` | The step 2 STOP path posts "Answer the open clarification questions" on an issue with no `spec:` label. `wing-commander-2-clarify.yml` never fires on the reply; the requester is told to act and cannot |
 | `specified == 'true'` on the spec-PR arm | A stale `spec-draft/NNN-*` branch left by an earlier run makes intake announce a spec PR for a spec this run never wrote |
+| The `clarification-unclaimed-spec` sentinel | That same guard, met by a resolvable spec dir, is the one combination suppressing **both** arms. An agent that authored the spec, pushed it and opened the PR but returned `specified: false` leaves a real spec PR unannounced with no mismatch (both views agree there are no questions), no sentinel and no failing step — the entire stage swallowed, green. The guard is right and stays; the contradiction it creates is reported instead of assumed benign |
 | `spec-dir != ''` on the spec-PR arm **only** | Announcing a spec PR that does not exist. Note it is deliberately **absent** from the questionnaire arm — putting it there would drop an authored questionnaire whenever the branch push failed, which is the silent loss this feature exists to remove |
 | Both posting callouts keyed off one output | The #159 failure mode: two independently computed conditions disagreeing, so both arms fire or neither does |
 | `blocked` veto on the readiness arm | An agent that leaves `[NEEDS CLARIFICATION:` markers in the committed `spec.md` (which prompt step 3 tells it to do) while returning `clarifications: []` gets "Review the spec PR" announced, and the markers merge with it |

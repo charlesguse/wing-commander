@@ -81,6 +81,13 @@ Entities). Wrapped in a top-level object per the diagnose precedent's
   push or `ls-remote` read-back failed — where the questions are real and
   must still post. `research.md` records why conflating the two was the
   original defect.
+- Because they are independent, they can also *contradict*: `specified ==
+  false` with a resolvable `spec-dir` says a spec exists for an issue the
+  agent called undiscernible. That combination is the only one suppressing
+  both callout arms, so it emits `clarification-unclaimed-spec`
+  (`contracts/watchdog-sentinel.md`) rather than passing as an ordinary STOP.
+  `specified` is agent-authored; treating it as unfalsifiable here would
+  reintroduce, on a different path, the silent loss this feature removes.
 
 ## Entity: Clarify read-back envelope (clarify structured output)
 

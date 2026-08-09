@@ -452,6 +452,11 @@ jobs:
               else:
                   continue          # not a published stage
               stages += 1
+              # Named, not just counted. verify-gate-7.py compares this set
+              # against wc_published_stages.py's; a count alone lets two
+              # derivations that see the same NUMBER of different files pass
+              # as agreeing, which is #149 wearing yet another hat.
+              print(f"note: {f}: published stage")
 
               inputs = (call.get("inputs") or {}) if isinstance(call, dict) else {}
               for iname, (itype, idefault) in DECLARED.items():

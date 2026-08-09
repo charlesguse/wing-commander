@@ -108,10 +108,24 @@ jobs:
           set -uo pipefail
           bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) 1.7.7 /tmp
 
-          if ! mapfile -t all_stages < <(python3 .github/scripts/wc_published_stages.py); then
-            echo "::error::could not derive the published stage set; pass 1 has nothing to lint."
+          # Captured into a variable FIRST, then split. `mapfile -t a < <(cmd)`
+          # reports mapfile's own status, never the process substitution's, so
+          # written that way the `if !` below can never fire and a dead
+          # derivation (an import error, a missing interpreter) would fall
+          # through to the "no workflow declares on.workflow_call" guard —
+          # reporting a broken script as a moved trigger. `$(...)` propagates
+          # the exit status, so this failure now names itself.
+          if ! stage_list="$(python3 .github/scripts/wc_published_stages.py)"; then
+            echo "::error::could not derive the published stage set (.github/scripts/wc_published_stages.py failed); pass 1 has nothing to lint."
             exit 1
           fi
+          # Blank lines dropped rather than kept: `<<< ""` yields ONE empty
+          # element, which would make the `-eq 0` guard below read an empty
+          # derivation as a one-stage fleet.
+          all_stages=()
+          while IFS= read -r stage_path; do
+            [ -n "$stage_path" ] && all_stages+=("$stage_path")
+          done <<< "$stage_list"
           shell_linted=(.github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase}.yml .github/workflows/release.yml)
           # Stages knowingly outside pass 2 (issue #149). Anything published
           # and NOT in shell_linted must be listed here, so the exemption is

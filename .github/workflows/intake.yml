@@ -709,6 +709,33 @@ jobs:
             echo "$msg" >> "$GITHUB_STEP_SUMMARY"
           fi
 
+          # Path (c): the mirror image, and the one path that would otherwise
+          # finish green having said NOTHING anywhere. `specified` gates both
+          # arms of the spec-PR announcement below, so specified=false with a
+          # resolvable spec dir posts no questionnaire, announces no PR, and
+          # trips no cross-check (structured=false, and a marker-free spec.md
+          # gives marker=false — agreement, not mismatch). The requester is
+          # left with the run-started comment and nothing else.
+          #
+          # Both readings of the contradiction are worth a human's attention:
+          #   - the agent authored the spec, pushed it, opened the PR and
+          #     mis-set the discriminator. `specified` is agent-authored,
+          #     which is the whole reason the cross-check and the orphan
+          #     sentinel exist; there is no reason to trust it more here.
+          #     A real spec PR is then sitting unannounced in the queue.
+          #   - a stale ${SPEC_DRAFT_PREFIX}NNN-* branch from an earlier run
+          #     on this issue survived, and the spec dir every later step
+          #     resolves from it belongs to that run, not this one. (That is
+          #     precisely the risk the `specified` guard was added for, so
+          #     the guard stays — this reports the collision it creates.)
+          # Reported, not vetoed: nothing is being announced, so there is no
+          # readiness claim to block, and `specified` still decides (FR-004).
+          if [ "$specified" != "true" ] && [ -n "$SPEC_DIR" ]; then
+            msg="⚠️ WC-SENTINEL: clarification-unclaimed-spec — intake reported specified=false (no discernible feature request) but $SPEC_DIR resolved from an existing ${SPEC_DRAFT_PREFIX}* branch. Either the agent authored a spec and mis-set the discriminator — leaving an unannounced spec PR in the review queue — or a stale branch from an earlier run on this issue survived. No callout was posted."
+            echo "$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
           # Colon-form marker cross-check (FR-004–FR-008). Never feeds
           # `needed` above; it can only veto (see below). Real markers are
           # '[NEEDS CLARIFICATION: <question>]' (spec-template.md); the
@@ -769,7 +796,26 @@ jobs:
             # synthesizes a question from marker text (FR-007).
             if [ "$structured" = "false" ] && [ "$marker" = "true" ]; then
               echo "blocked=true" >> "$GITHUB_OUTPUT"
-              echo "::error::wing-commander intake stage: refusing to announce the spec PR as ready — the structured result reported no open questions but $SPEC_DIR/spec.md still contains colon-form [NEEDS CLARIFICATION: markers. Resolve the markers or fix the agent's result; do not merge this spec PR as-is."
+              # The cross-check is NOT scoped to specified=true (clarify's is
+              # scoped to answered=true, because on clarify's `none` the
+              # markers legitimately remain and the mismatch would be routine
+              # noise). Intake has no such routine case: on a genuine step 2
+              # STOP no spec exists at all, so $SPEC_DIR is empty, the
+              # existence guard above skips, and this branch is unreachable.
+              # Reaching it with specified=false means a spec.md IS in this
+              # workspace carrying markers while the agent claims there was
+              # no discernible feature request — signal, not noise.
+              #
+              # It gets its own message because the other one names an
+              # announcement that cannot happen here: `specified` already
+              # blocks both arms, so "refusing to announce the spec PR as
+              # ready" would send a maintainer looking for a callout decision
+              # that was never in play.
+              if [ "$specified" = "true" ]; then
+                echo "::error::wing-commander intake stage: refusing to announce the spec PR as ready — the structured result reported no open questions but $SPEC_DIR/spec.md still contains colon-form [NEEDS CLARIFICATION: markers. Resolve the markers or fix the agent's result; do not merge this spec PR as-is."
+              else
+                echo "::error::wing-commander intake stage: intake reported specified=false (no discernible feature request), yet $SPEC_DIR/spec.md is present in this workspace and still contains colon-form [NEEDS CLARIFICATION: markers. Nothing was announced — specified=false already blocks both callouts — so this run would otherwise have finished green over a marker-carrying spec nobody was told about. Fix the agent's result, or clear the stale spec branch."
+              fi
             fi
           fi
 
@@ -843,6 +889,13 @@ jobs:
       # mistaken for this run's output); `spec-dir != ''` excludes the case
       # where a spec was attempted but its branch is not discoverable. Both
       # are needed — neither implies the other.
+      #
+      # Their overlap (specified=false AND a resolvable spec-dir) is the one
+      # combination that suppresses every callout, so it is not allowed to be
+      # quiet: the decision step emits the clarification-unclaimed-spec
+      # sentinel there, and fails the run outright if that spec.md also
+      # carries markers. Suppression here is a judgement about which run
+      # authored the branch, not a claim that nothing happened.
       - name: Resolve spec PR URL
         id: spec-pr
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'false' && steps.clarification.outputs.specified == 'true' && steps.clarification.outputs.blocked != 'true' && steps.created.outputs.spec-dir != ''

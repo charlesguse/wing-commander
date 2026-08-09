@@ -199,6 +199,16 @@ why a questionnaire here would be unanswerable.
 If the agent returned questions anyway, the run summary must say the
 questionnaire was suppressed and why (grep the run summary for `dead end`).
 
+**And the contradiction case**: `specified: false` while a
+`spec-draft/<issue>-*` branch IS discoverable is the one combination that
+suppresses both callout arms at once, so it must never be silent. Either the
+agent authored the spec and mis-set the discriminator — an unannounced spec
+PR is then sitting in the review queue — or a stale branch from an earlier
+run on this issue survived. Grep the run summary (and the job log, which is
+what the watchdog actually reads) for `clarification-unclaimed-spec`. If
+that spec.md also carries colon-form markers, the cross-check veto fires on
+top and the run must be RED.
+
 **Automated equivalent**: this path, plus the five others in the flow, is
 asserted without a live run by
 `python3 .github/scripts/verify-clarification-gating.py` (lint-workflows
@@ -235,7 +245,8 @@ grep -rn "WC-SENTINEL" .github/workflows/intake.yml .github/workflows/clarify.ym
 ```
 
 **Expected**: the `sentinels=` alternation does **not** contain
-`clarification-mismatch` or `clarification-orphaned`. Putting them there
+`clarification-mismatch`, `clarification-orphaned` or
+`clarification-unclaimed-spec`. Putting them there
 made them unreachable: that pass is `grep -Eim1` (one match per job) and
 `denied` — which the intake prompt coaches the agent to discuss — matches
 earlier in the log than the clarification steps run. Instead there is a

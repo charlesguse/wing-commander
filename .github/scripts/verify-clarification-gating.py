@@ -30,6 +30,12 @@ That is not hypothetical. Four defects of exactly this class have shipped:
   (c)    clarify grepped "$SPEC_DIR/spec.md" with no existence guard (intake
          had one), so an unreadable spec.md produced marker=false and a
          spurious mismatch on every run that legitimately had open questions.
+  (e)    the `specified` guard added for (a) also gates the spec-PR arm, and
+         its overlap with a resolvable spec dir suppresses BOTH arms at once.
+         An agent that authored the spec, pushed it and opened the PR but
+         mis-set the discriminator left a real spec PR unannounced, with no
+         mismatch (both views say "no questions"), no sentinel and no failing
+         step — the whole stage swallowed, green.
 
 So this harness EXECUTES the shipped decision shell against synthetic agent
 transcripts, then evaluates the shipped `if:` expressions against the outputs
@@ -412,6 +418,44 @@ INTAKE_SCENARIOS = [
         # oversight: intake authored a spec, nothing is wrong with it, but no
         # branch resolved, so there is no PR URL to point anyone at.
         expect_silent_green=True,
+    ),
+    dict(
+        name="specified=false but a spec branch resolved (defect e)",
+        why="The one combination that suppresses BOTH arms of the split: "
+            "`specified` gates the announce steps, so a spec PR the agent "
+            "really did open goes unannounced, and with a marker-free spec.md "
+            "the cross-check agrees (structured=false, marker=false) and says "
+            "nothing. Green run, spec PR in the queue, requester holding only "
+            "the run-started comment. The guard stays — a stale branch from an "
+            "earlier run on this issue must not be announced as this run's "
+            "output — but the contradiction must be emitted where the watchdog "
+            "can see it.",
+        result={"specified": False, "clarifications": []},
+        spec_dir="specs/042-a-feature", markers=False,
+        expect_valid=True, expect_needed="false", expect_blocked="",
+        expect_fires=set(),
+        expect_stdout=SENTINEL_PREFIX + "clarification-unclaimed-spec",
+        expect_run_red=False,
+        # Nothing is posted BY DESIGN (which run authored that branch is not
+        # knowable here), so this opts out of the silent-green assertion — but
+        # only because expect_stdout above pins that the run is loud in the
+        # log. Silent to the issue is a decision; silent everywhere was a bug.
+        expect_silent_green=True,
+    ),
+    dict(
+        name="specified=false, spec branch resolved, markers present (defect e)",
+        why="The dangerous half of the same contradiction. A step-2 STOP "
+            "leaves no spec at all, so reaching this means a marker-carrying "
+            "spec.md IS in the workspace while the agent claims no discernible "
+            "feature request — never routine, unlike clarify's `none`. The "
+            "veto fires and the run goes RED rather than finishing green over "
+            "a spec nobody was told about.",
+        result={"specified": False, "clarifications": []},
+        spec_dir="specs/042-a-feature", markers=True,
+        expect_valid=True, expect_needed="false", expect_blocked="true",
+        expect_fires=set(),
+        expect_stdout=SENTINEL_PREFIX + "clarification-mismatch",
+        expect_run_red=True,
     ),
     dict(
         name="questionnaire whose optional fields are empty strings (defect d)",
@@ -989,6 +1033,22 @@ def mut_silent_skip(loaded):
             '/spec.md." >> "$GITHUB_STEP_SUMMARY"', ':')
 
 
+def mut_drop_unclaimed_sentinel(loaded):
+    """Defect (e): specified=false over a resolvable spec dir says nothing.
+
+    The outcome is again unchanged — no callout either way. The only thing
+    separating "intake decided not to announce someone else's branch" from
+    "a spec PR this run opened is sitting unannounced" is this emission.
+    """
+    for stage, steps, _ in loaded:
+        if stage.name != "intake":
+            continue
+        run = str(steps[stage.decide]["run"])
+        steps[stage.decide]["run"] = run.replace(
+            'if [ "$specified" != "true" ] && [ -n "$SPEC_DIR" ]; then',
+            'if false; then')
+
+
 def mut_no_cell_escape(loaded):
     """Agent text reaches the markdown table cell unescaped."""
     for stage, steps, _ in loaded:
@@ -1015,6 +1075,8 @@ MUTATIONS = [
      mut_fail_step_never_fires),
     ("a `Fail on ...` step that fires but exits 0", mut_fail_step_exits_zero),
     ("skipping the marker cross-check without saying so", mut_silent_skip),
+    ("suppressing both callouts on specified=false without saying so",
+     mut_drop_unclaimed_sentinel),
     ("agent text reaching a markdown table cell unescaped", mut_no_cell_escape),
     ("options past Z rendering their label as null", mut_no_ordinal_fallback),
 ]

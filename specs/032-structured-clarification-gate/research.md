@@ -275,6 +275,34 @@ outcome (a reply that didn't address the open questions, spec.md still
 carrying its markers), defeating FR-012's purpose of making the watchdog
 sentinel a meaningful signal rather than expected noise.
 
+**Amended 2026-08-09** (code review of this branch). The parenthetical
+"there is no `none` equivalent there" is no longer strictly true: this
+feature's own `specified == 'true'` conjunct on intake's spec-PR arm makes
+`specified: false` intake's `none`, in that no callout is posted in either
+direction. The decision stands unchanged anyway, and the symmetry with
+clarify is only apparent:
+
+* On clarify's `none`, remaining markers are the EXPECTED state — the reply
+  resolved nothing — so an unscoped cross-check fires on the most common
+  outcome. That is the noise argument, and it holds.
+* On intake's `specified: false`, a genuine step-2 STOP produces no spec at
+  all, so `$SPEC_DIR` is empty, the existence guard skips the comparison,
+  and the veto branch is unreachable. Reaching it means a marker-carrying
+  `spec.md` is present in the workspace while the agent reports no
+  discernible feature request. There is no routine case to be noisy about;
+  that combination is a contradiction, and going red beats finishing green
+  over a spec nobody was told about.
+
+So intake's cross-check stays unscoped. What changed is the message: the
+veto now says what actually happened when `specified` is false, rather than
+"refusing to announce the spec PR as ready" — an announcement the
+`specified` guard had already made impossible, which would send a maintainer
+hunting for a callout decision that was never in play. The non-marker half
+of the same contradiction (specified false, spec dir resolved, no markers)
+posts nothing and disagrees with nothing, so it is reported through a new
+`clarification-unclaimed-spec` sentinel (`contracts/watchdog-sentinel.md`)
+rather than left as the one silently-green path in the stage.
+
 ## Decision: Rendering is a deterministic bash+jq step, not a new composite action
 
 **Decision**: The `## Question N` markdown is rendered by a `run:` step

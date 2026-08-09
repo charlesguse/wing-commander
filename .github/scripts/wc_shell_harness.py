@@ -124,6 +124,54 @@ def ensure_jq():
              "it, so nothing here can run without it.")
 
 
+def parse_github_output(path):
+    """Parse a $GITHUB_OUTPUT file the way the runner does.
+
+    Actions accepts TWO forms, and a harness that knows only the first is the
+    "green while checking nothing" shape these gates exist to prevent:
+
+        name=value                      single line
+        name<<DELIM \n ...\n DELIM      multi-line (what actions/core emits
+                                        for any value containing a newline)
+
+    Read with a bare `if "=" in line`, the second form yields a junk key
+    (`name<<EOF`) plus one stray entry per content line, and the output the
+    caller then asserts on is simply absent — so the assertion passes against
+    an empty string. No step under test publishes a multi-line output today;
+    the first one that does would land on exactly that.
+
+    An unterminated heredoc is a hard error, not a shrug: the runner rejects
+    it too, and a silently-truncated value is the same class of lie.
+    """
+    outputs = {}
+    with open(path, encoding="utf-8") as fh:
+        lines = fh.read().splitlines()
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        i += 1
+        eq, lt = line.find("="), line.find("<<")
+        # Whichever delimiter comes FIRST decides the form, so `k=a<<b` is a
+        # single-line value and not a malformed heredoc.
+        if lt != -1 and (eq == -1 or lt < eq):
+            key, delim = line[:lt], line[lt + 2:]
+            body = []
+            while i < len(lines) and lines[i] != delim:
+                body.append(lines[i])
+                i += 1
+            if i >= len(lines):
+                sys.exit(f"::error::{path}: output {key!r} opened a "
+                         f"{delim!r} heredoc that is never closed. The runner "
+                         f"rejects this too — fix the step, do not let the "
+                         f"harness assert against a truncated value.")
+            i += 1                      # consume the closing delimiter
+            outputs[key] = "\n".join(body)
+        elif eq != -1:
+            outputs[line[:eq]] = line[eq + 1:]
+    return outputs
+
+
 def run_step(bash, script, workdir, env_extra, runner_temp):
     """Run one extracted `run:` block; return (rc, output, outputs, summary).
 
@@ -153,12 +201,7 @@ def run_step(bash, script, workdir, env_extra, runner_temp):
                           cwd=workdir, env=env, capture_output=True,
                           text=True, encoding="utf-8", errors="replace")
 
-    outputs = {}
-    with open(out_file, encoding="utf-8") as fh:
-        for line in fh:
-            if "=" in line:
-                k, v = line.rstrip("\n").split("=", 1)
-                outputs[k] = v
+    outputs = parse_github_output(out_file)
     with open(sum_file, encoding="utf-8") as fh:
         summary = fh.read()
     return proc.returncode, proc.stdout + proc.stderr, outputs, summary

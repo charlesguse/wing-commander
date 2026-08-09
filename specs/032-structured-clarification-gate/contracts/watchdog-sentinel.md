@@ -49,9 +49,13 @@ deliberate and matches the care the surrounding collector already takes.
 |---|---|---|
 | `clarification-mismatch` | The structured decision and the colon-form `[NEEDS CLARIFICATION:` marker scan disagree about the same `spec.md` | One of the two views of "does this spec have open questions" is wrong. In the dangerous direction (structured empty, markers present) the emitting step ALSO sets `blocked=true` and fails the run — the sentinel reports, the veto acts |
 | `clarification-orphaned` | `specified == true` and `clarifications` is non-empty, but "Resolve created spec" found no `spec-draft/NNN-*` branch | The questionnaire is posted (deliberately — dropping it is the silent loss this feature removes) against a spec the rest of the pipeline cannot resolve, so the clarify loop that should consume the reply may not be reachable |
+| `clarification-unclaimed-spec` (intake only) | `specified == false` and "Resolve created spec" DID resolve a spec dir | The mirror image of `clarification-orphaned`, and the only combination that suppresses both arms of the split: `specified` gates the spec-PR announcement, so nothing is posted at all. Either the agent authored the spec and mis-set the discriminator — an unannounced spec PR now sits in the review queue — or a stale `spec-draft/NNN-*` branch from an earlier run on this issue survived and every later spec-dir read belongs to that run. Reported, not vetoed: there is no readiness claim being made to block, and `specified` still decides (FR-004). If that spec.md *also* carries markers, the existing cross-check veto fires on top and the run goes red |
 
-Both are emitted by the same step under the same stdout+summary discipline,
-in the form `⚠️ WC-SENTINEL: <token> — <human-readable detail>`.
+All three are emitted by the same step under the same stdout+summary
+discipline, in the form `⚠️ WC-SENTINEL: <token> — <human-readable detail>`.
+The collector needs no edit for any of them: its emitted-token pass matches
+`WC-SENTINEL: [a-z][a-z0-9-]*` generically and yields one signal per distinct
+token per job, so a new token is a workflow-side change only.
 
 ## Why this is sufficient
 
