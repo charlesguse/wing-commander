@@ -452,6 +452,11 @@ jobs:
               else:
                   continue          # not a published stage
               stages += 1
+              # Named, not just counted. verify-gate-7.py compares this set
+              # against wc_published_stages.py's; a count alone lets two
+              # derivations that see the same NUMBER of different files pass
+              # as agreeing, which is #149 wearing yet another hat.
+              print(f"note: {f}: published stage")
 
               inputs = (call.get("inputs") or {}) if isinstance(call, dict) else {}
               for iname, (itype, idefault) in DECLARED.items():
@@ -525,6 +530,68 @@ jobs:
       # about whether Gate 7 works.
       - name: Gate 7 self-test — the detector actually detects
         run: python3 .github/scripts/verify-gate-7.py
+
+      # Gate 8 — behavioral, not static. Gates 1-3 prove intake.yml and
+      # clarify.yml parse, register and are permitted to run; none of them can
+      # see that the two-way callout split each stage ends in sends a
+      # requester somewhere they cannot act, or announces a spec as ready when
+      # it visibly is not. Four defects of that class have shipped: #159's
+      # unmatchable marker grep, a `spec-dir` guard re-added to only ONE arm
+      # of the split (so the questionnaire could post on the "no discernible
+      # feature request" path, where no spec: label exists and no reply can
+      # reach wing-commander-2-clarify.yml), a cross-check that logged a
+      # mismatch and announced readiness anyway, and a missing existence guard
+      # that made the cross-check cry wolf about its own unreadable file.
+      #
+      # The harness EXECUTES the shipped decision shell against synthetic agent
+      # transcripts and evaluates the shipped `if:` expressions against the
+      # outputs it really produced, so it cannot drift from the workflows. It
+      # ends with mutation checks that reintroduce each defect and assert the
+      # suite fails — the same discipline as gates 6 and 7's self-tests, and
+      # the reason gate 5 exists at all.
+      - name: Gate 8 — clarification callouts are reachable and honest
+        run: python3 .github/scripts/verify-clarification-gating.py
+
+      # Gate 9 — the watchdog's own tripwire. "Collect: step summaries" is
+      # what turns a stage's emitted sentinel into a signal that diagnose can
+      # reason about; a sentinel it drops does not degrade the watchdog, it
+      # makes the watchdog blind to one class of problem while still
+      # reporting that inspection passed. That is the most expensive failure
+      # shape this repository has had (2026-07-24's false "passed inspection",
+      # and 2026-07-25's audit finding 10 of 19 "successful" runs not genuine).
+      #
+      # It was untested — pure shell inside a `gh api` loop, invisible to
+      # every static gate — and it had already grown a real conflict: the
+      # legacy bare-word pass (capped at one match per job) also matched the
+      # emitted-token lines that docs/agent-friendly-workflows.md tells stage
+      # authors to write, so one event produced two signals sharing an id and
+      # spent the cap that an unrelated genuine stall word needed.
+      #
+      # Same discipline as gates 4-8: the shipped step is extracted and
+      # executed against synthetic job logs with `gh` stubbed, so there is no
+      # copy to drift, and mutations reintroduce the conflict to prove the
+      # suite can fail.
+      - name: Gate 9 — the watchdog's sentinel collector sees what stages emit
+        run: python3 .github/scripts/verify-sentinel-collector.py
+
+      # Gate 10 — the gates themselves are wired up. Every gate above is a
+      # file in .github/scripts that some `run:` line has to name, and
+      # verify-denied-tool-collector.sh has already shown what happens when
+      # one is not named: it sat orphaned for weeks, drifted out of sync with
+      # the filter it checked, and still printed "all assertions passed" when
+      # run by hand, so it read as evidence while proving nothing. PR #158
+      # wired that one script up; this stops the next one landing the same
+      # way, and also catches the reverse — a gate step pointing at a file
+      # that has been moved or renamed, whose name in the job list implies a
+      # check that is not happening.
+      #
+      # The rule is a naming convention read off the directory, not a list of
+      # gate names: a list is what #149 was, where forgetting to add a file is
+      # invisible and a new one is born exempt. Mentioning a script in a
+      # comment does not count as running it — that is how an orphan would
+      # hide from this check.
+      - name: Gate 10 — every check is wired to a workflow, and every wire lands
+        run: python3 .github/scripts/verify-gate-wiring.py
 
   # Gate 4 — behavioral tests for the auto-update-spec-kit stage pair. Gates
   # 1-3 are static: they prove a workflow parses, registers, and is permitted

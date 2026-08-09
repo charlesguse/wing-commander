@@ -23,6 +23,7 @@ Usage: python3 .github/scripts/verify-gate-7.py
 """
 import io
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -209,6 +210,87 @@ CASES = [
 ]
 
 
+def norm(path):
+    """A workflow path in the one spelling both derivations can be compared in.
+
+    glob joins with os.sep, so the same file is `.github/workflows/x.yml` on
+    the runner and `.github/workflows\\x.yml` locally — a difference that would
+    make every path look like a disagreement on Windows and nowhere else.
+    """
+    p = path.strip().replace("\\", "/")
+    return p[2:] if p.startswith("./") else p
+
+
+def check_derivations_agree(gate_path):
+    """Gate 7's inline stage detection vs the one release.yml uses.
+
+    Two places need to know which workflows are published stages: this gate
+    (which checks their bindings on every PR) and release.yml's actionlint
+    pass (which is the only pre-release lint watchdog.yml and
+    auto-update-spec-kit.yml get). They must not answer differently — a
+    stage visible to one and invisible to the other is exactly issue #149,
+    where a file went unlinted for a whole release while the gate reported
+    success.
+
+    So release.yml calls wc_published_stages.py, and this asserts that module
+    still agrees with the gate's own inline logic on the real repository.
+    Comparing on the real fleet rather than on a fixture is deliberate: a
+    fixture would only ever exercise the shapes someone thought to write
+    down, and the shapes nobody thought of are the whole risk.
+
+    The comparison is set-vs-set, not count-vs-count. Counts agree whenever
+    the two derivations see the same NUMBER of files, which is exactly what
+    happens when one skips a malformed stage (wc_published_stages.py swallows
+    yaml.YAMLError and continues) while picking up a different one — the
+    disagreement this exists to catch, passing.
+    """
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    try:
+        from wc_published_stages import published_stages
+    except ImportError as exc:
+        return [("shared stage derivation", [f"cannot import "
+                 f"wc_published_stages ({exc}); release.yml's pass 1 depends "
+                 f"on it"], "")]
+
+    module_stages = {norm(p) for p in published_stages()}
+    proc = subprocess.run([sys.executable, gate_path], cwd=".",
+                          capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
+    out = (proc.stdout or "") + (proc.stderr or "")
+    m = re.search(r"Gate 7: (\d+) published stage\(s\)", out)
+    if not m:
+        return [("shared stage derivation",
+                 ["could not read the stage count out of Gate 7's own output; "
+                  "its summary line has changed shape"], out.strip())]
+
+    gate_count = int(m.group(1))
+    gate_stages = {norm(p) for p in
+                   re.findall(r"^note: (.+): published stage$", out, re.M)}
+    if len(gate_stages) != gate_count:
+        return [("shared stage derivation", [
+            f"Gate 7's summary says {gate_count} published stage(s) but it "
+            f"named {len(gate_stages)} of them. This check reads the "
+            f"'note: <path>: published stage' lines to compare the two "
+            f"derivations file by file; if the gate stopped emitting one per "
+            f"stage, restore it rather than falling back to counts."],
+            out.strip())]
+
+    if gate_stages != module_stages:
+        only_gate = sorted(gate_stages - module_stages)
+        only_module = sorted(module_stages - gate_stages)
+        return [("shared stage derivation", [
+            f"Gate 7 and wc_published_stages.py (which release.yml's "
+            f"actionlint pass uses) disagree about which workflows are "
+            f"published stages. Seen only by Gate 7: {only_gate or '(none)'}. "
+            f"Seen only by wc_published_stages.py: {only_module or '(none)'}. "
+            f"One of them is about to check a file the other does not know "
+            f"exists — that is #149, where a stage went unlinted for a whole "
+            f"release while the gate reported success."], "")]
+    print(f"ok    the shared stage derivation agrees with Gate 7 "
+          f"({gate_count} published stages)")
+    return []
+
+
 def main():
     if not os.path.isfile(LINT_WORKFLOW):
         sys.exit(f"::error::run this from the repository root; {LINT_WORKFLOW} not found.")
@@ -219,6 +301,26 @@ def main():
     io.open(gate_path, "w", encoding="utf-8").write(gate_src)
 
     failures = []
+
+    def record(name, problems, out):
+        """Append a failure AND say what it was.
+
+        Every failure goes through here. The derivation check used to append
+        straight to `failures` while only the fixture loop below knew how to
+        print, so a genuine derivation disagreement produced the summary line
+        ("1 of N scenarios behaved wrongly") and nothing else — pointing the
+        maintainer at a fixture suite that had just printed `ok` N times, for
+        a failure that is not one of the fixtures at all.
+        """
+        failures.append((name, problems, out))
+        print(f"FAIL  {name}")
+        for problem in problems:
+            print(f"        - {problem}")
+        for line in (out or "").strip().splitlines():
+            print(f"        | {line}")
+
+    for name, problems, out in check_derivations_agree(gate_path):
+        record(name, problems, out)
     try:
         for name, files, expect_fail, must_mention in CASES:
             case_dir = tempfile.mkdtemp(prefix="case_", dir=root)
@@ -243,25 +345,25 @@ def main():
                     problems.append(f"error text never mentions {token!r}")
 
             if problems:
-                failures.append((name, problems, out.strip()))
-                print(f"FAIL  {name}")
-                for p in problems:
-                    print(f"        - {p}")
-                for line in out.strip().splitlines():
-                    print(f"        | {line}")
+                record(name, problems, out)
             else:
                 print(f"ok    {name}")
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
+    # +1: the shared-derivation check is a check too, and counting only the
+    # fixtures made a derivation failure read as "1 of 14 scenarios" when all
+    # 14 scenarios had just passed.
+    total = len(CASES) + 1
     print()
     if failures:
         print(f"::error file={LINT_WORKFLOW}::Gate 7 self-test: "
-              f"{len(failures)} of {len(CASES)} scenarios behaved wrongly. Gate 7's "
+              f"{len(failures)} of {total} check(s) behaved wrongly "
+              f"({', '.join(name for name, _, _ in failures)}). Gate 7's "
               f"detection logic does not do what its name claims, so a green Gate 7 "
               f"on the real fleet means nothing.")
         return 1
-    print(f"Gate 7 self-test: all {len(CASES)} scenarios behaved as expected.")
+    print(f"Gate 7 self-test: all {total} checks behaved as expected.")
     return 0
 
 

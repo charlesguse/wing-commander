@@ -513,6 +513,12 @@ jobs:
             2. If the issue does not contain a discernible feature request, comment
                on the issue explaining that intake could not produce a specification
                and what is missing, then STOP. Do not create files or branches.
+               STOPPING HERE MEANS returning `{"specified": false,
+               "clarifications": []}` as your final result. Your comment is the
+               only thing the requester should see for this run — put whatever is
+               missing in it, NOT in `clarifications`. `specified: false` is what
+               tells the pipeline no spec was ever attempted, so it must not post
+               a follow-up questionnaire on top of your comment.
             3. Run the /speckit-specify skill (.claude/skills/speckit-specify/SKILL.md)
                using the feature description assembled in step 1 (title + body,
                plus any qualifying comments folded in). Follow the skill
@@ -543,14 +549,17 @@ jobs:
                - Create the spec identity label first (adding a nonexistent label fails):
                  gh label create "spec:<NNN-slug>" --color C5DEF5 --description "Lifecycle: <spec-dir>" --force
                - gh issue edit --add-label "spec:<NNN-slug>,stage:spec"
-               - If spec.md still contains [NEEDS CLARIFICATION] markers: write
-                 each question, in the skill's "## Question N" format (context,
-                 question, suggested-answer option table), to
-                 ${{ runner.temp }}/intake-clarification.md. A deterministic
-                 step after this one posts them to the issue — do not comment
-                 on the issue yourself.
-               - Otherwise: write nothing to that file — a deterministic step
-                 after this one announces the spec PR is ready for review.
+               - Return your final result in the shape the provided schema
+                 requires: `specified: true` (you reached this step, so a spec
+                 was authored — only the step 2 STOP path returns false), plus
+                 a `clarifications` array with one entry per open question you
+                 were unable to resolve while specifying, each with `question`
+                 (required), `context` (the relevant spec section, optional),
+                 and `options` (your suggested answers, optional — each with
+                 `answer` and, optionally, `implications`). An empty array
+                 means the spec has no open questions. Do not also write a
+                 questions file yourself — a deterministic step renders and
+                 posts them from this array.
 
             Constraints: create at most one spec directory; never edit files outside
             it; never merge or approve anything; never force-push.
@@ -575,8 +584,45 @@ jobs:
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ inputs.max-turns }}
+            --json-schema '{"type":"object","properties":{"specified":{"type":"boolean"},"clarifications":{"type":"array","items":{"type":"object","properties":{"question":{"type":"string"},"context":{"type":["string","null"]},"options":{"type":"array","items":{"type":"object","properties":{"answer":{"type":"string"},"implications":{"type":["string","null"]}},"required":["answer"]}}},"required":["question"]}}},"required":["specified","clarifications"]}'
             --allowedTools "${{ steps.tool-args-intake.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-intake.outputs.disallowed-tools }}"
+
+      # The action exits zero even when the agent run itself errored (e.g. a
+      # 401 from an invalid credential — observed live, run 29181108490), and
+      # this stage's no-spec path is deliberately green (a completed-but-
+      # underdelivering agent is a report-and-stop, not a failure). An agent
+      # that ERRORED, or one whose terminal result is missing/malformed/
+      # non-success, is different: fail loudly, or a credential/API outage or
+      # a dropped structured result reads as "intake ran fine and produced
+      # nothing" (contracts/credentials.md; contracts/clarification-schema.md
+      # FR-002). The verdict is recorded here — ahead of "Check whether the
+      # spec still needs clarification", so that step never computes `needed`
+      # from a coerced-empty array — but the run is failed by the job's last
+      # step, so an agent that DID create the spec, branch and PR before its
+      # terminal result went missing still gets that PR resolved and labeled
+      # instead of leaving orphaned pipeline state behind a red job.
+      - name: Validate agent result
+        id: agent-result
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent.outcome == 'success'
+        run: |
+          f="$RUNNER_TEMP/claude-execution-output.json"
+          agent_ok="$(jq -r '([.[] | select(.type=="result")] | last) as $r
+            | if $r != null and $r.is_error == false and $r.subtype == "success"
+              then "true" else "false" end' "$f" 2>/dev/null || echo false)"
+          if [ "$agent_ok" != "true" ]; then
+            err=$(jq -r '[.[] | select(.type=="result")] | last | .result // "missing or invalid terminal result"' "$f" 2>/dev/null || echo "missing execution output file")
+            echo "::error::wing-commander intake stage: the agent run did not complete with a valid result — $err"
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          raw="$(jq -r '[.[] | select(.type=="result")] | last | .result // empty' "$f" 2>/dev/null || true)"
+          if ! printf '%s' "$raw" | jq -e 'type=="object" and (.clarifications|type)=="array" and (.specified|type)=="boolean"' >/dev/null 2>&1; then
+            echo "::error::wing-commander intake stage: the agent's structured result is missing a valid clarifications array or specified boolean."
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "valid=true" >> "$GITHUB_OUTPUT"
 
       # Deterministic read-back of what intake produced — feeds the stage's
       # declared outputs (the agent may have legitimately stopped without a
@@ -600,19 +646,227 @@ jobs:
       # Deterministic kind decision (contracts/callout-points.md rows 1/2):
       # the agent never decides whether to post an action-required callout,
       # it only authors the clarification-question content when needed.
+      # Deliberately NOT gated on a discoverable spec branch: the decision
+      # comes from the structured output, which exists whether or not
+      # "Resolve created spec" found the branch, and an authored
+      # questionnaire dropped because a push failed is exactly the silent
+      # loss this feature exists to eliminate. Only the marker cross-check
+      # below needs a spec dir, so only it is guarded on one.
+      #
+      # `specified` is what keeps that ungating honest. Two very different
+      # runs produce an empty spec-dir, and a spec-dir test cannot tell them
+      # apart:
+      #   (a) the agent STOPped at prompt step 2 — no discernible feature
+      #       request, no spec ever attempted, no spec:/stage: labels. A
+      #       questionnaire here is a DEAD END: wing-commander-2-clarify.yml
+      #       requires a spec: label plus stage:spec|clarify, so a reply can
+      #       never reach the clarify loop, and the agent already posted its
+      #       own "what's missing" comment.
+      #   (b) the agent authored a spec but the branch push (or the
+      #       ls-remote read-back) failed. The questions are real and must
+      #       still be posted.
+      # --json-schema forces a conforming terminal result no matter WHERE the
+      # agent stopped, so on path (a) a non-empty clarifications array is
+      # entirely plausible — the agent has just finished enumerating what the
+      # issue is missing. `specified` is the discriminator the agent sets on
+      # the way past step 2, mirroring clarify.yml's `answered`; it is the
+      # only thing that distinguishes (a) from (b).
       - name: Check whether the spec still needs clarification
         id: clarification
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.created.outputs.spec-dir != ''
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent-result.outputs.valid == 'true'
         env:
           SPEC_DIR: ${{ steps.created.outputs.spec-dir }}
+          SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
         run: |
-          # No closing \]: real markers are '[NEEDS CLARIFICATION: <question>]'
-          # (spec-template.md) — the bare-bracket literal never matched one.
-          if grep -q '\[NEEDS CLARIFICATION' "$SPEC_DIR/spec.md"; then
+          f="$RUNNER_TEMP/claude-execution-output.json"
+          raw="$(jq -r '[.[] | select(.type=="result")] | last | .result // empty' "$f" 2>/dev/null || true)"
+          count="$(printf '%s' "$raw" | jq 'if type=="object" and (.clarifications|type)=="array" then (.clarifications|length) else 0 end' 2>/dev/null || echo 0)"
+          specified="$(printf '%s' "$raw" | jq -r 'if type=="object" and (.specified|type)=="boolean" then .specified else false end' 2>/dev/null || echo false)"
+          echo "specified=$specified" >> "$GITHUB_OUTPUT"
+          if [ "$specified" = "true" ] && [ "$count" -gt 0 ]; then
             echo "needed=true" >> "$GITHUB_OUTPUT"
+            structured=true
           else
             echo "needed=false" >> "$GITHUB_OUTPUT"
+            structured=false
           fi
+
+          # Path (a): report the drop rather than performing it silently. An
+          # agent that stopped at step 2 should have left `clarifications`
+          # empty (the prompt says so); a non-empty array here means it put
+          # the "what's missing" narrative in the wrong place, and the
+          # questions are being suppressed on purpose.
+          if [ "$specified" != "true" ] && [ "$count" -gt 0 ]; then
+            echo "Intake returned specified=false (no discernible feature request) alongside $count clarification question(s). No spec, branch or spec:/stage: label exists, so a questionnaire callout would be a dead end — the requester cannot reply into the clarify loop. Suppressed; the agent's own issue comment stands." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # Path (b): the questionnaire IS posted (this is the silent loss
+          # T002 removed the spec-dir gate to prevent), but a spec the rest
+          # of the pipeline cannot see is worth saying out loud.
+          if [ "$structured" = "true" ] && [ -z "$SPEC_DIR" ]; then
+            msg="⚠️ WC-SENTINEL: clarification-orphaned — intake authored clarification questions (specified=true) but no ${SPEC_DRAFT_PREFIX}* branch was discoverable, so the questionnaire is posted against a spec the pipeline cannot resolve."
+            echo "$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # Path (c): the mirror image, and the one path that would otherwise
+          # finish green having said NOTHING anywhere. `specified` gates both
+          # arms of the spec-PR announcement below, so specified=false with a
+          # resolvable spec dir posts no questionnaire, announces no PR, and
+          # trips no cross-check (structured=false, and a marker-free spec.md
+          # gives marker=false — agreement, not mismatch). The requester is
+          # left with the run-started comment and nothing else.
+          #
+          # Both readings of the contradiction are worth a human's attention:
+          #   - the agent authored the spec, pushed it, opened the PR and
+          #     mis-set the discriminator. `specified` is agent-authored,
+          #     which is the whole reason the cross-check and the orphan
+          #     sentinel exist; there is no reason to trust it more here.
+          #     A real spec PR is then sitting unannounced in the queue.
+          #   - a stale ${SPEC_DRAFT_PREFIX}NNN-* branch from an earlier run
+          #     on this issue survived, and the spec dir every later step
+          #     resolves from it belongs to that run, not this one. (That is
+          #     precisely the risk the `specified` guard was added for, so
+          #     the guard stays — this reports the collision it creates.)
+          # Reported, not vetoed: nothing is being announced, so there is no
+          # readiness claim to block, and `specified` still decides (FR-004).
+          if [ "$specified" != "true" ] && [ -n "$SPEC_DIR" ]; then
+            msg="⚠️ WC-SENTINEL: clarification-unclaimed-spec — intake reported specified=false (no discernible feature request) but $SPEC_DIR resolved from an existing ${SPEC_DRAFT_PREFIX}* branch. Either the agent authored a spec and mis-set the discriminator — leaving an unannounced spec PR in the review queue — or a stale branch from an earlier run on this issue survived. No callout was posted."
+            echo "$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # Colon-form marker cross-check (FR-004–FR-008). Never feeds
+          # `needed` above; it can only veto (see below). Real markers are
+          # '[NEEDS CLARIFICATION: <question>]' (spec-template.md); the
+          # colon distinguishes a genuine marker from a prose mention of the
+          # bare token (#159). Needs a spec on disk, so it is skipped when
+          # intake produced no discoverable spec.
+          #
+          # The two operands come from DIFFERENT places and can disagree:
+          # $SPEC_DIR is derived from `git ls-remote` (a read of the REMOTE,
+          # see "Resolve created spec"), while -f tests the LOCAL workspace.
+          # An agent that pushed the spec branch but left the working tree
+          # somewhere else yields a non-empty SPEC_DIR and no local spec.md.
+          # Skipping silently there would retire the veto in exactly the
+          # situation it exists for and announce "Review the spec PR" over a
+          # spec.md that still carries markers — a verifier sitting green
+          # while the path it guards is not the path that ran. So the skip
+          # is always SAID, matching clarify.yml.
+          if [ -n "$SPEC_DIR" ] && [ -f "$SPEC_DIR/spec.md" ]; then
+            if grep -q '\[NEEDS CLARIFICATION:' "$SPEC_DIR/spec.md"; then
+              marker=true
+            else
+              marker=false
+            fi
+          else
+            marker="$structured"   # nothing to compare against; never a mismatch
+            echo "Cross-check skipped: no readable ${SPEC_DIR:-<unset>}/spec.md." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ "$structured" != "$marker" ]; then
+            empty_or_not=$([ "$structured" = "true" ] && echo "non-empty" || echo "empty")
+            match_or_not=$([ "$marker" = "true" ] && echo "a match" || echo "no match")
+            # Written to BOTH the step summary and stdout on purpose:
+            # $GITHUB_STEP_SUMMARY is a file rendered on the run summary
+            # page and is never mirrored into the job log, and
+            # watchdog.yml's "Collect: step summaries" step greps job
+            # logs (with ##[group] blocks — the only place this script's
+            # own source appears — stripped). Summary-only would make the
+            # sentinel unreachable (contracts/watchdog-sentinel.md).
+            msg="⚠️ WC-SENTINEL: clarification-mismatch — structured output reported clarifications=$empty_or_not but the colon-form marker scan found $match_or_not in $SPEC_DIR/spec.md."
+            echo "$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+
+            # The cross-check gets a VETO, never a vote. Only one direction
+            # of disagreement is dangerous:
+            #   structured empty + markers present -> "Review the spec PR"
+            #     is about to be announced for a spec that visibly still
+            #     carries unresolved questions, and whoever merges that PR
+            #     merges the markers with it. That is the silent-loss class
+            #     this whole feature exists to close, and a watchdog
+            #     sentinel is a report, not a gate.
+            #   structured non-empty + no marker -> the questionnaire posts
+            #     with real, answerable questions. A warning is enough.
+            # Blocking is not a third callout branch competing with the
+            # other two: it posts nothing and fails the run, so `needed`
+            # remains the single source deciding WHICH callout fires
+            # (FR-004) and the two posting steps stay mutually exclusive
+            # (#159's structural property). The cross-check still never
+            # synthesizes a question from marker text (FR-007).
+            if [ "$structured" = "false" ] && [ "$marker" = "true" ]; then
+              echo "blocked=true" >> "$GITHUB_OUTPUT"
+              # The cross-check is NOT scoped to specified=true (clarify's is
+              # scoped to answered=true, because on clarify's `none` the
+              # markers legitimately remain and the mismatch would be routine
+              # noise). Intake has no such routine case: on a genuine step 2
+              # STOP no spec exists at all, so $SPEC_DIR is empty, the
+              # existence guard above skips, and this branch is unreachable.
+              # Reaching it with specified=false means a spec.md IS in this
+              # workspace carrying markers while the agent claims there was
+              # no discernible feature request — signal, not noise.
+              #
+              # It gets its own message because the other one names an
+              # announcement that cannot happen here: `specified` already
+              # blocks both arms, so "refusing to announce the spec PR as
+              # ready" would send a maintainer looking for a callout decision
+              # that was never in play.
+              if [ "$specified" = "true" ]; then
+                echo "::error::wing-commander intake stage: refusing to announce the spec PR as ready — the structured result reported no open questions but $SPEC_DIR/spec.md still contains colon-form [NEEDS CLARIFICATION: markers. Resolve the markers or fix the agent's result; do not merge this spec PR as-is."
+              else
+                echo "::error::wing-commander intake stage: intake reported specified=false (no discernible feature request), yet $SPEC_DIR/spec.md is present in this workspace and still contains colon-form [NEEDS CLARIFICATION: markers. Nothing was announced — specified=false already blocks both callouts — so this run would otherwise have finished green over a marker-carrying spec nobody was told about. Fix the agent's result, or clear the stale spec branch."
+              fi
+            fi
+          fi
+
+      # Deterministic render (contracts/clarification-schema.md): turns the
+      # structured `clarifications` array into the unchanged `## Question N`
+      # markdown, so the posted content and the `needed` decision above
+      # always come from the same read of the same artifact.
+      - name: Render clarification questionnaire
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'true'
+        run: |
+          f="$RUNNER_TEMP/claude-execution-output.json"
+          raw="$(jq -r '[.[] | select(.type=="result")] | last | .result // empty' "$f" 2>/dev/null || true)"
+          printf '%s' "$raw" | jq -r '
+            # Agent-authored text lands in markdown table cells, where a bare
+            # "|" opens a column and a newline ends the table — escape both
+            # rather than trusting the agent to have done it.
+            def cell: tostring | gsub("\\|"; "\\|") | gsub("[\r\n]+"; "<br>");
+            # NOTE: no apostrophes anywhere in this jq program — it is
+            # single-quoted in the shell, so one would end the program.
+            # The // operator falls through on null and false ONLY, so an
+            # empty or all-whitespace string counts as present. The schema
+            # permits context and implications to be "", which made the old
+            # `// null` render a bare "**Context**:" line with nothing under
+            # it, and `// "—"` render an empty Implications cell.
+            def blank: . == null or (type == "string" and (gsub("^\\s+|\\s+$"; "") == ""));
+            # The schema places no maxItems on options; past the last letter
+            # fall back to the ordinal so an 11th option cannot render the
+            # literal string "null" as its label.
+            ["A","B","C","D","E","F","G","H","I","J","K","L","M",
+             "N","O","P","Q","R","S","T","U","V","W","X","Y","Z"] as $letters
+            | (if type=="object" and (.clarifications|type)=="array" then .clarifications else [] end)
+            | to_entries
+            | map(
+                "## Question \(.key + 1)\n\n"
+                + (if (.value.context | blank) then "" else "**Context**: \(.value.context)\n\n" end)
+                + "**What we need to know**: \(.value.question)\n\n"
+                + "**Suggested Answers**:\n\n"
+                + "| Option | Answer | Implications |\n"
+                + "|--------|--------|--------------|\n"
+                + (
+                    (.value.options // [])
+                    | to_entries
+                    | map("| \($letters[.key] // ((.key + 1) | tostring)) | \(.value.answer | cell) | \(if (.value.implications | blank) then "—" else (.value.implications | cell) end) |")
+                    | join("\n")
+                    | (if length > 0 then . + "\n" else . end)
+                  )
+                + "| Custom | Provide your own answer | Reply on this issue with your own answer |\n\n"
+                + "**Your choice**: _Reply on this issue_\n"
+              )
+            | join("\n")
+          ' > "${{ runner.temp }}/intake-clarification.md"
 
       - name: Announce clarification needed
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'true'
@@ -628,9 +882,23 @@ jobs:
       # already uses below — gh pr list --head takes an exact branch name,
       # not a glob, so the NNN-slug suffix (unknown at this point) must be
       # matched client-side.
+      # Two guards, because `needed == 'false'` is true on the no-spec path
+      # as well as the happy path. `specified == 'true'` excludes the step 2
+      # STOP (the agent never attempted a spec, so there is no PR to point
+      # at, and a stale spec-draft branch left by an earlier run must not be
+      # mistaken for this run's output); `spec-dir != ''` excludes the case
+      # where a spec was attempted but its branch is not discoverable. Both
+      # are needed — neither implies the other.
+      #
+      # Their overlap (specified=false AND a resolvable spec-dir) is the one
+      # combination that suppresses every callout, so it is not allowed to be
+      # quiet: the decision step emits the clarification-unclaimed-spec
+      # sentinel there, and fails the run outright if that spec.md also
+      # carries markers. Suppression here is a judgement about which run
+      # authored the branch, not a claim that nothing happened.
       - name: Resolve spec PR URL
         id: spec-pr
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'false'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'false' && steps.clarification.outputs.specified == 'true' && steps.clarification.outputs.blocked != 'true' && steps.created.outputs.spec-dir != ''
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           NUM: ${{ steps.num.outputs.num }}
@@ -641,7 +909,7 @@ jobs:
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
       - name: Announce spec PR ready for review
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'false'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'false' && steps.clarification.outputs.specified == 'true' && steps.clarification.outputs.blocked != 'true' && steps.created.outputs.spec-dir != ''
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ steps.ctx.outputs.token }}
@@ -697,21 +965,25 @@ jobs:
           model: ${{ inputs.model }}
           max-turns: ${{ inputs.max-turns }}
 
-      # The action exits zero even when the agent run itself errored (e.g. a
-      # 401 from an invalid credential — observed live, run 29181108490), and
-      # this stage's no-spec path is deliberately green (a completed-but-
-      # underdelivering agent is a report-and-stop, not a failure). An agent
-      # that ERRORED is different: fail loudly, or a credential/API outage
-      # reads as "intake ran fine and produced nothing"
-      # (contracts/credentials.md: invalid credential fails at the first
-      # agent call).
-      - name: Fail on agent API error
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent.outcome == 'success'
+      # FR-002's loud failure, deferred to the job's last step so everything
+      # above still runs (spec resolution, PR labelling, transcript upload,
+      # metrics). "Validate agent result" already emitted the ::error::
+      # annotation describing what was wrong; this step only turns that
+      # verdict into the red run.
+      - name: Fail on invalid agent result
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent.outcome == 'success' && steps.agent-result.outputs.valid != 'true'
         run: |
-          f="$RUNNER_TEMP/claude-execution-output.json"
-          [ -f "$f" ] || exit 0
-          err=$(jq -r '[.[] | select(.type=="result")] | last | select(.is_error == true) | .result // "unknown agent error"' "$f")
-          if [ -n "$err" ]; then
-            echo "::error::wing-commander intake stage: the agent run errored before completing — $err"
-            exit 1
-          fi
+          echo "::error::wing-commander intake stage: failing the run — the agent result did not validate (see the error above)."
+          exit 1
+
+      # The cross-check's veto, turned into the red run — same deferral
+      # reasoning as the step above: the spec, branch and PR are real and
+      # must stay labelled and resolvable, it is only the "ready for review"
+      # CLAIM that is refused. A green run here would mean a spec PR sitting
+      # in the review queue with unresolved [NEEDS CLARIFICATION: markers in
+      # it and a callout inviting someone to merge it.
+      - name: Fail on unresolved clarification markers
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.blocked == 'true'
+        run: |
+          echo "::error::wing-commander intake stage: failing the run — the spec still carries colon-form [NEEDS CLARIFICATION: markers while the structured result reported none (see the error above). No readiness callout was posted."
+          exit 1

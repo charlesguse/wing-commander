@@ -399,40 +399,202 @@ jobs:
                still-open questions, or replace the section with a note that all
                clarifications are resolved (with a link to the answer comment).
                Leave the rest of the body untouched.
-            6. Write to ${{ runner.temp }}/clarify-followup.md:
-               - which questions were resolved and with what,
-               - if markers remain: restate ONLY the still-open questions.
-               A deterministic step after this one posts the result to the
-               issue — do not comment on the issue yourself for this part.
+            6. Return your final result matching the provided schema: `answered`
+               is `true` if the reply (step 2) addressed at least one open
+               question and you proceeded to steps 3–5, or `false` if you took
+               the early-STOP path in step 2 (the reply answered nothing —
+               your own `gh issue comment` in that step is the only
+               issue-facing output for this run; set `clarifications` to `[]`).
+               When `answered` is `true`, `clarifications` is the array of
+               questions still open after folding in the reply — empty if none
+               remain. Do not also write a followup file yourself — a
+               deterministic step renders and posts from this array when
+               questions remain.
 
             Never merge, approve, close, or relabel anything except as stated.
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ inputs.max-turns }}
+            --json-schema '{"type":"object","properties":{"answered":{"type":"boolean"},"clarifications":{"type":"array","items":{"type":"object","properties":{"question":{"type":"string"},"context":{"type":["string","null"]},"options":{"type":"array","items":{"type":"object","properties":{"answer":{"type":"string"},"implications":{"type":["string","null"]}},"required":["answer"]}}},"required":["question"]}}},"required":["answered","clarifications"]}'
             --allowedTools "${{ steps.tool-args-clarify.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-clarify.outputs.disallowed-tools }}"
+
+      # The action exits zero even when the agent run itself errored (e.g. a
+      # 401 from an invalid credential), and clarify has no downstream
+      # artifact whose absence would fail the run. An agent that ERRORED, or
+      # one whose terminal result is missing/malformed/non-success, is a
+      # failure (contracts/credentials.md; contracts/clarification-schema.md
+      # FR-002). Runs before "Determine clarification follow-up outcome" so
+      # that step never computes `outcome` from a coerced-empty result.
+      #
+      # Why this exits in place while intake defers its exit to the job's
+      # last step: intake has REMAINING steps whose work would be skipped
+      # ("Resolve created spec", "Label spec PR to match the issue"), leaving
+      # an unlabeled orphan PR. Clarify has no such steps.
+      #
+      # That is NOT the same as "no side effects" — and the earlier wording
+      # here claimed as much, wrongly. By this point the agent has already
+      # folded the answers into spec.md, committed, pushed, and rewritten the
+      # PR body; those are simply UPSTREAM of this gate, so failing here
+      # cannot strand them, only leave them unannounced. The residue is
+      # user-facing, not repo-state: the requester sees the 👀 reaction and
+      # nothing else, so a further reply re-enters clarify against questions
+      # that were in fact already resolved. The error message below therefore
+      # says the fold may already be committed, so whoever reads the red run
+      # checks the PR rather than assuming nothing happened.
+      - name: Fail on agent API error
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent.outcome == 'success'
+        run: |
+          f="$RUNNER_TEMP/claude-execution-output.json"
+          agent_ok="$(jq -r '([.[] | select(.type=="result")] | last) as $r
+            | if $r != null and $r.is_error == false and $r.subtype == "success"
+              then "true" else "false" end' "$f" 2>/dev/null || echo false)"
+          if [ "$agent_ok" != "true" ]; then
+            err=$(jq -r '[.[] | select(.type=="result")] | last | .result // "missing or invalid terminal result"' "$f" 2>/dev/null || echo "missing execution output file")
+            echo "::error::wing-commander clarify stage: the agent run did not complete with a valid result — $err"
+            exit 1
+          fi
+          raw="$(jq -r '[.[] | select(.type=="result")] | last | .result // empty' "$f" 2>/dev/null || true)"
+          if ! printf '%s' "$raw" | jq -e 'type=="object" and (.answered|type)=="boolean" and (.clarifications|type)=="array"' >/dev/null 2>&1; then
+            # Name the shape actually received: the fix is different for a
+            # bare array (agent skipped the schema wrapper) than for prose,
+            # and this is the only place that distinction is visible.
+            got="$(printf '%s' "$raw" | jq -r 'type' 2>/dev/null || echo 'not JSON')"
+            echo "::error::wing-commander clarify stage: the agent's structured result is missing a valid answered/clarifications shape (received: $got). The fold may ALREADY be committed and pushed to the spec PR — check the PR before re-running; no callout was posted for it."
+            exit 1
+          fi
 
       # Deterministic kind decision (contracts/callout-points.md rows 3/4).
       # outcome=none covers the agent's early-STOP path (step 2: the reply
       # didn't answer any open question) — the agent's own gh issue comment
-      # already covered that case, so no clarify-followup.md exists and no
-      # callout is posted here.
+      # already covered that case, so `answered` is `false` and no callout is
+      # posted here.
       - name: Determine clarification follow-up outcome
         id: clarification
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent.outcome == 'success'
         env:
           SPEC_DIR: ${{ steps.ctx.outputs.spec-dir }}
         run: |
-          followup="${{ runner.temp }}/clarify-followup.md"
-          if [ ! -f "$followup" ]; then
+          f="$RUNNER_TEMP/claude-execution-output.json"
+          raw="$(jq -r '[.[] | select(.type=="result")] | last | .result // empty' "$f" 2>/dev/null || true)"
+          answered="$(printf '%s' "$raw" | jq -r 'if type=="object" and (.answered|type)=="boolean" then .answered else false end' 2>/dev/null || echo false)"
+          if [ "$answered" != "true" ]; then
             echo "outcome=none" >> "$GITHUB_OUTPUT"
-          # No closing \]: real markers are '[NEEDS CLARIFICATION: <question>]'
-          # (spec-template.md) — the bare-bracket literal never matched one.
-          elif grep -q '\[NEEDS CLARIFICATION' "$SPEC_DIR/spec.md"; then
-            echo "outcome=needs-clarification" >> "$GITHUB_OUTPUT"
           else
-            echo "outcome=ready" >> "$GITHUB_OUTPUT"
+            count="$(printf '%s' "$raw" | jq 'if (.clarifications|type)=="array" then (.clarifications|length) else 0 end' 2>/dev/null || echo 0)"
+            if [ "$count" -gt 0 ]; then
+              echo "outcome=needs-clarification" >> "$GITHUB_OUTPUT"
+              structured=true
+            else
+              echo "outcome=ready" >> "$GITHUB_OUTPUT"
+              structured=false
+            fi
+
+            # Colon-form marker cross-check (FR-004–FR-008). Scoped to
+            # answered == true only (research.md's cross-check-scope
+            # decision) — run against the post-agent-edit spec.md, which this
+            # checkout already reflects.
+            #
+            # The existence guard matches intake's. Without it a missing or
+            # unresolvable spec.md makes grep fail, marker=false, and every
+            # run that legitimately still has open questions reports a
+            # spurious mismatch — the cross-check crying wolf about its own
+            # inability to read the file.
+            if [ -n "$SPEC_DIR" ] && [ -f "$SPEC_DIR/spec.md" ]; then
+              if grep -q '\[NEEDS CLARIFICATION:' "$SPEC_DIR/spec.md"; then
+                marker=true
+              else
+                marker=false
+              fi
+            else
+              marker="$structured"   # nothing to compare against; never a mismatch
+              echo "Cross-check skipped: no readable ${SPEC_DIR:-<unset>}/spec.md." >> "$GITHUB_STEP_SUMMARY"
+            fi
+            if [ "$structured" != "$marker" ]; then
+              empty_or_not=$([ "$structured" = "true" ] && echo "non-empty" || echo "empty")
+              match_or_not=$([ "$marker" = "true" ] && echo "a match" || echo "no match")
+              # Written to BOTH the step summary and stdout on purpose:
+              # $GITHUB_STEP_SUMMARY is a file rendered on the run summary
+              # page and is never mirrored into the job log, and
+              # watchdog.yml's "Collect: step summaries" step greps job logs
+              # (with ##[group] blocks — the only place this script's own
+              # source appears — stripped). Summary-only would make the
+              # sentinel unreachable (contracts/watchdog-sentinel.md).
+              msg="⚠️ WC-SENTINEL: clarification-mismatch — structured output reported clarifications=$empty_or_not but the colon-form marker scan found $match_or_not in $SPEC_DIR/spec.md."
+              echo "$msg"
+              echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+
+              # Only ONE direction of disagreement is dangerous, and it is
+              # not symmetric with the other:
+              #   structured empty + markers present -> we are about to
+              #     announce "Review the spec PR" for a spec that visibly
+              #     still carries unresolved questions, and a human merging
+              #     that PR merges the markers. Silent loss, the exact class
+              #     this feature exists to close.
+              #   structured non-empty + no marker -> the questionnaire posts
+              #     with real, answerable questions. A warning is enough.
+              # So the cross-check gets a VETO, never a vote: it can block
+              # the readiness claim and fail the run, but it can never pick a
+              # callout or synthesize a question (FR-004, FR-007). The
+              # posting branches stay mutually exclusive and single-sourced —
+              # #159's structural property is untouched, because "post
+              # nothing and go red" is not a third branch competing for the
+              # same decision.
+              if [ "$structured" = "false" ] && [ "$marker" = "true" ]; then
+                echo "blocked=true" >> "$GITHUB_OUTPUT"
+                echo "::error::wing-commander clarify stage: refusing to announce the spec PR as ready — the structured result reported no open questions but $SPEC_DIR/spec.md still contains colon-form [NEEDS CLARIFICATION: markers. Resolve the markers or fix the agent's result; do not merge this spec PR as-is."
+              fi
+            fi
           fi
+
+      # Deterministic render (contracts/clarification-schema.md): same
+      # algorithm as intake's, turning the structured `clarifications` array
+      # into the unchanged `## Question N` markdown for the still-open
+      # questions only.
+      - name: Render clarification questionnaire
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.outcome == 'needs-clarification'
+        run: |
+          f="$RUNNER_TEMP/claude-execution-output.json"
+          raw="$(jq -r '[.[] | select(.type=="result")] | last | .result // empty' "$f" 2>/dev/null || true)"
+          printf '%s' "$raw" | jq -r '
+            # Agent-authored text lands in markdown table cells, where a bare
+            # "|" opens a column and a newline ends the table — escape both
+            # rather than trusting the agent to have done it.
+            def cell: tostring | gsub("\\|"; "\\|") | gsub("[\r\n]+"; "<br>");
+            # NOTE: no apostrophes anywhere in this jq program — it is
+            # single-quoted in the shell, so one would end the program.
+            # The // operator falls through on null and false ONLY, so an
+            # empty or all-whitespace string counts as present. The schema
+            # permits context and implications to be "", which made the old
+            # `// null` render a bare "**Context**:" line with nothing under
+            # it, and `// "—"` render an empty Implications cell.
+            def blank: . == null or (type == "string" and (gsub("^\\s+|\\s+$"; "") == ""));
+            # The schema places no maxItems on options; past the last letter
+            # fall back to the ordinal so an 11th option cannot render the
+            # literal string "null" as its label.
+            ["A","B","C","D","E","F","G","H","I","J","K","L","M",
+             "N","O","P","Q","R","S","T","U","V","W","X","Y","Z"] as $letters
+            | (if type=="object" and (.clarifications|type)=="array" then .clarifications else [] end)
+            | to_entries
+            | map(
+                "## Question \(.key + 1)\n\n"
+                + (if (.value.context | blank) then "" else "**Context**: \(.value.context)\n\n" end)
+                + "**What we need to know**: \(.value.question)\n\n"
+                + "**Suggested Answers**:\n\n"
+                + "| Option | Answer | Implications |\n"
+                + "|--------|--------|--------------|\n"
+                + (
+                    (.value.options // [])
+                    | to_entries
+                    | map("| \($letters[.key] // ((.key + 1) | tostring)) | \(.value.answer | cell) | \(if (.value.implications | blank) then "—" else (.value.implications | cell) end) |")
+                    | join("\n")
+                    | (if length > 0 then . + "\n" else . end)
+                  )
+                + "| Custom | Provide your own answer | Reply on this issue with your own answer |\n\n"
+                + "**Your choice**: _Reply on this issue_\n"
+              )
+            | join("\n")
+          ' > "${{ runner.temp }}/clarify-followup.md"
 
       - name: Announce remaining clarification questions
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.outcome == 'needs-clarification'
@@ -450,7 +612,7 @@ jobs:
       # where the NNN-slug suffix isn't known until this same run.
       - name: Resolve spec PR URL
         id: spec-pr
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.outcome == 'ready'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.outcome == 'ready' && steps.clarification.outputs.blocked != 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
         run: |
@@ -458,7 +620,7 @@ jobs:
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
       - name: Announce spec PR ready for review
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.outcome == 'ready'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.outcome == 'ready' && steps.clarification.outputs.blocked != 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ steps.ctx.outputs.token }}
@@ -466,7 +628,6 @@ jobs:
           kind: action
           summary: "Review the spec PR"
           pr-url: ${{ steps.spec-pr.outputs.url }}
-          body-file: ${{ runner.temp }}/clarify-followup.md
           pr-label: "the spec PR"
 
       # The action writes its full execution transcript — every tool call,
@@ -491,18 +652,14 @@ jobs:
           model: ${{ inputs.model }}
           max-turns: ${{ inputs.max-turns }}
 
-      # The action exits zero even when the agent run itself errored (e.g. a
-      # 401 from an invalid credential), and clarify has no downstream
-      # artifact whose absence would fail the run. Fail loudly on an errored
-      # agent (contracts/credentials.md; see the intake stage for the live
-      # occurrence, run 29181108490).
-      - name: Fail on agent API error
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent.outcome == 'success'
+      # The cross-check's veto, turned into the red run (see the identical
+      # step in intake.yml). Deferred to last so the transcript upload and
+      # metrics still run; the fold itself is already committed and pushed,
+      # and stays that way — it is only the "ready for review" CLAIM that is
+      # refused, because a spec.md still carrying colon-form markers is not
+      # ready and a human invited to merge it would merge them.
+      - name: Fail on unresolved clarification markers
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.blocked == 'true'
         run: |
-          f="$RUNNER_TEMP/claude-execution-output.json"
-          [ -f "$f" ] || exit 0
-          err=$(jq -r '[.[] | select(.type=="result")] | last | select(.is_error == true) | .result // "unknown agent error"' "$f")
-          if [ -n "$err" ]; then
-            echo "::error::wing-commander clarify stage: the agent run errored before completing — $err"
-            exit 1
-          fi
+          echo "::error::wing-commander clarify stage: failing the run — the spec still carries colon-form [NEEDS CLARIFICATION: markers while the structured result reported none (see the error above). No readiness callout was posted."
+          exit 1
