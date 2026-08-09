@@ -574,6 +574,21 @@ jobs:
       - name: Gate 9 — the watchdog's sentinel collector sees what stages emit
         run: python3 .github/scripts/verify-sentinel-collector.py
 
+      # Gate 11 — the turn-budget numbers in every job summary mean what
+      # they say. wing-commander-metrics-summary rendered `.num_turns`
+      # against `--max-turns`, and those are different counters: the ratio
+      # read 1.0x-2.3x high, always upward, so "198 / 100 turns (198%)"
+      # appeared on a run that used 87 of 100. Nineteen of 47 implement runs
+      # carried a budget warning; 13 had actually exhausted the budget.
+      #
+      # That instrument is the only one pointed at the knob this pipeline
+      # tunes by hand, so it gets the same treatment as the collectors: the
+      # shipped run: block is extracted and executed against synthetic
+      # transcripts, and mutations reintroduce each counting defect to prove
+      # the suite can go red.
+      - name: Gate 11 — the metrics summary counts the turns the budget caps
+        run: python3 .github/scripts/verify-metrics-turn-accounting.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

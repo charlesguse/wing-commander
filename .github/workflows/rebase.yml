@@ -28,7 +28,12 @@ on:
         description: "Turn budget for the conflict-resolution agent"
         type: number
         required: false
-        default: 30
+        # The only rebase run in the retained-artifact window that reached
+        # the agent at all exhausted this budget exactly (2026-08-09).
+        # Conflict resolution is unbounded by nature — it scales with the
+        # conflict, not with the stage — so the old 30 was a guess with one
+        # data point against it.
+        default: 50
       pipeline-repo:
         description: >
           Repository to check out for the pipeline's shared composite actions

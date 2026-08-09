@@ -26,7 +26,7 @@ jobs:
     uses: ./.github/workflows/intake.yml
     with:
       issue-number: ${{ github.event.issue.number }}
-      model: ${{ vars.WING_COMMANDER_SPEC_MODEL || 'claude-opus-4-8' }}
+      model: ${{ vars.WING_COMMANDER_SPEC_MODEL || 'claude-opus-5' }}
       spec-draft-prefix: ${{ vars.WING_COMMANDER_SPEC_DRAFT_PREFIX || 'spec-draft/' }}
       spec-prefix: ${{ vars.WING_COMMANDER_SPEC_PREFIX || 'spec/' }}
       plan-prefix: ${{ vars.WING_COMMANDER_PLAN_PREFIX || 'plan/' }}

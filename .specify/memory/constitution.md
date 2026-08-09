@@ -1,4 +1,14 @@
 <!--
+Sync Impact Report — 2026-08-09
+Version change: 1.4.0 → 1.4.1 (PATCH: clarification — the Opus tier's model identifier moves from claude-opus-4-8 to claude-opus-5; the tiering itself is unchanged, only which model the "Opus tier" names)
+Modified principles: II. Cost-Conscious Model Tiering (identifier only — spec/clarify tier, and the implementation opt-in tier)
+Modified sections: none
+Added sections: none
+Removed sections: none
+Templates requiring updates: none (plan-template's Constitution Check is generic)
+Notes: the watchdog diagnose carve-out added in 1.3.0 already named claude-opus-5, so after this amendment every Opus reference in the repository is on one identifier. Defaults changed in the same PR: intake.yml, clarify.yml (model), implement.yml (escalation-model), and the three wrapper fallbacks in wing-commander-1-intake.yml, wing-commander-2-clarify.yml, wing-commander-5-implement.yml (including the model:opus label tier). These are workflow_call defaults, so adopters pinning a tag are unaffected until they move the pin; anyone who has set WING_COMMANDER_SPEC_MODEL / _IMPLEMENT_MODEL / _IMPLEMENT_ESCALATION_MODEL keeps their own value.
+-->
+<!--
 Sync Impact Report — 2026-07-28
 Version change: 1.3.0 → 1.4.0 (MINOR: new principle added — VII. Two Interfaces, naming the split between the published stage contract and this repository's own consuming instrument, and requiring that any stage-layer deviation be a registered, machine-checked exception rather than a code comment)
 Modified principles: none
@@ -62,7 +72,7 @@ Follow-up TODOs: none
 Every capability of the pipeline is built *through* the pipeline as soon as the pipeline can build it. Each feature begins life as a GitHub issue, becomes a spec under `specs/`, and flows through the same stages we ship to users. Documentation must always be able to point at a real spec, real PRs, and a real lifecycle issue in this repository as the worked example. If a change cannot be dogfooded yet (bootstrap phase), the reason is recorded in the PR description.
 
 ### II. Cost-Conscious Model Tiering
-Every automated Claude invocation declares an explicit model, chosen by task weight: `claude-haiku-4-5` for triage, classification, labeling, and summaries — except the watchdog's `diagnose` step, which despite looking like classification adjudicates multi-signal evidence against a strict output schema and gets `claude-opus-5` (a step that runs out of turns produces no verdict at all, and a watchdog that cannot reach a verdict is worse than no watchdog; see issue #124); `claude-opus-4-8` for specification and clarification — the spec is the foundation every later stage consumes, so a fully fleshed-out spec is worth the premium and is the cheapest place to spend it; `claude-sonnet-5` for planning and task generation, which elaborate an already-solid spec; `claude-sonnet-5` (default) or `claude-opus-4-8` (explicit opt-in via repo variable or `model:opus` label) for implementation and convergence. Every agent step sets `--max-turns`. No stage may run without a bounded turn budget and an explicit model.
+Every automated Claude invocation declares an explicit model, chosen by task weight: `claude-haiku-4-5` for triage, classification, labeling, and summaries — except the watchdog's `diagnose` step, which despite looking like classification adjudicates multi-signal evidence against a strict output schema and gets `claude-opus-5` (a step that runs out of turns produces no verdict at all, and a watchdog that cannot reach a verdict is worse than no watchdog; see issue #124); `claude-opus-5` for specification and clarification — the spec is the foundation every later stage consumes, so a fully fleshed-out spec is worth the premium and is the cheapest place to spend it; `claude-sonnet-5` for planning and task generation, which elaborate an already-solid spec; `claude-sonnet-5` (default) or `claude-opus-5` (explicit opt-in via repo variable or `model:opus` label) for implementation and convergence. Every agent step sets `--max-turns`. No stage may run without a bounded turn budget and an explicit model.
 
 ### III. Simple, GitHub-Native Interaction
 Users interact with the pipeline the way they interact with any GitHub repository: open an issue, read and reply to comments, review and merge PRs. No external dashboards, no custom CLIs required of the requester. The lifecycle of a spec is legible from its original issue alone — every stage posts its status there. Course correction happens through ordinary GitHub actions: comment to clarify, review to reshape, close to cancel.
@@ -97,4 +107,4 @@ Stages and their gates: intake (`/speckit-specify`, human gate = maintainer labe
 
 This constitution supersedes ad-hoc practice in this repository. Every spec, plan, and implementation PR is checked against it during review; violations must be fixed or the constitution amended first. Amendments arrive as ordinary PRs that modify this file, state the motivation, and bump the version below (semver: breaking principle changes = MAJOR, new principles/sections = MINOR, clarifications = PATCH).
 
-**Version**: 1.4.0 | **Ratified**: 2026-07-04 | **Last Amended**: 2026-07-28
+**Version**: 1.4.1 | **Ratified**: 2026-07-04 | **Last Amended**: 2026-08-09

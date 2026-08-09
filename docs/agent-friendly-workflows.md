@@ -89,9 +89,18 @@ narratives about jobs that had succeeded in 9 seconds.
   stalled" must carry job X's own conclusion and duration plus the quotable
   matched line — and the agent must be told a stall claim about a
   9-second-success job dies unless the line itself says otherwise.
-- **Recompute claims before filing.** "Budget exceeded" is checkable against
-  `num_turns` / `--max-turns`; "job stalled" against the job's conclusion.
-  One API call kills the false positive at the gate that creates issues.
+- **Recompute claims before filing.** "Budget exceeded" is checkable, and
+  "job stalled" against the job's conclusion. One API call kills the false
+  positive at the gate that creates issues.
+- **Check the recomputation against the right counter.** "Budget exceeded"
+  is NOT `num_turns` vs `--max-turns`: those are different counters, and
+  `num_turns` reads 1.0x-2.3x high, so that comparison manufactures the very
+  false positive the rung exists to prevent. The budget caps distinct
+  main-loop assistant responses (`parent_tool_use_id == null`, deduped by
+  `.message.id`); subagent turns do not count. The unambiguous signal is the
+  result record's own `subtype == "error_max_turns"` — prefer it, and see
+  `.github/actions/wing-commander-metrics-summary/action.yml` for the count
+  when a ratio is genuinely needed.
 - The echo also burns audits: a prompt's illustrative example string appears
   verbatim in every job log (prompts are echoed too), indistinguishable from
   the agent quoting its prompt. Scope fabrication checks to the agent's

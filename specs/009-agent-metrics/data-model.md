@@ -31,7 +31,8 @@ entry this feature reads.
 | Field on the final `result` record | Status | Used for |
 |---|---|---|
 | `.result` | Confirmed (already parsed by `speckit-5-implement.yml`'s "Extract agent final message" step) | Not surfaced by this feature directly, but confirms which record is "the" result record |
-| `.num_turns` | Assumed from spec.md's worked example (research.md D6) | Turns used |
+| `.num_turns` | Confirmed present, but **superseded 2026-08-09** — see the amendment below | No longer the turns-used figure; retained only as a labelled fallback |
+| `.subtype` | Confirmed | Detecting `error_max_turns` (budget exhausted) |
 | `.duration_ms` | Assumed from spec.md's worked example | Duration |
 | `.total_cost_usd` | Assumed from spec.md's worked example | Cost |
 | Token usage (exact key TBD — best-effort `usage`-shaped object) | Assumed, defensively extracted | Token counts |
@@ -47,7 +48,8 @@ outcome: **metrics unavailable** (FR-009) — never a step failure.
 | Field | Computed as | Renders as |
 |---|---|---|
 | `model` | From the Agent run's configured model (not the transcript) | Literal string |
-| `turns_used` | `.num_turns`, or "unavailable" if absent/unparseable | `N` or `unavailable` |
+| `turns_used` | Count of distinct `.message.id` over `.type == "assistant"` records with `parent_tool_use_id == null`; falls back to `.num_turns` (labelled, ratio suppressed) when that count is unavailable | `N` or `N (reported, not comparable to budget)` or `unavailable` |
+| `subagent_turns` | The same count over records WITH a `parent_tool_use_id` | A separate line when non-zero, never part of the ratio |
 | `turn_budget` | The `max-turns` input, or absent if the call site omitted it | `N` or omitted entirely from the ratio |
 | `turns_ratio` | `turns_used / turn_budget`, only when both are known | `"N / M"` |
 | `turn_warning` | `turns_ratio >= warn-fraction` (default 0.8, research.md D7), only when `turns_ratio` exists | A visible flag line, or nothing |
@@ -81,3 +83,31 @@ summary (research.md D8). One block per agent invocation, in invocation
 order, each self-contained so a job with three invocations
 (`speckit-5-implement.yml`) shows three distinct blocks rather than one
 merged/overwritten block. Exact rendering format is `contracts/step-summary-format.md`.
+
+## Amendment (2026-08-09): `.num_turns` is not the budget's counter
+
+The table above recorded `.num_turns` as "turns used" on the strength of
+spec.md's worked example. That was wrong in a way the worked example could
+not reveal: `--max-turns` caps **distinct main-loop assistant API responses**
+(`parent_tool_use_id == null`, deduped by `.message.id`), while `.num_turns`
+is a larger total. Against this repository's own history the two diverge by
+1.0x-2.3x, always upward.
+
+The consequence was a rendered ratio that was wrong in the alarming
+direction — "198 / 100 turns (198%)" with a budget warning, for an implement
+cycle that used 87 of its 100 and was never at risk — while every genuinely
+exhausted run stopped at exactly 100 main-loop turns (13 of 13). Nineteen of
+47 implement runs carried a warning; 13 had actually exhausted the budget.
+
+Two further properties of the real counter, both load-bearing:
+
+- One API response can stream as several assistant records sharing a
+  `.message.id`. Counting records rather than ids inflates by ~1.6x.
+- Subagent (Task tool) responses are inlined into the same transcript and do
+  **not** spend the parent's budget. A 2026-07-24 retry ran 180 distinct
+  assistant responses under a 100 cap without tripping it; 86 were subagents'.
+  They are reported on their own line, never folded into the ratio.
+
+`.github/scripts/verify-metrics-turn-accounting.py` (lint-workflows gate 11)
+executes the shipped action against fixtures for each of these and mutates
+the script to prove the suite can fail.
