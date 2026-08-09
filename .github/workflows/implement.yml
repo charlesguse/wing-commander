@@ -41,7 +41,15 @@ on:
         description: "Turn budget for each implementation attempt"
         type: number
         required: false
-        default: 100
+        # 100 exhausted 13 of 31 cycles (42%), and exhaustion is not a cheap
+        # outcome here: it fails the attempt, so the whole cycle is redone on
+        # the escalation model from a cold context. Those 13 cost $89 in
+        # truncated Sonnet cycles plus $80 in Opus retries. Pairing each
+        # capped cycle with the retry that finished it puts the real work at
+        # 113-194 turns (median 153, p75 182), so 180 lets the large majority
+        # finish in one Sonnet pass. Sonnet turns are the cheap resource
+        # being spent to avoid the expensive one.
+        default: 180
       escalation-model:
         description: "Model for the one-tier-up retry after a failed attempt (constitution II escalation default)"
         type: string

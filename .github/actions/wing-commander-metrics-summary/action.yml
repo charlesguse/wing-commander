@@ -8,6 +8,17 @@ description: >
   step or the job (missing/unparseable transcripts degrade to "metrics
   unavailable").
 
+  TURNS ARE COUNTED, NOT READ. The result record's `.num_turns` is NOT the
+  counter `--max-turns` enforces, and the two diverge by 1.0x-2.3x in this
+  repository's own history, always upward. Rendering `.num_turns` against
+  the budget is what this action shipped with, and it made the ratio
+  meaningless: the 2026-08-06 implement cycle rendered "198 / 100 turns
+  (198%)" plus a budget warning for a run that used 87 of its 100 and was
+  never at risk. Meanwhile every genuinely exhausted run stopped at exactly
+  100 distinct main-loop assistant messages (13 of 13), which is what the
+  cap actually counts. So this action counts that itself — see the
+  `main_turns` block below.
+
 inputs:
   transcript-path:
     description: >
@@ -72,6 +83,8 @@ runs:
         # --- T002: availability + capture the LAST .type=="result" record ------
         availability=unavailable
         result_json=""
+        main_turns=""
+        sub_turns=""
         if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ] && [ -s "$TRANSCRIPT" ]; then
           if jq -e . "$TRANSCRIPT" >/dev/null 2>&1; then
             result_json="$(jq -c 'if type=="array" then . else [.] end
@@ -79,6 +92,31 @@ runs:
             if [ -n "$result_json" ] && [ "$result_json" != "null" ]; then
               availability=ok
             fi
+
+            # The counter --max-turns actually enforces: distinct assistant
+            # API responses on the MAIN loop. Two details are load-bearing.
+            #
+            # Distinct .message.id, because one response is streamed as
+            # several assistant records (a text chunk, then a tool_use
+            # chunk) that all share an id — counting records inflates by
+            # roughly 1.6x.
+            #
+            # parent_tool_use_id == null, because subagent (Task tool)
+            # responses are inlined into the same transcript and do NOT
+            # count against the parent's budget. A 2026-07-24 retry ran 180
+            # distinct assistant responses under a 100 cap without tripping
+            # it; 86 of them belonged to subagents. Counting those would
+            # make delegation look like budget exhaustion.
+            main_turns="$(jq -r 'if type=="array" then . else [.] end
+              | map(select(.type=="assistant"
+                           and (.parent_tool_use_id // null) == null)
+                    | .message.id // empty)
+              | unique | length' "$TRANSCRIPT" 2>/dev/null || true)"
+            sub_turns="$(jq -r 'if type=="array" then . else [.] end
+              | map(select(.type=="assistant"
+                           and (.parent_tool_use_id // null) != null)
+                    | .message.id // empty)
+              | unique | length' "$TRANSCRIPT" 2>/dev/null || true)"
           fi
         fi
 
@@ -93,18 +131,32 @@ runs:
 
         # --- T003: defensive per-field extraction (each field independent) -----
         jqget() { printf '%s' "$result_json" | jq -r "$1 // empty" 2>/dev/null || true; }
-        turns_used="$(jqget '.num_turns')"
+        reported_turns="$(jqget '.num_turns')"
+        subtype="$(jqget '.subtype')"
         duration_ms="$(jqget '.duration_ms')"
         cost_usd="$(jqget '.total_cost_usd')"
         usage_json="$(printf '%s' "$result_json" | jq -c '.usage // empty' 2>/dev/null || true)"
         model_usage_json="$(printf '%s' "$result_json" | jq -c '.modelUsage // empty' 2>/dev/null || true)"
 
+        # Which number is comparable to the budget. A counted main-loop total
+        # is; .num_turns is not, so when counting fails (a transcript shape
+        # with no assistant message ids) the ratio and the warning are
+        # suppressed rather than computed from the wrong counter. Zero counts
+        # as "counting failed": every real run has at least one turn.
+        turns_counted=false
+        turns_used=""
+        if printf '%s' "$main_turns" | grep -Eq '^[0-9]+$' && [ "$main_turns" -gt 0 ]; then
+          turns_counted=true
+          turns_used="$main_turns"
+        else
+          turns_used="$reported_turns"
+        fi
+
         # --- T004: turn-budget fields (only when max-turns AND turns_used known)
         turn_warning=false
         turns_pct=""
         warn_pct=""
-        if [ -n "$MAX_TURNS" ] && [ -n "$turns_used" ] \
-           && printf '%s' "$turns_used" | grep -Eq '^[0-9]+([.][0-9]+)?$' \
+        if [ "$turns_counted" = "true" ] && [ -n "$MAX_TURNS" ] \
            && printf '%s' "$MAX_TURNS" | grep -Eq '^[0-9]+([.][0-9]+)?$'; then
           # `|| true` is load-bearing: GitHub invokes composite `shell: bash`
           # steps with -e (the `set` above adds flags, it can't remove -e), and
@@ -163,10 +215,17 @@ runs:
         # --- T006: normal-case Markdown block ----------------------------------
         turns_used_disp="$turns_used"
         [ -z "$turns_used_disp" ] && turns_used_disp="unavailable"
-        if [ -n "$MAX_TURNS" ]; then
+        # The budget only goes in the cell next to a number that is measured
+        # against it. An uncounted fallback is labelled so nobody reads it as
+        # a budget figure again.
+        if [ "$turns_counted" = "true" ] && [ -n "$MAX_TURNS" ]; then
           turns_cell="$turns_used_disp / $MAX_TURNS"
-        else
+        elif [ "$turns_counted" = "true" ]; then
           turns_cell="$turns_used_disp"
+        elif [ "$turns_used_disp" = "unavailable" ]; then
+          turns_cell="unavailable"
+        else
+          turns_cell="$turns_used_disp (reported, not comparable to budget)"
         fi
         duration_disp="$(fmt_duration "$duration_ms")"
         cost_disp="$(fmt_cost "$cost_usd")"
@@ -179,9 +238,20 @@ runs:
           printf '|---|---|---|---|---|\n'
           printf '| %s | %s | %s | %s | %s |\n\n' \
             "$MODEL_IN" "$turns_cell" "$duration_disp" "$tokens_disp" "$cost_disp"
-          if [ "$turn_warning" = "true" ]; then
+          # Ground truth, and it outranks the ratio: the runtime itself says
+          # the budget ran out. Reported whether or not counting succeeded.
+          if [ "$subtype" = "error_max_turns" ]; then
+            printf '🛑 **Turn budget exhausted**: the runtime cut this run off at its %s-turn cap. Work after that point was never attempted — treat any "done" narration in the transcript as unfinished.\n\n' \
+              "${MAX_TURNS:-configured}"
+          elif [ "$turn_warning" = "true" ]; then
             printf '⚠️ **Turn budget warning**: this run used %s/%s turns (%s%%) — at or above the %s%% warning threshold.\n\n' \
               "$turns_used" "$MAX_TURNS" "$turns_pct" "$warn_pct"
+          fi
+          # Subagent turns are real spend but free against the budget, so
+          # they belong in the summary and NOT in the ratio above.
+          if printf '%s' "$sub_turns" | grep -Eq '^[0-9]+$' && [ "$sub_turns" -gt 0 ]; then
+            printf '**Subagent turns**: %s (delegated work; these do not count against the --max-turns budget).\n\n' \
+              "$sub_turns"
           fi
           if [ -n "$per_model_line" ]; then
             printf '**Per-model breakdown**: %s\n\n' "$per_model_line"

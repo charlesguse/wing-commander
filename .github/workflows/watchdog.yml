@@ -47,7 +47,12 @@ on:
         description: "Turn budget for the diagnose agent"
         type: number
         required: false
-        default: 20
+        # Across 281 runs the p90 is 2 turns, so this raise costs nothing in
+        # practice — it buys the tail. The one run that did exhaust 20
+        # produced no verdict at all (issue #124), which is the failure this
+        # budget should never cause: a watchdog that reaches no verdict looks
+        # exactly like a watchdog that found nothing wrong.
+        default: 30
       propose-fix-model:
         description: "Model for the propose-fix agent (constitution II tiering: implementation-weight)"
         type: string

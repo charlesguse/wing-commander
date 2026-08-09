@@ -45,6 +45,16 @@ scope — FR-012).
 5. **MUST flag turns_ratio >= warn-fraction, and MUST NOT flag anything
    below it** (FR-004) — this is a strict boundary; the default is exactly
    `0.8`, matching spec.md's stated default.
+5a. **MUST measure the ratio against the counter `--max-turns` enforces**
+   (amended 2026-08-09; see data-model.md's amendment): distinct
+   `.message.id` over `.type == "assistant"` records with
+   `parent_tool_use_id == null`. `.num_turns` is a different, larger total
+   and MUST NOT be rendered against the budget. Subagent turns MUST be
+   reported separately and MUST NOT enter the ratio. When the count cannot
+   be taken, the fallback MUST be labelled and the ratio and warning
+   suppressed — a number that is not comparable to the budget must never be
+   shown beside it. `error_max_turns` MUST be stated outright rather than
+   left to be inferred from the ratio.
 6. **MUST degrade per-field, not all-or-nothing, when the result record is
    found but incomplete** (spec.md edge case) — e.g. cost present but token
    usage absent renders cost normally and marks tokens "unavailable," not

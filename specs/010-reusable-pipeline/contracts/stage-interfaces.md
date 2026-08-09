@@ -124,7 +124,7 @@ docs/adoption.md's wrapper examples MUST show these signatures verbatim.
 
 | | |
 |---|---|
-| Inputs | `head-ref` (string) **or** `slug` (string) — one required; `merged` (boolean, default `true`); `model` (string, default `claude-sonnet-5`); `max-turns` (number, default `80`); `plan-review` (string `pr`\|`auto`, default `pr`); `next-workflow` (string, default `""`) — wrapper filename to dispatch for tasks |
+| Inputs | `head-ref` (string) **or** `slug` (string) — one required; `merged` (boolean, default `true`); `model` (string, default `claude-sonnet-5`); `max-turns` (number, default `110`); `plan-review` (string `pr`\|`auto`, default `pr`); `next-workflow` (string, default `""`) — wrapper filename to dispatch for tasks |
 | Preconditions | `specs/NNN-slug/spec.md` + `spec-meta.json` exist on the default branch; no existing `plan/NNN-slug` branch (duplicate guard) |
 | Behavior | Derive+validate slug internally from `head-ref` (`spec-draft/` prefix) or take `slug` directly; create/reuse `spec/NNN-slug`; create lifecycle issue for hand-submitted specs; run `/speckit-plan`; `pr` opens a plan PR → `spec/NNN-slug` and stops — no dispatch; `auto` commits the plan directly to `spec/NNN-slug` and (if `next-workflow` set) dispatches tasks directly; either mode advances `spec-meta.json` to `plan` and flips the label; an unrecognized `plan-review` value fails open to `pr` and is surfaced (`::warning::`, step summary, lifecycle-issue comment) |
 | Outputs | `spec-branch`, `spec-dir` |
@@ -142,7 +142,7 @@ docs/adoption.md's wrapper examples MUST show these signatures verbatim.
 
 | | |
 |---|---|
-| Inputs | `spec-dir` (string, required); `issue-number` (number, required); `iteration` (number, required); `model` (string, default `claude-sonnet-5`); `max-turns` (number, default `100`); `max-iterations` (number, default `5`); `self-workflow` (string, default `""`) — wrapper filename for iteration N+1 re-dispatch; `next-workflow` (string, default `""`) — wrapper filename for finalize |
+| Inputs | `spec-dir` (string, required); `issue-number` (number, required); `iteration` (number, required); `model` (string, default `claude-sonnet-5`); `max-turns` (number, default `180`); `max-iterations` (number, default `5`); `self-workflow` (string, default `""`) — wrapper filename for iteration N+1 re-dispatch; `next-workflow` (string, default `""`) — wrapper filename for finalize |
 | Preconditions | `tasks.md` exists; `spec/NNN-slug` branch exists; `iteration <= max-iterations` |
 | Behavior | One implement ⟲ converge iteration on the spec branch (deterministic convergence check, single tier-up retry on outright failure, stall marking — all internal, as today); converged or capped ⇒ dispatch `next-workflow` (if set) with `converged`; not converged ⇒ dispatch `self-workflow` (if set) with `iteration+1`; empty chaining inputs ⇒ report to issue and stop |
 | Outputs | `converged` (boolean) |
@@ -171,7 +171,7 @@ The stage the spec calls "auto-rebase" — `rebase` is its canonical published i
 
 | | |
 |---|---|
-| Inputs | `model` (string, default `claude-sonnet-5`); `max-turns` (number, default `30`) |
+| Inputs | `model` (string, default `claude-sonnet-5`); `max-turns` (number, default `50`) |
 | Preconditions | none (discovers in-flight `spec/*` branches itself; empty discovery is a clean no-op) |
 | Behavior | Discover → fan-out per-branch rebase onto the default branch; clean push with lease, agent conflict resolution with deterministic scope check, escalate-once marker on stuck branches — all internal, as today |
 | Outputs | none |
@@ -186,7 +186,7 @@ and resolves `run-id`/`run-name` before calling this stage.
 
 | | |
 |---|---|
-| Inputs | `run-id` (string, required); `run-name` (string, required) — inspected run's display name; `diagnose-model` (string, default `claude-haiku-4-5`); `diagnose-max-turns` (number, default `20`); `propose-fix-model` (string, default `claude-sonnet-5`); `propose-fix-max-turns` (number, default `30`) |
+| Inputs | `run-id` (string, required); `run-name` (string, required) — inspected run's display name; `diagnose-model` (string, default `claude-haiku-4-5`); `diagnose-max-turns` (number, default `30`); `propose-fix-model` (string, default `claude-sonnet-5`); `propose-fix-max-turns` (number, default `30`) |
 | Preconditions | none as a refusal gate — spec-slug/lifecycle-issue resolution is best-effort (a run not tied to a spec is still inspected and reported against its own run URL). The credential invariant still applies to the two agent steps |
 | Behavior | `collect → diagnose → triage → act`: five deterministic FR-006 collectors into one `signals.json`; a read-only haiku diagnose step emits zero+ Findings; per-Finding fingerprint + `gh search issues` dedup + optional sonnet propose-fix + deterministic rung gate; act executes the selected rung and always reports to the lifecycle issue. Guardrails (`.specify/memory/watchdog-guardrails.json`, read-only), `vars.WING_COMMANDER_WATCHDOG_PAUSED`, and `vars.WING_COMMANDER_WATCHDOG_SELF_DISPATCH_CAP` (default `3`) gate every autonomous write; identical rules apply to self-inspection (FR-018/FR-021) |
 | Outputs | none (side effects only): a lifecycle-issue comment on every run (FR-022); at rung 2/3 a pipeline-defect issue (created/reused/reopened, fingerprint-marked); at rung 1/2 a fix PR to the default branch (`Refs #N`, never auto-closing) |

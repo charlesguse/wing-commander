@@ -176,6 +176,26 @@ against budget, duration, tokens, cost, with an ≥80% turn-budget warning) to
 that run's `$GITHUB_STEP_SUMMARY` — pure read, no agent, never fails the stage
 (`specs/009-agent-metrics/`).
 
+**What a "turn" is here**, because the transcript offers two numbers and only
+one of them is the budget's:
+
+- `--max-turns` caps **main-loop model turns** — distinct assistant API
+  responses with no `parent_tool_use_id`. Two consequences follow. A single
+  response streamed across several transcript records is *one* turn (counting
+  records inflates by ~1.6x), and **subagent turns are free**: Task-tool
+  subagents are inlined into the same transcript but spend no parent budget,
+  so a stage that delegates can do far more work per budget than one that does
+  not.
+- `.num_turns` on the result record is a larger, differently-defined total.
+  Measured against this repository's own history it runs 1.0x-2.3x above the
+  capped counter, always upward.
+
+The metrics action counts the former and reports subagent turns separately;
+until 2026-08-09 it rendered the latter, which is why job summaries carried
+lines like "198 / 100 turns (198%)" for runs that used 87 of 100 and were
+never at risk. `.github/scripts/verify-metrics-turn-accounting.py`
+(lint-workflows gate 11) holds that distinction to fixtures.
+
 **Bedrock pass-through** (`specs/016-bedrock-support/`): the per-stage
 `use-bedrock` input changes only which backend serves these already-tiered
 `model` inputs — the consumer supplies Bedrock-compatible identifiers directly

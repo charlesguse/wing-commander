@@ -39,7 +39,10 @@ on:
         description: "Turn budget for the planning agent"
         type: number
         required: false
-        default: 80
+        # No plan run has been cut off, but one reached 76 of 80 — four turns
+        # of margin on a stage whose truncation costs a human a manual
+        # re-run, against a p90 of 51. The headroom is the point.
+        default: 110
       plan-review:
         description: "pr (open a plan PR and wait for a human merge) or auto (commit the plan directly, dispatch the tasks stage)"
         type: string
