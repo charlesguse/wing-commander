@@ -633,6 +633,466 @@ jobs:
       - name: Gate 11 — the metrics summary counts the turns the budget caps
         run: python3 .github/scripts/verify-metrics-turn-accounting.py
 
+      # Gate 12 — every `gh`/API call runs under a token whose permissions
+      # actually cover what it touches. This repository has now hit the
+      # opposite failure three times by accident rather than by a check:
+      # spec 005's `gh workflow run` 403 (fixed by dispatching with the
+      # default token plus a job-level `actions: write`), and
+      # specs/033-pr-conversation-commands T062/T063 (a `gh run cancel`/`gh
+      # run list` pair that inherited the App token — which per
+      # docs/setup.md has no Actions permission — and 403'd; T062's version
+      # additionally reported that 403 to a maintainer as "already
+      # completed", conflating a permission failure with a genuine outcome).
+      # T062/T063 survived five pipeline cycles, a full quickstart
+      # desk-check, and three rounds of executing the shipped shell against
+      # synthetic inputs before being found by accident.
+      #
+      # (a) parses every workflow's `run:` blocks for `gh <subcommand>` and
+      # `gh api <path>` invocations (executable ones only — a `gh ...`
+      # inside a human-facing `echo`/print string, a code comment, or a
+      # heredoc body handed to another interpreter never runs, and does not
+      # count); (b) resolves the token in effect for each — a per-command
+      # `GH_TOKEN="$X" gh ...` prefix wins, else the step's own `env.GH_TOKEN`,
+      # else the job's — and classifies it as the App token
+      # (`steps.ctx.outputs.token`, the wing-commander-context output) or
+      # `github.token`; (c) maps the subcommand/path to the permission it
+      # needs via a table extended only with evidence (the same rule Gate
+      # 6's SUPPORTED_EVENTS already enforces) — an unrecognised subcommand,
+      # `gh api` path segment, or unresolvable token/path FAILS this gate
+      # rather than passing silently, because a detector that shrugs at what
+      # it does not understand is the exact failure mode this gate exists to
+      # close; (d) asserts App-token calls touch only permissions
+      # docs/setup.md's "Repository permissions" list actually grants —
+      # parsed from that doc, not hand-copied, so drift between the
+      # adopter-facing documentation and the workflows fails the gate; and
+      # (e) asserts `github.token` calls have the matching permission on the
+      # job that runs them (job-level `permissions:`, or the workflow-level
+      # block a job with no override inherits). A `Bash(gh run
+      # view:*)`-style tool grant handed to an agent step is checked the
+      # same way, against that step's own token — an agent that reaches for
+      # a granted-but-unusable tool 403s exactly like a deterministic step
+      # would (this is how specs/026-configurable-tool-lists'
+      # `implement.cycle`/`implement.retry` tool lists were found still
+      # carrying the T065 defect T065 itself had already fixed in
+      # `pr-conversation.act`).
+      #
+      # Cross-repository `gh api repos/OWNER/REPO/...` calls (a literal,
+      # different owner/repo — e.g. auto-update-spec-kit.yml's read of
+      # `github/spec-kit`'s public releases) are out of scope: the App's
+      # permission grant is this repository's installation, not a token
+      # anyone can use to authorize a call against an unrelated repository.
+      - name: Gate 12 — every gh/API call runs under a token permissioned for it
+        run: |
+          python3 - <<'PYEOF'
+          import glob, os, re, sys, yaml
+
+          # subcommand (verb1, verb2) -> (permission-category, level). Extended only
+          # with evidence (research.md R6 / Gate 6's SUPPORTED_EVENTS rule): every
+          # entry is a real invocation this repository's own workflows make. A
+          # category of None means no repository permission is needed at all (repo
+          # metadata is always readable, regardless of token).
+          APP_TOKEN_EXPR = "steps.ctx.outputs.token"
+          DEFAULT_TOKEN_EXPRS = {"github.token", "secrets.GITHUB_TOKEN"}
+
+          SUBCOMMAND_PERMS = {
+              ("run", "cancel"):     ("actions", "write"),
+              ("run", "download"):   ("actions", "read"),
+              ("run", "list"):       ("actions", "read"),
+              ("run", "view"):       ("actions", "read"),
+              ("workflow", "run"):   ("actions", "write"),
+              ("workflow", "view"):  ("actions", "read"),
+              ("workflow", "list"):  ("actions", "read"),
+              ("issue", "view"):     ("issues", "read"),
+              ("issue", "comment"):  ("issues", "write"),
+              ("issue", "create"):   ("issues", "write"),
+              ("issue", "edit"):     ("issues", "write"),
+              ("issue", "close"):    ("issues", "write"),
+              ("issue", "reopen"):   ("issues", "write"),
+              ("issue", "list"):     ("issues", "read"),
+              ("label", "create"):   ("issues", "write"),
+              ("label", "list"):     ("issues", "read"),
+              ("pr", "view"):        ("pull-requests", "read"),
+              ("pr", "comment"):     ("pull-requests", "write"),
+              ("pr", "create"):      ("pull-requests", "write"),
+              ("pr", "edit"):        ("pull-requests", "write"),
+              ("pr", "list"):        ("pull-requests", "read"),
+              ("search", "issues"):  ("issues", "read"),
+              ("search", "prs"):     ("pull-requests", "read"),
+              ("release", "create"): ("contents", "write"),
+              ("repo", "view"):      (None, None),
+          }
+
+          # `gh api PATH` — PATH's first segment under repos/{owner}/{repo}/ decides
+          # the permission, the same way SUBCOMMAND_PERMS does for named subcommands.
+          API_CATEGORY_PERM = {
+              "actions": "actions", "check-runs": "checks", "check-suites": "checks",
+              "issues": "issues", "pulls": "pull-requests", "contents": "contents",
+              "releases": "contents", "labels": "issues", "milestones": "issues",
+          }
+
+          GH_INVOKE_RE = re.compile(
+              r'(?:GH_TOKEN=(?P<tokexpr>"(?:[^"\\]|\\.)*"|\$\{\{[^}]*\}\}|\$\w+)\s+)?'
+              r'\bgh\s+(?:'
+              r'api\s+(?:-X\s+\S+\s+)?(?P<apipath>"(?:[^"\\]|\\.)*"|\S+)'
+              r'|(?P<verb1>[a-zA-Z][\w-]*)(?:\s+(?P<verb2>[a-zA-Z][\w-]*))?'
+              r')'
+          )
+          ASSIGN_RE = re.compile(r'(?<![\w$])(\w+)=("(?:[^"\\]|\\.)*"|\$\([^)]*\)|\S+)')
+          TOOL_GH_RE = re.compile(r'Bash\(gh\s+([a-zA-Z][\w-]*)(?:\s+([a-zA-Z][\w-]*))?')
+
+
+          def norm_expr(raw):
+              s = raw.strip()
+              m = re.fullmatch(r"\$\{\{\s*(.*?)\s*\}\}", s)
+              if m:
+                  return m.group(1).strip()
+              if s.startswith('"') and s.endswith('"') and len(s) >= 2:
+                  s = s[1:-1]
+              return s
+
+
+          def strip_heredocs(text):
+              """Heredoc bodies are data for another interpreter (python, jq), never
+              bash commands — a `gh ...` mentioned inside one (an error message a gate
+              prints, e.g.) never actually runs. Strip them before scanning."""
+              out = []
+              lines = text.splitlines()
+              heredoc_re = re.compile(r"<<-?\s*'?(\w+)'?\s*$")
+              i = 0
+              while i < len(lines):
+                  line = lines[i]
+                  m = heredoc_re.search(line)
+                  out.append(line)
+                  i += 1
+                  if m:
+                      delim = m.group(1)
+                      while i < len(lines) and lines[i].strip() != delim:
+                          i += 1
+                      if i < len(lines):
+                          out.append(lines[i])
+                          i += 1
+              return "\n".join(out)
+
+
+          def strip_comments(text):
+              return "\n".join(l for l in text.splitlines() if not l.strip().startswith("#"))
+
+
+          def executable_flags(text):
+              """True per character where shell would actually EXECUTE what it finds,
+              as opposed to inside a single-quoted or (non-substitution) double-quoted
+              literal — e.g. the "gh workflow run ..." inside an `echo "...gh..."`
+              human-facing message never runs. `$( ... )` command substitutions stay
+              executable even nested inside double quotes, because bash really does
+              run them there."""
+              n = len(text)
+              flags = [True] * n
+              stack = []
+              i = 0
+              while i < n:
+                  c = text[i]
+                  top = stack[-1] if stack else None
+                  cur_exec = top not in ("sq", "dq")
+                  flags[i] = cur_exec
+                  if c == "\\" and top != "sq" and i + 1 < n:
+                      flags[i + 1] = cur_exec
+                      i += 2
+                      continue
+                  if top == "sq":
+                      if c == "'":
+                          stack.pop()
+                      i += 1
+                      continue
+                  if c == "'":
+                      stack.append("sq"); i += 1; continue
+                  if c == '"':
+                      stack.pop() if top == "dq" else stack.append("dq")
+                      i += 1; continue
+                  if c == "$" and i + 1 < n and text[i + 1] == "(":
+                      stack.append("sub"); i += 2; continue
+                  if top == "sub" and c == ")":
+                      stack.pop(); i += 1; continue
+                  i += 1
+              return flags
+
+
+          def collect_assignments(text):
+              out = {}
+              for m in ASSIGN_RE.finditer(text):
+                  out.setdefault(m.group(1), []).append(m.group(2))
+              return out
+
+
+          def resolve_paths(path, assigns, depth=0):
+              path = norm_expr(path)
+              if depth > 5 or path.startswith("${{"):
+                  return [path]
+              if path.startswith("$("):
+                  return [None]
+              if path.startswith("$"):
+                  varname = path[1:].strip("{}")
+                  if varname in assigns:
+                      out = []
+                      for v in assigns[varname]:
+                          out.extend(resolve_paths(v, assigns, depth + 1))
+                      return out
+                  return [None]
+              return [path]
+
+
+          def path_category(path_text):
+              """-> ('SELF'|'CROSS', category) for a repos/OWNER/REPO/... path, or
+              ('OTHER', None) for anything else (org/user endpoints, GraphQL, etc.)."""
+              segs = [s for s in path_text.strip("/").split("/") if s]
+              if not segs or segs[0] != "repos":
+                  return "OTHER", None
+              rest = segs[1:]
+              if not rest:
+                  return "OTHER", None
+              if rest[0].startswith("$"):
+                  rest = rest[1:]           # one token already carries owner/repo
+                  scope = "SELF"
+              else:
+                  rest = rest[2:] if len(rest) >= 2 else []
+                  scope = "CROSS"           # a literal, different owner/repo pair
+              return (scope, rest[0]) if rest else (scope, None)
+
+
+          def resolve_token(tokexpr, step_env, job_env):
+              """-> (kind, detail). kind in app/default/other/unresolved."""
+              def classify(expr):
+                  if expr == APP_TOKEN_EXPR:
+                      return "app"
+                  if expr in DEFAULT_TOKEN_EXPRS:
+                      return "default"
+                  return "other"
+
+              if tokexpr is not None:
+                  val = norm_expr(tokexpr)
+                  if val.startswith("$") and not val.startswith("${{"):
+                      varname = val[1:].strip("{}")
+                      for env in (step_env, job_env):
+                          if varname in env:
+                              return classify(norm_expr(str(env[varname]))), varname
+                      return "unresolved", varname
+                  return classify(val), val
+
+              for env in (step_env, job_env):
+                  if "GH_TOKEN" in env:
+                      return classify(norm_expr(str(env["GH_TOKEN"]))), None
+              return "unresolved", None
+
+
+          def effective_job_permissions(wf, job):
+              p = job.get("permissions")
+              if p is None:
+                  p = wf.get("permissions")
+              return p if isinstance(p, dict) else None
+
+
+          def app_permission_ok(cat, app_perms):
+              return cat is None or cat in app_perms
+
+
+          def default_permission_ok(cat, level, job_perms):
+              if cat is None:
+                  return True
+              if job_perms is None:
+                  return None
+              granted = job_perms.get(cat)
+              if granted is None:
+                  return False
+              if level == "write":
+                  return granted == "write"
+              return granted in ("read", "write")
+
+
+          def parse_app_permissions(path="docs/setup.md"):
+              text = open(path, encoding="utf-8").read()
+              m = re.search(r"\*\*Repository permissions\*\*:\n((?:\s*-\s*.+\n)+)", text)
+              if not m:
+                  sys.exit(f"::error file={path}::Gate 12 could not find the "
+                            f"'Repository permissions' bullet list this gate treats as "
+                            f"the single source of truth for what the wing-commander-bot "
+                            f"App may do. If it moved or was reworded, update this gate "
+                            f"and the doc together.")
+              perms = {}
+              for line in m.group(1).splitlines():
+                  lm = re.match(r"\s*-\s*([A-Za-z ]+):\s*\*\*(.+?)\*\*", line)
+                  if not lm:
+                      continue
+                  name, level = lm.group(1).strip(), lm.group(2).strip().lower()
+                  if name.lower() == "everything else":
+                      continue
+                  key = name.lower().replace(" ", "-")
+                  if "write" in level:
+                      perms[key] = "write"
+                  elif "read" in level:
+                      perms[key] = "read"
+              return perms
+
+
+          def check_call(where, label, perm_cat, level, tok_kind, tok_detail,
+                         app_perms, job_perms, failures, notes):
+              if tok_kind == "app":
+                  if not app_permission_ok(perm_cat, app_perms):
+                      failures.append(
+                          f"{where}: {label} runs under the App token, which needs "
+                          f"{perm_cat!r} permission it does not have (docs/setup.md "
+                          f"grants only {sorted(app_perms)}). This 403s at runtime.")
+                  return
+              if tok_kind == "default":
+                  ok = default_permission_ok(perm_cat, level, job_perms)
+                  if ok is False:
+                      failures.append(
+                          f"{where}: {label} runs under github.token, which needs "
+                          f"{perm_cat!r} ({level}) but the job's effective permissions "
+                          f"are {job_perms}. This 403s at runtime.")
+                  elif ok is None:
+                      notes.append(f"{where}: {label} runs under github.token needing "
+                                   f"{perm_cat!r} ({level}); this job declares no "
+                                   f"permissions: block (inherits the repo default), "
+                                   f"which Gate 12 cannot resolve - unverified.")
+                  return
+              if tok_kind == "unresolved":
+                  failures.append(
+                      f"{where}: {label} - Gate 12 could not resolve which token this "
+                      f"call runs under ({tok_detail!r}), so it cannot verify the call "
+                      f"is safe.")
+                  return
+              notes.append(f"{where}: {label} runs under an unrecognised token "
+                           f"expression ({tok_detail!r}) - not the App token or "
+                           f"github.token, so Gate 12 cannot check it against either "
+                           f"permission model. Unverified.")
+
+
+          app_perms = parse_app_permissions()
+          failures = []
+          notes = []
+
+          for f in sorted(glob.glob(".github/workflows/*.yml") + glob.glob(".github/workflows/*.yaml")):
+              try:
+                  wf = yaml.safe_load(open(f, encoding="utf-8")) or {}
+              except Exception as e:
+                  failures.append(f"{f}: YAML parse failure: {e}")
+                  continue
+
+              for jname, job in (wf.get("jobs") or {}).items():
+                  job = job or {}
+                  job_env = job.get("env") or {}
+                  job_perms = effective_job_permissions(wf, job)
+                  pending_tools = []  # (verb1, verb2, source-step-name)
+
+                  for step in job.get("steps") or []:
+                      step = step or {}
+                      sname = step.get("name") or step.get("id") or "<unnamed step>"
+                      step_env = step.get("env") or {}
+                      uses = step.get("uses", "")
+
+                      # --- category A: literal invocations in run: blocks -----------
+                      run = step.get("run")
+                      if run:
+                          text = strip_comments(strip_heredocs(run))
+                          flags = executable_flags(text)
+                          assigns = collect_assignments(text)
+                          for m in GH_INVOKE_RE.finditer(text):
+                              if not flags[m.start()]:
+                                  continue
+                              where = f"{f} :: {jname} / {sname}"
+                              tok_kind, tok_detail = resolve_token(
+                                  m.group("tokexpr"), step_env, job_env)
+
+                              if m.group("apipath"):
+                                  resolved = resolve_paths(m.group("apipath"), assigns)
+                                  if any(p is None for p in resolved):
+                                      failures.append(
+                                          f"{where}: `gh api {m.group('apipath')}` - Gate "
+                                          f"12 cannot resolve this path to a literal "
+                                          f"value (it traces to a `$(...)` computed "
+                                          f"value or an unset variable), so it cannot "
+                                          f"verify which permission this call needs. "
+                                          f"Either make the path traceable or add it as "
+                                          f"a reviewed exception.")
+                                      continue
+                                  cats = {path_category(p) for p in resolved}
+                                  for scope, cat in cats:
+                                      if scope != "SELF" or cat is None:
+                                          continue  # cross-repo / non-repos path: a different repo's permission model, out of scope
+                                      perm_cat = API_CATEGORY_PERM.get(cat)
+                                      if perm_cat is None:
+                                          failures.append(
+                                              f"{where}: `gh api ...{cat}/...` - Gate "
+                                              f"12's API_CATEGORY_PERM table has no "
+                                              f"entry for {cat!r}. Add one (with "
+                                              f"evidence of what permission it needs) "
+                                              f"rather than let an unrecognised call "
+                                              f"pass unchecked.")
+                                          continue
+                                      level = ("write" if re.search(r"-X\s+(POST|PATCH|PUT|DELETE)", m.group(0))
+                                               else "read")
+                                      check_call(where, f"gh api (.../{cat}/...)", perm_cat, level,
+                                                 tok_kind, tok_detail, app_perms, job_perms,
+                                                 failures, notes)
+                              else:
+                                  verb1, verb2 = m.group("verb1"), m.group("verb2")
+                                  key = (verb1, verb2)
+                                  if key not in SUBCOMMAND_PERMS:
+                                      failures.append(
+                                          f"{where}: `gh {verb1}"
+                                          f"{(' ' + verb2) if verb2 else ''}` is not in "
+                                          f"Gate 12's SUBCOMMAND_PERMS table. An "
+                                          f"unrecognised subcommand must fail this gate, "
+                                          f"not pass it silently - add an entry (with "
+                                          f"evidence of the permission it needs) if this "
+                                          f"is legitimate.")
+                                      continue
+                                  perm_cat, level = SUBCOMMAND_PERMS[key]
+                                  check_call(where, f"gh {verb1} {verb2 or ''}".strip(),
+                                             perm_cat, level, tok_kind, tok_detail,
+                                             app_perms, job_perms, failures, notes)
+
+                      # --- category B: Bash(gh ...) grants to an agent step ----------
+                      if "wing-commander-tool-args" in uses:
+                          with_ = step.get("with") or {}
+                          for key in ("default-allowed-tools", "extra-allowed-tools",
+                                      "allowed-tools-override"):
+                              val = with_.get(key)
+                              if isinstance(val, str):
+                                  for gm in TOOL_GH_RE.finditer(val):
+                                      pending_tools.append((gm.group(1), gm.group(2), sname))
+
+                      if uses.startswith("anthropics/claude-code-action"):
+                          tok_kind, tok_detail = resolve_token(None, step_env, job_env)
+                          where = f"{f} :: {jname} / {sname} (agent tool grant)"
+                          for verb1, verb2, source in pending_tools:
+                              key = (verb1, verb2)
+                              if key not in SUBCOMMAND_PERMS:
+                                  continue   # not a subcommand this table tracks (e.g. bare `gh api`) — not this gate's job to police free-form agent calls
+                              perm_cat, level = SUBCOMMAND_PERMS[key]
+                              check_call(f"{where} [granted by {source!r}]",
+                                         f"Bash(gh {verb1} {verb2 or ''})".strip(),
+                                         perm_cat, level, tok_kind, tok_detail,
+                                         app_perms, job_perms, failures, notes)
+                          pending_tools = []
+
+          for n in notes:
+              print(f"note: {n}")
+          for fl in failures:
+              print(f"::error::Gate 12: {fl}")
+          print(f"Gate 12: checked every gh/API call site for a permissioned token; {len(failures)} failure(s).")
+          sys.exit(1 if failures else 0)
+          PYEOF
+
+      # Same reasoning as gates 6/7's self-tests: Gate 12 passing against
+      # this repository's own (healthy, by construction) fleet proves
+      # nothing about whether its detection logic works — only that nobody
+      # has introduced the defect it watches for yet. This runs the SHIPPED
+      # gate (extracted from this file, not a copy) against synthetic
+      # workflow trees with a known-bad call and asserts it fails, and
+      # against known-good ones and asserts it passes.
+      - name: Gate 12 self-test — the detector actually detects
+        run: python3 .github/scripts/verify-gate-12.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

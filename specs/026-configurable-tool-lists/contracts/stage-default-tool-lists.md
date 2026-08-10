@@ -25,7 +25,7 @@ configuration intent (they stay functionally inert even if a consumer's
 | plan | `plan.pr` | same as `plan.direct-commit` plus `Bash(git checkout:*),Bash(git switch:*),Bash(gh pr create:*),Bash(gh pr list:*)` | `WebFetch,ScheduleWakeup,Monitor,SendMessage` |
 | tasks | `tasks.direct-commit` | `Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git ls-tree:*),Bash(git branch:*),Bash(echo:*),Bash(ls:*),Bash(cat:*),Bash(.specify/scripts/bash/setup-tasks.sh:*),Bash(bash .specify/scripts/bash/setup-tasks.sh:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*)` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
 | tasks | `tasks.pr` | same as `tasks.direct-commit` plus `Bash(git checkout:*),Bash(git switch:*),Bash(gh pr create:*),Bash(gh pr list:*)` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
-| implement (⟲ converge) | `implement.cycle` | `Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(git ls-tree:*),Bash(git branch:*),Bash(echo:*),Bash(git show:*),Bash(ls:*),Bash(cat:*),Bash(yamllint:*),Bash(actionlint:*),Bash(shellcheck:*),Bash(jq:*),Bash(mkdir:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh run view:*),Bash(gh run list:*)` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
+| implement (⟲ converge) | `implement.cycle` | `Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(git ls-tree:*),Bash(git branch:*),Bash(echo:*),Bash(git show:*),Bash(ls:*),Bash(cat:*),Bash(yamllint:*),Bash(actionlint:*),Bash(shellcheck:*),Bash(jq:*),Bash(mkdir:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*)` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
 | implement (⟲ converge) | `implement.retry` | same as `implement.cycle` plus `Bash(git pull:*),Bash(git fetch:*),Bash(git reset:*)` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
 | implement (⟲ converge) | `implement.post-progress-comment` | `Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(gh issue comment:*)` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
 | finalize | `finalize` | `Read,Glob,Grep,Bash(git log:*),Bash(git diff:*),Bash(git show:*),Write` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
@@ -33,6 +33,13 @@ configuration intent (they stay functionally inert even if a consumer's
 | rebase | `rebase` | `Read,Edit,Grep,Glob,Bash(git status:*),Bash(git diff:*),Bash(git add:*),Bash(git rebase --continue:*),Bash(git rebase --abort:*)` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
 | watchdog | `watchdog.diagnose` | `Read,Grep,Bash(gh:*),Bash(git log:*),Bash(git diff:*)` (deliberately read-only) | `WebSearch,WebFetch,Write,Edit,Bash(git commit:*),Bash(git push:*),ScheduleWakeup,Monitor,SendMessage` |
 | watchdog | `watchdog.propose-fix` | `Read,Grep,Glob,Edit,Write` | `WebSearch,WebFetch,Bash,ScheduleWakeup,Monitor,SendMessage` |
+
+`implement.cycle`/`implement.retry` no longer carry `Bash(gh run view:*)`/
+`Bash(gh run list:*)` (specs/033-pr-conversation-commands T064, Gate 12 of
+`lint-workflows.yml`): the agent step's `GH_TOKEN` is the App token, which
+per `docs/setup.md` has no Actions permission, and the prompt never
+instructed the agent to use either tool — same class of defect as T065's
+removal from `pr-conversation.act` below.
 
 Sources: `.github/workflows/{intake,clarify,plan,tasks,implement,finalize,
 cleanup,rebase,watchdog}.yml` (`claude_args:` blocks, each stage's agent

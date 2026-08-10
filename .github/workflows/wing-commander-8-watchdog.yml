@@ -92,13 +92,16 @@ jobs:
     # GitHub validates the grant against every job in the called workflow at
     # startup (including if-skipped ones) and fails the run with zero jobs if
     # the called workflow asks for more. `actions: read` is what the collect
-    # job's run/job/artifact reads need. lint-workflows.yml gate 3 enforces it.
+    # job's run/job/artifact reads need; `checks: read` is what its
+    # check-run annotations read needs (Gate 12 / T064). lint-workflows.yml
+    # gate 3 enforces this superset relationship.
     permissions:
       contents: write
       pull-requests: write
       issues: write
       id-token: write
       actions: read
+      checks: read
     uses: ./.github/workflows/watchdog.yml
     with:
       run-id: ${{ needs.resolve.outputs.run-id }}

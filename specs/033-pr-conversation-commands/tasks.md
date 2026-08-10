@@ -1371,7 +1371,7 @@ static validation, and the full quickstart walkthrough.
   first. Verified: a failing lookup still posts the fallback reply, a
   succeeding one posts the reply with the run URL, and a defect witness
   confirms the pre-fix form aborted before `gh pr comment` ran.
-- [ ] T064 Add a machine-checked gate for the defect CLASS T062 and T063
+- [X] T064 Add a machine-checked gate for the defect CLASS T062 and T063
   belong to: a `gh`/API call issued under a token whose permissions do
   not cover the API it touches. This repository has now hit it three
   times — spec 005's `gh workflow run` 403 (fixed by dispatching with the
@@ -1413,6 +1413,55 @@ static validation, and the full quickstart walkthrough.
   assert that two different failure causes (403 vs 409) never collapse
   into the same user-visible reply. Constitution IV / Constitution I
   (missing).
+
+  **Status (iteration 8)**: shipped as **Gate 12** in `lint-workflows.yml`
+  ("every `gh`/API call runs under a token permissioned for it"), with
+  `.github/scripts/verify-gate-12.py` as its self-test, extracting the
+  gate's source from `lint-workflows.yml` at runtime per the
+  `verify-gate-6.py` precedent rather than copying it (gate 5 exists
+  because a copied verifier sat green while checking code that did not
+  ship). Wired into `run-local-gates.py` and passes `verify-gate-wiring.py`
+  so it cannot become orphaned. It resolves each call's effective token
+  (per-command `GH_TOKEN="$X"` prefix, then step `env`, then job `env`),
+  maps subcommand / `gh api` path to the permission it needs from a table
+  that FAILS on anything unrecognised rather than skipping it, checks
+  App-token calls against `docs/setup.md`'s "Repository permissions" list
+  parsed live so doc-vs-workflow drift fails the gate, checks
+  `github.token` calls against the job's own `permissions:`, and applies
+  the same test to `Bash(gh ...)` tool grants handed to an agent step
+  under its own token. Its scanner is quote/subshell/heredoc-aware so a
+  `gh` mentioned in a comment or an echoed string is not a call site (three
+  false-positive scenarios cover this).
+
+  First run against this repository flagged **11 call sites, all genuine**,
+  none of them in this feature: `implement.yml` handed its cycle and retry
+  agents `Bash(gh run view:*)`/`Bash(gh run list:*)` under the App token
+  (the T065 defect, in another stage — dropped, both contract mirrors
+  updated), and `watchdog.yml` made 8 Actions/Checks reads under the App
+  token across 6 steps, including `Fetch inspected run metadata`, whose
+  `gh run view` is NOT soft-failed and would take the whole `collect` job
+  down under `set -e`. All routed through a per-step `ACTIONS_TOKEN: ${{
+  github.token }}`, with `checks: read` added to `watchdog.yml` and to its
+  caller `wing-commander-8-watchdog.yml` (gate 3 requires the caller to be
+  a superset). `plan.yml`, `tasks.yml` and `wing-commander-watchdog-test.yml`
+  were checked and are already correct.
+
+  Verified: 16 self-test scenarios pass, INCLUDING negative fixtures, so
+  the detector demonstrably detects; and re-running the gate against a tree
+  with only `watchdog.yml` reverted reports exactly those 8 failures and
+  exits 1, then 0 failures on the fixed tree — the detector was proven
+  against real shipped code, not only fixtures. Local gates 9/9.
+
+  Caveat carried forward: that `github.token` + `actions: read` succeeds
+  for artifact and job-log reads at runtime is inferred from the
+  documented permission model and from the same pattern already working in
+  `pr-conversation.yml`/`implement.yml`/`tasks.yml` — it has not run in
+  real CI. Related observation worth its own investigation (NOT fixed
+  here, and not in this feature's scope): `watchdog.yml` soft-fails these
+  reads in 35 places (`2>/dev/null || echo '[]'`), so a 403 there is
+  indistinguishable from "there was no evidence to collect" — the watchdog
+  may have been silently collecting nothing from artifacts/annotations
+  rather than reporting a permission problem.
 - [X] T065 `pr-conversation.act`'s default allowed-tools list grants the
   agent `Bash(gh run cancel:*)`, `Bash(gh run list:*)` and `Bash(gh
   workflow run:*)`, but the agent step's `GH_TOKEN` is the App token,
