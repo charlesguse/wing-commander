@@ -823,9 +823,19 @@ jobs:
               return out
 
 
+          # NEVER write the literal two-brace expression opener in this (or any)
+          # run: block, even inside a quoted Python string in a heredoc.
+          # GitHub's own workflow parser scans run: text for expressions before
+          # anything executes, and an opener with no closer fails the WHOLE file
+          # with "The expression is not closed" — the file then does not
+          # register, its checks silently never appear on the PR, and only Gate
+          # 1 (which reads the default branch, post-merge) would notice. Build
+          # the sequence by concatenation instead.
+          EXPR_OPEN = "${" + "{"
+
           def resolve_paths(path, assigns, depth=0):
               path = norm_expr(path)
-              if depth > 5 or path.startswith("${{"):
+              if depth > 5 or path.startswith(EXPR_OPEN):
                   return [path]
               if path.startswith("$("):
                   return [None]
@@ -869,7 +879,7 @@ jobs:
 
               if tokexpr is not None:
                   val = norm_expr(tokexpr)
-                  if val.startswith("$") and not val.startswith("${{"):
+                  if val.startswith("$") and not val.startswith(EXPR_OPEN):
                       varname = val[1:].strip("{}")
                       for env in (step_env, job_env):
                           if varname in env:
