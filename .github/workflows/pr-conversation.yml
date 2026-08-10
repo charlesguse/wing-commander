@@ -726,12 +726,28 @@ jobs:
       max-parallel: 1
       matrix:
         include: ${{ fromJson(needs.classify-and-announce.outputs.classifications) }}
-    # matrix is an available context for this key and every leg gates
-    # independently (watchdog.yml's triage/act jobs establish this
-    # precedent) — T029/FR-020: bound only for a classification whose own
-    # category is in confirm-categories; every other leg's name resolves to
-    # "", a verified true no-op, and runs immediately even while a sibling
-    # leg waits for approval.
+    # matrix is an available context for this key, so each leg's
+    # environment.name can be a distinct expression — T029/FR-020: bound
+    # only for a classification whose own category is in confirm-categories;
+    # every other leg's name resolves to "", a verified true no-op, and
+    # runs immediately even while a sibling leg waits for approval.
+    #
+    # KNOWN Gate 7 divergence: watchdog.yml's own matrixed jobs (triage,
+    # act) bind every leg to the SAME literal `${{ inputs.environment }}` —
+    # matrix gives them N independent approvals against one shared
+    # environment, not a per-leg CHOICE of environment. This job needs the
+    # latter (each leg's confirmation gate is a property of ITS OWN
+    # classification, computed in classify-and-announce), which is
+    # incompatible with also forwarding the stage-wide `inputs.environment`/
+    # `inputs.environment-deployment` pair verbatim on this same job — only
+    # one `environment:` block exists per job, and splitting confirm
+    # gating into a prerequisite job would force every leg to wait on
+    # every OTHER leg's approval, breaking the "sibling leg" guarantee
+    # above. `lint-workflows.yml` Gate 7 (specs/031-stage-environment-binding)
+    # therefore flags this job — this stage does not support the whole-stage
+    # `environment` input on `act` (it still applies to `classify-and-announce`
+    # above). Documented rather than silenced; a future Gate 7 revision or
+    # confirm-mechanism redesign should reconcile this.
     environment:
       name: ${{ matrix['confirm-environment'] }}
       deployment: false

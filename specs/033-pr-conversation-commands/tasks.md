@@ -562,12 +562,49 @@ static validation, and the full quickstart walkthrough.
   against fixture PR metadata (`spec-draft/<slug>`→default branch ⇒
   false; `plan/<slug>`→`spec/<slug>` ⇒ false; `spec/<slug>`→default
   branch ⇒ true).
+
+  **Status (iteration 1, desk-checked, no live CI run available in this
+  environment)**: `actionlint`/`yamllint` clean on both files (only the
+  repo-wide pre-existing `job_workflow_sha`/`deployment:`-key/line-length
+  warnings every other stage also carries). Fixture-traced T002's actor
+  gate and T003's `qualifies` check by hand against exactly the payloads
+  quickstart.md names — both now correct; tracing T002 surfaced a real bug
+  (see below), now fixed. **`lint-workflows.yml` Gate 7 does NOT pass**,
+  and cannot with the current design: `act`'s job-level `environment:`
+  binds to `matrix['confirm-environment']` (T029/FR-020 — required so a
+  classification needing propose-and-confirm can gate independently of its
+  siblings, verified by T032), not to `${{ inputs.environment }}`/
+  `${{ inputs.environment-deployment }}` verbatim as Gate 7
+  (specs/031-stage-environment-binding) requires of every job in every
+  published stage. GitHub Actions permits only one `environment:` per job,
+  and splitting the confirm gate into a prerequisite job would force every
+  matrix leg to wait on every sibling's approval, breaking FR-020's
+  same-job leg independence — so this cannot be fixed inside
+  `pr-conversation.yml` alone. Documented in a comment above `act`'s
+  `environment:` block. Needs a human decision: extend Gate 7 to recognize
+  this binding shape, or accept `act` as a documented Gate 7 exception.
+  **Bug found and fixed during this sweep**: `wing-commander-9-pr-conversation.yml`'s
+  `resolve-model` job `if:` duplicated the OWNER/MEMBER/COLLABORATOR check
+  inside the wrapper itself, contradicting `contracts/wrapper-gate.md`'s
+  explicit prose ("the wrapper always dispatches to the stage when the
+  actor is non-bot... the stage's own first deterministic step checks
+  authorization") — a non-bot, non-authorized commenter got silently
+  skipped with no reply, instead of reaching the stage's T004
+  notice-and-stop. Fixed to gate on bot-exclusion only.
 - [ ] T043 Walk `quickstart.md`'s full scenario set (1–15), its edge case
   checks (bot comment, concurrent requests on the same spec, relayed
   request with risk, pure acknowledgement), and its regression check
   end-to-end against the finished workflow files, recording in the PR body
   which were exercised live (dogfooded against a real implementation PR in
   this repository, constitution I) versus desk-checked only.
+
+  **Status (iteration 1)**: not performed — this build-and-reassess cycle
+  is constrained to commit/push only on `spec/033-pr-conversation-commands`
+  and may not open a PR, so no implementation PR exists yet to dogfood
+  the 15 event-triggered scenarios against. Once this feature's own final
+  PR is opened, a maintainer should exercise at least scenarios 1–2 (the
+  MVP fold-in/re-dispatch loop) and 9–12 (propose-and-confirm/stop) live
+  against it before merging, given T042's Gate 7 finding above.
 
 ---
 

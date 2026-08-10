@@ -33,17 +33,23 @@ jobs:
   # issue, since the lifecycle issue number isn't resolved until
   # pr-conversation.yml's own classify-and-announce job runs.
   #
-  # This job's `if:` is the actual security gate for the whole workflow
+  # This job's `if:` is ONLY the bot-exclusion half of the security gate
   # (FR-002/FR-019/FR-021, contracts/wrapper-gate.md): bot actor -> job
-  # skipped, no run at all; non-bot but not OWNER/MEMBER/COLLABORATOR ->
-  # also skipped here (the wrapper cannot post a reply), the stage's own
-  # first deterministic step handles that notice-and-stop case for
-  # requests that DO reach it as `actor-association`. Refined to exact
-  # per-event-kind field access (only one of review/comment is populated
-  # per invocation) rather than the `||`-fallback illustrative expression
-  # in contracts/wrapper-gate.md, so a null-vs-populated mismatch across
-  # event shapes can never widen the gate. The `pull_request_review` leg
-  # additionally requires a non-empty body (an empty string is `== null`
+  # skipped, no run at all, no reply posted — the wrapper `if:` cannot
+  # itself post a reply, so it must not also be where the
+  # non-bot-unauthorized case is decided. Every non-bot actor, regardless
+  # of association, is dispatched through to the stage (actor-association
+  # passed as an input); pr-conversation.yml's classify-and-announce job
+  # runs its OWN first deterministic step to check OWNER/MEMBER/COLLABORATOR
+  # membership and, if it fails, posts the notice-and-stop reply (FR-021's
+  # first sentence) — deliberately NOT re-checked here, since duplicating
+  # that condition into this `if:` would silently skip the job instead and
+  # leave the non-bot-unauthorized case with no reply at all (wrapper-gate.md).
+  # Refined to exact per-event-kind field access (only one of review/comment
+  # is populated per invocation) rather than the `||`-fallback illustrative
+  # expression in contracts/wrapper-gate.md, so a null-vs-populated mismatch
+  # across event shapes can never widen the gate. The `pull_request_review`
+  # leg additionally requires a non-empty body (an empty string is `== null`
   # under GitHub Actions' loose comparison) — a plain approve/request-changes
   # with no text is not a maintainer request to classify (constitution II
   # cost-consciousness: no billable classify run for nothing to classify).
@@ -54,17 +60,14 @@ jobs:
       (
         (github.event_name == 'issue_comment' &&
          github.event.issue.pull_request != null &&
-         github.event.comment.user.type != 'Bot' &&
-         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+         github.event.comment.user.type != 'Bot')
         ||
         (github.event_name == 'pull_request_review_comment' &&
-         github.event.comment.user.type != 'Bot' &&
-         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+         github.event.comment.user.type != 'Bot')
         ||
         (github.event_name == 'pull_request_review' &&
          github.event.review.body != '' &&
-         github.event.review.user.type != 'Bot' &&
-         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association))
+         github.event.review.user.type != 'Bot')
       )
     runs-on: ubuntu-latest
     permissions:
