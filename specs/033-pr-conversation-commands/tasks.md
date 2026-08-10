@@ -56,7 +56,7 @@ Decision). All file paths below are repo-root-relative.
 **Purpose**: Create the two new workflow files as correctly-wired,
 empty-bodied skeletons — the scaffold every story's logic attaches to.
 
-- [ ] T001 [P] Create `.github/workflows/pr-conversation.yml` as a
+- [X] T001 [P] Create `.github/workflows/pr-conversation.yml` as a
   `workflow_call`-only skeleton (`contracts/reusable-pr-conversation.md`):
   full typed inputs — `pr-number` (number, required), `event-kind` (string
   `review`\|`review-comment`\|`issue-comment`, required), `comment-id`
@@ -77,7 +77,7 @@ empty-bodied skeletons — the scaffold every story's logic attaches to.
   (research.md D6 — the exact canonical group `specs/013-serialize-rebase-stages`
   established; `classify-and-announce` resolves `spec-dir` as its own
   first step so the group is known before either job's later steps run).
-- [ ] T002 [P] Create `.github/workflows/wing-commander-9-pr-conversation.yml`
+- [X] T002 [P] Create `.github/workflows/wing-commander-9-pr-conversation.yml`
   as the thin wrapper (`contracts/wrapper-gate.md`): `on.pull_request_review`
   (`types: [submitted]`), `on.pull_request_review_comment`
   (`types: [created]`), `on.issue_comment` (`types: [created]`, filtered
@@ -113,7 +113,7 @@ every category, not just one story's.
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T003 In the `classify-and-announce` job of
+- [X] T003 In the `classify-and-announce` job of
   `.github/workflows/pr-conversation.yml`, implement the
   `PullRequestIdentity.qualifies` preflight (research.md D4, FR-018,
   data-model.md): `gh pr view <pr-number> --json baseRefName,headRefName`;
@@ -125,19 +125,19 @@ every category, not just one story's.
   read/write; `qualifies == false` short-circuits the whole run with no
   reply at all (this PR is out of scope for the stage entirely, not merely
   unauthorized).
-- [ ] T004 In the `classify-and-announce` job, implement the stage-level
+- [X] T004 In the `classify-and-announce` job, implement the stage-level
   authorized-actor gate (FR-019, FR-021 — the wrapper in T002 has already
   excluded bots outright): `actor-association in {OWNER, MEMBER,
   COLLABORATOR}` passes; otherwise post one brief notice on the PR via
   `wing-commander-callout` stating the request was not acted on and who
   can authorize it, then stop before the classify step runs (one cheap
   `gh` call, no agent cost incurred on an unauthorized request).
-- [ ] T005 In the `classify-and-announce` job, stage `body` (and, for
+- [X] T005 In the `classify-and-announce` job, stage `body` (and, for
   `event-kind == review-comment`, the `thread-context` path/diff-hunk) to
   a file exactly as `clarify.yml` already does — never shell-interpolated,
   never pasted into the agent prompt string (data-model.md
   `PRConversationEvent`, constitution V).
-- [ ] T006 In the `classify-and-announce` job, implement the
+- [X] T006 In the `classify-and-announce` job, implement the
   `pr-conversation.classify` agent step (`contracts/classification-schema.md`):
   `anthropics/claude-code-action@v1`, the resolved `model`/`max-turns`
   inputs (T002's `resolve-model` output, research.md D2 — sonnet default,
@@ -157,7 +157,7 @@ every category, not just one story's.
   `classifications` is an array (1..N) so one comment can decompose into
   independently-routed parts (edge case: "request mixes in-scope and
   out-of-scope items").
-- [ ] T007 In the `classify-and-announce` job, implement the
+- [X] T007 In the `classify-and-announce` job, implement the
   `requires-confirmation` deterministic gate (FR-020,
   `contracts/autonomy-and-confirmation.md`): a plain set-membership check
   of each classification's `category` against the `confirm-categories`
@@ -167,7 +167,7 @@ every category, not just one story's.
   agent-assigned; emit the resolved `confirm-environment` name (or `""`)
   per classification as a job output for T029 (US5) to bind `act`'s
   `environment:` against.
-- [ ] T008 In the `classify-and-announce` job, implement the
+- [X] T008 In the `classify-and-announce` job, implement the
   `IntentAnnouncement` posting step (FR-023, `contracts/autonomy-and-confirmation.md`):
   for each classification, post one `wing-commander-callout` containing
   the assigned `category`+`summary`, a one-sentence `planned-action`, and
@@ -180,7 +180,7 @@ every category, not just one story's.
   `classify-and-announce` — `act`'s `environment:` binding (T029) cannot
   begin evaluating until this job completes, guaranteeing the announcement
   precedes every mutation (SC-008).
-- [ ] T009 In the `act` job, implement the relayed-request risk-confirmation
+- [X] T009 In the `act` job, implement the relayed-request risk-confirmation
   gate (FR-022, data-model.md `RelayedRequest`): when a classification's
   `relayed.risk == true` and no prior maintainer confirmation is found
   (scanning the PR thread the same way T030/US5's stop-scan will, for a
@@ -189,7 +189,7 @@ every category, not just one story's.
   once to confirm, then takes no further action on that classification
   until a matching confirmation reply arrives on a later run — applies
   ahead of every other category's route below, including in-scope-change.
-- [ ] T010 In the `act` job, wire the shared bounded agent step every
+- [X] T010 In the `act` job, wire the shared bounded agent step every
   category's route (T011 onward) invokes for its actual drafting/mutation
   work: `anthropics/claude-code-action@v1`, the same resolved `model`/
   `max-turns`, the broad-but-bounded tool allowlist
@@ -228,7 +228,7 @@ scenario 1–2).
 
 ### Implementation for User Story 1
 
-- [ ] T011 [US1] In the `act` job of `.github/workflows/pr-conversation.yml`,
+- [X] T011 [US1] In the `act` job of `.github/workflows/pr-conversation.yml`,
   for `category == "in-scope-change"`, implement `contracts/converge-fold-in.md`
   steps 1–5: read `stage`/`iteration` from `spec-meta.json`; append a
   `## Maintainer Feedback (PR #<pr-number>, comment <comment-id>)` section
@@ -240,13 +240,13 @@ scenario 1–2).
   never collide); advance `spec-meta.json.stage` back to `"implement"`
   (iteration left at `recorded`); push both files to `spec/<slug>` in one
   commit.
-- [ ] T012 [US1] Implement step 6: dispatch
+- [X] T012 [US1] Implement step 6: dispatch
   `gh workflow run wing-commander-5-implement.yml -f spec_dir=<spec-dir>
   -f issue=<issue-number> -f iteration=<recorded+1>` — the exact,
   already-published `workflow_dispatch` signature from
   `specs/010-reusable-pipeline/contracts/stage-interfaces.md`'s "Chaining
   payload contract" table (unchanged by this feature).
-- [ ] T013 [US1] Implement step 7: reply on the PR confirming the fold-in
+- [X] T013 [US1] Implement step 7: reply on the PR confirming the fold-in
   and dispatch (FR-014), with a best-effort link to the dispatched run via
   a short, bounded poll (`gh run list --workflow wing-commander-5-implement.yml
   --created ">=<step-start-timestamp>" --limit 1`; on timeout, point at
@@ -255,7 +255,7 @@ scenario 1–2).
   reply states that possibility on the **PR** (FR-005 — `implement.yml`
   itself continues to post the authoritative cap-reached outcome to the
   lifecycle issue, unchanged).
-- [ ] T014 [US1] Verify (`quickstart.md` scenario 2, spec.md US1 Acceptance
+- [X] T014 [US1] Verify (`quickstart.md` scenario 2, spec.md US1 Acceptance
   #3): confirm T008's `IntentAnnouncement` posting and T011–T013's route
   never post to the lifecycle issue for `in-scope-change` — the
   conversation and its resolution stay entirely on the PR.
@@ -282,27 +282,27 @@ lifecycle issue (`quickstart.md` scenarios 3–5).
 
 ### Implementation for User Story 2
 
-- [ ] T015 [US2] In the `act` job, for `category == "new-functionality"`
+- [X] T015 [US2] In the `act` job, for `category == "new-functionality"`
   with `fold-target == "current-spec"` (`contracts/spinoff-routing.md`),
   post a PR reply summarizing `drafted-content.spec-amendment-note` and
   route the actual work through T011's identical fold-in mechanism (the
   amendment becomes a `## Maintainer Feedback` task section, same as any
   in-scope change) — no new artifact, not an outstanding task item
   (FR-013).
-- [ ] T016 [US2] For `fold-target == "new-spec"` (research.md D7), open a
+- [X] T016 [US2] For `fold-target == "new-spec"` (research.md D7), open a
   new GitHub issue from `drafted-content.issue-title`/`.issue-body` and
   apply the `spec-request` label (`gh label create --force` on first use)
   — the same label `wing-commander-1-intake.yml` already gates its own
   trigger on, so intake picks the issue up with no new entry point. This
   is a `SpinOffArtifact` (`kind: new-lifecycle-issue`).
-- [ ] T017 [US2] Implement the shared `OutstandingTaskItem` posting
+- [X] T017 [US2] Implement the shared `OutstandingTaskItem` posting
   mechanism (FR-008/FR-013, `contracts/spinoff-routing.md`'s "Outstanding
   task item format"): one `wing-commander-callout` (`kind: action`) on the
   lifecycle issue per `SpinOffArtifact`, rendered as an unchecked list item
   (`- [ ] <artifact kind, human phrase> — <url> (from PR #<pr-number>)`)
   so it visibly persists until a human closes the linked artifact; wire it
   to fire for T016's `new-lifecycle-issue` artifact.
-- [ ] T018 [US2] For `category == "small-unrelated-change"`
+- [X] T018 [US2] For `category == "small-unrelated-change"`
   (research.md D8), implement the deterministic size backstop: measure
   `drafted-content.file-changes` (files touched, lines changed) against a
   hardcoded threshold (documented default: ≤ 3 files, ≤ 40 changed lines).
@@ -310,16 +310,16 @@ lifecycle issue (`quickstart.md` scenarios 3–5).
   `drafted-content.pr-title`/`.pr-body`/the diff, branched from the
   default branch (independent of `spec/<slug>`) — `SpinOffArtifact`
   (`kind: small-unrelated-pr`).
-- [ ] T019 [US2] Exceeds threshold: re-route the classification as
+- [X] T019 [US2] Exceeds threshold: re-route the classification as
   `new-functionality`/`fold-target: new-spec` (T016's path) instead of
   opening a PR — never opened once the backstop trips, regardless of what
   T006's classify step judged (edge case: "an unrelated tiny change turns
   out not to be tiny once examined"; SC-004).
-- [ ] T020 [US2] Wire T017 to fire for T018's `small-unrelated-pr`
+- [X] T020 [US2] Wire T017 to fire for T018's `small-unrelated-pr`
   artifact, plus a reference comment on the **current** PR (FR-007:
   "reference that PR from both the current PR and the current lifecycle
   issue").
-- [ ] T021 [US2] Verify (`quickstart.md` Static validation #4): exercise
+- [X] T021 [US2] Verify (`quickstart.md` Static validation #4): exercise
   T018/T019's size backstop against a fixture diff at, and one line over,
   the documented threshold — confirm the over-threshold case re-routes via
   T019 rather than opening a PR.
@@ -344,15 +344,15 @@ is posted instead of any action (`quickstart.md` scenarios 6–7).
 
 ### Implementation for User Story 3
 
-- [ ] T022 [US3] In the `act` job, for `category == "needs-info"`, post
+- [X] T022 [US3] In the `act` job, for `category == "needs-info"`, post
   `drafted-content.clarifying-question` as a PR reply; no mutation, no
   artifact (FR-009).
-- [ ] T023 [US3] For `category == "push-back"`, post a PR reply naming
+- [X] T023 [US3] For `category == "push-back"`, post a PR reply naming
   `constitution-conflict` and declining; no artifact, no fold (FR-010) —
   confirm this route (and every other route in this feature) has no tool
   in its allowlist (T010) capable of merging or approving a PR to `main`
   (SC-003).
-- [ ] T024 [US3] Extend T006's classify prompt with explicit guidance for
+- [X] T024 [US3] Extend T006's classify prompt with explicit guidance for
   judging constitution conflicts and ambiguity per spec.md's Assumptions
   and edge cases: a "new-functionality" request that is neither clearly
   in-scope nor clearly warranting its own spec must classify as
@@ -381,14 +381,14 @@ scenario 8).
 
 ### Implementation for User Story 4
 
-- [ ] T025 [US4] In the `act` job, for `category == "manual-step-permission"`
+- [X] T025 [US4] In the `act` job, for `category == "manual-step-permission"`
   with `drafted-content == {performed: true, outcome}`, execute the step
   via T010's existing tool allowlist and report the outcome on the PR
   (FR-011 first clause) — not a spin-off artifact.
-- [ ] T026 [US4] For `drafted-content == {performed: false, reason}`,
+- [X] T026 [US4] For `drafted-content == {performed: false, reason}`,
   report the reason on the PR (FR-011 second clause) — not a spin-off
   artifact.
-- [ ] T027 [US4] For `drafted-content == {needs-permission, pr-title,
+- [X] T027 [US4] For `drafted-content == {needs-permission, pr-title,
   pr-body}` (research.md D11), search `gh search issues --label
   permission-request --state all` for a `WithheldPermissionConversation`
   plausibly matching `needs-permission`, judged with the same conservative
@@ -398,7 +398,7 @@ scenario 8).
   permission-request PR to the default branch, labeled `permission-request`
   (`gh label create --force` on first use) — `SpinOffArtifact`
   (`kind: permission-request-pr`).
-- [ ] T028 [US4] Wire T017's `OutstandingTaskItem` posting to fire for
+- [X] T028 [US4] Wire T017's `OutstandingTaskItem` posting to fire for
   T027's `permission-request-pr` artifact.
 
 **Checkpoint**: User Story 4 works independently — all three
@@ -427,14 +427,14 @@ scenarios 9–12).
 
 ### Implementation for User Story 5
 
-- [ ] T029 [US5] In `.github/workflows/pr-conversation.yml`, bind `act`'s
+- [X] T029 [US5] In `.github/workflows/pr-conversation.yml`, bind `act`'s
   job-level `environment:` conditionally per classification
   (`contracts/autonomy-and-confirmation.md`): `name:` resolves to T007's
   computed confirm-environment string (empty when act-then-report),
   `deployment: false` — reusing `specs/031-stage-environment-binding`'s
   verified empty-name-no-op / expression-name-binding contract exactly, no
   new wait/poll mechanism.
-- [ ] T030 [US5] For `category == "stop"`, implement the reply-based stop
+- [X] T030 [US5] For `category == "stop"`, implement the reply-based stop
   procedure in `act` (research.md D10): scan the PR's comment thread
   (`gh api .../issues/{pr}/comments` and, for review-thread stops,
   `.../pulls/{pr}/comments`) for the most recent `IntentAnnouncement`
@@ -444,12 +444,12 @@ scenarios 9–12).
   cancel` the dispatched `wing-commander-5-implement.yml` run, found via
   `gh run list --workflow wing-commander-5-implement.yml --branch
   spec/<slug> --status in_progress`.
-- [ ] T031 [US5] When `gh run cancel` reports the target run already
+- [X] T031 [US5] When `gh run cancel` reports the target run already
   completed, or no in-progress run is found at all, reply with
   `StopRequest.outcome == "already-completed"` and a summary of what that
   prior run's own final reply already reported — never implying the
   action was prevented when it was not (FR-024's second clause, verbatim).
-- [ ] T032 [US5] Verify: direct cancellation (a maintainer cancelling the
+- [X] T032 [US5] Verify: direct cancellation (a maintainer cancelling the
   announced run URL themselves) needs zero pipeline code, per spec.md's
   Assumptions; confirm both stop paths go through the identical wrapper
   `if:` (T002) and stage-level authorization check (T004) as any other
@@ -474,16 +474,16 @@ are otherwise untouched (`quickstart.md` scenario 13–14).
 
 ### Implementation for User Story 6
 
-- [ ] T033 [US6] In the `act` job, for `category == "question"`, post
+- [X] T033 [US6] In the `act` job, for `category == "question"`, post
   `drafted-content.answer` as a PR reply; no mutating action, no spin-off
   artifact (FR-025).
-- [ ] T034 [US6] Verify (`quickstart.md` scenario 14): a comment mixing a
+- [X] T034 [US6] Verify (`quickstart.md` scenario 14): a comment mixing a
   question with an actionable in-scope request decomposes, via T006's
   multi-classification array, into one `question` classification and one
   separately-routed classification for the actionable part — each gets
   its own `IntentAnnouncement` (T008) and its own reply, never one
   conflated response.
-- [ ] T035 [US6] Extend T006's classify prompt so a question the step
+- [X] T035 [US6] Extend T006's classify prompt so a question the step
   cannot answer confidently says so in `drafted-content.answer` rather
   than guessing (US6 Acceptance #3).
 
@@ -507,12 +507,12 @@ trace there (`quickstart.md` scenario 15).
 
 ### Implementation for User Story 7
 
-- [ ] T036 [US7] Sweep verification: after driving T016 (new-issue),
+- [X] T036 [US7] Sweep verification: after driving T016 (new-issue),
   T018 (small-unrelated-pr), and T027 (permission-request-pr), inspect the
   lifecycle issue and confirm each of the three spin-off artifacts appears
   as its own outstanding-task-item line via T017 (SC-002), cross-linked to
   the PR, while T011–T014's in-scope cycle left no trace there at all.
-- [ ] T037 [US7] Verify FR-017 (edge case: "a comment is pure
+- [X] T037 [US7] Verify FR-017 (edge case: "a comment is pure
   acknowledgement or discussion with no actionable request"): confirm
   `category == "no-action"` results in zero mutating action and zero
   spin-off — and, per FR-014's "actionable request" scoping, no PR reply
