@@ -411,6 +411,46 @@ jobs:
             only repository maintainers (owners, members, or collaborators)
             can direct this stage.
 
+      # T047/FR-022: resumes a relayed request once its risk has been
+      # confirmed by a later, separate reply — that confirming comment
+      # triggers its own run, whose own classify pass would otherwise only
+      # ever see the short "I confirm" text, never the original request.
+      # The classification the act job's relay gate blocked on embeds
+      # itself as machine-parseable data inside its own risk-warning
+      # comment (mirrors the stop mechanism's own run-url parsing,
+      # research.md D10) — retrieved here, when this event's actor and body
+      # match, and re-announced/re-acted on exactly as if the maintainer
+      # had made the original request themselves. Bypasses a fresh classify
+      # pass entirely for this event when a match is found.
+      - name: Check for relay confirmation
+        id: relay-resume
+        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true'
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          PR_NUMBER: ${{ inputs.pr-number }}
+          ACTOR_LOGIN: ${{ inputs.actor-login }}
+          BODY: ${{ inputs.body }}
+        run: |
+          set -euo pipefail
+          resumed=false
+          if printf '%s' "$BODY" | grep -qiE 'confirm'; then
+            issue_comments=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq '[.[] | {created_at, body}]')
+            review_comments=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments" --paginate --jq '[.[] | {created_at, body}]')
+            all=$(jq -n --argjson a "$issue_comments" --argjson b "$review_comments" '$a + $b | sort_by(.created_at) | reverse')
+            marker=$(printf '%s' "$all" | jq -r '[.[] | select(.body | contains("wing-commander:pr-conversation-relay"))] | .[0].body // empty')
+            if [ -n "$marker" ]; then
+              payload=$(printf '%s' "$marker" | grep -E '^\{.*\}$' | head -n1 || true)
+              if [ -n "$payload" ]; then
+                found_login=$(printf '%s' "$payload" | jq -r '.["actor-login"] // empty' 2>/dev/null || true)
+                if [ "$found_login" = "$ACTOR_LOGIN" ]; then
+                  printf '%s' "$payload" | jq -c '[.classification]' > "$RUNNER_TEMP/classifications-raw.json"
+                  resumed=true
+                fi
+              fi
+            fi
+          fi
+          echo "resumed=$resumed" >> "$GITHUB_OUTPUT"
+
       # The request body is untrusted. Written straight to a file — never
       # shell-interpolated, never pasted into the prompt (mirrors
       # clarify.yml's staging convention, data-model.md PRConversationEvent).
@@ -469,7 +509,7 @@ jobs:
       # mixes in-scope and out-of-scope items").
       - name: Classify the PR conversation request
         id: agent
-        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && steps.tool-args-classify.outputs.allowed-tools != ''
+        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && steps.relay-resume.outputs.resumed != 'true' && steps.tool-args-classify.outputs.allowed-tools != ''
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -613,7 +653,7 @@ jobs:
       # and the outstanding-task-item mechanism never have to re-derive it.
       - name: Compute confirmation requirements
         id: confirm
-        if: steps.schema-check.outputs.ok == 'true'
+        if: steps.schema-check.outputs.ok == 'true' || steps.relay-resume.outputs.resumed == 'true'
         env:
           CONFIRM_CATEGORIES: ${{ inputs.confirm-categories }}
           CONFIRM_ENVIRONMENT: ${{ inputs.confirm-environment }}
@@ -813,11 +853,16 @@ jobs:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
 
-      # T009/FR-022/data-model.md RelayedRequest: applies AHEAD of every
-      # other category's route, including in-scope-change. Not risky, or
-      # not relayed at all -> proceed immediately. Risky and unconfirmed ->
-      # post the risk statement and stop this leg here; a later run (once
-      # the relaying maintainer replies accepting the risk) proceeds.
+      # T009/T049/FR-022/FR-018/data-model.md RelayedRequest: applies AHEAD
+      # of every other category's route, including in-scope-change. Not
+      # risky, or not relayed at all -> proceed immediately. Risky and
+      # unconfirmed -> post the risk statement (embedding this
+      # classification as machine-parseable data, T047) and stop this leg
+      # here; a later run (once the relaying maintainer replies accepting
+      # the risk) proceeds. Confirmation is scanned across BOTH PR comment
+      # surfaces (issue-style and review-thread), matching the stop
+      # procedure's own dual-surface scan (T030) — FR-018 treats all PR
+      # conversation surfaces as valid request/reply input.
       - name: Relayed-request risk-confirmation gate
         id: relay-gate
         env:
@@ -826,6 +871,7 @@ jobs:
           RISK: ${{ matrix.relayed.risk }}
           RISK_NOTE: ${{ matrix.relayed['risk-note'] }}
           ACTOR_LOGIN: ${{ inputs.actor-login }}
+          CLASSIFICATION_JSON: ${{ toJson(matrix) }}
         run: |
           set -euo pipefail
           if [ "$RISK" != "true" ]; then
@@ -833,7 +879,9 @@ jobs:
             exit 0
           fi
           confirmed=false
-          comments=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq '[.[] | {login: .user.login, body: .body}]')
+          issue_comments=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq '[.[] | {login: .user.login, body: .body}]')
+          review_comments=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments" --paginate --jq '[.[] | {login: .user.login, body: .body}]')
+          comments=$(jq -n --argjson a "$issue_comments" --argjson b "$review_comments" '$a + $b')
           if printf '%s' "$comments" | jq -e --arg login "$ACTOR_LOGIN" \
             '[.[] | select(.login == $login) | select(.body | test("(?i)confirm"))] | length > 0' >/dev/null 2>&1; then
             confirmed=true
@@ -844,6 +892,7 @@ jobs:
           fi
           echo "proceed=false" >> "$GITHUB_OUTPUT"
           body_file="$RUNNER_TEMP/relay-risk.md"
+          payload=$(printf '%s' "$CLASSIFICATION_JSON" | jq -c --arg login "$ACTOR_LOGIN" '{"actor-login": $login, "classification": .}')
           {
             echo "> [!IMPORTANT]"
             echo "> **This relayed request carries risk**"
@@ -851,6 +900,10 @@ jobs:
             echo "> ${RISK_NOTE:-No further detail was provided.}"
             echo ">"
             echo "> @$ACTOR_LOGIN — reply confirming you accept this risk to proceed. No action has been taken on this classification."
+            echo ">"
+            echo "<!-- wing-commander:pr-conversation-relay"
+            printf '%s\n' "$payload"
+            echo "-->"
           } > "$body_file"
           gh pr comment "$PR_NUMBER" --body-file "$body_file"
 
@@ -1146,12 +1199,18 @@ jobs:
           gh pr comment "$PR_NUMBER" --body-file "$body_file"
 
       # T016/T018/T025-27's reply, for every agent-driven route that is NOT
-      # a fold-in (the dispatch+reply step above already replied for those).
+      # a successful fold-in (the dispatch+reply step above already replied
+      # for those). T046/FR-014/SC-005: only `mutated == 'true'` fold-in
+      # legs are excluded here — a fold-in classification whose agent
+      # returned `mutated: false` (a valid schema value, e.g. it could not
+      # complete the tasks.md append/commit/push) still needs a PR reply,
+      # and this is the only step that posts one for a non-dispatch outcome.
       - name: Report mutation outcome
         if: >-
           steps.agent.outcome == 'success' && steps.act-result.outputs.mutated != '' &&
-          !(steps.route.outputs.effective-category == 'in-scope-change' ||
-            (steps.route.outputs.effective-category == 'new-functionality' && steps.route.outputs.effective-fold-target == 'current-spec'))
+          !(steps.act-result.outputs.mutated == 'true' &&
+            (steps.route.outputs.effective-category == 'in-scope-change' ||
+             (steps.route.outputs.effective-category == 'new-functionality' && steps.route.outputs.effective-fold-target == 'current-spec')))
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           PR_NUMBER: ${{ inputs.pr-number }}
@@ -1272,5 +1331,30 @@ jobs:
             [ -n "$impl_run_id" ] && extra=" and the dispatched implement run"
             gh pr comment "$PR_NUMBER" --body "Stopped: cancelled the announced run ($run_url)$extra."
           else
-            gh pr comment "$PR_NUMBER" --body "The announced run ($run_url) had already completed — nothing was cancelled. See that run's own reply for what it already did."
+            # T048/FR-024: include a summary of what the prior run's own
+            # final reply already reported, not just a pointer to it — the
+            # next bot comment, chronologically, after the announcement
+            # that embedded run_url is that run's own outcome reply.
+            all_asc=$(printf '%s' "$all" | jq -c 'sort_by(.created_at)')
+            announce_created_at=$(printf '%s' "$all_asc" | jq -r --arg url "$run_url" \
+              '[.[] | select(.body | contains($url))] | .[0].created_at // empty')
+            prior_reply=""
+            if [ -n "$announce_created_at" ]; then
+              prior_reply=$(printf '%s' "$all_asc" | jq -r --arg after "$announce_created_at" \
+                '[.[] | select(.created_at > $after) | select(.body | (contains("**Run:**") or contains("pr-conversation-relay")) | not)] | .[0].body // empty')
+            fi
+            body_file="$RUNNER_TEMP/stop-already-completed.md"
+            {
+              echo "The announced run ($run_url) had already completed — nothing was cancelled."
+              if [ -n "$prior_reply" ]; then
+                echo ""
+                echo "That run's own reply already reported:"
+                echo ""
+                echo "> $(printf '%s' "$prior_reply" | tr '\n' ' ')"
+              else
+                echo ""
+                echo "See that run's own reply on this PR for what it already did."
+              fi
+            } > "$body_file"
+            gh pr comment "$PR_NUMBER" --body-file "$body_file"
           fi

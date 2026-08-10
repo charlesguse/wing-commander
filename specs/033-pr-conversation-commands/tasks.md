@@ -679,7 +679,7 @@ static validation, and the full quickstart walkthrough.
 
 ## Phase 12: Convergence
 
-- [ ] T046 In `.github/workflows/pr-conversation.yml`, the "Dispatch
+- [X] T046 In `.github/workflows/pr-conversation.yml`, the "Dispatch
   implement and reply (fold-in routes)" step only fires
   `if: steps.act-result.outputs.mutated == 'true' && (... fold-in
   categories ...)`, and the sibling "Report mutation outcome" step
@@ -696,7 +696,21 @@ static validation, and the full quickstart walkthrough.
   'true'` fold-in case, which "Dispatch implement and reply" already
   covers) so a fold-in classification always gets a PR reply per
   FR-014/SC-005. FR-014/SC-005 (missing).
-- [ ] T047 FR-022 requires that once a relaying maintainer confirms a
+
+  **Status (iteration 3, desk-checked)**: relaxed "Report mutation
+  outcome"'s exclusion exactly as the task's own alternative suggests —
+  it now only skips a fold-in leg when `steps.act-result.outputs.mutated
+  == 'true'` (the case "Dispatch implement and reply" already covers).
+  A fold-in classification whose agent returned `mutated: false` now
+  falls through to "Report mutation outcome" and gets a PR reply built
+  from the agent's own summary, same as every non-fold-in category. The
+  "agent step does not reach a successful terminal result at all" case
+  was traced separately: `steps.agent.outcome` is `skipped`/`failure` in
+  that case for every category alike (not fold-in-specific), and the
+  existing "Fail on agent API error" step already fails the job loudly
+  rather than silently dropping the leg — left unchanged as out of this
+  task's actual scope (a pre-existing, category-uniform behavior).
+- [X] T047 FR-022 requires that once a relaying maintainer confirms a
   risky relayed request, the stage acts on the original request "as if
   the maintainer had made it themselves." The "Relayed-request
   risk-confirmation gate" step in `.github/workflows/pr-conversation.yml`
@@ -717,7 +731,29 @@ static validation, and the full quickstart walkthrough.
   out of a posted comment per research.md D10, so a later confirmation
   run can retrieve and act on it) or an equivalent design. FR-022
   (missing).
-- [ ] T048 `contracts/autonomy-and-confirmation.md`'s reply-based-stop
+
+  **Status (iteration 3, desk-checked)**: built the persisted-data resume
+  design the task names. The `act` job's "Relayed-request
+  risk-confirmation gate" step now embeds the blocked classification
+  (`toJson(matrix)`, the actor-login who must confirm it) as a compact
+  JSON line inside an HTML comment (`<!-- wing-commander:pr-conversation-relay
+  ... -->`) in its own risk-warning PR comment — mirroring the stop
+  mechanism's own embedded-`run_url` convention exactly. A new
+  `classify-and-announce` step, "Check for relay confirmation"
+  (`relay-resume`), runs before the classify agent: when this event's own
+  body looks like a confirmation and the most recent such marker comment's
+  recorded actor-login matches this event's actor, it extracts the
+  persisted classification straight into `classifications-raw.json` and
+  sets `resumed=true`. The classify agent step and downstream "Compute
+  confirmation requirements" step were updated to skip the fresh classify
+  pass and consume the resumed classification instead
+  (`steps.relay-resume.outputs.resumed`). The resumed classification then
+  flows through announce and into `act` exactly as a fresh one would;
+  `act`'s own relay gate re-scans and finds the now-posted confirming
+  reply, sets `proceed=true`, and the original route executes. Not run
+  live in this environment; verified by hand-tracing the data flow
+  end-to-end (embed → resume → re-announce → re-act).
+- [X] T048 `contracts/autonomy-and-confirmation.md`'s reply-based-stop
   clause requires that when a stop request finds its target run already
   completed, the stage's reply include "a summary of what that prior
   run's own final reply already reported" (also FR-024's second clause).
@@ -728,7 +764,17 @@ static validation, and the full quickstart walkthrough.
   Fetch the prior run's own final PR reply (the comment posted by the
   run whose announcement embedded `run_url`) and include its content (or
   a summary of it) in the already-completed reply. FR-024 (partial).
-- [ ] T049 The "Relayed-request risk-confirmation gate" step in
+
+  **Status (iteration 3, desk-checked)**: the already-completed branch
+  now sorts the same bot-comment set the step already fetches
+  (`$all`, both issue and review-thread comments) ascending, locates the
+  announcement comment containing `run_url`, then takes the next bot
+  comment after it chronologically that is not itself an announcement or
+  a relay-risk marker — that is the prior run's own final outcome reply.
+  Its body (flattened to one line) is quoted inline in the new reply;
+  when no such reply is found (e.g. the prior run never got that far),
+  the original pointer wording is kept as a fallback.
+- [X] T049 The "Relayed-request risk-confirmation gate" step in
   `.github/workflows/pr-conversation.yml` scans only issue-style PR
   comments (`repos/.../issues/{pr}/comments`) for the relaying
   maintainer's confirmation reply. The "Stop procedure" step (T030) scans
@@ -741,6 +787,13 @@ static validation, and the full quickstart walkthrough.
   confirmation is never detected. Extend the risk-confirmation gate's
   scan to also check `repos/.../pulls/{pr}/comments`, matching the stop
   procedure's own dual-surface scan. FR-018/FR-022 (partial).
+
+  **Status (iteration 3, desk-checked)**: the risk-confirmation gate's
+  confirmation scan now fetches both `repos/.../issues/{pr}/comments` and
+  `repos/.../pulls/{pr}/comments` and merges them before checking for the
+  relaying maintainer's confirming reply, matching the stop procedure's
+  own dual-surface scan exactly. Landed in the same edit as T047 since
+  both touch the same step.
 
 ---
 
