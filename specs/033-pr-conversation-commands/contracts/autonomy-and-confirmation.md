@@ -22,6 +22,21 @@ behavior can never be shaped by PR conversation content (FR-020's explicit
 prohibition), even though the *category* it's checked against is
 agent-assigned.
 
+That same step applies `small-unrelated-change`'s deterministic size
+backstop (`contracts/spinoff-routing.md`, research.md D8) as its **first**
+transformation, before the set-membership check runs — a classification
+that the backstop re-routes to `new-functionality`/`new-spec` is checked
+against `confirm-categories` under its *corrected* category, never its
+original one. This ordering is load-bearing, not incidental: `act`'s
+job-level `environment:` binding (below) is evaluated from the matrix at
+job start, before any of `act`'s own steps run, so if the backstop were
+applied later — inside `act` itself, as an earlier revision of this
+pipeline did — a `small-unrelated-change` that re-routes into a
+confirm-gated category would already have skipped its confirm gate by the
+time the re-route was even computed. Applying the backstop here, first,
+is what makes "gate this job based on a value known before the job
+starts" (research.md D9) actually correct for this category.
+
 ## Confirmation mechanism (FR-020's "propose-and-confirm")
 
 `pr-conversation.act`'s job-level `environment:` binds conditionally:
@@ -54,8 +69,12 @@ Posted by `classify-and-announce` (never by `act`, and always before `act`
 starts — structurally guaranteed: `act`'s `environment:` binding cannot
 even begin evaluating until the prior job completes, and the prior job's
 last step is this announcement). One callout per `RequestClassification`
-(`contracts/classification-schema.md`'s "multi-classification" note), each
-containing:
+(`contracts/classification-schema.md`'s "multi-classification" note),
+**except `category: "no-action"`**: a pure acknowledgement has no action
+to announce and nothing a stop request could ever target, so it draws
+zero PR reply (FR-017, quickstart.md's "pure acknowledgement" edge case).
+Every other category — `stop` included, since the stop scan below depends
+on `stop` itself being announced — is still announced, each containing:
 
 - the assigned `category` and `summary`,
 - the `planned-action` (one sentence — e.g. "re-run implement/converge" /

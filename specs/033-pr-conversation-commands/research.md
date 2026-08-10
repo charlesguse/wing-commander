@@ -239,13 +239,33 @@ step not asked for anywhere else in the spec.
 
 **Decision**: The classify+draft agent step makes the first-pass "very
 small" judgment (per spec.md's own Assumptions: "an agent judgment with a
-conservative bias"), and drafts the change; a deterministic step in `act`
-then measures the actual diff the drafted change would produce (files
-touched, lines changed) against a small, documented, hardcoded threshold
-before opening the PR. Exceeding the threshold re-routes the request to
-the new-functionality path (D7) instead of opening the PR — this is what
-edge case "an unrelated tiny change turns out not to be tiny once
-examined" requires.
+conservative bias"), and drafts the change; a deterministic step in
+`classify-and-announce` — "Compute confirmation requirements," applied as
+the first transformation over each raw classification, before
+`requires-confirmation` is computed and before the intent announcement is
+posted — then measures the actual diff the drafted change would produce
+(files touched, lines changed) against a small, documented, hardcoded
+threshold before opening the PR. Exceeding the threshold re-routes the
+request to the new-functionality path (D7) instead of opening the PR —
+this is what edge case "an unrelated tiny change turns out not to be tiny
+once examined" requires, and it rewrites `category`/`fold-target`/
+`drafted-content` in place so every later consumer of the classification
+(the confirm check, the announcement, and `act`) observes only the
+corrected shape.
+
+**Ordering, and why it is not in `act`**: this measurement has to run
+*before* `requires-confirmation` is computed and *before* `act`'s
+job-level `environment:` binds (D9) — both read the classification's
+`category`, and both are fixed before `act`'s own steps (including a
+route/measure step, had the backstop lived there instead) ever run. A
+backstop applied inside `act` would always be one step too late for both:
+an adopter gating `confirm-categories=new-functionality` would get no
+confirm gate for a `small-unrelated-change` that re-routes into exactly
+that action (an FR-020 bypass), and the already-posted intent announcement
+would misreport "open a small PR" for something that is actually about to
+become a spec-request issue (FR-023). Measuring it in
+`classify-and-announce`, ahead of both, closes that gap structurally
+rather than by convention.
 
 **Rationale**: Mirrors `clarify.yml`'s existing shape: an agent makes a
 judgment call, and a deterministic step cross-checks the agent's own
@@ -275,9 +295,18 @@ required reviewers; default `pr-conversation-confirm`. The stage's `act`
 job binds to this environment (via the job-level `environment:` mapping
 form, whose `name` may be an expression — confirmed by
 `specs/031-stage-environment-binding/contracts/environment-binding.md`'s
-empirical basis item 2) **only when** the classify step's chosen category
-is in the confirm list; otherwise `environment.name` resolves to `""`, a
+empirical basis item 2) **only when** the classification's category is in
+the confirm list; otherwise `environment.name` resolves to `""`, a
 verified true no-op (same contract, item 1), and `act` runs immediately.
+That category is read from `requires-confirmation`/`confirm-environment`
+as `classify-and-announce` computed them — i.e. AFTER D8's
+`small-unrelated-change` size backstop has already run and, where it
+trips, already rewritten the category to `new-functionality`/`new-spec`.
+Binding against the raw classify-time category instead (which is what
+happens if the backstop is measured later, inside `act`) would let a
+re-routed `small-unrelated-change` skip a confirm gate the adopter
+explicitly configured for the category it re-routes into — see D8's
+ordering note.
 
 **Rationale**: Spec 031 already proved, empirically, that an unconditional
 job-level `environment:` block with an expression `name` is a real,

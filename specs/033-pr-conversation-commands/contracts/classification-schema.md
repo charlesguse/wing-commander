@@ -53,9 +53,13 @@ finalized at implementation time)
 ```
 
 `drafted-content`'s shape varies by `category` — validated deterministically
-by `pr-conversation.act` before use (mirrors `clarify.yml`'s own
-deterministic cross-check of its structured output against the raw
-`[NEEDS CLARIFICATION:]` markers), not trusted blindly:
+before use (mirrors `clarify.yml`'s own deterministic cross-check of its
+structured output against the raw `[NEEDS CLARIFICATION:]` markers), not
+trusted blindly. For every category except `small-unrelated-change`, that
+validation happens in `pr-conversation.act`; `small-unrelated-change`'s
+size-backstop measurement (and the reshape it triggers when over
+threshold) happens earlier, in `classify-and-announce` — see below and
+`contracts/spinoff-routing.md`:
 
 | `category` | `drafted-content` fields |
 |---|---|
@@ -64,7 +68,7 @@ deterministic cross-check of its structured output against the raw
 | `needs-info` | `clarifying-question` (string) |
 | `push-back` | *(none — `constitution-conflict` carries the reason)* |
 | `new-functionality` | when `fold-target == "current-spec"`: `spec-amendment-note` (string, for a human-readable summary of what changed); when `"new-spec"`: `issue-title`, `issue-body` (`contracts/spinoff-routing.md`) |
-| `small-unrelated-change` | `pr-title`, `pr-body`, `file-changes` (array of `{path, diff}` — measured by the deterministic size backstop, research.md D8, before any PR opens) |
+| `small-unrelated-change` | `pr-title`, `pr-body`, `file-changes` (array of `{path, diff}` — measured against the deterministic size backstop, research.md D8, by `classify-and-announce`'s "Compute confirmation requirements" step, before `requires-confirmation` is computed and before this classification is announced; over-threshold rewrites `category`/`fold-target`/`drafted-content` in place to `new-functionality`/`new-spec`/`{issue-title, issue-body}`, so `pr-conversation.act` never sees an over-threshold `small-unrelated-change` at all) |
 | `manual-step-permission` | either `{performed: true, outcome}` or `{performed: false, reason}` or `{needs-permission: <capability-name>, pr-title, pr-body}` |
 | `stop` | *(none — handled entirely by `contracts/autonomy-and-confirmation.md`'s deterministic stop procedure, not agent-drafted content)* |
 | `no-action` | *(none)* |

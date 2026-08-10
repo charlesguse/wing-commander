@@ -689,6 +689,27 @@ jobs:
       # computes out-of-pr (whether this classification's planned action
       # is itself outside the PR — FR-013) so the announcement step below
       # and the outstanding-task-item mechanism never have to re-derive it.
+      #
+      # The `small-unrelated-change` size backstop (research.md D8,
+      # T018/T019's deterministic "not tiny after all" guard) is applied
+      # HERE, first, as a pre-transform over each raw classification —
+      # moved from `act`'s "Resolve effective category and route" (where
+      # T058 had put its drafted-content reshape) because that step runs
+      # too late for two consumers of the classify-time category that both
+      # already ran by then: this very requires-confirmation check, and
+      # `act`'s job-level `environment:` binding (evaluated from the
+      # matrix at job start, before any of `act`'s own steps — including
+      # the route step — execute). An adopter who sets
+      # `confirm-categories=new-functionality` to gate new-issue creation
+      # behind approval got NO gate when a `small-unrelated-change`
+      # re-routed into exactly that action, because requires-confirmation
+      # was computed against the pre-backstop category — an FR-020 bypass.
+      # Applying the backstop before this computation (and before "Post
+      # intent announcements" below) means every downstream consumer,
+      # including `act` itself, only ever sees the corrected shape: a
+      # `small-unrelated-change` leg that reaches `act` is under-threshold
+      # BY CONSTRUCTION. Do not move this back to `act` — see the comment
+      # left at the old site in "Resolve effective category and route".
       - name: Compute confirmation requirements
         id: confirm
         if: steps.schema-check.outputs.ok == 'true' || steps.relay-resume.outputs.resumed == 'true'
@@ -698,10 +719,58 @@ jobs:
         run: |
           set -euo pipefail
           raw="$(cat "$RUNNER_TEMP/classifications-raw.json")"
-          cats_json=$(printf '%s' "$CONFIRM_CATEGORIES" | jq -R -c 'split(",") | map(select(length > 0))')
+          # T061: built with `jq -n --arg`, NOT `printf | jq -R`. `jq -R`
+          # reads input LINES, and the documented default for
+          # confirm-categories is "" — zero bytes, so there is no line, the
+          # program never runs, and `cats_json` comes out EMPTY rather than
+          # `[]`. The `--argjson cats "$cats_json"` below then dies with
+          # "invalid JSON text passed to --argjson", and `set -euo pipefail`
+          # aborts this step before any announcement is posted — i.e. every
+          # run of this stage under its own default configuration. `-n
+          # --arg` takes the value as an argument instead of stdin, so the
+          # empty case yields `[]` like every other case.
+          cats_json=$(jq -n -c --arg s "$CONFIRM_CATEGORIES" '$s | split(",") | map(select(length > 0))')
           result=$(printf '%s' "$raw" | jq -c --argjson cats "$cats_json" --arg env "$CONFIRM_ENVIRONMENT" '
+            def coerce_str: if . == null then "" elif (type == "string") then . else tostring end;
             map(
-              . as $c
+              . as $orig
+              | (
+                  if ($orig.category == "small-unrelated-change") then
+                    ($orig["drafted-content"] // {}) as $dc
+                    | (($dc["file-changes"] // [])) as $fc
+                    | ($fc | length) as $files
+                    | ([$fc[] | (.diff // "") | split("\n")[]
+                        | select(test("^[+-]") and (test("^(\\+\\+\\+|---)") | not))] | length) as $lines
+                    | if ($files > 3) or ($lines > 40) then
+                        ($dc["pr-title"] | coerce_str) as $title0
+                        | ($dc["pr-body"] | coerce_str) as $body0
+                        | ($fc | map(.path // "<no path>")) as $paths
+                        | (if ($title0 | length) > 0 then $title0 else $orig.summary end) as $issue_title
+                        | ($body0
+                            + (if ($body0 | length) > 0 then "\n\n" else "" end)
+                            + "---\nRe-routed from small-unrelated-change: the drafted change touched "
+                            + ($files | tostring) + " file(s) ("
+                            + ($paths | join(", "))
+                            + "), " + ($lines | tostring)
+                            + " changed line(s) — over the small-change threshold (<=3 files,"
+                            + " <=40 changed lines), so this became a spec request instead of"
+                            + " a small PR."
+                          ) as $issue_body
+                        | ($orig
+                            | .category = "new-functionality"
+                            | .["fold-target"] = "new-spec"
+                            | .["drafted-content"] = {"issue-title": $issue_title, "issue-body": $issue_body}
+                            | .["planned-action"] = (($orig["planned-action"] // "no action")
+                                + " — exceeded the small-change threshold (<=3 files, <=40"
+                                + " changed lines), so this will be opened as a spec request"
+                                + " instead of a PR"))
+                      else
+                        $orig
+                      end
+                  else
+                    $orig
+                  end
+                ) as $c
               | (($cats | any(. == "all" or . == $c.category))) as $requires
               | (
                   ($c.category == "new-functionality" and (($c["fold-target"] // "") == "new-spec"))
@@ -721,13 +790,18 @@ jobs:
       # T008/FR-023: posted BEFORE act starts — structurally guaranteed,
       # since act's environment: binding cannot begin evaluating until
       # this job completes. One announcement per classification
-      # (contracts/classification-schema.md's multi-classification note):
-      # a maintainer sees N distinct "here's what I'm about to do" replies
-      # for N distinct asks in one comment, never one conflated response.
-      # Posted to the PR always; additionally to the lifecycle issue when
-      # out-of-pr (FR-013). Embeds the run URL — the ONLY field the stop
-      # mechanism (T030) parses back out of this comment (data-model.md
-      # IntentAnnouncement, research.md D10).
+      # (contracts/classification-schema.md's multi-classification note),
+      # EXCEPT `no-action`: a pure acknowledgement draws zero PR reply
+      # (FR-017, quickstart.md's "pure acknowledgement" edge case) since
+      # there is no action to announce and nothing a stop request could
+      # ever target for it. Every other category, including `stop`, is
+      # still announced: a maintainer sees N distinct "here's what I'm
+      # about to do" replies for N distinct actionable asks in one
+      # comment, never one conflated response. Posted to the PR always;
+      # additionally to the lifecycle issue when out-of-pr (FR-013).
+      # Embeds the run URL — the ONLY field the stop mechanism (T030)
+      # parses back out of this comment (data-model.md IntentAnnouncement,
+      # research.md D10).
       - name: Post intent announcements
         if: steps.confirm.outputs.classifications != ''
         env:
@@ -743,6 +817,10 @@ jobs:
           while [ "$i" -lt "$count" ]; do
             item=$(printf '%s' "$CLASSIFICATIONS" | jq -c ".[$i]")
             category=$(printf '%s' "$item" | jq -r '.category')
+            if [ "$category" = "no-action" ]; then
+              i=$((i + 1))
+              continue
+            fi
             summary=$(printf '%s' "$item" | jq -r '.summary')
             planned=$(printf '%s' "$item" | jq -r '.["planned-action"] // "no action"')
             out_of_pr=$(printf '%s' "$item" | jq -r '.["out-of-pr"]')
@@ -964,14 +1042,29 @@ jobs:
           } > "$body_file"
           gh pr comment "$PR_NUMBER" --body-file "$body_file"
 
-      # T018/T019 (research.md D8 size backstop) and T027 (research.md D11
-      # permission-conversation dedup search) both decide, deterministically,
-      # what this leg will actually do before any agent runs — including
-      # re-routing small-unrelated-change to new-functionality/new-spec when
-      # the drafted diff exceeds the documented threshold, and resolving
-      # manual-step-permission's needs-permission sub-outcome to either a
-      # deterministic "link the existing conversation" reply or a fresh
-      # permission-request PR.
+      # T027 (research.md D11 permission-conversation dedup search) decides,
+      # deterministically, what this leg will actually do before any agent
+      # runs — resolving manual-step-permission's needs-permission
+      # sub-outcome to either a deterministic "link the existing
+      # conversation" reply or a fresh permission-request PR.
+      #
+      # NOTE: the small-unrelated-change size backstop (research.md D8,
+      # T018/T019) used to live here, but has MOVED to
+      # classify-and-announce's "Compute confirmation requirements" step,
+      # which runs before requires-confirmation is computed and before the
+      # intent announcement is posted. It ran too late here: this job's own
+      # `environment:` binding is evaluated from the matrix at job start —
+      # before this step ever executes — so an adopter gating
+      # `confirm-categories=new-functionality` got no confirm gate for a
+      # small-unrelated-change that actually re-routed into exactly that
+      # action (FR-020 bypass), and the prior job's announcement had
+      # already told the maintainer "open a small PR" for something that
+      # would become a spec-request issue instead (FR-023). Do NOT re-add a
+      # second copy of the files/lines measurement or the
+      # new-functionality/new-spec re-route here — a `small-unrelated-change`
+      # leg that reaches this step is under-threshold BY CONSTRUCTION now;
+      # a second copy here could only drift from the one in
+      # classify-and-announce.
       - name: Resolve effective category and route
         id: route
         if: steps.relay-gate.outputs.proceed == 'true'
@@ -1007,23 +1100,9 @@ jobs:
               fi
               ;;
             small-unrelated-change)
-              files=$(printf '%s' "$DRAFTED_CONTENT" | jq '(.["file-changes"] // []) | length')
-              lines=$(printf '%s' "$DRAFTED_CONTENT" | jq '
-                [(.["file-changes"] // [])[] | .diff | split("\n")[]
-                 | select(test("^[+-]") and (test("^(\\+\\+\\+|---)") | not))] | length')
-              # Deterministic backstop (research.md D8, documented default:
-              # <=3 files, <=40 changed lines): exceeding it re-routes to
-              # new-functionality/new-spec instead of opening a PR,
-              # regardless of the classify step's own "very small" judgment
-              # (edge case: "an unrelated tiny change turns out not to be
-              # tiny once examined").
-              if [ "$files" -gt 3 ] || [ "$lines" -gt 40 ]; then
-                effective_category="new-functionality"
-                effective_fold_target="new-spec"
-              else
-                needs_checkout=true
-                checkout_ref="$DEFAULT_BRANCH"
-              fi
+              # Always under-threshold here — see the NOTE above this step.
+              needs_checkout=true
+              checkout_ref="$DEFAULT_BRANCH"
               agent_needed=true
               ;;
             manual-step-permission)
@@ -1081,6 +1160,12 @@ jobs:
 
       # Drafted-content is already-classified data (T006), but still not
       # fresh instructions — staged to a file, not interpolated (constitution V).
+      # Any small-unrelated-change size-backstop reshape (issue-title/
+      # issue-body replacing pr-title/pr-body/file-changes) already
+      # happened in classify-and-announce, before this job even started —
+      # see the NOTE in "Resolve effective category and route" — so
+      # matrix['drafted-content'] staged here is already the final shape
+      # for this leg's effective category; no override branch needed.
       - name: Stage drafted content for the act agent
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true'
         env:

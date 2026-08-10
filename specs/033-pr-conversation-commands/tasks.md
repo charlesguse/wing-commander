@@ -1173,7 +1173,7 @@ static validation, and the full quickstart walkthrough.
   lone `.`, empty capability, and a genuine miss — plus a defect witness
   confirming the pre-fix `test($cap; "i")` really did abort the step under
   `set -e` ("Regex failure: end pattern with unmatched parenthesis").
-- [ ] T058 The `small-unrelated-change` size backstop re-routes to
+- [X] T058 The `small-unrelated-change` size backstop re-routes to
   `new-functionality`/`new-spec` (T024's deterministic "not tiny after
   all" guard, "Resolve effective category and route"), but the following
   "Stage drafted content for the act agent" step writes
@@ -1193,7 +1193,76 @@ static validation, and the full quickstart walkthrough.
   re-route case name the fields that actually exist. Found by T043's
   desk-check (quickstart scenario 5, and the real-world consequence of
   static-validation item 4). FR-007/SC-004 (partial).
-- [ ] T059 `quickstart.md`'s "pure acknowledgement" edge case requires
+
+  **Status (iteration 7)**: fixed by deriving `issue-title` from the
+  drafted `pr-title` (falling back to the classification's own `summary`)
+  and `issue-body` from the drafted `pr-body` plus a note naming the file
+  paths and the measured size that tripped the backstop, so the spun-off
+  issue records why it stopped being a small PR. Implemented first as an
+  override in `act`'s route step; T060 then moved the whole backstop —
+  measurement and reshape together — into `classify-and-announce`, so the
+  reshape now happens there and `act` stages the (already correct)
+  `drafted-content` unchanged, as it did before this task. Two defects the
+  converge pass found in the first version are fixed in the final one: the
+  file count and the rendered path list could disagree (entries missing
+  `.path` were silently dropped from the list but still counted — now
+  rendered as `<no path>`), and a non-string `pr-title`/`pr-body` would
+  raise a jq type error and abort the step under `set -euo pipefail` with
+  nothing written (now coerced). Verified by executing the shipped jq.
+- [X] T060 CRITICAL (contradicts): the `small-unrelated-change` size
+  backstop ran in `act`'s "Resolve effective category and route", which is
+  too late for two consumers of the classify-time category that have
+  already read it by then. `Compute confirmation requirements`
+  (`classify-and-announce`) derives `requires-confirmation` /
+  `confirm-environment` from the raw category, and `act`'s job-level
+  `environment:` binding is evaluated from the matrix at job start —
+  before any of `act`'s own steps run. So an adopter who set
+  `confirm-categories=new-functionality` specifically to hold new-issue
+  creation behind a required reviewer got **no gate at all** when a
+  `small-unrelated-change` re-routed into exactly that action: FR-020's
+  "propose-and-confirm for this category" is bypassed for the one path
+  that reaches the category by re-route rather than by classification.
+  The same ordering also made the announcement lie (FR-023): the
+  maintainer was told "open a small PR to `main`" for a run that would
+  open a spec-request issue instead. Fixed by making the backstop a single
+  source of truth applied as the first transformation inside `Compute
+  confirmation requirements`, before confirmation is computed and before
+  the announcement is posted: it rewrites `category`, `fold-target`,
+  `drafted-content` (T058's reshape) and appends a clause to
+  `planned-action` so the announcement states what will actually happen.
+  The over-threshold branch is gone from `act`, which now handles only the
+  under-threshold case — a `small-unrelated-change` leg reaching `act` is
+  under-threshold by construction — with a comment at the old site so a
+  second, driftable copy does not get re-added. `contracts/spinoff-
+  routing.md`, `contracts/autonomy-and-confirmation.md`,
+  `contracts/classification-schema.md`, `data-model.md` and `research.md`
+  D8/D9 all now state where the backstop runs and why the ordering is
+  load-bearing. Verified by executing the shipped jq: the re-routed
+  classification now comes out `requires-confirmation: true` with a
+  non-empty `confirm-environment` under `confirm-categories=new-
+  functionality`, with a defect witness confirming the same input produced
+  `false` under the old ordering. Found by the converge pass over T058.
+  FR-020/FR-023 (contradicts).
+- [X] T061 CRITICAL: `Compute confirmation requirements` built its
+  category list with `cats_json=$(printf '%s' "$CONFIRM_CATEGORIES" | jq
+  -R -c ...)`. `jq -R` reads input **lines**, and the documented default
+  for `confirm-categories` is `""` — zero bytes, so there is no line, the
+  program never runs, and `cats_json` is EMPTY rather than `[]`. The very
+  next line, `jq --argjson cats "$cats_json"`, then fails with "invalid
+  JSON text passed to --argjson", and `set -euo pipefail` aborts the step
+  — before any announcement is posted and before `act` can start. This is
+  not an edge case: it is the stage's own default configuration, so every
+  run of `pr-conversation.yml` by an adopter who has not set
+  `WING_COMMANDER_PR_CONVERSATION_CONFIRM_CATEGORIES` would have failed on
+  run 1, silently as far as the PR is concerned (no reply is posted from a
+  step that dies here). Fixed by building the list with `jq -n -c --arg s
+  "$CONFIRM_CATEGORIES"`, which takes the value as an argument instead of
+  stdin and yields `[]` for the empty case like every other case. Verified
+  by executing the shipped line against `""`, one category, `all`, `,`,
+  `a,,b` and an embedded newline, plus a defect witness reproducing the
+  pre-fix abort on `""`. `jq -R` appears nowhere else in this repository's
+  workflows. Found incidentally by the T060 implement pass. FR-020.
+- [X] T059 `quickstart.md`'s "pure acknowledgement" edge case requires
   that a "thanks, looks good" comment (`category: "no-action"`) draw
   "zero mutation, zero reply beyond (at most) the classification step's
   own internal decision — no PR reply is required," citing FR-014's
@@ -1210,6 +1279,19 @@ static validation, and the full quickstart walkthrough.
   exclude `no-action` (only) from the announcement loop, or amend the
   quickstart edge case to expect the banner. Found by T043's desk-check.
   FR-017 (contradicts quickstart).
+
+  **Status (iteration 7)**: resolved in favour of the workflow yielding —
+  `no-action` (and only `no-action`) is now skipped by the announcement
+  loop, so a pure acknowledgement draws zero PR reply and `quickstart.md`'s
+  edge case is left unchanged. `stop` keeps its announcement, which the
+  stop scan depends on; `no-action` is safe to skip precisely because it
+  starts nothing a stop could ever target, so the two are not symmetric
+  cases. `contracts/autonomy-and-confirmation.md`'s "one callout per
+  RequestClassification" line now carries the exception and its reason.
+  Verified by executing the shipped loop with a stubbed `gh`: zero
+  comments for a `no-action`-only classification set, exactly one for
+  `stop`, for `in-scope-change`, and for each mixed set pairing
+  `no-action` with one actionable classification.
 
 ---
 

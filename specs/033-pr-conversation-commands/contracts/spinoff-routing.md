@@ -48,7 +48,45 @@ discretion to remember.
 3. **Exceeds threshold**: re-route as `new-functionality` /
    `fold-target: new-spec` instead (edge case: "an unrelated tiny change
    turns out not to be tiny once examined") — never opened as a PR once
-   the backstop trips, regardless of what the classify step judged.
+   the backstop trips, regardless of what the classify step judged. The
+   re-route also changes which `drafted-content` shape the act agent's
+   prompt expects (`new-spec`'s `issue-title`/`issue-body`, not
+   `small-unrelated-change`'s `pr-title`/`pr-body`/`file-changes` —
+   `contracts/classification-schema.md`), so the measurement and the
+   reshape both happen deterministically, together, in
+   `classify-and-announce`'s "Compute confirmation requirements" step —
+   **not** in `act`, and not in `act`'s "Resolve effective category and
+   route" (a categorization pass, not a measurement one; it now assumes
+   every `small-unrelated-change` leg it sees is already under threshold):
+   `issue-title` from the drafted `pr-title` (falling back to the
+   classification's own `summary` if the drafted title is empty/missing),
+   `issue-body` from the drafted `pr-body` plus an appended note naming
+   the file paths and the measured size (files touched, lines changed)
+   that tripped the backstop, so the spun-off issue records *why* it
+   became a spec request instead of a small PR. This mirrors the
+   contract's normal rule for drafted content generally —
+   validated/derived deterministically, never left for the agent to
+   improvise from a diff it wasn't given the fields for.
+
+   **Why it must run in `classify-and-announce`, before
+   `requires-confirmation` is computed, and not later in `act`**: two
+   things downstream of the classify step's raw category are already
+   fixed by the time `act`'s own steps run — `requires-confirmation`/
+   `confirm-environment` (`contracts/autonomy-and-confirmation.md`),
+   computed against the *classify-time* category, and `act`'s job-level
+   `environment:` binding, evaluated from the matrix at job start, before
+   the route step. Measuring the backstop only once `act` is already
+   running is too late for either of them: an adopter who sets
+   `confirm-categories=new-functionality` to gate new-issue creation
+   behind approval would get **no** confirm gate for a
+   `small-unrelated-change` that re-routes into exactly that action (an
+   FR-020 bypass), and `classify-and-announce`'s own intent announcement
+   (FR-023) would tell the maintainer "open a small PR" for something
+   that is actually about to become a spec-request issue. Applying the
+   backstop as the first transformation in "Compute confirmation
+   requirements" — before both the confirm computation and the
+   announcement — means every downstream consumer, including `act`, only
+   ever observes the corrected category.
 
 ## `manual-step-permission` (FR-011, FR-012, research.md D11)
 
