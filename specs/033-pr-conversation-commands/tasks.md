@@ -908,6 +908,100 @@ static validation, and the full quickstart walkthrough.
 
 ---
 
+## Phase 14: Convergence
+
+- [ ] T053 CRITICAL (contradicts): all three "find my own bot's prior PR
+  comment" lookups in `.github/workflows/pr-conversation.yml` — the
+  "Check for relay confirmation" step (`relay-resume`, T047, lines
+  433/438-439), the "Relayed-request risk-confirmation gate" step's
+  anchor lookup (T052, lines 883/895-906), and the "Stop procedure" step
+  (T030, lines 1323/1326-1330) — set `BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}`
+  and compare it directly against a GitHub API comment's
+  `.user.login`/`.login` field (`select(.user.login == env.BOT_LOGIN)` /
+  `--arg bot "$BOT_LOGIN"`). The `wing-commander-context` composite
+  action's own output doc
+  (`.wing-commander-pipeline/.github/actions/wing-commander-context/action.yml`
+  line 50) states plainly: "The App slug (actor filter form is
+  `<slug>[bot]`)" — i.e. `bot-slug` is the raw slug, while a GitHub App's
+  actual comment `user.login` always carries the `[bot]` suffix. Every
+  other place in this repository that compares against the bot's real
+  login appends the suffix itself (e.g. `finalize.yml:702-703`,
+  `git config user.name "${BOT_SLUG}[bot]"`, the same idiom repeated in
+  `cleanup.yml`/`implement.yml`/`rebase.yml`/`watchdog.yml`/
+  `auto-update-spec-kit.yml`); `pr-conversation.yml` is the only workflow
+  doing a raw, unsuffixed comparison. The comparison therefore never
+  matches, so: the Stop procedure's comment fetches are always empty →
+  `run_url` is always empty → every reply-based stop request reports "No
+  in-flight run was found to stop" even when one genuinely is running,
+  and the announced run is never actually cancelled (FR-024/SC-009
+  silently unmet); the relay-resume step's marker search is always empty
+  → `resumed` is always `false` → a maintainer's confirmation of a risky
+  relayed request never actually resumes the original classification —
+  it instead falls through to a fresh classify pass of the confirmation
+  reply's own short text, silently losing the original request (T047's
+  entire persisted-resume design never engages); and the `act` job's own
+  relay-gate anchor lookup is always empty → a risky relayed request can
+  never proceed via the same-run confirmation path either (T052's fix
+  never engages). Append the `[bot]` suffix to the comparison value at
+  all three sites (e.g. `BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]`
+  in each `env:` block, or build the suffixed value inline before use),
+  matching the idiom already used everywhere else in this codebase.
+  FR-022/FR-024/SC-009 (contradicts).
+- [ ] T054 The "Check for relay confirmation" step (`relay-resume`, T047)
+  in `.github/workflows/pr-conversation.yml` (lines 437-452) sorts all
+  bot-authored marker comments descending by `created_at` and takes only
+  `.[0]` — the single most recent marker on the PR system-wide — then
+  checks whether *that one* marker's embedded `actor-login` matches the
+  current commenter. This is looser than the `act` job's own relay-gate
+  anchor lookup (T052, lines 895-903), which correctly scopes by full
+  structural equality against `matrix`, not merely "most recent overall."
+  Consequence: if a second risky relayed classification (from any actor,
+  including a different one) posts a newer marker while an earlier one is
+  still pending unconfirmed, a maintainer confirming the *earlier*
+  classification is invisible to relay-resume — it only ever inspects the
+  newest marker on the PR, so the earlier confirmed request is silently
+  never resumed. Separately, once a classification IS resumed and
+  executed, its marker comment is never invalidated or marked consumed;
+  the resume trigger is a bare `grep -qiE 'confirm'` on the incoming
+  comment body (line 437), so any later, unrelated comment from the same
+  actor that happens to contain "confirm" and finds this same stale
+  marker as still "most recent" will set `resumed=true` again and re-feed
+  the already-executed classification into `act` a second time (a
+  duplicate fold-in commit, or a duplicate spin-off issue/PR). Scope
+  relay-resume's marker search to find the most-recent marker belonging
+  specifically to this actor's own outstanding classification (mirroring
+  T052's structural-equality approach), and mark or otherwise exclude a
+  marker once its classification has actually been executed, so a later
+  unrelated "confirm" cannot replay it. FR-022 (partial).
+- [ ] T055 `pr-conversation.act`'s tool allowlist
+  (`.github/workflows/pr-conversation.yml` line 1027, mirrored in
+  `contracts/reusable-pr-conversation.md` and
+  `specs/010-reusable-pipeline/contracts/stage-interfaces.md`) grants no
+  `Bash(git checkout:*)`, `Bash(git switch:*)`, or `Bash(git branch:*)`.
+  Yet the act agent's own prompt explicitly instructs creating a new
+  branch for two of its routes: `small-unrelated-change` ("apply the
+  drafted `file-changes` diffs... on a new branch off the current
+  (default) branch, commit... push, then `gh pr create`", lines
+  1113-1119) and `manual-step-permission`'s `needs-permission` branch
+  ("open a one-off PR to the default branch", lines 1130-1136, the same
+  branch-then-PR shape). Both routes are checked out on the default
+  branch itself (`checkout_ref="$DEFAULT_BRANCH"` in the "Resolve
+  effective category and route" step) before the agent runs, so the
+  agent has no way to reach a new branch without a branch-creation tool —
+  `intake.yml:452` establishes the precedent for this exact
+  commit-on-a-new-branch-then-PR pattern in this repository, granting
+  `Bash(git checkout:*),Bash(git switch:*),Bash(git branch:*)` for it.
+  Without these tools, the agent is either blocked from completing the
+  instructed step, or must find an unintended workaround (e.g. a
+  `git push origin HEAD:refs/heads/<name>` refspec using the still-granted
+  `Bash(git push:*)`) — neither of which the prompt or contract
+  describes. Add `Bash(git checkout:*)`, `Bash(git switch:*)`, and
+  `Bash(git branch:*)` to `pr-conversation.act`'s default allowed-tools
+  list in the workflow and both contract-doc mirrors. FR-007/FR-012
+  (missing).
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
