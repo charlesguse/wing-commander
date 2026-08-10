@@ -1028,9 +1028,23 @@ jobs:
               ;;
             manual-step-permission)
               if printf '%s' "$DRAFTED_CONTENT" | jq -e 'has("needs-permission")' >/dev/null 2>&1; then
-                capability=$(printf '%s' "$DRAFTED_CONTENT" | jq -r '.["needs-permission"]')
+                capability=$(printf '%s' "$DRAFTED_CONTENT" | jq -r '.["needs-permission"] // ""')
                 results=$(gh search prs --repo "$GITHUB_REPOSITORY" --label permission-request --state all --json number,title,url 2>/dev/null || echo '[]')
-                permission_match_url=$(printf '%s' "$results" | jq -r --arg cap "$capability" '[.[] | select(.title | test($cap; "i"))] | .[0].url // empty')
+                # T057: match the agent-drafted capability as a LITERAL
+                # case-insensitive substring, never as a regex. `test($cap)`
+                # would compile unconstrained free text as a pattern: an
+                # unbalanced paren/bracket errors jq, and under `set -e` that
+                # kills this step before its GITHUB_OUTPUT writes, so the
+                # request gets no reply at all (FR-014). Regex metacharacters
+                # that DO compile are just as wrong — a drafted "run npm
+                # ci..." would match unrelated permission-request PRs and
+                # link the wrong prior conversation (FR-012). An empty
+                # capability matches nothing rather than everything.
+                permission_match_url=$(printf '%s' "$results" | jq -r --arg cap "$capability" '
+                  ($cap | ascii_downcase) as $needle
+                  | if ($needle | length) == 0 then empty
+                    else [.[] | select((.title | ascii_downcase) | contains($needle))] | .[0].url // empty
+                    end')
                 if [ -n "$permission_match_url" ]; then
                   permission_match="confident"
                 else
@@ -1363,8 +1377,20 @@ jobs:
           issue_comments=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq '[.[] | select(.user.login == env.BOT_LOGIN) | {created_at, body}]')
           review_comments=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments" --paginate --jq '[.[] | select(.user.login == env.BOT_LOGIN) | {created_at, body}]')
           all=$(jq -n --argjson a "$issue_comments" --argjson b "$review_comments" '$a + $b | sort_by(.created_at) | reverse')
-          run_url=$(printf '%s' "$all" | jq -r '[.[] | select(.body | test("\\*\\*Run:\\*\\*"))] | .[0].body // empty' \
-            | grep -oE 'https://[^ )]+/actions/runs/[0-9]+' | head -n1 || true)
+          # T056: skip any announcement this run posted ITSELF. The
+          # classify-and-announce job announces EVERY classification,
+          # including this very "stop" one, and `act` needs it — so the
+          # newest `**Run:**` comment on the thread is always this run's own
+          # (and, for a multi-classification comment, its sibling legs'
+          # announcements too). Taking it would make `gh run cancel` cancel
+          # the stop-handling run itself and leave the run the maintainer
+          # actually asked to stop running to completion (FR-024/SC-009).
+          # Every announcement body carries exactly one run URL, so filtering
+          # the flattened match stream by run id drops precisely this run's
+          # own announcements and keeps the next-most-recent real target.
+          run_url=$(printf '%s' "$all" | jq -r '.[] | select(.body | test("\\*\\*Run:\\*\\*")) | .body' \
+            | grep -oE 'https://[^ )]+/actions/runs/[0-9]+' \
+            | grep -vE "/actions/runs/${GITHUB_RUN_ID}$" | head -n1 || true)
 
           if [ -z "$run_url" ]; then
             gh pr comment "$PR_NUMBER" --body "No in-flight run was found to stop — nothing was cancelled."

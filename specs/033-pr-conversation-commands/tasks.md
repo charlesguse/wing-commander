@@ -1052,7 +1052,7 @@ static validation, and the full quickstart walkthrough.
 
 ## Phase 15: Convergence
 
-- [ ] T056 CRITICAL (contradicts): the "Post intent announcements" step
+- [X] T056 CRITICAL (contradicts): the "Post intent announcements" step
   (`classify-and-announce` job) posts one `IntentAnnouncement` per
   classification with no category exclusion — including for
   `category == "stop"` itself — embedding `RUN_URL` = the **current**
@@ -1085,7 +1085,34 @@ static validation, and the full quickstart walkthrough.
   announcement (a stop request has no future action of its own to
   announce/cancel) — whichever a human decides is the cleaner fix.
   FR-024/SC-009 (contradicts).
-- [ ] T057 The "Resolve effective category and route" step (`act` job)
+
+  **Status (iteration 6, desk-checked)**: confirmed against the shipped
+  file and fixed by the FIRST option (filter the scan by run id), which
+  was chosen over "omit the `**Run:**` line for stop announcements"
+  because the second option only covers the pure-stop comment. A single
+  comment carrying `stop` plus any other classification (the
+  multi-classification case `classify-and-announce` explicitly supports)
+  still gets a sibling `**Run:**` announcement from THIS run posted before
+  `act` starts, so the scan would keep finding this run and cancelling
+  itself. The run-id filter subsumes both cases and keeps the stop
+  announcement's own run link, which is the one comment telling a
+  maintainer where the stop is being handled. Implementation: the scan now
+  flattens every `**Run:**`-bearing bot comment (newest first) into its run
+  URLs and drops any ending in `/actions/runs/$GITHUB_RUN_ID` before taking
+  the first, so the next-most-recent, actually-targeted announcement wins;
+  when the ONLY announcements are this run's own, the filter empties the
+  stream and the pre-existing "No in-flight run was found to stop" reply
+  fires — still a reply, never a silent wrong cancel (SC-009).
+  `contracts/autonomy-and-confirmation.md`'s stop procedure and
+  data-model.md's `StopRequest.target-run-url` now state the exclusion and
+  why. Verified by executing the shipped scan pipeline (grep-`-F`-asserted
+  against the workflow file first, so a drift fails the check) against
+  synthetic bot-comment threads: pure-stop, stop+sibling-leg, own-
+  announcements-only, empty thread, and a thread whose newest bot comment
+  is a non-announcement reply — plus a defect witness confirming the
+  pre-fix pipeline really did extract this run's own id. Not exercised
+  against live GitHub Actions in this environment.
+- [X] T057 The "Resolve effective category and route" step (`act` job)
   treats the act agent's own drafted `needs-permission` capability
   string as a live `jq` regex pattern —
   `jq -r --arg cap "$capability" '[.[] | select(.title | test($cap;
@@ -1105,6 +1132,26 @@ static validation, and the full quickstart walkthrough.
   literal substring match, or wrap the `test()` call so an invalid
   pattern degrades to "no match" instead of erroring the step). FR-012/
   FR-014 (partial).
+
+  **Status (iteration 6, desk-checked)**: confirmed and fixed by the
+  literal-substring option rather than by escaping or by swallowing the
+  error, because regex was never the intended semantics here: even a
+  capability that DOES compile (any `.`, `*`, `|`, `?` in drafted prose)
+  silently widens the dedup search and can link a maintainer to an
+  unrelated permission-request PR as a "confident" match — a wrong answer
+  is worse than the crash the task reports. The step now lowercases both
+  sides and uses `contains`, and an empty/`null` capability yields no match
+  instead of matching the first PR (`contains("")` is true for every
+  string); `capability` itself is now read with `// ""` so a JSON `null`
+  cannot arrive as the literal text `null`. Conservative bias is
+  unchanged: no match ⇒ `uncertain`/`none` ⇒ open the permission-request
+  PR. `contracts/spinoff-routing.md` now states the literal-substring rule
+  and why. Verified by executing the shipped `jq` program against a
+  synthetic `gh search prs` result set: literal hit, case-insensitive hit,
+  unbalanced paren, unbalanced bracket, `npm.ci`-style metacharacters, a
+  lone `.`, empty capability, and a genuine miss — plus a defect witness
+  confirming the pre-fix `test($cap; "i")` really did abort the step under
+  `set -e` ("Regex failure: end pattern with unmatched parenthesis").
 
 ---
 

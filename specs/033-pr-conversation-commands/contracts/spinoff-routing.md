@@ -65,7 +65,12 @@ Three sub-outcomes, chosen by `drafted-content`'s shape
 - **Needs a permission the stage lacks** (`{needs-permission, pr-title, pr-body}`):
   first, search `gh search prs --label permission-request --state all`
   for a `WithheldPermissionConversation` plausibly matching
-  `needs-permission` (data-model.md). If `match-confidence == "confident"`:
+  `needs-permission` (data-model.md) — compared as a **case-insensitive
+  literal substring** of the candidate PR titles, never as a regex: the
+  capability string is unconstrained agent-drafted free text, so a
+  metacharacter in it would either match unrelated permission-request PRs
+  or (an unbalanced bracket/paren) error the step outright and leave the
+  request with no reply at all. If `match-confidence == "confident"`:
   reply linking that prior conversation instead of opening anything new —
   **not** a new spin-off artifact (the existing conversation already is
   one, and is not re-recorded). Otherwise (`uncertain`/`none`, conservative

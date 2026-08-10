@@ -87,8 +87,15 @@ Two independent paths, both free of any new polling mechanism
    (event-triggered like any other comment). That run's `act` job:
    - scans the PR's comment thread (`gh api .../issues/{pr}/comments` and,
      for review-thread stops, `.../pulls/{pr}/comments`) for the most
-     recent `IntentAnnouncement` posted by the pipeline's own bot account,
-     extracting its embedded run URL → `run-id`;
+     recent `IntentAnnouncement` posted by the pipeline's own bot account
+     **whose embedded run id is not this run's own `github.run_id`**,
+     extracting its embedded run URL → `run-id`. The exclusion is not
+     defensive tidiness: this same run's `classify-and-announce` job
+     announces every classification it made, including this `stop` one and
+     any sibling classification from the same comment, and `act` runs
+     after it — so without the exclusion the newest `**Run:**` comment on
+     the thread is always this run's own, and `gh run cancel` would cancel
+     the stop-handling run instead of the announced one (FR-024/SC-009);
    - `gh run cancel <run-id>`;
    - if that announcement's `planned-action` was an implement re-trigger
      (`contracts/converge-fold-in.md`), additionally `gh run cancel` the
