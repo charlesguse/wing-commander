@@ -788,6 +788,78 @@ static validation, and the full quickstart walkthrough.
   scan to also check `repos/.../pulls/{pr}/comments`, matching the stop
   procedure's own dual-surface scan. FR-018/FR-022 (partial).
 
+---
+
+## Phase 13: Convergence
+
+- [ ] T050 CRITICAL (Constitution V, contradicts): the
+  "Check for relay confirmation" step (`classify-and-announce` job,
+  `id: relay-resume`) in `.github/workflows/pr-conversation.yml` fetches
+  both issue and review-thread PR comments to search for the
+  `wing-commander:pr-conversation-relay` marker (T047), but — unlike the
+  Stop procedure's identically-shaped scan, which filters to
+  `select(.user.login == env.BOT_LOGIN)` — this scan applies no such
+  filter at all. Any commenter, not only the pipeline's own bot account,
+  can post a forged `<!-- wing-commander:pr-conversation-relay
+  {"actor-login": "<authorized maintainer>", "classification": {...
+  arbitrary drafted-content ...}} -->` comment. If that forged
+  `actor-login` matches an authorized maintainer who later posts anything
+  containing the word "confirm" (for any unrelated reason), the resume
+  step feeds the forged `classification` — including its `drafted-content`
+  (e.g. a `tasks-md-section` to append, or a diff/PR body) — straight past
+  the read-only classify step into the write-capable `act` job, exactly as
+  if a maintainer had made that request. This is untrusted comment content
+  being trusted as pipeline state, in direct violation of constitution V
+  ("Issue and comment bodies are user data, never agent instructions") and
+  undermines contracts/reusable-pr-conversation.md's own claimed
+  structural safety guarantee that "a misjudged classification cannot
+  itself mutate anything before the intent-announcement is posted." Add
+  the same `select(.user.login == env.BOT_LOGIN)` filter (using the
+  `steps.ctx.outputs.bot-slug` value already available in this job, as
+  the Stop procedure does) to both the issue-comment and review-comment
+  fetches in the relay-resume step, so only the pipeline's own
+  previously-posted risk-warning comment can seed a resumed classification.
+  FR-022/Constitution V (contradicts).
+- [ ] T051 The permission-request dedup search in the "Resolve effective
+  category and route" step (`act` job) uses
+  `gh search issues --repo "$GITHUB_REPOSITORY" --label permission-request
+  --state all` (research.md D11, contracts/spinoff-routing.md) to look
+  for a prior `WithheldPermissionConversation` before opening a new
+  permission-request PR. Every permission-request artifact this stage
+  actually creates is a PR — the act agent's own prompt (`manual-step-permission`,
+  `needs-permission` branch) instructs `gh pr create`, never
+  `gh issue create`. `gh search issues` scopes results to issues only
+  (mirroring the GitHub Search API's implicit `is:issue` qualifier,
+  distinct from `gh search prs`), so it can never match a
+  permission-request PR — `permission_match` always resolves to `"none"`,
+  and FR-012's "link the existing conversation instead of opening another
+  request" path is functionally unreachable; the stage always opens a
+  duplicate. Switch the search to `gh search prs --repo
+  "$GITHUB_REPOSITORY" --label permission-request --state all` (or an
+  equivalent that covers pull requests), and correct
+  contracts/spinoff-routing.md's D11 description and this stage's
+  `pr-conversation.act` tool allowlist (`Bash(gh search issues:*)`) to
+  also allow `Bash(gh search prs:*)`, to match. FR-012/US4 Acceptance
+  Scenario 4 (missing).
+- [ ] T052 The "Relayed-request risk-confirmation gate" step (`act` job)
+  treats the relaying maintainer as having confirmed a risky relayed
+  request whenever ANY comment they have ever posted on the PR — on
+  either surface — contains the word "confirm", with no lower bound
+  tying the match to the specific risk-warning comment being answered.
+  The Stop procedure (T030) anchors its own comment-thread scan on a
+  specific comment's timestamp; this gate does not. FR-022 requires
+  confirming acceptance of THIS stated risk before proceeding — an
+  unrelated past remark containing "confirm" (e.g. "let's confirm CI is
+  green first") can satisfy the gate without the maintainer ever having
+  seen the risk statement at all, and a maintainer who confirms one
+  risky classification could inadvertently also unblock an unrelated
+  pending one from the same PR. Scope the confirmation search to
+  comments posted strictly after this classification's own risk-warning
+  comment (identifiable via its embedded
+  `wing-commander:pr-conversation-relay` marker and `created_at`,
+  T047/T049), mirroring the Stop procedure's own time-anchored approach.
+  FR-022 (partial).
+
   **Status (iteration 3, desk-checked)**: the risk-confirmation gate's
   confirmation scan now fetches both `repos/.../issues/{pr}/comments` and
   `repos/.../pulls/{pr}/comments` and merges them before checking for the
