@@ -529,21 +529,21 @@ full `quickstart.md` scenario set (1–15) plus its edge-case checks pass.
 **Purpose**: Adopter-facing documentation, the shared-contract-doc update,
 static validation, and the full quickstart walkthrough.
 
-- [ ] T038 [P] Add the three new repository variable rows
+- [X] T038 [P] Add the three new repository variable rows
   (`WING_COMMANDER_PR_CONVERSATION_MODEL`,
   `WING_COMMANDER_PR_CONVERSATION_CONFIRM_CATEGORIES`,
   `WING_COMMANDER_PR_CONVERSATION_CONFIRM_ENVIRONMENT`) to
   `docs/setup.md`'s repository-variables/config tables.
   (research.md D2/D9)
-- [ ] T039 [P] Add the new wrapper's example and its trigger shape (no
+- [X] T039 [P] Add the new wrapper's example and its trigger shape (no
   `workflow_dispatch`, purely `pull_request_review`/
   `pull_request_review_comment`/`issue_comment`-driven) to
   `docs/adoption.md`.
-- [ ] T040 [P] Add a "Stage 10 — PR Conversation" section to
+- [X] T040 [P] Add a "Stage 10 — PR Conversation" section to
   `docs/architecture.md`, advancing the stage/wrapper counts from nine to
   ten (constitution's own Sync Impact Report precedent for keeping these
   counts honest).
-- [ ] T041 [P] Add the `reusable-pr-conversation.yml` row, the new
+- [X] T041 [P] Add the `reusable-pr-conversation.yml` row, the new
   "Wrapper gate obligations" bullet, and the two new default-tool-list
   rows (`pr-conversation.classify`, `pr-conversation.act`) to
   `specs/010-reusable-pipeline/contracts/stage-interfaces.md`, carried

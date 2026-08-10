@@ -936,6 +936,75 @@ conventions your wrapper owns.
 | Side effects | per-branch rebase onto your default branch: clean → force-push with lease; conflicting → agent resolution with a deterministic scope check; unresolvable → abandoned untouched + `rebase:blocked` escalation comment (deduped by SHA marker) |
 | Outputs | none |
 
+### pr-conversation
+
+Optional, additive stage — not part of the eight-file minimal set above. It
+classifies and routes a maintainer's review or comment on an implementation
+PR (`spec/NNN-slug → default branch`): fold-in + implement re-dispatch,
+new-issue/new-PR spin-offs, manual-step/permission handling, or a plain
+reply. See [Stage 10 — PR Conversation](architecture.md#stage-10--pr-conversation-pr-conversationyml-wrapper-wing-commander-9-pr-conversationyml--see-specs033-pr-conversation-commands)
+for the full routing design.
+
+| | |
+|---|---|
+| Inputs | `pr-number` (number, required); `event-kind` (string `review`\|`review-comment`\|`issue-comment`, required); `body` (string, required, untrusted); `actor-login`/`actor-association` (string, required); `comment-id`/`review-id` (number, `0`); `thread-path`/`thread-diff-hunk` (string, `""`); `confirm-categories` (string, `""` = act-then-report for every category); `confirm-environment` (string, `pr-conversation-confirm`); `model` (string, `claude-sonnet-5`); `max-turns` (number, `40`) |
+| Preconditions | the PR's base is your default branch and its head starts with `spec-prefix` (not `spec-draft-prefix`/`plan-prefix`/`tasks-prefix`) — anything else short-circuits with no reply at all; the lifecycle issue is open |
+| Side effects | posts one `IntentAnnouncement` per classification before any mutation; routes per category — see the architecture doc for the full list |
+| Outputs | `qualifies`, `spec-dir`, `slug` |
+
+Deliberately **no `workflow_dispatch`** — this is the only stage that is
+purely event-triggered, since its whole purpose is reacting to a review or
+comment. The wrapper's `if:` gate has no requester carve-out (unlike
+clarify/intake): only `OWNER`/`MEMBER`/`COLLABORATOR` actors can direct it.
+
+```yaml
+name: "Wing Commander · 9 pr conversation"
+
+on:
+  pull_request_review:
+    types: [submitted]
+  pull_request_review_comment:
+    types: [created]
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  pr-conversation:
+    if: >-
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request != null &&
+       github.event.comment.user.type != 'Bot' &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review_comment' &&
+       github.event.comment.user.type != 'Bot' &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review' && github.event.review.body != '' &&
+       github.event.review.user.type != 'Bot' &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association))
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: write
+      id-token: write
+    uses: charlesguse/wing-commander/.github/workflows/pr-conversation.yml@v2
+    with:
+      pr-number: ${{ github.event.pull_request.number || github.event.issue.number }}
+      event-kind: >-
+        ${{ github.event_name == 'pull_request_review' && 'review'
+          || github.event_name == 'pull_request_review_comment' && 'review-comment'
+          || 'issue-comment' }}
+      body: ${{ github.event.review.body || github.event.comment.body || '' }}
+      actor-login: ${{ github.event.review.user.login || github.event.comment.user.login }}
+      actor-association: ${{ github.event.review.author_association || github.event.comment.author_association }}
+    secrets:
+      claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
+```
+
 ## Chaining payload contract
 
 When a stage dispatches a `next-workflow`/`self-workflow`, the target is a

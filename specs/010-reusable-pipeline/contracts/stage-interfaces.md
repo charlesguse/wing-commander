@@ -86,7 +86,10 @@ stage, the direction, and both values. On multi-step stages (currently only
 **Wrapper gate obligations** (documented, adopter-owned — constitution V
 guidance shipped in docs/adoption.md): maintainer-label entry gate before
 intake; commenter is maintainer-or-author and not a bot before clarify;
-never pass fork-PR head refs as checkout targets.
+never pass fork-PR head refs as checkout targets; commenter/reviewer is
+`OWNER`/`MEMBER`/`COLLABORATOR` and not a bot before pr-conversation — with
+**no** requester carve-out, unlike clarify/intake
+(`specs/033-pr-conversation-commands/contracts/wrapper-gate.md`).
 
 **Chaining payload contract**: when a stage dispatches a `next-workflow` /
 `self-workflow`, the dispatch target is a *wrapper file in the consuming
@@ -207,6 +210,24 @@ resolving a single `trigger` input before calling this stage.
 | Behavior | `health-check → detect → settle → evaluate-path → prepare → verify → act` plus `pr-merged`/`comment-reply` entry jobs: re-verify the pinned version (rollback on failure); detect the latest eligible upstream release and classify the delta; run a consecutive-daily-check settle window in the lifecycle issue's body marker; one read-only agent decides clean-bump / needs-migration / ambiguous-options; prepare the version-bump diff; verify it (lightweight always, +end-to-end for minor/major) in an isolated worktree; open the version-bump PR (pass), flag the issue (fail), or open a revert PR (health-check failure) |
 | Outputs | none (side effects only): lifecycle-issue comments/label (`auto-update:failed` on any failure/rollback) and a version-bump/revert PR to the default branch — **never merged by this stage** (constitution V, FR-017); the success path closes its issue only via the PR's own `Closes #N` keyword on merge |
 
+## reusable-pr-conversation.yml
+
+Classifies and routes a maintainer's PR conversation on an implementation PR
+(`specs/033-pr-conversation-commands/`). Its wrapper
+(`wing-commander-9-pr-conversation.yml`) owns the `pull_request_review:
+[submitted]` / `pull_request_review_comment: [created]` / `issue_comment:
+[created]` triggers, the actor gate (see "Wrapper gate obligations" above),
+and event→input extraction — this stage never reads `github.event`. Unlike
+every other stage, it has **no `workflow_dispatch`** entry point: purely
+event-triggered.
+
+| | |
+|---|---|
+| Inputs | `pr-number` (number, required); `event-kind` (string `review`\|`review-comment`\|`issue-comment`, required); `body` (string, required, untrusted); `actor-login`/`actor-association` (string, required); `comment-id`/`review-id` (number, default `0`); `thread-path`/`thread-diff-hunk` (string, default `""`); `confirm-categories` (string, default `""` — comma-separated category list, or `all`); `confirm-environment` (string, default `pr-conversation-confirm`); `model` (string, default `claude-sonnet-5`); `max-turns` (number, default `40`) |
+| Preconditions | PR base is the default branch and head starts with `spec-prefix` (not `spec-draft-prefix`/`plan-prefix`/`tasks-prefix`) — otherwise the whole run short-circuits with no reply; lifecycle issue is open |
+| Behavior | `classify-and-announce → act`: PR-identity + authorized-actor gates; stage the untrusted request; a read-only agent step classifies each distinguishable request into one of nine categories (`in-scope-change`, `question`, `needs-info`, `push-back`, `new-functionality`, `small-unrelated-change`, `manual-step-permission`, `stop`, `no-action`) and drafts its route's content; a deterministic (never agent-decided) gate computes per-classification confirmation requirements against `confirm-categories`; one `IntentAnnouncement` posted per classification before `act`'s `environment:` binding can begin evaluating. `act` runs one matrix leg per classification (`max-parallel: 1`): `in-scope-change`/`new-functionality current-spec` fold into `tasks.md` + `spec-meta.json` and dispatch `wing-commander-5-implement.yml` unchanged; `new-functionality new-spec` opens a `spec-request`-labeled issue; `small-unrelated-change` opens a PR within a deterministic size backstop (≤3 files, ≤40 lines) or re-routes to a new-spec issue otherwise; `manual-step-permission` performs/explains/opens a `permission-request`-labeled PR (deduped via a conservative-bias search); `needs-info`/`push-back`/`question` reply with no mutation; `stop` cancels the run named in the most recent bot-posted `IntentAnnouncement`. Every out-of-PR artifact is cross-linked from the lifecycle issue as one `OutstandingTaskItem` line |
+| Outputs | `qualifies` (boolean), `spec-dir`, `slug` |
+
 ## Per-stage default tool lists
 
 The `--allowedTools`/`--disallowedTools` values each agent-running stage ships
@@ -239,13 +260,15 @@ already read-only via its allowed list; see footnote).
 | rebase | `rebase` | `Read,Edit,Grep,Glob,Bash(git status:*),Bash(git diff:*),Bash(git add:*),Bash(git rebase --continue:*),Bash(git rebase --abort:*)` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
 | watchdog | `watchdog.diagnose` | `Read,Grep,Bash(gh:*),Bash(git log:*),Bash(git diff:*)` (deliberately read-only) | `WebSearch,WebFetch,Write,Edit,Bash(git commit:*),Bash(git push:*)` † |
 | watchdog | `watchdog.propose-fix` | `Read,Grep,Glob,Edit,Write` | `WebSearch,WebFetch,Bash,ScheduleWakeup,Monitor,SendMessage` |
+| pr-conversation | `pr-conversation.classify` | `Read,Grep,Glob,Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(cat:*),Bash(gh pr view:*),Bash(gh issue view:*),Bash(gh search issues:*)` (deliberately read-only) | `Write,Edit,WebSearch,WebFetch,Bash(git push:*),Bash(git commit:*),ScheduleWakeup,Monitor,SendMessage` |
+| pr-conversation | `pr-conversation.act` | `Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue create:*),Bash(gh issue edit:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(gh pr create:*),Bash(gh pr edit:*),Bash(gh api:*),Bash(gh run list:*),Bash(gh run cancel:*),Bash(gh workflow run:*),Bash(gh label create:*),Bash(gh search issues:*)` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
 
 † `watchdog.diagnose`'s shipped disallowed literal omits `ScheduleWakeup,
 Monitor,SendMessage` (unlike every other stage). This is the actual inline
 value in `watchdog.yml` today; it is carried verbatim so a consumer who sets
 none of the four tool-list inputs gets a byte-for-byte identical list (SC-005).
 
-Sources: `.github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase,watchdog}.yml`
+Sources: `.github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase,watchdog,pr-conversation}.yml`
 (`claude_args:` blocks, now composed via the `wing-commander-tool-args`
 composite action). A future change that edits a stage's default list must
 update this table in the same change — the composite action reads these as

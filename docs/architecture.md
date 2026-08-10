@@ -705,6 +705,73 @@ Rungs 1 and 2 have never fired in production; every finding so far has landed
 on rung 3, the report-only one. That is the intended conservative default,
 not evidence that rungs 1 and 2 work — they have not been exercised.
 
+## Stage 10 — PR Conversation (`pr-conversation.yml`, wrapper `wing-commander-9-pr-conversation.yml` — see `specs/033-pr-conversation-commands/`)
+
+**Trigger**: `pull_request_review: [submitted]`, `pull_request_review_comment:
+[created]`, and `issue_comment: [created]` filtered to PR comments — the
+first wrapper in this pipeline to listen to a review or review-thread event.
+Deliberately no `workflow_dispatch`: unlike every chained stage, this one is
+purely event-triggered. The wrapper's `if:` is the sole security gate — a
+bot actor gets no run at all, and (unlike clarify/intake) there is no
+`|| actor.id == issue.author.id` carve-out, so only an `OWNER`/`MEMBER`/
+`COLLABORATOR` can direct this stage, including the original requester. A
+`resolve-model` pre-job mirrors `wing-commander-5-implement.yml`'s tiering
+(`WING_COMMANDER_PR_CONVERSATION_MODEL`, `model:opus` label escalation).
+
+**Design** — two jobs, `classify-and-announce → act`:
+- `classify-and-announce` — read-only beyond posting replies. Confirms the
+  PR is an implementation PR this stage acts on (`spec/NNN-slug → default
+  branch`, never a draft-spec/plan/tasks branch); re-checks the stage-level
+  authorized-actor gate; stages the request body as untrusted data, never
+  interpolated into a prompt; a `claude-sonnet-5`/`claude-opus-5` step
+  (strictly read-only tools) classifies each distinguishable request in the
+  comment into one of nine categories — `in-scope-change`, `question`,
+  `needs-info`, `push-back`, `new-functionality`, `small-unrelated-change`,
+  `manual-step-permission`, `stop`, `no-action` — and drafts the content its
+  route will need; a deterministic (never agent-decided) gate computes
+  whether each classification requires propose-and-confirm, from a
+  repository-configured category list; one `IntentAnnouncement` per
+  classification is posted to the PR (and, when the planned action is itself
+  out-of-PR, to the lifecycle issue too) before `act` can start — `act`'s
+  `environment:` binding cannot begin evaluating until this job completes,
+  so intent is structurally guaranteed to precede any mutation.
+- `act` — one matrix leg per classification (`max-parallel: 1`, since two
+  legs from the same comment could both want to fold into `tasks.md`/
+  `spec-meta.json` and would race each other's push), each independently
+  bound to a confirmation environment (empty name = true no-op, reusing
+  `specs/031-stage-environment-binding`'s verified binding contract) and
+  gated by a relayed-request risk-confirmation check (a maintainer relaying
+  a non-maintainer's risky ask needs an explicit accept first). Every route
+  shares one bounded, broad-but-not-unlimited agent step (no merge/approve/
+  close tool in its allowlist — this stage can never merge its own PR):
+  `in-scope-change` (and a `new-functionality` request folded into the
+  current spec) appends a `## Maintainer Feedback` section to `tasks.md`,
+  advances `spec-meta.json.stage` back to `"implement"`, and dispatches the
+  existing `wing-commander-5-implement.yml` unchanged — the same chaining
+  contract every other stage uses, with zero trace left on the lifecycle
+  issue; `new-functionality` warranting its own spec opens a
+  `spec-request`-labeled issue, picked up by intake with no new entry point;
+  `small-unrelated-change` opens a PR to the default branch when a
+  deterministic size backstop (≤ 3 files, ≤ 40 changed lines) holds, and
+  re-routes to a new spec issue instead when it doesn't, regardless of the
+  classify step's own "very small" judgment; `manual-step-permission`
+  performs, explains, or — after a conservative-bias search for a prior
+  matching `permission-request`-labeled PR/issue — opens a one-off
+  permission-request PR; `needs-info`/`push-back`/`question` are
+  deterministic replies with no mutation; `stop` scans the PR's own comment
+  thread for the most recent bot-posted `IntentAnnouncement`, extracts its
+  embedded run URL, and cancels that run (and any implement run it
+  dispatched) — or, if it already finished, reports what that run's own
+  reply already said rather than implying it was prevented.
+
+Every artifact this stage creates outside the PR (a new lifecycle issue, a
+small-unrelated-change PR, a permission-request PR) is cross-linked from the
+lifecycle issue as one unchecked `OutstandingTaskItem` line, the single
+mechanism every spin-off route posts through — never left to the agent's own
+discretion to remember, and never fired for anything that stayed inside the
+PR. A pure-acknowledgement comment (`no-action`) triggers nothing beyond
+what the announcement step itself already decided to post.
+
 ## Auto-Update Spec Kit (`auto-update-spec-kit.yml`, wrapper `wing-commander-auto-update-spec-kit.yml`)
 
 **Trigger**: daily `schedule` (`cron: "13 7 * * *"`) + manual
