@@ -3,6 +3,6 @@
   "spec_dir": "specs/033-pr-conversation-commands",
   "feature_num": "033",
   "stage": "implement",
-  "iteration": 2,
+  "iteration": 3,
   "spec_branch": "spec/033-pr-conversation-commands"
 }
