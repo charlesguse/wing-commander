@@ -443,32 +443,47 @@ jobs:
             # actor-login, mirroring T052's approach) -- not merely the most
             # recent marker on the PR system-wide, which would make an
             # earlier actor's still-pending confirmation invisible behind a
-            # later, unrelated actor's marker.
+            # later, unrelated actor's marker. Already-consumed markers
+            # (below) are excluded so a later unrelated "confirm" can never
+            # resume the same classification twice.
             found=$(printf '%s' "$all" | jq -c --arg login "$ACTOR_LOGIN" '
               [ .[] | select(.body | contains("wing-commander:pr-conversation-relay"))
                 | . as $c
                 | ($c.body | split("\n") | map(select(test("^\\{.*\\}$"))) | .[0] // empty) as $line
                 | select($line != "")
                 | ($line | fromjson?) as $p
-                | select($p != null and $p["actor-login"] == $login)
+                | select($p != null and $p["actor-login"] == $login and (($p.consumed // false) == false))
                 | $c + {payload: $p}
               ] | .[0] // empty')
             if [ -n "$found" ]; then
               printf '%s' "$found" | jq -c '[.payload.classification]' > "$RUNNER_TEMP/classifications-raw.json"
               resumed=true
 
-              # T054: invalidate this marker so a later, unrelated comment
-              # from the same actor that happens to contain "confirm" can
-              # never replay an already-resumed classification -- strip the
-              # embedded marker block from the comment body in place.
+              # T054 (fixed, iteration 5b): mark this marker's payload
+              # consumed IN PLACE -- adding a sibling `consumed: true` field
+              # -- rather than stripping the marker block outright. Stripping
+              # it here would delete the exact anchor act's own
+              # "Relayed-request risk-confirmation gate" (T052) needs to find
+              # in THIS SAME run (act `needs: classify-and-announce`, so it
+              # runs after this step): that gate re-scans PR comments for
+              # this identical classification payload to decide
+              # `proceed=true`, and an already-stripped marker would make
+              # `proceed` permanently false, deadlocking the resumed request
+              # forever. Leaving `classification`/`actor-login` byte-for-byte
+              # intact keeps that later structural-equality match working,
+              # while the added `consumed` field is what THIS filter (above)
+              # checks on future runs to prevent replay.
               comment_id=$(printf '%s' "$found" | jq -r '.id')
               comment_kind=$(printf '%s' "$found" | jq -r '.kind')
               case "$comment_kind" in
                 issue) edit_path="repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" ;;
                 review) edit_path="repos/$GITHUB_REPOSITORY/pulls/comments/$comment_id" ;;
               esac
-              stripped_body=$(printf '%s' "$found" | jq -r '.body' | awk '/<!-- wing-commander:pr-conversation-relay/{exit} {print}')
-              new_body=$(printf '%s\n_Confirmed and resumed -- this marker is consumed and no longer active._' "$stripped_body")
+              new_marker_line=$(printf '%s' "$found" | jq -c '.payload + {consumed: true}')
+              new_body=$(printf '%s' "$found" | jq -r --arg line "$new_marker_line" '
+                (.body | split("\n")) as $lines
+                | ($lines | to_entries | map(select(.value | test("^\\{.*\\}$"))) | .[0].key) as $idx
+                | if $idx == null then .body else ($lines[0:$idx] + [$line] + $lines[($idx+1):]) | join("\n") end')
               gh api -X PATCH "$edit_path" -f body="$new_body" >/dev/null 2>&1 || true
             fi
           fi

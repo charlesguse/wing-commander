@@ -990,15 +990,27 @@ static validation, and the full quickstart walkthrough.
   T052's approach), and takes the most recent match from that filtered
   set rather than the PR-wide most-recent marker regardless of actor —
   an earlier actor's still-pending confirmation can no longer be hidden
-  behind a later, unrelated actor's marker. Once a match is found and the
-  classification is resumed, the step now also edits that marker comment
-  in place (`gh api -X PATCH`, issue- or review-comment endpoint per the
-  comment's own surface) to strip the embedded
-  `wing-commander:pr-conversation-relay` block and note the marker is
-  consumed — a later unrelated "confirm" from the same actor can no
-  longer find and replay it. Best-effort (`|| true`): a failed edit does
-  not block the resume itself. Not run live in this environment; verified
-  by hand-tracing the jq structural-match filter against fixture marker
+  behind a later, unrelated actor's marker. The filter also now excludes
+  markers already flagged consumed (below), so a later unrelated
+  "confirm" from the same actor can no longer find and replay an
+  already-resumed classification. Once a match is found and the
+  classification is resumed, the step edits that marker comment in place
+  (`gh api -X PATCH`, issue- or review-comment endpoint per the comment's
+  own surface) to add a sibling `consumed: true` field to the embedded
+  JSON payload — **not** to strip the marker block outright. Stripping it
+  here (iteration 5's first attempt) deadlocked every relay confirmation:
+  `act`'s own "Relayed-request risk-confirmation gate" (T052) runs later
+  in this same run (`needs: classify-and-announce`) and re-scans PR
+  comments for this identical classification payload, byte-for-byte, to
+  decide its own `proceed=true` — a stripped marker made that anchor
+  lookup permanently empty, so the resumed request could never actually
+  proceed and a fresh risk-warning (asking to "confirm" again) was
+  reposted every time, forever. Adding `consumed: true` as a sibling field
+  leaves `classification`/`actor-login` intact for that same-run
+  structural match while still giving THIS step's own filter something to
+  exclude on a later run. Best-effort (`|| true`): a failed edit does not
+  block the resume itself. Not run live in this environment; verified by
+  hand-tracing the jq structural-match filter against fixture marker
   payloads.
 - [X] T055 `pr-conversation.act`'s tool allowlist
   (`.github/workflows/pr-conversation.yml` line 1027, mirrored in
