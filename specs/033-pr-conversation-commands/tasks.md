@@ -1295,6 +1295,110 @@ static validation, and the full quickstart walkthrough.
 
 ---
 
+## Phase 16: Convergence
+
+- [ ] T062 CRITICAL (contradicts): the "Stop procedure" step (`act` job)
+  calls the Actions API with a token that has no Actions permission.
+  `docs/setup.md` documents this pipeline's App as Contents / Issues /
+  Pull requests read-write, "Everything else: **No access**" — yet the
+  step's `env` sets `GH_TOKEN: ${{ steps.ctx.outputs.token }}` (the App
+  token) and then runs `gh run cancel "$run_id"`, `gh run list --workflow
+  wing-commander-5-implement.yml ...`, and `gh run cancel
+  "$impl_run_id"`. All three 403. The same file already solves exactly
+  this problem one step earlier — "Dispatch implement and reply" sets
+  `DISPATCH_TOKEN: ${{ github.token }}` and calls `GH_TOKEN=
+  "$DISPATCH_TOKEN" gh workflow run ...`, leaning on the `act` job's own
+  `actions: write` grant — but the stop path never got that treatment.
+  Compounding it, `if ! gh run cancel ...; then outcome="already-
+  completed"; fi` collapses a permission failure into the already-
+  completed branch, so the maintainer is told "The announced run had
+  already completed — nothing was cancelled" while the targeted run is
+  still executing and goes on to make its changes. That is T056's failure
+  mode (a stop request that silently does not stop, reported as success)
+  reached through a different door, and it fires on every reply-based
+  stop. Fix both halves: route the three Actions calls through the
+  `github.token`-based dispatch token, and distinguish a permission/API
+  failure from a genuine already-completed (GitHub returns 409 for the
+  latter) so no reply ever claims an outcome it did not verify. Note this
+  is the fourth defect in this stage that only a live run or a
+  token-aware test would have caught — see T064. FR-024/SC-009
+  (contradicts).
+- [ ] T063 CRITICAL (contradicts): the "Dispatch implement and reply"
+  step overrides the token for `gh workflow run` but not for the `gh run
+  list` immediately after it, which polls for the dispatched run's URL
+  under the step's `env` `GH_TOKEN` — the App token again, so it 403s.
+  The step runs under `set -euo pipefail`, so the `run_url=$(gh run list
+  ...)` assignment aborts the whole step — *after* the implement
+  dispatch has already fired, and *before* the `gh pr comment` that tells
+  the maintainer any of it happened. The result on the P1 route (User
+  Story 1, in-scope change — the MVP this feature exists for) is that
+  every request silently re-dispatches implement and then dies without a
+  reply, leaving a failed leg and no answer on the PR. FR-014 ("MUST post
+  a reply on the PR describing the action it took... for each actionable
+  request") and SC-005 ("no actionable comment goes unanswered") are both
+  contradicted, as is FR-004's "updating the same PR with the result".
+  Fix with the same dispatch token, and additionally make the run-URL
+  lookup non-fatal (`|| true`, as the step's own fallback branch already
+  anticipates with its "see the workflow's Actions tab" message) so a
+  failed lookup degrades to the weaker reply instead of suppressing the
+  reply entirely. FR-014/SC-005/FR-004 (contradicts).
+- [ ] T064 Add a machine-checked gate for the defect CLASS T062 and T063
+  belong to: a `gh`/API call issued under a token whose permissions do
+  not cover the API it touches. This repository has now hit it three
+  times — spec 005's `gh workflow run` 403 (fixed by dispatching with the
+  default token plus a job-level `actions: write`), and T062/T063 above —
+  each time discovered by accident rather than by a check, and T062/T063
+  survived five pipeline cycles, a full quickstart desk-check, and three
+  rounds of executing the shipped shell against synthetic inputs. Prose
+  warnings have demonstrably not held; this needs a gate (constitution
+  IV, and constitution I — the repo is its own first example). Add it to
+  `lint-workflows.yml` in the same style as Gates 1-7, with its own
+  self-test script under `.github/scripts/` per the Gate 6 precedent
+  (`verify-gate-6.py`, whose whole reason for existing is that a detector
+  which never fires looks identical to one that finds nothing). Sketch:
+  (a) parse every workflow's `run:` blocks and extract each `gh
+  <subcommand>` and `gh api <path>` invocation; (b) resolve the token in
+  effect for that invocation — step-level `env.GH_TOKEN`, job-level env,
+  or a per-command override like `GH_TOKEN="$X" gh ...` — and classify it
+  as the App token (the `wing-commander-context` / app-token output) or
+  `github.token`; (c) map each subcommand and `gh api` path to the
+  permission it requires via a table maintained in the gate (`gh run *`
+  and `gh workflow run` -> Actions; `gh issue *` and `gh label create` ->
+  Issues; `gh pr *` -> Pull requests; `gh api repos/*/actions/*` ->
+  Actions; and so on), extended only with evidence, exactly as Gate 6's
+  `SUPPORTED_EVENTS` rule already requires; (d) assert App-token calls
+  touch only permissions in the App's documented set, **parsed from
+  `docs/setup.md` itself** so the adopter-facing documentation is the
+  single source of truth and any drift between doc and workflow fails the
+  gate; and assert `github.token` calls have the matching job-level
+  `permissions:` grant. Expect the first run to flag existing call sites
+  across other stages (`watchdog.yml` reads `gh api
+  repos/*/actions/runs/*`, `implement.yml` allowlists `gh run view`/`gh
+  run list` for its agent) — each one is either a real defect or an
+  entry the table must justify, and resolving them is part of this task.
+  Additionally make the runtime half catchable: the extract-and-run
+  harnesses already stub `gh`, so teach those stubs which token the step
+  exported and have them return a realistic 403 for an out-of-scope call.
+  That variant catches error-branch conflation of the T062 kind, where a
+  permission failure is reported to the user as a successful outcome —
+  assert that two different failure causes (403 vs 409) never collapse
+  into the same user-visible reply. Constitution IV / Constitution I
+  (missing).
+- [ ] T065 `pr-conversation.act`'s default allowed-tools list grants the
+  agent `Bash(gh run cancel:*)`, `Bash(gh run list:*)` and `Bash(gh
+  workflow run:*)`, but the agent step's `GH_TOKEN` is the App token,
+  which per `docs/setup.md` has no Actions permission — so any of the
+  three 403s if the agent ever reaches for it, and the agent has no way
+  to know that from its prompt. Either drop the three tools from the
+  list (the act prompt already tells the agent not to run `gh workflow
+  run` itself, since a later deterministic step dispatches implement), or
+  export a token that can use them for that step. Prefer dropping: the
+  deterministic steps own every Actions interaction this stage performs,
+  which is also what makes T062/T063 fixable in one place. FR-011/FR-016
+  (partial).
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
