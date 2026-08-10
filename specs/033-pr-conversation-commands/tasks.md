@@ -1050,6 +1050,64 @@ static validation, and the full quickstart walkthrough.
 
 ---
 
+## Phase 15: Convergence
+
+- [ ] T056 CRITICAL (contradicts): the "Post intent announcements" step
+  (`classify-and-announce` job) posts one `IntentAnnouncement` per
+  classification with no category exclusion — including for
+  `category == "stop"` itself — embedding `RUN_URL` = the **current**
+  run's own `${{ github.run_id }}` (`**Run:** $RUN_URL`, the literal text
+  the Stop procedure's own scan matches on). The "Stop procedure" step
+  (`act` job, T030) scans all bot PR comments for the single most recent
+  one matching `**Run:**` and treats its embedded run URL as "the
+  announced run to cancel." But because `classify-and-announce`'s own
+  stop-classification announcement was just posted moments earlier in
+  this exact same run (`act` `needs: classify-and-announce`, so it always
+  runs after), that self-announcement is now unconditionally the most
+  recent `**Run:**` comment on the thread — the Stop procedure's scan
+  finds and extracts its **own** run's `run_id`, not the prior
+  in-flight run a maintainer actually asked to stop. `gh run cancel
+  "$run_id"` then cancels the currently-executing stop-handling run
+  itself, not the announced action — the targeted prior run is never
+  touched and keeps running to completion, while the run tasked with
+  stopping it likely gets killed by GitHub Actions before it can even
+  post its own "Stopped: …" confirmation reply. This is not an edge
+  case — it fires on every reply-based stop request — and directly
+  contradicts FR-024 ("abandon the remaining work for that request
+  rather than completing it," reporting what was already done) and
+  SC-009 ("no stop request is silently dropped"): here a stop request is
+  worse than dropped, it silently cancels the wrong thing. Fix the Stop
+  procedure's scan to skip any candidate announcement whose embedded run
+  id equals the current run's own `${{ github.run_id }}` before taking
+  the "most recent" one (so it finds the next-most-recent, actually-
+  targeted announcement instead), OR have `classify-and-announce` omit
+  the `**Run:**`-bearing line for `category == "stop"`'s own
+  announcement (a stop request has no future action of its own to
+  announce/cancel) — whichever a human decides is the cleaner fix.
+  FR-024/SC-009 (contradicts).
+- [ ] T057 The "Resolve effective category and route" step (`act` job)
+  treats the act agent's own drafted `needs-permission` capability
+  string as a live `jq` regex pattern —
+  `jq -r --arg cap "$capability" '[.[] | select(.title | test($cap;
+  "i"))] | .[0].url // empty'` — to search prior permission-request PR
+  titles for a match (T027/T051). This step runs under `set -euo
+  pipefail`. If the agent-drafted `capability` text ever contains a
+  character sequence that is not a syntactically valid regex (e.g. an
+  unbalanced parenthesis or bracket — plausible for unconstrained
+  free-text drafted by the classify step, not itself regex-shaped
+  input), `jq`'s `test()` call errors, the `permission_match_url=$(...)`
+  assignment fails, and `set -e` aborts the whole step before it reaches
+  its `GITHUB_OUTPUT` writes — silently denying that `manual-step-
+  permission`/`needs-permission` classification any PR reply at all
+  (FR-014's "actionable request... gets... a reply" guarantee, and
+  FR-012's dedup-search path specifically). Escape or otherwise validate
+  `capability` before using it as a `test()` pattern (e.g. treat it as a
+  literal substring match, or wrap the `test()` call so an invalid
+  pattern degrades to "no match" instead of erroring the step). FR-012/
+  FR-014 (partial).
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
