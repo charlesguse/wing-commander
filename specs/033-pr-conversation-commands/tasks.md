@@ -608,6 +608,41 @@ static validation, and the full quickstart walkthrough.
 
 ---
 
+## Phase 11: Convergence
+
+- [ ] T044 Constitution VII requires that "a stage that must deviate
+  carries a registered, machine-checked exception naming the reason —
+  never an undeclared one, and never a code comment alone." `act`'s
+  job-level `environment:` in `.github/workflows/pr-conversation.yml`
+  deviates from every other job in every published stage — it binds
+  `name` to `${{ matrix['confirm-environment'] }}` (T029/FR-020, the
+  per-classification propose-and-confirm gate) instead of forwarding
+  `${{ inputs.environment }}`/`${{ inputs.environment-deployment }}`
+  verbatim, the shape `lint-workflows.yml` Gate 7
+  (specs/031-stage-environment-binding) requires of every job in every
+  `on.workflow_call` stage. The deviation is currently documented only in
+  a code comment above that block (added in this cycle) — not a
+  "registered, machine-checked exception." No such exception-registration
+  mechanism exists yet anywhere in this repository. Build one (e.g. a
+  small, explicit exception list Gate 7's script consults, keyed by
+  workflow+job+reason) and register `pr-conversation.yml`'s `act` job
+  under it, OR find and implement a binding shape that satisfies both
+  Gate 7's uniform-forwarding check and FR-020's same-job per-leg
+  independence (verified by T032) — whichever a human decides is
+  correct; this is a design call, not a mechanical fix. CRITICAL
+  (Constitution VII, contradicts).
+- [ ] T045 In `.github/workflows/pr-conversation.yml`'s "Dispatch
+  implement and reply (fold-in routes)" step, the PR reply only mentions
+  the possibility of hitting `implement.yml`'s iteration cap inside the
+  `run_url`-empty fallback branch (the run-link poll timing out) — when
+  the poll succeeds, the reply omits the cap-possibility note entirely.
+  T013 calls for this note on every dispatch, not only the timeout case
+  (FR-005: "post its outcome, including the case where the cap is
+  reached, on the PR"). Add the cap-possibility sentence to the
+  `run_url`-found branch's reply body too. T013/FR-005 (partial).
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
