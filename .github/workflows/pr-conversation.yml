@@ -1,0 +1,228 @@
+# Published stage — pr-conversation (contracts/reusable-pr-conversation.md).
+# on: workflow_call only. The calling wrapper owns the pull_request_review /
+# pull_request_review_comment / issue_comment triggers and the actor gate
+# (bot exclusion — constitution V; see docs/adoption.md and
+# contracts/wrapper-gate.md). This stage classifies a maintainer's PR
+# conversation into one of nine categories, announces its intent before
+# mutating anything, then routes: fold-in + implement re-dispatch,
+# new-issue/new-PR spin-offs, manual-step/permission handling, or a plain
+# reply — cross-linking every out-of-PR artifact from the lifecycle issue.
+# Consumers: uses: <owner>/wing-commander/.github/workflows/pr-conversation.yml@<ref>
+name: "reusable · pr-conversation"
+
+on:
+  workflow_call:
+    inputs:
+      pr-number:
+        description: "The PR this conversation event happened on"
+        type: number
+        required: true
+      event-kind:
+        description: "review | review-comment | issue-comment (contracts/wrapper-gate.md)"
+        type: string
+        required: true
+      comment-id:
+        description: "ID of the issue-style PR comment or review-thread comment (0 when event-kind is review)"
+        type: number
+        required: false
+        default: 0
+      review-id:
+        description: "ID of the pull_request_review (0 when event-kind is not review)"
+        type: number
+        required: false
+        default: 0
+      body:
+        description: "Untrusted request text — the review body or comment body"
+        type: string
+        required: true
+      actor-login:
+        description: "Login of the commenter/reviewer (display only)"
+        type: string
+        required: true
+      actor-association:
+        description: "author_association of the commenter/reviewer (FR-019 gate)"
+        type: string
+        required: true
+      thread-path:
+        description: "File path of the inline review-thread comment (review-comment only)"
+        type: string
+        required: false
+        default: ""
+      thread-diff-hunk:
+        description: "Diff hunk of the inline review-thread comment (review-comment only)"
+        type: string
+        required: false
+        default: ""
+      confirm-categories:
+        description: >
+          Comma-separated RequestClassification.category values requiring
+          propose-and-confirm, or the literal "all". Empty (default) = act-
+          then-report for every category (FR-020, contracts/autonomy-and-confirmation.md).
+        type: string
+        required: false
+        default: ""
+      confirm-environment:
+        description: >
+          Name of the GitHub deployment environment the act job binds to
+          for a classification requiring confirmation.
+        type: string
+        required: false
+        default: pr-conversation-confirm
+      model:
+        description: "Model for the classify and act agent steps (constitution II — sonnet default, opus opt-in, research.md D2)"
+        type: string
+        required: false
+        default: claude-sonnet-5
+      max-turns:
+        description: "Turn budget for the classify and act agent steps"
+        type: number
+        required: false
+        default: 40
+      pipeline-repo:
+        description: >
+          Repository to check out for the pipeline's shared composite actions
+          (research.md D3). Only forks that republish need to set it.
+        type: string
+        required: false
+        default: charlesguse/wing-commander
+      pipeline-ref:
+        description: >
+          Ref of the pipeline repository to check out for the shared
+          composite actions. Empty = the exact commit of the running
+          reusable workflow (github.job_workflow_sha, with an OIDC-claim
+          fallback) — set it only if your calling job cannot grant
+          id-token: write; then it MUST match your uses: pin.
+        type: string
+        required: false
+        default: ""
+      default-branch:
+        description: >
+          The consuming repository's default branch. Empty = derived via
+          `gh repo view` — the stage never assumes `main`.
+        type: string
+        required: false
+        default: ""
+      use-bedrock:
+        description: >
+          Run this stage's agent steps against AWS Bedrock instead of
+          Anthropic (contracts/bedrock-provider.md). Off by default.
+        type: boolean
+        required: false
+        default: false
+      aws-role-arn:
+        description: "IAM role ARN to assume via OIDC for Bedrock. Required when use-bedrock is true."
+        type: string
+        required: false
+        default: ""
+      aws-region:
+        description: "AWS region for both credential configuration and the Bedrock endpoint. Required when use-bedrock is true."
+        type: string
+        required: false
+        default: ""
+      spec-prefix:
+        description: "Branch prefix of the implementation branch this stage acts on (FR-018, data-model.md PullRequestIdentity)"
+        type: string
+        required: false
+        default: spec/
+      spec-draft-prefix:
+        description: "Branch prefix of draft-spec branches — explicitly excluded from qualifying (FR-018)"
+        type: string
+        required: false
+        default: spec-draft/
+      plan-prefix:
+        description: "Branch prefix of plan branches — explicitly excluded from qualifying (FR-018)"
+        type: string
+        required: false
+        default: plan/
+      tasks-prefix:
+        description: "Branch prefix of tasks branches — explicitly excluded from qualifying (FR-018)"
+        type: string
+        required: false
+        default: tasks/
+      environment:
+        description: >
+          Name of a GitHub deployment environment (in the consuming
+          repository) to bind every job in this stage to, applying its
+          protection rules before any step in the job runs. Empty (default)
+          is a verified true no-op.
+        type: string
+        required: false
+        default: ""
+      environment-deployment:
+        description: >
+          Whether binding to `environment` creates a GitHub deployment
+          record. true (default) mirrors GitHub's own default; false keeps
+          the gate but suppresses the deployment record.
+        type: boolean
+        required: false
+        default: true
+      extra-allowed-tools:
+        description: "Comma-separated tool list added to this stage's default allowed tools (union, not replacement)."
+        type: string
+        required: false
+        default: ""
+      extra-disallowed-tools:
+        description: "Comma-separated tool list added to this stage's default disallowed tools (union, not replacement)."
+        type: string
+        required: false
+        default: ""
+      allowed-tools-override:
+        description: "Replaces this stage's default allowed tools entirely when set to any value other than the sentinel default."
+        type: string
+        required: false
+        default: "__unset__"
+      disallowed-tools-override:
+        description: "Same semantics as allowed-tools-override, for the disallowed list."
+        type: string
+        required: false
+        default: "__unset__"
+    secrets:
+      claude-code-oauth-token:
+        description: "Claude OAuth token (claude setup-token) — one of the two credentials"
+        required: false
+      anthropic-api-key:
+        description: "Claude API key (Claude Console) — one of the two credentials"
+        required: false
+      pipeline-repo-token:
+        description: "Token with read access to the pipeline repository — only needed when that repository is private."
+        required: false
+      speckit-app-id:
+        description: "GitHub App ID used for pushes/PRs/comments"
+        required: true
+      speckit-app-private-key:
+        description: "GitHub App private key"
+        required: true
+
+permissions: {}
+
+jobs:
+  # Validates this PR is in scope, gates the actor, stages the untrusted
+  # request, classifies it, computes confirmation requirements, and
+  # announces intent before `act` starts (FR-023 — structurally guaranteed:
+  # `act`'s environment: binding cannot begin evaluating until this job
+  # completes). Read-only beyond posting replies — a misjudged
+  # classification cannot itself mutate anything (contracts/reusable-pr-conversation.md).
+  classify-and-announce:
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps: []
+
+  # Executes each classification's route: fold-in + implement re-dispatch
+  # (in-scope-change), new-issue/new-PR spin-offs (new-functionality,
+  # small-unrelated-change, manual-step-permission's permission-request
+  # path), or a deterministic reply (question, needs-info, push-back,
+  # no-action), plus the reply-based stop procedure. One matrix leg per
+  # RequestClassification (contracts/classification-schema.md's
+  # "multi-classification" note) so N distinct asks in one comment route
+  # and report independently.
+  act:
+    needs: classify-and-announce
+    runs-on: ubuntu-latest
+    steps: []

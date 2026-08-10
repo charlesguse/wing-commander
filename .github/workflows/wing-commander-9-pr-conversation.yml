@@ -1,0 +1,124 @@
+# Stage 10 — PR conversation (thin wrapper).
+# The first wrapper in this repository to listen to pull_request_review and
+# pull_request_review_comment (research.md D1 of specs/033-pr-conversation-commands)
+# — alongside issue_comment filtered to PR comments (the inverse of
+# wing-commander-2-clarify.yml's issue-only guard). A maintainer review,
+# review-thread comment, or issue-style PR comment on an implementation PR
+# (spec/<slug> -> default branch) is classified and routed by
+# pr-conversation.yml. Deliberately NO workflow_dispatch entry point
+# (contracts/wrapper-gate.md Non-goals) — this wrapper is purely
+# event-triggered, unlike the chained stages. Deliberately NO
+# `|| actor.id == issue.author.id` carve-out, unlike clarify/intake
+# (FR-019) — a non-maintainer, including the original requester, cannot
+# command this stage directly. All stage logic lives in pr-conversation.yml
+# (docs/adoption.md), called by local path.
+name: "Wing Commander · 9 pr conversation"
+
+on:
+  pull_request_review:
+    types: [submitted]
+  pull_request_review_comment:
+    types: [created]
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  # Default tier from vars.WING_COMMANDER_PR_CONVERSATION_MODEL
+  # (claude-sonnet-5 when unset, research.md D2 — not the haiku triage
+  # tier); the model:opus label escalates to claude-opus-5 regardless of
+  # the variable. Read from the PR's own labels (finalize.yml mirrors the
+  # lifecycle issue's full label set onto the implementation PR), not the
+  # issue, since the lifecycle issue number isn't resolved until
+  # pr-conversation.yml's own classify-and-announce job runs.
+  #
+  # This job's `if:` is the actual security gate for the whole workflow
+  # (FR-002/FR-019/FR-021, contracts/wrapper-gate.md): bot actor -> job
+  # skipped, no run at all; non-bot but not OWNER/MEMBER/COLLABORATOR ->
+  # also skipped here (the wrapper cannot post a reply), the stage's own
+  # first deterministic step handles that notice-and-stop case for
+  # requests that DO reach it as `actor-association`. Refined to exact
+  # per-event-kind field access (only one of review/comment is populated
+  # per invocation) rather than the `||`-fallback illustrative expression
+  # in contracts/wrapper-gate.md, so a null-vs-populated mismatch across
+  # event shapes can never widen the gate. The `pull_request_review` leg
+  # additionally requires a non-empty body (an empty string is `== null`
+  # under GitHub Actions' loose comparison) — a plain approve/request-changes
+  # with no text is not a maintainer request to classify (constitution II
+  # cost-consciousness: no billable classify run for nothing to classify).
+  # `pr-conversation`'s `needs: resolve-model` means it is skipped whenever
+  # this job is skipped — no separate repetition of the gate is needed.
+  resolve-model:
+    if: >-
+      (
+        (github.event_name == 'issue_comment' &&
+         github.event.issue.pull_request != null &&
+         github.event.comment.user.type != 'Bot' &&
+         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+        ||
+        (github.event_name == 'pull_request_review_comment' &&
+         github.event.comment.user.type != 'Bot' &&
+         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+        ||
+        (github.event_name == 'pull_request_review' &&
+         github.event.review.body != '' &&
+         github.event.review.user.type != 'Bot' &&
+         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association))
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      model: ${{ steps.tier.outputs.tier }}
+    steps:
+      - name: Resolve model tier
+        id: tier
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODEL_VAR: ${{ vars.WING_COMMANDER_PR_CONVERSATION_MODEL }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+        run: |
+          tier="${MODEL_VAR:-claude-sonnet-5}"
+          if gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name' | grep -qx 'model:opus'; then
+            tier="claude-opus-5"
+          fi
+          echo "tier=$tier" >> "$GITHUB_OUTPUT"
+          echo "PR conversation model for this run: $tier" >> "$GITHUB_STEP_SUMMARY"
+
+  pr-conversation:
+    needs: resolve-model
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: write
+      id-token: write
+    uses: ./.github/workflows/pr-conversation.yml
+    with:
+      pr-number: ${{ github.event.pull_request.number || github.event.issue.number }}
+      event-kind: >-
+        ${{
+          github.event_name == 'pull_request_review' && 'review'
+          || github.event_name == 'pull_request_review_comment' && 'review-comment'
+          || 'issue-comment'
+        }}
+      comment-id: ${{ github.event.comment.id || 0 }}
+      review-id: ${{ github.event.review.id || 0 }}
+      body: ${{ github.event.review.body || github.event.comment.body || '' }}
+      thread-path: ${{ github.event.comment.path || '' }}
+      thread-diff-hunk: ${{ github.event.comment.diff_hunk || '' }}
+      actor-login: ${{ github.event.review.user.login || github.event.comment.user.login }}
+      actor-association: ${{ github.event.review.author_association || github.event.comment.author_association }}
+      model: ${{ needs.resolve-model.outputs.model }}
+      confirm-categories: ${{ vars.WING_COMMANDER_PR_CONVERSATION_CONFIRM_CATEGORIES || '' }}
+      confirm-environment: ${{ vars.WING_COMMANDER_PR_CONVERSATION_CONFIRM_ENVIRONMENT || 'pr-conversation-confirm' }}
+      spec-prefix: ${{ vars.WING_COMMANDER_SPEC_PREFIX || 'spec/' }}
+      spec-draft-prefix: ${{ vars.WING_COMMANDER_SPEC_DRAFT_PREFIX || 'spec-draft/' }}
+      plan-prefix: ${{ vars.WING_COMMANDER_PLAN_PREFIX || 'plan/' }}
+      tasks-prefix: ${{ vars.WING_COMMANDER_TASKS_PREFIX || 'tasks/' }}
+    secrets:
+      claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
