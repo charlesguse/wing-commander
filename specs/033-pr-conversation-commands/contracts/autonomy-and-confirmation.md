@@ -105,28 +105,48 @@ Two independent paths, both free of any new polling mechanism
    `category: "stop"` triggers a **new** `pr-conversation.yml` run
    (event-triggered like any other comment). That run's `act` job:
    - scans the PR's comment thread (`gh api .../issues/{pr}/comments` and,
-     for review-thread stops, `.../pulls/{pr}/comments`) for the most
-     recent `IntentAnnouncement` posted by the pipeline's own bot account
-     **whose embedded run id is not this run's own `github.run_id`**,
-     extracting its embedded run URL → `run-id`. The exclusion is not
-     defensive tidiness: this same run's `classify-and-announce` job
-     announces every classification it made, including this `stop` one and
-     any sibling classification from the same comment, and `act` runs
-     after it — so without the exclusion the newest `**Run:**` comment on
-     the thread is always this run's own, and `gh run cancel` would cancel
-     the stop-handling run instead of the announced one (FR-024/SC-009);
-   - `gh run cancel <run-id>`;
+     for review-thread stops, `.../pulls/{pr}/comments`, both under the App
+     token) for the most recent `IntentAnnouncement` posted by the
+     pipeline's own bot account **whose embedded run id is not this run's
+     own `github.run_id`**, extracting its embedded run URL → `run-id`. The
+     exclusion is not defensive tidiness: this same run's
+     `classify-and-announce` job announces every classification it made,
+     including this `stop` one and any sibling classification from the same
+     comment, and `act` runs after it — so without the exclusion the newest
+     `**Run:**` comment on the thread is always this run's own, and `gh run
+     cancel` would cancel the stop-handling run instead of the announced
+     one (FR-024/SC-009);
+   - `gh run cancel <run-id>`, and the `gh run list`/`gh run cancel` calls
+     below, run under a `github.token`-based dispatch token (`DISPATCH_TOKEN:
+     ${{ github.token }}`), never the App token — the App token has no
+     Actions permission (`docs/setup.md`) and 403s on every `gh run` call,
+     which is what T062 fixed; the `act` job's own job-level `actions:
+     write` grant is what makes the dispatch token usable here, the same
+     mechanism the dispatch step (`contracts/converge-fold-in.md`) already
+     relies on. The App token remains in use for `gh pr comment`/`gh api`,
+     which need the bot identity;
    - if that announcement's `planned-action` was an implement re-trigger
      (`contracts/converge-fold-in.md`), additionally `gh run cancel` the
      dispatched `wing-commander-5-implement.yml` run, found via `gh run
      list --workflow wing-commander-5-implement.yml --branch spec/<slug>
      --status in_progress --json databaseId --jq '.[0].databaseId'`;
    - if `gh run cancel` reports the target run already completed (GitHub
-     returns a 409/"already completed" for this), or no in-progress run is
-     found at all, replies with `StopRequest.outcome == "already-completed"`
-     and a summary of what that prior run's own final reply already
-     reported (data-model.md) — never implying the action was prevented
-     when it was not (FR-024's second clause, verbatim).
+     returns a 409/"already completed"/"cannot cancel" style message for
+     this), replies with `StopRequest.outcome == "already-completed"` and a
+     summary of what that prior run's own final reply already reported
+     (data-model.md) — never implying the action was prevented when it was
+     not (FR-024's second clause, verbatim); if `gh run cancel` fails for
+     any OTHER reason (a permission/API error, a network failure — anything
+     that is not a confirmed already-completed response), replies with
+     `StopRequest.outcome == "cancel-failed"` instead, stating plainly that
+     the cancellation call failed and the run may still be in progress.
+     Collapsing this case into `already-completed` (T062's original defect:
+     a 403 from the wrong token was reported as "the announced run had
+     already completed") is exactly the failure FR-024's second clause
+     forbids — the reply must never claim an outcome the step did not
+     actually observe. If no in-progress run is found at all (the thread
+     scan above turns up nothing), the reply is instead
+     `StopRequest.outcome == "not-found"` (data-model.md).
 
 Both paths are themselves subject to the same authorized-actor gate as any
 other request (spec.md edge case: "a stop request from a non-authorized

@@ -26,7 +26,7 @@ and 031-stage-environment-binding used for their own contract additions).
 | Stage | Internal step (`step-label`) | Default allowed | Default disallowed |
 |---|---|---|---|
 | pr-conversation | `pr-conversation.classify` | `Read,Grep,Glob,Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(cat:*),Bash(gh pr view:*),Bash(gh issue view:*),Bash(gh search issues:*)` (deliberately read-only — mirrors `watchdog.diagnose`) | `Write,Edit,WebSearch,WebFetch,Bash(git push:*),Bash(git commit:*),ScheduleWakeup,Monitor,SendMessage` |
-| pr-conversation | `pr-conversation.act` | `Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(git checkout:*),Bash(git switch:*),Bash(git branch:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue create:*),Bash(gh issue edit:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(gh pr create:*),Bash(gh pr edit:*),Bash(gh api:*),Bash(gh run list:*),Bash(gh run cancel:*),Bash(gh workflow run:*),Bash(gh label create:*),Bash(gh search issues:*),Bash(gh search prs:*)` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
+| pr-conversation | `pr-conversation.act` | `Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(git checkout:*),Bash(git switch:*),Bash(git branch:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue create:*),Bash(gh issue edit:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(gh pr create:*),Bash(gh pr edit:*),Bash(gh api:*),Bash(gh label create:*),Bash(gh search issues:*),Bash(gh search prs:*)` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
 
 The classify step is scoped strictly read-only (like `watchdog.diagnose`)
 so a misjudged classification cannot itself mutate anything before the
@@ -34,4 +34,10 @@ intent-announcement is posted (FR-023's ordering guarantee is structural,
 not merely procedural). `pr-conversation.act`'s broad `gh` allowlist
 reflects the breadth of FR-003's eight routes; each route is still
 individually deterministic-gated (data-model.md), not left to the agent's
-own tool discretion.
+own tool discretion. `gh run cancel`, `gh run list`, and `gh workflow run`
+are deliberately absent (T065): the agent step's `GH_TOKEN` is the App
+token, which per `docs/setup.md` has no Actions permission, so any of the
+three would 403 with no way for the agent's prompt to know that — every
+Actions interaction this stage performs is owned by deterministic steps
+(the dispatch and stop-procedure steps), each using a `github.token`-based
+dispatch token instead (T062/T063).

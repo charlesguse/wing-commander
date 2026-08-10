@@ -1179,7 +1179,7 @@ jobs:
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
         with:
-          default-allowed-tools: "Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(git checkout:*),Bash(git switch:*),Bash(git branch:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue create:*),Bash(gh issue edit:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(gh pr create:*),Bash(gh pr edit:*),Bash(gh api:*),Bash(gh run list:*),Bash(gh run cancel:*),Bash(gh workflow run:*),Bash(gh label create:*),Bash(gh search issues:*),Bash(gh search prs:*)"
+          default-allowed-tools: "Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(git checkout:*),Bash(git switch:*),Bash(git branch:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue create:*),Bash(gh issue edit:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(gh pr create:*),Bash(gh pr edit:*),Bash(gh api:*),Bash(gh label create:*),Bash(gh search issues:*),Bash(gh search prs:*)"
           default-disallowed-tools: "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
           extra-allowed-tools: ${{ inputs.extra-allowed-tools }}
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
@@ -1334,11 +1334,19 @@ jobs:
           GH_TOKEN="$DISPATCH_TOKEN" gh workflow run wing-commander-5-implement.yml \
             -R "$GITHUB_REPOSITORY" -f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f iteration="$next"
 
+          # T063: this lookup ran under the App token (no Actions
+          # permission — docs/setup.md) and, under `set -euo pipefail`,
+          # its 403 aborted the step AFTER the dispatch above had already
+          # fired and BEFORE the `gh pr comment` below — so the reply never
+          # posted. Use the dispatch token (like the `gh workflow run` call
+          # above) and make the lookup non-fatal so any future failure
+          # degrades to the "see the workflow's Actions tab" fallback reply
+          # instead of suppressing the reply entirely.
           run_url=""
           for _ in 1 2 3 4 5 6; do
             sleep 5
-            run_url=$(gh run list -R "$GITHUB_REPOSITORY" --workflow wing-commander-5-implement.yml \
-              --created ">=$start_ts" --limit 1 --json url --jq '.[0].url // empty')
+            run_url=$(GH_TOKEN="$DISPATCH_TOKEN" gh run list -R "$GITHUB_REPOSITORY" --workflow wing-commander-5-implement.yml \
+              --created ">=$start_ts" --limit 1 --json url --jq '.[0].url // empty' 2>/dev/null) || run_url=""
             [ -n "$run_url" ] && break
           done
 
@@ -1453,6 +1461,7 @@ jobs:
         if: steps.relay-gate.outputs.proceed == 'true' && matrix.category == 'stop'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          DISPATCH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ inputs.pr-number }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
           SLUG: ${{ needs.classify-and-announce.outputs.slug }}
@@ -1483,21 +1492,42 @@ jobs:
           fi
           run_id="${run_url##*/runs/}"
 
+          # T062: the App token (default GH_TOKEN above) has no Actions
+          # permission (docs/setup.md) and 403s on every `gh run` call below
+          # — route these three through the job's own github.token, which
+          # works because the `act` job already grants itself `actions:
+          # write` (same pattern "Dispatch implement and reply" uses). The
+          # App token stays the default for `gh pr comment`/`gh api`
+          # further down, which need the bot identity.
           outcome="cancelled"
-          if ! gh run cancel "$run_id" -R "$GITHUB_REPOSITORY" 2>"$RUNNER_TEMP/cancel-err.txt"; then
-            outcome="already-completed"
+          if ! GH_TOKEN="$DISPATCH_TOKEN" gh run cancel "$run_id" -R "$GITHUB_REPOSITORY" 2>"$RUNNER_TEMP/cancel-err.txt"; then
+            # A genuine already-completed run reports itself via HTTP 409 /
+            # a "cannot cancel" style message (contracts/autonomy-and-
+            # confirmation.md). Anything else — including a 403 from a
+            # misconfigured token — is NOT an already-completed outcome and
+            # must not be reported as one (T062/FR-024/SC-009): the targeted
+            # run may still be running.
+            if grep -qiE '409|already completed|cannot cancel' "$RUNNER_TEMP/cancel-err.txt" 2>/dev/null; then
+              outcome="already-completed"
+            else
+              outcome="cancel-failed"
+            fi
           fi
 
-          impl_run_id=$(gh run list -R "$GITHUB_REPOSITORY" --workflow wing-commander-5-implement.yml \
-            --branch "${SPEC_PREFIX}${SLUG}" --status in_progress --json databaseId --jq '.[0].databaseId // empty')
+          impl_run_id=$(GH_TOKEN="$DISPATCH_TOKEN" gh run list -R "$GITHUB_REPOSITORY" --workflow wing-commander-5-implement.yml \
+            --branch "${SPEC_PREFIX}${SLUG}" --status in_progress --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null) || impl_run_id=""
           if [ -n "$impl_run_id" ]; then
-            gh run cancel "$impl_run_id" -R "$GITHUB_REPOSITORY" 2>/dev/null || true
+            GH_TOKEN="$DISPATCH_TOKEN" gh run cancel "$impl_run_id" -R "$GITHUB_REPOSITORY" 2>/dev/null || true
           fi
 
           if [ "$outcome" = "cancelled" ]; then
             extra=""
             [ -n "$impl_run_id" ] && extra=" and the dispatched implement run"
             gh pr comment "$PR_NUMBER" --body "Stopped: cancelled the announced run ($run_url)$extra."
+          elif [ "$outcome" = "cancel-failed" ]; then
+            # T062: never claim a completion we did not observe — this is a
+            # failed cancellation call, not a confirmed already-completed.
+            gh pr comment "$PR_NUMBER" --body "Could not cancel the announced run ($run_url) — the cancellation call failed for a reason other than the run finishing on its own, so it may still be running. Check $run_url directly, or cancel it from there."
           else
             # T048/FR-024: include a summary of what the prior run's own
             # final reply already reported, not just a pointer to it — the

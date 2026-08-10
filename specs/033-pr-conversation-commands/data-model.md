@@ -74,7 +74,7 @@ anything... which is also what makes the run cancellable."
 | Field | Type | Notes |
 |---|---|---|
 | `target-run-url` | string \| null | Extracted by scanning the PR thread for the most recent bot-posted `IntentAnnouncement` **other than one this run posted itself** (D10; the stop run announces its own `stop` classification before `act` starts, so its own announcements are always the newest and must be skipped); `null` if none found (e.g. the prior action already finished and its announcement is stale/unmatched). |
-| `outcome` | enum `cancelled` \| `already-completed` \| `not-found` | Deterministic result of `gh run cancel` (and, for `in-scope-change`, also cancelling the dispatched `wing-commander-5-implement.yml` run) — reported back on the PR per FR-024. |
+| `outcome` | enum `cancelled` \| `already-completed` \| `cancel-failed` \| `not-found` | Deterministic result of `gh run cancel` (and, for `in-scope-change`, also cancelling the dispatched `wing-commander-5-implement.yml` run) — reported back on the PR per FR-024. `cancel-failed` (added by T062) covers any `gh run cancel` failure that is NOT a confirmed already-completed (409/"already completed"/"cannot cancel") response — e.g. a permission or API error — so the reply never claims a completion outcome ("already-completed") that was not actually observed. |
 
 ### AutonomyConfiguration (trusted, wrapper-resolved — never derived from PR content)
 
