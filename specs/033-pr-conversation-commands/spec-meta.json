@@ -2,7 +2,7 @@
   "issue": 177,
   "spec_dir": "specs/033-pr-conversation-commands",
   "feature_num": "033",
-  "stage": "stalled",
-  "iteration": 0,
+  "stage": "implement",
+  "iteration": 1,
   "spec_branch": "spec/033-pr-conversation-commands"
 }
