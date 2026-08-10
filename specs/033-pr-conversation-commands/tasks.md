@@ -604,7 +604,7 @@ static validation, and the full quickstart walkthrough.
   CI run available in this environment — a maintainer should confirm
   Gate 7 passes live (`python3 .github/scripts/verify-gate-7.py` and the
   real `lint-workflows.yml` run) before merging.
-- [ ] T043 Walk `quickstart.md`'s full scenario set (1–15), its edge case
+- [X] T043 Walk `quickstart.md`'s full scenario set (1–15), its edge case
   checks (bot comment, concurrent requests on the same spec, relayed
   request with risk, pure acknowledgement), and its regression check
   end-to-end against the finished workflow files, recording in the PR body
@@ -618,6 +618,27 @@ static validation, and the full quickstart walkthrough.
   PR is opened, a maintainer should exercise at least scenarios 1–2 (the
   MVP fold-in/re-dispatch loop) and 9–12 (propose-and-confirm/stop) live
   against it before merging, given T042's Gate 7 finding above.
+
+  **Status (iteration 6)**: performed as a desk-check of all 24 items
+  (static validation 1–4, scenarios 1–15, four edge cases, regression)
+  against the shipped `pr-conversation.yml` and
+  `wing-commander-9-pr-conversation.yml`; recorded in PR #181's body as
+  T043 asks. **Zero items could be exercised live, and none can be until
+  this PR merges** — not a scheduling choice: the wrapper triggers only on
+  `issue_comment`/`pull_request_review`/`pull_request_review_comment`, and
+  GitHub dispatches those events only from workflow files on the DEFAULT
+  branch. `wing-commander-9-pr-conversation.yml` does not exist on `main`,
+  so commenting on PR #181 itself produces no run. Iteration 1's plan
+  ("once this feature's own final PR is opened, exercise scenarios live")
+  was therefore not achievable at PR time; the live pass belongs to the
+  first implementation PR raised AFTER merge. 21 of 24 items check out
+  against the shipped files; the three that do not are recorded as T058,
+  T059, and a doc note (quickstart's static-validation item 1 names
+  `actionlint`/`yamllint`, which no workflow in this repository actually
+  invokes — `lint-workflows.yml` implements the equivalent YAML-parse and
+  `bash -n` checking itself. Boilerplate inherited by ~45 spec files, not
+  introduced here, so left alone rather than corrected in this feature's
+  copy alone).
 
 ---
 
@@ -1152,6 +1173,43 @@ static validation, and the full quickstart walkthrough.
   lone `.`, empty capability, and a genuine miss — plus a defect witness
   confirming the pre-fix `test($cap; "i")` really did abort the step under
   `set -e` ("Regex failure: end pattern with unmatched parenthesis").
+- [ ] T058 The `small-unrelated-change` size backstop re-routes to
+  `new-functionality`/`new-spec` (T024's deterministic "not tiny after
+  all" guard, "Resolve effective category and route"), but the following
+  "Stage drafted content for the act agent" step writes
+  `matrix['drafted-content']` **unmodified** — still the
+  small-unrelated-change shape (`pr-title`, `pr-body`, `file-changes`) —
+  to `act-drafted-content.json`. The act prompt for the effective category
+  it was just given then tells the agent to run `gh issue create` "using
+  the drafted `issue-title`/`issue-body`", two fields the staged file does
+  not contain. Nothing deterministic reshapes or validates the payload
+  across the re-route, so the outcome rides entirely on the agent
+  improvising an issue title/body from a diff — exactly the "drafted
+  content is validated deterministically, not trusted blindly" principle
+  `contracts/classification-schema.md` states. Either derive the
+  `issue-title`/`issue-body` deterministically from the drafted
+  `pr-title`/`pr-body` when re-routing (they are the same intent, one
+  level of abstraction apart), or make the prompt for this specific
+  re-route case name the fields that actually exist. Found by T043's
+  desk-check (quickstart scenario 5, and the real-world consequence of
+  static-validation item 4). FR-007/SC-004 (partial).
+- [ ] T059 `quickstart.md`'s "pure acknowledgement" edge case requires
+  that a "thanks, looks good" comment (`category: "no-action"`) draw
+  "zero mutation, zero reply beyond (at most) the classification step's
+  own internal decision — no PR reply is required," citing FR-014's
+  scoping to *actionable* requests. The shipped "Post intent
+  announcements" step has no category filter and the classify schema
+  requires `minItems: 1`, so a pure acknowledgement always draws a
+  `> [!IMPORTANT] PR conversation stage: no-action` banner with
+  `**Planned action:** no action` on the PR. Everything downstream is
+  correct (no-action reaches the route step's default case, mutates
+  nothing, and is excluded from the reply step) — the contradiction is
+  only the announcement itself. Note the unfiltered loop is load-bearing
+  elsewhere: `contracts/autonomy-and-confirmation.md` relies on the stop
+  category being announced too. A human decides which side gives:
+  exclude `no-action` (only) from the announcement loop, or amend the
+  quickstart edge case to expect the banner. Found by T043's desk-check.
+  FR-017 (contradicts quickstart).
 
 ---
 
