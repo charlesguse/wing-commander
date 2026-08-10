@@ -792,7 +792,7 @@ static validation, and the full quickstart walkthrough.
 
 ## Phase 13: Convergence
 
-- [ ] T050 CRITICAL (Constitution V, contradicts): the
+- [X] T050 CRITICAL (Constitution V, contradicts): the
   "Check for relay confirmation" step (`classify-and-announce` job,
   `id: relay-resume`) in `.github/workflows/pr-conversation.yml` fetches
   both issue and review-thread PR comments to search for the
@@ -820,7 +820,18 @@ static validation, and the full quickstart walkthrough.
   fetches in the relay-resume step, so only the pipeline's own
   previously-posted risk-warning comment can seed a resumed classification.
   FR-022/Constitution V (contradicts).
-- [ ] T051 The permission-request dedup search in the "Resolve effective
+
+  **Status (iteration 4, desk-checked)**: added `BOT_LOGIN:
+  ${{ steps.ctx.outputs.bot-slug }}` to the relay-resume step's `env:` and
+  the identical `select(.user.login == env.BOT_LOGIN)` filter (mirroring
+  the Stop procedure's own filter verbatim) to both the issue-comment and
+  review-comment `--jq` fetches. A forged marker comment from a
+  non-bot account is now excluded before the actor-login match runs, so
+  only the pipeline's own previously-posted risk-warning comment can seed
+  `resumed=true`. Not run live in this environment; verified by
+  hand-tracing the filter against the Stop procedure's already-proven
+  equivalent.
+- [X] T051 The permission-request dedup search in the "Resolve effective
   category and route" step (`act` job) uses
   `gh search issues --repo "$GITHUB_REPOSITORY" --label permission-request
   --state all` (research.md D11, contracts/spinoff-routing.md) to look
@@ -841,7 +852,19 @@ static validation, and the full quickstart walkthrough.
   `pr-conversation.act` tool allowlist (`Bash(gh search issues:*)`) to
   also allow `Bash(gh search prs:*)`, to match. FR-012/US4 Acceptance
   Scenario 4 (missing).
-- [ ] T052 The "Relayed-request risk-confirmation gate" step (`act` job)
+
+  **Status (iteration 4, desk-checked)**: switched the dedup search to
+  `gh search prs --repo "$GITHUB_REPOSITORY" --label permission-request
+  --state all`; added `Bash(gh search prs:*)` alongside the existing
+  `Bash(gh search issues:*)` in `pr-conversation.act`'s tool allowlist in
+  both `pr-conversation.yml` and its two contract-doc mirrors
+  (`contracts/reusable-pr-conversation.md`,
+  `specs/010-reusable-pipeline/contracts/stage-interfaces.md`); corrected
+  `contracts/spinoff-routing.md`'s D11 description and research.md's D11
+  decision/rationale prose to match (`gh search prs`, scoped to pull
+  requests since every permission-request artifact this stage creates is
+  a PR). Not run live in this environment.
+- [X] T052 The "Relayed-request risk-confirmation gate" step (`act` job)
   treats the relaying maintainer as having confirmed a risky relayed
   request whenever ANY comment they have ever posted on the PR — on
   either surface — contains the word "confirm", with no lower bound
@@ -866,6 +889,22 @@ static validation, and the full quickstart walkthrough.
   relaying maintainer's confirming reply, matching the stop procedure's
   own dual-surface scan exactly. Landed in the same edit as T047 since
   both touch the same step.
+
+  **Status (iteration 4, desk-checked)**: added the time-anchor this task
+  actually calls for. The gate now fetches `created_at` alongside
+  `login`/`body` for every comment, locates THIS classification's own
+  bot-posted (`steps.ctx.outputs.bot-slug`-filtered) risk-warning comment
+  by decoding its embedded `wing-commander:pr-conversation-relay` marker
+  and matching both `actor-login` and full classification equality
+  (`jq`'s structural `==`, order-independent) against the current
+  `matrix`, and takes that comment's own `created_at` as the anchor. The
+  confirmation search now additionally requires `created_at > anchor` and
+  is skipped entirely when no matching anchor comment exists yet (the
+  first-detection run). An unrelated past "confirm" remark, or a
+  different pending classification's confirmation from the same actor,
+  can no longer satisfy the gate. Not run live in this environment;
+  verified by hand-tracing the jq pipeline against the marker format T047
+  already embeds.
 
 ---
 

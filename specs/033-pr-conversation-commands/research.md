@@ -347,16 +347,18 @@ posted, so a second copy would be redundant state to keep in sync.
 `permission-request` label (created on first use, same `gh label create
 --force` idiom `intake.yml` already uses for its own labels). Before
 opening a new one, the stage searches
-`gh search issues --label permission-request --state all` (mirroring
-`watchdog.yml`'s existing fingerprint/dedup search pattern) for a prior
-discussion whose title/body plausibly names the same capability; the
-classify step judges the match with the conservative bias spec.md's
-Assumptions already call for ("errs toward explaining the situation rather
-than silently re-requesting or silently doing nothing" — edge case).
+`gh search prs --label permission-request --state all` (mirroring
+`watchdog.yml`'s existing fingerprint/dedup search pattern, scoped to
+pull requests since every permission-request artifact this stage creates
+is a PR, never an issue) for a prior discussion whose title/body
+plausibly names the same capability; the classify step judges the match
+with the conservative bias spec.md's Assumptions already call for ("errs
+toward explaining the situation rather than silently re-requesting or
+silently doing nothing" — edge case).
 
-**Rationale**: `watchdog.yml` already establishes a "label + `gh search
-issues` fingerprint dedup" pattern in this exact codebase for a
-structurally identical problem (has this already been reported/decided?).
+**Rationale**: `watchdog.yml` already establishes a "label + `gh search`
+fingerprint dedup" pattern in this exact codebase for a structurally
+identical problem (has this already been reported/decided?).
 Reusing it needs no new tool, no new API surface, and no new mechanism
 class.
 

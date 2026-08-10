@@ -430,12 +430,13 @@ jobs:
           PR_NUMBER: ${{ inputs.pr-number }}
           ACTOR_LOGIN: ${{ inputs.actor-login }}
           BODY: ${{ inputs.body }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}
         run: |
           set -euo pipefail
           resumed=false
           if printf '%s' "$BODY" | grep -qiE 'confirm'; then
-            issue_comments=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq '[.[] | {created_at, body}]')
-            review_comments=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments" --paginate --jq '[.[] | {created_at, body}]')
+            issue_comments=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq '[.[] | select(.user.login == env.BOT_LOGIN) | {created_at, body}]')
+            review_comments=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments" --paginate --jq '[.[] | select(.user.login == env.BOT_LOGIN) | {created_at, body}]')
             all=$(jq -n --argjson a "$issue_comments" --argjson b "$review_comments" '$a + $b | sort_by(.created_at) | reverse')
             marker=$(printf '%s' "$all" | jq -r '[.[] | select(.body | contains("wing-commander:pr-conversation-relay"))] | .[0].body // empty')
             if [ -n "$marker" ]; then
@@ -862,7 +863,14 @@ jobs:
       # the risk) proceeds. Confirmation is scanned across BOTH PR comment
       # surfaces (issue-style and review-thread), matching the stop
       # procedure's own dual-surface scan (T030) — FR-018 treats all PR
-      # conversation surfaces as valid request/reply input.
+      # conversation surfaces as valid request/reply input. T052: the scan
+      # is anchored on THIS classification's own bot-posted risk-warning
+      # comment (matched by actor-login and classification equality against
+      # its embedded marker, same as T047's relay-resume) — only a
+      # confirming reply posted strictly after that comment's own
+      # created_at counts, so an unrelated past "confirm" remark, or a
+      # different pending classification's confirmation, can never satisfy
+      # this gate.
       - name: Relayed-request risk-confirmation gate
         id: relay-gate
         env:
@@ -872,6 +880,7 @@ jobs:
           RISK_NOTE: ${{ matrix.relayed['risk-note'] }}
           ACTOR_LOGIN: ${{ inputs.actor-login }}
           CLASSIFICATION_JSON: ${{ toJson(matrix) }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}
         run: |
           set -euo pipefail
           if [ "$RISK" != "true" ]; then
@@ -879,11 +888,22 @@ jobs:
             exit 0
           fi
           confirmed=false
-          issue_comments=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq '[.[] | {login: .user.login, body: .body}]')
-          review_comments=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments" --paginate --jq '[.[] | {login: .user.login, body: .body}]')
-          comments=$(jq -n --argjson a "$issue_comments" --argjson b "$review_comments" '$a + $b')
-          if printf '%s' "$comments" | jq -e --arg login "$ACTOR_LOGIN" \
-            '[.[] | select(.login == $login) | select(.body | test("(?i)confirm"))] | length > 0' >/dev/null 2>&1; then
+          issue_comments=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq '[.[] | {login: .user.login, body: .body, created_at: .created_at}]')
+          review_comments=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments" --paginate --jq '[.[] | {login: .user.login, body: .body, created_at: .created_at}]')
+          comments=$(jq -n --argjson a "$issue_comments" --argjson b "$review_comments" '$a + $b | sort_by(.created_at)')
+
+          anchor=$(printf '%s' "$comments" | jq -r --arg bot "$BOT_LOGIN" --arg login "$ACTOR_LOGIN" --argjson cls "$CLASSIFICATION_JSON" '
+            [ .[] | select(.login == $bot) | select(.body | contains("wing-commander:pr-conversation-relay"))
+              | . as $c
+              | ($c.body | split("\n") | map(select(test("^\\{.*\\}$"))) | .[0] // empty) as $line
+              | select($line != "")
+              | ($line | fromjson?) as $p
+              | select($p["actor-login"] == $login and $p.classification == $cls)
+              | $c.created_at
+            ] | sort | last // empty')
+
+          if [ -n "$anchor" ] && printf '%s' "$comments" | jq -e --arg login "$ACTOR_LOGIN" --arg anchor "$anchor" \
+            '[.[] | select(.login == $login) | select(.created_at > $anchor) | select(.body | test("(?i)confirm"))] | length > 0' >/dev/null 2>&1; then
             confirmed=true
           fi
           if [ "$confirmed" = "true" ]; then
@@ -972,7 +992,7 @@ jobs:
             manual-step-permission)
               if printf '%s' "$DRAFTED_CONTENT" | jq -e 'has("needs-permission")' >/dev/null 2>&1; then
                 capability=$(printf '%s' "$DRAFTED_CONTENT" | jq -r '.["needs-permission"]')
-                results=$(gh search issues --repo "$GITHUB_REPOSITORY" --label permission-request --state all --json number,title,url 2>/dev/null || echo '[]')
+                results=$(gh search prs --repo "$GITHUB_REPOSITORY" --label permission-request --state all --json number,title,url 2>/dev/null || echo '[]')
                 permission_match_url=$(printf '%s' "$results" | jq -r --arg cap "$capability" '[.[] | select(.title | test($cap; "i"))] | .[0].url // empty')
                 if [ -n "$permission_match_url" ]; then
                   permission_match="confident"
@@ -1023,7 +1043,7 @@ jobs:
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
         with:
-          default-allowed-tools: "Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue create:*),Bash(gh issue edit:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(gh pr create:*),Bash(gh pr edit:*),Bash(gh api:*),Bash(gh run list:*),Bash(gh run cancel:*),Bash(gh workflow run:*),Bash(gh label create:*),Bash(gh search issues:*)"
+          default-allowed-tools: "Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue create:*),Bash(gh issue edit:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(gh pr create:*),Bash(gh pr edit:*),Bash(gh api:*),Bash(gh run list:*),Bash(gh run cancel:*),Bash(gh workflow run:*),Bash(gh label create:*),Bash(gh search issues:*),Bash(gh search prs:*)"
           default-disallowed-tools: "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
           extra-allowed-tools: ${{ inputs.extra-allowed-tools }}
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}

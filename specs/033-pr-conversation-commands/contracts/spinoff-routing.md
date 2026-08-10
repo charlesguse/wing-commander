@@ -63,7 +63,7 @@ Three sub-outcomes, chosen by `drafted-content`'s shape
   reported on the PR with the reason (FR-011's second clause). Not a
   spin-off artifact.
 - **Needs a permission the stage lacks** (`{needs-permission, pr-title, pr-body}`):
-  first, search `gh search issues --label permission-request --state all`
+  first, search `gh search prs --label permission-request --state all`
   for a `WithheldPermissionConversation` plausibly matching
   `needs-permission` (data-model.md). If `match-confidence == "confident"`:
   reply linking that prior conversation instead of opening anything new —
