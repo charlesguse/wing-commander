@@ -1462,6 +1462,36 @@ static validation, and the full quickstart walkthrough.
   indistinguishable from "there was no evidence to collect" — the watchdog
   may have been silently collecting nothing from artifacts/annotations
   rather than reporting a permission problem.
+- [ ] T066 Gate 1 ("every workflow is registered under its declared name")
+  reports a FALSE POSITIVE for any workflow file that does not yet exist
+  on the default branch, and this feature is the first to expose it. On a
+  `workflow_dispatch` run of `lint-workflows.yml` from this branch, Gate 1
+  failed with "`.github/workflows/pr-conversation.yml` registered as
+  '.github/workflows/pr-conversation.yml' but declares name: 'reusable ·
+  pr-conversation'... this file is almost certainly invalid and never
+  runs." It is not invalid. GitHub created that registry entry on
+  2026-08-09T20:05 (local), when an earlier and genuinely-unparseable
+  version of the file was first pushed to this branch, and it never
+  refreshes the name for a file that is not on the default branch — so the
+  stale path-name survives every subsequent fix. Proven by probe: adding a
+  temporary `workflow_dispatch:` trigger to `pr-conversation.yml` on a
+  throwaway branch and POSTing to the dispatches endpoint returned **204**
+  (the file parses), and the resulting run displayed the declared name
+  `reusable · pr-conversation`, while the registry entry stayed
+  path-named. Note the sibling wrapper `wing-commander-9-pr-conversation
+  .yml`, also new on this branch, is not registered at all — branch-only
+  files normally have no entry, which is why only the one with a stale
+  entry from a broken push misfires. Fix Gate 1 to distinguish "registered
+  under its path" from "not on the default branch yet": e.g. skip files
+  absent from the default branch (the gate's own trigger already restricts
+  it to `push: main`/schedule, but a `workflow_dispatch` run from a
+  feature branch reaches it), or state the staleness caveat in the error
+  text so the next person does not spend a probe cycle re-deriving it. Also
+  record the probe technique itself: `specs/…`-level memory says the
+  dispatch trick cannot extract a parser error from a `workflow_call`-only
+  file, and the workaround is exactly the temporary-trigger-on-a-throwaway-
+  branch used here. Found while verifying T064's own CI run.
+  Constitution IV (partial).
 - [X] T065 `pr-conversation.act`'s default allowed-tools list grants the
   agent `Bash(gh run cancel:*)`, `Bash(gh run list:*)` and `Bash(gh
   workflow run:*)`, but the agent step's `GH_TOKEN` is the App token,
