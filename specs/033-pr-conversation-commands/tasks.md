@@ -677,6 +677,73 @@ static validation, and the full quickstart walkthrough.
 
 ---
 
+## Phase 12: Convergence
+
+- [ ] T046 In `.github/workflows/pr-conversation.yml`, the "Dispatch
+  implement and reply (fold-in routes)" step only fires
+  `if: steps.act-result.outputs.mutated == 'true' && (... fold-in
+  categories ...)`, and the sibling "Report mutation outcome" step
+  unconditionally excludes those same fold-in categories via
+  `!(...)`, regardless of `mutated`'s value. For an `in-scope-change` or
+  `new-functionality`/`current-spec` classification whose act agent
+  returns `mutated: false` (a valid schema value — e.g. it could not
+  complete the `tasks.md` append/commit/push), or whose agent step does
+  not reach a successful terminal result at all, **neither step fires**
+  and no reply is ever posted on the PR for that classification — every
+  other category correctly replies whenever `mutated != ''`, but the
+  fold-in path's exclusion is unconditional. Add a reply path (or relax
+  "Report mutation outcome"'s exclusion to only skip the `mutated ==
+  'true'` fold-in case, which "Dispatch implement and reply" already
+  covers) so a fold-in classification always gets a PR reply per
+  FR-014/SC-005. FR-014/SC-005 (missing).
+- [ ] T047 FR-022 requires that once a relaying maintainer confirms a
+  risky relayed request, the stage acts on the original request "as if
+  the maintainer had made it themselves." The "Relayed-request
+  risk-confirmation gate" step in `.github/workflows/pr-conversation.yml`
+  only unblocks the current leg (`proceed=true`) when a confirmation is
+  found on the *same run* that already holds the original
+  classification's `drafted-content` in `matrix`; when the confirmation
+  instead arrives as a later, separate comment (the documented flow —
+  "a later run... proceeds"), that new comment triggers its own
+  `classify-and-announce` run which classifies only the confirmation
+  reply's own short text (e.g. "I confirm"), not the original relayed
+  request. No mechanism persists the original classification's category
+  or `drafted-content` anywhere retrievable by that later run, so a
+  confirmed relayed request is never actually re-executed — the original
+  action silently never happens. Build a resume mechanism (e.g.
+  persisting the original classification's `drafted-content` as
+  machine-parseable, non-executed data inside the risk-warning comment
+  itself, mirroring how the stop mechanism parses its own run-url back
+  out of a posted comment per research.md D10, so a later confirmation
+  run can retrieve and act on it) or an equivalent design. FR-022
+  (missing).
+- [ ] T048 `contracts/autonomy-and-confirmation.md`'s reply-based-stop
+  clause requires that when a stop request finds its target run already
+  completed, the stage's reply include "a summary of what that prior
+  run's own final reply already reported" (also FR-024's second clause).
+  The "Stop procedure" step's already-completed branch in
+  `.github/workflows/pr-conversation.yml` instead posts only "See that
+  run's own reply for what it already did" — a pointer, not a summary —
+  requiring the maintainer to scroll and find the prior reply themselves.
+  Fetch the prior run's own final PR reply (the comment posted by the
+  run whose announcement embedded `run_url`) and include its content (or
+  a summary of it) in the already-completed reply. FR-024 (partial).
+- [ ] T049 The "Relayed-request risk-confirmation gate" step in
+  `.github/workflows/pr-conversation.yml` scans only issue-style PR
+  comments (`repos/.../issues/{pr}/comments`) for the relaying
+  maintainer's confirmation reply. The "Stop procedure" step (T030) scans
+  both issue comments and review-thread comments
+  (`repos/.../pulls/{pr}/comments`) for its own bot-announcement lookup,
+  since FR-018 treats all three PR conversation surfaces (issue-style
+  comments, review bodies, inline review-thread comments) as valid
+  request input. A relaying maintainer who confirms via an inline review
+  reply is currently invisible to the risk-confirmation gate, so their
+  confirmation is never detected. Extend the risk-confirmation gate's
+  scan to also check `repos/.../pulls/{pr}/comments`, matching the stop
+  procedure's own dual-surface scan. FR-018/FR-022 (partial).
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
