@@ -1135,7 +1135,7 @@ jobs:
             cat "$RUNNER_TEMP/act-summary.txt"
             echo ""
             if [ -n "$run_url" ]; then
-              echo "Dispatched implement/converge iteration $next: $run_url"
+              echo "Dispatched implement/converge iteration $next: $run_url — note this re-dispatched iteration may hit implement.yml's own iteration cap; if so, that run's own reply on the lifecycle issue is the authoritative outcome."
             else
               echo "Dispatched implement/converge iteration $next — note this re-dispatched iteration may hit implement.yml's own iteration cap; see the workflow's Actions tab for the new run."
             fi

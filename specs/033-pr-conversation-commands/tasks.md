@@ -631,7 +631,7 @@ static validation, and the full quickstart walkthrough.
   independence (verified by T032) — whichever a human decides is
   correct; this is a design call, not a mechanical fix. CRITICAL
   (Constitution VII, contradicts).
-- [ ] T045 In `.github/workflows/pr-conversation.yml`'s "Dispatch
+- [X] T045 In `.github/workflows/pr-conversation.yml`'s "Dispatch
   implement and reply (fold-in routes)" step, the PR reply only mentions
   the possibility of hitting `implement.yml`'s iteration cap inside the
   `run_url`-empty fallback branch (the run-link poll timing out) — when
