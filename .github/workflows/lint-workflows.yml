@@ -408,7 +408,7 @@ jobs:
       - name: Gate 7 — every job of every published stage carries the environment binding
         run: |
           python3 - <<'PYEOF'
-          import glob, sys, yaml
+          import glob, os, sys, yaml
 
           # sub-key -> the workflow_call input it must forward.
           BINDINGS = {"name": "environment", "deployment": "environment-deployment"}
@@ -417,6 +417,30 @@ jobs:
           # unaffected, and deployment true mirrors GitHub's own default.
           DECLARED = {"environment": ("string", ""),
                       "environment-deployment": ("boolean", True)}
+
+          # (workflow filename, job name) -> reason. Constitution VII: "a
+          # stage that must deviate carries a registered, machine-checked
+          # exception naming the reason — never an undeclared one, and never
+          # a code comment alone." A registered job still MUST carry an
+          # `environment:` mapping block (the exception is about what it
+          # binds to, not whether the job gates at all) — only the
+          # verbatim-forwarding check below is skipped for it, and only for
+          # the exact (file, job) pair named here.
+          EXCEPTIONS = {
+              ("pr-conversation.yml", "act"): (
+                  "FR-020 gives each matrix leg its own per-classification "
+                  "confirm gate (matrix['confirm-environment']), computed by "
+                  "classify-and-announce — not the stage-wide environment "
+                  "input. Splitting confirm-gating into a prerequisite job "
+                  "would force every leg to wait on every sibling leg's "
+                  "approval, breaking that per-leg independence (verified by "
+                  "specs/033-pr-conversation-commands/tasks.md T032). Only "
+                  "one environment: block exists per job, so this job cannot "
+                  "also forward inputs.environment/"
+                  "inputs.environment-deployment verbatim. "
+                  "specs/033-pr-conversation-commands/tasks.md T044."
+              ),
+          }
 
           # Assembled rather than written out: Actions expands expression
           # syntax in a run: block before bash, let alone python, sees it.
@@ -498,6 +522,13 @@ jobs:
                             f"sub-key, so environment-deployment: false would be silently "
                             f"ignored for this job. Use the mapping form.")
                       failures += 1
+                      continue
+
+                  reason = EXCEPTIONS.get((os.path.basename(f), jname))
+                  if reason is not None:
+                      print(f"note: {f}: job {jname!r} is a registered Gate 7 "
+                            f"exception — {reason}")
+                      bound += 1
                       continue
 
                   ok = True

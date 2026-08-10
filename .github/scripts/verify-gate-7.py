@@ -122,6 +122,15 @@ BOUND_WRONG_INPUT = """\
 
 UNBOUND = ""
 
+# Deliberately non-forwarding, mirroring the real pr-conversation.yml `act`
+# job's per-leg confirm binding — the exact shape Gate 7's EXCEPTIONS dict
+# names as (pr-conversation.yml, act).
+BOUND_MATRIX_LEG = """\
+    environment:
+      name: ${{ matrix['confirm-environment'] }}
+      deployment: false
+"""
+
 
 def job(name, binding):
     return f"  {name}:\n    runs-on: ubuntu-latest\n{binding}"\
@@ -207,6 +216,25 @@ CASES = [
      {"stage.yml": "name: stage\non:\n  workflow_call:\njobs:\n"
                    + job("only", BOUND)},
      True, ("does not declare",)),
+
+    # Constitution VII / T044: a registered (file, job) exception is allowed
+    # to deviate from verbatim forwarding, but ONLY that exact pair — the
+    # exception must not read as "any job with this binding shape passes"
+    # or "any job in this file passes".
+    ("registered exception: pr-conversation.yml's act job may bind its "
+     "own matrix leg instead of forwarding inputs.environment verbatim",
+     {"pr-conversation.yml": stage(job("act", BOUND_MATRIX_LEG))},
+     False, ()),
+
+    ("the same non-forwarding binding on a job NOT named in the exception "
+     "list still fails, even in the exact registered file",
+     {"pr-conversation.yml": stage(job("other", BOUND_MATRIX_LEG))},
+     True, ("'other'",)),
+
+    ("the same non-forwarding binding on a job named 'act' in a "
+     "DIFFERENT file still fails — the exception is not file-agnostic",
+     {"stage.yml": stage(job("act", BOUND_MATRIX_LEG))},
+     True, ("'act'",)),
 ]
 
 

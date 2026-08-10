@@ -743,11 +743,14 @@ jobs:
     # one `environment:` block exists per job, and splitting confirm
     # gating into a prerequisite job would force every leg to wait on
     # every OTHER leg's approval, breaking the "sibling leg" guarantee
-    # above. `lint-workflows.yml` Gate 7 (specs/031-stage-environment-binding)
-    # therefore flags this job — this stage does not support the whole-stage
-    # `environment` input on `act` (it still applies to `classify-and-announce`
-    # above). Documented rather than silenced; a future Gate 7 revision or
-    # confirm-mechanism redesign should reconcile this.
+    # above. This stage does not support the whole-stage `environment`
+    # input on `act` (it still applies to `classify-and-announce` above).
+    # Per Constitution VII, this is a REGISTERED, machine-checked exception
+    # — not just this comment: `lint-workflows.yml` Gate 7
+    # (specs/031-stage-environment-binding) carries this exact (file, job)
+    # pair, and its own reason string, in its `EXCEPTIONS` dict, verified by
+    # `.github/scripts/verify-gate-7.py`
+    # (specs/033-pr-conversation-commands/tasks.md T044).
     environment:
       name: ${{ matrix['confirm-environment'] }}
       deployment: false

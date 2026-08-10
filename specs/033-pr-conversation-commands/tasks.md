@@ -550,7 +550,7 @@ static validation, and the full quickstart walkthrough.
   over verbatim from `contracts/reusable-pr-conversation.md`'s drafts (the
   same deferral 029-intake-issue-comments and 031-stage-environment-binding
   used for their own contract additions).
-- [ ] T042 Static validation sweep (`quickstart.md` "Static validation"):
+- [X] T042 Static validation sweep (`quickstart.md` "Static validation"):
   `actionlint`/`yamllint` pass on both new workflow files;
   `lint-workflows.yml` Gate 7 passes on `pr-conversation.yml`'s
   `environment:` binding shape; exercise T002's actor-gate `if:`
@@ -591,6 +591,19 @@ static validation, and the full quickstart walkthrough.
   authorization") — a non-bot, non-authorized commenter got silently
   skipped with no reply, instead of reaching the stage's T004
   notice-and-stop. Fixed to gate on bot-exclusion only.
+
+  **Status (iteration 2, desk-checked)**: T044 (Phase 11) resolved the
+  Gate 7 finding above by registering `pr-conversation.yml`'s `act` job
+  under a new, machine-checked `EXCEPTIONS` mechanism in Gate 7's own
+  script — `lint-workflows.yml` Gate 7 now passes on
+  `pr-conversation.yml` by design, not merely by comment. Every other
+  check this task lists (actionlint/yamllint on both files, T002's actor
+  gate, T003's `qualifies` check) still holds as traced in iteration 1;
+  re-ran actionlint/yamllint after T044/T045's edits and confirmed no new
+  findings beyond the same repo-wide pre-existing warnings. Still no live
+  CI run available in this environment — a maintainer should confirm
+  Gate 7 passes live (`python3 .github/scripts/verify-gate-7.py` and the
+  real `lint-workflows.yml` run) before merging.
 - [ ] T043 Walk `quickstart.md`'s full scenario set (1–15), its edge case
   checks (bot comment, concurrent requests on the same spec, relayed
   request with risk, pure acknowledgement), and its regression check
@@ -610,7 +623,7 @@ static validation, and the full quickstart walkthrough.
 
 ## Phase 11: Convergence
 
-- [ ] T044 Constitution VII requires that "a stage that must deviate
+- [X] T044 Constitution VII requires that "a stage that must deviate
   carries a registered, machine-checked exception naming the reason —
   never an undeclared one, and never a code comment alone." `act`'s
   job-level `environment:` in `.github/workflows/pr-conversation.yml`
@@ -631,6 +644,27 @@ static validation, and the full quickstart walkthrough.
   independence (verified by T032) — whichever a human decides is
   correct; this is a design call, not a mechanical fix. CRITICAL
   (Constitution VII, contradicts).
+
+  **Status (iteration 2, desk-checked)**: built the first option — an
+  explicit `EXCEPTIONS` dict (`(workflow filename, job name) -> reason`)
+  inside Gate 7's own script in `.github/workflows/lint-workflows.yml`,
+  consulted after the "has an `environment:` mapping block" checks but
+  before the verbatim-forwarding check; `pr-conversation.yml`'s `act` job
+  is registered under it with the exact reasoning from this task. A
+  registered job still must carry an `environment:` mapping block (so a
+  job cannot use the exception to go fully unbound) — only the
+  forward-verbatim check is skipped, and only for that literal (file,
+  job) pair. Extended `.github/scripts/verify-gate-7.py` with three new
+  fixture cases proving the exception is scoped exactly (the registered
+  pair passes; the same non-forwarding binding on a different job in the
+  same file still fails; the same binding on a job named `act` in a
+  different file still fails). `pr-conversation.yml`'s own code comment
+  above `act`'s `environment:` block now points at the registration
+  instead of standing alone. Not run live in this environment (`python3`
+  is not allowlisted here); verified by hand-tracing the gate's logic
+  against each new fixture. A maintainer should run
+  `python3 .github/scripts/verify-gate-7.py` once before merging to
+  confirm live.
 - [X] T045 In `.github/workflows/pr-conversation.yml`'s "Dispatch
   implement and reply (fold-in routes)" step, the PR reply only mentions
   the possibility of hitting `implement.yml`'s iteration cap inside the
