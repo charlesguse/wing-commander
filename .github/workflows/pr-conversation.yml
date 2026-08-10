@@ -430,24 +430,46 @@ jobs:
           PR_NUMBER: ${{ inputs.pr-number }}
           ACTOR_LOGIN: ${{ inputs.actor-login }}
           BODY: ${{ inputs.body }}
-          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -euo pipefail
           resumed=false
           if printf '%s' "$BODY" | grep -qiE 'confirm'; then
-            issue_comments=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq '[.[] | select(.user.login == env.BOT_LOGIN) | {created_at, body}]')
-            review_comments=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments" --paginate --jq '[.[] | select(.user.login == env.BOT_LOGIN) | {created_at, body}]')
+            issue_comments=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq '[.[] | select(.user.login == env.BOT_LOGIN) | {id, created_at, body, kind: "issue"}]')
+            review_comments=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments" --paginate --jq '[.[] | select(.user.login == env.BOT_LOGIN) | {id, created_at, body, kind: "review"}]')
             all=$(jq -n --argjson a "$issue_comments" --argjson b "$review_comments" '$a + $b | sort_by(.created_at) | reverse')
-            marker=$(printf '%s' "$all" | jq -r '[.[] | select(.body | contains("wing-commander:pr-conversation-relay"))] | .[0].body // empty')
-            if [ -n "$marker" ]; then
-              payload=$(printf '%s' "$marker" | grep -E '^\{.*\}$' | head -n1 || true)
-              if [ -n "$payload" ]; then
-                found_login=$(printf '%s' "$payload" | jq -r '.["actor-login"] // empty' 2>/dev/null || true)
-                if [ "$found_login" = "$ACTOR_LOGIN" ]; then
-                  printf '%s' "$payload" | jq -c '[.classification]' > "$RUNNER_TEMP/classifications-raw.json"
-                  resumed=true
-                fi
-              fi
+            # T054: scope to the most recent marker belonging to THIS actor's
+            # own outstanding classification (structural match on
+            # actor-login, mirroring T052's approach) -- not merely the most
+            # recent marker on the PR system-wide, which would make an
+            # earlier actor's still-pending confirmation invisible behind a
+            # later, unrelated actor's marker.
+            found=$(printf '%s' "$all" | jq -c --arg login "$ACTOR_LOGIN" '
+              [ .[] | select(.body | contains("wing-commander:pr-conversation-relay"))
+                | . as $c
+                | ($c.body | split("\n") | map(select(test("^\\{.*\\}$"))) | .[0] // empty) as $line
+                | select($line != "")
+                | ($line | fromjson?) as $p
+                | select($p != null and $p["actor-login"] == $login)
+                | $c + {payload: $p}
+              ] | .[0] // empty')
+            if [ -n "$found" ]; then
+              printf '%s' "$found" | jq -c '[.payload.classification]' > "$RUNNER_TEMP/classifications-raw.json"
+              resumed=true
+
+              # T054: invalidate this marker so a later, unrelated comment
+              # from the same actor that happens to contain "confirm" can
+              # never replay an already-resumed classification -- strip the
+              # embedded marker block from the comment body in place.
+              comment_id=$(printf '%s' "$found" | jq -r '.id')
+              comment_kind=$(printf '%s' "$found" | jq -r '.kind')
+              case "$comment_kind" in
+                issue) edit_path="repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" ;;
+                review) edit_path="repos/$GITHUB_REPOSITORY/pulls/comments/$comment_id" ;;
+              esac
+              stripped_body=$(printf '%s' "$found" | jq -r '.body' | awk '/<!-- wing-commander:pr-conversation-relay/{exit} {print}')
+              new_body=$(printf '%s\n_Confirmed and resumed -- this marker is consumed and no longer active._' "$stripped_body")
+              gh api -X PATCH "$edit_path" -f body="$new_body" >/dev/null 2>&1 || true
             fi
           fi
           echo "resumed=$resumed" >> "$GITHUB_OUTPUT"
@@ -880,7 +902,7 @@ jobs:
           RISK_NOTE: ${{ matrix.relayed['risk-note'] }}
           ACTOR_LOGIN: ${{ inputs.actor-login }}
           CLASSIFICATION_JSON: ${{ toJson(matrix) }}
-          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -euo pipefail
           if [ "$RISK" != "true" ]; then
@@ -1043,7 +1065,7 @@ jobs:
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
         with:
-          default-allowed-tools: "Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue create:*),Bash(gh issue edit:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(gh pr create:*),Bash(gh pr edit:*),Bash(gh api:*),Bash(gh run list:*),Bash(gh run cancel:*),Bash(gh workflow run:*),Bash(gh label create:*),Bash(gh search issues:*),Bash(gh search prs:*)"
+          default-allowed-tools: "Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(git checkout:*),Bash(git switch:*),Bash(git branch:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue create:*),Bash(gh issue edit:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(gh pr create:*),Bash(gh pr edit:*),Bash(gh api:*),Bash(gh run list:*),Bash(gh run cancel:*),Bash(gh workflow run:*),Bash(gh label create:*),Bash(gh search issues:*),Bash(gh search prs:*)"
           default-disallowed-tools: "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
           extra-allowed-tools: ${{ inputs.extra-allowed-tools }}
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
@@ -1320,7 +1342,7 @@ jobs:
           PR_NUMBER: ${{ inputs.pr-number }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
           SLUG: ${{ needs.classify-and-announce.outputs.slug }}
-          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -euo pipefail
           issue_comments=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq '[.[] | select(.user.login == env.BOT_LOGIN) | {created_at, body}]')

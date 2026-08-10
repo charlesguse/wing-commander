@@ -910,7 +910,7 @@ static validation, and the full quickstart walkthrough.
 
 ## Phase 14: Convergence
 
-- [ ] T053 CRITICAL (contradicts): all three "find my own bot's prior PR
+- [X] T053 CRITICAL (contradicts): all three "find my own bot's prior PR
   comment" lookups in `.github/workflows/pr-conversation.yml` — the
   "Check for relay confirmation" step (`relay-resume`, T047, lines
   433/438-439), the "Relayed-request risk-confirmation gate" step's
@@ -947,7 +947,16 @@ static validation, and the full quickstart walkthrough.
   in each `env:` block, or build the suffixed value inline before use),
   matching the idiom already used everywhere else in this codebase.
   FR-022/FR-024/SC-009 (contradicts).
-- [ ] T054 The "Check for relay confirmation" step (`relay-resume`, T047)
+
+  **Status (iteration 5, desk-checked)**: appended `[bot]` to the
+  `BOT_LOGIN` env value at all three sites (relay-resume, the relay-gate
+  anchor lookup, and the Stop procedure), matching the suffixed idiom
+  used everywhere else in this codebase (e.g. `finalize.yml`). Not run
+  live in this environment; the fix is a literal string-suffix change to
+  an env value already exercised identically by the three existing
+  `select(.user.login == env.BOT_LOGIN)` / `--arg bot "$BOT_LOGIN"`
+  comparisons.
+- [X] T054 The "Check for relay confirmation" step (`relay-resume`, T047)
   in `.github/workflows/pr-conversation.yml` (lines 437-452) sorts all
   bot-authored marker comments descending by `created_at` and takes only
   `.[0]` — the single most recent marker on the PR system-wide — then
@@ -973,7 +982,25 @@ static validation, and the full quickstart walkthrough.
   T052's structural-equality approach), and mark or otherwise exclude a
   marker once its classification has actually been executed, so a later
   unrelated "confirm" cannot replay it. FR-022 (partial).
-- [ ] T055 `pr-conversation.act`'s tool allowlist
+
+  **Status (iteration 5, desk-checked)**: the relay-resume step's marker
+  search now fetches `id`/`kind` alongside `created_at`/`body` for both
+  comment surfaces, filters candidate markers to those whose embedded
+  `actor-login` structurally matches the current commenter (mirroring
+  T052's approach), and takes the most recent match from that filtered
+  set rather than the PR-wide most-recent marker regardless of actor —
+  an earlier actor's still-pending confirmation can no longer be hidden
+  behind a later, unrelated actor's marker. Once a match is found and the
+  classification is resumed, the step now also edits that marker comment
+  in place (`gh api -X PATCH`, issue- or review-comment endpoint per the
+  comment's own surface) to strip the embedded
+  `wing-commander:pr-conversation-relay` block and note the marker is
+  consumed — a later unrelated "confirm" from the same actor can no
+  longer find and replay it. Best-effort (`|| true`): a failed edit does
+  not block the resume itself. Not run live in this environment; verified
+  by hand-tracing the jq structural-match filter against fixture marker
+  payloads.
+- [X] T055 `pr-conversation.act`'s tool allowlist
   (`.github/workflows/pr-conversation.yml` line 1027, mirrored in
   `contracts/reusable-pr-conversation.md` and
   `specs/010-reusable-pipeline/contracts/stage-interfaces.md`) grants no
@@ -999,6 +1026,15 @@ static validation, and the full quickstart walkthrough.
   `Bash(git branch:*)` to `pr-conversation.act`'s default allowed-tools
   list in the workflow and both contract-doc mirrors. FR-007/FR-012
   (missing).
+
+  **Status (iteration 5, desk-checked)**: added
+  `Bash(git checkout:*),Bash(git switch:*),Bash(git branch:*)` to
+  `pr-conversation.act`'s default-allowed-tools list in
+  `pr-conversation.yml` and both contract-doc mirrors
+  (`contracts/reusable-pr-conversation.md`,
+  `specs/010-reusable-pipeline/contracts/stage-interfaces.md`), matching
+  `intake.yml`'s own precedent for the same commit-on-a-new-branch-then-PR
+  pattern verbatim. Not run live in this environment.
 
 ---
 
