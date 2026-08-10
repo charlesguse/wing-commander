@@ -275,9 +275,22 @@ jobs:
           SUPPORTED_EVENTS = {
               "issues", "issue_comment", "pull_request",
               "workflow_dispatch", "workflow_run", "schedule",
+              "pull_request_review", "pull_request_review_comment",
           }  # research.md R6 — deliberately excludes push (the confirmed
              # defect); extend only with a new entry backed by evidence in
              # this repository.
+             #
+             # The two review events were added for
+             # specs/033-pr-conversation-commands (research.md D1), with the
+             # evidence R6 asks for: claude-code-action's own usage guide
+             # (docs/usage.md) documents them as triggers it supports —
+             # `pull_request_review_comment: types: [created]` and
+             # `pull_request_review: types: [submitted]` — in the same
+             # trigger list as `issue_comment`/`issues`, which this
+             # allow-list already carries. They are exactly the events
+             # wing-commander-9-pr-conversation.yml listens to, and without
+             # them this gate fails a stage whose agent step the action
+             # supports.
 
           CLAUDE_ACTION_PREFIX = "anthropics/claude-code-action"
 
