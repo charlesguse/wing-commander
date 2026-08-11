@@ -809,7 +809,19 @@ jobs:
           # run of this stage under its own default configuration. `-n
           # --arg` takes the value as an argument instead of stdin, so the
           # empty case yields `[]` like every other case.
-          cats_json=$(jq -n -c --arg s "$CONFIRM_CATEGORIES" '$s | split(",") | map(select(length > 0))')
+          #
+          # T083: entries are TRIMMED before the empty-filter, because the
+          # membership test below (`$cats | any(. == $c.category)`) is exact
+          # string equality. `new-functionality, small-unrelated-change` —
+          # a space after the comma, how anyone writing a list writes one —
+          # otherwise yields " small-unrelated-change", which matches no
+          # category, so that leg comes back requires-confirmation:false and
+          # runs with no approval while the configuration says it must be
+          # confirmed. Silent, and in the unsafe direction: no error, no
+          # warning, the only symptom is an action nobody was asked about.
+          # Trim first, THEN drop empties, so "a, b," handles the trailing
+          # comma and the spaces in one pass.
+          cats_json=$(jq -n -c --arg s "$CONFIRM_CATEGORIES" '$s | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))')
           result=$(printf '%s' "$raw" | jq -c --argjson cats "$cats_json" --arg env "$CONFIRM_ENVIRONMENT" --argjson perms "$perm_prs" '
             def coerce_str: if . == null then "" elif (type == "string") then . else tostring end;
             # T057, moved here by T080: match the agent-drafted capability as
