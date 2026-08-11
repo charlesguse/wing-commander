@@ -640,6 +640,40 @@ static validation, and the full quickstart walkthrough.
   introduced here, so left alone rather than corrected in this feature's
   copy alone).
 
+  **Status (iteration 11, mechanized)**: the desk-check above was replaced
+  by executable coverage. **The blocker recorded in iteration 6 is now
+  gone**: PR #181 squash-merged on 2026-08-11, putting both workflow files
+  — and every fix through T082 — on the default branch, so GitHub will now
+  dispatch `issue_comment`/`pull_request_review*` at them for real. (Note
+  for anyone re-checking this: the squash makes the local branch read as
+  "38 commits ahead of main" while its tree is byte-identical to main's.
+  Ancestry checks like `git merge-base --is-ancestor` therefore report the
+  post-T056 commits as absent from `main` and are simply wrong here; diff
+  the trees instead.) The one thing still missing for a live pass is a
+  qualifying open PR to comment on — head `spec/<slug>`, base default —
+  which the next implement PR raised in this repository supplies at no
+  extra cost. Until then, throwaway harnesses drove the **shipped**
+  `run:` blocks (via `.github/scripts/wc_shell_harness.py`'s
+  `find_step`/`run_step`, never copies) against fixtures with `gh`/`git`
+  stubbed and argv-logged. Exercised for real: static validation 1
+  (YAML-parse + `bash -n` over all 21 `run:` blocks in both files), 2 (the
+  wrapper actor gate, evaluated from the literal `if:` string against 13
+  payload fixtures across all three event kinds, carve-out absence
+  confirmed against `wing-commander-2-clarify.yml:27`), 3 (`qualifies`, 4
+  cases), 5 (T067 pagination — all three scans run with `gh` applying each
+  step's real `--jq` per page, plus a page-2-only marker proving data is
+  not lost, not merely that nothing crashes); scenarios 1, 2, 5, 6, 7, 8,
+  9, 10, 11, 12, 13, 15 and the in-scope leg of 14; and all four edge
+  cases. Not mechanizable, desk-checked only: the agent steps' own
+  judgement (classification quality, drafted content), scenario 4's
+  fold-in-vs-new-issue decision, scenario 14's matrix fan-out (GitHub's
+  engine, not shell), the regression check, and live event dispatch. One
+  new defect found and recorded as T083; T056, T057, T061, T062 and T067
+  each now have an executable regression fixture behind them rather than a
+  hand-trace. Harnesses were deliberately throwaway (scratchpad, not the
+  repo) — promoting the valuable ones to `lint-workflows.yml` gates is
+  filed separately rather than done here.
+
 ---
 
 ## Phase 11: Convergence
@@ -2142,6 +2176,53 @@ static validation, and the full quickstart walkthrough.
   security bullet carried the same divergence in summary form and now names
   Stage 10 as the exception. The section also gained a paragraph on
   `implement-workflow` (T078) and its snippet now passes it.
+
+---
+
+## Phase 19: Convergence
+
+- [X] T083 (contradicts): `Compute confirmation requirements` splits
+  `WING_COMMANDER_PR_CONVERSATION_CONFIRM_CATEGORIES` with
+  `$s | split(",") | map(select(length > 0))`
+  (`.github/workflows/pr-conversation.yml:812`) and then tests membership
+  with exact string equality —
+  `($cats | any(. == "all" or . == $c.category))` (`:889`). Nothing trims
+  the split entries, so a maintainer who writes the repository variable
+  the natural way — `new-functionality, small-unrelated-change`, with a
+  space after the comma, exactly as prose lists are written — produces
+  `[" small-unrelated-change"]` for the second entry, which never equals
+  `"small-unrelated-change"`. That category comes back
+  `requires-confirmation: false` and its leg runs **immediately, with no
+  environment binding and no approval**, while the maintainer's
+  configuration says it must be confirmed first. The failure is silent in
+  the worst direction: it does not error, does not warn, and the only
+  visible symptom is an action the maintainer expected to be asked about
+  happening without being asked. `select(length > 0)` catches the empty
+  entry a trailing comma leaves behind but not the whitespace one, so
+  `"a, b,"` is half-handled. Same defect class as T061 (a formatting
+  variation of a documented config value silently defeating FR-020), which
+  is why the fix belongs next to it: trim each entry before the filter —
+  `split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))` —
+  and note in the docs that spacing is tolerated. Found by T043's
+  mechanized pass, which drove the shipped step with
+  `" new-functionality , ,small-unrelated-change ,,"` and observed
+  `requires-confirmation: false` for a category the configuration named.
+  FR-020 (contradicts).
+
+  **Status**: fixed on `fix/confirm-categories-whitespace`. `cats_json` now
+  trims each entry before dropping empties
+  (`pr-conversation.yml:812`), with the reasoning inline next to T061's
+  note since the two are the same defect class. Verified by re-running the
+  T043 fixture driver against the shipped step: the whitespace case
+  (`" new-functionality , ,small-unrelated-change ,,"`) now yields
+  `requires-confirmation: true` with the confirm environment bound, where
+  before the fix it yielded `false`; T061's empty-string case still yields
+  `[]` at rc=0, and the eight-case split fixture covers tabs, a
+  whitespace-only value, and a trailing comma. `docs/setup.md`'s variable
+  table now states that spacing and a trailing comma are tolerated, and
+  warns that an unrecognised category name is silently ignored — the
+  residual sharp edge this fix does not remove, since membership stays an
+  exact match and a typo simply never gates.
 
 ---
 
