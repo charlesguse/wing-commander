@@ -44,13 +44,24 @@ group (research.md D6).
    together) so the branch is never observed in an inconsistent
    intermediate state.
 5. **Push to `spec/<slug>`.**
-6. **Dispatch** `gh workflow run wing-commander-5-implement.yml -f spec_dir=<spec-dir> -f issue=<issue-number> -f iteration=<recorded+1>` —
+6. **Dispatch** `gh workflow run <implement-workflow> -f spec_dir=<spec-dir> -f issue=<issue-number> -f iteration=<recorded+1>` —
    the exact, already-published `workflow_dispatch` signature
    (`specs/010-reusable-pipeline/contracts/stage-interfaces.md`'s "Chaining
-   payload contract" table, unchanged by this feature).
+   payload contract" table, unchanged by this feature). `<implement-workflow>`
+   is the stage's declared `implement-workflow` input, **never** a literal
+   filename: a wrapper filename is consuming-repository convention, not
+   published contract (constitution VI/VII), exactly as `implement.yml`'s
+   `self-workflow`/`next-workflow` and `plan.yml`'s `next-workflow` already
+   treat it. Empty (the default) = **standalone mode**: steps 1-5 still
+   happen — the fold-in is committed and pushed — and step 7's reply says
+   plainly that no implement workflow is configured and gives the manual
+   `spec_dir`/`issue`/`iteration` payload. A missing dispatch must never
+   fail the step: under `set -euo pipefail` that would abort *after* the
+   fold-in push and *before* the reply, leaving the maintainer's change
+   folded in with nothing run and nothing said (T078, FR-014/SC-005).
 7. **Reply on the PR** confirming the fold-in and dispatch (FR-014), with
    a link to the dispatched run once `gh run list --workflow
-   wing-commander-5-implement.yml --created ">=<step-start-timestamp>" --limit 1`
+   <implement-workflow> --created ">=<step-start-timestamp>" --limit 1`
    resolves it (best-effort — a short, bounded poll, not the long-running
    pattern research.md D10 explicitly rejects elsewhere; if resolution
    times out, the reply still confirms the dispatch and points at the

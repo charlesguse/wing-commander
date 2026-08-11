@@ -78,6 +78,19 @@ on:
         type: number
         required: false
         default: 40
+      implement-workflow:
+        description: >
+          Filename of the CONSUMER wrapper workflow to dispatch after an
+          in-scope fold-in (chaining payload: spec_dir, issue, iteration) and
+          to cancel alongside the announced run in the stop procedure. Empty
+          (default) = no dispatch: the fold-in is still committed and pushed,
+          and the PR reply says so and how to run implement manually
+          (contracts/converge-fold-in.md). A wrapper filename is consuming-
+          repository convention, never a published constant (constitution
+          VI/VII) — T078.
+        type: string
+        required: false
+        default: ""
       pipeline-repo:
         description: >
           Repository to check out for the pipeline's shared composite actions
@@ -748,10 +761,24 @@ jobs:
       # `small-unrelated-change` leg that reaches `act` is under-threshold
       # BY CONSTRUCTION. Do not move this back to `act` — see the comment
       # left at the old site in "Resolve effective category and route".
+      #
+      # T080 applies the SAME precedent to the permission-request dedup
+      # search (research.md D11), for the same reason one layer over: the
+      # search decides whether a `manual-step-permission` leg will create an
+      # out-of-PR artifact at all. Run in `act`, it ran after this job had
+      # already announced "I will open a permission-request PR" to the PR
+      # *and cross-posted that to the lifecycle issue* — and on a confident
+      # match nothing is ever opened, with the correcting reply going only
+      # to the PR. The lifecycle issue was left permanently claiming a
+      # spin-off that never existed (FR-023/FR-013, SC-002). Resolved here,
+      # the announcement states what will actually happen, `out-of-pr` is
+      # false so the issue is never cross-posted, and a confirm gate is not
+      # spent on a leg that only posts a link (FR-020).
       - name: Compute confirmation requirements
         id: confirm
         if: steps.schema-check.outputs.ok == 'true' || steps.relay-resume.outputs.resumed == 'true'
         env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
           CONFIRM_CATEGORIES: ${{ inputs.confirm-categories }}
           CONFIRM_ENVIRONMENT: ${{ inputs.confirm-environment }}
           PR_NUMBER: ${{ inputs.pr-number }}
@@ -759,6 +786,19 @@ jobs:
         run: |
           set -euo pipefail
           raw="$(cat "$RUNNER_TEMP/classifications-raw.json")"
+
+          # T080: one search serves every leg — the corpus does not vary by
+          # classification. Skipped entirely (and left as `[]`) unless some
+          # leg actually needs it, so the common case adds no API call. A
+          # failed search yields `[]` = "no prior conversation found", the
+          # conservative direction: the leg opens a PR that a human can
+          # close as a duplicate, rather than silently swallowing a genuine
+          # request by claiming a match that was never verified.
+          perm_prs='[]'
+          if [ "$(printf '%s' "$raw" | jq -r 'any(.category == "manual-step-permission" and ((.["drafted-content"] // {}) | has("needs-permission")))')" = "true" ]; then
+            perm_prs=$(gh search prs --repo "$GITHUB_REPOSITORY" --label permission-request --state all --json number,title,url 2>/dev/null || echo '[]')
+            printf '%s' "$perm_prs" | jq -e 'type == "array"' >/dev/null 2>&1 || perm_prs='[]'
+          fi
           # T061: built with `jq -n --arg`, NOT `printf | jq -R`. `jq -R`
           # reads input LINES, and the documented default for
           # confirm-categories is "" — zero bytes, so there is no line, the
@@ -770,8 +810,20 @@ jobs:
           # --arg` takes the value as an argument instead of stdin, so the
           # empty case yields `[]` like every other case.
           cats_json=$(jq -n -c --arg s "$CONFIRM_CATEGORIES" '$s | split(",") | map(select(length > 0))')
-          result=$(printf '%s' "$raw" | jq -c --argjson cats "$cats_json" --arg env "$CONFIRM_ENVIRONMENT" '
+          result=$(printf '%s' "$raw" | jq -c --argjson cats "$cats_json" --arg env "$CONFIRM_ENVIRONMENT" --argjson perms "$perm_prs" '
             def coerce_str: if . == null then "" elif (type == "string") then . else tostring end;
+            # T057, moved here by T080: match the agent-drafted capability as
+            # a LITERAL case-insensitive substring, never as a regex.
+            # test($cap) would compile unconstrained free text as a pattern —
+            # an unbalanced paren errors jq, which under set -e kills this
+            # step before any announcement is posted, and metacharacters that
+            # DO compile just link the wrong prior conversation (FR-012). An
+            # empty capability matches nothing rather than everything.
+            def permission_match_url($cap):
+              ($cap | coerce_str | ascii_downcase) as $needle
+              | if ($needle | length) == 0 then ""
+                else ([$perms[] | select((.title | ascii_downcase) | contains($needle))] | .[0].url // "")
+                end;
             map(
               . as $orig
               | (
@@ -811,19 +863,53 @@ jobs:
                     $orig
                   end
                 ) as $c
-              | (($cats | any(. == "all" or . == $c.category))) as $requires
+              # T080: resolved here, not in `act`, so the announcement below
+              # states the action actually about to be taken. A confident
+              # match means the leg will only post a link to the existing
+              # conversation — no artifact, so no out-of-pr cross-post to
+              # the lifecycle issue and no confirmation gate — and the
+              # planned-action is rewritten to say so.
+              | (if ($c.category == "manual-step-permission"
+                     and (($c["drafted-content"] // {}) | has("needs-permission")))
+                 then permission_match_url($c["drafted-content"]["needs-permission"])
+                 else "" end) as $permurl
+              | ($permurl | length > 0) as $permdupe
+              | (if $permdupe then
+                   ($c
+                     | .["planned-action"] = ("link the permission request already tracked at "
+                         + $permurl + " — nothing new will be opened"))
+                 else $c end) as $c
               | (
                   ($c.category == "new-functionality" and (($c["fold-target"] // "") == "new-spec"))
                   or ($c.category == "small-unrelated-change")
-                  or ($c.category == "manual-step-permission" and (($c["drafted-content"] // {}) | has("needs-permission")))
+                  or ($c.category == "manual-step-permission"
+                      and (($c["drafted-content"] // {}) | has("needs-permission"))
+                      and ($permdupe | not))
                 ) as $outofpr
+              | ((($cats | any(. == "all" or . == $c.category))) and ($permdupe | not)) as $requires
               | $c + {
                   "requires-confirmation": $requires,
                   "confirm-environment": (if $requires then $env else "" end),
                   "out-of-pr": $outofpr,
+                  "permission-match": (if $permdupe then "confident" else "none" end),
+                  "permission-match-url": $permurl,
                   "relayed": ($c.relayed // {"risk": false, "risk-note": null})
                 }
             )
+            # T079/FR-020/US5-AC4: order every non-confirm-gated leg ahead of
+            # every confirm-gated one. The act job runs its matrix with
+            # max-parallel: 1 (load-bearing — two legs can both fold into
+            # tasks.md/spec-meta.json and would race each other on
+            # commit+push), and a leg pending environment approval OCCUPIES
+            # that single slot. Without this ordering, a comment carrying
+            # both a confirm-gated spin-off and an in-scope change stalls the
+            # in-scope change behind a human approval — the exact inverse of
+            # FR-020, which requires acting immediately on in-PR actions
+            # while confirming out-of-PR ones. sort_by is stable in jq, so
+            # legs keep their classified order within each group, and the
+            # announcements posted below follow the same order the legs will
+            # actually execute in.
+            | sort_by(if .["requires-confirmation"] then 1 else 0 end)
           ')
           echo "classifications=$result" >> "$GITHUB_OUTPUT"
 
@@ -948,14 +1034,28 @@ jobs:
       # each other's commit+push if run in parallel — the job-level
       # concurrency group above only serializes across RUNS, not across
       # legs within one run.
+      #
+      # T079: because this slot is single, a leg awaiting environment
+      # approval BLOCKS every later leg — so `classify-and-announce` orders
+      # the matrix with all non-confirm-gated legs first (see the sort_by at
+      # the end of "Compute confirmation requirements"). That is what keeps
+      # FR-020's "act immediately on in-PR actions while confirming
+      # out-of-PR ones" true under serialization: the in-PR work is already
+      # finished by the time anything waits on a human.
       max-parallel: 1
       matrix:
         include: ${{ fromJson(needs.classify-and-announce.outputs.classifications) }}
     # matrix is an available context for this key, so each leg's
     # environment.name can be a distinct expression — T029/FR-020: bound
     # only for a classification whose own category is in confirm-categories;
-    # every other leg's name resolves to "", a verified true no-op, and
-    # runs immediately even while a sibling leg waits for approval.
+    # every other leg's name resolves to "", a verified true no-op.
+    #
+    # T079 correction: an unbound leg does NOT run "even while a sibling leg
+    # waits for approval" — `max-parallel: 1` above gives the matrix one
+    # slot, and a leg pending approval holds it. What actually delivers
+    # FR-020 is the matrix ORDER: classify-and-announce sorts every
+    # non-confirm-gated leg ahead of every gated one, so unbound legs have
+    # all completed before the first approval wait begins.
     #
     # KNOWN Gate 7 divergence: watchdog.yml's own matrixed jobs (triage,
     # act) bind every leg to the SAME literal `${{ inputs.environment }}` —
@@ -967,8 +1067,8 @@ jobs:
     # `inputs.environment-deployment` pair verbatim on this same job — only
     # one `environment:` block exists per job, and splitting confirm
     # gating into a prerequisite job would force every leg to wait on
-    # every OTHER leg's approval, breaking the "sibling leg" guarantee
-    # above. This stage does not support the whole-stage `environment`
+    # every OTHER leg's approval — including the non-confirm-gated legs the
+    # ordering above exists to let through first (T079/FR-020). This stage does not support the whole-stage `environment`
     # input on `act` (it still applies to `classify-and-announce` above).
     # Per Constitution VII, this is a REGISTERED, machine-checked exception
     # — not just this comment: `lint-workflows.yml` Gate 7
@@ -1150,6 +1250,8 @@ jobs:
           CATEGORY: ${{ matrix.category }}
           FOLD_TARGET: ${{ matrix['fold-target'] }}
           DRAFTED_CONTENT: ${{ toJson(matrix['drafted-content']) }}
+          PERMISSION_MATCH: ${{ matrix['permission-match'] }}
+          PERMISSION_MATCH_URL: ${{ matrix['permission-match-url'] }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
           SLUG: ${{ needs.classify-and-announce.outputs.slug }}
           DEFAULT_BRANCH: ${{ needs.classify-and-announce.outputs.default-branch }}
@@ -1160,8 +1262,13 @@ jobs:
           needs_checkout=false
           checkout_ref=""
           agent_needed=false
-          permission_match="none"
-          permission_match_url=""
+          # T080: carried in from the matrix — the dedup search now runs in
+          # classify-and-announce, before the announcement. Default to "none"
+          # if the field is somehow absent so the conservative branch (open a
+          # PR) is taken rather than silently claiming a match.
+          permission_match="${PERMISSION_MATCH:-none}"
+          permission_match_url="${PERMISSION_MATCH_URL:-}"
+          [ "$permission_match" = "confident" ] || { permission_match="none"; permission_match_url=""; }
 
           case "$CATEGORY" in
             in-scope-change)
@@ -1183,27 +1290,14 @@ jobs:
               agent_needed=true
               ;;
             manual-step-permission)
+              # T080: the `gh search prs` dedup that used to live here now
+              # runs in classify-and-announce, BEFORE the announcement — see
+              # the T057/T080 comments there. A second copy here could only
+              # drift from the one whose verdict the announcement and the
+              # out-of-pr/cross-post decision were already made on, the same
+              # single-source rule the size backstop follows.
               if printf '%s' "$DRAFTED_CONTENT" | jq -e 'has("needs-permission")' >/dev/null 2>&1; then
-                capability=$(printf '%s' "$DRAFTED_CONTENT" | jq -r '.["needs-permission"] // ""')
-                results=$(gh search prs --repo "$GITHUB_REPOSITORY" --label permission-request --state all --json number,title,url 2>/dev/null || echo '[]')
-                # T057: match the agent-drafted capability as a LITERAL
-                # case-insensitive substring, never as a regex. `test($cap)`
-                # would compile unconstrained free text as a pattern: an
-                # unbalanced paren/bracket errors jq, and under `set -e` that
-                # kills this step before its GITHUB_OUTPUT writes, so the
-                # request gets no reply at all (FR-014). Regex metacharacters
-                # that DO compile are just as wrong — a drafted "run npm
-                # ci..." would match unrelated permission-request PRs and
-                # link the wrong prior conversation (FR-012). An empty
-                # capability matches nothing rather than everything.
-                permission_match_url=$(printf '%s' "$results" | jq -r --arg cap "$capability" '
-                  ($cap | ascii_downcase) as $needle
-                  | if ($needle | length) == 0 then empty
-                    else [.[] | select((.title | ascii_downcase) | contains($needle))] | .[0].url // empty
-                    end')
-                if [ -n "$permission_match_url" ]; then
-                  permission_match="confident"
-                else
+                if [ "$permission_match" != "confident" ]; then
                   needs_checkout=true
                   checkout_ref="$DEFAULT_BRANCH"
                   agent_needed=true
@@ -1224,6 +1318,10 @@ jobs:
             echo "agent-needed=$agent_needed"
             echo "permission-match=$permission_match"
             echo "permission-match-url=$permission_match_url"
+            # T081: the earliest point in this leg that precedes any
+            # possible artifact creation — the lower bound for the
+            # deterministic artifact lookup in "Fail on agent API error".
+            echo "leg-start=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           } >> "$GITHUB_OUTPUT"
 
       - name: Checkout working tree for this leg
@@ -1366,6 +1464,15 @@ jobs:
       - name: Fail on agent API error
         id: act-result
         if: steps.agent.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          PR_NUMBER: ${{ inputs.pr-number }}
+          OUT_OF_PR: ${{ matrix['out-of-pr'] }}
+          EFFECTIVE_CATEGORY: ${{ steps.route.outputs.effective-category }}
+          EFFECTIVE_FOLD_TARGET: ${{ steps.route.outputs.effective-fold-target }}
+          LEG_START: ${{ steps.route.outputs.leg-start }}
+          DEFAULT_BRANCH: ${{ needs.classify-and-announce.outputs.default-branch }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           f="$RUNNER_TEMP/claude-execution-output.json"
           agent_ok="$(jq -r '([.[] | select(.type=="result")] | last) as $r
@@ -1381,16 +1488,85 @@ jobs:
             echo "::error::wing-commander pr-conversation stage: the act agent's structured result is missing a valid mutated/summary shape."
             exit 1
           fi
-          {
-            echo "mutated=$(printf '%s' "$raw" | jq -r '.mutated')"
-            echo "artifact-url=$(printf '%s' "$raw" | jq -r '.["artifact-url"] // empty')"
-          } >> "$GITHUB_OUTPUT"
+          mutated="$(printf '%s' "$raw" | jq -r '.mutated')"
+          artifact_url="$(printf '%s' "$raw" | jq -r '.["artifact-url"] // empty')"
           printf '%s' "$raw" | jq -r '.summary' > "$RUNNER_TEMP/act-summary.txt"
 
+          # T081/FR-008/SC-002: the outstanding-task-item step downstream is
+          # meant to be "the ONE shared mechanism every SpinOffArtifact posts
+          # through — never optional, never left to the agent's own
+          # discretion to remember", but it fired only on a non-empty
+          # `artifact-url`, and that value came STRAIGHT from the agent's own
+          # self-reported schema field. An agent that genuinely opened the
+          # spec-request issue / small-unrelated PR / permission-request PR
+          # and returned `mutated: true` with `artifact-url: null` produced a
+          # spin-off recorded nowhere on the lifecycle issue, and nothing
+          # downstream noticed. Close the loop deterministically for exactly
+          # the legs where an artifact is REQUIRED — `out-of-pr` (computed in
+          # classify-and-announce, and false for a confident permission dedup
+          # match, which creates nothing by design): first try to derive the
+          # URL from GitHub rather than from the agent; if that also finds
+          # nothing, fail the leg loudly so the gap is visible instead of
+          # silent.
+          if [ "$OUT_OF_PR" = "true" ] && [ "$mutated" = "true" ] && [ -z "$artifact_url" ]; then
+            case "$EFFECTIVE_CATEGORY" in
+              new-functionality)
+                [ "$EFFECTIVE_FOLD_TARGET" = "new-spec" ] && artifact_url=$(gh issue list -R "$GITHUB_REPOSITORY" \
+                  --label spec-request --state all --limit 20 --json url,createdAt,author \
+                  --jq "[.[] | select(.createdAt >= \"$LEG_START\") | select(.author.login == \"$BOT_LOGIN\")] | .[0].url // empty" 2>/dev/null) || artifact_url=""
+                ;;
+              small-unrelated-change)
+                artifact_url=$(gh pr list -R "$GITHUB_REPOSITORY" --base "$DEFAULT_BRANCH" \
+                  --state all --limit 20 --json url,createdAt,author \
+                  --jq "[.[] | select(.createdAt >= \"$LEG_START\") | select(.author.login == \"$BOT_LOGIN\")] | .[0].url // empty" 2>/dev/null) || artifact_url=""
+                ;;
+              manual-step-permission)
+                artifact_url=$(gh pr list -R "$GITHUB_REPOSITORY" --label permission-request \
+                  --state all --limit 20 --json url,createdAt,author \
+                  --jq "[.[] | select(.createdAt >= \"$LEG_START\") | select(.author.login == \"$BOT_LOGIN\")] | .[0].url // empty" 2>/dev/null) || artifact_url=""
+                ;;
+            esac
+            if [ -n "$artifact_url" ]; then
+              echo "::warning::wing-commander pr-conversation stage: the act agent reported no artifact-url for a $EFFECTIVE_CATEGORY spin-off; recovered $artifact_url from GitHub so the lifecycle issue still records it (T081)."
+            else
+              # Reply BEFORE failing: every step that would otherwise report
+              # to the PR is skipped once this one exits non-zero, and a
+              # silent failure is the very outcome this check exists to
+              # prevent (T063's ordering lesson, FR-014).
+              body_file="$RUNNER_TEMP/artifact-gap-reply.md"
+              {
+                cat "$RUNNER_TEMP/act-summary.txt"
+                echo ""
+                echo "⚠️ This was classified as a **$EFFECTIVE_CATEGORY** spin-off and reported as done, but no created issue or PR could be identified for it — so it could not be recorded as an outstanding item on the lifecycle issue. Nothing has been lost, but this needs a human look: check this run's log for what the agent actually created, and link it on the lifecycle issue by hand."
+              } > "$body_file"
+              gh pr comment "$PR_NUMBER" --body-file "$body_file" || true
+              echo "::error::wing-commander pr-conversation stage: a $EFFECTIVE_CATEGORY leg reported mutated=true but produced no artifact URL, and none created since $LEG_START by $BOT_LOGIN could be found. A spin-off artifact must never go unrecorded on the lifecycle issue (FR-008/SC-002)."
+              exit 1
+            fi
+          fi
+
+          {
+            echo "mutated=$mutated"
+            echo "artifact-url=$artifact_url"
+          } >> "$GITHUB_OUTPUT"
+
       # T012/T013 (contracts/converge-fold-in.md steps 6-7): dispatch the
-      # EXISTING wing-commander-5-implement.yml wrapper unchanged, with a
-      # best-effort, short bounded poll for the dispatched run's own link —
-      # never the long-running pattern research.md D10 rejects elsewhere.
+      # consumer's EXISTING implement wrapper unchanged, with a best-effort,
+      # short bounded poll for the dispatched run's own link — never the
+      # long-running pattern research.md D10 rejects elsewhere.
+      #
+      # T078: the wrapper filename arrives as the declared `implement-workflow`
+      # input, never as a literal. It used to be hardcoded to THIS
+      # repository's own `wing-commander-5-implement.yml`, which is
+      # consuming-repository convention, not published contract (constitution
+      # VI/VII; every other chaining stage already takes it as an input —
+      # implement.yml's self-workflow/next-workflow, plan.yml's
+      # next-workflow). For an adopter whose wrapper is named anything else,
+      # `gh workflow run` exited non-zero under `set -euo pipefail` AFTER the
+      # fold-in commit had been pushed and BEFORE the reply below — the
+      # maintainer's change folded in, nothing run against it, no reply
+      # posted (FR-004/FR-014/SC-005). Invisible to this repository's own
+      # dogfooding, because here the file does exist.
       - name: Dispatch implement and reply (fold-in routes)
         if: >-
           steps.act-result.outputs.mutated == 'true' &&
@@ -1402,13 +1578,31 @@ jobs:
           PR_NUMBER: ${{ inputs.pr-number }}
           SPEC_DIR: ${{ needs.classify-and-announce.outputs.spec-dir }}
           ISSUE: ${{ needs.classify-and-announce.outputs.issue-number }}
+          IMPLEMENT_WORKFLOW: ${{ inputs.implement-workflow }}
         run: |
           set -euo pipefail
           recorded=$(jq -r '.iteration // 0' "$SPEC_DIR/spec-meta.json")
           next=$((recorded + 1))
           start_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-          GH_TOKEN="$DISPATCH_TOKEN" gh workflow run wing-commander-5-implement.yml \
+          # T078 standalone mode, mirroring implement.yml's empty
+          # self-workflow/next-workflow and plan.yml's empty next-workflow:
+          # the fold-in is already committed and pushed by the agent step
+          # above, so an unconfigured chain reports that on the PR and stops
+          # cleanly — never a failed step that swallows the reply.
+          if [ -z "$IMPLEMENT_WORKFLOW" ]; then
+            body_file="$RUNNER_TEMP/fold-in-reply.md"
+            {
+              cat "$RUNNER_TEMP/act-summary.txt"
+              echo ""
+              echo "No implement workflow is configured for automatic re-dispatch (\`implement-workflow\` is empty), so nothing was run against this fold-in — dispatch your implement wrapper manually with \`spec_dir=$SPEC_DIR\`, \`issue=$ISSUE\`, \`iteration=$next\` when ready."
+            } > "$body_file"
+            gh pr comment "$PR_NUMBER" --body-file "$body_file"
+            echo "Fold-in committed; no implement-workflow configured — reported on PR #$PR_NUMBER and stopped (standalone mode)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          GH_TOKEN="$DISPATCH_TOKEN" gh workflow run "$IMPLEMENT_WORKFLOW" \
             -R "$GITHUB_REPOSITORY" -f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f iteration="$next"
 
           # T063: this lookup ran under the App token (no Actions
@@ -1422,7 +1616,7 @@ jobs:
           run_url=""
           for _ in 1 2 3 4 5 6; do
             sleep 5
-            run_url=$(GH_TOKEN="$DISPATCH_TOKEN" gh run list -R "$GITHUB_REPOSITORY" --workflow wing-commander-5-implement.yml \
+            run_url=$(GH_TOKEN="$DISPATCH_TOKEN" gh run list -R "$GITHUB_REPOSITORY" --workflow "$IMPLEMENT_WORKFLOW" \
               --created ">=$start_ts" --limit 1 --json url --jq '.[0].url // empty' 2>/dev/null) || run_url=""
             [ -n "$run_url" ] && break
           done
@@ -1481,6 +1675,14 @@ jobs:
       # SpinOffArtifact posts through — never optional, never left to the
       # agent's own discretion to remember. Rendered as an unchecked list
       # item so it visibly persists until a human closes the linked artifact.
+      #
+      # T081: "never left to the agent's discretion" is now true rather than
+      # merely asserted. This step still keys off `artifact-url`, but for
+      # every leg where an artifact is REQUIRED (`out-of-pr`), the act-result
+      # step above no longer accepts the agent's silence: it derives the URL
+      # from GitHub when the agent omitted one, and fails the leg loudly
+      # (after replying on the PR) when neither source produces one. An
+      # unrecorded spin-off can therefore no longer pass silently.
       - name: Post outstanding task item on the lifecycle issue
         if: steps.act-result.outputs.artifact-url != ''
         env:
@@ -1564,6 +1766,7 @@ jobs:
           PR_NUMBER: ${{ inputs.pr-number }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
           SLUG: ${{ needs.classify-and-announce.outputs.slug }}
+          IMPLEMENT_WORKFLOW: ${{ inputs.implement-workflow }}
           BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -euo pipefail
@@ -1617,8 +1820,15 @@ jobs:
             fi
           fi
 
-          impl_run_id=$(GH_TOKEN="$DISPATCH_TOKEN" gh run list -R "$GITHUB_REPOSITORY" --workflow wing-commander-5-implement.yml \
-            --branch "${SPEC_PREFIX}${SLUG}" --status in_progress --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null) || impl_run_id=""
+          # T078: the same declared input the dispatch step uses. Empty means
+          # this stage never dispatches an implement run, so there is nothing
+          # of that kind to cancel — skip the lookup rather than passing an
+          # empty --workflow (which would match every workflow on the branch).
+          impl_run_id=""
+          if [ -n "$IMPLEMENT_WORKFLOW" ]; then
+            impl_run_id=$(GH_TOKEN="$DISPATCH_TOKEN" gh run list -R "$GITHUB_REPOSITORY" --workflow "$IMPLEMENT_WORKFLOW" \
+              --branch "${SPEC_PREFIX}${SLUG}" --status in_progress --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null) || impl_run_id=""
+          fi
           if [ -n "$impl_run_id" ]; then
             GH_TOKEN="$DISPATCH_TOKEN" gh run cancel "$impl_run_id" -R "$GITHUB_REPOSITORY" 2>/dev/null || true
           fi

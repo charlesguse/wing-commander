@@ -114,6 +114,7 @@ jobs:
       actor-login: ${{ github.event.review.user.login || github.event.comment.user.login }}
       actor-association: ${{ github.event.review.author_association || github.event.comment.author_association }}
       model: ${{ needs.resolve-model.outputs.model }}
+      implement-workflow: wing-commander-5-implement.yml
       confirm-categories: ${{ vars.WING_COMMANDER_PR_CONVERSATION_CONFIRM_CATEGORIES || '' }}
       confirm-environment: ${{ vars.WING_COMMANDER_PR_CONVERSATION_CONFIRM_ENVIRONMENT || 'pr-conversation-confirm' }}
       spec-prefix: ${{ vars.WING_COMMANDER_SPEC_PREFIX || 'spec/' }}

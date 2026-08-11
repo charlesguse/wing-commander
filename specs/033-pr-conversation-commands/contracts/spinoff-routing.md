@@ -7,6 +7,25 @@ posted to the lifecycle issue (FR-008/FR-013), via the existing
 the new artifact) — never optional, never left to the agent's own
 discretion to remember.
 
+**How that is enforced (T081)**: the posting step keys off the act agent's
+`artifact-url`, which is self-reported and therefore not a guarantee. For
+every leg whose `out-of-pr` is true — i.e. an artifact is required, which
+excludes a `manual-step-permission` leg with a confident dedup match, since
+that one creates nothing by design — an agent returning `mutated: true`
+with no `artifact-url` does **not** pass silently:
+
+1. the URL is derived from GitHub instead (`gh issue list --label
+   spec-request` / `gh pr list --base <default>` / `gh pr list --label
+   permission-request`, filtered to items created after the leg started and
+   authored by the pipeline's own App), and the run carries a `::warning::`
+   recording the recovery; failing which
+2. the leg replies on the PR saying the artifact could not be identified
+   and needs a human link, then fails with `::error::`.
+
+A spin-off that reaches neither the lifecycle issue nor a visible failure
+is what SC-002 ("zero spun-off items are left untracked") forbids; step 2
+converts an untracked artifact into a loud one.
+
 ## `new-functionality` (FR-006, research.md D7)
 
 `RequestClassification.fold-target` decides the route:
@@ -101,7 +120,13 @@ Three sub-outcomes, chosen by `drafted-content`'s shape
   reported on the PR with the reason (FR-011's second clause). Not a
   spin-off artifact.
 - **Needs a permission the stage lacks** (`{needs-permission, pr-title, pr-body}`):
-  first, search `gh search prs --label permission-request --state all`
+  first — in `classify-and-announce`, **before** the intent announcement is
+  posted, not in `act` (T080; same ordering rule the `small-unrelated-change`
+  size backstop follows, and for the same reason: this search decides
+  whether an out-of-PR artifact will exist at all, so the announcement, the
+  `out-of-pr` lifecycle-issue cross-post, and the confirm gate must all be
+  computed from its verdict) — search
+  `gh search prs --label permission-request --state all`
   for a `WithheldPermissionConversation` plausibly matching
   `needs-permission` (data-model.md) — compared as a **case-insensitive
   literal substring** of the candidate PR titles, never as a regex: the
@@ -111,7 +136,12 @@ Three sub-outcomes, chosen by `drafted-content`'s shape
   request with no reply at all. If `match-confidence == "confident"`:
   reply linking that prior conversation instead of opening anything new —
   **not** a new spin-off artifact (the existing conversation already is
-  one, and is not re-recorded). Otherwise (`uncertain`/`none`, conservative
+  one, and is not re-recorded). Because that verdict is known before the
+  announcement, this leg announces "link the permission request already
+  tracked at …", is never cross-posted to the lifecycle issue, and never
+  consumes a `confirm-categories` approval: there is nothing to approve.
+  A failed/errored search is treated as "no match" — a duplicate PR a human
+  can close beats silently dropping a genuine request. Otherwise (`uncertain`/`none`, conservative
   bias — research.md D11): open a one-off permission-request PR to the
   default branch, labeled `permission-request` (created via `gh label
   create --force` on first use, same idiom every other stage's own labels

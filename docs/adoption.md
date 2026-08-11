@@ -989,15 +989,31 @@ for the full routing design.
 
 | | |
 |---|---|
-| Inputs | `pr-number` (number, required); `event-kind` (string `review`\|`review-comment`\|`issue-comment`, required); `body` (string, required, untrusted); `actor-login`/`actor-association` (string, required); `comment-id`/`review-id` (number, `0`); `thread-path`/`thread-diff-hunk` (string, `""`); `confirm-categories` (string, `""` = act-then-report for every category); `confirm-environment` (string, `pr-conversation-confirm`); `model` (string, `claude-sonnet-5`); `max-turns` (number, `40`) |
+| Inputs | `pr-number` (number, required); `event-kind` (string `review`\|`review-comment`\|`issue-comment`, required); `body` (string, required, untrusted); `actor-login`/`actor-association` (string, required); `comment-id`/`review-id` (number, `0`); `thread-path`/`thread-diff-hunk` (string, `""`); `confirm-categories` (string, `""` = act-then-report for every category); `confirm-environment` (string, `pr-conversation-confirm`); `model` (string, `claude-sonnet-5`); `max-turns` (number, `40`); `implement-workflow` (string, `""`) |
 | Preconditions | the PR's base is your default branch and its head starts with `spec-prefix` (not `spec-draft-prefix`/`plan-prefix`/`tasks-prefix`) — anything else short-circuits with no reply at all; the lifecycle issue is open |
 | Side effects | posts one `IntentAnnouncement` per classification before any mutation; routes per category — see the architecture doc for the full list |
-| Outputs | `qualifies`, `spec-dir`, `slug` |
+| Outputs | none — side effects only. (`classify-and-announce` has *job*-level outputs, which a caller cannot read; `needs.pr-conversation.outputs.qualifies` in your own wrapper resolves to an empty string.) |
+
+`implement-workflow` is your implement wrapper's **filename**, the same
+opt-in chaining convention every other stage uses — pass
+`wing-commander-5-implement.yml` (or whatever you renamed it to) to have an
+in-scope fold-in re-drive implement automatically, and to have a `stop`
+request cancel that dispatched run too. Left at its `""` default, an
+in-scope fold-in is still committed and pushed to `spec/<slug>`; the PR
+reply then says no implement workflow is configured and gives you the
+`spec_dir`/`issue`/`iteration` payload to dispatch by hand.
 
 Deliberately **no `workflow_dispatch`** — this is the only stage that is
 purely event-triggered, since its whole purpose is reacting to a review or
-comment. The wrapper's `if:` gate has no requester carve-out (unlike
-clarify/intake): only `OWNER`/`MEMBER`/`COLLABORATOR` actors can direct it.
+comment. Authorization is **two layers**, and the split matters: the
+wrapper's `if:` excludes bots only, and the stage's `classify-and-announce`
+job checks `OWNER`/`MEMBER`/`COLLABORATOR` association as its own first
+deterministic step, posting a notice-and-stop reply when it fails. Do not
+move the association check up into the wrapper `if:` — a wrapper `if:`
+cannot post a reply, so an unauthorized human would get silence instead of
+that notice. What *is* absent at both layers, unlike clarify/intake, is any
+requester carve-out: the lifecycle issue's own author gets no special
+standing here.
 
 ```yaml
 name: "Wing Commander · 9 pr conversation"
@@ -1049,6 +1065,10 @@ jobs:
       body: ${{ github.event.review.body || github.event.comment.body || '' }}
       actor-login: ${{ github.event.review.user.login || github.event.comment.user.login }}
       actor-association: ${{ github.event.review.author_association || github.event.comment.author_association }}
+      # Your implement wrapper's filename — opt-in, like every other
+      # chaining input. Omit it and an in-scope fold-in is committed but
+      # nothing is dispatched (the PR reply says so).
+      implement-workflow: wing-commander-5-implement.yml
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}

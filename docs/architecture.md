@@ -205,7 +205,11 @@ change to the tiering above.
 ### Security (constitution V)
 - Pipeline entry = maintainer-applied `spec-request` label.
 - Comment triggers: commenter must be OWNER/MEMBER/COLLABORATOR **or** the
-  original issue author; `Bot`-type users never trigger.
+  original issue author; `Bot`-type users never trigger. Stage 10
+  (`pr-conversation`) is the one exception to the author carve-out —
+  maintainers only, no requester standing (FR-019) — and it checks the
+  association in the stage rather than the wrapper `if:`, so that an
+  unauthorized human gets a reply instead of silence (see Stage 10 below).
 - Issue/comment bodies are never interpolated into prompts or shell — they are
   fetched by the agent (`gh issue view`) or staged into files via env-var
   indirection, and framed as untrusted data.
@@ -760,7 +764,10 @@ standing with this stage. A
   so intent is structurally guaranteed to precede any mutation.
 - `act` — one matrix leg per classification (`max-parallel: 1`, since two
   legs from the same comment could both want to fold into `tasks.md`/
-  `spec-meta.json` and would race each other's push), each independently
+  `spec-meta.json` and would race each other's push; legs are ordered
+  non-confirm-gated first, because that single slot is held by any leg
+  waiting on an approval — which is what lets in-PR actions finish
+  immediately while an out-of-PR sibling waits), each independently
   bound to a confirmation environment (empty name = true no-op, reusing
   `specs/031-stage-environment-binding`'s verified binding contract) and
   gated by a relayed-request risk-confirmation check (a maintainer relaying
@@ -770,7 +777,10 @@ standing with this stage. A
   `in-scope-change` (and a `new-functionality` request folded into the
   current spec) appends a `## Maintainer Feedback` section to `tasks.md`,
   advances `spec-meta.json.stage` back to `"implement"`, and dispatches the
-  existing `wing-commander-5-implement.yml` unchanged — the same chaining
+  consumer's existing implement wrapper unchanged, named by the
+  `implement-workflow` input (`wing-commander-5-implement.yml` in this
+  repository's own wrapper; empty = the fold-in is committed and the PR
+  reply says no dispatch was configured) — the same opt-in chaining
   contract every other stage uses, with zero trace left on the lifecycle
   issue; `new-functionality` warranting its own spec opens a
   `spec-request`-labeled issue, picked up by intake with no new entry point;

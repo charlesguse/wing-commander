@@ -57,6 +57,20 @@ pass-through caveat spec 031 already carries for its own binding, restated
 here rather than re-solved (constitution VI: this is adopter
 configuration, not a pipeline behavior).
 
+**Leg ordering is part of the mechanism (T079/FR-020)**: `act` runs its
+matrix with `max-parallel: 1` — load-bearing, since two legs from one
+comment can both fold into `tasks.md`/`spec-meta.json` and would race each
+other's commit+push. A leg pending environment approval holds that single
+slot, so a confirm-gated leg would otherwise stall every leg classified
+after it. `classify-and-announce` therefore emits the classification array
+sorted with every `requires-confirmation: false` leg first (a stable sort —
+classified order is preserved within each group). FR-020's "acting
+immediately on in-PR actions" while an out-of-PR sibling awaits
+confirmation holds because the in-PR legs have all *completed* before the
+first approval wait begins — not because legs run concurrently, which under
+`max-parallel: 1` they never do. The announcements are posted in this same
+order, so the PR thread reads in execution order.
+
 **Reject = stop, for free**: a required reviewer rejecting the environment
 deployment is GitHub's own native "don't do this" signal — `act` never
 runs, and nothing further is needed to honor a maintainer's "no" during
@@ -127,9 +141,14 @@ Two independent paths, both free of any new polling mechanism
      which need the bot identity;
    - if that announcement's `planned-action` was an implement re-trigger
      (`contracts/converge-fold-in.md`), additionally `gh run cancel` the
-     dispatched `wing-commander-5-implement.yml` run, found via `gh run
-     list --workflow wing-commander-5-implement.yml --branch spec/<slug>
-     --status in_progress --json databaseId --jq '.[0].databaseId'`;
+     dispatched implement run, found via `gh run list --workflow
+     <implement-workflow> --branch spec/<slug> --status in_progress --json
+     databaseId --jq '.[0].databaseId'` — `<implement-workflow>` being the
+     stage's declared input, the same value the dispatch step used, never a
+     literal filename (T078, constitution VI/VII). When that input is empty
+     the stage never dispatches an implement run, so this lookup is skipped
+     entirely rather than run with an empty `--workflow` (which would match
+     every workflow on the branch);
    - if `gh run cancel` reports the target run already completed (GitHub
      returns a 409/"already completed"/"cannot cancel" style message for
      this), replies with `StopRequest.outcome == "already-completed"` and a

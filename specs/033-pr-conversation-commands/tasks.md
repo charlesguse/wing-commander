@@ -1907,6 +1907,244 @@ static validation, and the full quickstart walkthrough.
 
 ---
 
+## Phase 18: Convergence
+
+- [X] T078 CRITICAL (Constitution VI/VII, contradicts): the published stage
+  hardcodes THIS repository's own wrapper filename. `.github/workflows/pr-conversation.yml`
+  dispatches and polls `wing-commander-5-implement.yml` as a literal at three
+  sites — `:1411` (`gh workflow run wing-commander-5-implement.yml`), `:1425`
+  (the run-URL poll's `--workflow`), and `:1620` (the Stop procedure's
+  implement-run lookup). A wrapper filename is consuming-repository
+  convention, not published contract: constitution VI requires that
+  "anything repo-specific belongs in the consuming repository or its thin
+  wrapper workflows", and constitution VII that "every event fact and every
+  knob arrives as a declared, typed input". Every other stage that
+  dispatches a wrapper already does exactly that — `implement.yml:68/76`
+  (`self-workflow`/`next-workflow`), `plan.yml:51`, `tasks.yml` — and
+  `specs/010-reusable-pipeline/contracts/stage-interfaces.md:75` states the
+  rule outright ("Chaining is opt-in: `next-workflow`-style inputs default
+  to `""` = no dispatch"), while `docs/adoption.md:1078` makes it a promise
+  to adopters: "Rename the wrapper *files* freely — the stages take the
+  filenames as inputs — but keep the input *names* exactly." This stage's
+  own contract row (`stage-interfaces.md:226`) declares no such input, and
+  its Behavior text (`:228`) writes the literal filename into the published
+  contract. Consequence for any adopter whose implement wrapper is not named
+  `wing-commander-5-implement.yml`: `gh workflow run` exits non-zero
+  ("could not find any workflows named …"), and the step runs under
+  `set -euo pipefail`, so it aborts AFTER the fold-in commit has been pushed
+  and BEFORE the `gh pr comment` — the maintainer's in-scope change is
+  folded into `tasks.md`, nothing is ever run against it, and no reply is
+  posted. That is FR-004 and the P1/MVP route (US1) broken outright, plus
+  FR-014/SC-005, and it is invisible to this repository's own dogfooding
+  because the file does exist here — the same shape as T063's defect, one
+  layer up. Add a declared `implement-workflow` input (string, default
+  `""`), pass it from `wing-commander-9-pr-conversation.yml`, and treat
+  empty as "fold-in committed, no dispatch" — reported on the PR rather than
+  failing — mirroring the standalone-mode behaviour `implement.yml:1081`
+  and `plan.yml:823` already implement. Update the Stop procedure's lookup
+  and all four doc/contract mirrors (`contracts/converge-fold-in.md:47/53`,
+  `contracts/autonomy-and-confirmation.md:130-131`,
+  `contracts/reusable-pr-conversation.md:17`, `stage-interfaces.md:226/228`,
+  `docs/adoption.md`'s pr-conversation Inputs row) to match. Constitution
+  VI/VII, FR-004, FR-014, SC-005 (contradicts).
+
+  **Status (iteration 10)**: `implement-workflow` (string, default `""`) is
+  now a declared `workflow_call` input of `pr-conversation.yml`, passed as
+  `wing-commander-5-implement.yml` from
+  `wing-commander-9-pr-conversation.yml`. All three literal sites take it
+  from the input: the dispatch, the run-URL poll's `--workflow`, and the
+  Stop procedure's implement-run lookup. Empty is standalone mode, matching
+  `implement.yml:1081`/`plan.yml:823`: the fold-in commit is already pushed
+  by the agent step, so the step replies on the PR with the manual
+  `spec_dir`/`issue`/`iteration` payload and exits 0 — never a failed step
+  that aborts between the push and the reply. The stop procedure skips the
+  implement lookup entirely when the input is empty, rather than passing an
+  empty `--workflow` (which matches every workflow on the branch). Mirrors
+  updated: `contracts/converge-fold-in.md` steps 6-7,
+  `contracts/autonomy-and-confirmation.md`'s stop bullet,
+  `contracts/reusable-pr-conversation.md` Inputs+Outputs,
+  `stage-interfaces.md:226/228`, `docs/adoption.md`'s Inputs row and
+  copy-paste snippet, and `docs/architecture.md`'s Stage 10 fold-in
+  sentence. Verified by executing the extracted dispatch and stop steps
+  against fixtures with `gh` stubbed (cases T/U/V/W of the harness): the
+  configured filename is what gets dispatched and polled, an empty input
+  dispatches nothing but still replies, and no `wing-commander-5-implement`
+  literal appears in any call the step makes.
+- [X] T079 (contradicts): `act`'s `strategy.max-parallel: 1`
+  (`.github/workflows/pr-conversation.yml:951`) makes FR-020's central
+  guarantee false. The comment directly above the `environment:` block
+  (`:954-958`) states that a leg whose `confirm-environment` resolves to
+  `""` "runs immediately even while a sibling leg waits for approval", and
+  FR-020 requires exactly that — "confirming before creating out-of-PR
+  artifacts … while still acting immediately on in-PR actions" (US5
+  Acceptance #4 repeats it verbatim). But a matrix job pending environment
+  approval occupies the single slot `max-parallel: 1` allows, so every
+  later leg is queued behind it. A comment carrying both a spin-off request
+  (confirm-gated) and an in-scope change therefore stalls the in-scope
+  change until a human approves the spin-off — the inverse of the stated
+  contract. `max-parallel: 1` itself is load-bearing and must not simply be
+  removed: the comment at `:945-950` records why (two legs can both fold
+  into `tasks.md`/`spec-meta.json` and would race each other's commit+push).
+  Resolve so both hold — e.g. order the matrix so non-confirm-gated legs
+  run first, or split confirm-gated legs into their own serialized group —
+  or, if neither is achievable, amend the comment, `contracts/autonomy-and-confirmation.md`
+  and spec.md US5/AC4 to state the real behaviour. Note T032's checkpoint
+  claims this was "confirmed"; it was desk-checked against the comment, not
+  against `max-parallel`. FR-020, US5/AC4 (contradicts).
+
+  **Status (iteration 10)**: resolved by ordering, not by removing
+  `max-parallel: 1` (which stays load-bearing for the tasks.md/spec-meta.json
+  race). "Compute confirmation requirements" now ends with
+  `sort_by(if .["requires-confirmation"] then 1 else 0 end)` — a stable sort,
+  so classified order is preserved within each group — putting every
+  non-confirm-gated leg ahead of every gated one. The in-PR work therefore
+  *completes* before the first approval wait begins, which is what FR-020
+  and US5/AC4 actually require; the announcements, built from the same
+  array, now also read in execution order. The false claim was corrected
+  everywhere it appeared: the `environment:` comment no longer says an
+  unbound leg "runs immediately even while a sibling leg waits" (it says
+  what actually delivers FR-020), the `max-parallel: 1` comment records the
+  ordering dependency, the stale "sibling leg guarantee" back-reference in
+  the Gate 7 divergence note was rewritten, and
+  `contracts/autonomy-and-confirmation.md`, `data-model.md`,
+  `docs/architecture.md` and `stage-interfaces.md` state the mechanism as
+  ordering-under-serialization rather than concurrency. spec.md US5/AC4
+  needed no change — with the ordering in place its wording is true.
+  Verified by executing the extracted step (harness cases B/B2/H): a gated
+  leg sorts last, ungated legs keep `confirm-environment: ""`, order is
+  untouched when nothing is gated, and a size-backstop re-route that
+  *becomes* gated sorts last too.
+- [X] T080 (partial): the permission-conversation dedup decision is made
+  too late to keep the announcement honest — the same ordering defect class
+  T060 fixed for the size backstop. `out-of-pr` is computed in
+  `classify-and-announce`'s "Compute confirmation requirements"
+  (`.github/workflows/pr-conversation.yml:818`) from
+  `has("needs-permission")` alone, so a `manual-step-permission` leg is
+  announced to the PR *and cross-posted to the lifecycle issue* (`:904-906`)
+  promising a permission-request PR. The `gh search prs` dedup search that
+  decides whether any PR will actually be opened runs later, in `act`'s
+  "Resolve effective category and route" (`:1186-1210`). On a `confident`
+  match no artifact is created at all, and the correcting reply
+  ("A similar permission request is already tracked", `:1471-1478`) is
+  posted only to the PR. The lifecycle issue is therefore left carrying an
+  announcement of an out-of-PR artifact that never existed, with no
+  outstanding-task-item and no correction — contradicting FR-023 (the
+  announcement must state the action actually about to be taken) and
+  FR-013/SC-002's premise that the issue is the legible record of what was
+  spun off. Move the dedup resolution ahead of the announcement (the T060
+  precedent: make it a pre-transform in "Compute confirmation
+  requirements", which also fixes the FR-020 case where
+  `confirm-categories` gates a leg that will only post a link), or post the
+  correction to the lifecycle issue as well. FR-023/FR-013, SC-002
+  (partial).
+
+  **Status (iteration 10)**: took the T060 precedent — the dedup now runs in
+  `classify-and-announce`'s "Compute confirmation requirements", before the
+  announcement, not in `act`'s route step. One `gh search prs` serves every
+  leg (skipped entirely, left as `[]`, when no leg needs it, so the common
+  case adds no API call), and the T057 literal-substring matcher moved with
+  it as a jq function. A confident match now: sets `out-of-pr` false, so the
+  announcement is never cross-posted to the lifecycle issue; forces
+  `requires-confirmation` false, since a leg that only posts a link has
+  nothing to approve (the FR-020 case the task also named); and rewrites
+  `planned-action` to "link the permission request already tracked at
+  <url> — nothing new will be opened", so the announcement states the action
+  actually about to be taken (FR-023). The verdict rides the matrix as
+  `permission-match`/`permission-match-url`; `act`'s route step consumes it
+  and no longer searches (a second copy could only drift from the one the
+  announcement was made on). A failed search degrades to "no match", the
+  conservative direction. `data-model.md` gained rows for the two new
+  fields and for `out-of-pr`; `contracts/spinoff-routing.md`'s
+  needs-permission bullet records the ordering rule and its reason.
+  Verified by executing both extracted steps (harness cases C/D/E/F/G and
+  J/K/L), including that no `gh search prs` reaches `act` any more (the
+  stub fails the run if it does) and that an unbalanced-paren capability
+  string still cannot abort the step.
+- [X] T081 (partial): the `OutstandingTaskItem` mechanism is not actually
+  deterministic. "Post outstanding task item on the lifecycle issue"
+  (`.github/workflows/pr-conversation.yml:1484-1485`) fires only when
+  `steps.act-result.outputs.artifact-url != ''`, and that value comes
+  straight from the act agent's own self-reported `artifact-url` schema
+  field (`:1386`). Its own header comment claims the opposite — "the ONE
+  shared mechanism every SpinOffArtifact posts through — never optional,
+  never left to the agent's own discretion to remember" (`:1480-1483`). An
+  act agent that genuinely creates the spec-request issue, the
+  small-unrelated-change PR, or the permission-request PR but returns
+  `mutated: true` with `artifact-url: null` produces a spin-off artifact
+  that appears nowhere on the lifecycle issue, which is precisely the
+  "zero spun-off items are left untracked" guarantee SC-002 states and
+  FR-008 requires ("so it cannot be ignored"). Nothing downstream notices.
+  Close the loop deterministically: for the three spin-off categories,
+  either verify the artifact exists (e.g. `gh pr list`/`gh issue list`
+  scoped to the branch/label just used) and derive the URL from that rather
+  than from the agent, or fail the leg loudly when a spin-off category
+  reports `mutated: true` with no `artifact-url`, so the gap is visible
+  instead of silent. FR-008, SC-002 (partial).
+
+  **Status (iteration 10)**: both halves of the task's suggested fix, in
+  order. The act-result step now runs a verification for exactly the legs
+  where an artifact is REQUIRED — `matrix['out-of-pr']`, which after T080 is
+  false for a confident permission dedup match (that leg creates nothing by
+  design) — when the agent returns `mutated: true` with no `artifact-url`:
+  (1) derive the URL from GitHub instead (`gh issue list --label
+  spec-request` / `gh pr list --base <default-branch>` / `gh pr list --label
+  permission-request`, each filtered to items created after a `leg-start`
+  timestamp the route step emits AND authored by the pipeline's own App
+  login), emitting a `::warning::` recording the recovery; (2) failing that,
+  reply on the PR that the artifact could not be identified and needs a
+  human link, then `::error::` and exit 1. The reply is posted BEFORE the
+  failure on purpose — T063's ordering lesson: every downstream reporting
+  step is skipped once this one exits non-zero, and a silent failure is the
+  exact outcome the check exists to prevent. Fold-in legs, `mutated: false`
+  legs, and dedup-matched legs are untouched. The header comment on "Post
+  outstanding task item" no longer merely asserts "never left to the agent's
+  discretion" — it names the mechanism that makes it so, and
+  `contracts/spinoff-routing.md` carries the two-step enforcement contract.
+  Verified by executing the extracted step (harness cases M-S): the agent's
+  own URL still wins with no lookup; a forgotten URL is recovered; an issue
+  predating the leg or authored by someone else is NOT claimed and the leg
+  fails loudly after replying; and the small-unrelated-change lookup is
+  scoped to the default branch.
+- [X] T082 (contradicts): `docs/adoption.md`'s `pr-conversation` stage
+  section disagrees with the shipped stage in two ways. (a) Its table
+  claims `Outputs | qualifies, spec-dir, slug`. The stage declares **no**
+  `workflow_call` outputs at all — `.github/workflows/pr-conversation.yml`
+  has only a job-level `outputs:` on `classify-and-announce` (`:226`),
+  which a caller cannot read, and `contracts/reusable-pr-conversation.md:17`
+  states "Outputs | none (side effects only)". An adopter wiring
+  `needs.pr-conversation.outputs.qualifies` into their own wrapper gets an
+  empty string. (b) The prose under the same table reads "The wrapper's
+  `if:` gate has no requester carve-out (unlike clarify/intake): only
+  `OWNER`/`MEMBER`/`COLLABORATOR` actors can direct it" — attributing the
+  association check to the wrapper `if:`, the exact broken model T074 and
+  T075 corrected in this same file's copy-paste snippet and in
+  `docs/architecture.md`. This is the third copy of that divergence and the
+  one an adopter reads first, immediately above the snippet T074 fixed. Fix
+  both: drop the Outputs row (or state "none — side effects only"), and
+  restate the gate as the two layers it is (wrapper: bots never run; stage:
+  association checked in `classify-and-announce`, unauthorized gets
+  FR-021's notice), keeping the correct no-requester-carve-out point.
+  FR-021, contracts/reusable-pr-conversation.md (contradicts).
+
+  **Status (iteration 10)**: (a) the Outputs row now reads "none — side
+  effects only", and says explicitly that `classify-and-announce`'s outputs
+  are *job*-level and that `needs.pr-conversation.outputs.qualifies` in an
+  adopter's wrapper resolves to an empty string. The identical false claim
+  in `stage-interfaces.md:229` was the same defect one mirror over and was
+  corrected with it, so all three sources now agree with
+  `contracts/reusable-pr-conversation.md:17`. (b) the prose no longer
+  attributes the association check to the wrapper `if:` — it states the two
+  layers (wrapper: bots never run; stage: `classify-and-announce` checks the
+  association and posts FR-021's notice), warns against moving the check up
+  into the `if:` (a wrapper `if:` cannot reply, so an unauthorized human
+  would get silence), and keeps the correct no-requester-carve-out point.
+  `docs/architecture.md:207`'s blanket "or the original issue author"
+  security bullet carried the same divergence in summary form and now names
+  Stage 10 as the exception. The section also gained a paragraph on
+  `implement-workflow` (T078) and its snippet now passes it.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
