@@ -1462,7 +1462,7 @@ static validation, and the full quickstart walkthrough.
   indistinguishable from "there was no evidence to collect" — the watchdog
   may have been silently collecting nothing from artifacts/annotations
   rather than reporting a permission problem.
-- [ ] T066 Gate 1 ("every workflow is registered under its declared name")
+- [X] T066 Gate 1 ("every workflow is registered under its declared name")
   reports a FALSE POSITIVE for any workflow file that does not yet exist
   on the default branch, and this feature is the first to expose it. On a
   `workflow_dispatch` run of `lint-workflows.yml` from this branch, Gate 1
@@ -1492,6 +1492,26 @@ static validation, and the full quickstart walkthrough.
   file, and the workaround is exactly the temporary-trigger-on-a-throwaway-
   branch used here. Found while verifying T064's own CI run.
   Constitution IV (partial).
+
+  **Status (iteration 9)**: fixed in Gate 1's own script
+  (`.github/workflows/lint-workflows.yml`). Before comparing declared names
+  against registrations it now lists what actually exists on the default
+  branch (`gh api repos/.../contents/.github/workflows?ref=<default>`); a
+  mismatch on a file NOT on that branch is reported as a `::notice`
+  explaining the staleness rather than counted as a failure. Fails CLOSED —
+  if the default-branch listing cannot be read (or comes back empty) every
+  mismatch is reported exactly as before, so the gate can never be silenced
+  by a failing API call. The notice text also records the probe technique
+  T066 asks be written down: a `workflow_call`-only file cannot be
+  dispatched, so add a temporary `workflow_dispatch:` trigger on a throwaway
+  branch and POST to the dispatches endpoint — 204 means it parses, and a
+  422 body carries the real parser error verbatim. On a `push: main` run
+  (this gate's real trigger) every file IS on the default branch, so
+  behaviour there is unchanged; only the `workflow_dispatch`-from-a-branch
+  case differs. Gate 12 re-run against the whole tree confirms the two new
+  `gh api` calls are covered by the job's existing `contents: read`. Not run
+  live in this environment.
+
 - [X] T065 `pr-conversation.act`'s default allowed-tools list grants the
   agent `Bash(gh run cancel:*)`, `Bash(gh run list:*)` and `Bash(gh
   workflow run:*)`, but the agent step's `GH_TOKEN` is the App token,
@@ -1512,6 +1532,378 @@ static validation, and the full quickstart walkthrough.
   `specs/010-reusable-pipeline/contracts/stage-interfaces.md`). Every
   Actions interaction this stage performs is owned by a deterministic
   step, which is what let T062/T063 be fixed in one place.
+
+---
+
+## Phase 17: Convergence
+
+- [X] T067 CRITICAL (contradicts): all six array-collecting `gh api
+  --paginate` calls in `.github/workflows/pr-conversation.yml` are
+  unparseable past the first page. `gh` applies `--jq` to **each page
+  separately** and concatenates the results (this is exactly why `--slurp`
+  exists), so `--paginate --jq '[.[] | ...]'` produces `[...]\n[...]`, not
+  one array. Every one of the six feeds that string straight into `jq -n
+  --argjson`, which dies with "invalid JSON text passed to --argjson";
+  under `set -euo pipefail` the step aborts and takes its job down. Sites
+  and blast radius: `:438`/`:439` ("Check for relay confirmation",
+  `classify-and-announce`) — the whole job fails before any announcement is
+  posted, so a PR past one page of comments gets NO reply at all whenever
+  the body contains "confirm"; `:1006`/`:1007` ("Relayed-request
+  risk-confirmation gate", `act`) — the leg fails, so FR-022's confirmation
+  round can never complete; `:1471`/`:1472` ("Stop procedure", `act`) — a
+  stop request on a busy PR ALWAYS fails, defeating FR-024/SC-009 on
+  precisely the PRs long enough for a maintainer to want to stop something.
+  Note the default page size is 30, and this feature's own dogfood PR is
+  already well past it. `intake.yml:399` shows the correct streaming form
+  (`--jq '.[]'`); these six are the only array-collecting `--paginate` uses
+  in the repository. Fix each with `--slurp` (`gh` then emits one array) or
+  with `--jq '.[]'` piped through `jq -s`, and add the shape to
+  `quickstart.md`'s static-validation set so a multi-page fixture is
+  actually exercised. While there, check the adjacent
+  `watchdog.yml:665`/`:740`/`:743` `--paginate` calls, which page an
+  object-returning endpoint into `jq` the same way — out of this feature's
+  scope to fix, but same class, and worth a filed issue if it holds.
+  FR-022/FR-024, SC-009 (contradicts).
+
+  **Status (iteration 9)**: all six sites fixed to the streaming form
+  (`--paginate --jq '.[] | ...' | jq -s '.'`), the shape `intake.yml:399`
+  already uses. The premise was verified rather than assumed: two
+  single-page filter outputs concatenated fail a strict single-value JSON
+  parse with "Extra data" — exactly what `jq --argjson` performs — while the
+  slurped form parses. (Shown with Python's `json.loads`; `jq` is not
+  installed in this environment.) Added as item 5 of `quickstart.md`'s
+  static-validation set, including the grep guard that `--paginate --jq '['
+  must not appear in the workflow.
+
+  The adjacent sites T067 asked about were checked. **Safe**:
+  `lint-workflows.yml:1176` (streams TSV lines, correct across pages) and
+  `watchdog.yml:665`/`:740` (object endpoint consumed by
+  `jq -r '.jobs[]?.id'`, which accepts a multi-value stream). **Same defect
+  class, out of this feature's scope**: `watchdog.yml:743` (annotations —
+  silently drops evidence, since the step is soft-failed) and
+  `auto-update-spec-kit.yml:391`/`:799` (release detection). Filed as
+  **issue #182** with the analysis, the safe/unsafe split, and a suggested
+  repo-wide gate.
+
+- [X] T068 CRITICAL (contradicts, Constitution VII): Gate 12 —
+  the machine-checked interface T064 added so that "an unrecognised `gh`
+  call must FAIL, not pass silently" — is itself silently passing calls.
+  In `.github/workflows/lint-workflows.yml`, `executable_flags`
+  (`:780-814`) tracks shell quoting to decide which text really executes,
+  but the `if c == "'":` branch at `:805` is reached whenever `top` is
+  `"dq"` (the function only early-continues for `top == "sq"`), so an
+  apostrophe inside a **double-quoted** string pushes a bogus `sq` frame
+  and everything after it in the step is marked non-executable and skipped.
+  Extracting and running the shipped gate against the current tree shows it
+  silently skips **22 real `gh` invocations** repo-wide — including this
+  feature's own `pr-conversation.yml:1455` `gh pr comment`, masked by
+  `"This request was not carried out — it conflicts with this project's
+  constitution"` four lines above, plus `implement.yml`'s `gh workflow
+  run`, `cleanup.yml`'s `gh issue close`, and `rebase.yml`'s `gh label
+  create`. Fix: only open an `sq` frame when `top != "dq"`. Then re-run the
+  gate over the whole tree and triage whatever the 22 newly-visible calls
+  report — some may be genuine T062/T063-class permission defects that have
+  been hidden all along. Add a negative self-test fixture containing an
+  apostrophe inside a double-quoted string followed by a
+  wrongly-permissioned `gh` call, so this exact regression is proven
+  detectable rather than assumed. Constitution VII, FR-016 (contradicts).
+
+  **Status (iteration 9)**: fixed, and the "22 hidden calls" figure
+  corrected by measurement. `executable_flags` now opens an `sq` frame only
+  when `top != "dq"`. Measured against the real tree using the gate's own
+  preprocessing (`strip_comments(strip_heredocs(run))`), that unhides
+  **10** real `gh` invocations, not 22 — including this feature's own
+  `pr-conversation.yml` `gh pr comment` and `rebase.yml`'s `gh label create`
+  (masked by "Once you've rebased"), plus six in `auto-update-spec-kit.yml`.
+  The other sites T068 named (`implement.yml`'s `gh workflow run`,
+  `cleanup.yml`'s `gh issue close`) were already visible to the gate.
+
+  Triage of the newly-visible calls: the shipped gate run against the whole
+  tree reports **0 failures**, so none of them was hiding a T062/T063-class
+  permission defect.
+
+  A SECOND masking bug was found while triaging and fixed here too: a `#`
+  beginning a word outside quotes starts a shell comment, but
+  `strip_comments()` only drops WHOLE-line comments, so a TRAILING comment
+  reached the scanner intact and its apostrophe (`target=1  # ... stage 8's
+  resolve job must fail`) opened a bogus frame. That had kept
+  `wing-commander-watchdog-test.yml`'s real `gh workflow run` invisible.
+  With both fixes, **zero** line-initial `gh` invocations in the repository
+  are treated as non-executable.
+
+  Both regressions are pinned by new self-test fixtures, and — as T068 asks
+  — the fixtures were proven to DETECT rather than assumed to: reverting
+  each fix in the extracted gate flips exactly its own fixture to FAIL. That
+  mutation test caught a real flaw in the first fixture (it contained TWO
+  apostrophes, which cancel out and mask the bug); it now deliberately
+  contains exactly one, with a comment saying why. Gate 12 self-test: 20/20.
+
+- [X] T069 (contradicts): the relay-resume trigger in
+  `.github/workflows/pr-conversation.yml:437` is an unanchored substring
+  match — `printf '%s' "$BODY" | grep -qiE 'confirm'` over the entire
+  comment body. Any maintainer comment containing "confirm", "confirmed",
+  "confirmation", or "unconfirmed" — "can you confirm CI is green?" is the
+  obvious one — taken while an unconsumed relay marker exists routes into
+  the resume path, sets `resumed=true`, and thereby **skips the classify
+  agent entirely** (`:550`). The maintainer's actual new request is never
+  classified, never routed, and never answered; instead an old stored
+  classification is re-announced and re-acted on, which can mutate the repo
+  in a way nobody just asked for. Replace with an explicit, anchored
+  confirmation phrase (the marker T047/T054 posts should state the exact
+  phrase to reply with) so resume is opt-in rather than incidental, and
+  extend the T054 fixtures with a "can you confirm CI is green?" negative
+  case. FR-022, FR-003 (contradicts).
+
+  **Status (iteration 9)**: resume is now opt-in on the explicit anchored
+  phrase `wing-commander: confirm relay`, and the risk-warning comment
+  states that phrase verbatim ("no other wording will start one"). Both
+  matchers changed together — `classify-and-announce`'s resume trigger and
+  `act`'s risk-confirmation gate.
+
+  T054 had no fixture files (it was hand-traced), so the fixtures T069 asks
+  for were built: `.github/scripts/verify-relay-confirmation-phrase.py`,
+  wired as **Gate 13** in `lint-workflows.yml` (Gate 10 requires every
+  verifier be invoked; wiring re-run green at 11 checks). It EXTRACTS all
+  three artefacts from the shipped workflow — the two matchers and the
+  phrase the comment states — and checks them against 6 positive and 9
+  negative bodies, the first negative being T069's own "can you confirm CI
+  is green?". It also asserts the phrase the comment tells a maintainer to
+  type is one both matchers accept, which is the silent-deadlock direction:
+  a phrase no engine matches would make the stage re-ask forever.
+
+  Mutation-tested: reverting either matcher to the bare `confirm` substring,
+  or drifting the comment's stated phrase away from the matchers, each makes
+  the gate fail. Writing it also caught two real bugs in the verifier itself
+  (jq string-escape level, and an escaped backtick in the extracted phrase),
+  both fixed before wiring.
+
+- [X] T070 (partial): the "Determine implementation-PR identity" step in
+  `.github/workflows/pr-conversation.yml:287-292` has no `set -euo
+  pipefail`, unlike every other `run:` block in the file. If `gh repo view`
+  or either `gh pr view` fails — rate limit, transient 5xx, token hiccup —
+  `default_branch`/`base_ref`/`head_ref` come back empty, the qualification
+  chain evaluates false, and the run short-circuits with `qualifies=false`,
+  which by design posts **no reply at all** (`:315-317`). A transient API
+  failure is therefore indistinguishable from "this PR is genuinely out of
+  scope" and the maintainer's request vanishes silently — the exact failure
+  mode FR-014 and SC-005 exist to prevent. Add the guard, and make an API
+  failure fail the step loudly rather than resolve to a silent no-op; the
+  deliberate silence must remain reserved for a PR that genuinely does not
+  qualify (FR-018). FR-014/FR-018, SC-005 (partial).
+
+  **Status (iteration 9)**: added `set -euo pipefail`, plus an explicit
+  emptiness check on `default_branch`/`base_ref`/`head_ref` that fails the
+  step with an `::error` naming which lookup failed. An empty ref here is
+  never a legitimate "does not qualify" — only a failed lookup — so a
+  transient API failure now fails loudly instead of resolving to the silent
+  no-op FR-018 reserves for a genuinely out-of-scope PR. The deliberate
+  silence is unchanged for that real case.
+
+- [X] T071 (partial): a blank drafted reply fails the step and posts
+  nothing for the two categories whose ONLY output is that reply. The
+  classify schema at `.github/workflows/pr-conversation.yml:656` declares
+  `drafted-content` as a bare `{"type":"object"}` with no required
+  properties, so a `question` classification can legitimately arrive with
+  no `answer` (or `needs-info` with no `clarifying-question`). In "Reply
+  for question, needs-info, or push-back" (`:1436-1455`), `ANSWER` then
+  resolves to the empty string, `body_file` holds only a newline, and `gh
+  pr comment --body-file` rejects a blank body — under `set -euo pipefail`
+  the leg fails and no reply is posted. Either require the per-category
+  field in the schema (preferred — it makes the agent's contract explicit)
+  or fall back to a stated "the stage could not draft an answer" string;
+  ideally both, since a schema is not a runtime guarantee. Note US6
+  AC3/FR-025 already require the stage to SAY it cannot answer rather than
+  guess — a failed step says nothing at all. FR-009/FR-010/FR-025, SC-005,
+  SC-010 (partial).
+
+  **Status (iteration 9)**: both halves, as T071 prefers. **Schema**: the
+  classify `--json-schema` now carries an `allOf` of two conditionals —
+  `category == "question"` requires `drafted-content.answer`, and
+  `category == "needs-info"` requires `drafted-content.clarifying-question`,
+  each `minLength: 1`. Verified the edited schema still parses as JSON and
+  that both conditionals read back correctly. **Runtime**: the reply step no
+  longer trusts that. A `blank()` helper treats whitespace-only as empty and
+  substitutes a stated fallback ("I could not draft an answer ... so I am
+  not going to guess", and the needs-info equivalent), so the leg always
+  posts something rather than dying on `gh pr comment`'s blank-body
+  rejection. That also satisfies US6 AC3/FR-025 directly: the stage SAYS it
+  cannot answer instead of saying nothing at all. `push-back` was already
+  safe (it always writes a sentence) and is unchanged.
+
+- [X] T072 (contradicts): the `act` job's concurrency group makes the
+  `stop` route structurally unable to cancel the run it targets. `act`
+  joins `wing-commander-${{ ...spec-dir }}` with `cancel-in-progress:
+  false` (`.github/workflows/pr-conversation.yml:869-872`). The
+  announcement the stop route scans for embeds **this stage's own** run URL
+  (`:811`), so the common target is another `pr-conversation` run whose own
+  `act` job is in flight — and the stop request's `act` job cannot start
+  until that target job finishes. By the time the stop leg finally runs,
+  `gh run cancel` sees a completed run and T031's already-completed path
+  reports "had already completed — nothing was cancelled", so the
+  maintainer is told the action could not be stopped in every case where
+  stopping actually mattered. FR-024 and SC-009 promise the opposite.
+  Resolve by taking the `stop` route out of the per-spec serialization
+  (it mutates no spec state — it only cancels a run), e.g. a separate
+  non-grouped job or a distinct concurrency group, while keeping every
+  mutating route inside the existing group per research.md D6/FR-015.
+  Re-verify T032's direct-cancellation scenario afterwards, since it
+  currently passes only because it never exercises a live target.
+  FR-024, SC-009 (contradicts).
+
+  **Status (iteration 9)**: fixed via the "distinct concurrency group"
+  option T072 offers, rather than a separate job — splitting the route into
+  its own job would have duplicated seven setup steps (both checkouts,
+  pipeline-ref, preflight, AWS, ctx) for no additional isolation.
+  `classify-and-announce` now computes the group `act` will join and
+  publishes it as an output: a run whose legs are ALL `stop` gets
+  `wing-commander-pr-conversation-stop-pr-<n>`, outside the per-spec
+  serialization, because such a run mutates no spec state — it only cancels
+  a run. Any run carrying even one mutating leg keeps the canonical
+  `wing-commander-<spec-dir>` group unchanged (research.md D6/FR-015).
+
+  This resolves the case that actually matters — a standalone "stop"
+  comment, which is how a maintainer stops something — so the stop leg no
+  longer waits for its own target to finish before it can cancel it. A
+  comment mixing a stop request WITH a mutating request still serializes;
+  that is deliberate (the mutating leg genuinely needs the group) and is
+  documented at the code.
+
+  T032's direct-cancellation scenario is unaffected: it never enters `act`
+  at all — the maintainer cancels the announced run URL themselves, which
+  needs zero pipeline code. The re-verification T072 asks for is of the
+  reply-based path, which cannot be exercised until this stage runs live
+  (see T043); it remains desk-checked.
+
+- [X] T073 (partial): Gate 12's `app_permission_ok`
+  (`.github/workflows/lint-workflows.yml:903-904`) ignores the required
+  permission LEVEL. It returns `cat is None or cat in app_perms`,
+  discarding the `level` that `SUBCOMMAND_PERMS` and the `-X` method
+  detection went to the trouble of computing — while the sibling
+  `default_permission_ok` (`:907-`) does check it. So if `docs/setup.md`
+  ever records a category as Read-only, `parse_app_permissions` stores
+  `issues: read` and every App-token `gh issue create`/`gh issue comment`
+  still passes the gate while 403-ing at runtime — precisely the class of
+  failure T062/T063 hit and T064 was built to catch. Make the `app` branch
+  level-aware and add a self-test fixture with a read-only App grant plus a
+  write call. Do this after T068, so the fix is validated against the 22
+  call sites the quote bug is currently hiding. FR-016, Constitution VII
+  (partial).
+
+  **Status (iteration 9)**: `app_permission_ok` is now level-aware,
+  mirroring its `default_permission_ok` sibling: it resolves the granted
+  level from `app_perms` and requires `write` for a write call, accepting
+  `read` or `write` for a read. The failure message now names the required
+  level and the level actually granted, instead of dumping the category
+  list. Two new self-test fixtures cover it (a Read-only `Issues` grant with
+  an App-token `gh issue create` must fail; the same grant with
+  `gh issue view` must pass), and the fix is mutation-proven — reverting the
+  body to `cat in app_perms` flips exactly the write fixture to FAIL. Done
+  after T068 as instructed, so it was validated against the call sites the
+  quote bug had been hiding; the whole-tree run reports 0 failures.
+
+- [X] T074 (contradicts): the copy-paste wrapper snippet in
+  `docs/adoption.md:974-982` ships adopters the design this stage
+  explicitly rejected. It puts `contains(fromJSON('["OWNER","MEMBER",
+  "COLLABORATOR"]'), ...author_association)` in the job-level `if:` for all
+  three event legs. `contracts/wrapper-gate.md:63-66` and the shipped
+  wrapper's own header comment
+  (`.github/workflows/wing-commander-9-pr-conversation.yml:36-47`) both
+  state why that is wrong: a wrapper `if:` cannot post a reply, so
+  duplicating the association check there silently skips the job and leaves
+  the non-bot-unauthorized case with **no reply at all**, violating
+  FR-021's first sentence and SC-006. The shipped wrapper deliberately
+  gates on bot-exclusion only and lets `classify-and-announce`'s
+  authorized-actor gate post the notice. Replace the snippet with the
+  shipped wrapper's actual `if:` and add a sentence naming the reason, so
+  an adopter who reads only `adoption.md` cannot reconstruct the broken
+  variant. FR-021, SC-006 (contradicts).
+
+  **Status (iteration 9)**: the snippet's job-level `if:` now matches the
+  shipped wrapper — bot-exclusion only, across all three event legs, with
+  the `pull_request_review` leg's non-empty-body condition preserved. A
+  comment above it states the reason an adopter needs (a wrapper `if:`
+  cannot post a reply, so gating on association there silently skips the job
+  and leaves an unauthorized human with no response, violating
+  FR-021/SC-006), points at where the association check actually lives, and
+  notes the deliberate absence of a requester carve-out.
+
+- [X] T075 (contradicts): `docs/architecture.md:714` describes a security
+  model the code does not implement — "The wrapper's `if:` is the sole
+  security gate ... so only an `OWNER`/`MEMBER`/`COLLABORATOR` can direct
+  this stage, including the original requester." In the shipped design the
+  wrapper gate is bot-exclusion **only**; the association check lives in
+  `classify-and-announce`'s authorized-actor gate precisely so it can post
+  FR-021's notice. This is the paragraph an adopter reasons from when
+  writing their own wrapper, and it is the same divergence as T074 in
+  prose. Rewrite it as the two-layer gate it actually is (wrapper: bots
+  never run; stage: association checked, unauthorized gets a notice), and
+  keep the no-requester-carve-out point, which is correct. Fix alongside
+  T074 so the two documents agree. FR-021 (contradicts).
+
+  **Status (iteration 9)**: rewritten as the two-layer gate it actually is —
+  wrapper `if:` excludes bots and nothing else; `classify-and-announce`'s
+  first deterministic step checks OWNER/MEMBER/COLLABORATOR and posts the
+  notice-and-stop reply before the billable classify step runs — with the
+  reason for the split stated (a wrapper `if:` cannot post a reply) and a
+  pointer to `docs/adoption.md`'s snippet for adopters writing their own.
+  The no-requester-carve-out point was correct and is kept. Fixed alongside
+  T074, so the two documents now agree with each other and with the code.
+
+- [X] T076 (partial): T063 added `checks: read` to `watchdog.yml`'s
+  workflow-level `permissions:` (`:196`), which is a breaking change for
+  every existing adopter, and the documentation that would warn them was
+  not updated. GitHub validates the caller's grant against every job in the
+  called workflow at startup and kills the run with **zero jobs** if the
+  caller grants less. The in-repo caller was updated
+  (`wing-commander-8-watchdog.yml:104`), but `docs/architecture.md:505` —
+  the single place that documents this superset obligation, and which still
+  reads "notably `actions: read`" — was not, and no migration note exists
+  anywhere. An adopter who bumps their `@ref` gets a stage-8 run with zero
+  jobs and no diagnosable cause. Add `checks: read` to that line, and add a
+  migration note wherever adopters are told what changes between refs
+  (`docs/adoption.md`'s watchdog wrapper example must show the full grant).
+  Plan touch-point `docs/architecture.md`, T063 (partial).
+
+  **Status (iteration 9)**: `docs/architecture.md:505` now reads "notably
+  `actions: read` **and `checks: read`**", and states plainly that a
+  short-granting caller is killed at startup with zero jobs and no
+  diagnosable cause. T076 also asks for the migration note to go in
+  `docs/adoption.md`'s watchdog wrapper example — there is no watchdog
+  wrapper example in that document (its wrapper set covers stages 1–7 plus
+  rebase), so instead a new "Permission grants that changed between refs"
+  subsection was added under "Migrating to `@v2`", carrying a
+  stage/wrapper/added-grant/why table with the `checks: read` row, the full
+  stage-8 `permissions:` block to copy, and a note that Gate 3 enforces this
+  for in-repo wrappers but cannot see an adopter's.
+
+- [X] T077 (partial): `docs/adoption.md`'s "Deployment environments"
+  section (`:659` onward) tells adopters that `environment` "binds *every*
+  job in the stage file", and its per-stage prompts-per-call table
+  (`:676-685`) has no `pr-conversation` row at all. Both are wrong for this
+  stage: the `act` job deliberately does NOT honor `inputs.environment` —
+  it binds `matrix['confirm-environment']` instead, a registered,
+  machine-checked Gate 7 exception
+  (`.github/workflows/pr-conversation.yml:889-912`), because each leg's
+  confirmation gate is a property of its own classification. An adopter who
+  binds `environment` expecting to gate mutations gets an approval prompt
+  on the read-only `classify-and-announce` job and none on the job that
+  actually writes — the exact inverse of their intent. Add the
+  `pr-conversation` row (1 prompt for `classify-and-announce`, plus one per
+  confirm-gated `act` leg via `confirm-categories`) and state the exception
+  in the bullet's own text rather than only in the stage-reference section.
+  FR-020 (partial).
+
+  **Status (iteration 9)**: both corrections made in `docs/adoption.md`'s
+  "Deployment environments" section. The "binds *every* job" bullet now
+  carries the exception in its own text: `pr-conversation`'s `act` job does
+  NOT honour `inputs.environment` (each leg binds its own
+  `confirm-environment`, since whether a leg needs confirmation is a
+  property of its classification), so binding `environment` on this stage
+  gates the read-only `classify-and-announce` job and not the job that
+  writes — the inverse of the adopter's intent — and `confirm-categories` is
+  what to set instead. A `pr-conversation` row was added to the
+  prompts-per-call table recording 1 prompt for `classify-and-announce` plus
+  one per confirm-gated `act` leg.
 
 ---
 

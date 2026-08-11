@@ -85,6 +85,11 @@ DOCS_OK = """\
    - Everything else: No access
 """
 
+# Same doc, but the App holds Issues at Read-only — the T073 case: category
+# membership alone would let an App-token `gh issue create` pass here.
+DOCS_ISSUES_READONLY = DOCS_OK.replace("Issues: **Read and write**",
+                                       "Issues: **Read-only**")
+
 APP_ENV = 'GH_TOKEN: ${{ steps.ctx.outputs.token }}'
 DEFAULT_ENV = 'GH_TOKEN: ${{ github.token }}'
 
@@ -223,6 +228,47 @@ CASES = [
          "        env:\n"
          f"          {DEFAULT_ENV}\n"),
       "docs/setup.md": DOCS_OK},
+     False, ()),
+
+    # T068 regression guards. The shipped `executable_flags` decides which
+    # text really runs; when it wrongly concludes "not executable" the gate
+    # skips the call entirely and reports success — a false PASS, the one
+    # failure mode a linter must never have. Both shapes below hid real
+    # calls in this repository (rebase.yml's `gh label create`, masked by
+    # "Once you've rebased"; wing-commander-watchdog-test's `gh workflow
+    # run`, masked by "# ... stage 8's resolve job must fail"), so each is
+    # pinned with a KNOWN-BAD call after the apostrophe: if the scanner
+    # regresses, the call goes invisible and the case stops failing.
+    ("T068: an apostrophe inside a DOUBLE-quoted string is a literal, not a "
+     "quote opener - a wrongly-permissioned call after it must still be seen",
+     mkcase("", "", [APP_ENV],
+            # Exactly ONE apostrophe on purpose: a second one would close the
+            # bogus frame the bug opens and the fixture would pass even
+            # against the broken scanner, proving nothing (this fixture was
+            # written with two first, and the mutation test caught it).
+            ['echo "Once you\'ve rebased the branch, CI retries automatically"',
+             'gh run cancel "$RUN_ID" -R "$REPO"']),
+     True, ("run cancel", "App token", "actions")),
+
+    ("T068: an apostrophe inside a TRAILING `#` comment does not open a "
+     "quote - a wrongly-permissioned call after it must still be seen",
+     mkcase("", "", [APP_ENV],
+            ["target=1   # no run 1 exists; stage 8's resolve job must fail",
+             'gh run cancel "$target" -R "$REPO"']),
+     True, ("run cancel", "App token", "actions")),
+
+    # T073: the App branch must honour the required LEVEL, not just the
+    # category. With membership-only checking this case passed while 403ing
+    # at runtime - exactly the class T064 built this gate to catch.
+    ("T073: an App-token write call against a Read-only App grant fails, "
+     "rather than passing on mere category membership",
+     mkcase("", "", [APP_ENV], ['gh issue create --title t --body b'],
+            docs=DOCS_ISSUES_READONLY),
+     True, ("issue create", "App token", "issues")),
+
+    ("T073: an App-token read call against that same Read-only grant is fine",
+     mkcase("", "", [APP_ENV], ['gh issue view "$N"'],
+            docs=DOCS_ISSUES_READONLY),
      False, ()),
 ]
 

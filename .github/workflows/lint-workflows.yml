@@ -803,7 +803,29 @@ jobs:
                           stack.pop()
                       i += 1
                       continue
-                  if c == "'":
+                  # T068: a `#` starting a word outside quotes opens a shell
+                  # comment running to end of line. strip_comments() only drops
+                  # WHOLE-line comments, so a TRAILING one reached this scanner
+                  # intact and its apostrophe (`target=1  # stage 8's resolve
+                  # job must fail`) pushed a bogus frame that hid every call
+                  # after it — that is what kept wing-commander-watchdog-test's
+                  # real `gh workflow run` invisible to Gate 12.
+                  if c == "#" and top != "dq" and (i == 0 or text[i - 1] in " \t\n"):
+                      j = text.find("\n", i)
+                      j = n if j < 0 else j
+                      for k in range(i, j):
+                          flags[k] = False
+                      i = j
+                      continue
+                  # T068: an apostrophe inside a DOUBLE-quoted string is a
+                  # literal, not a quote opener ("this project's constitution").
+                  # Pushing an `sq` frame for it made everything after it in the
+                  # step read as non-executable, silently hiding 10 real `gh`
+                  # calls repo-wide from this gate — including this feature's
+                  # own `gh pr comment` and rebase.yml's `gh label create`. `'`
+                  # still opens a frame inside `$( ... )`, where the shell
+                  # really does honour it.
+                  if c == "'" and top != "dq":
                       stack.append("sq"); i += 1; continue
                   if c == '"':
                       stack.pop() if top == "dq" else stack.append("dq")
@@ -900,8 +922,20 @@ jobs:
               return p if isinstance(p, dict) else None
 
 
-          def app_permission_ok(cat, app_perms):
-              return cat is None or cat in app_perms
+          # T073: must honour the required LEVEL, exactly as its `default`
+          # sibling below does. Checking mere category membership let an
+          # App-token `gh issue create` pass against a Read-only `issues`
+          # grant and 403 at runtime — the very class of defect this gate
+          # exists to catch.
+          def app_permission_ok(cat, level, app_perms):
+              if cat is None:
+                  return True
+              granted = app_perms.get(cat)
+              if granted is None:
+                  return False
+              if level == "write":
+                  return granted == "write"
+              return granted in ("read", "write")
 
 
           def default_permission_ok(cat, level, job_perms):
@@ -945,11 +979,13 @@ jobs:
           def check_call(where, label, perm_cat, level, tok_kind, tok_detail,
                          app_perms, job_perms, failures, notes):
               if tok_kind == "app":
-                  if not app_permission_ok(perm_cat, app_perms):
+                  if not app_permission_ok(perm_cat, level, app_perms):
                       failures.append(
                           f"{where}: {label} runs under the App token, which needs "
-                          f"{perm_cat!r} permission it does not have (docs/setup.md "
-                          f"grants only {sorted(app_perms)}). This 403s at runtime.")
+                          f"{perm_cat!r} ({level}) but docs/setup.md grants it "
+                          f"{app_perms.get(perm_cat) or 'nothing'} "
+                          f"(full grant: {sorted(app_perms.items())}). "
+                          f"This 403s at runtime.")
                   return
               if tok_kind == "default":
                   ok = default_permission_ok(perm_cat, level, job_perms)
@@ -1103,6 +1139,18 @@ jobs:
       - name: Gate 12 self-test — the detector actually detects
         run: python3 .github/scripts/verify-gate-12.py
 
+      # Gate 13 — pr-conversation's relay-confirmation phrase. Three things
+      # have to state the same phrase: the risk-warning comment that tells a
+      # maintainer what to reply, the classify-side resume trigger, and the
+      # act-side risk gate. Nothing structural keeps them in step, and both
+      # drift directions are silent and bad — a phrase no engine accepts
+      # deadlocks every relayed request (the stage re-asks forever), while a
+      # loose pattern makes resume fire on incidental words, which SKIPS THE
+      # CLASSIFY AGENT and re-acts on a stored classification instead of
+      # answering what was actually just asked (T069).
+      - name: Gate 13 — relay confirmation is opt-in on one agreed phrase
+        run: python3 .github/scripts/verify-relay-confirmation-phrase.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when
@@ -1169,6 +1217,27 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
+          # T066: a workflow file that is not on the default branch can carry
+          # a STALE registry entry. GitHub creates the entry on first push of
+          # the file to ANY branch, and if that first version was genuinely
+          # unparseable the entry is path-named — but GitHub then never
+          # refreshes the name for a file it does not have on the default
+          # branch, so the path-name survives every later fix and this gate
+          # reports a file that parses fine as "almost certainly invalid".
+          # List what actually exists on the default branch so those can be
+          # told apart. Fails CLOSED: if the listing cannot be read, every
+          # mismatch is reported exactly as before rather than suppressed.
+          DEFAULT_BRANCH="$(gh api "repos/$GITHUB_REPOSITORY" --jq '.default_branch' 2>/dev/null || true)"
+          export DEFAULT_BRANCH
+          : > on-default.txt
+          DEFAULT_LISTING_OK=false
+          if [ -n "$DEFAULT_BRANCH" ] && gh api \
+              "repos/$GITHUB_REPOSITORY/contents/.github/workflows?ref=$DEFAULT_BRANCH" \
+              --jq '.[].path' > on-default.txt 2>/dev/null; then
+            DEFAULT_LISTING_OK=true
+          fi
+          export DEFAULT_LISTING_OK
+
           # Registration is updated as the push is processed; on a push-
           # triggered run the job can occasionally win that race, so retry
           # before believing a mismatch.
@@ -1177,12 +1246,25 @@ jobs:
               --jq '.workflows[] | [.path, .name] | @tsv' > registered.tsv || true
 
             python3 - <<'PYEOF' > result.txt
-          import glob, yaml
+          import glob, os, yaml
 
           registered = {}
           for line in open("registered.tsv", encoding="utf-8"):
               path, _, name = line.rstrip("\n").partition("\t")
               registered[path] = name
+
+          # T066: which workflow files are actually ON the default branch.
+          # Empty/unreadable => treat every file as on it (fail closed).
+          listing_ok = os.environ.get("DEFAULT_LISTING_OK") == "true"
+          default_branch = os.environ.get("DEFAULT_BRANCH") or "the default branch"
+          on_default = set()
+          if listing_ok:
+              try:
+                  on_default = {l.strip() for l in open("on-default.txt", encoding="utf-8") if l.strip()}
+              except OSError:
+                  listing_ok = False
+              if not on_default:
+                  listing_ok = False
 
           failures = 0
           for path in sorted(glob.glob(".github/workflows/*.yml")):
@@ -1198,6 +1280,21 @@ jobs:
               if f not in registered:
                   continue
               if registered[f] != declared:
+                  # T066: not on the default branch => the registry entry is
+                  # stale by construction, not evidence the file is invalid.
+                  if listing_ok and f not in on_default:
+                      print(f"::notice file={f}::registered as {registered[f]!r} but declares "
+                            f"name: {declared!r} — NOT treated as a failure: this file is not "
+                            f"on {default_branch}, and GitHub never refreshes the registered "
+                            f"name for a file it does not have there. A path-named entry "
+                            f"created when an earlier, genuinely-unparseable version was "
+                            f"first pushed to a feature branch therefore survives every "
+                            f"later fix. To confirm the file really parses, add a temporary "
+                            f"workflow_dispatch: trigger on a throwaway branch and POST to "
+                            f"the dispatches endpoint — 204 means it parses, and a 422 body "
+                            f"carries the real parser error verbatim. (A workflow_call-only "
+                            f"file cannot be dispatched without that temporary trigger.)")
+                      continue
                   encoded = f.replace("/", "%2F")
                   print(f"::error file={f}::registered as {registered[f]!r} but declares "
                         f"name: {declared!r}. GitHub falls back to the path when it "

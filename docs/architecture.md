@@ -502,9 +502,17 @@ Two constraints the wrappers must hold, both enforced by
   `name:` **exactly**. A name matching nothing is not an error to GitHub —
   just a trigger that silently never fires.
 - The calling job's `permissions:` must be a superset of `watchdog.yml`'s
-  workflow-level grant (notably `actions: read`). GitHub validates this
-  against every job in the called workflow at startup and kills the run with
-  zero jobs if the caller grants less.
+  workflow-level grant (notably `actions: read` **and `checks: read`**).
+  GitHub validates this against every job in the called workflow at startup
+  and kills the run with zero jobs if the caller grants less — with no
+  diagnosable cause in the run's own UI, since no job ever starts.
+
+  `checks: read` was **added** to `watchdog.yml`'s grant (the annotations
+  collector reads `check-runs/.../annotations`, which the App token cannot).
+  It is a breaking change for any existing caller: a wrapper written against
+  an earlier ref grants only `actions: read`, so bumping the `@ref` without
+  also adding `checks: read` to the wrapper produces a stage-8 run with zero
+  jobs. See `docs/adoption.md`'s "Migrating to `@v2`" section.
 
 **Design** — four sequential jobs, `collect → diagnose → triage → act`:
 - `collect` — deterministic evidence gathering only (no agent). Five FR-006
@@ -711,10 +719,25 @@ not evidence that rungs 1 and 2 work — they have not been exercised.
 [created]`, and `issue_comment: [created]` filtered to PR comments — the
 first wrapper in this pipeline to listen to a review or review-thread event.
 Deliberately no `workflow_dispatch`: unlike every chained stage, this one is
-purely event-triggered. The wrapper's `if:` is the sole security gate — a
-bot actor gets no run at all, and (unlike clarify/intake) there is no
-`|| actor.id == issue.author.id` carve-out, so only an `OWNER`/`MEMBER`/
-`COLLABORATOR` can direct this stage, including the original requester. A
+purely event-triggered. Authorization is a **two-layer** gate, split on
+purpose:
+- **Wrapper `if:` — bot exclusion only.** A bot actor gets no run at all,
+  no reply, nothing. Every non-bot actor is dispatched through to the
+  stage regardless of association, with `actor-association` passed as an
+  input.
+- **Stage — the association check.** `classify-and-announce`'s first
+  deterministic step checks `OWNER`/`MEMBER`/`COLLABORATOR` and, when it
+  fails, posts a notice naming who can authorize the request, then stops
+  before the (billable) classify step runs.
+
+The split is what makes FR-021's first sentence possible: a wrapper `if:`
+cannot post a reply, so duplicating the association check there would
+silently skip the job and leave an unauthorized human with no response at
+all (SC-006). Adopters writing their own wrapper must copy the
+bot-exclusion-only form in `docs/adoption.md`. As with the shipped wrapper,
+there is (unlike clarify/intake) no `|| actor.id == issue.author.id`
+carve-out — the lifecycle issue's original requester gets no special
+standing with this stage. A
 `resolve-model` pre-job mirrors `wing-commander-5-implement.yml`'s tiering
 (`WING_COMMANDER_PR_CONVERSATION_MODEL`, `model:opus` label escalation).
 

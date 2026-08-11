@@ -53,6 +53,21 @@ shapes and `data-model.md` for the entities being validated.
    (`contracts/spinoff-routing.md`) against a fixture diff at, and one
    line over, the documented threshold — confirm the over-threshold case
    re-routes rather than opening a PR.
+5. **Multi-page comment threads (T067)**: every comment-thread scan in
+   `pr-conversation.yml` (relay-resume, the relayed-request risk gate, and
+   the stop procedure) must survive a PR with **more than one page** of
+   comments — the default page size is 30, which real dogfood PRs pass
+   quickly. `gh` applies `--jq` to *each page separately* and concatenates
+   the results, so an array-collecting filter (`--paginate --jq '[.[] |
+   ...]'`) emits `[...]\n[...]` — one array per page — and any
+   `jq --argjson` consuming it dies with "Extra data"/"invalid JSON text",
+   aborting the step under `set -euo pipefail`. Required shape: stream one
+   object per line (`--paginate --jq '.[] | ...'`) and slurp once with
+   `jq -s '.'`, as `intake.yml` does. Fixture check: concatenate two
+   single-page filter outputs and confirm the consuming `jq -n --argjson`
+   parses them — it must, which it only does for the streamed-and-slurped
+   form. Grep guard: `--paginate --jq '[` must not appear in
+   `.github/workflows/pr-conversation.yml`.
 
 ## End-to-end scenario checks (one dogfood run each, or combined)
 

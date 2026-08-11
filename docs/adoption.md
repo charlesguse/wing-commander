@@ -626,6 +626,34 @@ input names other than the filename, label conventions, PR/issue comment
 formats) are part of this migration. The `v2` release's mandatory
 **Breaking changes** notes carry these same tables.
 
+### Permission grants that changed between refs
+
+A reusable workflow's caller must grant a **superset** of every permission
+the called workflow declares. GitHub validates this at startup and, when the
+caller grants less, kills the run with **zero jobs** — there is no failing
+step to read, so the cause is invisible in the run's own UI. Whenever a
+stage starts touching a new API, bumping your `@ref` therefore requires
+widening the wrapper's `permissions:` in the same change.
+
+| Stage | Wrapper | Added grant | Why |
+|---|---|---|---|
+| `watchdog.yml` | `wing-commander-8-watchdog.yml` | `checks: read` | The annotations collector reads `check-runs/.../annotations`, which the GitHub App token has no permission for, so it runs under `github.token` instead. |
+
+So a stage-8 wrapper must now grant at least:
+
+```yaml
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: read
+      checks: read
+      id-token: write
+```
+
+`lint-workflows.yml` Gate 3 enforces this for the in-repo wrappers; it
+cannot see yours, so check this table when you bump a pin.
+
 ## Private pipeline repository
 
 Adopting from a **private** pipeline repository needs two things a public one
@@ -671,7 +699,20 @@ things to know before you bind one:
   in the stage file, and each bound job that actually runs gates
   independently — a required reviewer is prompted once per job, and a wait
   timer is paid once per job, not once per call. A job skipped by its own
-  `if:` never prompts. Counting the jobs that do run:
+  `if:` never prompts.
+
+  **One documented exception — `pr-conversation`'s `act` job.** It does
+  **not** honour `inputs.environment`. Each of its matrix legs binds its own
+  `confirm-environment`, because whether a leg needs propose-and-confirm is
+  a property of that leg's own classification, not of the stage call (a job
+  may carry only one `environment:`, so it cannot do both). Binding
+  `environment` on this stage therefore gates the read-only
+  `classify-and-announce` job and **not** the job that actually writes — the
+  inverse of what you probably intend. To gate mutations here, set
+  `confirm-categories` (and `confirm-environment`) instead. This is a
+  registered, machine-checked Gate 7 exception, not an oversight.
+
+  Counting the jobs that do run:
 
   | Stage call | Jobs that run | Prompts per call |
   |---|---|---|
@@ -682,6 +723,7 @@ things to know before you bind one:
   | `cleanup` | `select` → one outcome job | 2 |
   | `rebase` | `discover` → one matrix leg per branch | 1 + N |
   | `watchdog` | `collect`, `diagnose`, `report-unhandled-failure` + one `triage` and one `act` leg per finding | 3 + 2N |
+  | `pr-conversation` | `classify-and-announce` (bound by `environment`) + one `act` leg per classification (bound by `confirm-categories`, **not** by `environment` — see the exception above) | 1, plus one per confirm-gated `act` leg |
   | `auto-update-spec-kit` (scheduled) | `health-check` → `detect` → `settle` → `evaluate-path` → `prepare` → `verify` → `act` | 7, sequentially |
 
   So the cheapest possible gate is a one-job stage (`intake`, `clarify`,
@@ -972,16 +1014,25 @@ permissions: {}
 
 jobs:
   pr-conversation:
+    # Bot-exclusion ONLY — do not add the OWNER/MEMBER/COLLABORATOR check
+    # here. A wrapper `if:` cannot post a reply, so gating on association at
+    # this level silently skips the job and leaves a non-bot, unauthorized
+    # commenter with no response at all, violating FR-021/SC-006. The
+    # association check belongs to the stage: pr-conversation.yml's
+    # classify-and-announce job runs it as its own first deterministic step
+    # and posts the notice-and-stop reply when it fails. There is also no
+    # `|| actor.id == issue.author.id` requester carve-out here (unlike the
+    # clarify and intake wrappers) — the lifecycle issue's own author gets
+    # no special standing with this stage.
     if: >-
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request != null &&
-       github.event.comment.user.type != 'Bot' &&
-       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request != null &&
+       github.event.comment.user.type != 'Bot') ||
       (github.event_name == 'pull_request_review_comment' &&
-       github.event.comment.user.type != 'Bot' &&
-       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
-      (github.event_name == 'pull_request_review' && github.event.review.body != '' &&
-       github.event.review.user.type != 'Bot' &&
-       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association))
+       github.event.comment.user.type != 'Bot') ||
+      (github.event_name == 'pull_request_review' &&
+       github.event.review.body != '' &&
+       github.event.review.user.type != 'Bot')
     permissions:
       contents: write
       pull-requests: write

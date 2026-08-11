@@ -230,6 +230,10 @@ jobs:
       default-branch: ${{ steps.identity.outputs.default-branch }}
       issue-number: ${{ steps.meta.outputs.issue-number }}
       classifications: ${{ steps.confirm.outputs.classifications }}
+      # T072: the group `act` joins — the canonical per-spec group, except
+      # for a stop-only run, which mutates nothing and must not queue behind
+      # the very run it was asked to cancel.
+      concurrency-group: ${{ steps.confirm.outputs.concurrency-group }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v4
@@ -285,12 +289,33 @@ jobs:
           PLAN_PREFIX: ${{ inputs.plan-prefix }}
           TASKS_PREFIX: ${{ inputs.tasks-prefix }}
         run: |
+          # T070: this step is the one place where a silent result is BY
+          # DESIGN — a PR that genuinely does not qualify gets no reply at
+          # all (FR-018). That makes an unguarded API failure especially
+          # dangerous: without `set -e` a rate-limited or 5xx `gh` returned
+          # empty, the qualification chain evaluated false, and the run
+          # short-circuited exactly as if the PR were out of scope, so the
+          # maintainer's request vanished with no reply and no error — the
+          # failure mode FR-014/SC-005 exist to prevent. Fail loudly
+          # instead; the deliberate silence stays reserved for a genuine
+          # non-qualifying PR.
+          set -euo pipefail
+
           default_branch="$DEFAULT_BRANCH_INPUT"
           if [ -z "$default_branch" ]; then
             default_branch=$(gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef --jq '.defaultBranchRef.name')
           fi
           base_ref=$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json baseRefName --jq '.baseRefName')
           head_ref=$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json headRefName --jq '.headRefName')
+
+          # A call can exit 0 and still yield nothing; an empty ref here is
+          # never a legitimate "does not qualify", only a failed lookup.
+          for pair in "default_branch:$default_branch" "base_ref:$base_ref" "head_ref:$head_ref"; do
+            if [ -z "${pair#*:}" ]; then
+              echo "::error::wing-commander pr-conversation stage: could not resolve ${pair%%:*} for PR #$PR_NUMBER from the GitHub API. Refusing to treat an API failure as 'this PR is out of scope' — that would silently drop the request (FR-014/SC-005). Re-run once the API is reachable."
+              exit 1
+            fi
+          done
 
           qualifies=false
           slug=""
@@ -434,9 +459,22 @@ jobs:
         run: |
           set -euo pipefail
           resumed=false
-          if printf '%s' "$BODY" | grep -qiE 'confirm'; then
-            issue_comments=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq '[.[] | select(.user.login == env.BOT_LOGIN) | {id, created_at, body, kind: "issue"}]')
-            review_comments=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments" --paginate --jq '[.[] | select(.user.login == env.BOT_LOGIN) | {id, created_at, body, kind: "review"}]')
+          # T069: resume must be OPT-IN, on an explicit anchored phrase the
+          # risk-warning comment itself states verbatim. A bare substring
+          # match on "confirm" swept in "can you confirm CI is green?" —
+          # which skipped the classify agent entirely, left the maintainer's
+          # actual request unanswered, and re-acted on a stored
+          # classification nobody had just asked for.
+          if printf '%s' "$BODY" | grep -qiE 'wing-commander:[[:space:]]*confirm[[:space:]]+relay'; then
+            # T067: `gh --paginate` applies `--jq` to EACH PAGE separately and
+            # concatenates the results, so an array-collecting filter
+            # (`'[.[] | ...]'`) emits `[...]\n[...]` past page 1 -- not one
+            # array -- and `jq --argjson` below dies on it, taking the whole
+            # job down on any PR with more than 30 comments. Stream one object
+            # per line (`'.[] | ...'`) and slurp with `jq -s` instead, the
+            # shape intake.yml:399 already uses.
+            issue_comments=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq '.[] | select(.user.login == env.BOT_LOGIN) | {id, created_at, body, kind: "issue"}' | jq -s '.')
+            review_comments=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments" --paginate --jq '.[] | select(.user.login == env.BOT_LOGIN) | {id, created_at, body, kind: "review"}' | jq -s '.')
             all=$(jq -n --argjson a "$issue_comments" --argjson b "$review_comments" '$a + $b | sort_by(.created_at) | reverse')
             # T054: scope to the most recent marker belonging to THIS actor's
             # own outstanding classification (structural match on
@@ -653,7 +691,7 @@ jobs:
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ inputs.max-turns }}
-            --json-schema '{"type":"object","required":["classifications"],"properties":{"classifications":{"type":"array","minItems":1,"items":{"type":"object","required":["category","summary","planned-action"],"properties":{"category":{"enum":["in-scope-change","question","needs-info","push-back","new-functionality","small-unrelated-change","manual-step-permission","stop","no-action"]},"summary":{"type":"string"},"planned-action":{"type":"string"},"drafted-content":{"type":"object"},"fold-target":{"enum":["current-spec","new-spec",null]},"constitution-conflict":{"type":["string","null"]},"relayed":{"type":"object","properties":{"risk":{"type":"boolean"},"risk-note":{"type":["string","null"]}}}}}}}}'
+            --json-schema '{"type":"object","required":["classifications"],"properties":{"classifications":{"type":"array","minItems":1,"items":{"type":"object","required":["category","summary","planned-action"],"properties":{"category":{"enum":["in-scope-change","question","needs-info","push-back","new-functionality","small-unrelated-change","manual-step-permission","stop","no-action"]},"summary":{"type":"string"},"planned-action":{"type":"string"},"drafted-content":{"type":"object"},"fold-target":{"enum":["current-spec","new-spec",null]},"constitution-conflict":{"type":["string","null"]},"relayed":{"type":"object","properties":{"risk":{"type":"boolean"},"risk-note":{"type":["string","null"]}}}},"allOf":[{"if":{"required":["category"],"properties":{"category":{"const":"question"}}},"then":{"required":["drafted-content"],"properties":{"drafted-content":{"required":["answer"],"properties":{"answer":{"type":"string","minLength":1}}}}}},{"if":{"required":["category"],"properties":{"category":{"const":"needs-info"}}},"then":{"required":["drafted-content"],"properties":{"drafted-content":{"required":["clarifying-question"],"properties":{"clarifying-question":{"type":"string","minLength":1}}}}}}]}}}}'
             --allowedTools "${{ steps.tool-args-classify.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-classify.outputs.disallowed-tools }}"
 
@@ -716,6 +754,8 @@ jobs:
         env:
           CONFIRM_CATEGORIES: ${{ inputs.confirm-categories }}
           CONFIRM_ENVIRONMENT: ${{ inputs.confirm-environment }}
+          PR_NUMBER: ${{ inputs.pr-number }}
+          SPEC_DIR: ${{ steps.identity.outputs.spec-dir }}
         run: |
           set -euo pipefail
           raw="$(cat "$RUNNER_TEMP/classifications-raw.json")"
@@ -786,6 +826,29 @@ jobs:
             )
           ')
           echo "classifications=$result" >> "$GITHUB_OUTPUT"
+
+          # T072/FR-024/SC-009: pick the concurrency group `act` will join.
+          # A `stop` classification mutates NO spec state — it only cancels a
+          # run. But `act` joined wing-commander-<spec-dir> unconditionally
+          # with cancel-in-progress: false, and the run a stop request
+          # targets is almost always ANOTHER pr-conversation run whose own
+          # `act` is in flight in that same group. The stop leg therefore
+          # could not start until its own target had finished, and then
+          # reported "already completed — nothing was cancelled" in every
+          # case where stopping actually mattered: structurally unable to do
+          # the one thing it exists for.
+          #
+          # So a run whose legs are ALL `stop` stays out of the per-spec
+          # serialization entirely. Any run carrying even one mutating leg
+          # keeps the canonical group (research.md D6/FR-015) — that leg
+          # genuinely does need serializing against plan/tasks/implement/
+          # finalize/rebase, and correctness of the mutation outranks the
+          # latency of a stop request bundled into the same comment.
+          if [ "$(printf '%s' "$result" | jq -r 'all(.category == "stop")')" = "true" ]; then
+            echo "concurrency-group=wing-commander-pr-conversation-stop-pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          else
+            echo "concurrency-group=wing-commander-${SPEC_DIR}" >> "$GITHUB_OUTPUT"
+          fi
 
       # T008/FR-023: posted BEFORE act starts — structurally guaranteed,
       # since act's environment: binding cannot begin evaluating until
@@ -868,8 +931,14 @@ jobs:
     # research.md D6 — the exact canonical group specs/013-serialize-rebase-stages
     # established: at most one of {plan, tasks, implement, finalize, rebase,
     # this stage} ever mutates a given spec/<slug> at a time.
+    #
+    # T072: resolved by classify-and-announce rather than hardcoded here. It
+    # is `wing-commander-<spec-dir>` for every run carrying a mutating leg,
+    # and a separate per-PR group for a stop-ONLY run, which mutates nothing
+    # and would otherwise be unable to start until the run it was asked to
+    # cancel had already finished (FR-024/SC-009).
     concurrency:
-      group: wing-commander-${{ needs.classify-and-announce.outputs.spec-dir }}
+      group: ${{ needs.classify-and-announce.outputs.concurrency-group }}
       cancel-in-progress: false
     strategy:
       fail-fast: false
@@ -1003,8 +1072,13 @@ jobs:
             exit 0
           fi
           confirmed=false
-          issue_comments=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq '[.[] | {login: .user.login, body: .body, created_at: .created_at}]')
-          review_comments=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments" --paginate --jq '[.[] | {login: .user.login, body: .body, created_at: .created_at}]')
+          # T067: stream one object per line and slurp -- `gh --paginate`
+          # applies `--jq` per page, so an array-collecting filter emits one
+          # array PER PAGE and the `--argjson` below aborts the step on any
+          # PR past page 1 (30 comments), making FR-022's confirmation round
+          # permanently unreachable there.
+          issue_comments=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq '.[] | {login: .user.login, body: .body, created_at: .created_at}' | jq -s '.')
+          review_comments=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments" --paginate --jq '.[] | {login: .user.login, body: .body, created_at: .created_at}' | jq -s '.')
           comments=$(jq -n --argjson a "$issue_comments" --argjson b "$review_comments" '$a + $b | sort_by(.created_at)')
 
           anchor=$(printf '%s' "$comments" | jq -r --arg bot "$BOT_LOGIN" --arg login "$ACTOR_LOGIN" --argjson cls "$CLASSIFICATION_JSON" '
@@ -1018,7 +1092,7 @@ jobs:
             ] | sort | last // empty')
 
           if [ -n "$anchor" ] && printf '%s' "$comments" | jq -e --arg login "$ACTOR_LOGIN" --arg anchor "$anchor" \
-            '[.[] | select(.login == $login) | select(.created_at > $anchor) | select(.body | test("(?i)confirm"))] | length > 0' >/dev/null 2>&1; then
+            '[.[] | select(.login == $login) | select(.created_at > $anchor) | select(.body | test("(?i)wing-commander:\\s*confirm\\s+relay"))] | length > 0' >/dev/null 2>&1; then
             confirmed=true
           fi
           if [ "$confirmed" = "true" ]; then
@@ -1034,7 +1108,10 @@ jobs:
             echo ">"
             echo "> ${RISK_NOTE:-No further detail was provided.}"
             echo ">"
-            echo "> @$ACTOR_LOGIN — reply confirming you accept this risk to proceed. No action has been taken on this classification."
+            # T069: state the exact phrase. Resume keys on this literal, so
+            # the comment that asks for confirmation and the scanner that
+            # detects it can never drift apart.
+            echo "> @$ACTOR_LOGIN — to accept this risk and proceed, reply with the exact phrase \`wing-commander: confirm relay\`. No action has been taken on this classification, and no other wording will start one."
             echo ">"
             echo "<!-- wing-commander:pr-conversation-relay"
             printf '%s\n' "$payload"
@@ -1439,10 +1516,32 @@ jobs:
           CONSTITUTION_CONFLICT: ${{ matrix['constitution-conflict'] }}
         run: |
           set -euo pipefail
+          # T071: `drafted-content` is agent-produced, so a `question` can
+          # still arrive with no `answer` (or `needs-info` with no
+          # `clarifying-question`) even with the schema now requiring them —
+          # a schema is not a runtime guarantee. `gh pr comment --body-file`
+          # rejects a blank body, so under `set -euo pipefail` this leg used
+          # to FAIL and post nothing at all, for the two categories whose
+          # only output IS that reply (FR-009/FR-025, SC-005/SC-010). US6
+          # AC3 requires the stage to SAY when it cannot answer; a dead step
+          # says nothing.
+          blank() { [ -z "$(printf '%s' "${1:-}" | tr -d '[:space:]')" ]; }
           body_file="$RUNNER_TEMP/reply.md"
           case "$CATEGORY" in
-            question) printf '%s\n' "$ANSWER" > "$body_file" ;;
-            needs-info) printf '%s\n' "$CLARIFYING_QUESTION" > "$body_file" ;;
+            question)
+              if blank "$ANSWER"; then
+                echo "I could not draft an answer to this question with any confidence, so I am not going to guess. Could you rephrase it, or point me at the specific code or behaviour you are asking about?" > "$body_file"
+              else
+                printf '%s\n' "$ANSWER" > "$body_file"
+              fi
+              ;;
+            needs-info)
+              if blank "$CLARIFYING_QUESTION"; then
+                echo "This request needs more information before I can act on it, but I could not draft a specific question about it. Could you restate what you would like changed, and where?" > "$body_file"
+              else
+                printf '%s\n' "$CLARIFYING_QUESTION" > "$body_file"
+              fi
+              ;;
             push-back)
               echo "This request was not carried out — it conflicts with this project's constitution (${CONSTITUTION_CONFLICT:-see the linked principle})." > "$body_file"
               ;;
@@ -1468,8 +1567,12 @@ jobs:
           BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -euo pipefail
-          issue_comments=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq '[.[] | select(.user.login == env.BOT_LOGIN) | {created_at, body}]')
-          review_comments=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments" --paginate --jq '[.[] | select(.user.login == env.BOT_LOGIN) | {created_at, body}]')
+          # T067: stream one object per line and slurp -- an array-collecting
+          # `--jq` under `--paginate` emits one array PER PAGE, so this step
+          # aborted on exactly the long PRs a maintainer most wants to stop
+          # something on (FR-024/SC-009).
+          issue_comments=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq '.[] | select(.user.login == env.BOT_LOGIN) | {created_at, body}' | jq -s '.')
+          review_comments=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments" --paginate --jq '.[] | select(.user.login == env.BOT_LOGIN) | {created_at, body}' | jq -s '.')
           all=$(jq -n --argjson a "$issue_comments" --argjson b "$review_comments" '$a + $b | sort_by(.created_at) | reverse')
           # T056: skip any announcement this run posted ITSELF. The
           # classify-and-announce job announces EVERY classification,
