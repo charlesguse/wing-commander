@@ -626,6 +626,34 @@ input names other than the filename, label conventions, PR/issue comment
 formats) are part of this migration. The `v2` release's mandatory
 **Breaking changes** notes carry these same tables.
 
+### Permission grants that changed between refs
+
+A reusable workflow's caller must grant a **superset** of every permission
+the called workflow declares. GitHub validates this at startup and, when the
+caller grants less, kills the run with **zero jobs** — there is no failing
+step to read, so the cause is invisible in the run's own UI. Whenever a
+stage starts touching a new API, bumping your `@ref` therefore requires
+widening the wrapper's `permissions:` in the same change.
+
+| Stage | Wrapper | Added grant | Why |
+|---|---|---|---|
+| `watchdog.yml` | `wing-commander-8-watchdog.yml` | `checks: read` | The annotations collector reads `check-runs/.../annotations`, which the GitHub App token has no permission for, so it runs under `github.token` instead. |
+
+So a stage-8 wrapper must now grant at least:
+
+```yaml
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: read
+      checks: read
+      id-token: write
+```
+
+`lint-workflows.yml` Gate 3 enforces this for the in-repo wrappers; it
+cannot see yours, so check this table when you bump a pin.
+
 ## Private pipeline repository
 
 Adopting from a **private** pipeline repository needs two things a public one
@@ -671,7 +699,20 @@ things to know before you bind one:
   in the stage file, and each bound job that actually runs gates
   independently — a required reviewer is prompted once per job, and a wait
   timer is paid once per job, not once per call. A job skipped by its own
-  `if:` never prompts. Counting the jobs that do run:
+  `if:` never prompts.
+
+  **One documented exception — `pr-conversation`'s `act` job.** It does
+  **not** honour `inputs.environment`. Each of its matrix legs binds its own
+  `confirm-environment`, because whether a leg needs propose-and-confirm is
+  a property of that leg's own classification, not of the stage call (a job
+  may carry only one `environment:`, so it cannot do both). Binding
+  `environment` on this stage therefore gates the read-only
+  `classify-and-announce` job and **not** the job that actually writes — the
+  inverse of what you probably intend. To gate mutations here, set
+  `confirm-categories` (and `confirm-environment`) instead. This is a
+  registered, machine-checked Gate 7 exception, not an oversight.
+
+  Counting the jobs that do run:
 
   | Stage call | Jobs that run | Prompts per call |
   |---|---|---|
@@ -682,6 +723,7 @@ things to know before you bind one:
   | `cleanup` | `select` → one outcome job | 2 |
   | `rebase` | `discover` → one matrix leg per branch | 1 + N |
   | `watchdog` | `collect`, `diagnose`, `report-unhandled-failure` + one `triage` and one `act` leg per finding | 3 + 2N |
+  | `pr-conversation` | `classify-and-announce` (bound by `environment`) + one `act` leg per classification (bound by `confirm-categories`, **not** by `environment` — see the exception above) | 1, plus one per confirm-gated `act` leg |
   | `auto-update-spec-kit` (scheduled) | `health-check` → `detect` → `settle` → `evaluate-path` → `prepare` → `verify` → `act` | 7, sequentially |
 
   So the cheapest possible gate is a one-job stage (`intake`, `clarify`,
@@ -935,6 +977,104 @@ conventions your wrapper owns.
 | Preconditions | none — discovers in-flight `spec/*` branches itself; empty discovery is a clean no-op |
 | Side effects | per-branch rebase onto your default branch: clean → force-push with lease; conflicting → agent resolution with a deterministic scope check; unresolvable → abandoned untouched + `rebase:blocked` escalation comment (deduped by SHA marker) |
 | Outputs | none |
+
+### pr-conversation
+
+Optional, additive stage — not part of the eight-file minimal set above. It
+classifies and routes a maintainer's review or comment on an implementation
+PR (`spec/NNN-slug → default branch`): fold-in + implement re-dispatch,
+new-issue/new-PR spin-offs, manual-step/permission handling, or a plain
+reply. See [Stage 10 — PR Conversation](architecture.md#stage-10--pr-conversation-pr-conversationyml-wrapper-wing-commander-9-pr-conversationyml--see-specs033-pr-conversation-commands)
+for the full routing design.
+
+| | |
+|---|---|
+| Inputs | `pr-number` (number, required); `event-kind` (string `review`\|`review-comment`\|`issue-comment`, required); `body` (string, required, untrusted); `actor-login`/`actor-association` (string, required); `comment-id`/`review-id` (number, `0`); `thread-path`/`thread-diff-hunk` (string, `""`); `confirm-categories` (string, `""` = act-then-report for every category); `confirm-environment` (string, `pr-conversation-confirm`); `model` (string, `claude-sonnet-5`); `max-turns` (number, `40`); `implement-workflow` (string, `""`) |
+| Preconditions | the PR's base is your default branch and its head starts with `spec-prefix` (not `spec-draft-prefix`/`plan-prefix`/`tasks-prefix`) — anything else short-circuits with no reply at all; the lifecycle issue is open |
+| Side effects | posts one `IntentAnnouncement` per classification before any mutation; routes per category — see the architecture doc for the full list |
+| Outputs | none — side effects only. (`classify-and-announce` has *job*-level outputs, which a caller cannot read; `needs.pr-conversation.outputs.qualifies` in your own wrapper resolves to an empty string.) |
+
+`implement-workflow` is your implement wrapper's **filename**, the same
+opt-in chaining convention every other stage uses — pass
+`wing-commander-5-implement.yml` (or whatever you renamed it to) to have an
+in-scope fold-in re-drive implement automatically, and to have a `stop`
+request cancel that dispatched run too. Left at its `""` default, an
+in-scope fold-in is still committed and pushed to `spec/<slug>`; the PR
+reply then says no implement workflow is configured and gives you the
+`spec_dir`/`issue`/`iteration` payload to dispatch by hand.
+
+Deliberately **no `workflow_dispatch`** — this is the only stage that is
+purely event-triggered, since its whole purpose is reacting to a review or
+comment. Authorization is **two layers**, and the split matters: the
+wrapper's `if:` excludes bots only, and the stage's `classify-and-announce`
+job checks `OWNER`/`MEMBER`/`COLLABORATOR` association as its own first
+deterministic step, posting a notice-and-stop reply when it fails. Do not
+move the association check up into the wrapper `if:` — a wrapper `if:`
+cannot post a reply, so an unauthorized human would get silence instead of
+that notice. What *is* absent at both layers, unlike clarify/intake, is any
+requester carve-out: the lifecycle issue's own author gets no special
+standing here.
+
+```yaml
+name: "Wing Commander · 9 pr conversation"
+
+on:
+  pull_request_review:
+    types: [submitted]
+  pull_request_review_comment:
+    types: [created]
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  pr-conversation:
+    # Bot-exclusion ONLY — do not add the OWNER/MEMBER/COLLABORATOR check
+    # here. A wrapper `if:` cannot post a reply, so gating on association at
+    # this level silently skips the job and leaves a non-bot, unauthorized
+    # commenter with no response at all, violating FR-021/SC-006. The
+    # association check belongs to the stage: pr-conversation.yml's
+    # classify-and-announce job runs it as its own first deterministic step
+    # and posts the notice-and-stop reply when it fails. There is also no
+    # `|| actor.id == issue.author.id` requester carve-out here (unlike the
+    # clarify and intake wrappers) — the lifecycle issue's own author gets
+    # no special standing with this stage.
+    if: >-
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request != null &&
+       github.event.comment.user.type != 'Bot') ||
+      (github.event_name == 'pull_request_review_comment' &&
+       github.event.comment.user.type != 'Bot') ||
+      (github.event_name == 'pull_request_review' &&
+       github.event.review.body != '' &&
+       github.event.review.user.type != 'Bot')
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: write
+      id-token: write
+    uses: charlesguse/wing-commander/.github/workflows/pr-conversation.yml@v2
+    with:
+      pr-number: ${{ github.event.pull_request.number || github.event.issue.number }}
+      event-kind: >-
+        ${{ github.event_name == 'pull_request_review' && 'review'
+          || github.event_name == 'pull_request_review_comment' && 'review-comment'
+          || 'issue-comment' }}
+      body: ${{ github.event.review.body || github.event.comment.body || '' }}
+      actor-login: ${{ github.event.review.user.login || github.event.comment.user.login }}
+      actor-association: ${{ github.event.review.author_association || github.event.comment.author_association }}
+      # Your implement wrapper's filename — opt-in, like every other
+      # chaining input. Omit it and an in-scope fold-in is committed but
+      # nothing is dispatched (the PR reply says so).
+      implement-workflow: wing-commander-5-implement.yml
+    secrets:
+      claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
+```
 
 ## Chaining payload contract
 

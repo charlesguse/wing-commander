@@ -181,11 +181,20 @@ on:
 # surface (issues for the lifecycle/pipeline-defect reports, pull-requests
 # and contents for rung 1/2 fix PRs), and only one concurrency group needs to
 # span all four jobs of a single run-inspection.
+#
+# actions/checks are read-only, and load-bearing for github.token specifically
+# (not the App token, which per docs/setup.md has neither): every collector
+# that reads the inspected run's own Actions data (job list, job logs,
+# artifacts) or check-run annotations routes through github.token via a
+# per-step ACTIONS_TOKEN, because the App's "Everything else: No access"
+# means those `gh` calls 403 under steps.ctx.outputs.token. Gate 12
+# (lint-workflows.yml) checks every such call against exactly this grant.
 permissions:
   contents: write
   pull-requests: write
   issues: write
   actions: read
+  checks: read
   id-token: write
 
 concurrency:
@@ -290,10 +299,16 @@ jobs:
         id: run-meta
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ACTIONS_TOKEN: ${{ github.token }}
           RUN_ID: ${{ inputs.run-id }}
         run: |
           set -euo pipefail
-          json=$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json headBranch,headSha,conclusion,url,event,createdAt,databaseId)
+          # Gate 12: `gh run view` needs Actions:read, which the App token
+          # does not have — use the job's own default token instead (the
+          # top-level permissions: block grants it). This step has no
+          # fallback: under `set -e` a 403 here used to kill the whole
+          # collect job before any evidence was gathered.
+          json=$(GH_TOKEN="$ACTIONS_TOKEN" gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json headBranch,headSha,conclusion,url,event,createdAt,databaseId)
           {
             echo "head-branch=$(printf '%s' "$json" | jq -r '.headBranch // empty')"
             echo "head-sha=$(printf '%s' "$json" | jq -r '.headSha // empty')"
@@ -386,12 +401,17 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ACTIONS_TOKEN: ${{ github.token }}
           RUN_ID: ${{ inputs.run-id }}
         run: |
           set -uo pipefail
           dl_dir="$RUNNER_TEMP/execution-output"
           mkdir -p "$dl_dir"
-          if ! gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -p 'claude-execution-output*' -D "$dl_dir" >"$RUNNER_TEMP/eo-dl.log" 2>&1; then
+          # Gate 12: artifact download needs Actions:read, which the App
+          # token does not have (docs/setup.md) — the swallowed failure
+          # below would otherwise silently read as "no artifact" on every
+          # single run instead of the permission error it actually was.
+          if ! GH_TOKEN="$ACTIONS_TOKEN" gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -p 'claude-execution-output*' -D "$dl_dir" >"$RUNNER_TEMP/eo-dl.log" 2>&1; then
             echo "No claude-execution-output-* artifact found for run $RUN_ID (or it has expired past retention) — treated as a successful empty contribution." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
@@ -617,6 +637,7 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ACTIONS_TOKEN: ${{ github.token }}
           RUN_ID: ${{ inputs.run-id }}
         run: |
           set -uo pipefail
@@ -637,12 +658,16 @@ jobs:
           # permanently masked every clarification signal. A sentinel that
           # another sentinel can silence is not a safety net.
           token_re='WC-SENTINEL: [a-z][a-z0-9-]*'
-          jobs_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" --paginate 2>/dev/null || echo '{"jobs":[]}')"
+          # Gate 12: both `gh api` calls below need Actions:read, which the
+          # App token does not have (docs/setup.md) — under the App token
+          # every job's log silently reads as unfetchable ("$log" always
+          # empty) and this collector has never actually found a sentinel.
+          jobs_json="$(GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" --paginate 2>/dev/null || echo '{"jobs":[]}')"
           entries='[]'
           for job_id in $(printf '%s' "$jobs_json" | jq -r '.jobs[]?.id // empty'); do
             job_name="$(printf '%s' "$jobs_json" | jq -r --arg id "$job_id" '.jobs[] | select((.id|tostring) == $id) | .name')"
             job_conclusion="$(printf '%s' "$jobs_json" | jq -r --arg id "$job_id" '.jobs[] | select((.id|tostring) == $id) | .conclusion // "in_progress"')"
-            log="$(gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$job_id/logs" 2>/dev/null || true)"
+            log="$(GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$job_id/logs" 2>/dev/null || true)"
             [ -n "$log" ] || continue
             # Match RUNTIME OUTPUT only. Actions echoes every step's own
             # script source and env/with blocks into the log between
@@ -704,13 +729,18 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ACTIONS_TOKEN: ${{ github.token }}
           RUN_ID: ${{ inputs.run-id }}
         run: |
           set -uo pipefail
-          jobs_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" --paginate 2>/dev/null || echo '{"jobs":[]}')"
+          # Gate 12: `.../actions/runs/.../jobs` needs Actions:read and
+          # `.../check-runs/.../annotations` needs Checks:read — the App
+          # token has neither (docs/setup.md); use the job's default token,
+          # which the top-level permissions: block grants both.
+          jobs_json="$(GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" --paginate 2>/dev/null || echo '{"jobs":[]}')"
           entries='[]'
           for job_id in $(printf '%s' "$jobs_json" | jq -r '.jobs[]?.id // empty'); do
-            anns="$(gh api "repos/$GITHUB_REPOSITORY/check-runs/$job_id/annotations" --paginate 2>/dev/null || echo '[]')"
+            anns="$(GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/check-runs/$job_id/annotations" --paginate 2>/dev/null || echo '[]')"
             filtered="$(printf '%s' "$anns" | jq -c '[ .[]? | select(.annotation_level=="warning" or .annotation_level=="failure") | {source:"annotations","class-hint":null,facts:{level:.annotation_level,message:.message}} ]' 2>/dev/null || echo '[]')"
             entries="$(printf '%s' "$entries" | jq -c --argjson f "$filtered" '. + $f')"
           done
@@ -2079,6 +2109,7 @@ jobs:
         if: inputs.run-name == 'Wing Commander · 8 watchdog'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ACTIONS_TOKEN: ${{ github.token }}
           RUN_ID: ${{ inputs.run-id }}
           CAP_INPUT: ${{ vars.WING_COMMANDER_WATCHDOG_SELF_DISPATCH_CAP }}
         run: |
@@ -2088,7 +2119,11 @@ jobs:
             cap=3
           fi
           limit=$((cap + 5))
-          runs_json="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow 'Wing Commander · 8 watchdog' --json databaseId,event,createdAt --limit "$limit" --jq 'sort_by(.createdAt) | reverse' 2>/dev/null || echo '[]')"
+          # Gate 12: `gh run list` needs Actions:read, which the App token
+          # does not have (docs/setup.md) — a swallowed failure here reads
+          # as "no prior runs" (depth 0), silently defeating the self-
+          # dispatch cap this step exists to enforce.
+          runs_json="$(GH_TOKEN="$ACTIONS_TOKEN" gh run list --repo "$GITHUB_REPOSITORY" --workflow 'Wing Commander · 8 watchdog' --json databaseId,event,createdAt --limit "$limit" --jq 'sort_by(.createdAt) | reverse' 2>/dev/null || echo '[]')"
           depth="$(printf '%s' "$runs_json" | jq --argjson rid "$RUN_ID" '
             (map(.databaseId) | index($rid)) as $start
             | if $start == null then 0
@@ -2577,6 +2612,7 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ACTIONS_TOKEN: ${{ github.token }}
           RUN_ID: ${{ inputs.run-id }}
           SPEC_DRAFT_PREFIX: ${{ vars.WING_COMMANDER_SPEC_DRAFT_PREFIX }}
           SPEC_PREFIX: ${{ vars.WING_COMMANDER_SPEC_PREFIX }}
@@ -2593,7 +2629,10 @@ jobs:
 
           issue=""
           if [ -n "$GH_TOKEN" ]; then
-            head_branch="$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json headBranch --jq '.headBranch // empty' 2>/dev/null || true)"
+            # Gate 12: `gh run view` needs Actions:read, which the App token
+            # does not have (docs/setup.md) — route through the job's
+            # default token instead.
+            head_branch="$(GH_TOKEN="$ACTIONS_TOKEN" gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json headBranch --jq '.headBranch // empty' 2>/dev/null || true)"
 
             slug=""
             case "$head_branch" in

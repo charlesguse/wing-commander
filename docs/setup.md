@@ -95,6 +95,9 @@ create them now so the stubs' documentation stays true):
 | `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_PAUSED` | unset (not paused) | `true` = kill switch for the Spec Kit auto-updater. Read wrapper-side (`wing-commander-auto-update-spec-kit.yml`'s job-level `if:`) so no job starts at all — nothing detected, no agent invoked, nothing written |
 | `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_STABILIZATION_CHECKS` | `1` | Consecutive daily checks a newly detected upstream version must be observed unchanged before an upgrade is prepared (a settle window, not a fixed calendar delay). Raise it to let a fast-moving patch stream settle longer |
 | `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_MODEL` | `claude-sonnet-5` | Model for the auto-updater's `evaluate-path` judgment step (clean-bump / needs-migration / ambiguous-options) |
+| `WING_COMMANDER_PR_CONVERSATION_MODEL` | `claude-sonnet-5` | Model for the PR conversation stage's classify and act steps; a PR's `model:opus` label escalates to `claude-opus-5` regardless |
+| `WING_COMMANDER_PR_CONVERSATION_CONFIRM_CATEGORIES` | unset (act-then-report for every category) | Comma-separated `RequestClassification.category` values requiring propose-and-confirm before `act` mutates anything, or the literal `all` |
+| `WING_COMMANDER_PR_CONVERSATION_CONFIRM_ENVIRONMENT` | `pr-conversation-confirm` | Deployment environment name the `act` job binds to for a classification requiring confirmation |
 
 The watchdog also reads one consuming-repo-owned config file,
 `.specify/memory/watchdog-guardrails.json`, which defines the change-class
