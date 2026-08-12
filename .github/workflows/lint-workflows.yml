@@ -1151,6 +1151,21 @@ jobs:
       - name: Gate 13 — relay confirmation is opt-in on one agreed phrase
         run: python3 .github/scripts/verify-relay-confirmation-phrase.py
 
+      # Gate 14 — the stalled-restart runbook is a command the guard accepts.
+      # implement.yml's stall report tells a maintainer how to restart, but
+      # whether that advice WORKS is decided by the idempotency guard in a
+      # different job, which admits a stalled stage only at recorded+1. They
+      # disagreed: the runbook printed the iteration that had just failed, so
+      # every restart command the pipeline ever handed out was classified as a
+      # duplicate dispatch. The failure is silent in all three places anyone
+      # would look — skip=true turns every later `if:` false, so the run is
+      # GREEN in ~11s, posts nothing to the lifecycle issue, and gives the
+      # watchdog no failed conclusion to catch. Gates 1-3 passed on that file
+      # throughout; they prove shell parses, not that two steps agree about a
+      # number. Seen on #184: run 31596632026 (green no-op) vs 31597726542.
+      - name: Gate 14 — the stalled-restart runbook is a command the guard accepts
+        run: python3 .github/scripts/verify-stall-restart-runbook.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when
