@@ -3,6 +3,6 @@
   "spec_dir": "specs/034-e2e-verification-tier",
   "feature_num": "034",
   "stage": "implement",
-  "iteration": 2,
+  "iteration": 3,
   "spec_branch": "spec/034-e2e-verification-tier"
 }
