@@ -1177,9 +1177,83 @@ jobs:
           path: ${{ runner.temp }}/prepare.bundle
           retention-days: 1
 
+  # New AI-driven stage (FR-017/018/019): one real e2e agent-driven smoke
+  # test against the candidate's own regenerated .specify/ artifacts, run
+  # inside a scratch GitHub repository created for this run. Gates verify's
+  # combined verdict as a fourth check
+  # (contracts/e2e-verification-tier.md). Never runs for a patch jump — the
+  # deeper tier only applies to minor/major, unchanged gating condition from
+  # the lightweight tier's own end-to-end step.
+  e2e-stage:
+    needs: prepare
+    if: needs.prepare.outputs.release-type != 'patch'
+    runs-on: ubuntu-latest
+    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
+    # form accepts an expression in both name and deployment, and a
+    # rendered deployment value is coerced as a boolean, so false really
+    # does suppress the deployment record while keeping the gate; an
+    # unknown name is created on reference. Not part of GitHub's
+    # published schema (FR-013) — see contracts/environment-binding.md.
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    outputs:
+      passed: ${{ steps.readback.outputs.passed }}
+      failure-detail: ${{ steps.readback.outputs.failure-detail }}
+      scratch-repo: ${{ steps.scratch-repo.outputs.full-name }}
+    steps:
+      - name: Checkout consumer repository (bootstrap, default token)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref" | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      - name: Wing Commander context
+        id: ctx
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      # Placeholders filled in by Phase 3 (User Story 1):
+      # T008: create-or-reuse the scratch repository (id: scratch-repo).
+      # T009: clone it, scaffold-push the candidate's regenerated .specify/
+      #   artifacts.
+      # T010: claude-code-action@v1 (id: decide) — one real
+      #   /speckit-specify-equivalent turn against the scratch clone.
+      # T011: deterministic "Read back stage result" (id: readback).
+      # T012: best-effort push-back of the agent-produced spec.md.
+
   # Tiered smoke test against the prepared candidate.
   verify:
-    needs: prepare
+    needs: [prepare, e2e-stage]
     # Same reason as `prepare` above: guarding only `prepare` would have
     # moved the silence one job down instead of ending it.
     if: always() && needs.prepare.result == 'success'

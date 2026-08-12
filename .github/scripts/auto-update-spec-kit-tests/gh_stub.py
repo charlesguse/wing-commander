@@ -30,6 +30,7 @@ def load():
     s.setdefault("issues", {})
     s.setdefault("prs", {})
     s.setdefault("labels", [])
+    s.setdefault("repos", {})
     s.setdefault("default_branch", "main")
     s.setdefault("next_issue", 100)
     s.setdefault("next_pr", 200)
@@ -167,9 +168,52 @@ def main():
         sys.stderr.write("gh stub: unhandled api path %s\n" % path)
         return 1
 
-    # ---- gh repo view ---------------------------------------------------
+    # ---- gh repo view/create/delete/list ---------------------------------
+    # `repos` tracks only repositories this stub itself created via `repo
+    # create` (keyed by NAME, not OWNER/NAME — the scratch repos this
+    # feature manages). Any other name (e.g. $GITHUB_REPOSITORY, the
+    # consuming repo the pre-existing `repo view` call sites already rely
+    # on) is treated as always-existing, preserving their behaviour.
     if cmd == "repo" and argv[1] == "view":
+        full = argv[2] if len(argv) > 2 else ""
+        _, _, name = full.partition("/")
+        repo = s["repos"].get(name) if name else None
+        if repo is not None:
+            if repo.get("deleted"):
+                sys.stderr.write("gh: repository not found\n")
+                return 1
+            emit({"defaultBranchRef": {"name": s["default_branch"]}}, argv)
+            return 0
+        if name.startswith("wing-commander-e2e-"):
+            sys.stderr.write("gh: repository not found\n")
+            return 1
         emit({"defaultBranchRef": {"name": s["default_branch"]}}, argv)
+        return 0
+
+    if cmd == "repo" and argv[1] == "create":
+        full = argv[2] if len(argv) > 2 else ""
+        owner, _, name = full.partition("/")
+        repo = s["repos"].get(name)
+        if repo is None or repo.get("deleted"):
+            s["repos"][name] = {"owner": owner, "deleted": False}
+            save(s)
+        return 0
+
+    if cmd == "repo" and argv[1] == "delete":
+        full = argv[2] if len(argv) > 2 else ""
+        _, _, name = full.partition("/")
+        repo = s["repos"].get(name)
+        if repo is not None:
+            repo["deleted"] = True
+            save(s)
+        return 0
+
+    if cmd == "repo" and argv[1] == "list":
+        owner = argv[2] if len(argv) > 2 else ""
+        names = sorted(n for n, r in s["repos"].items()
+                        if r.get("owner") == owner and not r.get("deleted"))
+        fields = (opt(argv, "--json") or "name").split(",")
+        emit([{f: (n if f == "name" else None) for f in fields} for n in names], argv)
         return 0
 
     # ---- gh search issues ----------------------------------------------
