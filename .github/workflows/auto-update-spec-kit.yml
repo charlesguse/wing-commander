@@ -79,6 +79,16 @@ on:
         type: string
         required: false
         default: claude-sonnet-5
+      e2e-stage-model:
+        description: "Model for the e2e-stage disposable smoke-test agent (constitution II tiering: disposable smoke-test generation, not the foundational-spec premium tier)."
+        type: string
+        required: false
+        default: claude-sonnet-5
+      e2e-stage-max-turns:
+        description: "Max turns for the e2e-stage disposable smoke-test agent."
+        type: string
+        required: false
+        default: "20"
       pipeline-repo:
         description: >
           Repository to check out for the pipeline's shared composite actions
