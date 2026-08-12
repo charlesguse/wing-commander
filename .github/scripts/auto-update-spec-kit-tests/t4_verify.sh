@@ -313,6 +313,21 @@ run_step 'auto-update-spec-kit__e2e-stage__*create-or-reuse-the-scratch-reposito
 check "S7 re-dispatch reuses the existing repo (idempotent)" "$(out full-name)" "wing-commander/wing-commander-e2e-77"
 check "S7 no duplicate recorded" "$(jq '.repos | length' "$GH_STATE")" "1"
 
+echo "  scratch-repository creation failure fails the step itself, not just silently continues (T037, FR-021 edge case)"
+new_step_env
+export GH_TOKEN=stub OWNER=wing-commander ISSUE=88 GH_STUB_FAIL="repo create"
+GHA_SUBST=()
+run_step 'auto-update-spec-kit__e2e-stage__*create-or-reuse-the-scratch-repository*.sh' >/dev/null 2>&1
+check "S7 create-repo failure makes the step itself fail" "$?" "1"
+check "S7 create-repo failure leaves full-name unset" "$(out full-name)" ""
+unset GH_STUB_FAIL
+
+echo "  ...and the verify job's combine step still narrates the incomplete stage, distinguishable from a candidate-artifact failure"
+combine minor true "" success true "" failure
+check "S7 stage-not-run combined result is not passed" "$C_PASSED" "false"
+check_contains "S7 combined detail states the stage did not complete" "$C_DETAIL" "did not complete"
+check_not_contains "S7 combined detail is not candidate-artifact wording" "$C_DETAIL" "spec.md"
+
 echo "  issue-closed trigger deletes the scratch repository, idempotently"
 GHA_SUBST=()
 run_step 'auto-update-spec-kit__issue-closed__*delete-the-scratch-repository*.sh' >/dev/null 2>&1

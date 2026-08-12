@@ -1340,7 +1340,10 @@ jobs:
           set -uo pipefail
           full="$OWNER/wing-commander-e2e-$ISSUE"
           if ! gh repo view "$full" >/dev/null 2>&1; then
-            gh repo create "$full" --private --add-readme
+            if ! gh repo create "$full" --private --add-readme; then
+              echo "::error::wing-commander auto-update-spec-kit e2e-stage: 'gh repo create' failed while creating the scratch repository $full."
+              exit 1
+            fi
           fi
           echo "full-name=$full" >> "$GITHUB_OUTPUT"
 
@@ -1722,7 +1725,17 @@ jobs:
               detail="$E2E_DETAIL"
             elif [ "$E2E_PASSED" = "true" ] && { [ "$STAGE_RESULT" != "success" ] || [ "$STAGE_PASSED" != "true" ]; }; then
               passed=false
-              detail="$STAGE_DETAIL"
+              # T037/FR-021: a job-level failure before the read-back step
+              # ever runs (e.g. `gh repo create` or the scaffold step
+              # failing) leaves STAGE_DETAIL empty — synthesize a
+              # stage-did-not-complete message here so the narration is
+              # never blank or reduced to just the scratch-repo pointer
+              # below.
+              if [ -n "$STAGE_DETAIL" ]; then
+                detail="$STAGE_DETAIL"
+              else
+                detail="the e2e-stage job did not complete (result: $STAGE_RESULT) — this is a stage/infrastructure problem, not a candidate defect."
+              fi
             fi
           fi
 

@@ -70,6 +70,27 @@ Surfaced here (rather than silently assumed) for a maintainer to confirm
    every `gh repo create`/`delete`/`list` in the test suite goes through
    `gh_stub.py`'s JSON state file, never a real API call.
 
+## T037 — convergence: e2e-stage infra-failure narration gap (FR-021)
+
+Fixed in cycle 3: the "Create or reuse the scratch repository" step now
+checks `gh repo create`'s exit status and fails the step (rather than
+silently continuing and unconditionally emitting `full-name`) when
+creation fails. Separately — and this is the fix that actually closes the
+gap, since a failure in either that step or the following "Scaffold and
+push" step still leaves `steps.readback.outputs.failure-detail` empty
+(the read-back step never runs) — the `verify` job's "Combine verification
+result" step now synthesizes `"the e2e-stage job did not complete (result:
+$STAGE_RESULT) — this is a stage/infrastructure problem, not a candidate
+defect."` whenever `STAGE_DETAIL` reaches it empty, instead of falling
+through to a blank detail or the bare scratch-repo-retained pointer.
+`t4_verify.sh` gained a scenario driving `gh_stub.py`'s existing
+`GH_STUB_FAIL` failure-injection (already generic across every `gh`
+subcommand, including `repo create`) to confirm the step itself now fails,
+and a `combine()` call confirming the composed detail states the stage did
+not complete and never carries candidate-artifact wording (e.g. `spec.md`).
+Re-linted with `actionlint`/`shellcheck` — no findings beyond the
+pre-existing ones already noted below.
+
 ## Determinism note (T029, SC-010, FR-020)
 
 Recorded here as well as in `t4_verify.sh`'s header comment: the suite is
