@@ -31,10 +31,20 @@
 
 ## Notes
 
-- Two [NEEDS CLARIFICATION] markers remain, both on scope of what the deeper tier
-  should exercise (FR-002 breadth, FR-003 whether an AI-driven stage run is required).
-  Per the CI intake deviation, they are left in place and posted to the lifecycle
-  issue as questions rather than blocking the run.
+- Both drafting clarifications were answered on the lifecycle issue (#184) and are now
+  encoded in the spec:
+  - **Q1 → option B** — the tier must invoke a real AI-driven pipeline stage against the
+    candidate; scripts and templates alone do not satisfy the parent spec's FR-004.
+    Encoded in FR-017 (stage required), FR-018 (the stage gates adoption), FR-021
+    (a stage that does not complete is the same single failure), FR-020 (the harness
+    drives controlled stage results so it stays deterministic), and US1 scenarios 5–6.
+  - **Q2 → option B** — the tier must cover every Spec Kit script the pipeline depends on,
+    each asserted against its documented shape. Encoded in FR-002 and SC-008, with the
+    raised re-triage rate recorded as an accepted trade-off in Assumptions.
+- One [NEEDS CLARIFICATION] marker remains, opened by the Q1 answer: FR-019, where the
+  AI-driven stage runs. The maintainer's leaning is a dedicated
+  `wing-commander-end-to-end-test` repository but it does not exist yet, and they invited
+  an alternative. It is posted to the lifecycle issue as a question rather than blocking.
 - The open question carried over from #157 (failure vs. non-clean-bump routing) is
   **not** a remaining clarification — it was answered as option C in the issue
   conversation and is encoded in FR-005/FR-006/FR-008 and the Assumptions section.

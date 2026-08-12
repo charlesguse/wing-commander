@@ -12,11 +12,11 @@
 
 ### User Story 1 - A broken minor/major candidate is caught by the deeper tier (Priority: P1)
 
-The scheduled Spec Kit auto-update detects a new upstream version that is a minor or major jump from the pinned version. Because the jump is larger than a patch, the deeper verification tier runs in addition to the lightweight one. That deeper tier exercises the candidate version's *own* Spec Kit artifacts — running a real spec-kit operation out of the candidate's checkout and checking the result against the shape the pipeline depends on. When the candidate behaves differently from what the pipeline needs, the run reports a verification failure instead of proceeding to a version-bump PR.
+The scheduled Spec Kit auto-update detects a new upstream version that is a minor or major jump from the pinned version. Because the jump is larger than a patch, the deeper verification tier runs in addition to the lightweight one. That deeper tier exercises the candidate version's *own* Spec Kit artifacts — running **every Spec Kit operation the pipeline depends on** out of the candidate's checkout and checking each result against the shape the pipeline depends on, and then driving **a real AI-driven pipeline stage** (a throwaway spec-kit-driven stage) against the candidate. When the candidate behaves differently from what the pipeline needs, the run reports a verification failure instead of proceeding to a version-bump PR.
 
 **Why this priority**: This is the entire reason the tier exists. The pipeline is pinned at 0.12.4 with upstream at v0.16.2, so the very next adoption is a minor jump routed through this tier. Today that tier cannot fail for any candidate-specific reason, which means the largest jump the project has ever attempted would be waved through on the strength of the lightweight check alone. Fixing this one behaviour delivers the protection on its own.
 
-**Independent Test**: Point the deeper tier at a candidate whose Spec Kit scripts are deliberately broken (made to exit non-zero, or made to emit a renamed/absent output field) and confirm the minor/major run reports verification failure with a reason naming the failing check — while the same tier passes for an unmodified, healthy candidate.
+**Independent Test**: Point the deeper tier at a candidate whose Spec Kit scripts are deliberately broken (made to exit non-zero, or made to emit a renamed/absent output field) and confirm the minor/major run reports verification failure with a reason naming the failing check — while the same tier passes for an unmodified, healthy candidate. Repeat with the candidate's scripts intact but the AI-driven stage unable to complete, and confirm the tier fails there too.
 
 **Acceptance Scenarios**:
 
@@ -24,6 +24,8 @@ The scheduled Spec Kit auto-update detects a new upstream version that is a mino
 2. **Given** a minor or major candidate whose Spec Kit operation exits non-zero, **When** the deeper verification tier runs, **Then** the tier fails and the failure reason names the operation and what went wrong.
 3. **Given** a minor or major candidate whose Spec Kit operation succeeds but emits an output that no longer carries the documented shape the pipeline consumes, **When** the deeper verification tier runs, **Then** the tier fails and the failure reason states what shape was expected and what was observed.
 4. **Given** any input to the deeper tier, **When** it reports a pass, **Then** that pass depended on at least one behaviour of the candidate's own artifacts that the lightweight tier did not already establish.
+5. **Given** a minor or major candidate, **When** the deeper verification tier runs, **Then** every Spec Kit operation the pipeline depends on is exercised out of the candidate's checkout and each is asserted against its documented shape — a defect in any one of them fails the tier.
+6. **Given** a candidate whose scripts behave correctly but whose AI-driven stage does not produce the documented stage output (or does not complete at all), **When** the deeper verification tier runs, **Then** the tier fails and the candidate is not adopted — the AI-driven stage gates adoption rather than being reported without effect.
 
 ---
 
@@ -66,13 +68,14 @@ The tier's pass and failure paths are covered by the repository's executable sce
 
 **Why this priority**: The original defect survived a scenario walk precisely because Scenario 7 was desk-checked against a description rather than executed against behaviour. Coverage is what stops the same class of regression, but it delivers nothing on its own if US1–US3 have not landed, so it is P3.
 
-**Independent Test**: Run the existing scenario harness for this workflow and confirm it exercises, and can fail on, each of: a healthy candidate passing, a missing expected artifact failing, a wrong-shape result failing, and the narration carrying the non-clean-bump hint.
+**Independent Test**: Run the existing scenario harness for this workflow and confirm it exercises, and can fail on, each of: a healthy candidate passing, a missing expected artifact failing, a wrong-shape result failing, an AI-driven stage that does not complete failing, and the narration carrying the non-clean-bump hint. Run it twice and confirm the verdicts are identical — the harness drives controlled stage results, not live agent runs.
 
 **Acceptance Scenarios**:
 
 1. **Given** the scenario harness for this workflow, **When** it runs against the fixed tier, **Then** it asserts a pass for a healthy candidate and a failure for each defective-candidate case above.
 2. **Given** a change that reintroduces a fallback pass or removes the candidate-dependent assertion, **When** the harness runs, **Then** at least one harness check fails.
-3. **Given** the parent spec's Scenario 7 narrative, **When** it is compared with the implemented tier, **Then** the narrative describes what the tier actually does.
+3. **Given** the harness covers a stage that is AI-driven in a real run, **When** the harness runs repeatedly, **Then** it produces the same verdict every time, because it drives controlled stage results rather than a live agent.
+4. **Given** the parent spec's Scenario 7 narrative, **When** it is compared with the implemented tier, **Then** the narrative describes what the tier actually does.
 
 ---
 
@@ -84,7 +87,9 @@ The tier's pass and failure paths are covered by the repository's executable sce
 - **Lightweight tier already failed**: the deeper tier does not run and the combined verdict reports the lightweight reason — unchanged from today.
 - **Deeper tier fails after creating scratch files**: the disposable worktree is still discarded, and nothing reaches the repository's real `specs/` tree or any pushed branch.
 - **Patch-type jump**: the deeper tier does not run at all; tiering is unchanged.
-- **Candidate legitimately reorganized its templates/scripts**: still a verification failure (single path), with the narration telling the maintainer that a non-clean bump is the alternative reading.
+- **Candidate legitimately reorganized its templates/scripts**: still a verification failure (single path), with the narration telling the maintainer that a non-clean bump is the alternative reading. Because coverage spans every depended-on script, a reorganization anywhere on the dependency path triggers this — an accepted cost of the chosen breadth.
+- **AI-driven stage does not complete** (error, timeout, unavailable model or credentials): verification failure on the same single path; the narration states the stage did not complete and distinguishes it from a candidate-artifact failure.
+- **AI-driven stage completes but produces no documented stage output, or output in the wrong shape**: verification failure describing expected vs. observed.
 - **Deeper tier failure reason contains newlines or shell-hostile characters**: the reason still reaches the lifecycle issue intact and readable.
 
 ## Requirements *(mandatory)*
@@ -92,8 +97,8 @@ The tier's pass and failure paths are covered by the repository's executable sce
 ### Functional Requirements
 
 - **FR-001**: The end-to-end verification tier MUST execute at least one real Spec Kit operation resolved from and run out of the *candidate* version's own checkout, such that the tier's verdict depends on the candidate's own behaviour.
-- **FR-002**: The tier MUST assert the documented result of what it runs — the documented output fields present and non-empty, and the documented on-disk artifacts created — rather than asserting only that some file exists and is non-empty. [NEEDS CLARIFICATION: should the tier exercise one additional Spec Kit operation beyond what the lightweight tier already runs, or every `.specify` script the pipeline depends on? Breadth trades regression coverage against how often a legitimate upstream reorganization fails the tier.]
-- **FR-003**: The tier's assertions MUST add coverage beyond the lightweight tier: at least one assertion MUST be one that the lightweight tier's checks could not already have satisfied. [NEEDS CLARIFICATION: does "end-to-end" require invoking a real AI-driven pipeline stage against the candidate, or is exercising the candidate's Spec Kit scripts and templates without an agent run sufficient to satisfy the parent spec's FR-004? The former is closer to the parent spec's wording; the latter keeps the scheduled job free of agent cost and non-determinism.]
+- **FR-002**: The tier MUST exercise *every* Spec Kit script the pipeline depends on, and MUST assert the documented result of each — the documented output fields present and non-empty, and the documented on-disk artifacts created — rather than asserting only that some file exists and is non-empty. Coverage is defined by what the pipeline consumes, not by file count; a script the pipeline does not depend on is out of scope until it becomes a dependency.
+- **FR-003**: The tier's assertions MUST add coverage beyond the lightweight tier: at least one assertion MUST be one that the lightweight tier's checks could not already have satisfied.
 - **FR-004**: The tier MUST NOT contain any fallback path that substitutes locally generated content for an expected candidate artifact. When an expected artifact is absent, the tier MUST fail.
 - **FR-005**: A deeper-tier failure MUST produce exactly one outcome: verification failure. The candidate is not adopted, the pinned version is left unchanged, no version bump is applied, and the lifecycle issue stays open and is flagged `auto-update:failed`.
 - **FR-006**: The system MUST NOT introduce a second automated outcome path (such as a distinct non-clean-bump routing) for a missing expected artifact; the label applied, the adoption decision, and the flow of the run MUST be identical across all deeper-tier failure reasons.
@@ -105,13 +110,19 @@ The tier's pass and failure paths are covered by the repository's executable sce
 - **FR-012**: The combined verification verdict MUST continue to carry the deeper tier's failure reason when the deeper tier is the failing check, and the lightweight reason when the lightweight tier is.
 - **FR-013**: Every artifact the tier creates MUST remain inside a disposable isolated checkout that is discarded on every outcome (pass, fail, or error); no scratch artifact may land in the repository's real `specs/` tree, in any pushed branch, or in any opened pull request.
 - **FR-014**: The failure reason MUST survive transport to the lifecycle issue intact, including multi-line content, trimmed to a readable length rather than dropped.
-- **FR-015**: The pass and failure paths of the tier MUST be asserted by the repository's executable scenario harness for this workflow, covering at minimum: a healthy candidate passing, a missing expected artifact failing, a wrong-shape or non-zero-exit result failing, and the narration carrying the non-clean-bump hint.
+- **FR-015**: The pass and failure paths of the tier MUST be asserted by the repository's executable scenario harness for this workflow, covering at minimum: a healthy candidate passing, a missing expected artifact failing, a wrong-shape or non-zero-exit result failing, an AI-driven stage that does not complete failing, and the narration carrying the non-clean-bump hint.
 - **FR-016**: The parent spec's Scenario 7 narrative MUST be updated to describe what the tier actually does, so the description and the implementation no longer disagree.
+- **FR-017**: The tier MUST invoke at least one real AI-driven pipeline stage (a throwaway spec-kit-driven stage, e.g. a specify run) against the candidate version, in addition to exercising the candidate's scripts and templates. Exercising scripts and templates alone does not satisfy the parent spec's FR-004 for a minor or major candidate.
+- **FR-018**: The AI-driven stage's result MUST gate adoption. If the stage does not complete, or completes without producing the documented stage output in the documented shape, the tier MUST fail under the single failure path of FR-005. No part of the deeper tier may be reported-but-non-gating.
+- **FR-019**: The AI-driven stage MUST run against a disposable target that is isolated from this repository's real `specs/` tree and from any pushed branch or opened pull request, and that target MUST be discarded or reset on every outcome (pass, fail, or error), consistent with FR-013. [NEEDS CLARIFICATION: what that target is — a dedicated `wing-commander-end-to-end-test` repository (which does not exist yet and would need creating plus cross-repository credentials for the scheduled job), the disposable isolated checkout the tier already provisions, or a scratch repository created and deleted per run.]
+- **FR-020**: Because an AI-driven stage is non-deterministic, the executable scenario harness required by FR-015 MUST assert the tier's pass and failure paths against controlled candidate behaviour (stubbed or recorded stage results) rather than against live agent runs, so that harness outcomes are deterministic and a harness failure always indicates a real regression.
+- **FR-021**: An AI-driven stage that does not complete — error, timeout, or unavailable model/credentials — MUST produce the same single verification-failure outcome as any other deeper-tier failure, and the narration MUST state that the stage did not complete and distinguish that from a candidate-artifact failure, so the maintainer can tell an infrastructure problem from a broken candidate.
 
 ### Key Entities
 
 - **Candidate version**: the upstream Spec Kit version being evaluated for adoption, materialized in a disposable isolated checkout; the subject of every deeper-tier assertion.
-- **Verification tier**: a named group of checks (lightweight, end-to-end) selected by release type; produces a pass/fail verdict plus a human-readable failure reason.
+- **Verification tier**: a named group of checks (lightweight, end-to-end) selected by release type; produces a pass/fail verdict plus a human-readable failure reason. The end-to-end tier's checks are the depended-on Spec Kit scripts plus one AI-driven stage, all gating.
+- **AI-driven stage run**: a throwaway spec-kit-driven stage executed against the candidate inside a disposable target; its completion and documented output are gating assertions of the end-to-end tier.
 - **Verification verdict**: the combined pass/fail result plus the tier label and the failure reason carried forward to the lifecycle issue and the job summary.
 - **Failure narration**: the comment posted to the lifecycle issue; carries the failing check, expected-vs-observed detail, and — for a missing artifact — the non-clean-bump consideration.
 - **Scratch feature artifacts**: the throwaway feature directory and files the tier creates inside the disposable checkout; never committed, never pushed.
@@ -127,14 +138,20 @@ The tier's pass and failure paths are covered by the repository's executable sce
 - **SC-005**: Across pass, fail, and error outcomes, zero scratch artifacts from the deeper tier appear in the repository's real `specs/` tree, in any pushed branch, or in any opened pull request.
 - **SC-006**: The next real minor/major adoption (0.12.4 → the then-current upstream version) is decided on evidence produced by the candidate's own behaviour rather than on a check that cannot fail.
 - **SC-007**: Every deeper-tier failure reason and the parent spec's Scenario 7 description match the tier's implemented behaviour when compared side by side.
+- **SC-008**: Every Spec Kit script on the pipeline's dependency path is asserted by the deeper tier — a defect injected into any one of them, in isolation, fails the tier; the count of asserted scripts equals the count the pipeline consumes, with no unlisted gap.
+- **SC-009**: A minor or major run that reports a pass includes evidence that an AI-driven stage completed against the candidate and produced its documented output; there is no pass in which that stage was skipped, or ran without affecting the verdict.
+- **SC-010**: The executable scenario harness produces identical verdicts across repeated runs (no flaky outcome from the AI-driven stage), because the stage result is controlled in the harness.
 
 ## Assumptions
 
-- The carried-over open question from #157 is treated as **answered — option C**, per the issue conversation: a missing expected artifact is a single verification failure whose *narration* carries the FR-018 non-clean-bump hint, not a second outcome branch.
+- The carried-over open question from #157 is treated as **answered — option C**, per the issue conversation: a missing expected artifact is a single verification failure whose *narration* carries the parent spec's FR-018 non-clean-bump hint, not a second outcome branch.
+- The two drafting clarifications are **answered** in the issue conversation: the tier must invoke a real AI-driven stage against the candidate (Q1 → option B, encoded in FR-017/FR-018), and it must cover every Spec Kit script the pipeline depends on (Q2 → option B, encoded in FR-002).
 - Tier selection itself is out of scope and unchanged: patch jumps run the lightweight check only; minor and major jumps run lightweight plus the deeper tier, and only after lightweight passes (parent spec 027, FR-004/FR-014).
 - The existing lifecycle-issue mechanics are reused unchanged: the same `auto-update:failed` label, the same issue-stays-open behaviour, the same comment mechanism. Only the failure text gains the non-clean-bump sentence.
 - The scheduled health check of the *already pinned* version keeps its lightweight-only scope; this feature changes the candidate-verification tier only.
-- The deeper tier continues to operate inside the same disposable isolated checkout and scratch feature that the lightweight tier already established, rather than provisioning its own.
+- The script-level checks of the deeper tier continue to operate inside the same disposable isolated checkout and scratch feature that the lightweight tier already established, rather than provisioning their own. Where the *AI-driven* stage runs is still open (FR-019); the maintainer's stated leaning is a dedicated `wing-commander-end-to-end-test` repository, which does not exist yet.
+- The scheduled job accepts the model cost and wall-clock cost of one AI-driven stage per minor/major candidate. Patch candidates are unaffected, so the cost is incurred only on the jumps the tier exists to protect.
+- Choosing full breadth (every depended-on script) raises the rate at which a legitimate upstream reorganization fails the tier. That is accepted: under the answered option C there is still one outcome, and the FR-008 narration is what keeps the resulting re-triage cheap.
 - The repository's existing executable scenario harness for this workflow (from #156) is the home for the new assertions; no new test framework is introduced.
 - Rollback, revert-PR, and post-merge regression behaviour are unchanged by this feature.
 - "Expected artifact" means an artifact the pipeline itself depends on and that the tier names explicitly — not any arbitrary file the candidate happens to ship.
