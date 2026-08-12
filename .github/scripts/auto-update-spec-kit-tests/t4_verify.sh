@@ -14,11 +14,11 @@ seed_worktree() { # seed_worktree <dir>
 }
 
 echo "--- Scenario 7: tier selection (patch = lightweight only; minor/major adds e2e) ---"
-combine() { # combine <release-type> <lw-passed> <lw-detail> <e2e-outcome> <e2e-passed> <e2e-detail> [stage-result] [stage-passed] [stage-detail]
+combine() { # combine <release-type> <lw-passed> <lw-detail> <e2e-outcome> <e2e-passed> <e2e-detail> [stage-result] [stage-passed] [stage-detail] [scratch-repo]
   new_step_env
   GHA_SUBST=()
   export RELEASE_TYPE="$1" LW_PASSED="$2" LW_DETAIL="$3" E2E_OUTCOME="$4" E2E_PASSED="$5" E2E_DETAIL="$6"
-  export STAGE_RESULT="${7:-success}" STAGE_PASSED="${8:-true}" STAGE_DETAIL="${9:-}"
+  export STAGE_RESULT="${7:-success}" STAGE_PASSED="${8:-true}" STAGE_DETAIL="${9:-}" SCRATCH_REPO="${10:-}"
   run_step 'auto-update-spec-kit__verify__*combine*.sh' >/dev/null 2>&1
   C_TIER="$(out tier)"; C_PASSED="$(out passed)"; C_DETAIL="$(out failure-detail)"; C_SUM="$(summary)"
 }
@@ -229,5 +229,102 @@ GHA_SUBST=()
 run_step 'auto-update-spec-kit__e2e-stage__*read-back-stage-result*.sh' >/dev/null 2>&1
 cd "$HERE" || exit 1
 check "S5 empty spec.md -> not passed" "$(out passed)" "false"
+
+echo
+echo "--- Scenario 6: missing-artifact narration carries the FR-008 hint; other failures don't (US3, FR-008/FR-009) ---"
+
+echo "  missing-artifact failure (spec.md) carries the hint"
+new_step_env
+WT="$RUNNER_TEMP/e2e-hint-spec"
+seed_worktree "$WT"
+FD="$WT/specs/029-scratch"
+mkdir -p "$FD"
+: > "$FD/spec.md"
+GHA_SUBST=()
+export WORKTREE="$WT" FEATURE_DIR="$FD"
+run_step 'auto-update-spec-kit__verify__*end-to-end*.sh' >/dev/null 2>&1
+check_contains "S6 missing spec.md carries the FR-008 hint" "$(out failure-detail)" "FR-018"
+
+echo "  missing-artifact failure (plan.md) carries the hint"
+new_step_env
+WT="$RUNNER_TEMP/e2e-hint-plan"
+seed_worktree "$WT"
+rm -f "$WT/.specify/templates/plan-template.md"
+FD="$WT/specs/029-scratch"
+mkdir -p "$FD"
+printf '# spec\n' > "$FD/spec.md"
+GHA_SUBST=()
+export WORKTREE="$WT" FEATURE_DIR="$FD"
+run_step 'auto-update-spec-kit__verify__*end-to-end*.sh' >/dev/null 2>&1
+check_contains "S6 missing plan.md carries the FR-008 hint" "$(out failure-detail)" "FR-018"
+
+echo "  a non-zero-exit failure does NOT carry the hint (FR-009: narration content only)"
+new_step_env
+WT="$RUNNER_TEMP/e2e-hint-exit"
+seed_worktree "$WT"
+printf '\nthis_command_does_not_exist_1234\n' >> "$WT/.specify/scripts/bash/common.sh"
+FD="$WT/specs/029-scratch"
+mkdir -p "$FD"
+printf '# spec\n' > "$FD/spec.md"
+GHA_SUBST=()
+export WORKTREE="$WT" FEATURE_DIR="$FD"
+run_step 'auto-update-spec-kit__verify__*end-to-end*.sh' >/dev/null 2>&1
+check_not_contains "S6 non-zero-exit failure has no FR-008 hint" "$(out failure-detail)" "FR-018"
+
+echo "  an e2e-stage-incomplete failure does NOT carry the hint either"
+check_not_contains "S6 e2e-stage-incomplete failure has no FR-008 hint" "$S4_DETAIL" "FR-018"
+
+echo "  every tier=lightweight+end-to-end run's narration names the scratch repository, pass or fail (SC-012)"
+combine minor true "" success true "" success true "" "wing-commander/wing-commander-e2e-42"
+check_contains "S6 passing run names the scratch repository" "$C_DETAIL" "wing-commander-e2e-42"
+combine minor true "" success false "e2e: spec.md never landed" success true "" "wing-commander/wing-commander-e2e-42"
+check_contains "S6 failing run also names the scratch repository" "$C_DETAIL" "wing-commander-e2e-42"
+
+echo
+echo "--- Scenario 7: scratch repository lifecycle — retained while open, deleted on close (US3, FR-019/022/023, SC-011) ---"
+
+echo "  create-or-reuse is idempotent (a re-dispatch does not duplicate)"
+new_step_env
+export GH_TOKEN=stub OWNER=wing-commander ISSUE=77
+GHA_SUBST=()
+run_step 'auto-update-spec-kit__e2e-stage__*create-or-reuse-the-scratch-repository*.sh' >/dev/null 2>&1
+check "S7 scratch repo created" "$(out full-name)" "wing-commander/wing-commander-e2e-77"
+
+: > "$GITHUB_OUTPUT"   # reset outputs only; keep the SAME GH_STATE to simulate a re-dispatch
+GHA_SUBST=()
+run_step 'auto-update-spec-kit__e2e-stage__*create-or-reuse-the-scratch-repository*.sh' >/dev/null 2>&1
+check "S7 re-dispatch reuses the existing repo (idempotent)" "$(out full-name)" "wing-commander/wing-commander-e2e-77"
+check "S7 no duplicate recorded" "$(jq '.repos | length' "$GH_STATE")" "1"
+
+echo "  issue-closed trigger deletes the scratch repository, idempotently"
+GHA_SUBST=()
+run_step 'auto-update-spec-kit__issue-closed__*delete-the-scratch-repository*.sh' >/dev/null 2>&1
+check "S7 repo marked deleted" "$(jq -r '.repos["wing-commander-e2e-77"].deleted' "$GH_STATE")" "true"
+
+GHA_SUBST=()
+run_step 'auto-update-spec-kit__issue-closed__*delete-the-scratch-repository*.sh' >/dev/null 2>&1
+check "S7 re-deleting an already-deleted repo does not error" "$?" "0"
+
+new_step_env
+export GH_TOKEN=stub OWNER=wing-commander ISSUE=999
+GHA_SUBST=()
+run_step 'auto-update-spec-kit__issue-closed__*delete-the-scratch-repository*.sh' >/dev/null 2>&1
+check "S7 deleting a never-created repo does not error" "$?" "0"
+
+echo "  scheduled sweep deletes closed/missing-issue repos, leaves open-issue repos alone"
+new_step_env
+cat > "$GH_STATE" <<'STATE'
+{"repos": {"wing-commander-e2e-10": {"owner": "wing-commander", "deleted": false},
+           "wing-commander-e2e-20": {"owner": "wing-commander", "deleted": false},
+           "wing-commander-e2e-30": {"owner": "wing-commander", "deleted": false}},
+ "issues": {"10": {"number": 10, "state": "open", "title": "", "body": "", "labels": [], "comments": []},
+            "20": {"number": 20, "state": "closed", "title": "", "body": "", "labels": [], "comments": []}}}
+STATE
+export GH_TOKEN=stub OWNER=wing-commander
+GHA_SUBST=()
+run_step 'auto-update-spec-kit__reap-scratch-repos__*sweep-orphaned-scratch-repositories*.sh' >/dev/null 2>&1
+check "S7 sweep leaves the open-issue repo alone" "$(jq -r '.repos["wing-commander-e2e-10"].deleted' "$GH_STATE")" "false"
+check "S7 sweep deletes the closed-issue repo" "$(jq -r '.repos["wing-commander-e2e-20"].deleted' "$GH_STATE")" "true"
+check "S7 sweep deletes the repo whose issue no longer exists" "$(jq -r '.repos["wing-commander-e2e-30"].deleted' "$GH_STATE")" "true"
 
 report "T4 verify"

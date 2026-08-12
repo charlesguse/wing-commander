@@ -31,7 +31,7 @@ on:
   workflow_call:
     inputs:
       trigger:
-        description: "scheduled | dispatch | pr-merged | comment-reply — resolved by the wrapper from github.event_name (constitution VII: the stage never reads github.event.* directly)"
+        description: "scheduled | dispatch | pr-merged | issue-closed | comment-reply — resolved by the wrapper from github.event_name (constitution VII: the stage never reads github.event.* directly)"
         type: string
         required: true
       pr-number:
@@ -363,6 +363,78 @@ jobs:
           if [ -z "$version" ]; then
             echo "::warning::wing-commander auto-update-spec-kit: could not determine a prior pinned speckit_version from git history — the rollback PR will need a maintainer to fill in the target version by hand."
           fi
+
+  # Scheduled backstop sweep (FR-023): independent of that day's own
+  # detect/settle/verify cycle — runs even when there's nothing new to
+  # check, so a scratch repository whose run died mid-flight, or whose
+  # issue-closed webhook never fired, is still reaped no later than the
+  # next scheduled/dispatch run. Matched only against the
+  # wing-commander-e2e-<digits> name pattern exactly, never a broader glob
+  # (contract's Self-recognition contract).
+  reap-scratch-repos:
+    if: inputs.trigger == 'scheduled' || inputs.trigger == 'dispatch'
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    steps:
+      - name: Checkout consumer repository (bootstrap, default token)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref" | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      - name: Wing Commander context
+        id: ctx
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      - name: Sweep orphaned scratch repositories
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -uo pipefail
+          names="$(gh repo list "$OWNER" --json name --jq '.[].name' 2>/dev/null | grep -E '^wing-commander-e2e-[0-9]+$' || true)"
+          swept=0
+          while IFS= read -r name; do
+            [ -n "$name" ] || continue
+            issue="${name#wing-commander-e2e-}"
+            state="$(gh issue view "$issue" --json state --jq .state 2>/dev/null || true)"
+            if [ "$state" != "OPEN" ]; then
+              gh repo delete "$OWNER/$name" --yes 2>/dev/null || true
+              swept=$((swept + 1))
+            fi
+          done <<< "$names"
+          echo "reap-scratch-repos: swept $swept orphaned scratch repository(ies)." >> "$GITHUB_STEP_SUMMARY"
 
   # Deterministic latest-eligible-release lookup (gh api + semver compare).
   # Skipped entirely (never routed through) when health-check ran and
@@ -1554,7 +1626,7 @@ jobs:
           # content — check-prerequisites.sh --paths-only doesn't either.
           if [ ! -s "$FEATURE_DIR/spec.md" ]; then
             pass=false
-            detail="expected $FEATURE_DIR/spec.md to exist and be non-empty after create-new-feature.sh, but it did not."
+            detail="expected $FEATURE_DIR/spec.md to exist and be non-empty after create-new-feature.sh, but it did not. This may also mean the candidate legitimately reorganized its templates or scripts rather than that it is broken — see specs/027-auto-update-spec-kit's FR-018 for the non-clean-bump route a maintainer can choose instead."
           fi
 
           # T006: setup-plan.sh --json — same SPECIFY_FEATURE_DIRECTORY this
@@ -1575,7 +1647,7 @@ jobs:
               detail="setup-plan.sh --json did not produce the documented FEATURE_SPEC/IMPL_PLAN/SPECS_DIR/BRANCH shape: $(printf '%s' "$sp_out" | tail -c 500)"
             elif [ ! -s "$impl_plan" ]; then
               pass=false
-              detail="expected $impl_plan (setup-plan.sh's IMPL_PLAN) to exist and be non-empty, but it did not."
+              detail="expected $impl_plan (setup-plan.sh's IMPL_PLAN) to exist and be non-empty, but it did not. This may also mean the candidate legitimately reorganized its templates or scripts rather than that it is broken — see specs/027-auto-update-spec-kit's FR-018 for the non-clean-bump route a maintainer can choose instead."
             fi
           fi
 
@@ -1621,6 +1693,7 @@ jobs:
           STAGE_RESULT: ${{ needs.e2e-stage.result }}
           STAGE_PASSED: ${{ needs.e2e-stage.outputs.passed }}
           STAGE_DETAIL: ${{ needs.e2e-stage.outputs.failure-detail }}
+          SCRATCH_REPO: ${{ needs.e2e-stage.outputs.scratch-repo }}
         run: |
           set -uo pipefail
           if [ "$RELEASE_TYPE" = "patch" ]; then
@@ -1637,6 +1710,19 @@ jobs:
             elif [ "$E2E_PASSED" = "true" ] && { [ "$STAGE_RESULT" != "success" ] || [ "$STAGE_PASSED" != "true" ]; }; then
               passed=false
               detail="$STAGE_DETAIL"
+            fi
+          fi
+
+          # FR-022/SC-012: name the scratch repository regardless of pass or
+          # fail, whenever e2e-stage actually ran — appended into the same
+          # failure-detail string the pass path's PR body and the fail
+          # path's issue comment both already read.
+          if [ "$tier" = "lightweight+end-to-end" ] && [ -n "$SCRATCH_REPO" ]; then
+            pointer="The e2e-stage scratch repository $SCRATCH_REPO is retained while this issue stays open, and deleted when it closes."
+            if [ -n "$detail" ]; then
+              detail="$(printf '%s\n%s' "$detail" "$pointer")"
+            else
+              detail="$pointer"
             fi
           fi
           {
@@ -1846,6 +1932,7 @@ jobs:
           CANDIDATE: ${{ needs.prepare.outputs.candidate-version }}
           ISSUE: ${{ needs.prepare.outputs.issue-number }}
           TIER: ${{ needs.verify.outputs.tier }}
+          DETAIL: ${{ needs.verify.outputs.failure-detail }}
           DB: ${{ steps.defbranch.outputs.name }}
         run: |
           set -euo pipefail
@@ -1854,6 +1941,10 @@ jobs:
             echo "Bumps this repository's pinned Spec Kit version to v$CANDIDATE."
             echo ""
             echo "**Verified:** $TIER checks passed against this candidate in an isolated worktree."
+            if [ -n "$DETAIL" ]; then
+              echo ""
+              echo "$DETAIL"
+            fi
             echo ""
             echo "Closes #$ISSUE"
             echo ""
@@ -2075,6 +2166,83 @@ jobs:
           echo "🔙 **Spec Kit reverted to v$restored** — $url merged. This issue stays open and flagged (a rollback is itself the failure this feature wants visible)." > "$RUNNER_TEMP/pr-merged-summary.md"
           gh issue comment "$issue" --body-file "$RUNNER_TEMP/pr-merged-summary.md"
           echo "pr-merged: posted closing summary to #$issue for revert to v$restored." >> "$GITHUB_STEP_SUMMARY"
+
+  # trigger == issue-closed entry point (FR-019/022/023): deletes this
+  # feature's own scratch repository when its owning lifecycle issue
+  # closes. Self-recognition guard: only acts when the closed issue
+  # carries this feature's own settle-tracking marker — an unrelated
+  # closed issue is a no-op, same discipline every other trigger applies.
+  issue-closed:
+    if: inputs.trigger == 'issue-closed'
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    steps:
+      - name: Checkout consumer repository (bootstrap, default token)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref" | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      - name: Wing Commander context
+        id: ctx
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      - name: Verify this issue carries this feature's marker
+        id: guard
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ISSUE: ${{ inputs.issue-number }}
+        run: |
+          set -uo pipefail
+          body="$(gh issue view "$ISSUE" --json body --jq .body 2>/dev/null || true)"
+          if printf '%s' "$body" | grep -qF '<!-- wing-commander-auto-update-spec-kit: candidate='; then
+            echo "recognized=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "recognized=false" >> "$GITHUB_OUTPUT"
+            echo "issue-closed: issue #$ISSUE carries no wing-commander-auto-update-spec-kit marker — not this feature's issue, no-op." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Delete the scratch repository
+        if: steps.guard.outputs.recognized == 'true'
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          OWNER: ${{ github.repository_owner }}
+          ISSUE: ${{ inputs.issue-number }}
+        run: |
+          set -uo pipefail
+          gh repo delete "$OWNER/wing-commander-e2e-$ISSUE" --yes 2>/dev/null || true
+          echo "issue-closed: reaped wing-commander-e2e-$ISSUE (idempotent no-op if it never existed)." >> "$GITHUB_STEP_SUMMARY"
 
   # trigger == comment-reply entry point: resumes an ambiguous-options
   # question from a verified maintainer's reply.

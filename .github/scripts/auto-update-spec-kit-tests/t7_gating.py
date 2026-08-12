@@ -325,6 +325,79 @@ def main():
         "needs.prepare.result": "cancelled", "needs.verify.result": "skipped",
     }, {"prepare": True, "verify": False, "act": False})
 
+    # ---- e2e-stage / verify / issue-closed / reap-scratch-repos gating
+    # (US3/US4, T027) -----------------------------------------------------
+    scenario("e2e-stage runs for a minor bump (contract's e2e-stage job)", ifs, {
+        "needs.prepare.result": "success", "needs.prepare.outputs.release-type": "minor",
+    }, {"e2e-stage": True})
+
+    scenario("e2e-stage runs for a major bump", ifs, {
+        "needs.prepare.result": "success", "needs.prepare.outputs.release-type": "major",
+    }, {"e2e-stage": True})
+
+    scenario("e2e-stage does NOT run for a patch bump (Scenario 8, Edge Case)", ifs, {
+        "needs.prepare.result": "success", "needs.prepare.outputs.release-type": "patch",
+    }, {"e2e-stage": False})
+
+    # T004's always(): verify must still run — and read needs.e2e-stage.* —
+    # even when e2e-stage itself failed or timed out, as long as prepare
+    # succeeded. Without always(), GitHub's implicit "skip if any needed
+    # job did not succeed" would skip verify here, silently dropping the
+    # combine step's fourth gating check.
+    scenario("verify still runs when e2e-stage fails, as long as prepare succeeded (T004)", ifs, {
+        "needs.prepare.result": "success", "needs.e2e-stage.result": "failure",
+    }, {"verify": True})
+
+    scenario("verify does not run when prepare itself did not succeed", ifs, {
+        "needs.prepare.result": "failure", "needs.e2e-stage.result": "skipped",
+    }, {"verify": False})
+
+    scenario("issue-closed job runs only when inputs.trigger == issue-closed", ifs, {
+        "inputs.trigger": "issue-closed",
+    }, {"issue-closed": True, "comment-reply": False, "pr-merged": False})
+
+    scenario("issue-closed job does not run for other triggers", ifs, {
+        "inputs.trigger": "scheduled",
+    }, {"issue-closed": False})
+
+    scenario("reap-scratch-repos runs on scheduled, independent of that day's own cycle", ifs, {
+        "inputs.trigger": "scheduled",
+    }, {"reap-scratch-repos": True})
+
+    scenario("reap-scratch-repos runs on dispatch too", ifs, {
+        "inputs.trigger": "dispatch",
+    }, {"reap-scratch-repos": True})
+
+    scenario("reap-scratch-repos does not run for pr-merged/comment-reply/issue-closed", ifs, {
+        "inputs.trigger": "pr-merged", "inputs.pr-merged": True,
+    }, {"reap-scratch-repos": False})
+
+    scenario("reap-scratch-repos does not run for issue-closed", ifs, {
+        "inputs.trigger": "issue-closed",
+    }, {"reap-scratch-repos": False})
+
+    # ---- wrapper: issues(closed) resolves to trigger=issue-closed --------
+    wrap_doc = yaml.safe_load(open(WRAP, encoding="utf-8"))
+    trigger_expr = str(wrap_doc["jobs"]["auto-update-spec-kit"]["with"]["trigger"])
+    wrap_on = wrap_doc.get("on", {}) or {}
+    print("\n--- wrapper trigger resolution (verbatim from the workflow) ---")
+    print("  %s" % re.sub(r"\s+", " ", trigger_expr))
+    global PASS, FAIL
+    if "github.event_name == 'issues'" in trigger_expr and "'issue-closed'" in trigger_expr:
+        PASS += 1
+        print("    ok   issues(closed) resolves to trigger=issue-closed")
+    else:
+        FAIL += 1
+        FAILED.append("wrapper trigger: issues -> issue-closed")
+        print("    FAIL issues(closed) branch not found in the trigger expression")
+    if wrap_on.get("issues", {}).get("types") == ["closed"]:
+        PASS += 1
+        print("    ok   on.issues.types == [closed]")
+    else:
+        FAIL += 1
+        FAILED.append("wrapper on.issues.types")
+        print("    FAIL on.issues.types is not [closed]: %r" % wrap_on.get("issues"))
+
     # ---- act's four arms, at step level --------------------------------
     act = load_step_ifs(STAGE, "act")
     print("\nact step gates (verbatim from the workflow):")
