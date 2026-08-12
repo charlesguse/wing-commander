@@ -101,6 +101,14 @@ def issue_json(iss, fields):
     suites reads them that way), so the object shape is put on here — at the
     boundary the workflow actually parses. A stub that returns strings would
     let `.labels[]?.name` silently evaluate to empty and pass.
+
+    `state` is UPPERCASE in `gh issue view --json state` (the GraphQL
+    IssueState enum) but lowercase in `gh search issues --json state` — the
+    same split rebase.yml and watchdog.yml both comment on. The stub stores
+    lowercase internally, so the case is put on here, at the `issue view`
+    boundary only. A stub that returned lowercase would let
+    reap-scratch-repos' `[ "$state" != "OPEN" ]` match every issue and sweep
+    away scratch repositories whose lifecycle issue is still open.
     """
     out = {}
     for f in fields:
@@ -108,6 +116,8 @@ def issue_json(iss, fields):
             out[f] = [{"name": l} for l in iss.get("labels", [])]
         elif f == "comments":
             out[f] = [{"body": c["body"]} for c in iss.get("comments", [])]
+        elif f == "state":
+            out[f] = str(iss.get(f) or "").upper()
         else:
             out[f] = iss.get(f)
     return out

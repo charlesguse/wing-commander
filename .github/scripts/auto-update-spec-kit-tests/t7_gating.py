@@ -379,7 +379,9 @@ def main():
     # ---- wrapper: issues(closed) resolves to trigger=issue-closed --------
     wrap_doc = yaml.safe_load(open(WRAP, encoding="utf-8"))
     trigger_expr = str(wrap_doc["jobs"]["auto-update-spec-kit"]["with"]["trigger"])
-    wrap_on = wrap_doc.get("on", {}) or {}
+    # YAML 1.1 (what safe_load implements) resolves the bare key `on` to the
+    # boolean True, so the trigger block is NOT under the string "on".
+    wrap_on = wrap_doc.get("on", wrap_doc.get(True)) or {}
     print("\n--- wrapper trigger resolution (verbatim from the workflow) ---")
     print("  %s" % re.sub(r"\s+", " ", trigger_expr))
     global PASS, FAIL
@@ -432,7 +434,8 @@ def main():
     }, "rollback")
 
     # ---- wrapper pause kill-switch -------------------------------------
-    global PASS, FAIL
+    # (PASS/FAIL are already declared global above, at the first assignment
+    # in this function — a second declaration after them is a SyntaxError.)
     print("\n--- wrapper pause kill-switch ---")
     for val, want in [("true", False), ("false", True), ("", True)]:
         got = evaluate(wrap["auto-update-spec-kit"],

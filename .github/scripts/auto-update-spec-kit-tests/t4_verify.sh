@@ -329,6 +329,14 @@ check_contains "S7 combined detail states the stage did not complete" "$C_DETAIL
 check_not_contains "S7 combined detail is not candidate-artifact wording" "$C_DETAIL" "spec.md"
 
 echo "  issue-closed trigger deletes the scratch repository, idempotently"
+# Fresh env + a real create: the create-failure scenario above deliberately
+# left GH_STATE with no repo at all (and ISSUE=88), so deleting against that
+# state would assert nothing.
+new_step_env
+export GH_TOKEN=stub OWNER=wing-commander ISSUE=77
+GHA_SUBST=()
+run_step 'auto-update-spec-kit__e2e-stage__*create-or-reuse-the-scratch-repository*.sh' >/dev/null 2>&1
+check "S7 scratch repo exists before its issue closes" "$(jq -r '.repos["wing-commander-e2e-77"].deleted' "$GH_STATE")" "false"
 GHA_SUBST=()
 run_step 'auto-update-spec-kit__issue-closed__*delete-the-scratch-repository*.sh' >/dev/null 2>&1
 check "S7 repo marked deleted" "$(jq -r '.repos["wing-commander-e2e-77"].deleted' "$GH_STATE")" "true"

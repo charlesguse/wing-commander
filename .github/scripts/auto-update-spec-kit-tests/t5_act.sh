@@ -92,13 +92,19 @@ mkopts 0.15.1; git add -A; git commit -qm "chore: bump Spec Kit to v0.15.1"
 git checkout -q main
 printf '{"issues":{"42":{"number":42,"state":"open","body":"watching","labels":[],"comments":[]}},"prs":{},"labels":[],"next_issue":50,"next_pr":70,"default_branch":"main"}' > "$GH_STATE"
 GHA_SUBST=("steps.ctx.outputs.token=stub")
-export GH_TOKEN=stub BRANCH="auto-update-spec-kit/v0.15.1" CANDIDATE=0.15.1 ISSUE=42 TIER="lightweight+end-to-end" DB=main
+# DETAIL is verify's failure-detail output, which on the PASS path carries
+# the SC-012 scratch-repository pointer the combine step appends for every
+# lightweight+end-to-end run — so the PR body is where a maintainer actually
+# reads it.
+export GH_TOKEN=stub BRANCH="auto-update-spec-kit/v0.15.1" CANDIDATE=0.15.1 ISSUE=42 TIER="lightweight+end-to-end" DB=main \
+  DETAIL="The e2e-stage scratch repository charlesguse/wing-commander-e2e-42 is retained while this issue stays open, and deleted when it closes."
 run_step 'auto-update-spec-kit__act__*version-bump-pr*.sh' >"$WORK/act4.log" 2>&1 || echo "    (exit $?)"
 sed 's/^/      /' "$WORK/act4.log" | head -3
 PRBODY="$("$PY" -c "import json,os;s=json.load(open(os.environ['GH_STATE']));print(list(s['prs'].values())[0]['body'])")"
 check_contains "S5 PR body has Closes #42 (US3 auto-close)" "$PRBODY" "Closes #42"
 check_contains "S5 PR body carries the version-bump self-marker" "$PRBODY" "auto-update-spec-kit: version-bump"
 check_contains "S5 PR body records what was verified" "$PRBODY" "lightweight+end-to-end"
+check_contains "S5/SC-012 PR body names the scratch repository" "$PRBODY" "wing-commander-e2e-42"
 check "S5 PR is NOT merged by the workflow" "$("$PY" -c "import json,os;s=json.load(open(os.environ['GH_STATE']));print(list(s['prs'].values())[0]['mergedAt'])")" "None"
 check "S5 no merge call was ever made" "$(grep -c 'pr merge' "$GH_CALLS")" "0"
 check "S5 issue got a comment linking the PR" "$("$PY" -c "import json,os;s=json.load(open(os.environ['GH_STATE']));print(len(s['issues']['42']['comments']))")" "1"
