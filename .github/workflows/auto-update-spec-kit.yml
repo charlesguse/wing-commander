@@ -3,10 +3,13 @@
 # (.specify/init-options.json's speckit_version, plus the matching
 # SPECKIT_SUPPORTED_VERSION constant in wing-commander-preflight/action.yml)
 # current with upstream github/spec-kit releases. on: workflow_call only.
-# Nine jobs:
+# Twelve jobs:
 #   - health-check: re-verifies the CURRENTLY PINNED version first
 #     (scheduled/dispatch only); a failure here skips straight to act's
 #     rollback branch.
+#   - reap-scratch-repos: scheduled/dispatch backstop sweep deleting any
+#                    wing-commander-e2e-* scratch repository whose owning
+#                    lifecycle issue is closed or missing (specs/034).
 #   - detect:       deterministic latest-eligible-release lookup + semver
 #                    classification (patch/minor/major).
 #   - settle:       issue-marker settle-tracking state machine — a freshly
@@ -14,17 +17,27 @@
 #   - evaluate-path: one claude-sonnet-5 judgment step deciding clean-bump /
 #                    needs-migration / ambiguous-options.
 #   - prepare:      deterministic version-bump diff, no push yet.
-#   - verify:       tiered smoke test (lightweight always, +end-to-end for
-#                    minor/major) against the prepared candidate.
+#   - e2e-stage:    (minor/major only, specs/034) creates/reuses a scratch
+#                    GitHub repository and runs one bounded AI-driven
+#                    /speckit-specify-equivalent turn against it, read back
+#                    deterministically — gates verify's combined verdict.
+#   - verify:       tiered smoke test: a lightweight tier always, plus (for
+#                    minor/major) the per-script assertion chain
+#                    (create-new-feature.sh/check-prerequisites.sh/
+#                    setup-plan.sh/setup-tasks.sh) and the e2e-stage result,
+#                    against the prepared candidate.
 #   - act:          opens the version-bump PR (pass), leaves the pin
 #                    unchanged and flags the issue (fail), or opens a revert
 #                    PR (health-check failure).
 #   - pr-merged:    posts a closing summary once a version-bump/revert PR
 #                    this feature opened is closed.
+#   - issue-closed: (specs/034) deletes the run's scratch repository when
+#                    its owning lifecycle issue closes.
 #   - comment-reply: resumes an ambiguous-options question from a verified
 #                    maintainer's reply.
 # See specs/027-auto-update-spec-kit/contracts/auto-update-spec-kit-workflow.md
-# for the full contract this file implements.
+# and specs/034-e2e-verification-tier/contracts/e2e-verification-tier.md for
+# the full contract this file implements.
 name: "reusable · auto-update-spec-kit"
 
 on:
