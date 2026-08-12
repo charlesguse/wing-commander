@@ -79,6 +79,54 @@ cd "$HERE" || exit 1
 check "S1 e2e-stage readback passes with a real spec.md" "$(out passed)" "true"
 
 echo
+echo "--- Scenario 2: missing expected artifact fails, no fallback, single outcome (US2, FR-004, SC-002) ---"
+
+echo "  plan-template.md missing -> setup-plan.sh's own silent-empty fallback -> zero-byte plan.md -> tier fails"
+new_step_env
+WT="$RUNNER_TEMP/e2e-missing-plan-template"
+seed_worktree "$WT"
+rm -f "$WT/.specify/templates/plan-template.md"
+FD="$WT/specs/029-scratch"
+mkdir -p "$FD"
+printf '# spec\n' > "$FD/spec.md"
+(cd "$WT" && SPECIFY_FEATURE_DIRECTORY="$FD" bash .specify/scripts/bash/setup-plan.sh --json >"$WORK/setup-plan-missing-template.log" 2>&1)
+check "S2 setup-plan.sh itself still exits 0 (its own fallback, not a crash)" "$?" "0"
+check "S2 plan.md written as zero-byte, not a substitute" "$([ -f "$FD/plan.md" ] && [ ! -s "$FD/plan.md" ] && echo yes || echo no)" "yes"
+GHA_SUBST=()
+export WORKTREE="$WT" FEATURE_DIR="$FD"
+run_step 'auto-update-spec-kit__verify__*end-to-end*.sh' >/dev/null 2>&1
+check "S2 tier fails on the empty plan.md" "$(out passed)" "false"
+check_contains "S2 failure-detail names plan.md" "$(out failure-detail)" "plan.md"
+
+echo "  confirm no locally-manufactured substitute exists anywhere in the extracted step's source"
+STEP_SRC_FILE="$(ls "$STEPS"/auto-update-spec-kit__verify__*end-to-end*.sh | head -1)"
+STEP_SRC="$(cat "$STEP_SRC_FILE")"
+check_not_contains "S2 no cp-from-template fallback in source" "$STEP_SRC" "cp \"\$template\""
+check_not_contains "S2 no printf-placeholder fallback in source" "$STEP_SRC" "printf '# Scratch spec"
+
+echo "  spec-template.md missing -> create-new-feature.sh's own identical fallback -> zero-byte spec.md -> tier fails"
+new_step_env
+WT="$RUNNER_TEMP/e2e-missing-spec-template"
+seed_worktree "$WT"
+rm -f "$WT/.specify/templates/spec-template.md"
+(cd "$WT" && bash .specify/scripts/bash/create-new-feature.sh --json "wing commander e2e missing spec template fixture" >"$WORK/create-new-feature-missing-template.log" 2>&1)
+check "S2 create-new-feature.sh itself still exits 0 (its own fallback, not a crash)" "$?" "0"
+SPEC_FILE2="$(tail -1 "$WORK/create-new-feature-missing-template.log" | jq -r '.SPEC_FILE // empty' 2>/dev/null || true)"
+FD2="$(dirname "$SPEC_FILE2" 2>/dev/null || true)"
+check "S2 spec.md written as zero-byte, not a substitute" "$([ -n "$SPEC_FILE2" ] && [ -f "$SPEC_FILE2" ] && [ ! -s "$SPEC_FILE2" ] && echo yes || echo no)" "yes"
+GHA_SUBST=()
+export WORKTREE="$WT" FEATURE_DIR="$FD2"
+run_step 'auto-update-spec-kit__verify__*end-to-end*.sh' >/dev/null 2>&1
+check "S2 tier fails on the empty spec.md" "$(out passed)" "false"
+check_contains "S2 failure-detail names spec.md" "$(out failure-detail)" "spec.md"
+
+echo "  a missing-artifact failure reaches the exact same single act branch as every other deeper-tier failure (FR-005/FR-006)"
+ACT_FAIL_STEPS="$(grep -c 'name: Comment verification failure on the issue' "$REPO/.github/workflows/auto-update-spec-kit.yml")"
+check "only one 'Comment verification failure' step exists (no second outcome path)" "$ACT_FAIL_STEPS" "1"
+ACT_LABEL_STEPS="$(grep -c 'name: Apply the failed label$' "$REPO/.github/workflows/auto-update-spec-kit.yml")"
+check "only one unconditional 'Apply the failed label' step for verify failures" "$ACT_LABEL_STEPS" "1"
+
+echo
 echo "--- Scenario 3: a wrong-shape or non-zero-exit script result fails the tier, in isolation (SC-008) ---"
 
 echo "  mutant: spec.md missing/empty (create-new-feature.sh's own silent-empty behaviour)"
