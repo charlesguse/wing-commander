@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 # Scenarios 1, 3, 4, 5, 6, 7: the verify job's per-script assertion chain,
 # the e2e-stage read-back, and the verify job's tiering/result combination.
+#
+# Determinism (US4/T029, SC-010, FR-020): every scenario below exercises
+# real, unmodified `.specify/scripts/bash/*.sh` scripts against fixture
+# worktrees, or the e2e-stage read-back's own deterministic logic driven
+# by a plain DECIDE_OUTCOME env var — never a live claude-code-action
+# call (that step itself is untestable here, exactly like evaluate-path's
+# own `decide` step; only its deterministic read-back is exercised).
+# Every `gh repo create`/`delete`/`list` call in this suite goes through
+# `gh_stub.py`'s JSON state file (`$GH_STATE`), never a real GitHub API
+# call — running this suite twice against the same inputs produces
+# identical pass/fail verdicts.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 # A fixture worktree carrying real, unmodified Spec Kit scripts/templates
@@ -23,9 +34,15 @@ combine() { # combine <release-type> <lw-passed> <lw-detail> <e2e-outcome> <e2e-
   C_TIER="$(out tier)"; C_PASSED="$(out passed)"; C_DETAIL="$(out failure-detail)"; C_SUM="$(summary)"
 }
 
+# Scenario 8 (Edge Case, US4/T028): a patch jump never reaches e2e-stage at
+# all (t7_gating.py's "e2e-stage does NOT run for a patch bump" asserts the
+# job-level `if:` directly) — so no scratch repository is ever created for
+# this cycle, and combine still reports the unchanged lightweight-only
+# shape below, with no scratch-repo pointer appended (no SCRATCH_REPO arg).
 combine patch true "" skipped "" ""
-check "S7 patch tier" "$C_TIER" "lightweight"
-check "S7 patch passed" "$C_PASSED" "true"
+check "S7/S8 patch tier" "$C_TIER" "lightweight"
+check "S7/S8 patch passed" "$C_PASSED" "true"
+check_not_contains "S7/S8 patch narration names no scratch repository" "$C_DETAIL" "wing-commander-e2e-"
 
 combine minor true "" success true ""
 check "S7 minor tier" "$C_TIER" "lightweight+end-to-end"

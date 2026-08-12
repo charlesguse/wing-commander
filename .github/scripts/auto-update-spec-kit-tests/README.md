@@ -73,7 +73,7 @@ Suites:
 | `t1_detect.sh` | Scenarios 1, 2, 7 — eligibility, semver ordering, prerelease exclusion, release-type classification, live upstream data |
 | `t2_settle.sh` | Scenarios 2, 3, 4, 11, 12 — the settle state machine's six branches |
 | `t3_healthcheck.sh` | Scenarios 6, 8 — lightweight tier against real `.specify` scripts, worktree isolation, rollback target from git history |
-| `t4_verify.sh` | Scenarios 5, 6, 7 — tier selection and result combination |
+| `t4_verify.sh` | Scenarios 5, 6, 7 — tier selection and result combination; plus (specs/034) the deeper tier's per-script assertion chain (`spec.md`/`setup-plan.sh`/`setup-tasks.sh`) against real fixture worktrees, the e2e-stage read-back's completion-vs-shape distinction, the FR-008 missing-artifact narration hint, and the scratch-repository create/delete/sweep lifecycle against `gh_stub.py`'s `repos` state |
 | `t5_act.sh` | Scenarios 5, 6, 8, 10 — revert PR, version-bump PR, failure flagging, against a real git remote |
 | `t6_reply.sh` | Scenarios 9, 12, 13, 14, 15 — self-recognition, maintainer gate, fail-safe read-backs, prompt-injection safety |
 | `t7_gating.py` | every scenario's job routing, plus the wrapper's pause kill-switch |
@@ -92,6 +92,9 @@ against a deliberately broken workflow. Every mutant below is caught:
 | `act` merges its own PR (constitution V) | `t5` |
 | pr-merged self-recognition guard always matches | `t6` (5) |
 | maintainer gate widened to accept `NONE` | `t7` (1) |
+| the deleted `else`/`printf` placeholder fallback reintroduced (specs/034 FR-004) | `t4` (2, source-inspection `check_not_contains`) |
+| a per-script assertion silently skipped (e.g. `setup-tasks.sh`'s field-shape check dropped) | `t4` (3, wrong-shape mutants fail to fail) |
+| the e2e-stage result reported but not folded into `combine`'s gating | `t4` (6, e2e-stage gating failure asserted against `combine`'s output) |
 
 Re-run one with, e.g.:
 
