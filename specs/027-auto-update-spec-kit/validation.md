@@ -41,14 +41,27 @@ maintainer per the quickstart's own prerequisites.
 Surfaced here (rather than silently assumed) for a maintainer to confirm
 before the first live scheduled run:
 
-1. **Regeneration command.** `prepare` regenerates `.specify/` artifacts at
-   the candidate version via
-   `uvx --from git+https://github.com/github/spec-kit.git@v<CANDIDATE> specify init . --ai claude --script sh --ai-skills --here --force`.
-   research.md could not verify from within CI whether upstream Spec Kit
-   exposes a **dedicated upgrade/update command distinct from re-running
-   `specify init`**. If one exists, `prepare`'s regeneration step should use
-   it. The current step fails loudly (`::error::` + non-zero exit) rather than
-   silently mis-applying the wrong steps if the assumption is wrong.
+1. **Regeneration command.** ✅ **RESOLVED — no longer needs maintainer
+   confirmation.** research.md could not verify from within CI whether
+   upstream Spec Kit exposes a **dedicated upgrade/update command distinct
+   from re-running `specify init`**. It does:
+   `specify integration upgrade <key> [--force] [--script sh]`
+   (`src/specify_cli/integrations/_migrate_commands.py`), which reinstalls
+   diff-aware against `.specify/integrations/<key>.manifest.json`. `prepare`
+   now runs
+   `uvx --from git+https://github.com/github/spec-kit.git@v<CANDIDATE> specify integration upgrade claude --script sh --force`.
+
+   The previously assumed command —
+   `specify init . --ai claude --script sh --ai-skills --here --force` —
+   was not merely unverified, it was **invalid at every version in range**:
+   `specify init` has no `--ai` and no `--ai-skills` option at the pinned
+   0.12.4 or at any candidate since (they are `--integration` and
+   `--integration-options="--skills"`, and the claude integration installs
+   skills by default). It had never executed: `uvx` was itself missing from
+   the runner until PR #187, so run 31658562063 died one step earlier. The
+   step still fails loudly (`::error::` + non-zero exit) rather than
+   silently mis-applying the wrong steps if a future candidate changes the
+   CLI shape again.
 2. **Stabilization default.** `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_STABILIZATION_CHECKS`
    defaults to `1` (one settled daily check). research.md could not verify
    whether Spec Kit's **release history shows any past breaking upgrade** that

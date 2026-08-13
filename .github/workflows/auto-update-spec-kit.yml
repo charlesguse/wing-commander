@@ -1142,8 +1142,14 @@ jobs:
       # The step below drives Spec Kit through `uvx`, which is not on the
       # GitHub-hosted ubuntu image and was never installed here — so `prepare`
       # could not have succeeded on any real candidate (run 31658562063).
+      #
+      # Pinned to a full version, NOT the `@v10` major this repository uses
+      # everywhere else: astral-sh/setup-uv publishes floating major tags only
+      # through v7, so `@v10` resolves to nothing and fails the job at "Prepare
+      # all required actions", before any step runs. Bump this to the next full
+      # version deliberately; do not "normalise" it back to `@v10`.
       - name: Install uv (provides uvx for the Spec Kit CLI)
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.0.0
 
       - name: Write version-bump diff
         id: diff
@@ -1159,25 +1165,40 @@ jobs:
           branch="auto-update-spec-kit/v$CANDIDATE"
           git checkout -B "$branch" "refs/remotes/origin/$DB"
 
-          # Regenerate .specify/ artifacts at the candidate version,
-          # re-applying init-options.json's existing recorded flags. The
-          # exact spec-kit CLI invocation below is a documented ASSUMPTION —
-          # research.md flagged that this repository could not verify
-          # upstream's actual upgrade-command shape (no network access to
-          # spec-kit's own docs in this CI environment); surfaced to the
-          # maintainer per tasks.md T033. If the assumption is wrong, this
-          # step fails loudly here rather than silently mis-applying the
-          # wrong upgrade steps.
-          if command -v uvx >/dev/null 2>&1; then
-            if ! uvx --from "git+https://github.com/github/spec-kit.git@v${CANDIDATE}" \
-              specify init . --ai claude --script sh --ai-skills --here --force \
-              > "$RUNNER_TEMP/prepare-install.log" 2>&1; then
-              echo "::error::wing-commander auto-update-spec-kit prepare: 'uvx --from git+https://github.com/github/spec-kit.git@v${CANDIDATE} specify init' failed — see log below. This command is a documented assumption (research.md); a maintainer should confirm Spec Kit's actual upgrade-CLI shape."
-              tail -c 2000 "$RUNNER_TEMP/prepare-install.log"
-              exit 1
-            fi
-          else
+          # Regenerate .specify/ artifacts at the candidate version using Spec
+          # Kit's own dedicated upgrade command. This answers the open question
+          # research.md flagged for a maintainer (does `specify` expose an
+          # upgrade path distinct from re-running `init`?) — it does, and the
+          # shape below was read off upstream's CLI source at the candidate tag
+          # (src/specify_cli/integrations/_migrate_commands.py). `integration
+          # upgrade` reinstalls diff-aware: it hashes the installed files
+          # against .specify/integrations/claude.manifest.json and refuses when
+          # they were modified locally, hence --force. It rewrites
+          # .specify/integration.json and the manifest stamped with the
+          # candidate's own version, because uvx runs the candidate's CLI.
+          #
+          # It replaces an ASSUMED `specify init . --ai claude --script sh
+          # --ai-skills --here --force`, which could never have run: neither
+          # `--ai` nor `--ai-skills` is an option of `specify init` at the
+          # pinned 0.12.4 or at any candidate since (the flags are
+          # `--integration` and `--integration-options="--skills"`, and the
+          # claude integration installs skills by default). They look derived
+          # from init-options.json's recorded `ai`/`ai_skills` keys, which are
+          # persisted state, not CLI surface. Never regenerate this command
+          # line from that file.
+          #
+          # The candidate's CLI is still an upstream moving target, so a shape
+          # that stops being valid must fail loudly here rather than silently
+          # mis-apply an upgrade.
+          if ! command -v uvx >/dev/null 2>&1; then
             echo "::error::wing-commander auto-update-spec-kit prepare: 'uvx' is not available on this runner — cannot regenerate Spec Kit artifacts at v${CANDIDATE}."
+            exit 1
+          fi
+          if ! uvx --from "git+https://github.com/github/spec-kit.git@v${CANDIDATE}" \
+            specify integration upgrade claude --script sh --force \
+            > "$RUNNER_TEMP/prepare-install.log" 2>&1; then
+            echo "::error::wing-commander auto-update-spec-kit prepare: 'uvx --from git+https://github.com/github/spec-kit.git@v${CANDIDATE} specify integration upgrade claude --script sh --force' failed — see log below. If the failure is an unknown command or option, the candidate changed Spec Kit's upgrade-CLI shape and a maintainer must re-read it from upstream's source."
+            tail -c 2000 "$RUNNER_TEMP/prepare-install.log"
             exit 1
           fi
 
@@ -1323,9 +1344,10 @@ jobs:
       # later command line.
       # The scaffold step drives Spec Kit through `uvx`, which is not on the
       # GitHub-hosted ubuntu image — the same missing dependency `prepare` hit
-      # on run 31658562063.
+      # on run 31658562063. Pinned to a full version for the same reason as
+      # `prepare`'s copy: there is no floating `@v10` tag to resolve.
       - name: Install uv (provides uvx for the Spec Kit CLI)
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.0.0
 
       - name: Scaffold and force-push the candidate into the scratch repository
         id: scaffold
@@ -1361,10 +1383,18 @@ jobs:
               echo "::error::wing-commander auto-update-spec-kit e2e-stage: 'uvx' is not available on this runner — cannot scaffold Spec Kit v$CANDIDATE."
               exit 1
             fi
+            # `init` is the right command here (unlike `prepare`, which
+            # upgrades an existing install): the branch was just reset to an
+            # empty tree, so there is nothing to upgrade. A positional `.` is
+            # normalised to here-mode by the CLI, so `--here` would be
+            # redundant. `--ai`/`--ai-skills` are NOT options of `specify init`
+            # at any version in range — the flags are `--integration` and
+            # `--integration-options="--skills"`, and claude installs skills by
+            # default; see `prepare`'s equivalent step for the full note.
             uvx --from "git+https://github.com/github/spec-kit.git@v${CANDIDATE}" \
-              specify init . --ai claude --script sh --ai-skills --here --force \
+              specify init . --integration claude --script sh --force \
               > "$RUNNER_TEMP/e2e-scaffold-install.log" 2>&1 || {
-                echo "::error::wing-commander auto-update-spec-kit e2e-stage: 'specify init' failed while scaffolding the scratch repository — see log below."
+                echo "::error::wing-commander auto-update-spec-kit e2e-stage: 'specify init . --integration claude --script sh --force' failed while scaffolding the scratch repository — see log below."
                 tail -c 2000 "$RUNNER_TEMP/e2e-scaffold-install.log"
                 exit 1
               }
@@ -2035,10 +2065,13 @@ jobs:
             v${{ needs.evaluate-path.outputs.pinned-version }}), so the
             candidate was never verified and no version-bump PR was opened.
             This repository's pinned version is unchanged and nothing was
-            pushed. The most likely cause is the upgrade command itself —
-            `specify init . --force` against the candidate tag — whose shape
-            is an unverified upstream assumption (`research.md`). See the
-            job log for the failing step:
+            pushed. Read the failing step's own `::error::` line in the job
+            log for the cause — this comment deliberately does not guess at
+            one. An earlier version of it asserted a fixed "most likely
+            cause" (the upgrade command's shape), which was wrong on run
+            31658562063, where the command never executed because `uvx` was
+            missing from the runner, and sent the maintainer to the wrong
+            file. Job log:
             ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: Apply the failed label (prepare failed)
