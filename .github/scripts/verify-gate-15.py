@@ -3,24 +3,18 @@
 
 Gate 15 passing against a healthy fleet proves nothing: a gate that never
 fires is indistinguishable from one whose detection logic is broken. Gate 5
-exists in this repository because a verifier sat green for weeks while
-checking a code path that did not ship, so every detector here carries one
-of these.
+exists because a verifier sat green for weeks while checking a code path
+that did not ship, so every detector here carries one of these.
 
-The defect Gate 15 exists for was invisible to every other gate. In
-auto-update-spec-kit.yml, `evaluate-path` needs both `settle` and
-`comment-reply` and exactly one of them runs per cycle, so its `if` opens
-with `always()`. `prepare` and `verify` had no status-check function, so
-GitHub suppressed them through the needs-closure before their `if` was ever
-evaluated. evaluate-path ran the agent, emitted outcome=clean-bump, and
-commented "clean version bump — preparing it" on the lifecycle issue; then
-nothing prepared, nothing verified, nothing was adopted, and the run was
-green. Every file parsed, registered, and was permitted to run, so gates
-1-3 and the YAML/bash-n checks all passed.
+The defect Gate 15 exists for was invisible to every other gate:
+auto-update-spec-kit.yml's `prepare` and `verify` had no status-check
+function, so GitHub suppressed them through the needs-closure of an
+`always()`-gated `evaluate-path` before their `if` was ever evaluated. The
+adopt path did nothing while every run stayed green.
 
 Drift-proofing: the gate's source is EXTRACTED from lint-workflows.yml at
-run time rather than copied here. There is no second copy to fall out of
-sync — if the shipped gate changes, this runs the changed gate.
+run time rather than copied here, so there is no second copy to fall out of
+sync.
 
 Usage: python3 .github/scripts/verify-gate-15.py
 """
@@ -170,11 +164,9 @@ def main():
             for fname, body in files.items():
                 io.open(os.path.join(wf_dir, fname), "w", encoding="utf-8").write(body)
 
-            # PYTHONIOENCODING is not decoration: this repository is developed
-            # on Windows, where the child would otherwise write its error text
-            # in cp1252 and every non-ASCII character would come back as
-            # U+FFFD — which then also fails to print on a cp1252 console. The
-            # gate's messages are prose and do contain punctuation like "—".
+            # This repository is developed on Windows, where the child would
+            # otherwise write its error text in cp1252 and every non-ASCII
+            # character would come back as U+FFFD.
             env = dict(os.environ, PYTHONIOENCODING="utf-8")
             proc = subprocess.run([sys.executable, gate_path], cwd=case_dir,
                                   capture_output=True, text=True, env=env,

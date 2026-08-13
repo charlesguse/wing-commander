@@ -1151,29 +1151,23 @@ jobs:
       - name: Gate 13 — relay confirmation is opt-in on one agreed phrase
         run: python3 .github/scripts/verify-relay-confirmation-phrase.py
 
-      # Gate 15 — a job with no status-check function of its own is skipped
-      # whenever ANYTHING in its needs-closure was skipped, before its `if` is
-      # ever evaluated. That is fine for an ordinary chain — that is how a
-      # chain is meant to stop. It is a silent trap the moment an intermediate
-      # job deliberately survives a skipped ancestor with `always()`: the
-      # intermediate runs, reports success, sets its outputs, and every
+      # Gate 15 — a job with no status-check function is skipped whenever
+      # ANYTHING in its needs-closure was skipped, before its `if` is
+      # evaluated. Ordinarily that is how a chain is meant to stop. It becomes
+      # a silent trap when an intermediate job deliberately survives a skipped
+      # ancestor with `always()`: that job runs and sets its outputs, and every
       # unguarded descendant is suppressed anyway.
       #
-      # Not hypothetical. auto-update-spec-kit.yml's `evaluate-path` needs
-      # both `settle` and `comment-reply`, exactly one of which runs per
-      # cycle, so it opens with `always()`. `prepare` and `verify` did not.
-      # Result: for every cycle after the comment-reply arm was added,
-      # evaluate-path ran the upgrade-path agent, decided outcome=clean-bump,
-      # commented "clean version bump — preparing it" on the lifecycle issue,
-      # and then prepare/verify/act did nothing at all. The run was green, the
-      # issue said work was underway, no version was ever adopted, and no
-      # existing gate could see it: every file parsed, registered, and was
-      # permitted to run. `act` was already written with `always()`, which is
-      # why the chain went quiet rather than failing.
+      # Not hypothetical. auto-update-spec-kit.yml's `evaluate-path` opens with
+      # `always()` because exactly one of `settle`/`comment-reply` runs per
+      # cycle; `prepare` and `verify` did not, so the whole adopt path did
+      # nothing for every cycle after the comment-reply arm was added — green
+      # runs, a lifecycle issue saying work was underway, no version adopted.
+      # No existing gate could see it: every file parsed, registered, and was
+      # permitted to run.
       #
-      # The check is a needs-closure walk, not a list of known-bad jobs: the
-      # next author to add a second entry-point arm gets caught by the same
-      # rule that caught this one.
+      # A needs-closure walk rather than a list of known-bad jobs, so the next
+      # second entry-point arm is caught by the same rule.
       - name: Gate 15 — no job is silently suppressed by a skipped ancestor
         run: |
           python3 - <<'PYEOF'
