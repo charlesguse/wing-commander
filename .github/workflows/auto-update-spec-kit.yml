@@ -1024,7 +1024,19 @@ jobs:
   # each job is a fresh runner and nothing is pushed to origin until `act`).
   prepare:
     needs: evaluate-path
-    if: needs.evaluate-path.result == 'success' && needs.evaluate-path.outputs.outcome == 'clean-bump'
+    # `always() &&` is load-bearing. `evaluate-path` needs both `settle` and
+    # `comment-reply` and only survives the skipped one via its own
+    # `always()`; a skipped ancestor keeps suppressing descendants through
+    # the needs graph, so without a status-check function of its own this job
+    # is skipped before its `if` is read. Gate 15 checks this fleet-wide.
+    #
+    # The guards below still do all the gating — prepare runs only when
+    # evaluate-path genuinely succeeded and emitted clean-bump, and a
+    # cancelled run leaves result=cancelled.
+    if: >-
+      always() &&
+      needs.evaluate-path.result == 'success' &&
+      needs.evaluate-path.outputs.outcome == 'clean-bump'
     runs-on: ubuntu-latest
     # Empirically verified 2026-08-05/06 against GitHub-hosted runners
     # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
@@ -1093,6 +1105,12 @@ jobs:
           git fetch --no-tags --quiet origin "$db:refs/remotes/origin/$db"
           echo "name=$db" >> "$GITHUB_OUTPUT"
 
+      # The step below drives Spec Kit through `uvx`, which is not on the
+      # GitHub-hosted ubuntu image and was never installed here — so `prepare`
+      # could not have succeeded on any real candidate (run 31658562063).
+      - name: Install uv (provides uvx for the Spec Kit CLI)
+        uses: astral-sh/setup-uv@v10
+
       - name: Write version-bump diff
         id: diff
         env:
@@ -1152,7 +1170,9 @@ jobs:
   # Tiered smoke test against the prepared candidate.
   verify:
     needs: prepare
-    if: needs.prepare.result == 'success'
+    # Same reason as `prepare` above: guarding only `prepare` would have
+    # moved the silence one job down instead of ending it.
+    if: always() && needs.prepare.result == 'success'
     runs-on: ubuntu-latest
     # Empirically verified 2026-08-05/06 against GitHub-hosted runners
     # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping

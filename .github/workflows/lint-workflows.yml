@@ -1151,6 +1151,86 @@ jobs:
       - name: Gate 13 — relay confirmation is opt-in on one agreed phrase
         run: python3 .github/scripts/verify-relay-confirmation-phrase.py
 
+      # Gate 15 — a job with no status-check function is skipped whenever
+      # ANYTHING in its needs-closure was skipped, before its `if` is
+      # evaluated. Ordinarily that is how a chain is meant to stop. It becomes
+      # a silent trap when an intermediate job deliberately survives a skipped
+      # ancestor with `always()`: that job runs and sets its outputs, and every
+      # unguarded descendant is suppressed anyway.
+      #
+      # Not hypothetical. auto-update-spec-kit.yml's `evaluate-path` opens with
+      # `always()` because exactly one of `settle`/`comment-reply` runs per
+      # cycle; `prepare` and `verify` did not, so the whole adopt path did
+      # nothing for every cycle after the comment-reply arm was added — green
+      # runs, a lifecycle issue saying work was underway, no version adopted.
+      # No existing gate could see it: every file parsed, registered, and was
+      # permitted to run.
+      #
+      # A needs-closure walk rather than a list of known-bad jobs, so the next
+      # second entry-point arm is caught by the same rule.
+      - name: Gate 15 — no job is silently suppressed by a skipped ancestor
+        run: |
+          python3 - <<'PYEOF'
+          import glob, re, sys, yaml
+
+          # The functions that make GitHub evaluate a job's `if` even when
+          # part of its needs-closure was skipped.
+          STATUS_FN = re.compile(r"\b(always|success|failure|cancelled)\s*\(")
+
+
+          def needs_of(spec):
+              n = (spec or {}).get("needs") or []
+              return [n] if isinstance(n, str) else list(n)
+
+
+          failures = []
+          for path in sorted(glob.glob(".github/workflows/*.yml")
+                             + glob.glob(".github/workflows/*.yaml")):
+              doc = yaml.safe_load(open(path, encoding="utf-8")) or {}
+              jobs = doc.get("jobs") or {}
+              if not isinstance(jobs, dict):
+                  continue
+              guarded = {
+                  n for n, s in jobs.items()
+                  if isinstance(s, dict) and STATUS_FN.search(str(s.get("if", "")))
+              }
+              for name, spec in sorted(jobs.items()):
+                  if not isinstance(spec, dict) or name in guarded:
+                      continue
+                  seen, stack, risky = set(), needs_of(spec), []
+                  while stack:
+                      p = stack.pop()
+                      if p in seen or p not in jobs:
+                          continue
+                      seen.add(p)
+                      if p in guarded:
+                          risky.append(p)
+                      stack.extend(needs_of(jobs[p])
+                                   if isinstance(jobs[p], dict) else [])
+                  if risky:
+                      failures.append(
+                          f"::error file={path}::Gate 15: job {name!r} depends on "
+                          f"{', '.join(repr(r) for r in sorted(risky))}, which run(s) "
+                          f"under a status-check "
+                          f"function (always()/success()/failure()/cancelled()) because "
+                          f"something they need is skipped. {name!r} has no such function "
+                          f"of its own, so GitHub skips it before its `if` is evaluated — "
+                          f"it will silently never run, no matter what that `if` says. "
+                          f"Prefix its `if` with `always() &&` (keeping every existing "
+                          f"result/output guard, which is what actually does the gating).")
+
+          for f in failures:
+              print(f)
+          print(f"Gate 15: walked every job's needs-closure; {len(failures)} failure(s).")
+          sys.exit(1 if failures else 0)
+          PYEOF
+
+      # Same reasoning as gates 6/7/12's self-tests: this gate is a detector,
+      # and the fleet it runs against is (and should stay) clean, so a green
+      # Gate 15 says nothing about whether Gate 15 works.
+      - name: Gate 15 self-test — the detector actually detects
+        run: python3 .github/scripts/verify-gate-15.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when
