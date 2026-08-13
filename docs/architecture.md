@@ -816,7 +816,7 @@ input (`scheduled`/`dispatch`/`pr-merged`/`comment-reply`) from
 kill-switch in its own job-level `if:` (constitution VII); the stage never
 reads `github.event.*`/`vars.*`.
 
-**Design** — a seven-job upgrade chain plus two entry-point jobs, all under
+**Design** — an eight-job upgrade chain plus two entry-point jobs, all under
 one `concurrency: wing-commander-auto-update-spec-kit` group so a scheduled
 run, a manual dispatch, and a comment-reply resume can never race (FR-015 —
 one active upgrade cycle at a time):
@@ -851,11 +851,38 @@ one active upgrade cycle at a time):
 - `verify` runs **tiered** verification against the prepared candidate in an
   isolated worktree: a lightweight tier always (`check-prerequisites.sh` +
   `create-new-feature.sh --json` exit 0 and produce the documented JSON
-  shape), plus an end-to-end tier for `minor`/`major` jumps (a disposable
-  spec generated and discarded — never touches the real `specs/` tree).
+  shape), plus a deeper tier for `minor`/`major` jumps — a per-script
+  assertion chain exercising every Spec Kit script the pipeline depends on
+  (`create-new-feature.sh`'s own `spec.md` non-empty, `setup-plan.sh --json`
+  shape + `plan.md` non-empty, `setup-tasks.sh --json` shape), plus the
+  gating result of `e2e-stage` (below). No fallback content of any kind — a
+  missing expected artifact fails the same single path as any other defect
+  (FR-004).
+- `e2e-stage` (minor/major only) scaffolds the candidate's own regenerated
+  `.specify/` artifacts onto a branch of a **pre-created** scratch
+  repository and runs one bounded `claude-code-action@v1` turn producing a
+  throwaway feature spec — read back deterministically (never trusting agent
+  narration, matching `evaluate-path`'s own convention) as "did the stage
+  complete, and did it produce a non-empty `specs/*/spec.md`." Its result is
+  one of `verify`'s gating checks.
+
+  The repository comes from `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_SCRATCH_REPO`
+  and this feature **never creates or deletes repositories**: a GitHub App
+  installation token cannot create one on a user account at all, and the
+  `Administration: write` grant that would let it delete one would also let
+  every stage in this pipeline delete the consuming repository. Create one
+  empty private repository by hand, install the App on it, and point the
+  variable at it. Per-run isolation is the branch, not the repository:
+  `auto-update-spec-kit/e2e-<lifecycle-issue-number>` is reset to an empty
+  tree and force-pushed on every run, so nothing a previous cycle left
+  behind can satisfy the read-back's assertion. Left unconfigured, the job
+  fails and no `minor`/`major` candidate is adopted — the same single
+  outcome path every other verification failure takes (FR-004).
 - `act` opens the version-bump PR on a pass, leaves the pin untouched and
   flags the issue on a fail, or opens the revert PR on a health-check
-  failure. It never merges its own PR (constitution V, FR-017).
+  failure. It never merges its own PR (constitution V, FR-017). Whenever the
+  deeper tier ran, the narration (pass or fail) also names the scratch
+  repository and the branch holding that run's evidence.
 
 **Self-recognition** — the feature owns no `spec:<NNN>` identity and never
 assumes any other PR/issue is its own. PRs it opens carry a body marker

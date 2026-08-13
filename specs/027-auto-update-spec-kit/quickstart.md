@@ -75,9 +75,14 @@ without immediately cleaning up.
    a minor-type jump against the same baseline.
 2. Expected: the patch run's job summary shows only the lightweight
    check ran; the minor run's shows both lightweight and end-to-end
-   checks ran (a throwaway spec-kit-driven stage generated and
-   discarded) — confirm no scratch artifact from the end-to-end check
-   lands in the real `specs/` tree.
+   checks ran — the deeper tier exercises every Spec Kit script the
+   pipeline depends on (`create-new-feature.sh`, `check-prerequisites.sh`,
+   `setup-plan.sh`, `setup-tasks.sh`) against the candidate's own checkout,
+   plus one real AI-driven stage against a per-run branch of the
+   pre-created scratch GitHub repository (see
+   `specs/034-e2e-verification-tier/quickstart.md`) — confirm no scratch
+   artifact from either check lands in the real `specs/` tree, and that
+   there is a single failure path with no fallback content of any kind.
 
 ## Scenario 8 — Post-merge health-check catches a regression and rolls back (US2 Acceptance #2, FR-006/FR-007)
 
