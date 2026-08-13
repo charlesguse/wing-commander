@@ -1252,6 +1252,17 @@ jobs:
           [ -n "$reason_text" ] || reason_text="see the failing run's step summary"
           restart_workflow="$SELF_WORKFLOW"
           [ -n "$restart_workflow" ] || restart_workflow="<your implement wrapper workflow>"
+          # A stall arrives in one of two states: the failed pass either recorded
+          # its iteration before dying, or its push never landed and the record
+          # still reads the previous one. Only the agent writes `iteration`; the
+          # stall commit above touches `.stage` alone. Since the guard admits a
+          # stalled stage only at recorded+1, the restart has to be derived from
+          # the record — $ITERATION+1 is right in the first state and a dispatch
+          # the guard drops as a duplicate in the second. An unreadable record
+          # falls back to $ITERATION rather than killing the report.
+          recorded=$(jq -r '.iteration // 0' "$SPEC_DIR/spec-meta.json" 2>/dev/null) || recorded=""
+          case "$recorded" in ''|*[!0-9]*) recorded="$ITERATION" ;; esac
+          restart_iteration=$((recorded + 1))
           {
             echo "⏸️ **Implementation stalled** — iteration $ITERATION of the implement/converge loop failed (last attempt on \`$TIER\`), and no higher model tier remains to escalate to, so this specification is now **stalled** (nothing restarts automatically)."
             echo ""
@@ -1278,12 +1289,12 @@ jobs:
             echo "   |---|---|"
             echo "   | \`spec_dir\` | \`$SPEC_DIR\` |"
             echo "   | \`issue\` | \`$ISSUE\` |"
-            echo "   | \`iteration\` | \`$ITERATION\` |"
+            echo "   | \`iteration\` | \`$restart_iteration\` |"
             echo ""
             echo "   or from a terminal:"
             echo ""
             echo "   \`\`\`"
-            echo "   gh workflow run $restart_workflow -R $GITHUB_REPOSITORY -f spec_dir=$SPEC_DIR -f issue=$ISSUE -f iteration=$ITERATION"
+            echo "   gh workflow run $restart_workflow -R $GITHUB_REPOSITORY -f spec_dir=$SPEC_DIR -f issue=$ISSUE -f iteration=$restart_iteration"
             echo "   \`\`\`"
           } > /tmp/stall-comment.md
 

@@ -1151,6 +1151,19 @@ jobs:
       - name: Gate 13 — relay confirmation is opt-in on one agreed phrase
         run: python3 .github/scripts/verify-relay-confirmation-phrase.py
 
+      # Gate 14 — implement.yml's stall report tells a maintainer how to
+      # restart, but whether that advice works is decided by the idempotency
+      # guard in another job, which admits a stalled stage only at recorded+1.
+      # They disagreed: the runbook printed the iteration that had just failed,
+      # so every restart command the pipeline handed out was dropped as a
+      # duplicate — silently, since skip=true turns every later `if:` false and
+      # the run goes GREEN in ~11s with nothing posted and no failed conclusion
+      # for the watchdog. Seen on #184: run 31596632026 vs 31597726542. Gates
+      # 1-3 passed throughout; they prove shell parses, not that two steps
+      # agree about a number.
+      - name: Gate 14 — the stalled-restart runbook is a command the guard accepts
+        run: python3 .github/scripts/verify-stall-restart-runbook.py
+
       # Gate 15 — a job with no status-check function is skipped whenever
       # ANYTHING in its needs-closure was skipped, before its `if` is
       # evaluated. Ordinarily that is how a chain is meant to stop. It becomes
