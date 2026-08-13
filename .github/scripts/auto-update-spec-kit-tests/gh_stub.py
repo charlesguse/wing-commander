@@ -100,6 +100,16 @@ def issue_json(iss, fields):
     suites reads them that way), so the object shape is put on here — at the
     boundary the workflow actually parses. A stub that returns strings would
     let `.labels[]?.name` silently evaluate to empty and pass.
+
+    `state` is UPPERCASE in `gh issue view --json state` (the GraphQL
+    IssueState enum) but lowercase in `gh search issues --json state` — the
+    same split rebase.yml:783 and watchdog.yml:1676 both comment on. The stub
+    stores lowercase internally, so the case is put on here, at the `issue
+    view` boundary only. Nothing in this stage reads it today (the sweep that
+    did was removed with the scratch-repository lifecycle), but a stub that
+    hands back the wrong case is a trap: the reaper that DID read it compared
+    against "OPEN", so a lowercase stub made every issue look closed and the
+    fixture-passing fix would have been to break the workflow instead.
     """
     out = {}
     for f in fields:
@@ -107,6 +117,8 @@ def issue_json(iss, fields):
             out[f] = [{"name": l} for l in iss.get("labels", [])]
         elif f == "comments":
             out[f] = [{"body": c["body"]} for c in iss.get("comments", [])]
+        elif f == "state":
+            out[f] = str(iss.get(f) or "").upper()
         else:
             out[f] = iss.get(f)
     return out
@@ -168,6 +180,10 @@ def main():
         return 1
 
     # ---- gh repo view ---------------------------------------------------
+    # Every repository is treated as existing and visible. The e2e-stage's
+    # not-visible branch is exercised with GH_STUB_FAIL="repo view" instead
+    # of a repository registry: this feature no longer creates or deletes
+    # repositories, so there is no repository state for the stub to model.
     if cmd == "repo" and argv[1] == "view":
         emit({"defaultBranchRef": {"name": s["default_branch"]}}, argv)
         return 0

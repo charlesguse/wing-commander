@@ -3,7 +3,7 @@
 # (.specify/init-options.json's speckit_version, plus the matching
 # SPECKIT_SUPPORTED_VERSION constant in wing-commander-preflight/action.yml)
 # current with upstream github/spec-kit releases. on: workflow_call only.
-# Nine jobs:
+# Ten jobs:
 #   - health-check: re-verifies the CURRENTLY PINNED version first
 #     (scheduled/dispatch only); a failure here skips straight to act's
 #     rollback branch.
@@ -14,8 +14,16 @@
 #   - evaluate-path: one claude-sonnet-5 judgment step deciding clean-bump /
 #                    needs-migration / ambiguous-options.
 #   - prepare:      deterministic version-bump diff, no push yet.
-#   - verify:       tiered smoke test (lightweight always, +end-to-end for
-#                    minor/major) against the prepared candidate.
+#   - e2e-stage:    (minor/major only, specs/034) scaffolds the candidate
+#                    onto a force-reset branch of the pre-created scratch
+#                    repository and runs one bounded AI-driven
+#                    /speckit-specify-equivalent turn against it, read back
+#                    deterministically — gates verify's combined verdict.
+#   - verify:       tiered smoke test: a lightweight tier always, plus (for
+#                    minor/major) the per-script assertion chain
+#                    (create-new-feature.sh/check-prerequisites.sh/
+#                    setup-plan.sh/setup-tasks.sh) and the e2e-stage result,
+#                    against the prepared candidate.
 #   - act:          opens the version-bump PR (pass), leaves the pin
 #                    unchanged and flags the issue (fail), or opens a revert
 #                    PR (health-check failure).
@@ -24,7 +32,8 @@
 #   - comment-reply: resumes an ambiguous-options question from a verified
 #                    maintainer's reply.
 # See specs/027-auto-update-spec-kit/contracts/auto-update-spec-kit-workflow.md
-# for the full contract this file implements.
+# and specs/034-e2e-verification-tier/contracts/e2e-verification-tier.md for
+# the full contract this file implements.
 name: "reusable · auto-update-spec-kit"
 
 on:
@@ -79,6 +88,31 @@ on:
         type: string
         required: false
         default: claude-sonnet-5
+      e2e-stage-model:
+        description: "Model for the e2e-stage disposable smoke-test agent (constitution II tiering: disposable smoke-test generation, not the foundational-spec premium tier)."
+        type: string
+        required: false
+        default: claude-sonnet-5
+      e2e-stage-max-turns:
+        description: "Max turns for the e2e-stage disposable smoke-test agent."
+        type: string
+        required: false
+        default: "20"
+      e2e-scratch-repo:
+        description: >
+          OWNER/NAME of a pre-created, disposable repository the e2e-stage
+          scaffolds the candidate into. This feature never creates or deletes
+          repositories: a GitHub App installation token cannot create one on a
+          user account at all, and granting the App the Administration rights
+          needed to delete one would give every stage in this pipeline the
+          power to delete this repository. Create the scratch repository once
+          by hand, install the App on it, and set it here. Left empty, the
+          e2e-stage fails and no minor/major candidate is adopted (FR-004: a
+          candidate that cannot be verified is not adopted, and there is no
+          second outcome path).
+        type: string
+        required: false
+        default: ""
       pipeline-repo:
         description: >
           Repository to check out for the pipeline's shared composite actions
@@ -1167,9 +1201,277 @@ jobs:
           path: ${{ runner.temp }}/prepare.bundle
           retention-days: 1
 
+  # New AI-driven stage (FR-017/018/019): one real e2e agent-driven smoke
+  # test against the candidate's own regenerated .specify/ artifacts, run
+  # inside a scratch GitHub repository created for this run. Gates verify's
+  # combined verdict as a fourth check
+  # (contracts/e2e-verification-tier.md). Never runs for a patch jump — the
+  # deeper tier only applies to minor/major, unchanged gating condition from
+  # the lightweight tier's own end-to-end step.
+  e2e-stage:
+    needs: prepare
+    # Two guards, both load-bearing. `always()` because a skipped ancestor
+    # keeps suppressing descendants through the needs graph, so without a
+    # status-check function this job is skipped before its `if` is read.
+    # `result == 'success'` BECAUSE of that always(): a failed `prepare`
+    # publishes no outputs, so `release-type` reads as '' and `'' != 'patch'`
+    # is TRUE — the stage would scaffold a candidate that was never prepared.
+    if: >-
+      always() &&
+      needs.prepare.result == 'success' &&
+      needs.prepare.outputs.release-type != 'patch'
+    runs-on: ubuntu-latest
+    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
+    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
+    # form accepts an expression in both name and deployment, and a
+    # rendered deployment value is coerced as a boolean, so false really
+    # does suppress the deployment record while keeping the gate; an
+    # unknown name is created on reference. Not part of GitHub's
+    # published schema (FR-013) — see contracts/environment-binding.md.
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    outputs:
+      passed: ${{ steps.readback.outputs.passed }}
+      failure-detail: ${{ steps.readback.outputs.failure-detail }}
+      scratch-repo: ${{ steps.scratch-repo.outputs.full-name }}
+      scratch-branch: ${{ steps.scratch-repo.outputs.branch }}
+    steps:
+      - name: Checkout consumer repository (bootstrap, default token)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref" | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      - name: Wing Commander context
+        id: ctx
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      # T008 (FR-019/022): resolve the ONE pre-created scratch repository this
+      # feature is configured with. It is never created and never deleted
+      # here — see the e2e-scratch-repo input for why. Per-run isolation comes
+      # from the branch (named deterministically from the lifecycle issue
+      # number, force-reset below), not from a per-run repository, so no
+      # name-to-issue mapping is stored anywhere (research.md).
+      - name: Resolve the scratch repository
+        id: scratch-repo
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          SCRATCH_REPO: ${{ inputs.e2e-scratch-repo }}
+          ISSUE: ${{ needs.prepare.outputs.issue-number }}
+        run: |
+          set -uo pipefail
+          if [ -z "$SCRATCH_REPO" ]; then
+            echo "::error::wing-commander auto-update-spec-kit e2e-stage: no scratch repository is configured, so this candidate cannot be verified end to end and is not adopted. Create one empty private repository, install the wing-commander App on it, and set the repository variable WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_SCRATCH_REPO to its OWNER/NAME (docs/setup.md). Only minor and major candidates need it; patch candidates never reach this job."
+            exit 1
+          fi
+          if ! gh repo view "$SCRATCH_REPO" >/dev/null 2>&1; then
+            echo "::error::wing-commander auto-update-spec-kit e2e-stage: the configured scratch repository $SCRATCH_REPO is not visible to the wing-commander App token. Create it, or install the App on it (Contents: read and write is all it needs), then re-dispatch."
+            exit 1
+          fi
+          echo "full-name=$SCRATCH_REPO" >> "$GITHUB_OUTPUT"
+          echo "branch=auto-update-spec-kit/e2e-$ISSUE" >> "$GITHUB_OUTPUT"
+
+      # T009: the same `specify init` command `prepare`'s "Write
+      # version-bump diff" step already runs, this time against the scratch
+      # repository's own clone, so it reflects "candidate scaffolded and
+      # ready" (FR-022) even if the agent step below never completes.
+      # Cloned into a subdirectory of this job's own workspace (rather than
+      # $RUNNER_TEMP) so the claude-code-action step below — which operates
+      # relative to $GITHUB_WORKSPACE — can be scoped to it by path.
+      #
+      # The scratch repository outlives the run, so the branch is reset to an
+      # EMPTY tree before scaffolding and force-pushed afterwards: whatever a
+      # previous cycle left behind (or the repository's own README) must
+      # never be able to satisfy the read-back's non-empty-spec.md assertion
+      # and make a broken candidate look like it scaffolded correctly.
+      #
+      # Cloned and pushed over an explicitly tokenised URL rather than
+      # `gh repo clone` + `git push`: this is a DIFFERENT repository from the
+      # one actions/checkout credentialed, and `gh` only lends its
+      # credentials to git after `gh auth setup-git`. The token is kept out
+      # of .git/config (the remote is rewritten immediately) and off every
+      # later command line.
+      # The scaffold step drives Spec Kit through `uvx`, which is not on the
+      # GitHub-hosted ubuntu image — the same missing dependency `prepare` hit
+      # on run 31658562063.
+      - name: Install uv (provides uvx for the Spec Kit CLI)
+        uses: astral-sh/setup-uv@v10
+
+      - name: Scaffold and force-push the candidate into the scratch repository
+        id: scaffold
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          FULL_NAME: ${{ steps.scratch-repo.outputs.full-name }}
+          BRANCH: ${{ steps.scratch-repo.outputs.branch }}
+          CANDIDATE: ${{ needs.prepare.outputs.candidate-version }}
+          BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
+        run: |
+          set -euo pipefail
+          rm -rf e2e-scratch
+          auth_url="https://x-access-token:${GH_TOKEN}@github.com/${FULL_NAME}.git"
+          git clone --quiet "$auth_url" e2e-scratch
+          (
+            cd e2e-scratch
+            git remote set-url origin "https://github.com/${FULL_NAME}.git"
+            git config user.name "${BOT_SLUG}[bot]"
+            git config user.email "${BOT_SLUG}[bot]@users.noreply.github.com"
+
+            # Empty tree on a fresh branch. `--orphan` needs a commit to
+            # detach from; a scratch repository with no commits at all is
+            # already on an unborn branch, so only rename it there.
+            if git rev-parse --verify HEAD >/dev/null 2>&1; then
+              git checkout --quiet --orphan "$BRANCH"
+              git rm -rq --cached . >/dev/null 2>&1 || true
+              find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+            else
+              git checkout --quiet -b "$BRANCH"
+            fi
+
+            if ! command -v uvx >/dev/null 2>&1; then
+              echo "::error::wing-commander auto-update-spec-kit e2e-stage: 'uvx' is not available on this runner — cannot scaffold Spec Kit v$CANDIDATE."
+              exit 1
+            fi
+            uvx --from "git+https://github.com/github/spec-kit.git@v${CANDIDATE}" \
+              specify init . --ai claude --script sh --ai-skills --here --force \
+              > "$RUNNER_TEMP/e2e-scaffold-install.log" 2>&1 || {
+                echo "::error::wing-commander auto-update-spec-kit e2e-stage: 'specify init' failed while scaffolding the scratch repository — see log below."
+                tail -c 2000 "$RUNNER_TEMP/e2e-scaffold-install.log"
+                exit 1
+              }
+
+            git add -A
+            git commit -m "chore: scaffold Spec Kit v$CANDIDATE for e2e verification" --quiet --allow-empty
+            git push --force --quiet "$auth_url" "HEAD:refs/heads/$BRANCH"
+          )
+
+      # T010: one throwaway /speckit-specify-equivalent turn. Prompt is a
+      # fixed, hardcoded throwaway feature description — never issue/comment
+      # text, there is no untrusted input to this step at all (constitution
+      # V). least-privilege --allowedTools scoped to the candidate's own
+      # create-new-feature.sh plus Write/Edit inside e2e-scratch/ only;
+      # --disallowedTools blocks web tools and any agent-issued push — the
+      # workflow's own deterministic steps (T009/T012) do all pushing.
+      - name: Run e2e agent-driven stage
+        id: decide
+        continue-on-error: true
+        timeout-minutes: 15
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
+        with:
+          claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
+          anthropic_api_key: ${{ secrets.anthropic-api-key }}
+          github_token: ${{ steps.ctx.outputs.token }}
+          allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
+          prompt: |
+            Working only inside the e2e-scratch/ directory of this checkout,
+            run that checkout's own
+            .specify/scripts/bash/create-new-feature.sh to start one
+            throwaway feature titled "wing commander e2e verification smoke
+            test", then write a short feature spec (a sentence or two
+            describing a trivial, disposable example feature) to the
+            spec.md file that script reports.
+
+            This output is never read by a human and never merged anywhere
+            — it exists solely to confirm the candidate's own
+            /speckit-specify-equivalent flow produces a real spec.md. Do
+            not modify, read, or write anything outside e2e-scratch/, do
+            not push, and do not open a PR.
+          claude_args: |
+            --model ${{ inputs.e2e-stage-model }}
+            --max-turns ${{ inputs.e2e-stage-max-turns }}
+            --allowedTools "Bash(e2e-scratch/.specify/scripts/bash/create-new-feature.sh:*),Write(e2e-scratch/**),Edit(e2e-scratch/**)"
+            --disallowedTools "WebSearch,WebFetch,Bash(git push:*)"
+
+      # T011: deterministic read-back — never trusts agent narration,
+      # exactly like evaluate-path's decide-outcome (FR-021's
+      # completion-vs-shape distinction).
+      - name: Read back stage result
+        id: readback
+        env:
+          DECIDE_OUTCOME: ${{ steps.decide.outcome }}
+        run: |
+          set -uo pipefail
+          pass=true
+          detail=""
+
+          if [ "$DECIDE_OUTCOME" != "success" ]; then
+            pass=false
+            detail="the e2e-stage agent step did not complete (outcome: $DECIDE_OUTCOME) — this is a stage/infrastructure problem, not a candidate defect."
+          fi
+
+          spec_file=""
+          if [ "$pass" = "true" ]; then
+            spec_file="$(find e2e-scratch/specs -mindepth 2 -maxdepth 2 -type f -name 'spec.md' 2>/dev/null | head -1)"
+            if [ -z "$spec_file" ] || [ ! -s "$spec_file" ]; then
+              pass=false
+              detail="expected a non-empty specs/*/spec.md in the scratch repository after the e2e-stage agent completed, but none was found."
+            fi
+          fi
+
+          echo "passed=$pass" >> "$GITHUB_OUTPUT"
+          {
+            echo "failure-detail<<AUTOUPDATE_EOF"
+            echo "$detail"
+            echo "AUTOUPDATE_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # T012: best-effort — a push failure here must never flip `passed`,
+      # since the gating assertion already happened against the local
+      # working tree above.
+      - name: Push agent-produced spec.md to the scratch repository (best-effort)
+        if: steps.readback.outputs.passed == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          FULL_NAME: ${{ steps.scratch-repo.outputs.full-name }}
+          BRANCH: ${{ steps.scratch-repo.outputs.branch }}
+          BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
+        run: |
+          set -uo pipefail
+          (
+            cd e2e-scratch
+            git config user.name "${BOT_SLUG}[bot]"
+            git config user.email "${BOT_SLUG}[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "chore: e2e-stage agent output" --quiet || exit 0
+            git push --quiet "https://x-access-token:${GH_TOKEN}@github.com/${FULL_NAME}.git" "HEAD:refs/heads/$BRANCH"
+          ) || echo "::warning::wing-commander auto-update-spec-kit e2e-stage: best-effort push of the agent-produced spec.md failed — the gating assertion already ran against the local working tree, so this does not affect the verdict."
+
   # Tiered smoke test against the prepared candidate.
   verify:
-    needs: prepare
+    needs: [prepare, e2e-stage]
     # Same reason as `prepare` above: guarding only `prepare` would have
     # moved the silence one job down instead of ending it.
     if: always() && needs.prepare.result == 'success'
@@ -1306,11 +1608,13 @@ jobs:
             echo "AUTOUPDATE_EOF"
           } >> "$GITHUB_OUTPUT"
 
-      # FR-004/FR-014: additionally, for minor/major jumps, one throwaway
-      # spec-kit-driven stage run — generate a disposable spec.md in the
-      # same isolated worktree and confirm it lands, then discard
-      # everything (never committed, never touches the real specs/ tree,
-      # never opens a real lifecycle issue).
+      # FR-001/002/003: every Spec Kit script the pipeline depends on,
+      # chained in the same isolated worktree and feature directory the
+      # lightweight tier's create-new-feature.sh + check-prerequisites.sh
+      # already produced. No fallback content anywhere in this chain
+      # (FR-004) — a missing expected artifact fails the same way a
+      # non-zero exit or wrong-shape result does, via the ordinary
+      # non-empty/shape assertions below.
       - name: End-to-end verification (minor/major only)
         id: end-to-end
         if: needs.prepare.outputs.release-type != 'patch' && steps.lightweight.outputs.passed == 'true'
@@ -1321,22 +1625,56 @@ jobs:
           set -uo pipefail
           pass=true
           detail=""
-          template="$WORKTREE/.specify/templates/spec-template.md"
-          # FEATURE_DIR comes from check-prerequisites.sh already ABSOLUTE —
-          # prefixing it with $WORKTREE again produced a path like
-          # /tmp/wt//tmp/wt/specs/NNN, so the cp below always failed and this
-          # tier reported the misleading "spec.md never landed" for every
-          # minor/major candidate.
-          target="$FEATURE_DIR/spec.md"
-          if [ -f "$template" ]; then
-            cp "$template" "$target"
-          else
-            printf '# Scratch spec (wing-commander auto-update-spec-kit end-to-end verification)\n' > "$target"
-          fi
-          if [ ! -s "$target" ]; then
+
+          # T005: create-new-feature.sh already ran in the lightweight tier
+          # but its own JSON shape check never looked at spec.md's actual
+          # content — check-prerequisites.sh --paths-only doesn't either.
+          if [ ! -s "$FEATURE_DIR/spec.md" ]; then
             pass=false
-            detail="expected $FEATURE_DIR/spec.md to exist and be non-empty after the disposable /speckit-specify-equivalent run, but it did not."
+            detail="expected $FEATURE_DIR/spec.md to exist and be non-empty after create-new-feature.sh, but it did not. This may also mean the candidate legitimately reorganized its templates or scripts rather than that it is broken — see specs/027-auto-update-spec-kit's FR-018 for the non-clean-bump route a maintainer can choose instead."
           fi
+
+          # T006: setup-plan.sh --json — same SPECIFY_FEATURE_DIRECTORY this
+          # repository's own plan.yml stage already sets before invoking it.
+          if [ "$pass" = "true" ]; then
+            sp_out="$(cd "$WORKTREE" && SPECIFY_FEATURE_DIRECTORY="$FEATURE_DIR" bash .specify/scripts/bash/setup-plan.sh --json 2>&1)" || {
+              pass=false
+              detail="setup-plan.sh --json exited non-zero: $(printf '%s' "$sp_out" | tail -c 500)"
+            }
+          fi
+          if [ "$pass" = "true" ]; then
+            feature_spec="$(printf '%s' "$sp_out" | tail -1 | jq -r '.FEATURE_SPEC // empty' 2>/dev/null || true)"
+            impl_plan="$(printf '%s' "$sp_out" | tail -1 | jq -r '.IMPL_PLAN // empty' 2>/dev/null || true)"
+            specs_dir="$(printf '%s' "$sp_out" | tail -1 | jq -r '.SPECS_DIR // empty' 2>/dev/null || true)"
+            sp_branch="$(printf '%s' "$sp_out" | tail -1 | jq -r '.BRANCH // empty' 2>/dev/null || true)"
+            if [ -z "$feature_spec" ] || [ -z "$impl_plan" ] || [ -z "$specs_dir" ] || [ -z "$sp_branch" ]; then
+              pass=false
+              detail="setup-plan.sh --json did not produce the documented FEATURE_SPEC/IMPL_PLAN/SPECS_DIR/BRANCH shape: $(printf '%s' "$sp_out" | tail -c 500)"
+            elif [ ! -s "$impl_plan" ]; then
+              pass=false
+              detail="expected $impl_plan (setup-plan.sh's IMPL_PLAN) to exist and be non-empty, but it did not. This may also mean the candidate legitimately reorganized its templates or scripts rather than that it is broken — see specs/027-auto-update-spec-kit's FR-018 for the non-clean-bump route a maintainer can choose instead."
+            fi
+          fi
+
+          # T007: setup-tasks.sh --json — no silent-empty path of its own; a
+          # missing tasks-template.md makes it exit non-zero directly, which
+          # the non-zero-exit branch above already fails on.
+          if [ "$pass" = "true" ]; then
+            st_out="$(cd "$WORKTREE" && SPECIFY_FEATURE_DIRECTORY="$FEATURE_DIR" bash .specify/scripts/bash/setup-tasks.sh --json 2>&1)" || {
+              pass=false
+              detail="setup-tasks.sh --json exited non-zero: $(printf '%s' "$st_out" | tail -c 500)"
+            }
+          fi
+          if [ "$pass" = "true" ]; then
+            st_feature_dir="$(printf '%s' "$st_out" | tail -1 | jq -r '.FEATURE_DIR // empty' 2>/dev/null || true)"
+            available_docs="$(printf '%s' "$st_out" | tail -1 | jq -c '.AVAILABLE_DOCS' 2>/dev/null || echo null)"
+            tasks_template="$(printf '%s' "$st_out" | tail -1 | jq -r '.TASKS_TEMPLATE // empty' 2>/dev/null || true)"
+            if [ -z "$st_feature_dir" ] || ! printf '%s' "$available_docs" | jq -e 'type == "array"' >/dev/null 2>&1 || [ -z "$tasks_template" ] || [ ! -s "$tasks_template" ]; then
+              pass=false
+              detail="setup-tasks.sh --json did not produce the documented FEATURE_DIR/AVAILABLE_DOCS/TASKS_TEMPLATE shape: $(printf '%s' "$st_out" | tail -c 500)"
+            fi
+          fi
+
           echo "passed=$pass" >> "$GITHUB_OUTPUT"
           {
             echo "failure-detail<<AUTOUPDATE_EOF"
@@ -1357,6 +1695,11 @@ jobs:
           E2E_OUTCOME: ${{ steps.end-to-end.outcome }}
           E2E_PASSED: ${{ steps.end-to-end.outputs.passed }}
           E2E_DETAIL: ${{ steps.end-to-end.outputs.failure-detail }}
+          STAGE_RESULT: ${{ needs.e2e-stage.result }}
+          STAGE_PASSED: ${{ needs.e2e-stage.outputs.passed }}
+          STAGE_DETAIL: ${{ needs.e2e-stage.outputs.failure-detail }}
+          SCRATCH_REPO: ${{ needs.e2e-stage.outputs.scratch-repo }}
+          SCRATCH_BRANCH: ${{ needs.e2e-stage.outputs.scratch-branch }}
         run: |
           set -uo pipefail
           if [ "$RELEASE_TYPE" = "patch" ]; then
@@ -1370,6 +1713,35 @@ jobs:
             if [ "$E2E_OUTCOME" != "skipped" ] && [ "$E2E_PASSED" != "true" ]; then
               passed=false
               detail="$E2E_DETAIL"
+            elif [ "$E2E_PASSED" = "true" ] && { [ "$STAGE_RESULT" != "success" ] || [ "$STAGE_PASSED" != "true" ]; }; then
+              passed=false
+              # T037/FR-021: a job-level failure before the read-back step
+              # ever runs (e.g. resolving the scratch repository or the
+              # scaffold step failing) leaves STAGE_DETAIL empty —
+              # synthesize a
+              # stage-did-not-complete message here so the narration is
+              # never blank or reduced to just the scratch-repo pointer
+              # below.
+              if [ -n "$STAGE_DETAIL" ]; then
+                detail="$STAGE_DETAIL"
+              else
+                detail="the e2e-stage job did not complete (result: $STAGE_RESULT) — this is a stage/infrastructure problem, not a candidate defect."
+              fi
+            fi
+          fi
+
+          # FR-022/SC-012: name the scratch repository regardless of pass or
+          # fail, whenever e2e-stage actually ran — appended into the same
+          # failure-detail string the pass path's PR body and the fail
+          # path's issue comment both already read. Nothing is ever deleted:
+          # the branch is what the maintainer inspects, and the next cycle
+          # for this same issue force-resets it.
+          if [ "$tier" = "lightweight+end-to-end" ] && [ -n "$SCRATCH_REPO" ]; then
+            pointer="The e2e-stage ran in $SCRATCH_REPO on branch $SCRATCH_BRANCH, which is left in place for inspection and force-reset by the next run for this issue."
+            if [ -n "$detail" ]; then
+              detail="$(printf '%s\n%s' "$detail" "$pointer")"
+            else
+              detail="$pointer"
             fi
           fi
           {
@@ -1579,6 +1951,7 @@ jobs:
           CANDIDATE: ${{ needs.prepare.outputs.candidate-version }}
           ISSUE: ${{ needs.prepare.outputs.issue-number }}
           TIER: ${{ needs.verify.outputs.tier }}
+          DETAIL: ${{ needs.verify.outputs.failure-detail }}
           DB: ${{ steps.defbranch.outputs.name }}
         run: |
           set -euo pipefail
@@ -1587,6 +1960,10 @@ jobs:
             echo "Bumps this repository's pinned Spec Kit version to v$CANDIDATE."
             echo ""
             echo "**Verified:** $TIER checks passed against this candidate in an isolated worktree."
+            if [ -n "$DETAIL" ]; then
+              echo ""
+              echo "$DETAIL"
+            fi
             echo ""
             echo "Closes #$ISSUE"
             echo ""

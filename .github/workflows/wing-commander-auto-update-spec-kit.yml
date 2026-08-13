@@ -45,6 +45,9 @@ jobs:
       issue-author-id: ${{ github.event.issue.user.id || '' }}
       stabilization-checks: ${{ vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_STABILIZATION_CHECKS || '1' }}
       model: ${{ vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_MODEL || 'claude-sonnet-5' }}
+      e2e-stage-model: ${{ vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_STAGE_MODEL || 'claude-sonnet-5' }}
+      e2e-stage-max-turns: ${{ vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_STAGE_MAX_TURNS || '20' }}
+      e2e-scratch-repo: ${{ vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_SCRATCH_REPO || '' }}
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}

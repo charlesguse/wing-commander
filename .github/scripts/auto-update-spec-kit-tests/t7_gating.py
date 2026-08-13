@@ -325,6 +325,71 @@ def main():
         "needs.prepare.result": "cancelled", "needs.verify.result": "skipped",
     }, {"prepare": True, "verify": False, "act": False})
 
+    # ---- e2e-stage / verify gating (US3/US4, T027) ----------------------
+    scenario("e2e-stage runs for a minor bump (contract's e2e-stage job)", ifs, {
+        "needs.prepare.result": "success", "needs.prepare.outputs.release-type": "minor",
+    }, {"e2e-stage": True})
+
+    scenario("e2e-stage runs for a major bump", ifs, {
+        "needs.prepare.result": "success", "needs.prepare.outputs.release-type": "major",
+    }, {"e2e-stage": True})
+
+    scenario("e2e-stage does NOT run for a patch bump (Scenario 8, Edge Case)", ifs, {
+        "needs.prepare.result": "success", "needs.prepare.outputs.release-type": "patch",
+    }, {"e2e-stage": False})
+
+    # T004's always(): verify must still run — and read needs.e2e-stage.* —
+    # even when e2e-stage itself failed or timed out, as long as prepare
+    # succeeded. Without always(), GitHub's implicit "skip if any needed
+    # job did not succeed" would skip verify here, silently dropping the
+    # combine step's fourth gating check.
+    scenario("verify still runs when e2e-stage fails, as long as prepare succeeded (T004)", ifs, {
+        "needs.prepare.result": "success", "needs.e2e-stage.result": "failure",
+    }, {"verify": True})
+
+    scenario("verify does not run when prepare itself did not succeed", ifs, {
+        "needs.prepare.result": "failure", "needs.e2e-stage.result": "skipped",
+    }, {"verify": False})
+
+    # ---- the scratch-repository lifecycle jobs must NOT come back --------
+    # There is no issue-closed job and no reap-scratch-repos job: the scratch
+    # repository is pre-created and never deleted by this feature, because a
+    # GitHub App installation token cannot create a repository on a user
+    # account, and the Administration rights that would let it delete one
+    # would also let every stage in this pipeline delete THIS repository.
+    # Asserted structurally — a re-added job would otherwise sit here
+    # ungated and unnoticed until it ran.
+    wrap_doc = yaml.safe_load(open(WRAP, encoding="utf-8"))
+    trigger_expr = str(wrap_doc["jobs"]["auto-update-spec-kit"]["with"]["trigger"])
+    # YAML 1.1 (what safe_load implements) resolves the bare key `on` to the
+    # boolean True, so the trigger block is NOT under the string "on".
+    wrap_on = wrap_doc.get("on", wrap_doc.get(True)) or {}
+    print("\n--- no repository-lifecycle jobs, no issues trigger ---")
+    global PASS, FAIL
+    for job in ("issue-closed", "reap-scratch-repos"):
+        if job not in ifs:
+            PASS += 1
+            print("    ok   no %s job" % job)
+        else:
+            FAIL += 1
+            FAILED.append("job %s is back" % job)
+            print("    FAIL %s job is back: if: %s" % (job, ifs[job]))
+    if "issues" not in wrap_on:
+        PASS += 1
+        print("    ok   wrapper does not subscribe to the issues event")
+    else:
+        FAIL += 1
+        FAILED.append("wrapper on.issues")
+        print("    FAIL wrapper still subscribes to issues: %r" % (wrap_on["issues"],))
+    if "issue-closed" not in trigger_expr:
+        PASS += 1
+        print("    ok   trigger expression resolves no issue-closed arm")
+    else:
+        FAIL += 1
+        FAILED.append("wrapper trigger: issue-closed arm")
+        print("    FAIL trigger expression still has an issue-closed arm:\n         %s"
+              % re.sub(r"\s+", " ", trigger_expr))
+
     # ---- act's four arms, at step level --------------------------------
     act = load_step_ifs(STAGE, "act")
     print("\nact step gates (verbatim from the workflow):")
@@ -359,7 +424,8 @@ def main():
     }, "rollback")
 
     # ---- wrapper pause kill-switch -------------------------------------
-    global PASS, FAIL
+    # (PASS/FAIL are already declared global above, at the first assignment
+    # in this function — a second declaration after them is a SyntaxError.)
     print("\n--- wrapper pause kill-switch ---")
     for val, want in [("true", False), ("false", True), ("", True)]:
         got = evaluate(wrap["auto-update-spec-kit"],

@@ -2,7 +2,7 @@
   "issue": 184,
   "spec_dir": "specs/034-e2e-verification-tier",
   "feature_num": "034",
-  "stage": "spec",
-  "iteration": 0,
-  "spec_branch": null
+  "stage": "review",
+  "iteration": 3,
+  "spec_branch": "spec/034-e2e-verification-tier"
 }
