@@ -1115,6 +1115,16 @@ jobs:
           git fetch --no-tags --quiet origin "$db:refs/remotes/origin/$db"
           echo "name=$db" >> "$GITHUB_OUTPUT"
 
+      # Spec Kit is invoked as `uvx --from git+...spec-kit@vN specify init`,
+      # and `uvx` is NOT on the GitHub-hosted ubuntu image — nothing here ever
+      # installed it. The step below detects the absence and fails cleanly,
+      # which is how run 31658562063 reported it ("'uvx' is not available on
+      # this runner"), but a clean failure is still a failure: `prepare` could
+      # not have succeeded on any real candidate, independently of the job
+      # gating that had been keeping it from running at all.
+      - name: Install uv (provides uvx for the Spec Kit CLI)
+        uses: astral-sh/setup-uv@v10
+
       - name: Write version-bump diff
         id: diff
         env:
