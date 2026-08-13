@@ -15,6 +15,15 @@ REPORTS SUCCESS in ~11s, posts nothing to the lifecycle issue, and leaves the
 watchdog no failed conclusion. Seen on #184: run 31596632026 (iteration=1, as
 advised — green no-op) vs 31597726542 (iteration=2 — runs the agent).
 
+A stall arrives in either of two states, and `recorded` is the ONLY input that
+separates them: the failed pass either got its commit in (record advanced to the
+dispatched iteration) or did not ("the branch never advanced" — the record still
+reads the previous one, or the 0 intake seeds). Advice derived from the
+dispatched iteration is admitted in the first and dropped as a duplicate in the
+second, which is exactly how the first fix here shipped broken past a green
+version of this gate. Hence SCENARIOS below varies the relationship between the
+two, not just the number.
+
 WHAT THIS CHECKS
 ----------------
 The round trip, executing the SHIPPED blocks rather than a copy (gate 5 exists
@@ -62,10 +71,17 @@ MARK_STEP = "Mark lifecycle record stalled"
 REPORT_STEP = "Report stalled on lifecycle issue"
 GUARD_STEP = "Idempotency guard"
 
-# The iterations a stall can happen at. 1 is the overwhelmingly common case
-# (and the one observed on #184); the others guard against a fix that special-
-# cases the first iteration instead of incrementing.
-SCENARIOS = [1, 2, 4]
+# (recorded, dispatched): what spec-meta.json holds when the stall lands, and
+# which iteration was dispatched into that failure. Varying the NUMBER without
+# varying the RELATIONSHIP is what let the first fix here ship broken — it read
+# the dispatched iteration, which is only the recorded one in the top group.
+#
+#   recorded == dispatched  the pass recorded its iteration, then failed
+#   recorded <  dispatched  the pass never got its push in ("the branch never
+#                           advanced" — implement.yml classifies this by name),
+#                           so the record still reads the previous iteration;
+#                           0 is what intake seeds, i.e. a stall at iteration 1
+SCENARIOS = [(1, 1), (2, 2), (4, 4), (0, 1), (2, 3)]
 
 SPEC_DIR = "specs/034-e2e-verification-tier"
 SLUG = "034-e2e-verification-tier"
@@ -94,7 +110,7 @@ def sh(script, cwd):
                           errors="replace")
 
 
-def make_workspace(root, iteration):
+def make_workspace(root, recorded):
     """A git repo with a working remote, holding a pre-stall spec-meta.json.
 
     The stall step commits and pushes; a real bare remote runs that path
@@ -110,7 +126,7 @@ cd '{repo}'
 git config user.email harness@example.invalid
 git config user.name harness
 mkdir -p '{SPEC_DIR}'
-printf '%s\\n' '{{"issue": {ISSUE}, "spec_dir": "{SPEC_DIR}", "stage": "implement", "iteration": {iteration}}}' > '{SPEC_DIR}/spec-meta.json'
+printf '%s\\n' '{{"issue": {ISSUE}, "spec_dir": "{SPEC_DIR}", "stage": "implement", "iteration": {recorded}}}' > '{SPEC_DIR}/spec-meta.json'
 git add -A
 git commit -q -m seed
 git push -q origin main
@@ -140,11 +156,11 @@ def parse_runbook(text):
     }
 
 
-def scenario(steps, iteration, root):
+def scenario(steps, seeded, iteration, root):
     """One stall-then-restart round trip. Returns a list of failures."""
     failures = []
-    where = f"iteration {iteration}"
-    work, repo = make_workspace(root, iteration)
+    where = f"recorded {seeded}, dispatched {iteration}"
+    work, repo = make_workspace(root, seeded)
     runner_temp = os.path.join(work, "runner_temp")
     bindir = os.path.join(work, "bin")
     calls = os.path.join(work, "gh_calls")
@@ -174,6 +190,14 @@ def scenario(steps, iteration, root):
                         f"stalled branch cannot be reached at all.")
         return failures
     recorded = meta.get("iteration")
+    # The stall commit sets `.stage` alone. If it ever starts writing
+    # `.iteration` too, the guard compares against a number no pass produced and
+    # the restart rewinds (or skips) the loop.
+    if recorded != seeded:
+        failures.append(f"{where}: {MARK_STEP!r} changed the recorded iteration "
+                        f"from {seeded} to {recorded!r} — only the agent may "
+                        f"write it, and the guard compares against it.")
+        return failures
 
     # 2. The runbook the maintainer is told to follow.
     stall_md = os.path.join(work, "stall-comment.md")
@@ -249,7 +273,8 @@ def scenario(steps, iteration, root):
 
 
 def suite(steps, root):
-    return [f for it in SCENARIOS for f in scenario(steps, it, root)]
+    return [f for seeded, it in SCENARIOS
+            for f in scenario(steps, seeded, it, root)]
 
 
 def load_steps():
@@ -275,9 +300,23 @@ def _mut_stall_resets_recorded_iteration(steps):
         """jq '.stage = "stalled"'""", """jq '.stage = "stalled" | .iteration = 0'""")
 
 
+def _mut_runbook_derives_from_dispatched(steps):
+    """The first fix's defect: advise dispatched+1 instead of recorded+1.
+
+    Indistinguishable from correct whenever the record advanced, so only the
+    lagging-record scenarios can catch it. If this one ever survives, the
+    SCENARIOS table has lost its `recorded < dispatched` rows.
+    """
+    steps[REPORT_STEP] = steps[REPORT_STEP].replace(
+        "restart_iteration=$((recorded + 1))",
+        "restart_iteration=$((ITERATION + 1))")
+
+
 MUTATIONS = [
     ("runbook advises the iteration that just failed",
      _mut_runbook_prints_failed_iteration),
+    ("runbook advises dispatched+1 rather than recorded+1",
+     _mut_runbook_derives_from_dispatched),
     ("guard admits only recorded+2", _mut_guard_wants_two_ahead),
     ("stall commit resets the recorded iteration",
      _mut_stall_resets_recorded_iteration),
