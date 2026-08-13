@@ -58,15 +58,20 @@ e2e-stage:
     passed: ${{ steps.readback.outputs.passed }}
     failure-detail: ${{ steps.readback.outputs.failure-detail }}
     scratch-repo: ${{ steps.scratch-repo.outputs.full-name }}
+    scratch-branch: ${{ steps.scratch-repo.outputs.branch }}
   steps:
     # 1. Wing Commander context (bot token) — same pattern every job uses.
-    # 2. Create-or-reuse the scratch repository (idempotent: gh repo view
-    #    then create-if-absent), named
-    #    "${{ github.repository_owner }}/wing-commander-e2e-${{ needs.prepare.outputs.issue-number }}".
-    # 3. Clone it locally; run the candidate's own
+    # 2. RESOLVE (never create) the scratch repository: inputs.e2e-scratch-repo
+    #    must be non-empty and visible to `gh repo view`, else the step fails
+    #    with a reason naming the variable to set or the App installation to
+    #    add. Branch for this run:
+    #    "auto-update-spec-kit/e2e-${{ needs.prepare.outputs.issue-number }}".
+    # 3. Clone it over an explicitly tokenised URL (this is a DIFFERENT
+    #    repository from the one actions/checkout credentialed), reset the
+    #    branch to an EMPTY tree (orphan + clear), then run the candidate's own
     #    `uvx --from git+https://github.com/github/spec-kit.git@v${CANDIDATE}
     #    specify init . --ai claude --script sh --ai-skills --here --force`
-    #    (same command `prepare` already runs); commit and push the scaffold.
+    #    (same command `prepare` already runs); commit and force-push it.
     # 4. claude-code-action@v1 (id: decide), continue-on-error: true, bounded
     #    timeout-minutes, --model ${{ inputs.e2e-stage-model }},
     #    --max-turns ${{ inputs.e2e-stage-max-turns }}, least-privilege
@@ -83,77 +88,56 @@ e2e-stage:
 ```
 
 `inputs.e2e-stage-model` (default `claude-sonnet-5`, sourced from
-`vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_STAGE_MODEL`) and
-`inputs.e2e-stage-max-turns` (default `20`) are new `workflow_call` inputs
-on `auto-update-spec-kit.yml`, threaded from the wrapper the same way
-`inputs.model` already is.
+`vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_STAGE_MODEL`),
+`inputs.e2e-stage-max-turns` (default `20`) and `inputs.e2e-scratch-repo`
+(default empty, sourced from
+`vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_SCRATCH_REPO`) are new
+`workflow_call` inputs on `auto-update-spec-kit.yml`, threaded from the
+wrapper the same way `inputs.model` already is.
 
-## Scratch-repository deletion — event-driven
+## Scratch-repository lifecycle — a maintainer's, not the pipeline's
 
-`wing-commander-auto-update-spec-kit.yml`'s trigger contract gains:
+This feature creates no repository and deletes none, so there is no
+`issues: [closed]` trigger, no `issue-closed` job, and no scheduled reaping
+sweep. Two facts forced that (spec.md Assumptions):
 
-```yaml
-on:
-  issues:
-    types: [closed]
-```
+- `POST /user/repos` — the endpoint `gh repo create OWNER/NAME` reaches for a
+  **user**-owned account, which `charlesguse` is — is documented for OAuth and
+  classic-PAT scopes only. A GitHub App installation token, which every job
+  here runs under, has no documented way to call it.
+- `gh repo delete` needs `Administration: write`. That grant is not
+  per-call-site: the same App token could delete **this** repository, at all
+  fourteen of the pipeline's agent steps. Gate 12 (lint-workflows.yml) fails
+  closed on both call sites for exactly this reason.
 
-resolved into the existing typed-input shape:
+Per-run isolation is therefore the **branch**, not the repository:
 
-```yaml
-with:
-  trigger: >-
-    ${{ github.event_name == 'schedule' && 'scheduled'
-        || github.event_name == 'workflow_dispatch' && 'dispatch'
-        || github.event_name == 'pull_request' && 'pr-merged'
-        || github.event_name == 'issues' && 'issue-closed'
-        || 'comment-reply' }}
-  issue-number: ${{ github.event.issue.number || '' }}
-```
+1. `auto-update-spec-kit/e2e-<lifecycle-issue-number>` — deterministic from
+   the issue number, so no name-to-issue mapping is stored anywhere.
+2. Reset to an empty tree before every scaffold and force-pushed, so nothing
+   a previous cycle (or the repository's own README) left behind can satisfy
+   the read-back's non-empty-`spec.md` assertion.
+3. Left in place afterwards. It is the maintainer's inspection surface, and
+   the next run for the same issue overwrites it.
 
-A new job/branch in `auto-update-spec-kit.yml`, gated on
-`inputs.trigger == 'issue-closed'`:
-
-1. Fetch the closed issue's body; verify it carries this feature's own
-   settle-tracking marker (specs/027 data-model.md) — a closed issue that
-   isn't this feature's own lifecycle issue is a no-op, same
-   self-recognition discipline every other trigger already applies.
-2. `gh repo delete "${{ github.repository_owner }}/wing-commander-e2e-${{ inputs.issue-number }}" --yes 2>/dev/null || true` —
-   idempotent; a repository that was never created (e.g. the run never
-   reached `e2e-stage`, or this was a patch-only cycle) is a silent no-op,
-   not an error.
-
-## Scratch-repository deletion — scheduled backstop
-
-Added to the existing `scheduled`/`dispatch` entry point, independent of
-that day's own detect/settle/verify cycle (runs even when there's nothing
-new to check):
-
-1. `gh repo list "${{ github.repository_owner }}" --json name --jq '.[].name' | grep '^wing-commander-e2e-'`
-2. For each match, derive `<issue>` from the name suffix; `gh issue view
-   <issue> --json state` — state `CLOSED` or the lookup itself failing
-   (issue missing) → delete; state `OPEN` → leave alone.
+Permissions used: `Contents: read and write` on the scratch repository (the
+App must be installed on it) — already in the App's documented grant, so
+`docs/setup.md`'s permission list is unchanged by this feature.
 
 ## Self-recognition contract (extends specs/027's)
 
-- `issues: {types: [closed]}` events are only acted upon when the closed
-  issue's body carries `<!-- wing-commander-auto-update-spec-kit:
-  candidate=X.Y.Z observed=N -->` (specs/027's existing marker) — an
-  unrelated closed issue is always a no-op, same rule specs/027's contract
-  already states for `pull_request`/`issue_comment` events.
-- The scheduled backstop sweep only ever touches repositories whose name
-  matches the `wing-commander-e2e-<digits>` pattern exactly — never a
-  broader glob that could catch an unrelated repository a maintainer
-  happens to have named similarly.
+- Branch names this feature writes match
+  `auto-update-spec-kit/e2e-<digits>` exactly, inside the one configured
+  scratch repository — it never force-pushes a branch it did not derive from
+  its own lifecycle issue number, and never touches any other repository.
 
 ## Non-goals (explicitly out of contract, per spec.md Assumptions)
 
-- No permanent scratch repository — every scratch repository is per-run,
-  named per lifecycle issue, and eventually deleted (spec.md Assumptions:
-  "No permanent `wing-commander-end-to-end-test` repository is created").
+- No repository creation or deletion of any kind, and no repository-
+  administration permission on the App — see the lifecycle section above.
 - No second outcome path for a missing-artifact failure — the FR-008 hint
   is narration text inside the same single `failure-detail` string, never a
   separate label, comment kind, or routing branch (FR-006/FR-009).
 - The e2e-stage's own generated content is never merged, committed to this
   repository, or otherwise treated as real pipeline output — it exists
-  solely inside the disposable scratch repository.
+  solely on the scratch repository's per-run branch.

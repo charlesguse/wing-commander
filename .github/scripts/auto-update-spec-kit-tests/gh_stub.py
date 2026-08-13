@@ -30,7 +30,6 @@ def load():
     s.setdefault("issues", {})
     s.setdefault("prs", {})
     s.setdefault("labels", [])
-    s.setdefault("repos", {})
     s.setdefault("default_branch", "main")
     s.setdefault("next_issue", 100)
     s.setdefault("next_pr", 200)
@@ -104,11 +103,13 @@ def issue_json(iss, fields):
 
     `state` is UPPERCASE in `gh issue view --json state` (the GraphQL
     IssueState enum) but lowercase in `gh search issues --json state` — the
-    same split rebase.yml and watchdog.yml both comment on. The stub stores
-    lowercase internally, so the case is put on here, at the `issue view`
-    boundary only. A stub that returned lowercase would let
-    reap-scratch-repos' `[ "$state" != "OPEN" ]` match every issue and sweep
-    away scratch repositories whose lifecycle issue is still open.
+    same split rebase.yml:783 and watchdog.yml:1676 both comment on. The stub
+    stores lowercase internally, so the case is put on here, at the `issue
+    view` boundary only. Nothing in this stage reads it today (the sweep that
+    did was removed with the scratch-repository lifecycle), but a stub that
+    hands back the wrong case is a trap: the reaper that DID read it compared
+    against "OPEN", so a lowercase stub made every issue look closed and the
+    fixture-passing fix would have been to break the workflow instead.
     """
     out = {}
     for f in fields:
@@ -178,52 +179,13 @@ def main():
         sys.stderr.write("gh stub: unhandled api path %s\n" % path)
         return 1
 
-    # ---- gh repo view/create/delete/list ---------------------------------
-    # `repos` tracks only repositories this stub itself created via `repo
-    # create` (keyed by NAME, not OWNER/NAME — the scratch repos this
-    # feature manages). Any other name (e.g. $GITHUB_REPOSITORY, the
-    # consuming repo the pre-existing `repo view` call sites already rely
-    # on) is treated as always-existing, preserving their behaviour.
+    # ---- gh repo view ---------------------------------------------------
+    # Every repository is treated as existing and visible. The e2e-stage's
+    # not-visible branch is exercised with GH_STUB_FAIL="repo view" instead
+    # of a repository registry: this feature no longer creates or deletes
+    # repositories, so there is no repository state for the stub to model.
     if cmd == "repo" and argv[1] == "view":
-        full = argv[2] if len(argv) > 2 else ""
-        _, _, name = full.partition("/")
-        repo = s["repos"].get(name) if name else None
-        if repo is not None:
-            if repo.get("deleted"):
-                sys.stderr.write("gh: repository not found\n")
-                return 1
-            emit({"defaultBranchRef": {"name": s["default_branch"]}}, argv)
-            return 0
-        if name.startswith("wing-commander-e2e-"):
-            sys.stderr.write("gh: repository not found\n")
-            return 1
         emit({"defaultBranchRef": {"name": s["default_branch"]}}, argv)
-        return 0
-
-    if cmd == "repo" and argv[1] == "create":
-        full = argv[2] if len(argv) > 2 else ""
-        owner, _, name = full.partition("/")
-        repo = s["repos"].get(name)
-        if repo is None or repo.get("deleted"):
-            s["repos"][name] = {"owner": owner, "deleted": False}
-            save(s)
-        return 0
-
-    if cmd == "repo" and argv[1] == "delete":
-        full = argv[2] if len(argv) > 2 else ""
-        _, _, name = full.partition("/")
-        repo = s["repos"].get(name)
-        if repo is not None:
-            repo["deleted"] = True
-            save(s)
-        return 0
-
-    if cmd == "repo" and argv[1] == "list":
-        owner = argv[2] if len(argv) > 2 else ""
-        names = sorted(n for n, r in s["repos"].items()
-                        if r.get("owner") == owner and not r.get("deleted"))
-        fields = (opt(argv, "--json") or "name").split(",")
-        emit([{f: (n if f == "name" else None) for f in fields} for n in names], argv)
         return 0
 
     # ---- gh search issues ----------------------------------------------

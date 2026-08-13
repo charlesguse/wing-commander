@@ -215,3 +215,49 @@ Both are Priority P1 for the same reason spec.md states explicitly: User Story 1
 ## Phase 8: Convergence
 
 - [X] T037 In `.github/workflows/auto-update-spec-kit.yml`'s `e2e-stage` job, when the "Create or reuse the scratch repository" step's `gh repo create` call fails, or the "Scaffold and push the candidate into the scratch repository" step fails (both currently unguarded — the create step never checks `gh repo create`'s exit status before unconditionally emitting `full-name`, and the scaffold step has no `continue-on-error`, so a failure there skips the `decide`/`readback` steps entirely and the job fails with `steps.readback.outputs.passed`/`failure-detail` never set), ensure `verify`'s combine step still receives a non-empty `STAGE_DETAIL` stating the stage did not complete (FR-021's completion-vs-shape distinction) — today `needs.e2e-stage.outputs.failure-detail` reaches combine as an empty string in this path, so the composed narration ends up either blank or, because the create step already set `full-name` before failing, carries only the misleading scratch-repository "is retained" pointer with no indication anything failed. Extend `gh_stub.py`'s `repo create` handler with a failure-injection mode and add a `t4_verify.sh` scenario exercising a failed scratch-repository creation, confirming the composed `failure-detail` explicitly states the stage did not complete and is distinguishable from a candidate-artifact failure — per FR-021 and spec.md's "Scratch repository cannot be created" edge case (partial).
+
+---
+
+## Phase 9: Amendment — the scratch repository is pre-created, not provisioned
+
+Filed after PR #187's CI run. Gate 12 (`lint-workflows.yml`) failed closed on
+all five of the feature's `gh repo create`/`delete`/`list`/`clone` call sites,
+and the investigation found the design was not implementable as specified:
+`POST /user/repos` (what `gh repo create` reaches for on a **user** account,
+which `charlesguse` is) has no documented GitHub App installation-token path,
+and `gh repo delete` would need an `Administration: write` grant that the same
+App token could turn on this repository from any of the pipeline's agent
+steps. spec.md's Assumptions section records the full amendment and its
+reasoning; `validation.md` item 3 is updated from "hard blocker" to
+"resolved by removing the need".
+
+- [X] T038 Replace `e2e-stage`'s "Create or reuse the scratch repository" step
+  with "Resolve the scratch repository": reads the new `e2e-scratch-repo`
+  input (wrapper var
+  `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_SCRATCH_REPO`), fails the step with
+  a maintainer-actionable reason when it is unset or not visible to the App
+  token, and outputs `full-name` plus the per-run branch
+  `auto-update-spec-kit/e2e-<issue>`.
+- [X] T039 Scaffold onto that branch instead of the repository's default
+  branch: clone over an explicitly tokenised URL (this is a different
+  repository from the one `actions/checkout` credentialed, and `gh` only lends
+  git its credentials after `gh auth setup-git`), reset the branch to an empty
+  tree, scaffold, force-push. Same treatment for the best-effort agent-output
+  push.
+- [X] T040 Delete the `issue-closed` job, the `reap-scratch-repos` job, the
+  wrapper's `issues: [closed]` trigger, and the trigger expression's
+  `issue-closed` arm.
+- [X] T041 Carry `scratch-branch` through `e2e-stage` → `verify`'s combine
+  step, and reword the SC-012 pointer: it names the repository and branch and
+  states the branch is force-reset by the next run, rather than promising a
+  deletion this feature can no longer perform.
+- [X] T042 Harness: rewrite `t4_verify.sh` Scenario 7 around resolve /
+  unconfigured / not-visible, add the negative assertion that **zero**
+  `repo create` and `repo delete` calls are made, drop `gh_stub.py`'s now-dead
+  `repo create`/`delete`/`list` handlers, and replace `t7_gating.py`'s
+  removed-job scenarios with structural assertions that neither job (nor the
+  `issues` trigger) comes back.
+- [X] T043 Docs: `docs/setup.md` gains the new variable row (and states the
+  App permission list is unchanged); `docs/architecture.md`, the contract,
+  `data-model.md`, both quickstarts, `spec.md` (FR-013/015/019-023,
+  SC-010-012, Assumptions) and `validation.md` updated to the amended design.

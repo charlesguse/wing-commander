@@ -1,5 +1,20 @@
 # Phase 0 Research: End-to-End Verification Tier That Actually Verifies
 
+> **Amended after PR #187's CI run — scratch-repository provisioning was removed.**
+> Everywhere below that describes this feature *creating* or *deleting* a
+> scratch repository (`gh repo create`/`delete`/`list`, the per-run
+> `wing-commander-e2e-<issue>` repository, the `issues: {types: [closed]}`
+> trigger, the `issue-closed` job, and the `reap-scratch-repos` sweep) is
+> **superseded**. A GitHub App installation token cannot create a repository
+> on a user account, and the `Administration: write` needed to delete one is
+> installation-wide — the same token could delete this repository from any
+> agent step. The shipped design uses **one pre-created scratch repository**
+> (`WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_SCRATCH_REPO`) with a per-run
+> branch `auto-update-spec-kit/e2e-<issue>` force-reset before every scaffold.
+> See spec.md's Assumptions, `contracts/e2e-verification-tier.md`'s
+> "Scratch-repository lifecycle" section, and tasks.md Phase 9. Everything
+> else in this document still holds.
+
 `spec.md` carries no `[NEEDS CLARIFICATION]` markers — every drafting
 ambiguity (the carried-over #157 open question, the two Q1/Q2 drafting
 clarifications, and the AI-driven-stage location follow-up) was already

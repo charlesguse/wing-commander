@@ -3,13 +3,10 @@
 # (.specify/init-options.json's speckit_version, plus the matching
 # SPECKIT_SUPPORTED_VERSION constant in wing-commander-preflight/action.yml)
 # current with upstream github/spec-kit releases. on: workflow_call only.
-# Twelve jobs:
+# Ten jobs:
 #   - health-check: re-verifies the CURRENTLY PINNED version first
 #     (scheduled/dispatch only); a failure here skips straight to act's
 #     rollback branch.
-#   - reap-scratch-repos: scheduled/dispatch backstop sweep deleting any
-#                    wing-commander-e2e-* scratch repository whose owning
-#                    lifecycle issue is closed or missing (specs/034).
 #   - detect:       deterministic latest-eligible-release lookup + semver
 #                    classification (patch/minor/major).
 #   - settle:       issue-marker settle-tracking state machine — a freshly
@@ -17,8 +14,9 @@
 #   - evaluate-path: one claude-sonnet-5 judgment step deciding clean-bump /
 #                    needs-migration / ambiguous-options.
 #   - prepare:      deterministic version-bump diff, no push yet.
-#   - e2e-stage:    (minor/major only, specs/034) creates/reuses a scratch
-#                    GitHub repository and runs one bounded AI-driven
+#   - e2e-stage:    (minor/major only, specs/034) scaffolds the candidate
+#                    onto a force-reset branch of the pre-created scratch
+#                    repository and runs one bounded AI-driven
 #                    /speckit-specify-equivalent turn against it, read back
 #                    deterministically — gates verify's combined verdict.
 #   - verify:       tiered smoke test: a lightweight tier always, plus (for
@@ -31,8 +29,6 @@
 #                    PR (health-check failure).
 #   - pr-merged:    posts a closing summary once a version-bump/revert PR
 #                    this feature opened is closed.
-#   - issue-closed: (specs/034) deletes the run's scratch repository when
-#                    its owning lifecycle issue closes.
 #   - comment-reply: resumes an ambiguous-options question from a verified
 #                    maintainer's reply.
 # See specs/027-auto-update-spec-kit/contracts/auto-update-spec-kit-workflow.md
@@ -44,7 +40,7 @@ on:
   workflow_call:
     inputs:
       trigger:
-        description: "scheduled | dispatch | pr-merged | issue-closed | comment-reply — resolved by the wrapper from github.event_name (constitution VII: the stage never reads github.event.* directly)"
+        description: "scheduled | dispatch | pr-merged | comment-reply — resolved by the wrapper from github.event_name (constitution VII: the stage never reads github.event.* directly)"
         type: string
         required: true
       pr-number:
@@ -102,6 +98,21 @@ on:
         type: string
         required: false
         default: "20"
+      e2e-scratch-repo:
+        description: >
+          OWNER/NAME of a pre-created, disposable repository the e2e-stage
+          scaffolds the candidate into. This feature never creates or deletes
+          repositories: a GitHub App installation token cannot create one on a
+          user account at all, and granting the App the Administration rights
+          needed to delete one would give every stage in this pipeline the
+          power to delete this repository. Create the scratch repository once
+          by hand, install the App on it, and set it here. Left empty, the
+          e2e-stage fails and no minor/major candidate is adopted (FR-004: a
+          candidate that cannot be verified is not adopted, and there is no
+          second outcome path).
+        type: string
+        required: false
+        default: ""
       pipeline-repo:
         description: >
           Repository to check out for the pipeline's shared composite actions
@@ -376,78 +387,6 @@ jobs:
           if [ -z "$version" ]; then
             echo "::warning::wing-commander auto-update-spec-kit: could not determine a prior pinned speckit_version from git history — the rollback PR will need a maintainer to fill in the target version by hand."
           fi
-
-  # Scheduled backstop sweep (FR-023): independent of that day's own
-  # detect/settle/verify cycle — runs even when there's nothing new to
-  # check, so a scratch repository whose run died mid-flight, or whose
-  # issue-closed webhook never fired, is still reaped no later than the
-  # next scheduled/dispatch run. Matched only against the
-  # wing-commander-e2e-<digits> name pattern exactly, never a broader glob
-  # (contract's Self-recognition contract).
-  reap-scratch-repos:
-    if: inputs.trigger == 'scheduled' || inputs.trigger == 'dispatch'
-    runs-on: ubuntu-latest
-    environment:
-      name: ${{ inputs.environment }}
-      deployment: ${{ inputs.environment-deployment }}
-    steps:
-      - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Resolve pipeline ref
-        id: pipeline-ref
-        env:
-          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
-          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
-        run: |
-          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
-          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref" | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
-            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
-            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
-          fi
-          if [ -z "$ref" ]; then
-            echo "::error::wing-commander stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
-            exit 1
-          fi
-          echo "ref=$ref" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ inputs.pipeline-repo }}
-          ref: ${{ steps.pipeline-ref.outputs.ref }}
-          token: ${{ github.token }}
-          path: .wing-commander-pipeline
-          persist-credentials: false
-
-      - name: Wing Commander context
-        id: ctx
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
-        with:
-          app-id: ${{ secrets.speckit-app-id }}
-          private-key: ${{ secrets.speckit-app-private-key }}
-
-      - name: Sweep orphaned scratch repositories
-        env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
-          OWNER: ${{ github.repository_owner }}
-        run: |
-          set -uo pipefail
-          names="$(gh repo list "$OWNER" --json name --jq '.[].name' 2>/dev/null | grep -E '^wing-commander-e2e-[0-9]+$' || true)"
-          swept=0
-          while IFS= read -r name; do
-            [ -n "$name" ] || continue
-            issue="${name#wing-commander-e2e-}"
-            state="$(gh issue view "$issue" --json state --jq .state 2>/dev/null || true)"
-            if [ "$state" != "OPEN" ]; then
-              gh repo delete "$OWNER/$name" --yes 2>/dev/null || true
-              swept=$((swept + 1))
-            fi
-          done <<< "$names"
-          echo "reap-scratch-repos: swept $swept orphaned scratch repository(ies)." >> "$GITHUB_STEP_SUMMARY"
 
   # Deterministic latest-eligible-release lookup (gh api + semver compare).
   # Skipped entirely (never routed through) when health-check ran and
@@ -1287,6 +1226,7 @@ jobs:
       passed: ${{ steps.readback.outputs.passed }}
       failure-detail: ${{ steps.readback.outputs.failure-detail }}
       scratch-repo: ${{ steps.scratch-repo.outputs.full-name }}
+      scratch-branch: ${{ steps.scratch-repo.outputs.branch }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v4
@@ -1327,25 +1267,30 @@ jobs:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
 
-      # T008 (FR-019/022): idempotent create-or-reuse, named deterministically
-      # from the lifecycle issue number — no separate name-to-issue mapping
-      # is stored anywhere (research.md).
-      - name: Create or reuse the scratch repository
+      # T008 (FR-019/022): resolve the ONE pre-created scratch repository this
+      # feature is configured with. It is never created and never deleted
+      # here — see the e2e-scratch-repo input for why. Per-run isolation comes
+      # from the branch (named deterministically from the lifecycle issue
+      # number, force-reset below), not from a per-run repository, so no
+      # name-to-issue mapping is stored anywhere (research.md).
+      - name: Resolve the scratch repository
         id: scratch-repo
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
-          OWNER: ${{ github.repository_owner }}
+          SCRATCH_REPO: ${{ inputs.e2e-scratch-repo }}
           ISSUE: ${{ needs.prepare.outputs.issue-number }}
         run: |
           set -uo pipefail
-          full="$OWNER/wing-commander-e2e-$ISSUE"
-          if ! gh repo view "$full" >/dev/null 2>&1; then
-            if ! gh repo create "$full" --private --add-readme; then
-              echo "::error::wing-commander auto-update-spec-kit e2e-stage: 'gh repo create' failed while creating the scratch repository $full."
-              exit 1
-            fi
+          if [ -z "$SCRATCH_REPO" ]; then
+            echo "::error::wing-commander auto-update-spec-kit e2e-stage: no scratch repository is configured, so this candidate cannot be verified end to end and is not adopted. Create one empty private repository, install the wing-commander App on it, and set the repository variable WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_SCRATCH_REPO to its OWNER/NAME (docs/setup.md). Only minor and major candidates need it; patch candidates never reach this job."
+            exit 1
           fi
-          echo "full-name=$full" >> "$GITHUB_OUTPUT"
+          if ! gh repo view "$SCRATCH_REPO" >/dev/null 2>&1; then
+            echo "::error::wing-commander auto-update-spec-kit e2e-stage: the configured scratch repository $SCRATCH_REPO is not visible to the wing-commander App token. Create it, or install the App on it (Contents: read and write is all it needs), then re-dispatch."
+            exit 1
+          fi
+          echo "full-name=$SCRATCH_REPO" >> "$GITHUB_OUTPUT"
+          echo "branch=auto-update-spec-kit/e2e-$ISSUE" >> "$GITHUB_OUTPUT"
 
       # T009: the same `specify init` command `prepare`'s "Write
       # version-bump diff" step already runs, this time against the scratch
@@ -1354,21 +1299,48 @@ jobs:
       # Cloned into a subdirectory of this job's own workspace (rather than
       # $RUNNER_TEMP) so the claude-code-action step below — which operates
       # relative to $GITHUB_WORKSPACE — can be scoped to it by path.
-      - name: Scaffold and push the candidate into the scratch repository
+      #
+      # The scratch repository outlives the run, so the branch is reset to an
+      # EMPTY tree before scaffolding and force-pushed afterwards: whatever a
+      # previous cycle left behind (or the repository's own README) must
+      # never be able to satisfy the read-back's non-empty-spec.md assertion
+      # and make a broken candidate look like it scaffolded correctly.
+      #
+      # Cloned and pushed over an explicitly tokenised URL rather than
+      # `gh repo clone` + `git push`: this is a DIFFERENT repository from the
+      # one actions/checkout credentialed, and `gh` only lends its
+      # credentials to git after `gh auth setup-git`. The token is kept out
+      # of .git/config (the remote is rewritten immediately) and off every
+      # later command line.
+      - name: Scaffold and force-push the candidate into the scratch repository
         id: scaffold
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           FULL_NAME: ${{ steps.scratch-repo.outputs.full-name }}
+          BRANCH: ${{ steps.scratch-repo.outputs.branch }}
           CANDIDATE: ${{ needs.prepare.outputs.candidate-version }}
           BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
         run: |
           set -euo pipefail
           rm -rf e2e-scratch
-          gh repo clone "$FULL_NAME" e2e-scratch
+          auth_url="https://x-access-token:${GH_TOKEN}@github.com/${FULL_NAME}.git"
+          git clone --quiet "$auth_url" e2e-scratch
           (
             cd e2e-scratch
+            git remote set-url origin "https://github.com/${FULL_NAME}.git"
             git config user.name "${BOT_SLUG}[bot]"
             git config user.email "${BOT_SLUG}[bot]@users.noreply.github.com"
+
+            # Empty tree on a fresh branch. `--orphan` needs a commit to
+            # detach from; a scratch repository with no commits at all is
+            # already on an unborn branch, so only rename it there.
+            if git rev-parse --verify HEAD >/dev/null 2>&1; then
+              git checkout --quiet --orphan "$BRANCH"
+              git rm -rq --cached . >/dev/null 2>&1 || true
+              find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+            else
+              git checkout --quiet -b "$BRANCH"
+            fi
 
             if ! command -v uvx >/dev/null 2>&1; then
               echo "::error::wing-commander auto-update-spec-kit e2e-stage: 'uvx' is not available on this runner — cannot scaffold Spec Kit v$CANDIDATE."
@@ -1384,7 +1356,7 @@ jobs:
 
             git add -A
             git commit -m "chore: scaffold Spec Kit v$CANDIDATE for e2e verification" --quiet --allow-empty
-            git push origin HEAD
+            git push --force --quiet "$auth_url" "HEAD:refs/heads/$BRANCH"
           )
 
       # T010: one throwaway /speckit-specify-equivalent turn. Prompt is a
@@ -1468,6 +1440,8 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          FULL_NAME: ${{ steps.scratch-repo.outputs.full-name }}
+          BRANCH: ${{ steps.scratch-repo.outputs.branch }}
           BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
         run: |
           set -uo pipefail
@@ -1477,7 +1451,7 @@ jobs:
             git config user.email "${BOT_SLUG}[bot]@users.noreply.github.com"
             git add -A
             git commit -m "chore: e2e-stage agent output" --quiet || exit 0
-            git push origin HEAD
+            git push --quiet "https://x-access-token:${GH_TOKEN}@github.com/${FULL_NAME}.git" "HEAD:refs/heads/$BRANCH"
           ) || echo "::warning::wing-commander auto-update-spec-kit e2e-stage: best-effort push of the agent-produced spec.md failed — the gating assertion already ran against the local working tree, so this does not affect the verdict."
 
   # Tiered smoke test against the prepared candidate.
@@ -1710,6 +1684,7 @@ jobs:
           STAGE_PASSED: ${{ needs.e2e-stage.outputs.passed }}
           STAGE_DETAIL: ${{ needs.e2e-stage.outputs.failure-detail }}
           SCRATCH_REPO: ${{ needs.e2e-stage.outputs.scratch-repo }}
+          SCRATCH_BRANCH: ${{ needs.e2e-stage.outputs.scratch-branch }}
         run: |
           set -uo pipefail
           if [ "$RELEASE_TYPE" = "patch" ]; then
@@ -1726,8 +1701,9 @@ jobs:
             elif [ "$E2E_PASSED" = "true" ] && { [ "$STAGE_RESULT" != "success" ] || [ "$STAGE_PASSED" != "true" ]; }; then
               passed=false
               # T037/FR-021: a job-level failure before the read-back step
-              # ever runs (e.g. `gh repo create` or the scaffold step
-              # failing) leaves STAGE_DETAIL empty — synthesize a
+              # ever runs (e.g. resolving the scratch repository or the
+              # scaffold step failing) leaves STAGE_DETAIL empty —
+              # synthesize a
               # stage-did-not-complete message here so the narration is
               # never blank or reduced to just the scratch-repo pointer
               # below.
@@ -1742,9 +1718,11 @@ jobs:
           # FR-022/SC-012: name the scratch repository regardless of pass or
           # fail, whenever e2e-stage actually ran — appended into the same
           # failure-detail string the pass path's PR body and the fail
-          # path's issue comment both already read.
+          # path's issue comment both already read. Nothing is ever deleted:
+          # the branch is what the maintainer inspects, and the next cycle
+          # for this same issue force-resets it.
           if [ "$tier" = "lightweight+end-to-end" ] && [ -n "$SCRATCH_REPO" ]; then
-            pointer="The e2e-stage scratch repository $SCRATCH_REPO is retained while this issue stays open, and deleted when it closes."
+            pointer="The e2e-stage ran in $SCRATCH_REPO on branch $SCRATCH_BRANCH, which is left in place for inspection and force-reset by the next run for this issue."
             if [ -n "$detail" ]; then
               detail="$(printf '%s\n%s' "$detail" "$pointer")"
             else
@@ -2192,83 +2170,6 @@ jobs:
           echo "🔙 **Spec Kit reverted to v$restored** — $url merged. This issue stays open and flagged (a rollback is itself the failure this feature wants visible)." > "$RUNNER_TEMP/pr-merged-summary.md"
           gh issue comment "$issue" --body-file "$RUNNER_TEMP/pr-merged-summary.md"
           echo "pr-merged: posted closing summary to #$issue for revert to v$restored." >> "$GITHUB_STEP_SUMMARY"
-
-  # trigger == issue-closed entry point (FR-019/022/023): deletes this
-  # feature's own scratch repository when its owning lifecycle issue
-  # closes. Self-recognition guard: only acts when the closed issue
-  # carries this feature's own settle-tracking marker — an unrelated
-  # closed issue is a no-op, same discipline every other trigger applies.
-  issue-closed:
-    if: inputs.trigger == 'issue-closed'
-    runs-on: ubuntu-latest
-    environment:
-      name: ${{ inputs.environment }}
-      deployment: ${{ inputs.environment-deployment }}
-    steps:
-      - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Resolve pipeline ref
-        id: pipeline-ref
-        env:
-          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
-          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
-        run: |
-          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
-          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref" | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
-            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
-            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
-          fi
-          if [ -z "$ref" ]; then
-            echo "::error::wing-commander stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
-            exit 1
-          fi
-          echo "ref=$ref" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ inputs.pipeline-repo }}
-          ref: ${{ steps.pipeline-ref.outputs.ref }}
-          token: ${{ github.token }}
-          path: .wing-commander-pipeline
-          persist-credentials: false
-
-      - name: Wing Commander context
-        id: ctx
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
-        with:
-          app-id: ${{ secrets.speckit-app-id }}
-          private-key: ${{ secrets.speckit-app-private-key }}
-
-      - name: Verify this issue carries this feature's marker
-        id: guard
-        env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
-          ISSUE: ${{ inputs.issue-number }}
-        run: |
-          set -uo pipefail
-          body="$(gh issue view "$ISSUE" --json body --jq .body 2>/dev/null || true)"
-          if printf '%s' "$body" | grep -qF '<!-- wing-commander-auto-update-spec-kit: candidate='; then
-            echo "recognized=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "recognized=false" >> "$GITHUB_OUTPUT"
-            echo "issue-closed: issue #$ISSUE carries no wing-commander-auto-update-spec-kit marker — not this feature's issue, no-op." >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Delete the scratch repository
-        if: steps.guard.outputs.recognized == 'true'
-        env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
-          OWNER: ${{ github.repository_owner }}
-          ISSUE: ${{ inputs.issue-number }}
-        run: |
-          set -uo pipefail
-          gh repo delete "$OWNER/wing-commander-e2e-$ISSUE" --yes 2>/dev/null || true
-          echo "issue-closed: reaped wing-commander-e2e-$ISSUE (idempotent no-op if it never existed)." >> "$GITHUB_STEP_SUMMARY"
 
   # trigger == comment-reply entry point: resumes an ambiguous-options
   # question from a verified maintainer's reply.

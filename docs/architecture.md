@@ -809,19 +809,17 @@ what the announcement step itself already decided to post.
 
 **Trigger**: daily `schedule` (`cron: "13 7 * * *"`) + manual
 `workflow_dispatch` (the routine adoption path), plus `pull_request:
-[closed]`, `issue_comment: [created]` (the self-managing lifecycle-issue
-and maintainer-reply paths), and `issues: [closed]` (deletes the run's
-e2e-stage scratch repository, below). The wrapper resolves a single typed
-`trigger` input (`scheduled`/`dispatch`/`pr-merged`/`comment-reply`/
-`issue-closed`) from `github.event_name` and checks the
-`WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_PAUSED` kill-switch in its own
-job-level `if:` (constitution VII); the stage never reads
-`github.event.*`/`vars.*`.
+[closed]` and `issue_comment: [created]` (the self-managing lifecycle-issue
+and maintainer-reply paths). The wrapper resolves a single typed `trigger`
+input (`scheduled`/`dispatch`/`pr-merged`/`comment-reply`) from
+`github.event_name` and checks the `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_PAUSED`
+kill-switch in its own job-level `if:` (constitution VII); the stage never
+reads `github.event.*`/`vars.*`.
 
-**Design** — a nine-job upgrade chain plus three entry-point/backstop jobs,
-all under one `concurrency: wing-commander-auto-update-spec-kit` group so a
-scheduled run, a manual dispatch, and a comment-reply resume can never race
-(FR-015 — one active upgrade cycle at a time):
+**Design** — an eight-job upgrade chain plus two entry-point jobs, all under
+one `concurrency: wing-commander-auto-update-spec-kit` group so a scheduled
+run, a manual dispatch, and a comment-reply resume can never race (FR-015 —
+one active upgrade cycle at a time):
 
 - `health-check` (scheduled/dispatch only) re-verifies the **currently
   pinned** version first — its failure short-circuits the chain straight to
@@ -860,30 +858,31 @@ scheduled run, a manual dispatch, and a comment-reply resume can never race
   gating result of `e2e-stage` (below). No fallback content of any kind — a
   missing expected artifact fails the same single path as any other defect
   (FR-004).
-- `e2e-stage` (minor/major only) creates or reuses a private scratch GitHub
-  repository named `wing-commander-e2e-<lifecycle-issue-number>` under the
-  consuming repository's own owner, scaffolds it with the candidate's own
-  regenerated `.specify/` artifacts, and runs one bounded
-  `claude-code-action@v1` turn producing a throwaway feature spec — read
-  back deterministically (never trusting agent narration, matching
-  `evaluate-path`'s own convention) as "did the stage complete, and did it
-  produce a non-empty `specs/*/spec.md`." Its result is one of `verify`'s
-  gating checks. The scratch repository is retained while its lifecycle
-  issue stays open and deleted by the `issue-closed` job (below) or the
-  `reap-scratch-repos` scheduled backstop sweep (specs/034).
+- `e2e-stage` (minor/major only) scaffolds the candidate's own regenerated
+  `.specify/` artifacts onto a branch of a **pre-created** scratch
+  repository and runs one bounded `claude-code-action@v1` turn producing a
+  throwaway feature spec — read back deterministically (never trusting agent
+  narration, matching `evaluate-path`'s own convention) as "did the stage
+  complete, and did it produce a non-empty `specs/*/spec.md`." Its result is
+  one of `verify`'s gating checks.
+
+  The repository comes from `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_SCRATCH_REPO`
+  and this feature **never creates or deletes repositories**: a GitHub App
+  installation token cannot create one on a user account at all, and the
+  `Administration: write` grant that would let it delete one would also let
+  every stage in this pipeline delete the consuming repository. Create one
+  empty private repository by hand, install the App on it, and point the
+  variable at it. Per-run isolation is the branch, not the repository:
+  `auto-update-spec-kit/e2e-<lifecycle-issue-number>` is reset to an empty
+  tree and force-pushed on every run, so nothing a previous cycle left
+  behind can satisfy the read-back's assertion. Left unconfigured, the job
+  fails and no `minor`/`major` candidate is adopted — the same single
+  outcome path every other verification failure takes (FR-004).
 - `act` opens the version-bump PR on a pass, leaves the pin untouched and
   flags the issue on a fail, or opens the revert PR on a health-check
   failure. It never merges its own PR (constitution V, FR-017). Whenever the
-  deeper tier ran, the narration (pass or fail) also names the run's scratch
-  repository and states it is deleted on issue close.
-- `issue-closed` (specs/034) deletes the run's `wing-commander-e2e-*` scratch
-  repository when its lifecycle issue closes, guarded by the same
-  self-recognition marker check every other trigger uses.
-- `reap-scratch-repos` (scheduled/dispatch, specs/034) is a backstop sweep,
-  independent of that day's own detect/settle/verify cycle: lists every
-  `wing-commander-e2e-*` repository under the owner and deletes any whose
-  derived lifecycle issue is closed or no longer exists — covers a run that
-  died mid-flight or an `issue-closed` webhook that never fired.
+  deeper tier ran, the narration (pass or fail) also names the scratch
+  repository and the branch holding that run's evidence.
 
 **Self-recognition** — the feature owns no `spec:<NNN>` identity and never
 assumes any other PR/issue is its own. PRs it opens carry a body marker

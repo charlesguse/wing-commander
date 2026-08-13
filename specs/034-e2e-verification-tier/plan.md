@@ -6,6 +6,21 @@
 
 **Note**: This template is filled in by the `/speckit-plan` command. See `.specify/templates/plan-template.md` for the execution workflow.
 
+> **Amended after PR #187's CI run — scratch-repository provisioning was removed.**
+> Everywhere below that describes this feature *creating* or *deleting* a
+> scratch repository (`gh repo create`/`delete`/`list`, the per-run
+> `wing-commander-e2e-<issue>` repository, the `issues: {types: [closed]}`
+> trigger, the `issue-closed` job, and the `reap-scratch-repos` sweep) is
+> **superseded**. A GitHub App installation token cannot create a repository
+> on a user account, and the `Administration: write` needed to delete one is
+> installation-wide — the same token could delete this repository from any
+> agent step. The shipped design uses **one pre-created scratch repository**
+> (`WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_SCRATCH_REPO`) with a per-run
+> branch `auto-update-spec-kit/e2e-<issue>` force-reset before every scaffold.
+> See spec.md's Assumptions, `contracts/e2e-verification-tier.md`'s
+> "Scratch-repository lifecycle" section, and tasks.md Phase 9. Everything
+> else in this document still holds.
+
 ## Summary
 
 Replace `auto-update-spec-kit.yml`'s `verify` job "End-to-end verification
@@ -86,14 +101,13 @@ init` command `prepare` already runs, reused a second time against the
 scratch repository's clone. No new external service or vendored copy of
 Spec Kit's source.
 
-**Storage**: No new persisted state file. The scratch repository's identity
-is derived, not stored — its name is a deterministic function of the
-lifecycle issue number (`wing-commander-e2e-<issue-number>`), discoverable
-by any job that already has the issue number and re-derivable by the
-scheduled reaper via `gh repo list --json name` filtered by prefix, so
-"is this scratch repo's issue closed or gone" needs no separate mapping
-file (research.md — same "state that already exists beats a new ledger"
-reasoning specs/027/research.md already established for settle-tracking and
+**Storage**: No new persisted state file. The scratch repository is named in
+one repo variable; the per-run *branch* inside it is derived, not stored — a
+deterministic function of the lifecycle issue number
+(`auto-update-spec-kit/e2e-<issue-number>`), re-derivable by any job that
+already has the issue number, so nothing needs a mapping file (research.md —
+same "state that already exists beats a new ledger" reasoning
+specs/027/research.md already established for settle-tracking and
 rollback-target lookup).
 
 **Testing**: `.github/scripts/auto-update-spec-kit-tests/` (specs/027's
@@ -134,19 +148,19 @@ AI-driven stage per minor/major candidate").
 **Constraints**: FR-004's single-failure-path rule (no fallback content, no
 second outcome branch); FR-013's containment rule now explicitly spans two
 kinds of ephemeral state — the disposable isolated worktree (discarded every
-outcome, unchanged from specs/027) and the new scratch repository (retained
-while the lifecycle issue is open, deleted on close, FR-019/023) — neither
-may leak into this repository's real `specs/` tree, pushed branches, or
-opened PRs. The scheduled job needs `gh repo create`/`gh repo delete`
-rights it does not have today (spec.md Assumptions flags this as a required,
-broader grant). Every new agent step declares `--model` and `--max-turns`
+outcome, unchanged from specs/027) and the scratch repository's per-run
+branch (force-reset before every scaffold, left in place afterwards,
+FR-019/023) — neither may leak into this repository's real `specs/` tree,
+pushed branches, or opened PRs. The job needs only `Contents: read and write`
+on the scratch repository, already in the App's documented grant: it creates
+and deletes no repository (spec.md Assumptions records why that changed). Every new agent step declares `--model` and `--max-turns`
 (constitution II).
 
 **Scale/Scope**: Two existing workflow files modified
 (`auto-update-spec-kit.yml`: `verify` job's end-to-end step split into a
-per-script chain, new `e2e-stage` job, new `combine` inputs, new
-`reap-scratch-repos` step/job; `wing-commander-auto-update-spec-kit.yml`:
-new `issues: {types: [closed]}` trigger), five test-harness files extended
+per-script chain, new `e2e-stage` job, new `combine` inputs;
+`wing-commander-auto-update-spec-kit.yml`: three new inputs threaded from
+repo variables), five test-harness files extended
 (`t4_verify.sh`, `gh_stub.py`, `t7_gating.py`, plus `README.md`'s scenario
 table and mutation table), and one out-of-tree file corrected during
 implementation per FR-016 (`specs/027-auto-update-spec-kit/quickstart.md`
@@ -178,34 +192,41 @@ Scenario 7). No new workflow file, no new `.specify/memory/*.json` config.
   **Pass.**
 - **III. Simple, GitHub-Native Interaction**: The lifecycle issue remains
   the single legible record — narration gains per-check specificity and the
-  FR-008 hint, and now also names the scratch repository and its deletion
-  trigger (FR-022), all as comments on the same issue. No new dashboard, no
+  FR-008 hint, and now also names the scratch repository and the branch
+  holding that run's evidence (FR-022), all as comments on the same issue. No new dashboard, no
   new CLI, no second issue or label taxonomy (FR-006/FR-009 preserved).
   **Pass.**
-- **IV. Automation-First**: No new manual step is introduced. Closing the
-  lifecycle issue — already the maintainer's own action, not a new one this
-  feature invents — now also triggers an automated deletion the maintainer
-  is told about in advance (FR-022), rather than requiring a separate manual
-  cleanup step. **Pass.**
-- **V. Security (NON-NEGOTIABLE)**: The scratch repository is created and
-  deleted only by this stage's own bot identity, never by an untrusted
-  actor's input — its name is derived from the lifecycle issue *number*
-  (a trusted, workflow-computed value), never from issue or comment body
-  text. The new `e2e-stage` agent step reads only the candidate's own
+- **IV. Automation-First**: One manual step is introduced, and it is
+  deliberate: a maintainer creates the scratch repository once and names it in
+  `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_SCRATCH_REPO`. The automated
+  alternative — the pipeline provisioning and reaping repositories itself — is
+  not available to a GitHub App installation token on a user account, and the
+  permission that would make deletion possible is one this pipeline should not
+  hold (spec.md Assumptions). Per-run cleanup stays automatic: the branch is
+  force-reset before every scaffold, so no maintainer action is needed between
+  runs. **Pass, with the one-time setup recorded in `docs/setup.md`.**
+- **V. Security (NON-NEGOTIABLE)**: This stage creates and deletes no
+  repository at all, so its App token needs no repository-administration
+  grant — a grant that, being installation-wide rather than call-site scoped,
+  would have let any of the pipeline's fourteen agent steps delete the
+  consuming repository. The branch it writes is derived from the lifecycle
+  issue *number* (a trusted, workflow-computed value), never from issue or
+  comment body text. The new `e2e-stage` agent step reads only the candidate's own
   regenerated `.specify/` artifacts and a fixed, hardcoded throwaway feature
   description — never live-fetched or user-supplied content — so there is no
   new untrusted-content-as-instruction surface (unlike `evaluate-path`,
   which already frames release notes as data; this step has no comparable
   external input at all). No web tools. Only the candidate's own checkout
-  (already fetched via the disposable bundle, per specs/027) and the newly
-  created scratch repository — never a fork PR head — are ever checked out.
+  (already fetched via the disposable bundle, per specs/027) and the
+  configured scratch repository — never a fork PR head — are ever checked
+  out.
   This stage still never merges or approves anything. **Pass.**
 - **VI. Portability**: No new consuming-repo-owned config file. The new repo
-  variable follows the existing `WING_COMMANDER_<PURPOSE>_<KNOB>` naming
-  convention. The scratch repository is created under the *consuming*
-  repository's own owner/account (`github.repository_owner`), using the
-  same App installation token every other step in this stage already mints
-  — nothing hardcodes Wing Commander itself or any other repository name.
+  variables follow the existing `WING_COMMANDER_<PURPOSE>_<KNOB>` naming
+  convention. The scratch repository is whichever one the consuming repository
+  names in its own variable, reached with the same App installation token
+  every other step in this stage already mints — nothing hardcodes Wing
+  Commander itself or any other repository name.
   **Pass.**
 - **VII. Two Interfaces**: `auto-update-spec-kit.yml` remains
   `workflow_call`-only and still reads no `github.event.*`/`vars.*`

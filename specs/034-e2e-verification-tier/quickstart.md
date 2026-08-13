@@ -4,12 +4,13 @@ Prerequisites: same as `specs/027-auto-update-spec-kit/quickstart.md` (a repo
 checkout with `gh` authenticated as a maintainer, a willingness to stage
 disposable issues/PRs/repositories against a scratch environment — never
 against this repository's real pinned version without immediately cleaning
-up). Additionally: the scheduled job's token needs repository create/delete
-rights for Scenarios 4-7 below (spec.md Assumptions) — those scenarios can
-alternatively be exercised entirely through the executable harness
-(`.github/scripts/auto-update-spec-kit-tests/`, extended by this feature),
-which is the primary, repeatable validation path per FR-015/FR-020 and does
-not need real `gh repo create`/`delete` rights at all.
+up). Additionally: the live halves of Scenarios 4-7 below need the scratch
+repository named by `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_SCRATCH_REPO`
+to exist with the App installed on it — the pipeline never creates one. Those
+scenarios can alternatively be exercised entirely through the executable
+harness (`.github/scripts/auto-update-spec-kit-tests/`, extended by this
+feature), which is the primary, repeatable validation path per
+FR-015/FR-020 and touches no real repository at all.
 
 Run the harness with:
 
@@ -101,38 +102,45 @@ bash .github/scripts/auto-update-spec-kit-tests/run-tests.sh          # everythi
    applied, the adoption decision, and the run's flow are otherwise
    identical (FR-009's "narration content only").
 3. Confirm every tier=lightweight+end-to-end run's narration — pass or
-   fail — names the scratch repository and states it is deleted on issue
-   close (SC-012), via a `check_contains` on the composed detail/summary
-   text, not just the failure path.
+   fail — names the scratch repository AND the branch holding that run's
+   evidence (SC-012), via a `check_contains` on the composed detail/summary
+   text, not just the failure path; and that it never promises a deletion
+   this feature cannot perform (`check_not_contains "deleted"`).
 
-## Scenario 7 — Scratch repository: retained while open, deleted on close (US3 Acceptance #5/#6, FR-019/022/023, SC-011)
+## Scenario 7 — Scratch repository: resolved, never created, never deleted (US3 Acceptance #5/#6, FR-019/022/023, SC-011)
 
-1. Harness (`gh_stub.py`'s new `repo create`/`repo delete`/`repo list`
-   handling): drive the extracted scratch-repo-create step for a lifecycle
-   issue number, confirm `gh repo view` then reports it present; re-run the
-   create step (simulating a re-dispatch) and confirm no duplicate is
-   recorded (idempotency).
-2. Drive the `issue-closed` trigger's deletion branch against that same
-   issue number; confirm the stub's state marks the repo deleted, and that
-   re-running the deletion branch against an already-deleted (or
-   never-created) repo does not error (idempotent).
-3. Drive the scheduled backstop sweep against a stub state containing one
-   repo whose issue is `OPEN`, one whose issue is `CLOSED`, and one whose
-   issue number no longer exists at all; confirm only the latter two are
-   deleted.
-4. Live equivalent (optional, needs real repo create/delete rights):
-   observe a full minor/major cycle create `wing-commander-e2e-<issue>`,
-   confirm it's reachable from the lifecycle issue's own comments
-   (SC-012), close the issue, confirm the repository is gone.
+1. Configured and visible: drive the extracted "Resolve the scratch
+   repository" step with `SCRATCH_REPO` set and the stub answering `gh repo
+   view`; confirm it outputs that repository and the branch
+   `auto-update-spec-kit/e2e-<issue>` derived from the lifecycle issue.
+   Re-run it (simulating a re-dispatch) and confirm the same branch — the
+   branch, not a repository, is what makes a run isolated.
+2. Assert the negative directly: grep the stub's own call log and confirm
+   **zero** `repo create` and **zero** `repo delete` calls were made. This is
+   the assertion the feature exists to keep true; a future edit that
+   reintroduces provisioning fails here rather than at the App's permission
+   boundary in production.
+3. Unconfigured: drive the same step with `SCRATCH_REPO` empty; confirm the
+   step FAILS (exit 1), leaves `full-name` unset, and says both that the
+   candidate is not adopted and which repository variable to set. An
+   unverifiable candidate must fail, not skip the deepest check (FR-004).
+4. Configured but not visible to the App token (`GH_STUB_FAIL="repo view"`):
+   confirm the step fails and names the repository plus the two things a
+   maintainer can do about it (create it, or install the App on it).
+5. Live equivalent (optional, needs the scratch repository to exist): observe
+   a full minor/major cycle force-reset `auto-update-spec-kit/e2e-<issue>`,
+   confirm it is reachable from the lifecycle issue's own comments (SC-012),
+   and confirm a second run for the same issue starts from an empty tree.
 
 ## Scenario 8 — Lightweight-only tier is unaffected (Edge Case: patch-type jump)
 
 1. Reach the settled state for a patch-type jump (same shape as specs/027
    Scenario 7's patch half).
 2. Expected: `e2e-stage` never runs (`if:
-   needs.prepare.outputs.release-type != 'patch'` short-circuits), no
-   scratch repository is ever created for this cycle, `tier=lightweight`,
-   unchanged from specs/027.
+   needs.prepare.outputs.release-type != 'patch'` short-circuits), the
+   scratch repository is never touched for this cycle, `tier=lightweight`,
+   unchanged from specs/027 — and the narration carries no scratch-repository
+   pointer at all.
 
 ## Scenario 9 — Every deeper-tier failure reason matches the tier's actual behaviour (FR-016, SC-007)
 
@@ -140,8 +148,9 @@ bash .github/scripts/auto-update-spec-kit-tests/run-tests.sh          # everythi
    narrative (implementation-phase edit, not this plan's own artifact)
    against the tier's actual checks after implementation.
 2. Expected: the narrative states the tier exercises every dependent
-   Spec Kit script plus one real AI-driven stage against a scratch
-   repository, single failure path, no fallback — matching this feature's
+   Spec Kit script plus one real AI-driven stage against a branch of the
+   pre-created scratch repository, single failure path, no fallback —
+   matching this feature's
    spec.md and this quickstart's scenarios above, not the old "throwaway
    spec-kit-driven stage generated and discarded" description that never
    matched the implementation.

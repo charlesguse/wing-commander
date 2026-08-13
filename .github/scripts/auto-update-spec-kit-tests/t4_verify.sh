@@ -25,11 +25,12 @@ seed_worktree() { # seed_worktree <dir>
 }
 
 echo "--- Scenario 7: tier selection (patch = lightweight only; minor/major adds e2e) ---"
-combine() { # combine <release-type> <lw-passed> <lw-detail> <e2e-outcome> <e2e-passed> <e2e-detail> [stage-result] [stage-passed] [stage-detail] [scratch-repo]
+combine() { # combine <release-type> <lw-passed> <lw-detail> <e2e-outcome> <e2e-passed> <e2e-detail> [stage-result] [stage-passed] [stage-detail] [scratch-repo] [scratch-branch]
   new_step_env
   GHA_SUBST=()
   export RELEASE_TYPE="$1" LW_PASSED="$2" LW_DETAIL="$3" E2E_OUTCOME="$4" E2E_PASSED="$5" E2E_DETAIL="$6"
   export STAGE_RESULT="${7:-success}" STAGE_PASSED="${8:-true}" STAGE_DETAIL="${9:-}" SCRATCH_REPO="${10:-}"
+  export SCRATCH_BRANCH="${11:-auto-update-spec-kit/e2e-42}"
   run_step 'auto-update-spec-kit__verify__*combine*.sh' >/dev/null 2>&1
   C_TIER="$(out tier)"; C_PASSED="$(out passed)"; C_DETAIL="$(out failure-detail)"; C_SUM="$(summary)"
 }
@@ -42,7 +43,7 @@ combine() { # combine <release-type> <lw-passed> <lw-detail> <e2e-outcome> <e2e-
 combine patch true "" skipped "" ""
 check "S7/S8 patch tier" "$C_TIER" "lightweight"
 check "S7/S8 patch passed" "$C_PASSED" "true"
-check_not_contains "S7/S8 patch narration names no scratch repository" "$C_DETAIL" "wing-commander-e2e-"
+check_not_contains "S7/S8 patch narration names no scratch repository" "$C_DETAIL" "wc-speckit-e2e"
 
 combine minor true "" success true ""
 check "S7 minor tier" "$C_TIER" "lightweight+end-to-end"
@@ -291,35 +292,55 @@ check_not_contains "S6 non-zero-exit failure has no FR-008 hint" "$(out failure-
 echo "  an e2e-stage-incomplete failure does NOT carry the hint either"
 check_not_contains "S6 e2e-stage-incomplete failure has no FR-008 hint" "$S4_DETAIL" "FR-018"
 
-echo "  every tier=lightweight+end-to-end run's narration names the scratch repository, pass or fail (SC-012)"
-combine minor true "" success true "" success true "" "wing-commander/wing-commander-e2e-42"
-check_contains "S6 passing run names the scratch repository" "$C_DETAIL" "wing-commander-e2e-42"
-combine minor true "" success false "e2e: spec.md never landed" success true "" "wing-commander/wing-commander-e2e-42"
-check_contains "S6 failing run also names the scratch repository" "$C_DETAIL" "wing-commander-e2e-42"
+echo "  every tier=lightweight+end-to-end run's narration names the scratch repository AND branch, pass or fail (SC-012)"
+combine minor true "" success true "" success true "" "wing-commander/wc-speckit-e2e"
+check_contains "S6 passing run names the scratch repository" "$C_DETAIL" "wing-commander/wc-speckit-e2e"
+check_contains "S6 passing run names the branch that holds the evidence" "$C_DETAIL" "auto-update-spec-kit/e2e-42"
+combine minor true "" success false "e2e: spec.md never landed" success true "" "wing-commander/wc-speckit-e2e"
+check_contains "S6 failing run also names the scratch repository" "$C_DETAIL" "wing-commander/wc-speckit-e2e"
+check_contains "S6 failing run also names the branch" "$C_DETAIL" "auto-update-spec-kit/e2e-42"
+check_not_contains "S6 narration never promises a deletion this feature cannot do" "$C_DETAIL" "deleted"
 
 echo
-echo "--- Scenario 7: scratch repository lifecycle — retained while open, deleted on close (US3, FR-019/022/023, SC-011) ---"
+echo "--- Scenario 7: the pre-created scratch repository is resolved, never created or deleted (US3, FR-019/022, SC-011) ---"
 
-echo "  create-or-reuse is idempotent (a re-dispatch does not duplicate)"
+echo "  configured and visible: resolves to the repo and this issue's own branch"
 new_step_env
-export GH_TOKEN=stub OWNER=wing-commander ISSUE=77
+export GH_TOKEN=stub SCRATCH_REPO="wing-commander/wc-speckit-e2e" ISSUE=77
 GHA_SUBST=()
-run_step 'auto-update-spec-kit__e2e-stage__*create-or-reuse-the-scratch-repository*.sh' >/dev/null 2>&1
-check "S7 scratch repo created" "$(out full-name)" "wing-commander/wing-commander-e2e-77"
+run_step 'auto-update-spec-kit__e2e-stage__*resolve-the-scratch-repository*.sh' >/dev/null 2>&1
+check "S7 resolves the configured repository" "$(out full-name)" "wing-commander/wc-speckit-e2e"
+check "S7 branch is derived from the lifecycle issue" "$(out branch)" "auto-update-spec-kit/e2e-77"
 
-: > "$GITHUB_OUTPUT"   # reset outputs only; keep the SAME GH_STATE to simulate a re-dispatch
+echo "  a re-dispatch for the same issue resolves identically (the branch IS the per-run isolation)"
+: > "$GITHUB_OUTPUT"
 GHA_SUBST=()
-run_step 'auto-update-spec-kit__e2e-stage__*create-or-reuse-the-scratch-repository*.sh' >/dev/null 2>&1
-check "S7 re-dispatch reuses the existing repo (idempotent)" "$(out full-name)" "wing-commander/wing-commander-e2e-77"
-check "S7 no duplicate recorded" "$(jq '.repos | length' "$GH_STATE")" "1"
+run_step 'auto-update-spec-kit__e2e-stage__*resolve-the-scratch-repository*.sh' >/dev/null 2>&1
+check "S7 re-dispatch resolves the same branch" "$(out branch)" "auto-update-spec-kit/e2e-77"
 
-echo "  scratch-repository creation failure fails the step itself, not just silently continues (T037, FR-021 edge case)"
+echo "  NOTHING in this stage creates or deletes a repository (the whole reason it is pre-created)"
+check "S7 no repo create call was ever made" "$(grep -c 'repo create' "$GH_CALLS")" "0"
+check "S7 no repo delete call was ever made" "$(grep -c 'repo delete' "$GH_CALLS")" "0"
+
+echo "  unconfigured: the step FAILS the stage rather than skipping the deepest check (FR-004, no second outcome path)"
 new_step_env
-export GH_TOKEN=stub OWNER=wing-commander ISSUE=88 GH_STUB_FAIL="repo create"
+export GH_TOKEN=stub SCRATCH_REPO="" ISSUE=88
 GHA_SUBST=()
-run_step 'auto-update-spec-kit__e2e-stage__*create-or-reuse-the-scratch-repository*.sh' >/dev/null 2>&1
-check "S7 create-repo failure makes the step itself fail" "$?" "1"
-check "S7 create-repo failure leaves full-name unset" "$(out full-name)" ""
+run_step 'auto-update-spec-kit__e2e-stage__*resolve-the-scratch-repository*.sh' >"$WORK/resolve-unset.log" 2>&1
+check "S7 unconfigured scratch repo fails the step" "$?" "1"
+check "S7 unconfigured leaves full-name unset" "$(out full-name)" ""
+check_contains "S7 unconfigured says the candidate is not adopted" "$(cat "$WORK/resolve-unset.log")" "is not adopted"
+check_contains "S7 unconfigured names the variable to set" "$(cat "$WORK/resolve-unset.log")" "WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_SCRATCH_REPO"
+
+echo "  configured but invisible to the App token: fails, and says which of the two things to fix (T037, FR-021 edge case)"
+new_step_env
+export GH_TOKEN=stub SCRATCH_REPO="wing-commander/wc-speckit-e2e" ISSUE=88 GH_STUB_FAIL="repo view"
+GHA_SUBST=()
+run_step 'auto-update-spec-kit__e2e-stage__*resolve-the-scratch-repository*.sh' >"$WORK/resolve-invisible.log" 2>&1
+check "S7 invisible scratch repo fails the step" "$?" "1"
+check "S7 invisible leaves full-name unset" "$(out full-name)" ""
+check_contains "S7 invisible names the repository" "$(cat "$WORK/resolve-invisible.log")" "wing-commander/wc-speckit-e2e"
+check_contains "S7 invisible tells the maintainer to install the App" "$(cat "$WORK/resolve-invisible.log")" "install the App on it"
 unset GH_STUB_FAIL
 
 echo "  ...and the verify job's combine step still narrates the incomplete stage, distinguishable from a candidate-artifact failure"
@@ -327,44 +348,5 @@ combine minor true "" success true "" failure
 check "S7 stage-not-run combined result is not passed" "$C_PASSED" "false"
 check_contains "S7 combined detail states the stage did not complete" "$C_DETAIL" "did not complete"
 check_not_contains "S7 combined detail is not candidate-artifact wording" "$C_DETAIL" "spec.md"
-
-echo "  issue-closed trigger deletes the scratch repository, idempotently"
-# Fresh env + a real create: the create-failure scenario above deliberately
-# left GH_STATE with no repo at all (and ISSUE=88), so deleting against that
-# state would assert nothing.
-new_step_env
-export GH_TOKEN=stub OWNER=wing-commander ISSUE=77
-GHA_SUBST=()
-run_step 'auto-update-spec-kit__e2e-stage__*create-or-reuse-the-scratch-repository*.sh' >/dev/null 2>&1
-check "S7 scratch repo exists before its issue closes" "$(jq -r '.repos["wing-commander-e2e-77"].deleted' "$GH_STATE")" "false"
-GHA_SUBST=()
-run_step 'auto-update-spec-kit__issue-closed__*delete-the-scratch-repository*.sh' >/dev/null 2>&1
-check "S7 repo marked deleted" "$(jq -r '.repos["wing-commander-e2e-77"].deleted' "$GH_STATE")" "true"
-
-GHA_SUBST=()
-run_step 'auto-update-spec-kit__issue-closed__*delete-the-scratch-repository*.sh' >/dev/null 2>&1
-check "S7 re-deleting an already-deleted repo does not error" "$?" "0"
-
-new_step_env
-export GH_TOKEN=stub OWNER=wing-commander ISSUE=999
-GHA_SUBST=()
-run_step 'auto-update-spec-kit__issue-closed__*delete-the-scratch-repository*.sh' >/dev/null 2>&1
-check "S7 deleting a never-created repo does not error" "$?" "0"
-
-echo "  scheduled sweep deletes closed/missing-issue repos, leaves open-issue repos alone"
-new_step_env
-cat > "$GH_STATE" <<'STATE'
-{"repos": {"wing-commander-e2e-10": {"owner": "wing-commander", "deleted": false},
-           "wing-commander-e2e-20": {"owner": "wing-commander", "deleted": false},
-           "wing-commander-e2e-30": {"owner": "wing-commander", "deleted": false}},
- "issues": {"10": {"number": 10, "state": "open", "title": "", "body": "", "labels": [], "comments": []},
-            "20": {"number": 20, "state": "closed", "title": "", "body": "", "labels": [], "comments": []}}}
-STATE
-export GH_TOKEN=stub OWNER=wing-commander
-GHA_SUBST=()
-run_step 'auto-update-spec-kit__reap-scratch-repos__*sweep-orphaned-scratch-repositories*.sh' >/dev/null 2>&1
-check "S7 sweep leaves the open-issue repo alone" "$(jq -r '.repos["wing-commander-e2e-10"].deleted' "$GH_STATE")" "false"
-check "S7 sweep deletes the closed-issue repo" "$(jq -r '.repos["wing-commander-e2e-20"].deleted' "$GH_STATE")" "true"
-check "S7 sweep deletes the repo whose issue no longer exists" "$(jq -r '.repos["wing-commander-e2e-30"].deleted' "$GH_STATE")" "true"
 
 report "T4 verify"

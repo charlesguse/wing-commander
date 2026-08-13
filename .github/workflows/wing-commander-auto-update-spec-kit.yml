@@ -1,9 +1,8 @@
 # Maintenance — Auto-Update Spec Kit (thin wrapper).
-# Five triggers multiplexed into one typed `trigger` input: the daily
+# Four triggers multiplexed into one typed `trigger` input: the daily
 # schedule / on-demand workflow_dispatch (detect+adopt), pull_request(closed)
-# (post-merge summary), issue_comment(created) (resume an ambiguous-options
-# question), and issues(closed) (delete the run's scratch repository,
-# specs/034). Every job lives in auto-update-spec-kit.yml
+# (post-merge summary), and issue_comment(created) (resume an
+# ambiguous-options question). Every job lives in auto-update-spec-kit.yml
 # (docs/architecture.md), called by local path — this wrapper only resolves
 # triggers, gates, and vars.* (constitution VII).
 name: "Wing Commander · auto-update-spec-kit"
@@ -16,8 +15,6 @@ on:
     types: [closed]
   issue_comment:
     types: [created]
-  issues:
-    types: [closed]
 
 permissions: {}
 
@@ -38,7 +35,6 @@ jobs:
         ${{ github.event_name == 'schedule' && 'scheduled'
             || github.event_name == 'workflow_dispatch' && 'dispatch'
             || github.event_name == 'pull_request' && 'pr-merged'
-            || github.event_name == 'issues' && 'issue-closed'
             || 'comment-reply' }}
       pr-number: ${{ github.event.pull_request.number || '' }}
       pr-merged: ${{ github.event.pull_request.merged || false }}
@@ -51,6 +47,7 @@ jobs:
       model: ${{ vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_MODEL || 'claude-sonnet-5' }}
       e2e-stage-model: ${{ vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_STAGE_MODEL || 'claude-sonnet-5' }}
       e2e-stage-max-turns: ${{ vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_STAGE_MAX_TURNS || '20' }}
+      e2e-scratch-repo: ${{ vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_SCRATCH_REPO || '' }}
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
