@@ -1252,12 +1252,9 @@ jobs:
           [ -n "$reason_text" ] || reason_text="see the failing run's step summary"
           restart_workflow="$SELF_WORKFLOW"
           [ -n "$restart_workflow" ] || restart_workflow="<your implement wrapper workflow>"
-          # The stall commit above leaves spec-meta.json's `iteration` at the
-          # iteration that just failed, and the idempotency guard only lets a
-          # stalled stage through at recorded+1 (same rule the healthy
-          # re-dispatch above follows). Printing $ITERATION here handed the
-          # maintainer a command the guard silently swallowed as a duplicate —
-          # a green run with every real step skipped.
+          # The stall commit leaves `iteration` at the one that just failed, and
+          # the guard admits a stalled stage only at recorded+1. Advising
+          # $ITERATION is a dispatch the guard drops as a duplicate.
           restart_iteration=$((ITERATION + 1))
           {
             echo "⏸️ **Implementation stalled** — iteration $ITERATION of the implement/converge loop failed (last attempt on \`$TIER\`), and no higher model tier remains to escalate to, so this specification is now **stalled** (nothing restarts automatically)."
