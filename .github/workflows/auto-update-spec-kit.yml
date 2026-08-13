@@ -1210,20 +1210,12 @@ jobs:
   # the lightweight tier's own end-to-end step.
   e2e-stage:
     needs: prepare
-    # Two guards, both load-bearing:
-    #
-    # `always() &&` — `prepare` sits downstream of `evaluate-path`, which
-    # only survives its own skipped `comment-reply` ancestor via `always()`.
-    # A skipped ancestor keeps suppressing descendants through the needs
-    # graph, so without a status-check function of its own this job is
-    # skipped before its `if` is ever consulted, exactly as `prepare` and
-    # `verify` were.
-    #
-    # `needs.prepare.result == 'success' &&` — required BECAUSE of the
-    # always(). A failed `prepare` publishes no outputs, so
-    # `release-type` reads as the empty string, and `'' != 'patch'` is TRUE:
-    # without this guard the always() would send the e2e stage off to
-    # scaffold a candidate that was never prepared.
+    # Two guards, both load-bearing. `always()` because a skipped ancestor
+    # keeps suppressing descendants through the needs graph, so without a
+    # status-check function this job is skipped before its `if` is read.
+    # `result == 'success'` BECAUSE of that always(): a failed `prepare`
+    # publishes no outputs, so `release-type` reads as '' and `'' != 'patch'`
+    # is TRUE — the stage would scaffold a candidate that was never prepared.
     if: >-
       always() &&
       needs.prepare.result == 'success' &&
@@ -1329,11 +1321,9 @@ jobs:
       # credentials to git after `gh auth setup-git`. The token is kept out
       # of .git/config (the remote is rewritten immediately) and off every
       # later command line.
-      # Same missing dependency `prepare` hit on run 31658562063: the scaffold
-      # step below drives Spec Kit through `uvx`, which is not on the
-      # GitHub-hosted ubuntu image. Its `command -v uvx` guard turns that into
-      # a clean error rather than a confusing one, but the stage still cannot
-      # do its job without uv actually being installed.
+      # The scaffold step drives Spec Kit through `uvx`, which is not on the
+      # GitHub-hosted ubuntu image — the same missing dependency `prepare` hit
+      # on run 31658562063.
       - name: Install uv (provides uvx for the Spec Kit CLI)
         uses: astral-sh/setup-uv@v10
 
