@@ -1329,6 +1329,14 @@ jobs:
       # credentials to git after `gh auth setup-git`. The token is kept out
       # of .git/config (the remote is rewritten immediately) and off every
       # later command line.
+      # Same missing dependency `prepare` hit on run 31658562063: the scaffold
+      # step below drives Spec Kit through `uvx`, which is not on the
+      # GitHub-hosted ubuntu image. Its `command -v uvx` guard turns that into
+      # a clean error rather than a confusing one, but the stage still cannot
+      # do its job without uv actually being installed.
+      - name: Install uv (provides uvx for the Spec Kit CLI)
+        uses: astral-sh/setup-uv@v10
+
       - name: Scaffold and force-push the candidate into the scratch repository
         id: scaffold
         env:
