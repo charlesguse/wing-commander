@@ -1210,7 +1210,24 @@ jobs:
   # the lightweight tier's own end-to-end step.
   e2e-stage:
     needs: prepare
-    if: needs.prepare.outputs.release-type != 'patch'
+    # Two guards, both load-bearing:
+    #
+    # `always() &&` — `prepare` sits downstream of `evaluate-path`, which
+    # only survives its own skipped `comment-reply` ancestor via `always()`.
+    # A skipped ancestor keeps suppressing descendants through the needs
+    # graph, so without a status-check function of its own this job is
+    # skipped before its `if` is ever consulted, exactly as `prepare` and
+    # `verify` were.
+    #
+    # `needs.prepare.result == 'success' &&` — required BECAUSE of the
+    # always(). A failed `prepare` publishes no outputs, so
+    # `release-type` reads as the empty string, and `'' != 'patch'` is TRUE:
+    # without this guard the always() would send the e2e stage off to
+    # scaffold a candidate that was never prepared.
+    if: >-
+      always() &&
+      needs.prepare.result == 'success' &&
+      needs.prepare.outputs.release-type != 'patch'
     runs-on: ubuntu-latest
     # Empirically verified 2026-08-05/06 against GitHub-hosted runners
     # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
