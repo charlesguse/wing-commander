@@ -1024,7 +1024,29 @@ jobs:
   # each job is a fresh runner and nothing is pushed to origin until `act`).
   prepare:
     needs: evaluate-path
-    if: needs.evaluate-path.result == 'success' && needs.evaluate-path.outputs.outcome == 'clean-bump'
+    # `always() &&` is load-bearing, not decoration. `evaluate-path` needs
+    # BOTH `settle` and `comment-reply`, and exactly one of them runs per
+    # cycle — on the scheduled/dispatch path `comment-reply` is skipped, and
+    # evaluate-path only survives that because its own `if` opens with
+    # `always()`. A skipped ancestor keeps suppressing descendants through
+    # the needs graph, so a downstream job with no status-check function of
+    # its own is skipped before its `if` is ever consulted. That is what
+    # happened here: evaluate-path succeeded, emitted outcome=clean-bump,
+    # commented "clean version bump — preparing it" on the lifecycle issue,
+    # and prepare/verify/act silently did nothing — for every cycle since
+    # the comment-reply arm was added. `verify` (always() && ...) and `act`
+    # (always() && ...) were already written this way; `prepare` was the one
+    # job in the chain that was not, which is why the whole adopt path went
+    # quiet rather than half of it.
+    #
+    # The result/outcome guards below still do all the real gating: this can
+    # only ever let prepare run when evaluate-path genuinely succeeded AND
+    # genuinely emitted clean-bump. A cancelled run leaves result=cancelled,
+    # so cancellation still stops here.
+    if: >-
+      always() &&
+      needs.evaluate-path.result == 'success' &&
+      needs.evaluate-path.outputs.outcome == 'clean-bump'
     runs-on: ubuntu-latest
     # Empirically verified 2026-08-05/06 against GitHub-hosted runners
     # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
@@ -1152,7 +1174,12 @@ jobs:
   # Tiered smoke test against the prepared candidate.
   verify:
     needs: prepare
-    if: needs.prepare.result == 'success'
+    # Same reason as `prepare` above — the skipped `comment-reply` ancestor
+    # suppresses this job too, so guarding only `prepare` would have moved
+    # the silence one job down the chain instead of ending it. `act` was
+    # already written with `always()`; `prepare` and `verify` were the two
+    # that were not.
+    if: always() && needs.prepare.result == 'success'
     runs-on: ubuntu-latest
     # Empirically verified 2026-08-05/06 against GitHub-hosted runners
     # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
