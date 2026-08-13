@@ -872,7 +872,11 @@ one active upgrade cycle at a time):
   `Administration: write` grant that would let it delete one would also let
   every stage in this pipeline delete the consuming repository. Create one
   empty private repository by hand, install the App on it, and point the
-  variable at it. Per-run isolation is the branch, not the repository:
+  variable at it. The App installation is what the job needs: `e2e-stage`
+  mints a **second** installation token scoped to that repository alone,
+  because the shared `wing-commander-context` token is scoped to the
+  repository the stage runs in and can therefore neither see nor push to the
+  scratch repository. Per-run isolation is the branch, not the repository:
   `auto-update-spec-kit/e2e-<lifecycle-issue-number>` is reset to an empty
   tree and force-pushed on every run, so nothing a previous cycle left
   behind can satisfy the read-back's assertion. Left unconfigured, the job
