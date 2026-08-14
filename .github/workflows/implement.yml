@@ -1021,9 +1021,24 @@ jobs:
             --allowedTools "${{ steps.tool-args-post-progress-comment.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-post-progress-comment.outputs.disallowed-tools }}"
 
-      # Progress-comment run's metrics. This invocation uploads no execution
-      # artifact, so the metrics step anchors directly after the agent step
-      # itself — every agent invocation gets its own summary block.
+      # Same `always()` reasoning as the cycle and retry uploads above: this
+      # agent runs under continue-on-error, so a failure here leaves the job
+      # green and the loop dispatches the next cycle regardless — the missing
+      # progress comment is the only symptom, and this transcript is the only
+      # place the cause (turn cap, a denied `gh issue comment`) is recorded.
+      # A distinct artifact name because -cycle and -retry were already
+      # uploaded from this same job.
+      - name: Upload Claude execution log (progress)
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.progress.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-execution-output-progress
+          path: ${{ runner.temp }}/claude-execution-output.json
+          if-no-files-found: ignore
+
+      # Progress-comment run's metrics, anchored directly after the agent
+      # step and its transcript upload — every agent invocation gets its own
+      # summary block.
       - name: Agent run metrics summary (progress comment)
         if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.progress.outcome != 'skipped'
         # Belt-and-braces for the action's own "never fail the job" contract.
@@ -1227,7 +1242,21 @@ jobs:
             git push
           fi
 
+      # `always()` for the same reason the empty-commit branch above exists:
+      # this job's entire purpose is to tell a human the stage stopped, and
+      # a step that only reports must not be suppressed by the bookkeeping
+      # step in front of it. That branch covered the case where there was
+      # nothing to commit; it did not cover the `git push` being REJECTED,
+      # which is a live possibility here — auto-rebase force-pushes this
+      # same spec branch on a schedule. Without this, a losing race turns
+      # the whole stall report into a red run with no label, no reason and
+      # no restart runbook on the issue.
+      #
+      # Gated on ctx rather than bare: this step needs the App token that
+      # step mints, so running it after a failed mint would only add a
+      # confusing second error on top of the real one.
       - name: Report stalled on lifecycle issue
+        if: always() && steps.ctx.outcome == 'success'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ISSUE: ${{ inputs.issue-number }}
@@ -1298,7 +1327,15 @@ jobs:
             echo "   \`\`\`"
           } > /tmp/stall-comment.md
 
+      # Same reasoning, one step further on: the step above opens with
+      # `gh label create` / `gh issue edit --add-label` and neither is
+      # `|| true`, so one transient API error would write the runbook to
+      # /tmp and never post it. The callout composite runs `set -uo pipefail`
+      # without `-e`, so a body-file that was never written degrades to a
+      # summary-only comment rather than erroring — the maintainer still
+      # learns the stage stalled.
       - name: Announce the stall on the lifecycle issue
+        if: always() && steps.ctx.outcome == 'success'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ steps.ctx.outputs.token }}

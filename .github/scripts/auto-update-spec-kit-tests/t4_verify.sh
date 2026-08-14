@@ -25,12 +25,18 @@ seed_worktree() { # seed_worktree <dir>
 }
 
 echo "--- Scenario 7: tier selection (patch = lightweight only; minor/major adds e2e) ---"
-combine() { # combine <release-type> <lw-passed> <lw-detail> <e2e-outcome> <e2e-passed> <e2e-detail> [stage-result] [stage-passed] [stage-detail] [scratch-repo] [scratch-branch]
+# LW_OUTCOME is the lightweight STEP's own outcome, distinct from the
+# verdict it published: `success` means the tier ran and reached a verdict
+# (pass or fail), anything else means a step before it failed and no tier
+# ever looked at the candidate. Defaulted here so every pre-existing
+# scenario keeps describing a tier that actually ran.
+combine() { # combine <release-type> <lw-passed> <lw-detail> <e2e-outcome> <e2e-passed> <e2e-detail> [stage-result] [stage-passed] [stage-detail] [scratch-repo] [scratch-branch] [lw-outcome]
   new_step_env
   GHA_SUBST=()
   export RELEASE_TYPE="$1" LW_PASSED="$2" LW_DETAIL="$3" E2E_OUTCOME="$4" E2E_PASSED="$5" E2E_DETAIL="$6"
   export STAGE_RESULT="${7:-success}" STAGE_PASSED="${8:-true}" STAGE_DETAIL="${9:-}" SCRATCH_REPO="${10:-}"
-  export SCRATCH_BRANCH="${11:-auto-update-spec-kit/e2e-42}"
+  export SCRATCH_BRANCH="${11:-auto-update-spec-kit/e2e-42}" LW_OUTCOME="${12:-success}"
+  export RUN_URL="https://github.com/charlesguse/wing-commander/actions/runs/424242"
   run_step 'auto-update-spec-kit__verify__*combine*.sh' >/dev/null 2>&1
   C_TIER="$(out tier)"; C_PASSED="$(out passed)"; C_DETAIL="$(out failure-detail)"; C_SUM="$(summary)"
 }
@@ -70,6 +76,38 @@ echo "--- guard: a minor whose e2e step was skipped because lightweight failed -
 combine minor false "lightweight blew up" skipped "" ""
 check "lightweight failure still fails the combined result" "$C_PASSED" "false"
 check_contains "and reports the lightweight reason" "$C_DETAIL" "lightweight blew up"
+
+# The combine step is the sole producer of verify's passed/failure-detail
+# outputs, and act posts failure-detail verbatim as the body of the
+# "Verification failed" callout. Under the default `success()` condition it
+# was skipped whenever ANY earlier step of the job failed — the artifact
+# download, the bundle fetch, the App-token mint — so verify published
+# passed='' and failure-detail='', and the lifecycle issue got a callout with
+# an empty body: SC-004/FR-010 says the issue text alone must convey the
+# outcome. It is now `if: always()`, and this is the arm that fires then.
+echo "--- guard: verify never reached its tier at all (an earlier step failed) ---"
+for lw_outcome in skipped failure; do
+  combine patch "" "" skipped "" "" success true "" "" "" "$lw_outcome"
+  check "LW_OUTCOME=$lw_outcome still reports a verdict" "$C_PASSED" "false"
+  check "LW_OUTCOME=$lw_outcome still names the tier" "$C_TIER" "lightweight"
+  check_contains "LW_OUTCOME=$lw_outcome blames the stage, not the candidate" \
+    "$C_DETAIL" "not a candidate defect"
+  check_contains "LW_OUTCOME=$lw_outcome points at the run" "$C_DETAIL" "/actions/runs/"
+  check_contains "LW_OUTCOME=$lw_outcome summary records it" "$C_SUM" "never reached"
+done
+
+# The same arm on a minor, where the tier name differs — the maintainer is
+# told which tier never ran, not just that something did not run.
+combine minor "" "" skipped "" "" success true "" "" "" skipped
+check "minor: never-reached arm still names the full tier" "$C_TIER" "lightweight+end-to-end"
+check_contains "minor: narration names the full tier" "$C_DETAIL" "lightweight+end-to-end"
+
+# No false positive: a tier that ran and genuinely failed must keep its own
+# reason, never be overwritten by the never-reached narration.
+combine patch false "create-new-feature.sh --json exited non-zero: boom" skipped "" "" success true "" "" "" success
+check "a tier that ran and failed is still a candidate verdict" "$C_PASSED" "false"
+check_contains "and keeps its own reason" "$C_DETAIL" "boom"
+check_not_contains "and is not relabelled a stage problem" "$C_DETAIL" "never reached"
 
 echo
 echo "--- Scenario 1: healthy candidate — the per-script chain passes end to end (SC-002, SC-009) ---"

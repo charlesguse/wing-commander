@@ -1502,6 +1502,20 @@ jobs:
             --allowedTools "Bash(e2e-scratch/.specify/scripts/bash/create-new-feature.sh:*),Write(e2e-scratch/**),Edit(e2e-scratch/**)"
             --disallowedTools "WebSearch,WebFetch,Bash(git push:*)"
 
+      # Same convention as evaluate-path's `decide` and comment-reply's
+      # `interpret`: `always()` so the log survives precisely the runs where
+      # the agent step failed and the log is the only record of why. The
+      # read-back below reports the agent's non-success as a stage problem
+      # without ever seeing inside it, so this artifact is the maintainer's
+      # only route to the cause.
+      - name: Upload Claude execution log
+        if: always() && steps.decide.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-execution-output-e2e-stage
+          path: ${{ runner.temp }}/claude-execution-output.json
+          if-no-files-found: ignore
+
       # T011: deterministic read-back — never trusts agent narration,
       # exactly like evaluate-path's decide-outcome (FR-021's
       # completion-vs-shape distinction).
@@ -1775,10 +1789,28 @@ jobs:
         if: always() && steps.lightweight.outputs.worktree != ''
         run: git worktree remove --force "${{ steps.lightweight.outputs.worktree }}" 2>/dev/null || rm -rf "${{ steps.lightweight.outputs.worktree }}"
 
+      # `always()` is load-bearing, for exactly the reason the T037/FR-021
+      # arm inside this script already exists — applied to this job instead
+      # of e2e-stage. This step is the sole producer of verify's `passed`,
+      # `failure-detail` and `tier` outputs, and `act` narrates the whole
+      # cycle from them. Under the default `success()` condition a failure
+      # in ANY earlier step here (the artifact download, the bundle fetch,
+      # the App-token mint, the pipeline checkout) skips it, leaving
+      # `passed=''` and `failure-detail=''`. act's failure arm then fires
+      # correctly on `passed != 'true'` but posts a callout whose body is
+      # the empty string, so the lifecycle issue says only that something
+      # failed — the SC-004/FR-010 requirement is that the issue text alone
+      # conveys the outcome.
+      #
+      # This cannot turn a failure into a pass: the LW_OUTCOME arm below
+      # reports not-passed whenever the lightweight tier did not run, and
+      # `passed` is otherwise still read from the tiers' own verdicts.
       - name: Combine verification result
         id: result
+        if: always()
         env:
           RELEASE_TYPE: ${{ needs.prepare.outputs.release-type }}
+          LW_OUTCOME: ${{ steps.lightweight.outcome }}
           LW_PASSED: ${{ steps.lightweight.outputs.passed }}
           LW_DETAIL: ${{ steps.lightweight.outputs.failure-detail }}
           E2E_OUTCOME: ${{ steps.end-to-end.outcome }}
@@ -1789,6 +1821,7 @@ jobs:
           STAGE_DETAIL: ${{ needs.e2e-stage.outputs.failure-detail }}
           SCRATCH_REPO: ${{ needs.e2e-stage.outputs.scratch-repo }}
           SCRATCH_BRANCH: ${{ needs.e2e-stage.outputs.scratch-branch }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -uo pipefail
           if [ "$RELEASE_TYPE" = "patch" ]; then
@@ -1796,6 +1829,25 @@ jobs:
           else
             tier="lightweight+end-to-end"
           fi
+
+          # The lightweight tier is unconditional in this job, so any outcome
+          # other than success means a step BEFORE it failed and no tier ever
+          # examined the candidate. Report that in the same voice the
+          # e2e-stage arm below uses — a stage problem, not a candidate
+          # defect — rather than falling through with an empty LW_PASSED and
+          # letting act post a bodyless callout.
+          if [ "$LW_OUTCOME" != "success" ]; then
+            {
+              echo "tier=$tier"
+              echo "passed=false"
+              echo "failure-detail<<AUTOUPDATE_EOF"
+              echo "the verify job never reached its $tier check (the lightweight tier's outcome was '$LW_OUTCOME') — this is a stage/infrastructure problem, not a candidate defect. The pin is unchanged and nothing was pushed. Read the failing step's own log line for the cause: $RUN_URL"
+              echo "AUTOUPDATE_EOF"
+            } >> "$GITHUB_OUTPUT"
+            echo "verify: never reached the $tier check — the lightweight tier's outcome was '${LW_OUTCOME:-skipped}'." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
           passed="$LW_PASSED"
           detail="$LW_DETAIL"
           if [ "$tier" = "lightweight+end-to-end" ] && [ "$LW_PASSED" = "true" ]; then

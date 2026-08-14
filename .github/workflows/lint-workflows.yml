@@ -1255,6 +1255,117 @@ jobs:
       - name: Gate 15 self-test — the detector actually detects
         run: python3 .github/scripts/verify-gate-15.py
 
+      # Gate 16 — every agent step's execution log survives the agent's own
+      # failure. `anthropics/claude-code-action` writes its transcript to
+      # claude-execution-output.json in the runner temp dir, and that file is
+      # the only record of what the agent actually did: the read-back steps that
+      # follow deliberately never trust agent narration, so when one reports
+      # "the agent step did not complete" it says nothing about WHY, and the
+      # artifact is the maintainer's only route to the cause.
+      #
+      # A plain upload step inherits the default `success()` condition, which
+      # drops the artifact precisely on the runs where the agent failed —
+      # the log is captured exactly when it is not needed and discarded
+      # exactly when it is. Every stage that got this right wrote `always()`;
+      # auto-update-spec-kit's `e2e-stage` agent (the newest one) shipped
+      # with no upload at all, so its failures left nothing behind but a
+      # one-line "stage/infrastructure problem" verdict.
+      #
+      # Two shapes both count as covering an agent step, because both ship:
+      # a job-wide catch-all (`if: always()`, no per-step key, relying on
+      # if-no-files-found: ignore) and a per-agent upload keyed on
+      # `steps.<id>.outcome != 'skipped'`. What never counts is an upload
+      # with no status-check function, or a job whose only keyed uploads name
+      # other agent steps — which is how a second agent added to an
+      # already-covered job goes uncaptured.
+      - name: Gate 16 — every agent step's execution log survives its failure
+        run: |
+          python3 - <<'PYEOF'
+          import glob, re, sys, yaml
+
+          AGENT = "anthropics/claude-code-action"
+          LOG = "claude-execution-output.json"
+          # Built by concatenation, never written literally: GitHub's parser
+          # scans `run:` text for expressions and rejects the WHOLE file with
+          # "The expression is not closed" if it finds an unclosed one — even
+          # inside a quoted string in a heredoc. yaml.safe_load and `bash -n`
+          # both pass it, so nothing local catches it; the only symptom is
+          # this workflow's checks quietly not appearing.
+          TEMP_EXPR = "$" + "{{ runner.temp }}"
+          STATUS_FN = re.compile(r"\b(always|failure|cancelled)\s*\(")
+          STEP_KEY = re.compile(r"steps\.([A-Za-z0-9_-]+)\.outcome")
+
+
+          def published(path):
+              """True for a stage an adopter can call — same rule as gate 7."""
+              wf = yaml.safe_load(open(path, encoding="utf-8")) or {}
+              # PyYAML resolves the bare key `on` to True (YAML 1.1).
+              on = wf.get(True, wf.get("on"))
+              return (isinstance(on, dict) and "workflow_call" in on) or \
+                     (isinstance(on, list) and "workflow_call" in on), wf
+
+
+          failures = []
+          for path in sorted(glob.glob(".github/workflows/*.yml")
+                             + glob.glob(".github/workflows/*.yaml")):
+              try:
+                  is_stage, wf = published(path)
+              except yaml.YAMLError:
+                  continue  # the YAML guard rail reports this, with a better message
+              if not is_stage:
+                  continue
+              for job_name, job in sorted((wf.get("jobs") or {}).items()):
+                  steps = (job or {}).get("steps") or []
+                  if not isinstance(steps, list):
+                      continue
+                  uploads = []
+                  for s in steps:
+                      if not isinstance(s, dict):
+                          continue
+                      with_ = s.get("with") or {}
+                      if "actions/upload-artifact" in str(s.get("uses", "")) and \
+                         LOG in str(with_.get("path", "")):
+                          cond = str(s.get("if", ""))
+                          uploads.append((cond, set(STEP_KEY.findall(cond))))
+                  for s in steps:
+                      if not isinstance(s, dict) or \
+                         AGENT not in str(s.get("uses", "")):
+                          continue
+                      sid = s.get("id")
+                      covered = any(
+                          STATUS_FN.search(cond) and (not keys or sid in keys)
+                          for cond, keys in uploads)
+                      if covered:
+                          continue
+                      why = ("no step in this job uploads it at all"
+                             if not uploads else
+                             "the job's execution-log upload(s) are keyed to "
+                             "other steps or carry no status-check function")
+                      failures.append(
+                          f"::error file={path}::Gate 16: the agent step "
+                          f"{s.get('name')!r} (id: {sid!r}) in job {job_name!r} has no "
+                          f"execution log that survives its own failure — {why}. "
+                          f"claude-execution-output.json is the only record of what the "
+                          f"agent did, and the read-back steps downstream deliberately do "
+                          f"not read agent narration, so without it a failed agent leaves "
+                          f"nothing to diagnose. Add an actions/upload-artifact step for "
+                          f"{TEMP_EXPR}/{LOG} gated "
+                          f"`always() && steps.{sid}.outcome != 'skipped'` "
+                          f"(with if-no-files-found: ignore).")
+
+          for f in failures:
+              print(f)
+          print(f"Gate 16: checked every agent step in every published stage; "
+                f"{len(failures)} failure(s).")
+          sys.exit(1 if failures else 0)
+          PYEOF
+
+      # Same reasoning as Gate 15's self-test: the fleet this runs against is
+      # (and should stay) clean, so a green Gate 16 says nothing about whether
+      # Gate 16 works.
+      - name: Gate 16 self-test — the detector actually detects
+        run: python3 .github/scripts/verify-gate-16.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when
