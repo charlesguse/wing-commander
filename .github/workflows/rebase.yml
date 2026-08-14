@@ -713,8 +713,18 @@ jobs:
       # checkout, so a push rejected because the branch moved meanwhile is
       # skipped silently, with no lifecycle comment. On success, drop any
       # stale rebase:blocked label (auto-recovery).
+      #
+      # `!cancelled()` rather than `always()`: the status function is here to
+      # stop a scope-verified result being dropped by an unrelated earlier
+      # failure (the execution-log upload, the tool-args composite), which it
+      # still does. It was never meant to defeat cancellation — and `always()`
+      # did exactly that, since "Verify AI resolution scope" above is also
+      # status-gated and would still set push=true on a cancelled run, so
+      # cancelling mid-flight force-pushed the spec branch anyway.
       - name: Publish rebased branch
-        if: always() && (steps.clean.outputs.push == 'true' || steps.verify.outputs.push == 'true')
+        if: >-
+          !cancelled() &&
+          (steps.clean.outputs.push == 'true' || steps.verify.outputs.push == 'true')
         env:
           SLUG: ${{ matrix.slug }}
           ISSUE: ${{ matrix.issue }}
@@ -745,9 +755,17 @@ jobs:
       # left byte-for-byte as it was — nothing was ever pushed — then escalate
       # to the lifecycle issue, re-deriving it from the pre-attempt tip. If
       # the issue cannot be trusted, record why and act no further.
+      #
+      # `!cancelled()` for the same reason as the publish step above: this arm
+      # stamps rebase:blocked on the lifecycle issue and comments on it, and a
+      # cancelled run should not leave that marker behind for a rebase nobody
+      # finished evaluating. The status function is still doing its real job —
+      # reaching this arm after an earlier step failed.
       - name: Abandon and escalate
         id: escalate
-        if: always() && (steps.verify.outputs.escalate == 'true' || steps.attempt.outputs.outcome == 'error')
+        if: >-
+          !cancelled() &&
+          (steps.verify.outputs.escalate == 'true' || steps.attempt.outputs.outcome == 'error')
         env:
           SLUG: ${{ matrix.slug }}
           BEFORE: ${{ steps.attempt.outputs.before }}

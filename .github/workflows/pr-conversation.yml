@@ -708,6 +708,24 @@ jobs:
             --allowedTools "${{ steps.tool-args-classify.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-classify.outputs.disallowed-tools }}"
 
+      # The action writes its full transcript — every tool call, including
+      # permission denials — to claude-execution-output.json in the runner
+      # temp dir; the streamed job log does not contain it. `always()` is
+      # what makes it useful: the schema check immediately below `exit 1`s
+      # on a bad or missing terminal result, and under the default
+      # `success()` condition that failure would take the transcript down
+      # with the runner — discarding it on exactly the runs that need a
+      # post-mortem. It is also what watchdog.yml's "Collect: execution-
+      # output artifacts" step reads, so without this the watchdog's
+      # denied-tool detection is blind to this stage.
+      - name: Upload Claude execution log
+        if: always() && steps.agent.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-execution-output-classify
+          path: ${{ runner.temp }}/claude-execution-output.json
+          if-no-files-found: ignore
+
       # Mirrors clarify.yml's own gate: the action exits zero even when the
       # agent run itself errored, so a missing/malformed terminal result
       # must be caught explicitly before anything downstream trusts it.
@@ -1472,6 +1490,21 @@ jobs:
             --json-schema '{"type":"object","required":["mutated","summary"],"properties":{"mutated":{"type":"boolean"},"summary":{"type":"string"},"artifact-url":{"type":["string","null"]}}}'
             --allowedTools "${{ steps.tool-args-act.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-act.outputs.disallowed-tools }}"
+
+      # Same reasoning as the classify upload — and it matters more here,
+      # because this is the MUTATING agent: the schema check below `exit 1`s
+      # on a bad terminal result, which is precisely the case where the agent
+      # may have half-committed something, and the transcript is the only
+      # record of what it touched. Keyed by job-index because the matrix
+      # entries are classification objects with no index field of their own,
+      # and artifact names must be unique within a run.
+      - name: Upload Claude execution log (act)
+        if: always() && steps.agent.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-execution-output-act-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/claude-execution-output.json
+          if-no-files-found: ignore
 
       - name: Fail on agent API error
         id: act-result

@@ -992,8 +992,18 @@ jobs:
 
       # The stalled comment always carries a link and a manual full-teardown
       # runbook scoped to this spec's own remaining branches.
+      #
+      # `always()` because the step above ends in a `git push` onto the spec
+      # branch, which auto-rebase force-pushes on a schedule: a rejected push
+      # would otherwise skip the only step that tells anyone the pipeline
+      # stalled, and this stage's trigger is a one-shot `pull_request:
+      # closed` — nothing re-dispatches it, so that report is lost for good.
+      # The `idempotency.outcome == 'success'` clause is load-bearing rather
+      # than defensive: idempotency is what proves `meta` resolved, and a
+      # bare `always()` would let this run with ISSUE empty and comment into
+      # the void.
       - name: Flip stage label and comment stalled notice
-        if: steps.idempotency.outputs.skip != 'true'
+        if: always() && steps.idempotency.outcome == 'success' && steps.idempotency.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           SLUG: ${{ steps.spec.outputs.slug }}

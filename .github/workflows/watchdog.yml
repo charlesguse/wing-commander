@@ -1963,8 +1963,14 @@ jobs:
           path: ${{ runner.temp }}/watchdog-triage-decision.json
           if-no-files-found: warn
 
+      # `always()` for the same reason as the two steps above, and it only
+      # started to matter once `act` was allowed to run after a failed triage
+      # leg: this upload is the sole route by which a produced fix diff
+      # reaches `act`, so under the default `success()` it would be dropped
+      # on exactly the leg whose later steps (the rung gate, the decision
+      # persist) failed — the one case where act now still runs and needs it.
       - name: Upload propose-fix diff artifact
-        if: steps.diff-check.outputs.has-diff == 'true'
+        if: always() && steps.diff-check.outputs.has-diff == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: watchdog-triage-diff-${{ matrix.index }}
@@ -1982,7 +1988,31 @@ jobs:
   # shared report step.
   act:
     needs: [collect, diagnose, triage]
+    # `!cancelled()` is load-bearing. `triage` is a fail-fast: false matrix,
+    # but a JOB's result is `failure` if any leg failed — and a job with no
+    # status-check function of its own is skipped whenever anything in its
+    # needs-closure failed, before its `if` is evaluated. So one leg losing
+    # its App-token mint or its checkout used to suppress the report for
+    # EVERY Finding, including the ones whose own triage completed cleanly.
+    # FR-022 calls the lifecycle-issue report "the one write every path
+    # through this workflow performs unconditionally"; it was not.
+    #
+    # Surviving that is what the triage side was already built for and never
+    # got to do: `Persist triage decision` and `Upload triage decision
+    # artifact` are both `always()`-gated, `Download triage decision` is
+    # continue-on-error, and `Load triage decision` carries an explicit
+    # "no artifact → treat this Finding as report-only" fallback that no run
+    # could reach while this job was being skipped.
+    #
+    # `!cancelled()` rather than `always()` so cancelling a run still stops
+    # it, and `diagnose.result == 'success'` BECAUSE of the status function:
+    # a failed diagnose publishes no outputs, so `findings` reads as '' and
+    # `'' != '[]'` is TRUE — the matrix would then try to fromJson('') and
+    # the job would die on its own strategy. Same shape as #187's guard on
+    # auto-update-spec-kit's e2e-stage.
     if: >-
+      !cancelled() &&
+      needs.diagnose.result == 'success' &&
       needs.diagnose.outputs.outcome != 'passed-inspection' &&
       needs.collect.outputs.evidence-available != 'false' &&
       needs.diagnose.outputs.findings != '[]'
