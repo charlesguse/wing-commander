@@ -1257,8 +1257,8 @@ jobs:
 
       # Gate 16 — every agent step's execution log survives the agent's own
       # failure. `anthropics/claude-code-action` writes its transcript to
-      # ${{ runner.temp }}/claude-execution-output.json, and that file is the
-      # only record of what the agent actually did: the read-back steps that
+      # claude-execution-output.json in the runner temp dir, and that file is
+      # the only record of what the agent actually did: the read-back steps that
       # follow deliberately never trust agent narration, so when one reports
       # "the agent step did not complete" it says nothing about WHY, and the
       # artifact is the maintainer's only route to the cause.
@@ -1285,6 +1285,13 @@ jobs:
 
           AGENT = "anthropics/claude-code-action"
           LOG = "claude-execution-output.json"
+          # Built by concatenation, never written literally: GitHub's parser
+          # scans `run:` text for expressions and rejects the WHOLE file with
+          # "The expression is not closed" if it finds an unclosed one — even
+          # inside a quoted string in a heredoc. yaml.safe_load and `bash -n`
+          # both pass it, so nothing local catches it; the only symptom is
+          # this workflow's checks quietly not appearing.
+          TEMP_EXPR = "$" + "{{ runner.temp }}"
           STATUS_FN = re.compile(r"\b(always|failure|cancelled)\s*\(")
           STEP_KEY = re.compile(r"steps\.([A-Za-z0-9_-]+)\.outcome")
 
@@ -1342,7 +1349,7 @@ jobs:
                           f"agent did, and the read-back steps downstream deliberately do "
                           f"not read agent narration, so without it a failed agent leaves "
                           f"nothing to diagnose. Add an actions/upload-artifact step for "
-                          f"${{{{ runner.temp }}}}/{LOG} gated "
+                          f"{TEMP_EXPR}/{LOG} gated "
                           f"`always() && steps.{sid}.outcome != 'skipped'` "
                           f"(with if-no-files-found: ignore).")
 
