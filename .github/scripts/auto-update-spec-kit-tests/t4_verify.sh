@@ -304,9 +304,38 @@ check_not_contains "S6 narration never promises a deletion this feature cannot d
 echo
 echo "--- Scenario 7: the pre-created scratch repository is resolved, never created or deleted (US3, FR-019/022, SC-011) ---"
 
+echo "  the OWNER/NAME split that feeds the scratch-scoped token mint"
+new_step_env
+export SCRATCH_REPO="wing-commander/wc-speckit-e2e"
+GHA_SUBST=()
+run_step 'auto-update-spec-kit__e2e-stage__*split-the-scratch-repository*.sh' >/dev/null 2>&1
+check "S7 split yields the owner the token is minted against" "$(out owner)" "wing-commander"
+check "S7 split yields the repository name" "$(out name)" "wc-speckit-e2e"
+
+echo "  unconfigured: the step FAILS the stage rather than skipping the deepest check (FR-004, no second outcome path)"
+new_step_env
+export SCRATCH_REPO=""
+GHA_SUBST=()
+run_step 'auto-update-spec-kit__e2e-stage__*split-the-scratch-repository*.sh' >"$WORK/split-unset.log" 2>&1
+check "S7 unconfigured scratch repo fails the step" "$?" "1"
+check "S7 unconfigured leaves owner unset" "$(out owner)" ""
+check_contains "S7 unconfigured says the candidate is not adopted" "$(cat "$WORK/split-unset.log")" "is not adopted"
+check_contains "S7 unconfigured names the variable to set" "$(cat "$WORK/split-unset.log")" "WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_SCRATCH_REPO"
+
+# A malformed value must not reach create-github-app-token, where it fails
+# with that action's own generic message against a nonsense owner.
+for bad in "wing-commander/wc/extra" "wc-speckit-e2e" "wing-commander/" "/wc-speckit-e2e"; do
+  new_step_env
+  export SCRATCH_REPO="$bad"
+  GHA_SUBST=()
+  run_step 'auto-update-spec-kit__e2e-stage__*split-the-scratch-repository*.sh' >"$WORK/split-bad.log" 2>&1
+  check "S7 malformed '$bad' fails the step" "$?" "1"
+  check_contains "S7 malformed '$bad' says what shape is expected" "$(cat "$WORK/split-bad.log")" "OWNER/NAME"
+done
+
 echo "  configured and visible: resolves to the repo and this issue's own branch"
 new_step_env
-export GH_TOKEN=stub SCRATCH_REPO="wing-commander/wc-speckit-e2e" ISSUE=77
+export GH_TOKEN=stub TOKEN_OUTCOME=success SCRATCH_REPO="wing-commander/wc-speckit-e2e" ISSUE=77
 GHA_SUBST=()
 run_step 'auto-update-spec-kit__e2e-stage__*resolve-the-scratch-repository*.sh' >/dev/null 2>&1
 check "S7 resolves the configured repository" "$(out full-name)" "wing-commander/wc-speckit-e2e"
@@ -322,19 +351,33 @@ echo "  NOTHING in this stage creates or deletes a repository (the whole reason 
 check "S7 no repo create call was ever made" "$(grep -c 'repo create' "$GH_CALLS")" "0"
 check "S7 no repo delete call was ever made" "$(grep -c 'repo delete' "$GH_CALLS")" "0"
 
-echo "  unconfigured: the step FAILS the stage rather than skipping the deepest check (FR-004, no second outcome path)"
+# Run 31679204393: the shared wing-commander-context token is scoped to the
+# repository the stage runs in, so it 404s on the scratch repository however
+# the App is installed. The scratch-scoped mint is continue-on-error so this
+# step can name what to fix — which makes "did the mint actually succeed" a
+# gate this step now owns, and an unchecked one would let the stage proceed
+# with an empty token and fail later with an unrelated message.
+echo "  the scratch-scoped token mint failed: fails HERE, naming the fix, not later on a git error"
 new_step_env
-export GH_TOKEN=stub SCRATCH_REPO="" ISSUE=88
+export GH_TOKEN="" TOKEN_OUTCOME=failure SCRATCH_REPO="wing-commander/wc-speckit-e2e" ISSUE=88
 GHA_SUBST=()
-run_step 'auto-update-spec-kit__e2e-stage__*resolve-the-scratch-repository*.sh' >"$WORK/resolve-unset.log" 2>&1
-check "S7 unconfigured scratch repo fails the step" "$?" "1"
-check "S7 unconfigured leaves full-name unset" "$(out full-name)" ""
-check_contains "S7 unconfigured says the candidate is not adopted" "$(cat "$WORK/resolve-unset.log")" "is not adopted"
-check_contains "S7 unconfigured names the variable to set" "$(cat "$WORK/resolve-unset.log")" "WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_SCRATCH_REPO"
+run_step 'auto-update-spec-kit__e2e-stage__*resolve-the-scratch-repository*.sh' >"$WORK/resolve-nomint.log" 2>&1
+check "S7 failed token mint fails the step" "$?" "1"
+check "S7 failed token mint leaves full-name unset" "$(out full-name)" ""
+check_contains "S7 failed token mint names the repository" "$(cat "$WORK/resolve-nomint.log")" "wing-commander/wc-speckit-e2e"
+check_contains "S7 failed token mint tells the maintainer to install the App" "$(cat "$WORK/resolve-nomint.log")" "Install the App on that repository"
+
+echo "  ...and a mint that 'succeeded' with an empty token is caught by the same gate"
+new_step_env
+export GH_TOKEN="" TOKEN_OUTCOME=success SCRATCH_REPO="wing-commander/wc-speckit-e2e" ISSUE=88
+GHA_SUBST=()
+run_step 'auto-update-spec-kit__e2e-stage__*resolve-the-scratch-repository*.sh' >"$WORK/resolve-emptytok.log" 2>&1
+check "S7 empty scratch token fails the step" "$?" "1"
+check "S7 empty scratch token leaves full-name unset" "$(out full-name)" ""
 
 echo "  configured but invisible to the App token: fails, and says which of the two things to fix (T037, FR-021 edge case)"
 new_step_env
-export GH_TOKEN=stub SCRATCH_REPO="wing-commander/wc-speckit-e2e" ISSUE=88 GH_STUB_FAIL="repo view"
+export GH_TOKEN=stub TOKEN_OUTCOME=success SCRATCH_REPO="wing-commander/wc-speckit-e2e" ISSUE=88 GH_STUB_FAIL="repo view"
 GHA_SUBST=()
 run_step 'auto-update-spec-kit__e2e-stage__*resolve-the-scratch-repository*.sh' >"$WORK/resolve-invisible.log" 2>&1
 check "S7 invisible scratch repo fails the step" "$?" "1"

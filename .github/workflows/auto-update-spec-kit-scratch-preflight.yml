@@ -1,0 +1,122 @@
+# Diagnostic — can the wing-commander App reach the e2e-stage scratch repository?
+#
+# `e2e-stage` (auto-update-spec-kit.yml) can only verify a minor/major
+# candidate if the App can mint a token for the configured scratch
+# repository. That question is deliberately hard to answer from outside:
+# `GET /user/installations` requires a token authorised to the App itself, so
+# a PAT gets a flat 403 no matter its scopes, and the GitHub UI shows a
+# repository *selection* that is easy to misread. Until this file existed the
+# only place the answer surfaced was a full `e2e-stage` run — which spends
+# Claude quota on an agent turn to tell you a token could not be minted.
+#
+# So this runs the reachability half of that preflight and nothing else:
+# split the variable, mint the scratch-scoped token, read the repository
+# back. No checkout, no clone, no push, no agent step, no writes of any kind
+# — one runner minute and zero Claude quota. It FAILS the run when the
+# repository is unreachable, so the verdict is legible from `gh run list`
+# without opening a log.
+#
+# The split-and-mint here is a deliberate, small duplicate of e2e-stage's
+# own. What must stay identical is the thing being tested — the same action,
+# the same `owner`/`repositories` inputs — not the wording of the errors,
+# which are asserted against e2e-stage's copy by
+# .github/scripts/auto-update-spec-kit-tests/t4_verify.sh. A diagnostic that
+# drifts in phrasing still answers reachable / not reachable correctly; one
+# that drifts in what it mints would not, which is why the mint is the part
+# copied verbatim.
+#
+# No pause kill-switch (constitution VII's wrapper rule): this is dispatched
+# by hand, and `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_PAUSED=true` is exactly
+# when a maintainer is most likely to be debugging why the stage cannot run.
+name: "Wing Commander · auto-update-spec-kit scratch preflight"
+
+on:
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  scratch-preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Split the scratch repository into owner and name
+        id: scratch-parts
+        env:
+          SCRATCH_REPO: ${{ vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_SCRATCH_REPO }}
+        run: |
+          set -uo pipefail
+          if [ -z "${SCRATCH_REPO:-}" ]; then
+            echo "::error::wing-commander scratch preflight: WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_SCRATCH_REPO is not set on this repository, so e2e-stage has no scratch repository to verify a minor/major candidate in (docs/setup.md)."
+            exit 1
+          fi
+          case "$SCRATCH_REPO" in
+            */*/*|/*|*/|*[[:space:]]*) shape=bad ;;
+            */*)                       shape=ok ;;
+            *)                         shape=bad ;;
+          esac
+          if [ "$shape" = "bad" ]; then
+            echo "::error::wing-commander scratch preflight: WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_SCRATCH_REPO is set to '$SCRATCH_REPO', which is not an OWNER/NAME pair (docs/setup.md)."
+            exit 1
+          fi
+          echo "owner=${SCRATCH_REPO%%/*}" >> "$GITHUB_OUTPUT"
+          echo "name=${SCRATCH_REPO#*/}" >> "$GITHUB_OUTPUT"
+          echo "full-name=$SCRATCH_REPO" >> "$GITHUB_OUTPUT"
+
+      # Same shape as e2e-stage's mint, for the same reason: with neither
+      # `owner` nor `repositories` set, create-github-app-token scopes the
+      # token to the CURRENT repository, which can never reach the scratch
+      # one. continue-on-error so the verdict step below can explain a
+      # failure instead of the run ending on the action's bare "Not Found".
+      - name: Mint a scratch-repository App token
+        id: scratch-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+          private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
+          owner: ${{ steps.scratch-parts.outputs.owner }}
+          repositories: ${{ steps.scratch-parts.outputs.name }}
+
+      - name: Report whether the scratch repository is reachable
+        env:
+          GH_TOKEN: ${{ steps.scratch-token.outputs.token }}
+          TOKEN_OUTCOME: ${{ steps.scratch-token.outcome }}
+          SCRATCH_REPO: ${{ steps.scratch-parts.outputs.full-name }}
+        run: |
+          set -uo pipefail
+          if [ "$TOKEN_OUTCOME" != "success" ] || [ -z "$GH_TOKEN" ]; then
+            {
+              echo "### ❌ $SCRATCH_REPO is NOT reachable"
+              echo
+              echo "The wing-commander App could not mint a token scoped to this"
+              echo "repository, so \`e2e-stage\` cannot verify a minor or major"
+              echo "candidate and will not adopt one."
+              echo
+              echo "Install the App on \`$SCRATCH_REPO\` (Contents: read and write is"
+              echo "all it needs) at <https://github.com/settings/installations>. If it"
+              echo "lives under a different owner than this repository, the App needs"
+              echo "its own installation there."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::wing-commander scratch preflight: the App could not mint a token for $SCRATCH_REPO — it is not installed on that repository. See the job summary."
+            exit 1
+          fi
+          if ! gh repo view "$SCRATCH_REPO" >/dev/null 2>&1; then
+            {
+              echo "### ❌ $SCRATCH_REPO is NOT reachable"
+              echo
+              echo "A token was minted, but reading the repository back failed."
+              echo "Either it does not exist, or the installation does not actually"
+              echo "cover it."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::wing-commander scratch preflight: minted a token for $SCRATCH_REPO but could not read the repository back. See the job summary."
+            exit 1
+          fi
+          {
+            echo "### ✅ $SCRATCH_REPO is reachable"
+            echo
+            echo "The wing-commander App is installed on it and a scoped token"
+            echo "reads it back, so \`e2e-stage\` can scaffold a candidate there."
+            echo "This says nothing about whether the stage's later steps pass —"
+            echo "only that the access it depends on is in place."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "wing-commander scratch preflight: $SCRATCH_REPO is reachable."

@@ -653,8 +653,10 @@ jobs:
       # heredoc body handed to another interpreter never runs, and does not
       # count); (b) resolves the token in effect for each — a per-command
       # `GH_TOKEN="$X" gh ...` prefix wins, else the step's own `env.GH_TOKEN`,
-      # else the job's — and classifies it as the App token
-      # (`steps.ctx.outputs.token`, the wing-commander-context output) or
+      # else the job's — and classifies it as an App token
+      # (`steps.ctx.outputs.token`, the wing-commander-context output, or
+      # e2e-stage's scratch-repository-scoped `steps.scratch-token.outputs.token`
+      # — same App, same grant, narrower repository scope) or
       # `github.token`; (c) maps the subcommand/path to the permission it
       # needs via a table extended only with evidence (the same rule Gate
       # 6's SUPPORTED_EVENTS already enforces) — an unrecognised subcommand,
@@ -691,7 +693,16 @@ jobs:
           # entry is a real invocation this repository's own workflows make. A
           # category of None means no repository permission is needed at all (repo
           # metadata is always readable, regardless of token).
-          APP_TOKEN_EXPR = "steps.ctx.outputs.token"
+          # Both are installation tokens for the SAME App, so both carry the
+          # permission grant docs/setup.md documents. They differ only in
+          # repository scope: `ctx` is the shared wing-commander-context token
+          # (scoped to the repository the stage runs in), `scratch-token` is
+          # auto-update-spec-kit e2e-stage's separately minted token for the
+          # pre-created scratch repository — a scope the context token cannot
+          # cover, since create-github-app-token defaults to the current
+          # repository and one installation token cannot span two owners.
+          APP_TOKEN_EXPRS = {"steps.ctx.outputs.token",
+                             "steps.scratch-token.outputs.token"}
           DEFAULT_TOKEN_EXPRS = {"github.token", "secrets.GITHUB_TOKEN"}
 
           SUBCOMMAND_PERMS = {
@@ -893,7 +904,7 @@ jobs:
           def resolve_token(tokexpr, step_env, job_env):
               """-> (kind, detail). kind in app/default/other/unresolved."""
               def classify(expr):
-                  if expr == APP_TOKEN_EXPR:
+                  if expr in APP_TOKEN_EXPRS:
                       return "app"
                   if expr in DEFAULT_TOKEN_EXPRS:
                       return "default"

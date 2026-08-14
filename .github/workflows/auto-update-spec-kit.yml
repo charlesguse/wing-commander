@@ -1303,16 +1303,73 @@ jobs:
       # from the branch (named deterministically from the lifecycle issue
       # number, force-reset below), not from a per-run repository, so no
       # name-to-issue mapping is stored anywhere (research.md).
-      - name: Resolve the scratch repository
-        id: scratch-repo
+      #
+      # The scratch repository needs a SECOND App token, minted here rather
+      # than reused from `steps.ctx`. `wing-commander-context` calls
+      # actions/create-github-app-token@v1 with neither `owner` nor
+      # `repositories` set, which that action documents as "access will be
+      # scoped to only the current repository" — so the shared context token
+      # cannot see, clone, or push to the scratch repository no matter how the
+      # App is installed. Proved live on run 31679204393: `gh repo view` 404'd
+      # against a scratch repository that demonstrably exists. Widening the
+      # shared token is not the fix — `e2e-scratch-repo` is an arbitrary
+      # OWNER/NAME and one installation token cannot span two owners — so this
+      # token is scoped to the scratch repository alone and used for exactly
+      # three things: the visibility preflight below, the scaffold
+      # clone/force-push, and the best-effort agent-output push. Nothing in
+      # the consuming repository ever runs under it.
+      - name: Split the scratch repository into owner and name
+        id: scratch-parts
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
           SCRATCH_REPO: ${{ inputs.e2e-scratch-repo }}
-          ISSUE: ${{ needs.prepare.outputs.issue-number }}
         run: |
           set -uo pipefail
           if [ -z "$SCRATCH_REPO" ]; then
             echo "::error::wing-commander auto-update-spec-kit e2e-stage: no scratch repository is configured, so this candidate cannot be verified end to end and is not adopted. Create one empty private repository, install the wing-commander App on it, and set the repository variable WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_SCRATCH_REPO to its OWNER/NAME (docs/setup.md). Only minor and major candidates need it; patch candidates never reach this job."
+            exit 1
+          fi
+          # Exactly two non-empty segments. A malformed value would otherwise
+          # reach the token mint as a nonsense owner and fail there with the
+          # action's own generic message instead of a fixable one.
+          case "$SCRATCH_REPO" in
+            */*/*|/*|*/|*[[:space:]]*) shape=bad ;;
+            */*)                       shape=ok ;;
+            *)                         shape=bad ;;
+          esac
+          if [ "$shape" = "bad" ]; then
+            echo "::error::wing-commander auto-update-spec-kit e2e-stage: WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_SCRATCH_REPO is set to '$SCRATCH_REPO', which is not an OWNER/NAME pair (docs/setup.md)."
+            exit 1
+          fi
+          echo "owner=${SCRATCH_REPO%%/*}" >> "$GITHUB_OUTPUT"
+          echo "name=${SCRATCH_REPO#*/}" >> "$GITHUB_OUTPUT"
+
+      # continue-on-error, then re-checked below: when the App is not installed
+      # on the scratch repository this step fails with the action's own generic
+      # "Not Found", which tells a maintainer nothing about what to go and fix.
+      # The next step converts that into the actionable message. It is never
+      # allowed to pass silently — `outcome` and the token itself are both
+      # asserted there.
+      - name: Mint a scratch-repository App token
+        id: scratch-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+          owner: ${{ steps.scratch-parts.outputs.owner }}
+          repositories: ${{ steps.scratch-parts.outputs.name }}
+
+      - name: Resolve the scratch repository
+        id: scratch-repo
+        env:
+          GH_TOKEN: ${{ steps.scratch-token.outputs.token }}
+          TOKEN_OUTCOME: ${{ steps.scratch-token.outcome }}
+          SCRATCH_REPO: ${{ inputs.e2e-scratch-repo }}
+          ISSUE: ${{ needs.prepare.outputs.issue-number }}
+        run: |
+          set -uo pipefail
+          if [ "$TOKEN_OUTCOME" != "success" ] || [ -z "$GH_TOKEN" ]; then
+            echo "::error::wing-commander auto-update-spec-kit e2e-stage: the wing-commander App could not mint a token for the configured scratch repository $SCRATCH_REPO. Install the App on that repository (Contents: read and write is all it needs) — if it lives under a different owner than this repository, the App needs its own installation there — then re-dispatch."
             exit 1
           fi
           if ! gh repo view "$SCRATCH_REPO" >/dev/null 2>&1; then
@@ -1352,7 +1409,8 @@ jobs:
       - name: Scaffold and force-push the candidate into the scratch repository
         id: scaffold
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          # The scratch-scoped token, not steps.ctx's — see the mint step.
+          GH_TOKEN: ${{ steps.scratch-token.outputs.token }}
           FULL_NAME: ${{ steps.scratch-repo.outputs.full-name }}
           BRANCH: ${{ steps.scratch-repo.outputs.branch }}
           CANDIDATE: ${{ needs.prepare.outputs.candidate-version }}
@@ -1484,7 +1542,8 @@ jobs:
         if: steps.readback.outputs.passed == 'true'
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          # The scratch-scoped token, not steps.ctx's — see the mint step.
+          GH_TOKEN: ${{ steps.scratch-token.outputs.token }}
           FULL_NAME: ${{ steps.scratch-repo.outputs.full-name }}
           BRANCH: ${{ steps.scratch-repo.outputs.branch }}
           BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
