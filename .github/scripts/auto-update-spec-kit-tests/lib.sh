@@ -136,5 +136,12 @@ run_step() { # run_step <step-file-glob>
   fi
   cp "$f" "$WORK/step.sh"
   "$PY" "$SP/subst.py" "$WORK/step.sh" "${GHA_SUBST[@]}"
-  bash "$WORK/step.sh"
+  # `-e`, because that is what the runner does. A `run:` block with no
+  # `shell:` key executes as `bash -e {0}` (visible in any job log's step
+  # header), so a step that runs to completion here but aborts mid-way in
+  # production is exactly the drift this harness exists to prevent. It ran
+  # without `-e` until the e2e-stage read-back died on run 31906592089 at a
+  # `find` whose directory was missing — a case t4 Scenario 5 already
+  # covered, and passed, because errexit was off here and on there.
+  bash -e "$WORK/step.sh"
 }

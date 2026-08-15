@@ -655,7 +655,8 @@ jobs:
               echo "settle: adopted pre-existing tracking issue #$issue_num and labelled it '$TRACKING_LABEL'." >> "$GITHUB_STEP_SUMMARY"
             fi
 
-            marker_line="$(printf '%s' "$issue_body" | grep -o '<!-- wing-commander-auto-update-spec-kit:[^>]*-->' | head -1)"
+            # `|| true`: see the comment-reply guard's copy of this line.
+            marker_line="$(printf '%s' "$issue_body" | grep -o '<!-- wing-commander-auto-update-spec-kit:[^>]*-->' | head -1 || true)"
             candidate="$(printf '%s' "$marker_line" | sed -n 's/.*candidate=\([0-9.]*\).*/\1/p')"
             observed="$(printf '%s' "$marker_line" | sed -n 's/.*observed=\([0-9]*\).*/\1/p')"
             awaiting=false
@@ -796,7 +797,8 @@ jobs:
           fi
 
           body="$(gh issue view "$issue_number" --json body --jq .body)"
-          marker_line="$(printf '%s' "$body" | grep -o '<!-- wing-commander-auto-update-spec-kit:[^>]*-->' | head -1)"
+          # `|| true`: see the comment-reply guard's copy of this line.
+          marker_line="$(printf '%s' "$body" | grep -o '<!-- wing-commander-auto-update-spec-kit:[^>]*-->' | head -1 || true)"
           candidate="$(printf '%s' "$marker_line" | sed -n 's/.*candidate=\([0-9.]*\).*/\1/p')"
           pinned="$(git show "refs/remotes/origin/$DB:.specify/init-options.json" | jq -r '.speckit_version')"
 
@@ -1062,7 +1064,8 @@ jobs:
           # comment-reply job's question-state guard (T025) recognizes an
           # outstanding question.
           body="$(gh issue view "$ISSUE" --json body --jq .body)"
-          marker_line="$(printf '%s' "$body" | grep -o '<!-- wing-commander-auto-update-spec-kit:[^>]*-->' | head -1)"
+          # `|| true`: see the comment-reply guard's copy of this line.
+          marker_line="$(printf '%s' "$body" | grep -o '<!-- wing-commander-auto-update-spec-kit:[^>]*-->' | head -1 || true)"
           if ! printf '%s' "$marker_line" | grep -qF 'awaiting-decision=true'; then
             new_marker="$(printf '%s' "$marker_line" | sed 's/ *-->/ awaiting-decision=true -->/')"
             printf '%s' "$body" | sed "s|$marker_line|$new_marker|" > "$RUNNER_TEMP/ambiguous-issue-body.md"
@@ -1534,6 +1537,30 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
+          # Without this the stage verifies the WRONG REPOSITORY. The
+          # candidate's `create-new-feature.sh` resolves its project root with
+          # `get_repo_root`, which walks up from `$(pwd)` looking for a
+          # `.specify/` directory — not up from the script's own location. The
+          # agent runs from the workspace root, and the consumer checkout there
+          # is itself a Spec Kit project, so the walk matches on its very first
+          # step and never descends into e2e-scratch/. On run 31906592089 the
+          # script therefore wrote specs/035-wing-commander-e2e/spec.md into the
+          # consumer checkout and switched that checkout's branch, while
+          # e2e-scratch/ stayed empty. The agent noticed the returned path was
+          # outside e2e-scratch/, refused to write there because the prompt
+          # forbids it, and stopped — which is the only reason this surfaced as
+          # a failure rather than as a green run that had verified nothing.
+          #
+          # SPECIFY_INIT_DIR is an explicit override checked *before* that walk,
+          # and it validates: a value that is not an existing Spec Kit project
+          # exits 1 with an ERROR, so a future candidate that drops support
+          # fails loudly instead of silently re-targeting the consumer. It
+          # spells the same at both ends of the supported range — verified in
+          # `.specify/scripts/bash/common.sh` at v0.12.4, the pin, and v0.16.4,
+          # the candidate. Absolute, not `e2e-scratch`: a relative value is
+          # resolved against `$(pwd)`, and the agent's shell need not start
+          # where we think it does.
+          SPECIFY_INIT_DIR: ${{ github.workspace }}/e2e-scratch
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
@@ -1552,10 +1579,13 @@ jobs:
             environment to work out why something was denied will exhaust
             the turn budget before the task is done.
 
-            The command prints JSON naming a spec.md path. Write a short
-            feature spec to that path with the Write tool (a sentence or
-            two describing a trivial, disposable example feature). Write
-            and Edit are permitted anywhere under e2e-scratch/.
+            The command prints JSON whose SPEC_FILE names a spec.md path.
+            That path is absolute and lies inside e2e-scratch/. Write a
+            short feature spec to exactly that path with the Write tool (a
+            sentence or two describing a trivial, disposable example
+            feature). Write and Edit are permitted anywhere under
+            e2e-scratch/, by absolute path or relative — do not rewrite or
+            shorten the path the command gave you.
 
             This output is never read by a human and never merged anywhere
             — it exists solely to confirm the candidate's own
@@ -1576,11 +1606,19 @@ jobs:
           # `cd e2e-scratch && ...` is deliberately NOT allowed: Claude Code
           # blocks a cd-then-git chain outright (untrusted hooks in the
           # target directory), so allowing it would only re-introduce a
-          # denial the prompt already steers away from.
+          # denial the prompt already steers away from. SPECIFY_INIT_DIR
+          # above is what puts the script on the right root without a `cd`.
+          #
+          # The absolute Write/Edit entries are there for the same reason the
+          # `bash <path>` Bash entry is: SPEC_FILE comes back as an absolute
+          # path, and an absolute target matching a relative `e2e-scratch/**`
+          # rule is an assumption about Claude Code's path normalisation that
+          # this stage cannot cheaply retest — a wrong guess costs a whole
+          # dispatch. Both spellings are allowed so neither can deadlock it.
           claude_args: |
             --model ${{ inputs.e2e-stage-model }}
             --max-turns ${{ inputs.e2e-stage-max-turns }}
-            --allowedTools "Bash(e2e-scratch/.specify/scripts/bash/create-new-feature.sh:*),Bash(bash e2e-scratch/.specify/scripts/bash/create-new-feature.sh:*),Write(e2e-scratch/**),Edit(e2e-scratch/**)"
+            --allowedTools "Bash(e2e-scratch/.specify/scripts/bash/create-new-feature.sh:*),Bash(bash e2e-scratch/.specify/scripts/bash/create-new-feature.sh:*),Write(e2e-scratch/**),Edit(e2e-scratch/**),Write(${{ github.workspace }}/e2e-scratch/**),Edit(${{ github.workspace }}/e2e-scratch/**)"
             --disallowedTools "WebSearch,WebFetch,Bash(git push:*)"
 
       # Same convention as evaluate-path's `decide` and comment-reply's
@@ -1616,7 +1654,19 @@ jobs:
 
           spec_file=""
           if [ "$pass" = "true" ]; then
-            spec_file="$(find e2e-scratch/specs -mindepth 2 -maxdepth 2 -type f -name 'spec.md' 2>/dev/null | head -1)"
+            # The trailing `|| true` is what lets this step report the very
+            # failure it exists to detect. `find` exits 1 when e2e-scratch/specs
+            # does not exist — the exact case "no spec was produced" — and with
+            # `pipefail` set that status is the pipeline's, so the assignment
+            # fails and the step's own `bash -e` kills it right here. The
+            # failure-detail below is then never written and `passed` is never
+            # set, so `verify` sees empty outputs and can only report the job
+            # result. That is what run 31906592089 did: the step whose job is to
+            # explain the failure died of it silently, and the real cause (a
+            # spec.md written into the consumer checkout instead) was visible
+            # only in the uploaded agent log. 2>/dev/null already hides find's
+            # stderr; this hides its status too.
+            spec_file="$(find e2e-scratch/specs -mindepth 2 -maxdepth 2 -type f -name 'spec.md' 2>/dev/null | head -1 || true)"
             if [ -z "$spec_file" ] || [ ! -s "$spec_file" ]; then
               pass=false
               detail="expected a non-empty specs/*/spec.md in the scratch repository after the e2e-stage agent completed, but none was found."
@@ -2499,7 +2549,18 @@ jobs:
         run: |
           set -uo pipefail
           body="$(gh issue view "$ISSUE_NUMBER" --json body --jq .body 2>/dev/null || true)"
-          marker_line="$(printf '%s' "$body" | grep -o '<!-- wing-commander-auto-update-spec-kit:[^>]*-->' | head -1)"
+          # `grep -o` exits 1 when there is no match, `pipefail` makes that the
+          # pipeline's status, and this step runs under the runner's `bash -e`
+          # — so without `|| true` the no-match case aborts the step here. That
+          # is the one case the next four lines exist to handle: an issue with
+          # no marker is "not this feature's issue", a clean no-op. Instead
+          # comment-reply FAILED outright on any unrelated issue, and the
+          # explanatory summary was never written. The same shape is repeated
+          # at four other marker reads in this file, all guarded the same way.
+          # None of this was visible until the test harness was corrected to
+          # run steps with `-e` as the runner does; the assertions covering
+          # this branch had been passing against a shell that never aborted.
+          marker_line="$(printf '%s' "$body" | grep -o '<!-- wing-commander-auto-update-spec-kit:[^>]*-->' | head -1 || true)"
           if [ -z "$marker_line" ] || ! printf '%s' "$marker_line" | grep -qF 'candidate='; then
             echo "proceed=false" >> "$GITHUB_OUTPUT"
             echo "Issue #$ISSUE_NUMBER carries no wing-commander-auto-update-spec-kit settle-tracking marker — not this feature's issue, no-op." >> "$GITHUB_STEP_SUMMARY"
@@ -2646,7 +2707,8 @@ jobs:
           set -uo pipefail
           author="$(gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" --jq .user.login 2>/dev/null || echo "a maintainer")"
           body="$(gh issue view "$ISSUE_NUMBER" --json body --jq .body)"
-          marker_line="$(printf '%s' "$body" | grep -o '<!-- wing-commander-auto-update-spec-kit:[^>]*-->' | head -1)"
+          # `|| true`: see the comment-reply guard's copy of this line.
+          marker_line="$(printf '%s' "$body" | grep -o '<!-- wing-commander-auto-update-spec-kit:[^>]*-->' | head -1 || true)"
           new_marker="$(printf '%s' "$marker_line" | sed 's/ awaiting-decision=true//')"
           printf '%s' "$body" | sed "s|$marker_line|$new_marker|" > "$RUNNER_TEMP/resume-issue-body.md"
           gh issue edit "$ISSUE_NUMBER" --body-file "$RUNNER_TEMP/resume-issue-body.md"

@@ -122,4 +122,86 @@ check_not_contains "default-main dropped the seeded tree" \
   "$(remote ls-tree -r --name-only "$BRANCH" 2>/dev/null)" "README.md"
 check "default-main left main alone" "$(remote rev-list --count main 2>/dev/null || echo missing)" "1"
 
+echo
+echo "--- the agent stage's project root (run 31906592089) ---"
+# `create-new-feature.sh` picks its project root with `get_repo_root`, which
+# walks up from $(pwd) looking for a `.specify/` — NOT up from the script's own
+# location. The e2e agent runs from the workspace root, and the consumer
+# checkout there is itself a Spec Kit project, so the walk matched on its first
+# step: the script wrote its spec.md into the CONSUMER checkout and switched
+# that checkout's branch, while e2e-scratch/ stayed empty. The stage was
+# verifying the wrong repository and could only ever fail the read-back.
+#
+# This runs the real pinned scripts, so it doubles as a contract check exactly
+# like t3's: a future Spec Kit bump that drops SPECIFY_INIT_DIR fails here, on
+# the PR that bumps it, rather than silently re-targeting the consumer.
+new_step_env
+NEST="$WORK/nest"
+mkdir -p "$NEST"
+# The outer directory is a Spec Kit project AND a git repo — the consumer.
+cp -r "$REPO/.specify" "$NEST/.specify"
+( cd "$NEST" && git init -q . && git add -A \
+  && git -c user.email=t@t -c user.name=t commit -qm outer ) >/dev/null 2>&1
+# The inner one is the scaffolded scratch clone.
+mkdir -p "$NEST/e2e-scratch"
+cp -r "$REPO/.specify" "$NEST/e2e-scratch/.specify"
+( cd "$NEST/e2e-scratch" && git init -q . && git add -A \
+  && git -c user.email=t@t -c user.name=t commit -qm inner ) >/dev/null 2>&1
+# This repository tracks the .specify scripts as 100644, so a copy of them is
+# not executable on Linux — whereas the scratch clone's copies come from
+# `specify init`, which writes them executable, and the agent invokes the
+# script directly. Restore the production mode rather than invoking through
+# `bash`, so the fixture matches how the step is actually run. (Git Bash on
+# Windows reports every file as executable, so this only ever bit on CI.)
+chmod +x "$NEST/e2e-scratch/.specify/scripts/bash/"*.sh
+
+# Without the override — the production failure, asserted so the fix cannot be
+# dropped without this flipping.
+( cd "$NEST" && env -u SPECIFY_INIT_DIR \
+    e2e-scratch/.specify/scripts/bash/create-new-feature.sh --json "smoke" ) \
+  >"$WORK/root-nofix.log" 2>&1
+check "unset SPECIFY_INIT_DIR resolves to the CONSUMER checkout (the defect)" \
+  "$([ -d "$NEST/specs" ] && echo consumer || echo scratch)" "consumer"
+check "unset SPECIFY_INIT_DIR leaves the scratch clone empty" \
+  "$([ -d "$NEST/e2e-scratch/specs" ] && echo written || echo empty)" "empty"
+
+# With the override, as the workflow now sets it.
+rm -rf "$NEST/specs"
+( cd "$NEST" && SPECIFY_INIT_DIR="$NEST/e2e-scratch" \
+    e2e-scratch/.specify/scripts/bash/create-new-feature.sh --json "smoke" ) \
+  >"$WORK/root-fix.log" 2>&1
+fix_rc=$?
+check "SPECIFY_INIT_DIR exit code" "$fix_rc" "0"
+check "SPECIFY_INIT_DIR writes into the scratch clone" \
+  "$([ -d "$NEST/e2e-scratch/specs" ] && echo written || echo empty)" "written"
+check "SPECIFY_INIT_DIR leaves the consumer checkout untouched" \
+  "$([ -d "$NEST/specs" ] && echo touched || echo clean)" "clean"
+check_contains "SPECIFY_INIT_DIR's SPEC_FILE points inside e2e-scratch" \
+  "$(cat "$WORK/root-fix.log")" "/e2e-scratch/specs/"
+check "the read-back's find pattern matches what the script produced" \
+  "$(cd "$NEST" && find e2e-scratch/specs -mindepth 2 -maxdepth 2 -type f -name 'spec.md' | wc -l | tr -d ' ')" "1"
+
+# A candidate that drops the override must fail LOUDLY, not fall back to the
+# consumer — that is the whole reason this lever was chosen over a `cd`.
+( cd "$NEST" && SPECIFY_INIT_DIR="$NEST/not-a-project" \
+    e2e-scratch/.specify/scripts/bash/create-new-feature.sh --json "smoke" ) \
+  >"$WORK/root-bad.log" 2>&1
+bad_rc=$?
+check "a bad SPECIFY_INIT_DIR exits non-zero" "$([ "$bad_rc" -ne 0 ] && echo nonzero || echo zero)" "nonzero"
+check_contains "a bad SPECIFY_INIT_DIR says why" "$(cat "$WORK/root-bad.log")" "SPECIFY_INIT_DIR"
+
+# The behaviour above is worthless if the workflow forgets to set it, so assert
+# the wiring too — on the agent step specifically, not just anywhere in the file.
+DECIDE_ENV="$("$PY" - "$REPO/.github/workflows/auto-update-spec-kit.yml" <<'PY'
+import sys, yaml
+wf = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+for step in wf["jobs"]["e2e-stage"]["steps"]:
+    if step.get("id") == "decide":
+        print(step.get("env", {}).get("SPECIFY_INIT_DIR", ""))
+        break
+PY
+)"
+check_contains "the agent step declares SPECIFY_INIT_DIR" "$DECIDE_ENV" "e2e-scratch"
+check_contains "and it is absolute, not resolved against the agent's cwd" "$DECIDE_ENV" "github.workspace"
+
 report t8_scaffold

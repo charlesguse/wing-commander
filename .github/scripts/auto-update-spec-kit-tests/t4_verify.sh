@@ -275,6 +275,26 @@ S5_DETAIL="$(out failure-detail)"
 check_contains "S5 detail names the expected non-empty spec.md" "$S5_DETAIL" "spec.md"
 check "S4 vs S5 wording differ (a maintainer can tell infra from candidate defect)" "$([ "$S4_DETAIL" = "$S5_DETAIL" ] && echo same || echo different)" "different"
 
+echo "  (and with no e2e-scratch/specs directory at all — run 31906592089)"
+# The distinction from the case above is the whole point. There, e2e-scratch/
+# exists and `find` merely returns nothing; here the directory it is pointed at
+# does not exist, so `find` EXITS 1 — and with `pipefail` set and the runner's
+# `bash -e`, the assignment aborted the step before it could write either
+# output. `verify` then saw empty outputs and could say only "the job failed",
+# while the real cause sat unread in the agent log. A step whose job is to
+# explain a failure has to survive it, so assert the outputs exist, not just
+# their values.
+new_step_env
+HERE="$PWD"; cd "$RUNNER_TEMP" || exit 1
+export DECIDE_OUTCOME=success
+GHA_SUBST=()
+run_step 'auto-update-spec-kit__e2e-stage__*read-back-stage-result*.sh' >/dev/null 2>&1
+RB_RC=$?
+cd "$HERE" || exit 1
+check "S5 missing e2e-scratch entirely -> step still exits 0" "$RB_RC" "0"
+check "S5 missing e2e-scratch -> reports rather than dies" "$(out passed)" "false"
+check_contains "S5 missing e2e-scratch -> detail still written" "$(out failure-detail)" "spec.md"
+
 echo "  (repeat with an empty spec.md — the agent wrote the file but left it blank)"
 new_step_env
 HERE="$PWD"; cd "$RUNNER_TEMP" || exit 1
