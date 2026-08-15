@@ -868,6 +868,13 @@ jobs:
             that file (a JSON array of {tag, url, body}) for your evidence;
             do not fetch anything else and do not browse the web.
 
+            Your evidence tools are Read and Grep. Bash is restricted to
+            `gh api` and `git diff`, so a scripting interpreter — python3,
+            node, awk — is denied, and every denied call spends a turn out
+            of your budget without returning anything. To pull the text
+            surrounding a keyword out of that JSON, use Grep with `-o` and a
+            context-window pattern rather than a script.
+
             Decide exactly one outcome:
             - "clean-bump": nothing in the release notes requires more than a
               plain version-string bump — no required script/template
@@ -883,9 +890,28 @@ jobs:
             sources as the release URLs from release-notes.json — never
             fabricate a source, and never invent options that aren't actually
             described in the release notes.
+          # --max-turns is 30, not the 15 this shipped with, for two
+          # compounding reasons found on run 31898987431:
+          #
+          #   1. The action fails the step by comparing the result record's
+          #      `.num_turns` against this cap, and those are different
+          #      counters — the same mismatch Gate 11
+          #      (verify-metrics-turn-accounting.py) exists to catch, where
+          #      `.num_turns` measured 1.0x-2.3x the main-loop responses
+          #      `--max-turns` actually enforces. So the cap has to absorb
+          #      that inflation or a run well inside its budget still fails.
+          #   2. The evidence grows on its own. The agent reads every release
+          #      between the pin and the candidate: 22 entries on 2026-08-13
+          #      (passed), 24 on 2026-08-15 (failed at .num_turns 16 after
+          #      reaching a verdict). Every upstream release narrows a fixed
+          #      cap further.
+          #
+          # 30 is ~2x the observed steady-state read, which bounds the
+          # worst-case spend (that run cost $0.75) while leaving room for the
+          # release list to keep growing.
           claude_args: |
             --model ${{ inputs.model }}
-            --max-turns 15
+            --max-turns 30
             --allowedTools "Read,Grep,Bash(gh api:*),Bash(git diff:*)"
             --disallowedTools "WebSearch,WebFetch,Write,Edit,Bash(git commit:*),Bash(git push:*)"
             --json-schema '{"type":"object","properties":{"outcome":{"type":"string","enum":["clean-bump","needs-migration","ambiguous-options"]},"reasoning":{"type":"string"},"sources":{"type":"array","items":{"type":"object","properties":{"title":{"type":"string"},"url":{"type":"string"}},"required":["title","url"]}},"options":{"type":["array","null"],"items":{"type":"object","properties":{"label":{"type":"string"},"description":{"type":"string"}},"required":["label","description"]}}},"required":["outcome","reasoning","sources"]}'
