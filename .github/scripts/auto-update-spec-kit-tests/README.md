@@ -77,7 +77,7 @@ Suites:
 | `t5_act.sh` | Scenarios 5, 6, 8, 10 — revert PR, version-bump PR, failure flagging, against a real git remote |
 | `t6_reply.sh` | Scenarios 9, 12, 13, 14, 15 — self-recognition, maintainer gate, fail-safe read-backs, prompt-injection safety |
 | `t7_gating.py` | every scenario's job routing, plus the wrapper's pause kill-switch |
-| `t8_scaffold.sh` | e2e-stage's scaffold step run repeatedly against one scratch repository — the branch is reset to a single orphan commit each time, whatever the scratch repository's default branch happens to be |
+| `t8_scaffold.sh` | e2e-stage's scaffold step run repeatedly against one scratch repository — the branch is reset to a single orphan commit each time, whatever the scratch repository's default branch happens to be; plus the agent stage's project-root resolution, run against the real pinned scripts in a nested consumer/scratch layout |
 
 ## Mutation results
 
@@ -98,6 +98,17 @@ against a deliberately broken workflow. Every mutant below is caught:
 | the e2e-stage result reported but not folded into `combine`'s gating | `t4` (6, e2e-stage gating failure asserted against `combine`'s output) |
 | repository provisioning reintroduced, or the `issue-closed`/`reap-scratch-repos` jobs brought back (specs/034 FR-023) | `t4` (7, zero-`repo create`/`repo delete` assertion) and `t7` (structural no-such-job assertions) |
 | the scaffold's detach-and-delete dropped, so `--orphan` collides with the branch `git clone` checked out | `t8` (6, all on the second and third run — the first still passes, which is the whole point) |
+| `SPECIFY_INIT_DIR` dropped from the agent step, so the stage verifies the consumer checkout instead of the scratch clone | `t8` (2 wiring assertions; the behavioural half asserts the unfixed resolution directly, so it holds either way) |
+| the read-back's `\|\| true` dropped, so `find` on a missing directory aborts the step | `t4` (5 — the step stops reporting at all, taking the pre-existing S5 assertions with it) |
+
+One mutant deserves singling out, because it is about the harness rather than
+the workflow. `run_step` executed steps as `bash <file>` until the e2e-stage
+read-back died in production at a `find` whose directory was missing — a case
+`t4` Scenario 5 **already covered and passed**, because the runner uses
+`bash -e {0}` and this harness did not. Restore `bash <file>` and reintroduce
+that workflow defect and the suite goes green again (104/0 on `t4`), which is
+the drift in miniature: assertions that cannot fail are not assertions. The
+`-e` is therefore load-bearing, not tidiness.
 
 Re-run one with, e.g.:
 
