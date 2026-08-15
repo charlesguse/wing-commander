@@ -77,6 +77,7 @@ Suites:
 | `t5_act.sh` | Scenarios 5, 6, 8, 10 — revert PR, version-bump PR, failure flagging, against a real git remote |
 | `t6_reply.sh` | Scenarios 9, 12, 13, 14, 15 — self-recognition, maintainer gate, fail-safe read-backs, prompt-injection safety |
 | `t7_gating.py` | every scenario's job routing, plus the wrapper's pause kill-switch |
+| `t8_scaffold.sh` | e2e-stage's scaffold step run repeatedly against one scratch repository — the branch is reset to a single orphan commit each time, whatever the scratch repository's default branch happens to be |
 
 ## Mutation results
 
@@ -96,6 +97,7 @@ against a deliberately broken workflow. Every mutant below is caught:
 | a per-script assertion silently skipped (e.g. `setup-tasks.sh`'s field-shape check dropped) | `t4` (3, wrong-shape mutants fail to fail) |
 | the e2e-stage result reported but not folded into `combine`'s gating | `t4` (6, e2e-stage gating failure asserted against `combine`'s output) |
 | repository provisioning reintroduced, or the `issue-closed`/`reap-scratch-repos` jobs brought back (specs/034 FR-023) | `t4` (7, zero-`repo create`/`repo delete` assertion) and `t7` (structural no-such-job assertions) |
+| the scaffold's detach-and-delete dropped, so `--orphan` collides with the branch `git clone` checked out | `t8` (6, all on the second and third run — the first still passes, which is the whole point) |
 
 Re-run one with, e.g.:
 
