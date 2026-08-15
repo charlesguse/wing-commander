@@ -74,7 +74,7 @@ Suites:
 | `t2_settle.sh` | Scenarios 2, 3, 4, 11, 12 — the settle state machine's six branches |
 | `t3_healthcheck.sh` | Scenarios 6, 8 — lightweight tier against real `.specify` scripts, worktree isolation, rollback target from git history |
 | `t4_verify.sh` | Scenarios 5, 6, 7 — tier selection and result combination; plus (specs/034) the deeper tier's per-script assertion chain (`spec.md`/`setup-plan.sh`/`setup-tasks.sh`) against real fixture worktrees, the e2e-stage read-back's completion-vs-shape distinction, the FR-008 missing-artifact narration hint, and the scratch repository being resolved rather than provisioned (configured / unconfigured / malformed `OWNER/NAME` / scratch-token mint failed or empty / not visible to the token, plus a direct assertion that no `repo create` or `repo delete` call is ever made) |
-| `t5_act.sh` | Scenarios 5, 6, 8, 10 — revert PR, version-bump PR, failure flagging, against a real git remote |
+| `t5_act.sh` | Scenarios 5, 6, 8, 10 — revert PR, version-bump PR, failure flagging, against a real git remote whose `origin` is credential-less exactly as the runner's is |
 | `t6_reply.sh` | Scenarios 9, 12, 13, 14, 15 — self-recognition, maintainer gate, fail-safe read-backs, prompt-injection safety |
 | `t7_gating.py` | every scenario's job routing, plus the wrapper's pause kill-switch |
 | `t8_scaffold.sh` | e2e-stage's scaffold step run repeatedly against one scratch repository — the branch is reset to a single orphan commit each time, whatever the scratch repository's default branch happens to be; plus the agent stage's project-root resolution, run against the real pinned scripts in a nested consumer/scratch layout |
@@ -100,9 +100,23 @@ against a deliberately broken workflow. Every mutant below is caught:
 | the scaffold's detach-and-delete dropped, so `--orphan` collides with the branch `git clone` checked out | `t8` (6, all on the second and third run — the first still passes, which is the whole point) |
 | `SPECIFY_INIT_DIR` dropped from the agent step, so the stage verifies the consumer checkout instead of the scratch clone | `t8` (2 wiring assertions; the behavioural half asserts the unfixed resolution directly, so it holds either way) |
 | the read-back's `\|\| true` dropped, so `find` on a missing directory aborts the step | `t4` (5 — the step stops reporting at all, taking the pre-existing S5 assertions with it) |
+| either `act` push reverted to `git push origin`, which cannot authenticate under `persist-credentials: false` | `t5` (18, both step exit codes 128 — the production code) |
 
-One mutant deserves singling out, because it is about the harness rather than
-the workflow. `run_step` executed steps as `bash <file>` until the e2e-stage
+Two mutants deserve singling out, because they are about the harness rather
+than the workflow — both are cases where the fixture was kinder than the
+runner, so a real defect passed here and fired in production.
+
+`t5` built its fixture with `git clone <path>`, which leaves an `origin` that
+needs no credentials. The runner's `origin` needs them and does not have them:
+every checkout in the workflow sets `persist-credentials: false`. So
+`git push origin` passed here for as long as the suite existed and died with
+exit 128 the first time `act` ever reached a push (run 31910291963) — the last
+step of the last job, after five earlier blockers had kept anything from
+getting that far. The fixture now points `origin` at a credential-less URL that
+resolves to nothing and the App-token URL at the bare repo, so which URL
+carries the push is what is actually under test.
+
+`run_step` executed steps as `bash <file>` until the e2e-stage
 read-back died in production at a `find` whose directory was missing — a case
 `t4` Scenario 5 **already covered and passed**, because the runner uses
 `bash -e {0}` and this harness did not. Restore `bash <file>` and reintroduce

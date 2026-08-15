@@ -25,8 +25,34 @@ build() { # build -> echoes work repo path; history 0.11.0 -> 0.12.4 -> 0.13.0
   git add -A; git commit -qm "chore: bump Spec Kit to v0.13.0"
   git push -q origin main
   git fetch -q --no-tags origin main:refs/remotes/origin/main 2>/dev/null || true
+  # Production fidelity. Every checkout in the workflow sets
+  # `persist-credentials: false`, so in the runner `origin` is a plain https
+  # URL with nothing behind it. Cloning from a path gave this fixture an
+  # origin that accepted any push, so `git push origin` passed here for as
+  # long as the suite has existed and died with exit 128 the first time act
+  # ever reached a push in production (run 31910291963).
+  #
+  # Rewrite both URLs so the distinction is real and stays offline: the
+  # App-token URL the steps must use reaches the bare repo; the credential-
+  # less one they must NOT use reaches a path that does not exist. git cannot
+  # be made to prompt for a password here, so an unreachable target stands in
+  # for the prompt — what is under test is which URL carries the push, not
+  # which fatal git prints.
+  local repo="${GITHUB_REPOSITORY:-charlesguse/wing-commander}"   # as new_step_env sets it
+  git remote set-url origin "https://github.com/$repo.git"
+  git config "url.$base/origin.git.insteadOf" \
+    "https://x-access-token:stub@github.com/$repo.git"            # every scenario exports GH_TOKEN=stub
+  git config "url.$base/no-credentials-here.git.insteadOf" \
+    "https://github.com/$repo.git"
   cd - >/dev/null
   echo "$base/repo"
+}
+
+# Assertions read the bare repo by path: `origin` now deliberately reaches
+# nothing (see build()). build() runs in a command substitution, so the path
+# is derived from the working directory rather than exported out of it.
+remote_refs() { # remote_refs <ref-pattern> -> match count
+  git ls-remote "$PWD/../origin.git" "$1" 2>/dev/null | wc -l | tr -d ' '
 }
 
 echo "=== Scenario 8: health-check failed WITH a recoverable rollback target ==="
@@ -36,8 +62,13 @@ printf '{"issues":{},"prs":{},"labels":[],"next_issue":50,"next_pr":70,"default_
 GHA_SUBST=("steps.ctx.outputs.token=stub" "steps.defbranch.outputs.name=main")
 export GH_TOKEN=stub DB=main ROLLBACK_TARGET=0.12.4 PINNED_VERSION=0.13.0 BOT_SLUG=wing-commander
 export FAILURE_DETAIL="create-new-feature.sh --json exited non-zero: boom: unsupported runtime"
-run_step 'auto-update-spec-kit__act__*rollback*.sh' >"$WORK/act.log" 2>&1 || echo "    (step exit $?)"
+run_step 'auto-update-spec-kit__act__*rollback*.sh' >"$WORK/act.log" 2>&1
+RB_RC=$?
 sed 's/^/      /' "$WORK/act.log" | head -5
+# Attribute a push failure to the push, not merely to the PR that never
+# appeared: an unauthenticated push aborts the step under `bash -e` long
+# before gh is reached, and every assertion below would fail without saying why.
+check "S8 rollback step exit code" "$RB_RC" "0"
 ST="$(cat "$GH_STATE")"
 check "S8 a revert PR was opened" "$("$PY" -c "import json,os;print(len(json.load(open(os.environ['GH_STATE']))['prs']))")" "1"
 PRBODY="$("$PY" -c "import json,os;s=json.load(open(os.environ['GH_STATE']));print(list(s['prs'].values())[0]['body'])")"
@@ -46,7 +77,7 @@ check_contains "S8 revert PR carries the revert self-marker" "$PRBODY" "auto-upd
 check_contains "S8 revert PR states what the health check found" "$PRBODY" "boom: unsupported runtime"
 check_not_contains "S8 revert PR has NO Closes keyword (rollback must stay visible)" "$PRBODY" "Closes #"
 check_contains "S8 title names both versions" "$PRTITLE" "restore v0.12.4"
-check "S8 branch was pushed to origin" "$(git ls-remote origin 'refs/heads/auto-update-spec-kit/revert-v0.12.4' | wc -l)" "1"
+check "S8 branch was pushed, via the authenticated URL" "$(remote_refs 'refs/heads/auto-update-spec-kit/revert-v0.12.4')" "1"
 echo "    pushed revert branch diff:"
 git --no-pager diff main auto-update-spec-kit/revert-v0.12.4 -- .specify/init-options.json | grep -E '^[-+] ' | sed 's/^/      /'
 check "S8 revert restores the pin to 0.12.4" "$(MSYS_NO_PATHCONV=1 git show auto-update-spec-kit/revert-v0.12.4:.specify/init-options.json | jq -r .speckit_version)" "0.12.4"
@@ -68,7 +99,7 @@ export GH_TOKEN=stub DB=main ROLLBACK_TARGET="" PINNED_VERSION=0.13.0 BOT_SLUG=w
 run_step 'auto-update-spec-kit__act__*rollback*.sh' >"$WORK/act2.log" 2>&1
 check "S8b no PR is opened without a target" "$("$PY" -c "import json,os;print(len(json.load(open(os.environ['GH_STATE']))['prs']))")" "0"
 check "S8b a flagged issue is still filed" "$("$PY" -c "import json,os;print(len(json.load(open(os.environ['GH_STATE']))['issues']))")" "1"
-check "S8b nothing pushed" "$(git ls-remote origin 'refs/heads/auto-update-spec-kit/*' | wc -l)" "0"
+check "S8b nothing pushed" "$(remote_refs 'refs/heads/auto-update-spec-kit/*')" "0"
 check "S8b pin left untouched on main" "$(git show main:.specify/init-options.json | jq -r .speckit_version)" "0.13.0"
 cd - >/dev/null
 
@@ -98,8 +129,14 @@ GHA_SUBST=("steps.ctx.outputs.token=stub")
 # reads it.
 export GH_TOKEN=stub BRANCH="auto-update-spec-kit/v0.15.1" CANDIDATE=0.15.1 ISSUE=42 TIER="lightweight+end-to-end" DB=main \
   DETAIL="The e2e-stage scratch repository charlesguse/wing-commander-e2e-42 is retained while this issue stays open, and deleted when it closes."
-run_step 'auto-update-spec-kit__act__*version-bump-pr*.sh' >"$WORK/act4.log" 2>&1 || echo "    (exit $?)"
+run_step 'auto-update-spec-kit__act__*version-bump-pr*.sh' >"$WORK/act4.log" 2>&1
+VB_RC=$?
 sed 's/^/      /' "$WORK/act4.log" | head -3
+# The exit code is the assertion, not the fatal's wording: the fixture makes an
+# unauthenticated push fail by pointing it at nothing, so it cannot print the
+# runner's "could not read Username". A check_not_contains on that text stayed
+# green under the mutant and was removed rather than kept for looks.
+check "S5 version-bump step exit code" "$VB_RC" "0"
 PRBODY="$("$PY" -c "import json,os;s=json.load(open(os.environ['GH_STATE']));print(list(s['prs'].values())[0]['body'])")"
 check_contains "S5 PR body has Closes #42 (US3 auto-close)" "$PRBODY" "Closes #42"
 check_contains "S5 PR body carries the version-bump self-marker" "$PRBODY" "auto-update-spec-kit: version-bump"
@@ -108,7 +145,7 @@ check_contains "S5/SC-012 PR body names the scratch repository" "$PRBODY" "wing-
 check "S5 PR is NOT merged by the workflow" "$("$PY" -c "import json,os;s=json.load(open(os.environ['GH_STATE']));print(list(s['prs'].values())[0]['mergedAt'])")" "None"
 check "S5 no merge call was ever made" "$(grep -c 'pr merge' "$GH_CALLS")" "0"
 check "S5 issue got a comment linking the PR" "$("$PY" -c "import json,os;s=json.load(open(os.environ['GH_STATE']));print(len(s['issues']['42']['comments']))")" "1"
-check "S5 branch pushed" "$(git ls-remote origin 'refs/heads/auto-update-spec-kit/v0.15.1' | wc -l)" "1"
+check "S5 branch pushed, via the authenticated URL" "$(remote_refs 'refs/heads/auto-update-spec-kit/v0.15.1')" "1"
 check "S5 default branch pin untouched (PR not merged)" "$(git show main:.specify/init-options.json | jq -r .speckit_version)" "0.13.0"
 cd - >/dev/null
 
@@ -126,7 +163,7 @@ check "S6 label exists" "$("$PY" -c "import json,os;print('auto-update:failed' i
 check "S10 issue carries auto-update:failed" "$("$PY" -c "import json,os;s=json.load(open(os.environ['GH_STATE']));print('auto-update:failed' in s['issues']['42']['labels'])")" "True"
 check "S10 issue stays OPEN" "$("$PY" -c "import json,os;s=json.load(open(os.environ['GH_STATE']));print(s['issues']['42']['state'])")" "open"
 check "S6 no PR opened" "$("$PY" -c "import json,os;print(len(json.load(open(os.environ['GH_STATE']))['prs']))")" "0"
-check "S6 nothing pushed to origin" "$(git ls-remote origin 'refs/heads/auto-update-spec-kit/*' | wc -l)" "0"
+check "S6 nothing pushed to origin" "$(remote_refs 'refs/heads/auto-update-spec-kit/*')" "0"
 check "S6 pin unchanged" "$(git show main:.specify/init-options.json | jq -r .speckit_version)" "0.13.0"
 check "S6/S10 issue never closed" "$(grep -c 'issue close' "$GH_CALLS")" "0"
 cd - >/dev/null
@@ -148,7 +185,7 @@ check "P1 issue carries auto-update:failed" "$("$PY" -c "import json,os;s=json.l
 check "P1 issue stays OPEN for the maintainer" "$("$PY" -c "import json,os;s=json.load(open(os.environ['GH_STATE']));print(s['issues']['42']['state'])")" "open"
 check "P1 issue never closed" "$(grep -c 'issue close' "$GH_CALLS")" "0"
 check "P1 no PR opened" "$("$PY" -c "import json,os;print(len(json.load(open(os.environ['GH_STATE']))['prs']))")" "0"
-check "P1 nothing pushed to origin" "$(git ls-remote origin 'refs/heads/auto-update-spec-kit/*' | wc -l)" "0"
+check "P1 nothing pushed to origin" "$(remote_refs 'refs/heads/auto-update-spec-kit/*')" "0"
 check "P1 pin left untouched" "$(git show main:.specify/init-options.json | jq -r .speckit_version)" "0.13.0"
 cd - >/dev/null
 

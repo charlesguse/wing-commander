@@ -2161,7 +2161,10 @@ jobs:
             .github/actions/wing-commander-preflight/action.yml
           git add -A
           git commit -m "revert: Spec Kit v$PINNED_VERSION regression — restore v$ROLLBACK_TARGET" --quiet
-          git push origin "refs/heads/$branch:refs/heads/$branch"
+          # Authenticated URL rather than `origin`: see the version-bump
+          # push's copy of this line.
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "refs/heads/$branch:refs/heads/$branch"
 
           {
             echo "Restores this repository's pinned Spec Kit version to v$ROLLBACK_TARGET after v$PINNED_VERSION failed its routine health check."
@@ -2227,7 +2230,27 @@ jobs:
           DB: ${{ steps.defbranch.outputs.name }}
         run: |
           set -euo pipefail
-          git push origin "refs/heads/$BRANCH:refs/heads/$BRANCH"
+          # Push through an explicitly authenticated URL, not `origin`. Every
+          # checkout in this file sets `persist-credentials: false`, so in the
+          # runner `origin` is a bare https URL with no credential helper
+          # behind it, and `git push origin` dies with `could not read
+          # Username for 'https://github.com'` — exit 128, before the PR body
+          # is even written (run 31910291963). act is the only job that pushes
+          # to the consumer repository at all: prepare deliberately hands its
+          # branch over as a bundle so an unverified candidate never reaches
+          # origin. So these two pushes are the only sites that need the App
+          # token wired into git, and neither had ever executed until the e2e
+          # stage started passing.
+          #
+          # plan.yml solves this differently, with a "Re-checkout default
+          # branch as wing-commander-bot" step that lets checkout persist the
+          # App token. That is not portable here: it would have to land before
+          # the bundle download (a re-checkout discards the fetched refs), and
+          # it leaves the token in .git/config for the rest of the job —
+          # which is the thing every `persist-credentials: false` in this
+          # file exists to prevent.
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "refs/heads/$BRANCH:refs/heads/$BRANCH"
           {
             echo "Bumps this repository's pinned Spec Kit version to v$CANDIDATE."
             echo ""
