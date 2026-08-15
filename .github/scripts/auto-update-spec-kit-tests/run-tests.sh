@@ -14,7 +14,7 @@ WC_TEST_WORK="$(mktemp -d)"
 export WC_TEST_WORK
 trap 'rm -rf "$WC_TEST_WORK"' EXIT
 
-SUITES=(t1_detect.sh t2_settle.sh t3_healthcheck.sh t4_verify.sh t5_act.sh t6_reply.sh t7_gating.py)
+SUITES=(t1_detect.sh t2_settle.sh t3_healthcheck.sh t4_verify.sh t5_act.sh t6_reply.sh t7_gating.py t8_scaffold.sh)
 if [ "$#" -gt 0 ]; then
   want="${1%.sh}"; want="${want%.py}"
   SUITES=()

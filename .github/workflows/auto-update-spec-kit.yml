@@ -1457,7 +1457,21 @@ jobs:
             # Empty tree on a fresh branch. `--orphan` needs a commit to
             # detach from; a scratch repository with no commits at all is
             # already on an unborn branch, so only rename it there.
+            #
+            # The detach-and-delete is what makes this step repeatable. The
+            # first scaffold pushes "$BRANCH" into a scratch repository that
+            # has no commits yet, and GitHub adopts the first branch pushed to
+            # an empty repository as its default. From the next run on, `git
+            # clone` checks that branch out, so `--orphan "$BRANCH"` aborts
+            # with "a branch named ... already exists" (exit 128, and this
+            # shell is `-e`) — which is exactly how run 31905247552 failed,
+            # one run after the scaffold first succeeded. Detaching frees the
+            # name so it can be deleted; the local branch is disposable either
+            # way, since the push below is `--force HEAD:refs/heads/$BRANCH`
+            # and carries no local history with it.
             if git rev-parse --verify HEAD >/dev/null 2>&1; then
+              git checkout --quiet --detach
+              git branch -D "$BRANCH" >/dev/null 2>&1 || true
               git checkout --quiet --orphan "$BRANCH"
               git rm -rq --cached . >/dev/null 2>&1 || true
               find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
