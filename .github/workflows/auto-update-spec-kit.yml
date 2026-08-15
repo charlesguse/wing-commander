@@ -1526,23 +1526,47 @@ jobs:
           github_token: ${{ steps.ctx.outputs.token }}
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           prompt: |
-            Working only inside the e2e-scratch/ directory of this checkout,
-            run that checkout's own
-            .specify/scripts/bash/create-new-feature.sh to start one
-            throwaway feature titled "wing commander e2e verification smoke
-            test", then write a short feature spec (a sentence or two
-            describing a trivial, disposable example feature) to the
-            spec.md file that script reports.
+            Run this command, exactly as written, from the directory you
+            start in — do not `cd` first, and do not prefix it with `bash`:
+
+              e2e-scratch/.specify/scripts/bash/create-new-feature.sh --json "wing commander e2e verification smoke test"
+
+            That is the only shell command you are permitted to run. Any
+            other form of it — a `cd` into e2e-scratch/ first, a `bash `
+            prefix, an absolute path — is denied, and each denied call
+            costs a turn without returning anything. Exploring the
+            environment to work out why something was denied will exhaust
+            the turn budget before the task is done.
+
+            The command prints JSON naming a spec.md path. Write a short
+            feature spec to that path with the Write tool (a sentence or
+            two describing a trivial, disposable example feature). Write
+            and Edit are permitted anywhere under e2e-scratch/.
 
             This output is never read by a human and never merged anywhere
             — it exists solely to confirm the candidate's own
             /speckit-specify-equivalent flow produces a real spec.md. Do
-            not modify, read, or write anything outside e2e-scratch/, do
-            not push, and do not open a PR.
+            not modify or write anything outside e2e-scratch/, do not
+            push, and do not open a PR.
+          # The `bash <path>` entry is not redundant with the bare one.
+          # Claude Code matches a Bash rule against the literal start of the
+          # command string, so `bash e2e-scratch/...` does NOT match
+          # `Bash(e2e-scratch/...:*)` — and `bash <script>` is the form an
+          # agent reaches for first. On run 31903910286 that cost four of
+          # twenty turns; the agent then spent the rest probing its own
+          # permissions (11 denials total) and hit the cap without ever
+          # running the script. The prompt above now dictates the exact
+          # command, and both plausible spellings are allowed, so a wording
+          # drift on either side cannot deadlock the stage again.
+          #
+          # `cd e2e-scratch && ...` is deliberately NOT allowed: Claude Code
+          # blocks a cd-then-git chain outright (untrusted hooks in the
+          # target directory), so allowing it would only re-introduce a
+          # denial the prompt already steers away from.
           claude_args: |
             --model ${{ inputs.e2e-stage-model }}
             --max-turns ${{ inputs.e2e-stage-max-turns }}
-            --allowedTools "Bash(e2e-scratch/.specify/scripts/bash/create-new-feature.sh:*),Write(e2e-scratch/**),Edit(e2e-scratch/**)"
+            --allowedTools "Bash(e2e-scratch/.specify/scripts/bash/create-new-feature.sh:*),Bash(bash e2e-scratch/.specify/scripts/bash/create-new-feature.sh:*),Write(e2e-scratch/**),Edit(e2e-scratch/**)"
             --disallowedTools "WebSearch,WebFetch,Bash(git push:*)"
 
       # Same convention as evaluate-path's `decide` and comment-reply's
