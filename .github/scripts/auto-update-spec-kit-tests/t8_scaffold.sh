@@ -147,6 +147,13 @@ mkdir -p "$NEST/e2e-scratch"
 cp -r "$REPO/.specify" "$NEST/e2e-scratch/.specify"
 ( cd "$NEST/e2e-scratch" && git init -q . && git add -A \
   && git -c user.email=t@t -c user.name=t commit -qm inner ) >/dev/null 2>&1
+# This repository tracks the .specify scripts as 100644, so a copy of them is
+# not executable on Linux — whereas the scratch clone's copies come from
+# `specify init`, which writes them executable, and the agent invokes the
+# script directly. Restore the production mode rather than invoking through
+# `bash`, so the fixture matches how the step is actually run. (Git Bash on
+# Windows reports every file as executable, so this only ever bit on CI.)
+chmod +x "$NEST/e2e-scratch/.specify/scripts/bash/"*.sh
 
 # Without the override — the production failure, asserted so the fix cannot be
 # dropped without this flipping.
