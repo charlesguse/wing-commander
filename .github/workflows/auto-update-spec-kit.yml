@@ -1405,10 +1405,12 @@ jobs:
           echo "full-name=$SCRATCH_REPO" >> "$GITHUB_OUTPUT"
           echo "branch=auto-update-spec-kit/e2e-$ISSUE" >> "$GITHUB_OUTPUT"
 
-      # T009: the same `specify init` command `prepare`'s "Write
-      # version-bump diff" step already runs, this time against the scratch
-      # repository's own clone, so it reflects "candidate scaffolded and
-      # ready" (FR-022) even if the agent step below never completes.
+      # T009: scaffolds the candidate into the scratch repository's own
+      # clone, so the branch reflects "candidate scaffolded and ready"
+      # (FR-022) even if the agent step below never completes. This is
+      # `specify init` rather than the `specify integration upgrade` that
+      # `prepare` runs — the two are not interchangeable; see the note on the
+      # invocation itself for why each job needs the command it uses.
       # Cloned into a subdirectory of this job's own workspace (rather than
       # $RUNNER_TEMP) so the claude-code-action step below — which operates
       # relative to $GITHUB_WORKSPACE — can be scoped to it by path.
@@ -1475,10 +1477,25 @@ jobs:
             # at any version in range — the flags are `--integration` and
             # `--integration-options="--skills"`, and claude installs skills by
             # default; see `prepare`'s equivalent step for the full note.
+            #
+            # `--ignore-agent-tools` is required, not optional tidiness. With
+            # `--integration claude`, `init` runs a `check_tool("claude")`
+            # PATH preflight before it writes anything and exits 1 with
+            # "Agent Detection Error: claude not found" — which is exactly how
+            # this step failed on run 31901443458, the first time it ever
+            # reached the scaffold. The runner has no Claude Code binary and
+            # does not need one: the agent step below gets its runtime from
+            # claude-code-action, and this step only has to lay files on disk.
+            # The flag skips the preflight and nothing else — it is read once,
+            # in front of that check, and changes no scaffolded output. It
+            # spells the same at both ends of the supported range (verified in
+            # `specify_cli/commands/init.py` at v0.12.4, the pin, and v0.16.4,
+            # the candidate). `prepare` never hit this because
+            # `specify integration upgrade` has no such preflight.
             uvx --from "git+https://github.com/github/spec-kit.git@v${CANDIDATE}" \
-              specify init . --integration claude --script sh --force \
+              specify init . --integration claude --script sh --force --ignore-agent-tools \
               > "$RUNNER_TEMP/e2e-scaffold-install.log" 2>&1 || {
-                echo "::error::wing-commander auto-update-spec-kit e2e-stage: 'specify init . --integration claude --script sh --force' failed while scaffolding the scratch repository — see log below."
+                echo "::error::wing-commander auto-update-spec-kit e2e-stage: 'specify init . --integration claude --script sh --force --ignore-agent-tools' failed while scaffolding the scratch repository — see log below."
                 tail -c 2000 "$RUNNER_TEMP/e2e-scaffold-install.log"
                 exit 1
               }
