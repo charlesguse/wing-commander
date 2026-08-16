@@ -35,6 +35,7 @@ run with a clear error if the inputs conflict (FR-010).
 |---|---|
 | `allowed-tools` | Composed, deduplicated, comma-joined effective allowed list — the exact value to splice into that step's `claude_args:` after `--allowedTools`. |
 | `disallowed-tools` | Composed, deduplicated, comma-joined effective disallowed list — spliced after `--disallowedTools`. |
+| `shell-commands` | Prose rendering of the `Bash(...)` entries in `allowed-tools`, unwrapped to the bare command prefixes they authorize and comma-joined as backticked text — for a prompt to state its own shell tooling from the list that is actually enforced, instead of a hand-maintained copy. Non-`Bash` entries (`Read`, `Grep`, `Skill`, …) are omitted: they are tools, not shell commands. Added after this feature shipped, by the change that made `implement.yml`'s tooling paragraph derive; **specified retroactively in `specs/037-rendered-tooling-list/`**, which is also where its known divergences are being fixed — see the caveats below. |
 
 ## Behavior
 
@@ -55,9 +56,41 @@ run with a clear error if the inputs conflict (FR-010).
    whitespace, drop exact-duplicate entries (edge case: same tool named
    twice collapses to one), rejoin with `,` preserving first-seen order for
    determinism (stable, reviewable `GITHUB_STEP_SUMMARY`/log output).
-4. **Emit outputs** via `$GITHUB_OUTPUT`, consistent with existing
+4. **Render `shell-commands`** from `effective_allowed`: keep the
+   `Bash(<cmd>)` entries, strip the wrapper and a trailing `:*` or ` *`
+   (matcher syntax, not part of the command), and join the survivors as
+   backticked text.
+
+   **Caveats as shipped.** This render post-dates the feature and does not
+   yet meet the contract `specs/037-rendered-tooling-list/` sets for it.
+   Four divergences are known, all latent against the tool lists this
+   repository and its published stages actually use — none is reachable
+   without consumer configuration that no caller supplies today:
+
+   - It walks `effective_allowed` only, so an entry that `effective_disallowed`
+     denies is still rendered as permitted. Deliberate at the composition
+     layer — see the `effective_disallowed` formula above and quickstart's
+     User Story 2 Acceptance #2, where an allowed list that still names a
+     separately-denied tool is the *specified* outcome, resolved downstream
+     by the engine's deny-precedence. It is only a defect in the render,
+     which states that list as if it were the enforced set (037 FR-002).
+   - A bare `Bash` grant (unrestricted shell — legal, and the most
+     permissive grant a consumer can give) renders as nothing, which reads
+     as the most restrictive (037 FR-005).
+   - `Bash(git status)` (exact) and `Bash(git status:*)` (prefix) both
+     render as `git status`, advertising arguments the exact form denies;
+     granting both renders the command twice, since dedupe happens before
+     the unwrap (037 FR-004, FR-007).
+   - An `effective_allowed` with no `Bash(...)` entry renders empty. The
+     agent-step guard is `allowed-tools != ''`, which such a list passes,
+     so the empty render reaches the model (037 FR-006, FR-008, FR-016).
+
+   Callers must not read `shell-commands` as the enforced set. `allowed-tools`
+   and `disallowed-tools` are the enforcement surface; this output is prose
+   derived from one of them.
+5. **Emit outputs** via `$GITHUB_OUTPUT`, consistent with existing
    composite actions' output style (e.g. `wing-commander-context`).
-5. **Never reached on validation failure** — steps 2–4 only run once step 1
+6. **Never reached on validation failure** — steps 2–5 only run once step 1
    passes for both directions.
 
 ## Call-site shape (one call per internal agent step)

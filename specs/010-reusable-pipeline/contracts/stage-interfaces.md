@@ -54,6 +54,23 @@ stage, the direction, and both values. On multi-step stages (currently only
 (D5). See the per-stage default lists below and
 [specs/026-configurable-tool-lists](../../026-configurable-tool-lists/contracts/tool-list-inputs.md).
 
+**What the agent is *told*, not only what it is permitted**: on `implement`,
+the prompt's tooling paragraph names the shell commands allowlisted for that
+run, rendered from the same composed allowed list the step enforces (the
+composite's `shell-commands` output) rather than from a hand-maintained copy.
+Configuring any of the four inputs therefore changes the prompt as well as the
+enforcement. The rendering keeps the `Bash(<cmd>)` entries and drops the
+matcher's trailing wildcard; non-`Bash` entries are omitted, since the sentence
+is about shell commands and the other tools are conveyed by the tool interface
+itself. Four divergences between that rendering and what a consumer would
+reasonably predict are known and being fixed under
+[specs/037-rendered-tooling-list](../../037-rendered-tooling-list/spec.md) —
+most importantly, the rendering is derived from the allowed list *before* the
+disallowed list is applied, so a command you deny with `extra-disallowed-tools`
+while leaving it in the allowed list is still named to the agent as permitted
+(the engine denies it correctly; only the prompt is wrong). Enumerated in
+[tool-composition-action.md](../../026-configurable-tool-lists/contracts/tool-composition-action.md#outputs).
+
 **Universal behavior**:
 - `on:` is `workflow_call` **only**; stages never read `github.event` — all
   event facts arrive as inputs (research D2).

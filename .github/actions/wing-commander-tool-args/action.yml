@@ -58,6 +58,16 @@ outputs:
   disallowed-tools:
     description: Composed, deduplicated, comma-joined effective disallowed list.
     value: ${{ steps.compose.outputs.disallowed-tools }}
+  shell-commands:
+    description: >
+      The Bash(...) entries of the composed allowed list, unwrapped to the
+      bare command prefixes they authorize and joined with ", " — the same
+      information a stage's prompt would otherwise hard-code in prose. A
+      prompt that names its tools by hand drifts from the list actually
+      passed to --allowedTools the first time either is edited alone, which
+      is how specs/036 reached a finalize PR with four validation tasks
+      unrun: the grant said one thing and the prompt said another.
+    value: ${{ steps.compose.outputs.shell-commands }}
 
 runs:
   using: composite
@@ -167,7 +177,38 @@ runs:
         effective_allowed="$(compose_list "$raw_allowed" "")"
         effective_disallowed="$(compose_list "$raw_disallowed" "subtract")"
 
-        # 4. Emit (only reached once validation in step 1 passes).
+        # 4. Render the Bash(...) entries as the bare command prefixes they
+        #    authorize, so a prompt can state its own tooling from the list
+        #    that is actually enforced instead of a hand-maintained copy.
+        #    `Bash(git status:*)` and the equivalent `Bash(git status *)`
+        #    both authorize the prefix `git status`; the trailing wildcard is
+        #    matcher syntax, not part of the command, so it is dropped.
+        #    Non-Bash entries (Read, Grep, Skill, ...) are omitted — they are
+        #    tools, not shell commands, and the sentence this feeds is about
+        #    what may be run in a shell.
+        shell_commands=""
+        IFS=',' read -ra allowed_items <<< "$effective_allowed"
+        for item in "${allowed_items[@]}"; do
+          item="$(trim "$item")"
+          case "$item" in
+            'Bash('*')') ;;
+            *) continue ;;
+          esac
+          cmd="${item#Bash(}"
+          cmd="${cmd%)}"
+          cmd="${cmd%:\*}"
+          cmd="${cmd% \*}"
+          cmd="$(trim "$cmd")"
+          [ -z "$cmd" ] && continue
+          if [ -z "$shell_commands" ]; then
+            shell_commands="\`$cmd\`"
+          else
+            shell_commands="$shell_commands, \`$cmd\`"
+          fi
+        done
+
+        # 5. Emit (only reached once validation in step 1 passes).
         echo "allowed-tools=$effective_allowed" >> "$GITHUB_OUTPUT"
         echo "disallowed-tools=$effective_disallowed" >> "$GITHUB_OUTPUT"
+        echo "shell-commands=$shell_commands" >> "$GITHUB_OUTPUT"
         echo "✅ wing-commander-tool-args ($STEP_LABEL): composed tool lists." >> "$GITHUB_STEP_SUMMARY"
