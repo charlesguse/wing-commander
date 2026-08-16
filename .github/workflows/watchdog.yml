@@ -662,11 +662,12 @@ jobs:
           # App token does not have (docs/setup.md) — under the App token
           # every job's log silently reads as unfetchable ("$log" always
           # empty) and this collector has never actually found a sentinel.
-          jobs_json="$(GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" --paginate 2>/dev/null || echo '{"jobs":[]}')"
+          jobs_json="$(GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" --paginate --jq '.jobs[]' 2>/dev/null | jq -s '.')"
+          [ -n "$jobs_json" ] || jobs_json='[]'
           entries='[]'
-          for job_id in $(printf '%s' "$jobs_json" | jq -r '.jobs[]?.id // empty'); do
-            job_name="$(printf '%s' "$jobs_json" | jq -r --arg id "$job_id" '.jobs[] | select((.id|tostring) == $id) | .name')"
-            job_conclusion="$(printf '%s' "$jobs_json" | jq -r --arg id "$job_id" '.jobs[] | select((.id|tostring) == $id) | .conclusion // "in_progress"')"
+          for job_id in $(printf '%s' "$jobs_json" | jq -r '.[]?.id // empty'); do
+            job_name="$(printf '%s' "$jobs_json" | jq -r --arg id "$job_id" '.[] | select((.id|tostring) == $id) | .name')"
+            job_conclusion="$(printf '%s' "$jobs_json" | jq -r --arg id "$job_id" '.[] | select((.id|tostring) == $id) | .conclusion // "in_progress"')"
             log="$(GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$job_id/logs" 2>/dev/null || true)"
             [ -n "$log" ] || continue
             # Match RUNTIME OUTPUT only. Actions echoes every step's own

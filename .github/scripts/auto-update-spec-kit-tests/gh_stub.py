@@ -96,8 +96,8 @@ PAGE_SIZE = 30
 
 
 def emit_paginated(data_list, argv):
-    """Print JSON the way real `gh api ... --paginate` does: split into
-    PAGE_SIZE-item pages and call emit() once per page, writing directly to
+    """Print JSON the way a real `--paginate` read from `gh api` does: split
+    into PAGE_SIZE-item pages and call emit() once per page, writing directly to
     stdout with no added separator between pages — reproducing the N
     concatenated JSON documents shape --jq produces across real pagination
     (research.md D4, spec 036). Falls back to a single emit() when
