@@ -74,8 +74,8 @@ Suites:
 | `t2_settle.sh` | Scenarios 2, 3, 4, 11, 12 — the settle state machine's six branches |
 | `t3_healthcheck.sh` | Scenarios 6, 8 — lightweight tier against real `.specify` scripts, worktree isolation, rollback target from git history |
 | `t4_verify.sh` | Scenarios 5, 6, 7 — tier selection and result combination; plus (specs/034) the deeper tier's per-script assertion chain (`spec.md`/`setup-plan.sh`/`setup-tasks.sh`) against real fixture worktrees, the e2e-stage read-back's completion-vs-shape distinction, the FR-008 missing-artifact narration hint, and the scratch repository being resolved rather than provisioned (configured / unconfigured / malformed `OWNER/NAME` / scratch-token mint failed or empty / not visible to the token, plus a direct assertion that no `repo create` or `repo delete` call is ever made) |
-| `t5_act.sh` | Scenarios 5, 6, 8, 10 — revert PR, version-bump PR, failure flagging, against a real git remote whose `origin` is credential-less exactly as the runner's is |
-| `t6_reply.sh` | Scenarios 9, 12, 13, 14, 15 — self-recognition, maintainer gate, fail-safe read-backs, prompt-injection safety |
+| `t5_act.sh` | Scenarios 5, 6, 8, 10 — revert PR, version-bump PR, failure flagging, against a real git remote whose `origin` is credential-less exactly as the runner's is; plus the PR-opening preflight against a pre-existing branch, a pre-existing PR, a clear remote, and a remote it cannot read at all |
+| `t6_reply.sh` | Scenarios 9, 12, 13, 14, 15 — self-recognition, maintainer gate, fail-safe read-backs, prompt-injection safety, and the guard-skip branch that outranks both entry paths' decisions |
 | `t7_gating.py` | every scenario's job routing, plus the wrapper's pause kill-switch |
 | `t8_scaffold.sh` | e2e-stage's scaffold step run repeatedly against one scratch repository — the branch is reset to a single orphan commit each time, whatever the scratch repository's default branch happens to be; plus the agent stage's project-root resolution, run against the real pinned scripts in a nested consumer/scratch layout |
 | `t9_prepare.sh` | Scenario 5's other half — the version-bump commit itself: the regenerated pin in all three files that carry it, `-A` semantics across additions/deletions/files outside `.specify`, the pipeline checkout kept out of the commit, the bundle handed to verify/act round-tripping, the candidate's `uvx` CLI shape asserted verbatim, and both ways the regeneration can fail (`uvx` absent, upgrade-CLI moved) |
@@ -105,6 +105,8 @@ against a deliberately broken workflow. Every mutant below is caught:
 | `prepare`'s commit reverted to a bare `git add -A`, which sweeps the `.wing-commander-pipeline` checkout in as a gitlink | `t9` (3 — the production code, shipped in PR #201) |
 | the same revert on `act`'s rollback commit | `t5` (2, Scenario 8) |
 | the gitlink excluded by narrowing `-A` to an explicit pathspec list (`.specify .github`) instead | `t9` (1 — the regenerated `.claude/skills` file silently stops being committed) |
+| the PR-opening preflight reverted to reading `origin`, which cannot authenticate for the same reason the pushes cannot | `t5` (5 — including the clear-remote case, which flips to blocked: an unreadable remote is not an absent branch) |
+| the `guard-skip` branch of `decide-outcome` never taken, so the agent's own outcome wins | `t6` (4, both entry paths) |
 
 Three mutants deserve singling out, because they are about the harness rather
 than the workflow — both are cases where the fixture was kinder than the

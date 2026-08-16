@@ -2394,7 +2394,35 @@ jobs:
           BRANCH: ${{ needs.prepare.outputs.branch }}
         run: |
           set -uo pipefail
-          if git ls-remote --exit-code origin "refs/heads/$BRANCH" >/dev/null 2>&1; then
+          # Through the authenticated URL, not `origin` — the same reason the
+          # push below spells its remote out in full: `persist-credentials:
+          # false` leaves `origin` a bare https URL with no credential helper,
+          # so `git ls-remote origin` cannot read a private consumer
+          # repository. Reading through `origin` would have made this step
+          # fail open — a failed lookup is indistinguishable from "no such
+          # branch" once the error is discarded, so the very branch this step
+          # exists to protect would have been pushed over (FR-015).
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          # `|| rc=$?` rather than a bare call: a `run:` block executes as
+          # `bash -e {0}`, and `set -uo pipefail` above does not turn errexit
+          # back off, so an unguarded non-zero exit here kills the step before
+          # it can decide anything.
+          rc=0
+          git ls-remote --exit-code "$remote" "refs/heads/$BRANCH" \
+            >/dev/null 2>"$RUNNER_TEMP/preflight-ls-remote.txt" || rc=$?
+
+          # --exit-code makes 2 mean "reached the remote, no such ref" — the
+          # only code that may proceed. 0 is a hit; anything else is the
+          # lookup itself failing, and "don't know means don't act" (the
+          # guard step's copy of this rule) blocks rather than risks the
+          # overwrite.
+          if [ "$rc" -eq 2 ]; then
+            echo "blocked=false" >> "$GITHUB_OUTPUT"
+          elif [ "$rc" -ne 0 ]; then
+            echo "blocked=true" >> "$GITHUB_OUTPUT"
+            echo "reason=could not read refs/heads/$BRANCH on the remote (git exit $rc) — declined rather than risk overwriting it" >> "$GITHUB_OUTPUT"
+            sed 's/^/  /' "$RUNNER_TEMP/preflight-ls-remote.txt"
+          else
             existing_pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" \
               --state open --json number --jq '.[0].number // empty' 2>/dev/null || true)"
             echo "blocked=true" >> "$GITHUB_OUTPUT"
@@ -2403,8 +2431,6 @@ jobs:
             else
               echo "reason=branch $BRANCH already exists with no open PR — delete it and re-dispatch" >> "$GITHUB_OUTPUT"
             fi
-          else
-            echo "blocked=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Decline — a pre-existing branch or pull request blocks this candidate
