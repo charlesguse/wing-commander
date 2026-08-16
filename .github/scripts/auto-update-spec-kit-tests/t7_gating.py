@@ -137,7 +137,19 @@ def act_steps(ifs_steps, ctx, arm):
         "verify passed": [
             "Download prepared branch bundle",
             "Fetch prepared branch from bundle",
+            "Check for a pre-existing branch or pull request",
             "Open version-bump PR",
+        ],
+        # 035-auto-update-pr-guard (US4): the preflight step's own gate is
+        # identical to "Open version-bump PR"'s base condition, so it always
+        # runs alongside it — but when it BLOCKS, "Open version-bump PR"
+        # must NOT, and the decline steps must run instead.
+        "verify passed, preflight blocked": [
+            "Download prepared branch bundle",
+            "Fetch prepared branch from bundle",
+            "Check for a pre-existing branch or pull request",
+            "Decline — a pre-existing branch or pull request blocks this candidate",
+            "Post the preflight decline on the issue",
         ],
         "rollback": ["Rollback (health-check failed)"],
     }[arm])
@@ -461,6 +473,15 @@ def main():
         "needs.prepare.result": "success", "needs.verify.result": "success",
         "needs.verify.outputs.passed": "true",
     }, "verify passed")
+
+    # 035-auto-update-pr-guard (US4, FR-015): the preflight step blocks —
+    # "Open version-bump PR" must NOT run, and the decline steps must.
+    act_steps(act, {
+        "needs.health-check.outputs.pinned-ok": "true",
+        "needs.prepare.result": "success", "needs.verify.result": "success",
+        "needs.verify.outputs.passed": "true",
+        "steps.preflight.outputs.blocked": "true",
+    }, "verify passed, preflight blocked")
 
     # health-check failure short-circuits the whole chain, so prepare is
     # skipped rather than successful — the rollback arm must not depend on
