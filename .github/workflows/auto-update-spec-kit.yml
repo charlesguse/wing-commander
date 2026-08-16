@@ -1042,6 +1042,95 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "evaluate-path: outcome=$outcome for #$ISSUE." >> "$GITHUB_STEP_SUMMARY"
 
+      # Legible narration for a guarded run (US2, FR-006/FR-007): the step
+      # summary always names the candidate, the blocking PR(s), and the
+      # reason. The tracking issue's marker gains a `guard-checked` liveness
+      # timestamp refreshed every guarded run, and a one-time narration
+      # comment fires only when the blocking PR differs from the marker's
+      # existing `guard-pr` (a fresh PR, or the first guarded run ever) — no
+      # guarded run ever adds a second comment for a PR already narrated.
+      # `multiple-matches` is a data-integrity condition and gets a warning
+      # every run instead, matching settle's own count > 1 precedent of
+      # never maintaining dedup state for it.
+      - name: Compose the guard-skip narration
+        id: guard-narrate
+        if: steps.decide-outcome.outputs.outcome == 'guard-skip'
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ISSUE: ${{ steps.entry.outputs.issue-number }}
+          CANDIDATE: ${{ steps.entry.outputs.candidate-version }}
+          REASON: ${{ steps.decide-outcome.outputs.reason }}
+          MATCHES: ${{ steps.decide-outcome.outputs.matches }}
+        run: |
+          set -uo pipefail
+          nums="$(printf '%s' "$MATCHES" | jq -r '[.[].number] | map("#" + (. | tostring)) | join(", ")')"
+
+          case "$REASON" in
+            already-open)
+              summary="evaluate-path: v$CANDIDATE already has an open version-bump PR ($nums) — declined this cycle, awaiting review."
+              ;;
+            queued-behind)
+              summary="evaluate-path: v$CANDIDATE is queued behind $nums, an older open version-bump PR — declined this cycle (at most one proposal stays in flight)."
+              ;;
+            multiple-matches)
+              summary="evaluate-path: $nums open PRs carry the version-bump marker for v$CANDIDATE — data-integrity condition, left for a human."
+              ;;
+            lookup-failed)
+              summary="evaluate-path: the open-PR lookup failed — declined this cycle rather than risk a duplicate proposal."
+              ;;
+            *)
+              summary="evaluate-path: declined this cycle (guard reason: $REASON)."
+              ;;
+          esac
+          echo "$summary" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$REASON" = "multiple-matches" ]; then
+            echo "::warning::wing-commander auto-update-spec-kit: $nums open PRs carry the version-bump marker for v$CANDIDATE — data-integrity condition, never auto-resolved."
+            echo "narrate=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$REASON" = "lookup-failed" ]; then
+            echo "narrate=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          blocking_pr="$(printf '%s' "$MATCHES" | jq -r '.[0].number')"
+          blocked_candidate="$(printf '%s' "$MATCHES" | jq -r '.[0].candidate')"
+          pr_link="https://github.com/$GITHUB_REPOSITORY/pull/$blocking_pr"
+          checked="$(date -u +%Y-%m-%dT%H:%MZ)"
+
+          body="$(gh issue view "$ISSUE" --json body --jq .body)"
+          # `|| true`: see the comment-reply guard's copy of this line.
+          marker_line="$(printf '%s' "$body" | grep -o '<!-- wing-commander-auto-update-spec-kit:[^>]*-->' | head -1 || true)"
+          prior_pr="$(printf '%s' "$marker_line" | sed -n 's/.*guard-pr=\([0-9]*\).*/\1/p')"
+
+          stripped="$(printf '%s' "$marker_line" | sed -E 's/ guard-pr=[0-9]+//; s/ guard-checked=[^ ]+//')"
+          new_marker="$(printf '%s' "$stripped" | sed "s/ *-->/ guard-pr=$blocking_pr guard-checked=$checked -->/")"
+          printf '%s' "$body" | sed "s|$marker_line|$new_marker|" > "$RUNNER_TEMP/guard-issue-body.md"
+          gh issue edit "$ISSUE" --body-file "$RUNNER_TEMP/guard-issue-body.md"
+
+          if [ "$prior_pr" != "$blocking_pr" ]; then
+            if [ "$REASON" = "already-open" ]; then
+              echo "v$CANDIDATE already has an open version-bump pull request awaiting review: $pr_link. This run declined to re-propose it." > "$RUNNER_TEMP/guard-narration.md"
+            else
+              echo "v$CANDIDATE is queued behind an older open version-bump pull request proposing v$blocked_candidate: $pr_link. At most one version-bump proposal stays in flight at a time." > "$RUNNER_TEMP/guard-narration.md"
+            fi
+            echo "narrate=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "narrate=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Post the guard-skip narration
+        if: steps.guard-narrate.outputs.narrate == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ steps.entry.outputs.issue-number }}
+          kind: info
+          summary: "Declined to act — a version-bump pull request is already open"
+          body-file: ${{ runner.temp }}/guard-narration.md
+
       # clean-bump reasoning + sources are recorded on the issue regardless
       # of outcome (FR-013) — needs-migration/ambiguous-options record their
       # own via US4's T022/T023.
