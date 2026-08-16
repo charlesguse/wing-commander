@@ -33,6 +33,20 @@ Single-project CI/CD feature, no `src/`/`tests/` split. All file paths below are
 
 **Checkpoint**: Baseline is green; Gate 18/19 numbering is free.
 
+> **Validation status (headless implement run, 2026-08-16)**: T001's second
+> half is **done** — `lint-workflows.yml` carries Gates 1-17 plus this
+> feature's new Gate 18 and Gate 19, each named exactly once, so the numbering
+> this feature claims was free. T001's first half is **not run**: the
+> allowlist for this run permits only `actionlint`, `yamllint`, `shellcheck`
+> and `jq`, so `python3 .github/scripts/run-local-gates.py` and
+> `bash .github/scripts/auto-update-spec-kit-tests/run-tests.sh` are both
+> auto-denied. The same applies to T023-T025. Every workflow this feature
+> touches was linted with `actionlint` (shellcheck included) and carries no
+> finding this feature introduced; everything else below was verified by
+> reading the shipped code against the harnesses that execute it. **A human
+> or a CI run must still execute the two suites before this feature is
+> considered validated.**
+
 ---
 
 ## Phase 2: Foundational (Blocking Prerequisites)
@@ -150,6 +164,8 @@ Single-project CI/CD feature, no `src/`/`tests/` split. All file paths below are
 - [ ] T024 [P] Run the quickstart.md "reintroduce a broken shape" drill (step 3): temporarily revert the `collect-annotations` step to its pre-fix shape, confirm `run-local-gates.py` fails naming `watchdog.yml` and the offending line with error text alone sufficient to write the fix back (SC-006), then restore the file.
 - [ ] T025 Run `bash .github/scripts/auto-update-spec-kit-tests/run-tests.sh` (full suite) and `python3 .github/scripts/verify-gate-19.py` to confirm nothing else regressed (quickstart.md steps 4-6).
 - [X] T026 Confirm no published stage's declared `workflow_call` inputs, outputs, or secrets other than `watchdog.yml`'s new `untrusted-collectors` output were widened (FR-015): diff `watchdog.yml`'s and `auto-update-spec-kit.yml`'s `on: workflow_call` blocks against the pre-feature versions.
+- [X] T027 Restore the errexit guards the pagination rewrite dropped. A `run:` block's default shell is `bash -e {0}` and `set -uo pipefail` does not turn errexit back off (`auto-update-spec-kit-tests/lib.sh` `run_step` records a prior incident of exactly this class). Every read T002/T005/T006/T011/T016 rewrote had previously carried `|| echo '...'` or `|| true`; without one, a failed read aborted the step *before* the `${PIPESTATUS[0]}`/`$?` capture and before the `collector-outcomes.json` append — the exact "behaved as though there was nothing to see" outcome User Story 5 exists to end, and it made Gate 19's failure-injection scenario (T021) unreachable. Captured through `|| rc=…` / `|| releases_json='[]'` (the left side of a `||` is errexit-exempt, and `PIPESTATUS` survives into the right side's expansion) at all seven sites: both watchdog jobs listings, the per-job log read, the annotations read, `collect-branch-drift`'s `git fetch`, and both `spec-kit/releases` reads.
+- [X] T028 Repair `.github/scripts/verify-sentinel-collector.py` (Gate 9), which executes the shipped `Collect: step summaries` step and which T011/T016 broke two ways: its `gh` stub dumped the raw `{"jobs":[…]}` fixture while the step now reads it as `--paginate --jq '.jobs[]' | jq -s '.'` (yielding `[{"jobs":[…]}]`, whose `.[]?.id` is empty, so every scenario collected nothing), and it never seeded `$RUNNER_TEMP/collector-outcomes.json`, which the step's closing `jq` now reads — a hard failure under `bash -e`. The stub now applies the step's own `--jq` per page and the fixture seeds the outcomes file.
 
 ---
 
