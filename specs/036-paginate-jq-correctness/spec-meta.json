@@ -3,6 +3,6 @@
   "spec_dir": "specs/036-paginate-jq-correctness",
   "feature_num": "036",
   "stage": "implement",
-  "iteration": 1,
+  "iteration": 2,
   "spec_branch": "spec/036-paginate-jq-correctness"
 }
