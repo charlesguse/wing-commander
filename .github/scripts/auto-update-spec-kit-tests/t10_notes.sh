@@ -62,4 +62,27 @@ check_not_contains "multi-page: a page-1 release outside the range is excluded" 
 BUNDLE_COUNT="$(printf '%s' "$N_BUNDLE" | jq 'length')"
 check "multi-page: bundle contains exactly the 3 eligible releases, nothing else" "$BUNDLE_COUNT" "3"
 
+echo "--- Mutation: the pre-fix (--paginate, no --jq) read must break the multi-page scenario above (T033, spirit of Gate 9/19's MUTATIONS) ---"
+MUT_OLD="$(mktemp)"; MUT_NEW="$(mktemp)"
+cat > "$MUT_OLD" <<'EOF'
+releases_json="$(gh api repos/github/spec-kit/releases --paginate --jq '.[] | select(.prerelease == false)' 2>/dev/null | jq -s '.')" || releases_json='[]'
+EOF
+cat > "$MUT_NEW" <<'EOF'
+releases_json="$(gh api repos/github/spec-kit/releases --paginate 2>/dev/null || echo '[]')"
+EOF
+notes_mutated() { # notes_mutated <pinned> <candidate> <releases-file> -> sets N_BUNDLE; returns 1 if the mutation no longer applies
+  new_step_env
+  "$PY" -c "
+import json,sys
+json.dump({'releases_file': sys.argv[1], 'default_branch':'main'}, open(sys.argv[2],'w'))" "$3" "$GH_STATE"
+  GHA_SUBST=()
+  export GH_TOKEN=stub PINNED="$1" CANDIDATE="$2"
+  run_step_mutated 'auto-update-spec-kit__evaluate-path__*fetch-candidate-release-notes*.sh' "$MUT_OLD" "$MUT_NEW" >/dev/null 2>&1 || return 1
+  N_BUNDLE="$(cat "$RUNNER_TEMP/release-notes.json" 2>/dev/null || echo '[]')"
+}
+if notes_mutated "0.15.1" "0.15.5" "$BULK"; then
+  MUT_BUNDLE_COUNT="$(printf '%s' "$N_BUNDLE" | jq -s 'length' 2>/dev/null)"
+  check_ne "MUTATION: pre-fix (no --jq) read does not assemble a single well-formed 3-release bundle (jq -s counts top-level values, not release entries)" "$MUT_BUNDLE_COUNT" "1"
+fi
+
 report "T10 notes"

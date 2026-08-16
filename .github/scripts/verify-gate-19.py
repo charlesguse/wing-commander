@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Behavioral tests for watchdog.yml's "Collect: annotations" step (Gate 19).
+"""Behavioral tests for watchdog.yml's "Collect: annotations" step (Gate 19),
+plus failure-injection coverage (T021, T031) for the not-found-vs-other-
+failure branches of two neighboring collectors ("Collect: execution-output
+artifacts", "Collect: branch drift") and the "Aggregate signals" step
+(T022, T030) that folds every collector's read outcome into
+untrusted-collectors.
 
 WHY THIS EXISTS
 ---------------
@@ -328,6 +333,242 @@ MUTATIONS = [
 
 
 # --------------------------------------------------------------------------
+# T031: failure-injection coverage for the two collectors whose not-found-
+# vs-other-failure branch (T029) nothing previously executed —
+# `collect-execution-output`'s `gh run download` and `collect-branch-drift`'s
+# `git fetch`. Gate 19 already injects a read failure into
+# `collect-annotations`; these two branches were desk-read only, the same
+# "a verifier nothing runs is not a verifier" shape Gate 5/9 exist to
+# prevent, and the T029 bug (a `no valid artifacts` phrasing that fell
+# through the old `grep -qi "no artifact"` check) would have been caught
+# here.
+# --------------------------------------------------------------------------
+EXEC_STEP = "Collect: execution-output artifacts"
+BD_STEP = "Collect: branch drift"
+
+STUB_GH_DOWNLOAD_TEMPLATE = r'''#!/usr/bin/env bash
+if [ "$1" = "run" ] && [ "$2" = "download" ]; then
+  if [ -n "${GH_STUB_DOWNLOAD_FAIL:-}" ]; then
+    printf '%s\n' __MSG__ >&2
+    exit 1
+  fi
+  exit 0
+fi
+echo "unexpected gh invocation: $*" >&2
+exit 1
+'''
+
+STUB_GIT_TEMPLATE = r'''#!/usr/bin/env bash
+case "$1" in
+  fetch)
+    if [ -n "${GIT_STUB_FETCH_FAIL:-}" ]; then
+      printf '%s\n' __MSG__ >&2
+      exit 1
+    fi
+    exit 0
+    ;;
+  rev-parse)
+    if [ -n "${GIT_STUB_REVPARSE_FAIL:-}" ]; then
+      echo "fatal: injected rev-parse failure" >&2
+      exit 1
+    fi
+    echo "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    exit 0
+    ;;
+  rev-list)
+    if [ -n "${GIT_STUB_REVLIST_FAIL:-}" ]; then
+      echo "fatal: injected rev-list failure" >&2
+      exit 1
+    fi
+    echo "${GIT_STUB_REVLIST_COUNT:-0}"
+    exit 0
+    ;;
+esac
+exit 1
+'''
+
+
+def stub_bin(bindir, name, template, msg):
+    path = os.path.join(bindir, name)
+    content = template.replace("__MSG__", shell_quote(msg))
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(content)
+    os.chmod(path, 0o755)
+
+
+EXEC_SCENARIOS = [
+    dict(
+        name="gh's 'no artifact matches' phrasing: a genuine not-found is ok",
+        fail=True,
+        msg="gh: no artifact matches any of the names or patterns provided",
+        expect_outcome="ok",
+    ),
+    dict(
+        name="gh's 'no valid artifacts found to download' phrasing "
+             "(T029): a genuine not-found is ok even though it contains "
+             "no 'no artifact' substring",
+        fail=True,
+        msg="gh: no valid artifacts found to download",
+        expect_outcome="ok",
+    ),
+    dict(
+        name="a permission/network-flavored download failure is failed",
+        fail=True,
+        msg="gh: HTTP 403: Resource not accessible by integration",
+        expect_outcome="failed",
+    ),
+]
+
+BD_SCENARIOS = [
+    dict(
+        name="branch already torn down: a genuine not-found is ok",
+        fetch_fail=True,
+        fetch_msg="fatal: couldn't find remote ref refs/heads/spec/999-torn-down",
+        revparse_fail=True,
+        revlist_fail=False,
+        expect_outcome="ok",
+    ),
+    dict(
+        name="a permission/network-flavored fetch failure is failed",
+        fetch_fail=True,
+        fetch_msg="fatal: unable to access 'https://github.com/...': Could not "
+                  "resolve host",
+        revparse_fail=True,
+        revlist_fail=False,
+        expect_outcome="failed",
+    ),
+    dict(
+        name="fetch succeeds but rev-parse unexpectedly fails: not the "
+             "torn-down case, so the read is untrusted (T032)",
+        fetch_fail=False,
+        fetch_msg="",
+        revparse_fail=True,
+        revlist_fail=False,
+        expect_outcome="failed",
+    ),
+    dict(
+        name="fetch and rev-parse succeed but rev-list unexpectedly fails "
+             "(T032)",
+        fetch_fail=False,
+        fetch_msg="",
+        revparse_fail=False,
+        revlist_fail=True,
+        expect_outcome="failed",
+    ),
+    dict(
+        name="every read succeeds: outcome is ok (FR-005/SC-007 baseline)",
+        fetch_fail=False,
+        fetch_msg="",
+        revparse_fail=False,
+        revlist_fail=False,
+        expect_outcome="ok",
+    ),
+]
+
+
+def last_outcome(outcomes, collector):
+    entries = [o for o in outcomes
+               if isinstance(o, dict) and o.get("collector") == collector]
+    return entries[-1].get("outcome") if entries else None
+
+
+def run_exec_one(script, env, sc, tmproot):
+    workdir = tempfile.mkdtemp(dir=tmproot)
+    runner_temp = tempfile.mkdtemp(dir=tmproot)
+    bindir = tempfile.mkdtemp(dir=tmproot)
+
+    with open(os.path.join(runner_temp, "collector-outcomes.json"), "w",
+              encoding="utf-8") as fh:
+        fh.write("[]")
+    with open(os.path.join(runner_temp, "signals.json"), "w", encoding="utf-8") as fh:
+        fh.write("[]")
+    stub_bin(bindir, "gh", STUB_GH_DOWNLOAD_TEMPLATE, sc["msg"])
+
+    run_env = dict(env)
+    run_env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
+    if sc["fail"]:
+        run_env["GH_STUB_DOWNLOAD_FAIL"] = "1"
+
+    rc, out, _, _ = run_step(BASH, script, workdir, run_env, runner_temp)
+    with open(os.path.join(runner_temp, "collector-outcomes.json"), encoding="utf-8") as fh:
+        outcomes = json.load(fh)
+    for d in (workdir, runner_temp, bindir):
+        shutil.rmtree(d, ignore_errors=True)
+    return rc, out, outcomes
+
+
+def suite_exec(script, env, tmproot):
+    failures = []
+    for sc in EXEC_SCENARIOS:
+        tag = f"[execution-output: {sc['name']}]"
+        rc, out, outcomes = run_exec_one(script, env, sc, tmproot)
+        if rc != 0:
+            failures.append(f"{tag} the collector exited {rc}:\n{out}")
+            continue
+        got = last_outcome(outcomes, "collect-execution-output")
+        if got != sc["expect_outcome"]:
+            failures.append(
+                f"{tag} collector-outcomes.json for collect-execution-output "
+                f"reads {got!r}, expected {sc['expect_outcome']!r} (FR-010). "
+                f"outcomes: {outcomes}")
+    return failures
+
+
+def run_bd_one(script, env, sc, tmproot):
+    workdir = tempfile.mkdtemp(dir=tmproot)
+    runner_temp = tempfile.mkdtemp(dir=tmproot)
+    bindir = tempfile.mkdtemp(dir=tmproot)
+
+    with open(os.path.join(runner_temp, "collector-outcomes.json"), "w",
+              encoding="utf-8") as fh:
+        fh.write("[]")
+    with open(os.path.join(runner_temp, "signals.json"), "w", encoding="utf-8") as fh:
+        fh.write("[]")
+    stub_bin(bindir, "git", STUB_GIT_TEMPLATE, sc["fetch_msg"])
+
+    run_env = dict(env)
+    run_env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
+    run_env["RUN_NAME"] = "Wing Commander · 5 implement"
+    run_env["RUN_CONCLUSION"] = "success"
+    run_env["HEAD_BRANCH"] = "spec/999-torn-down"
+    run_env["HEAD_SHA"] = "0000000000000000000000000000000000000000"
+    run_env["SLUG"] = ""
+    run_env["META_STAGE"] = ""
+    run_env["STALLED_LABEL"] = "false"
+    run_env["SPEC_PREFIX"] = "spec/"
+    if sc["fetch_fail"]:
+        run_env["GIT_STUB_FETCH_FAIL"] = "1"
+    if sc["revparse_fail"]:
+        run_env["GIT_STUB_REVPARSE_FAIL"] = "1"
+    if sc["revlist_fail"]:
+        run_env["GIT_STUB_REVLIST_FAIL"] = "1"
+
+    rc, out, _, _ = run_step(BASH, script, workdir, run_env, runner_temp)
+    with open(os.path.join(runner_temp, "collector-outcomes.json"), encoding="utf-8") as fh:
+        outcomes = json.load(fh)
+    for d in (workdir, runner_temp, bindir):
+        shutil.rmtree(d, ignore_errors=True)
+    return rc, out, outcomes
+
+
+def suite_bd(script, env, tmproot):
+    failures = []
+    for sc in BD_SCENARIOS:
+        tag = f"[branch-drift: {sc['name']}]"
+        rc, out, outcomes = run_bd_one(script, env, sc, tmproot)
+        if rc != 0:
+            failures.append(f"{tag} the collector exited {rc}:\n{out}")
+            continue
+        got = last_outcome(outcomes, "collect-branch-drift")
+        if got != sc["expect_outcome"]:
+            failures.append(
+                f"{tag} collector-outcomes.json for collect-branch-drift "
+                f"reads {got!r}, expected {sc['expect_outcome']!r} (FR-010). "
+                f"outcomes: {outcomes}")
+    return failures
+
+
+# --------------------------------------------------------------------------
 # T022: the `collect` job's "Aggregate signals" step — folds each
 # collector's own read-outcome tracking (T016-T017) into the additive
 # untrusted-collectors output, without changing collectors-failed or
@@ -337,6 +578,21 @@ AGGREGATE_STEP = "Aggregate signals"
 COLLECTOR_IDS = ["collect-execution-output", "collect-branch-drift",
                  "collect-spec-meta", "collect-step-summary",
                  "collect-annotations"]
+
+# Acceptance Scenario 3 requires more than "evidence-available stays true"
+# — the successful collectors' own contributions to signals.json must
+# survive a partial failure untouched. A representative multi-source set,
+# seeded into signals.json before the step runs and asserted to come back
+# byte-identical through the "signals" output, is what actually proves that
+# half of the scenario (T030).
+SIGNALS_FIXTURE = [
+    {"source": "annotations", "class-hint": None,
+     "facts": {"level": "warning", "message": "deprecated input used"}},
+    {"source": "result-record", "class-hint": "denied-tool",
+     "facts": {"tool": "Bash", "denials": 2, "denied-commands": ["rm -rf /"]}},
+    {"source": "step-summary", "class-hint": None,
+     "facts": {"job": "build", "conclusion": "failure"}},
+]
 
 AGGREGATE_CASES = [
     dict(
@@ -348,6 +604,7 @@ AGGREGATE_CASES = [
         step_outcomes={c: "success" for c in COLLECTOR_IDS},
         expect_untrusted=[],
         expect_evidence_available="true",
+        expect_signals=SIGNALS_FIXTURE,
     ),
     dict(
         name="one collector's read failed, the other four succeeded",
@@ -355,13 +612,16 @@ AGGREGATE_CASES = [
             "failed collector, evidence-available stays true (a partial "
             "failure still reaches a verdict), and this is true even though "
             "the failed collector's own STEP outcome is 'success' (T016: "
-            "outcome is never derived from the step's overall exit code).",
+            "outcome is never derived from the step's overall exit code). "
+            "The successful collectors' own evidence in signals.json must "
+            "also survive the partial failure unchanged (T030).",
         outcomes=([{"collector": c, "outcome": "ok"} for c in COLLECTOR_IDS
                    if c != "collect-annotations"]
                   + [{"collector": "collect-annotations", "outcome": "failed"}]),
         step_outcomes={c: "success" for c in COLLECTOR_IDS},
         expect_untrusted=["collect-annotations"],
         expect_evidence_available="true",
+        expect_signals=SIGNALS_FIXTURE,
     ),
 ]
 
@@ -393,7 +653,7 @@ def run_aggregate(outcomes, step_outcomes):
                   encoding="utf-8") as fh:
             json.dump(outcomes, fh)
         with open(os.path.join(runner_temp, "signals.json"), "w", encoding="utf-8") as fh:
-            fh.write("[]")
+            json.dump(SIGNALS_FIXTURE, fh)
         return run_step(BASH, script, workdir, {}, runner_temp)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
@@ -418,6 +678,12 @@ def run_aggregate_suite():
             failures.append(
                 f"{tag} evidence-available = {got_avail!r}, expected "
                 f"{case['expect_evidence_available']!r}. {case['why']}")
+        got_signals = json.loads(outputs.get("signals", "null") or "null")
+        if got_signals != case["expect_signals"]:
+            failures.append(
+                f"{tag} signals = {got_signals!r}, expected the seeded "
+                f"fixture to survive unchanged: {case['expect_signals']!r}. "
+                f"{case['why']}")
     return failures
 
 
@@ -461,12 +727,37 @@ def main():
     finally:
         shutil.rmtree(tmproot, ignore_errors=True)
 
+    exec_step = find_step(WATCHDOG, EXEC_STEP)
+    exec_script, exec_env = render_step(exec_step)
+    bd_step = find_step(WATCHDOG, BD_STEP)
+    bd_script, bd_env = render_step(bd_step)
+
+    exec_tmproot = tempfile.mkdtemp()
+    try:
+        exec_failures = suite_exec(exec_script, exec_env, exec_tmproot)
+    finally:
+        shutil.rmtree(exec_tmproot, ignore_errors=True)
+    for f in exec_failures:
+        print(f"::error::{f}")
+    failures.extend(exec_failures)
+
+    bd_tmproot = tempfile.mkdtemp()
+    try:
+        bd_failures = suite_bd(bd_script, bd_env, bd_tmproot)
+    finally:
+        shutil.rmtree(bd_tmproot, ignore_errors=True)
+    for f in bd_failures:
+        print(f"::error::{f}")
+    failures.extend(bd_failures)
+
     aggregate_failures = run_aggregate_suite()
     for f in aggregate_failures:
         print(f"::error::{f}")
     failures.extend(aggregate_failures)
 
     print(f"annotation collector: {len(SCENARIOS)} scenario(s); "
+          f"execution-output collector: {len(EXEC_SCENARIOS)} scenario(s); "
+          f"branch-drift collector: {len(BD_SCENARIOS)} scenario(s); "
           f"aggregate: {len(AGGREGATE_CASES)} case(s); "
           f"{len(failures)} failure(s).")
     sys.exit(1 if failures else 0)

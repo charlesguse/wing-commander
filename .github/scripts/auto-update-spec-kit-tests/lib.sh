@@ -102,6 +102,13 @@ check_not_contains() { # check_not_contains <label> <haystack> <needle>
     PASS=$((PASS+1)); printf '    ok   %s does not contain %s\n' "$1" "$3"
   fi
 }
+check_ne() { # check_ne <label> <actual> <not-expected> — exact-match inverse of check()
+  if [ "$2" != "$3" ]; then
+    PASS=$((PASS+1)); printf '    ok   %s != %s (got %s)\n' "$1" "$3" "$2"
+  else
+    FAIL=$((FAIL+1)); FAILED_NAMES+=("$1"); printf '    FAIL %s: expected NOT %s, got %s\n' "$1" "$3" "$2"
+  fi
+}
 
 report() {
   echo
@@ -143,5 +150,34 @@ run_step() { # run_step <step-file-glob>
   # without `-e` until the e2e-stage read-back died on run 31906592089 at a
   # `find` whose directory was missing — a case t4 Scenario 5 already
   # covered, and passed, because errexit was off here and on there.
+  bash -e "$WORK/step.sh"
+}
+
+# T033: the mutation-testing counterpart to run_step — proves a suite's
+# multi-page scenarios can actually FAIL, the way Gate 9/19's MUTATIONS
+# section does for the watchdog steps. <old-file>/<new-file> hold the
+# literal pre-fix/post-fix text (passed as files, not argv, so shell
+# quoting never has to survive the brackets and quotes real gh/jq
+# invocations are full of). Reports loudly and fails the suite, rather than
+# silently skipping, if <old-file>'s text is no longer present — that means
+# the step was rewritten and this mutation needs updating, not that the fix
+# is somehow extra-correct.
+run_step_mutated() { # run_step_mutated <step-file-glob> <old-file> <new-file>
+  local f n oldf="$2" newf="$3"
+  n="$(ls "$STEPS"/$1 2>/dev/null | wc -l)"
+  if [ "$n" -gt 1 ]; then
+    echo "    FAIL: glob $1 is ambiguous — matches $n extracted steps:"
+    ls "$STEPS"/$1 | sed 's|.*/|      |'
+    FAIL=$((FAIL+1)); return 1
+  fi
+  f="$(ls "$STEPS"/$1 2>/dev/null | head -1)"
+  if [ -z "$f" ]; then
+    echo "    FAIL: no extracted step matching $1"; FAIL=$((FAIL+1)); return 1
+  fi
+  if ! "$PY" "$SP/mutate.py" "$f" "$oldf" "$newf" "$WORK/step.sh"; then
+    echo "    FAIL: mutation text no longer found in $f — the step was rewritten; update the mutation (T033)."
+    FAIL=$((FAIL+1)); return 1
+  fi
+  "$PY" "$SP/subst.py" "$WORK/step.sh" "${GHA_SUBST[@]}"
   bash -e "$WORK/step.sh"
 }

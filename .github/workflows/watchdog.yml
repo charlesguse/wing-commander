@@ -429,9 +429,15 @@ jobs:
             # gh's genuine not-found/no-match condition is distinguished by
             # its own message text from any other failure (permission,
             # network, rate-limit) — only the latter marks this collector
-            # untrusted (FR-010).
+            # untrusted (FR-010). gh does not use one phrasing for this: it
+            # says "no artifact matches any of the names or patterns
+            # provided" in some cases and "no valid artifacts found to
+            # download" in others, and the latter contains no "no artifact"
+            # substring. This classification depends on gh's message text,
+            # so a future gh release that rewords it is a known risk, not a
+            # silent one.
             eo_outcome="ok"
-            grep -qi "no artifact" "$RUNNER_TEMP/eo-dl.log" 2>/dev/null || eo_outcome="failed"
+            grep -qiE "no artifact|no valid artifacts|no artifacts" "$RUNNER_TEMP/eo-dl.log" 2>/dev/null || eo_outcome="failed"
             jq -c --arg c "collect-execution-output" --arg o "$eo_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
             exit 0
           fi
@@ -504,16 +510,21 @@ jobs:
             end
           '
           found=false
+          eo_outcome="ok"
           for f in "$dl_dir"/*/*.json "$dl_dir"/*.json; do
             [ -e "$f" ] || continue
             found=true
-            entries=$(jq -c "$filter" "$f" 2>/dev/null || echo '[]')
+            # `|| { ...; }` rather than a bare `$?`: an unreadable/malformed
+            # artifact must mark this collector untrusted (T032), not
+            # silently read as a successful empty contribution the way
+            # `2>/dev/null || echo '[]'` alone would.
+            entries=$(jq -c "$filter" "$f" 2>/dev/null) || { eo_outcome="failed"; entries='[]'; }
             jq -c --argjson new "$entries" '. + $new' "$RUNNER_TEMP/signals.json" > "$RUNNER_TEMP/signals.json.tmp" && mv "$RUNNER_TEMP/signals.json.tmp" "$RUNNER_TEMP/signals.json"
           done
           if [ "$found" = "false" ]; then
             echo "claude-execution-output-* artifact download produced no readable JSON file — treated as a successful empty contribution." >> "$GITHUB_STEP_SUMMARY"
           fi
-          jq -c --arg c "collect-execution-output" --arg o "ok" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
+          jq -c --arg c "collect-execution-output" --arg o "$eo_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
 
       # FR-003b/FR-006: pattern-matched lost-progress detection — zero
       # commits pushed to the inspected run's own branch since it started.
@@ -582,7 +593,12 @@ jobs:
           # bare failing command aborts the whole step before it can record
           # WHY it failed, which is the one thing FR-010 needs it to do.
           # The left side of a `||` is exempt from errexit, so this captures
-          # the code instead of dying on it.
+          # the code instead of dying on it. The outcome record is appended
+          # once, after every read below has had a chance to run (T032) —
+          # not immediately here — so a rev-parse/rev-list failure that
+          # follows is folded into the same record instead of being
+          # collapsed into a silent "nothing to see" by the `2>/dev/null`
+          # fallbacks those reads use.
           fetch_rc=0
           fetch_log="$(git fetch --no-tags --quiet origin "refs/heads/$HEAD_BRANCH:refs/remotes/origin/$HEAD_BRANCH" 2>&1)" || fetch_rc=$?
           # A fetch failure caused by the ref genuinely no longer existing
@@ -590,17 +606,36 @@ jobs:
           # collector's read untrusted; any other fetch failure does
           # (FR-010).
           bd_outcome="ok"
-          if [ "$fetch_rc" != "0" ] && ! printf '%s' "$fetch_log" | grep -qi "couldn't find remote ref\|couldn't find remote branch"; then
-            bd_outcome="failed"
+          branch_torn_down=false
+          if [ "$fetch_rc" != "0" ]; then
+            if printf '%s' "$fetch_log" | grep -qi "couldn't find remote ref\|couldn't find remote branch"; then
+              branch_torn_down=true
+            else
+              bd_outcome="failed"
+            fi
           fi
-          jq -c --arg c "collect-branch-drift" --arg o "$bd_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
-          after_sha="$(git rev-parse "refs/remotes/origin/$HEAD_BRANCH" 2>/dev/null || true)"
-          if [ -z "$after_sha" ]; then
+
+          rev_parse_rc=0
+          after_sha="$(git rev-parse "refs/remotes/origin/$HEAD_BRANCH" 2>/dev/null)" || rev_parse_rc=$?
+          if [ -z "$after_sha" ] || [ "$rev_parse_rc" != "0" ]; then
+            # An empty/failed rev-parse is only a legitimate "branch already
+            # torn down" outcome when the fetch above already diagnosed
+            # that condition — otherwise the ref should have resolved, and a
+            # failure here is a genuine untrusted read (T032).
+            if [ "$branch_torn_down" != "true" ]; then
+              bd_outcome="failed"
+            fi
+            jq -c --arg c "collect-branch-drift" --arg o "$bd_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
             echo "branch-drift: '$HEAD_BRANCH' no longer exists (already torn down) — skipping." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
-          commits="$(git rev-list --count "$HEAD_SHA..$after_sha" 2>/dev/null || echo "")"
+          commits_rc=0
+          commits="$(git rev-list --count "$HEAD_SHA..$after_sha" 2>/dev/null)" || commits_rc=$?
+          if [ "$commits_rc" != "0" ] || [ -z "$commits" ]; then
+            bd_outcome="failed"
+          fi
+          jq -c --arg c "collect-branch-drift" --arg o "$bd_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
           if [ -z "$commits" ] || [ "$commits" != "0" ]; then
             exit 0
           fi

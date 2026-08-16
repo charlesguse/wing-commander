@@ -105,4 +105,26 @@ echo "--- Multi-page: a single-page list still produces today's outcome unchange
 detect "0.15.1" "$F"
 check "single-page detection unaffected by the pagination change" "$D_NEWER" "false"
 
+echo "--- Mutation: the pre-fix (--paginate, no --jq) read must break the multi-page scenario above (T033, spirit of Gate 9/19's MUTATIONS) ---"
+MUT_OLD="$(mktemp)"; MUT_NEW="$(mktemp)"
+cat > "$MUT_OLD" <<'EOF'
+releases_json="$(gh api repos/github/spec-kit/releases --paginate --jq '.[] | select(.prerelease == false)' 2>/dev/null | jq -s '.')" || releases_json='[]'
+EOF
+cat > "$MUT_NEW" <<'EOF'
+releases_json="$(gh api repos/github/spec-kit/releases --paginate 2>/dev/null || echo '[]')"
+EOF
+detect_mutated() { # detect_mutated <pinned> <releases-file> -> sets D_LATEST; returns 1 if the mutation no longer applies
+  new_step_env
+  "$PY" -c "
+import json,sys
+json.dump({'releases_file': sys.argv[1], 'default_branch':'main'}, open(sys.argv[2],'w'))" "$2" "$GH_STATE"
+  GHA_SUBST=()
+  export GH_TOKEN=stub PINNED_VERSION="$1"
+  run_step_mutated 'auto-update-spec-kit__detect__*compare*.sh' "$MUT_OLD" "$MUT_NEW" >/dev/null 2>&1 || return 1
+  D_LATEST="$(out latest-upstream)"
+}
+if detect_mutated "0.1.1" "$BULK"; then
+  check_ne "MUTATION: pre-fix (no --jq) read does not correctly resolve the page-2 release" "$D_LATEST" "0.20.0"
+fi
+
 report "T1 detect"
