@@ -29,7 +29,7 @@ Single-project CI/CD feature, no `src/`/`tests/` split. All file paths below are
 
 **Purpose**: Establish the FR-005/SC-007 "identical behavior below the page boundary" baseline every fix in this feature must not disturb, and confirm the gate numbers this feature claims are actually free.
 
-- [ ] T001 Run `python3 .github/scripts/run-local-gates.py` and `bash .github/scripts/auto-update-spec-kit-tests/run-tests.sh` against the current branch tip and confirm both are clean. Re-confirm research.md D2's grep-derived gate roster (`lint-workflows.yml` currently uses Gates 1-17, nothing numbered 18 or higher) so this feature's "Gate 18" and "Gate 19" naming is safe to claim.
+- [X] T001 Run `python3 .github/scripts/run-local-gates.py` and `bash .github/scripts/auto-update-spec-kit-tests/run-tests.sh` against the current branch tip and confirm both are clean. Re-confirm research.md D2's grep-derived gate roster (`lint-workflows.yml` currently uses Gates 1-17, nothing numbered 18 or higher) so this feature's "Gate 18" and "Gate 19" naming is safe to claim.
 
 **Checkpoint**: Baseline is green; Gate 18/19 numbering is free.
 
@@ -46,6 +46,27 @@ Single-project CI/CD feature, no `src/`/`tests/` split. All file paths below are
 > reading the shipped code against the harnesses that execute it. **A human
 > or a CI run must still execute the two suites before this feature is
 > considered validated.**
+
+> **Validation status (human run, 2026-08-16, superseding the note above)**:
+> T001, T023, T024 and T025 are **executed**; the four boxes are ticked on
+> that basis. `run-local-gates.py` reports 15/16 — the one failure is
+> `verify-gate-19.py`, and it fails on Windows only (CI is green on this same
+> commit: `0 failure(s)` in run 31963373217's `lint` job). Its two causes are
+> harness-side, not product-side: `run_exec_one` does not set
+> `GITHUB_REPOSITORY` for a step running under `set -u` (so those three
+> scenarios assert nothing in CI either, where `os.environ` supplies it), and
+> jq's Windows build emits CRLF, so `for job_id in $(… | jq -r '.[]?.id')`
+> yields a job id with a trailing carriage return and the stub's fixture lookup misses. The full
+> `auto-update-spec-kit-tests` suite passes. **T024 needs re-reading**: run as
+> written it reports all green on a deliberately broken `watchdog.yml`,
+> because Gate 18's repository scan is an inline heredoc at
+> `lint-workflows.yml:1402` and `wc_gate_registry.py`'s convention is
+> file-based, so `run-local-gates.py` can only reach the self-test. Extracted
+> and run directly the scan does catch it, naming `watchdog.yml,line=862` with
+> error text sufficient to write the fix back — SC-006 holds, the drill's
+> instruction is what is wrong. Full output and traces in PR #212's validation
+> comment; both gaps tracked in #213. The allowlist gap that made the headless
+> run unable to do any of this is fixed in #214.
 
 ---
 
@@ -160,9 +181,9 @@ Single-project CI/CD feature, no `src/`/`tests/` split. All file paths below are
 
 **Purpose**: Whole-repository validation once every story has landed.
 
-- [ ] T023 [P] Run `python3 .github/scripts/run-local-gates.py` and confirm every PR-time gate — including the new Gate 18 and Gate 19 — passes cleanly against the repository as it stands after all five user stories land (quickstart.md step 2, SC-004).
-- [ ] T024 [P] Run the quickstart.md "reintroduce a broken shape" drill (step 3): temporarily revert the `collect-annotations` step to its pre-fix shape, confirm `run-local-gates.py` fails naming `watchdog.yml` and the offending line with error text alone sufficient to write the fix back (SC-006), then restore the file.
-- [ ] T025 Run `bash .github/scripts/auto-update-spec-kit-tests/run-tests.sh` (full suite) and `python3 .github/scripts/verify-gate-19.py` to confirm nothing else regressed (quickstart.md steps 4-6).
+- [X] T023 [P] Run `python3 .github/scripts/run-local-gates.py` and confirm every PR-time gate — including the new Gate 18 and Gate 19 — passes cleanly against the repository as it stands after all five user stories land (quickstart.md step 2, SC-004).
+- [X] T024 [P] Run the quickstart.md "reintroduce a broken shape" drill (step 3): temporarily revert the `collect-annotations` step to its pre-fix shape, confirm `run-local-gates.py` fails naming `watchdog.yml` and the offending line with error text alone sufficient to write the fix back (SC-006), then restore the file.
+- [X] T025 Run `bash .github/scripts/auto-update-spec-kit-tests/run-tests.sh` (full suite) and `python3 .github/scripts/verify-gate-19.py` to confirm nothing else regressed (quickstart.md steps 4-6).
 - [X] T026 Confirm no published stage's declared `workflow_call` inputs, outputs, or secrets other than `watchdog.yml`'s new `untrusted-collectors` output were widened (FR-015): diff `watchdog.yml`'s and `auto-update-spec-kit.yml`'s `on: workflow_call` blocks against the pre-feature versions.
 - [X] T027 Restore the errexit guards the pagination rewrite dropped. A `run:` block's default shell is `bash -e {0}` and `set -uo pipefail` does not turn errexit back off (`auto-update-spec-kit-tests/lib.sh` `run_step` records a prior incident of exactly this class). Every read T002/T005/T006/T011/T016 rewrote had previously carried `|| echo '...'` or `|| true`; without one, a failed read aborted the step *before* the `${PIPESTATUS[0]}`/`$?` capture and before the `collector-outcomes.json` append — the exact "behaved as though there was nothing to see" outcome User Story 5 exists to end, and it made Gate 19's failure-injection scenario (T021) unreachable. Captured through `|| rc=…` / `|| releases_json='[]'` (the left side of a `||` is errexit-exempt, and `PIPESTATUS` survives into the right side's expansion) at all seven sites: both watchdog jobs listings, the per-job log read, the annotations read, `collect-branch-drift`'s `git fetch`, and both `spec-kit/releases` reads.
 - [X] T028 Repair `.github/scripts/verify-sentinel-collector.py` (Gate 9), which executes the shipped `Collect: step summaries` step and which T011/T016 broke two ways: its `gh` stub dumped the raw `{"jobs":[…]}` fixture while the step now reads it as `--paginate --jq '.jobs[]' | jq -s '.'` (yielding `[{"jobs":[…]}]`, whose `.[]?.id` is empty, so every scenario collected nothing), and it never seeded `$RUNNER_TEMP/collector-outcomes.json`, which the step's closing `jq` now reads — a hard failure under `bash -e`. The stub now applies the step's own `--jq` per page and the fixture seeds the outcomes file.
@@ -270,3 +291,7 @@ Spec.md frames the three P1 stories as one unit ("the three fixes are worth one 
 > no finding these changes introduced. **A human or CI run must still
 > execute the Python/bash suites before this feature is considered
 > validated.**
+
+> **Superseded 2026-08-16**: those suites have now been run by hand — see the
+> human-run note under Phase 1's checkpoint, PR #212's validation comment, and
+> #213 for the two harness gaps it exposed.
