@@ -422,7 +422,13 @@ jobs:
           PINNED_VERSION: ${{ needs.health-check.outputs.pinned-version }}
         run: |
           set -uo pipefail
-          releases_json="$(gh api repos/github/spec-kit/releases --paginate --jq '.[] | select(.prerelease == false)' 2>/dev/null | jq -s '.')"
+          # `|| releases_json='[]'`, not a bare assignment: a `run:` block's
+          # default shell is `bash -e {0}` and `set -uo pipefail` above does
+          # not turn errexit back off, so an unreadable release list would
+          # abort this step outright instead of reaching the "treated as up
+          # to date this cycle" path below. The left side of a `||` is
+          # exempt from errexit.
+          releases_json="$(gh api repos/github/spec-kit/releases --paginate --jq '.[] | select(.prerelease == false)' 2>/dev/null | jq -s '.')" || releases_json='[]'
           latest="$(printf '%s' "$releases_json" | jq -c 'sort_by(.tag_name | ltrimstr("v") | split(".") | map(tonumber? // 0)) | last // empty')"
           if [ -z "$latest" ] || [ "$latest" = "null" ]; then
             echo "::warning::wing-commander auto-update-spec-kit: could not resolve any stable release from repos/github/spec-kit/releases — treating this cycle as 'up to date'."
@@ -873,7 +879,10 @@ jobs:
           CANDIDATE: ${{ steps.entry.outputs.candidate-version }}
         run: |
           set -uo pipefail
-          releases_json="$(gh api repos/github/spec-kit/releases --paginate --jq '.[] | select(.prerelease == false)' 2>/dev/null | jq -s '.')"
+          # See the `compare` step: errexit is on (`bash -e {0}`), so an
+          # unreadable release list must not abort this step — it falls
+          # through to the empty release-notes bundle below.
+          releases_json="$(gh api repos/github/spec-kit/releases --paginate --jq '.[] | select(.prerelease == false)' 2>/dev/null | jq -s '.')" || releases_json='[]'
           printf '%s' "$releases_json" | jq -c \
             --arg pinned "$PINNED" --arg candidate "$CANDIDATE" '
             ($pinned | split(".") | map(tonumber)) as $pp
