@@ -108,7 +108,7 @@ runs:
       env:
         # The pipeline's supported spec-kit version (constitution pin).
         # Update here — and only here — when the constitution's pin changes.
-        SPECKIT_SUPPORTED_VERSION: "0.12.4"
+        SPECKIT_SUPPORTED_VERSION: "0.16.4"
         OAUTH_TOKEN: ${{ inputs.oauth-token }}
         API_KEY: ${{ inputs.api-key }}
         REQUIRE_CREDENTIAL: ${{ inputs.require-credential }}
