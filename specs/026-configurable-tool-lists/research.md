@@ -203,6 +203,37 @@ that step) is the consumer's responsibility, exactly as it is for the
 stage's primary work. This will be called out explicitly in the
 documentation update (FR-013).
 
+**Revisited 2026-08-16 — the append direction, and why stage-scope stands.**
+The consequence above reasons about an *override* narrowing a step below what
+it needs. The mirror case was not considered: an **append** widening a step
+above what it needs. It is now live. This repository's own wrapper passes
+`extra-allowed-tools: "Bash(python3 .github/scripts/run-local-gates.py:*),
+Bash(bash .github/scripts/auto-update-spec-kit-tests/run-tests.sh:*)"` to the
+`implement` stage so the cycle and retry steps can run the gate suites their
+task lists name (the defect that left specs/036 with four tasks unrun). Being
+stage-scoped, that grant also reaches `implement.post-progress-comment` — a
+four-entry, read-only step whose only job is posting a sentence, which runs
+`continue-on-error: true`, so a hang there is invisible. Constitution V asks
+each stage to run with the least-privilege allowlist it needs, and this is
+strictly more than that step needs.
+
+**Decision: stage-scope is retained and the widening is accepted.** The
+alternative — per-internal-step inputs — is the input-count multiplication this
+decision already declined, and it would add up to three inputs to `implement`'s
+published interface to constrain a step that has no network tools, no write
+tools, and no path to the repository beyond `gh issue comment`. The exposure is
+bounded by what the consumer themselves granted: an append cannot introduce a
+tool the consumer did not ask for, only apply it more widely than they may have
+intended.
+
+**Revisit when** a consumer needs to grant a stage a tool they would not want
+every step in that stage to hold — a credentialed command, a write to anything
+outside the feature branch, or a network-reaching tool. At that point the
+grant's blast radius stops being a matter of tidiness and the per-step input
+earns its cost. Until then this is documented behaviour (`docs/adoption.md`,
+"these inputs are *stage-scoped* — the same values apply identically to every
+internal step"), not an undeclared one.
+
 ### D6: Validation and failure mode (FR-010, FR-014)
 
 **Decision**: The composite action runs as an early step in each stage's
