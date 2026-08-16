@@ -2378,11 +2378,54 @@ jobs:
           set -euo pipefail
           git fetch "$RUNNER_TEMP/prepare-bundle/prepare.bundle" "$BRANCH:refs/heads/$BRANCH"
 
+      # Independent of evaluate-path's guard (research.md): that guard only
+      # ever observes an OPEN PR, so it cannot see a branch left behind by a
+      # run that failed after pushing, or by a PR closed unmerged without its
+      # branch being deleted (US4, FR-015). No force-push is introduced here
+      # (FR-018, Out of Scope) — a decline names the blocker and the remedy
+      # instead of a raw non-fast-forward push rejection.
+      - name: Check for a pre-existing branch or pull request
+        id: preflight
+        if: needs.health-check.outputs.pinned-ok != 'false' && needs.prepare.result == 'success' && needs.verify.outputs.passed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          BRANCH: ${{ needs.prepare.outputs.branch }}
+        run: |
+          set -uo pipefail
+          if git ls-remote --exit-code origin "refs/heads/$BRANCH" >/dev/null 2>&1; then
+            existing_pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" \
+              --state open --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+            echo "blocked=true" >> "$GITHUB_OUTPUT"
+            if [ -n "$existing_pr" ]; then
+              echo "reason=pr #$existing_pr already proposes this candidate" >> "$GITHUB_OUTPUT"
+            else
+              echo "reason=branch $BRANCH already exists with no open PR — delete it and re-dispatch" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "blocked=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Decline — a pre-existing branch or pull request blocks this candidate
+        if: steps.preflight.outputs.blocked == 'true'
+        env:
+          REASON: ${{ steps.preflight.outputs.reason }}
+        run: |
+          echo "act: declined to open a version-bump PR — $REASON." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post the preflight decline on the issue
+        if: steps.preflight.outputs.blocked == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ needs.prepare.outputs.issue-number }}
+          kind: info
+          summary: "Declined to open a version-bump pull request — ${{ steps.preflight.outputs.reason }}"
+
       # Pass path (T014): verification passed — push the prepared branch and
       # open a version-bump PR. This feature never merges it itself
       # (constitution V, FR-017).
       - name: Open version-bump PR
-        if: needs.health-check.outputs.pinned-ok != 'false' && needs.prepare.result == 'success' && needs.verify.outputs.passed == 'true'
+        if: needs.health-check.outputs.pinned-ok != 'false' && needs.prepare.result == 'success' && needs.verify.outputs.passed == 'true' && steps.preflight.outputs.blocked != 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           BRANCH: ${{ needs.prepare.outputs.branch }}
