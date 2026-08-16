@@ -211,4 +211,54 @@ check "P1 nothing pushed to origin" "$(remote_refs 'refs/heads/auto-update-spec-
 check "P1 pin left untouched" "$(git show main:.specify/init-options.json | jq -r .speckit_version)" "0.13.0"
 cd - >/dev/null
 
+echo
+echo "=== 035-auto-update-pr-guard Scenario 10: preflight meets a pre-existing branch, no open PR ==="
+R7="$(build)"; new_step_env; cd "$R7"
+git checkout -q -B auto-update-spec-kit/v0.15.1 main
+mkopts 0.15.1; git add -A; git commit -qm "chore: bump Spec Kit to v0.15.1"
+# Pushed here (fixture setup, via the authenticated URL build() wires up) so
+# the branch is already on the remote BEFORE the preflight step under test
+# ever runs — that step only reads, it never pushes.
+git push -q "https://x-access-token:stub@github.com/${GITHUB_REPOSITORY}.git" \
+  "refs/heads/auto-update-spec-kit/v0.15.1:refs/heads/auto-update-spec-kit/v0.15.1"
+git checkout -q main
+printf '{"issues":{},"prs":{},"labels":[],"next_issue":50,"next_pr":70,"default_branch":"main"}' > "$GH_STATE"
+export GH_TOKEN=stub BRANCH="auto-update-spec-kit/v0.15.1"
+run_step 'auto-update-spec-kit__act__*check-for-a-pre-existing-branch-or-pull-request*.sh' >"$WORK/preflight1.log" 2>&1
+PF_RC=$?
+sed 's/^/      /' "$WORK/preflight1.log" | head -5
+check "S10p preflight step exit code" "$PF_RC" "0"
+check "S10p blocked=true" "$(out blocked)" "true"
+check_contains "S10p reason names the branch" "$(out reason)" "auto-update-spec-kit/v0.15.1"
+check_contains "S10p reason states the remedy" "$(out reason)" "delete it and re-dispatch"
+REASON="$(out reason)"; export REASON
+run_step 'auto-update-spec-kit__act__*decline*pre-existing-branch-or-pull-request*.sh' >/dev/null 2>&1
+check_contains "S10p summary names the branch and remedy" "$(summary)" "delete it and re-dispatch"
+check "S10p branch not overwritten (still exactly one ref)" "$(remote_refs 'refs/heads/auto-update-spec-kit/v0.15.1')" "1"
+check "S10p no PR created" "$("$PY" -c "import json,os;print(len(json.load(open(os.environ['GH_STATE']))['prs']))")" "0"
+cd - >/dev/null
+
+echo
+echo "=== 035-auto-update-pr-guard Scenario 11: preflight meets a pre-existing open PR (defense-in-depth backstop) ==="
+R8="$(build)"; new_step_env; cd "$R8"
+git checkout -q -B auto-update-spec-kit/v0.15.1 main
+mkopts 0.15.1; git add -A; git commit -qm "chore: bump Spec Kit to v0.15.1"
+git push -q "https://x-access-token:stub@github.com/${GITHUB_REPOSITORY}.git" \
+  "refs/heads/auto-update-spec-kit/v0.15.1:refs/heads/auto-update-spec-kit/v0.15.1"
+git checkout -q main
+printf '{"issues":{},"prs":{"77":{"number":77,"title":"chore: bump Spec Kit to v0.15.1","body":"<!-- wing-commander-auto-update-spec-kit: version-bump -->","url":"https://github.com/o/r/pull/77","base":"main","head":"auto-update-spec-kit/v0.15.1","mergedAt":null}},"labels":[],"next_issue":50,"next_pr":70,"default_branch":"main"}' > "$GH_STATE"
+export GH_TOKEN=stub BRANCH="auto-update-spec-kit/v0.15.1"
+run_step 'auto-update-spec-kit__act__*check-for-a-pre-existing-branch-or-pull-request*.sh' >"$WORK/preflight2.log" 2>&1
+PF_RC2=$?
+sed 's/^/      /' "$WORK/preflight2.log" | head -5
+check "S11p preflight step exit code" "$PF_RC2" "0"
+check "S11p blocked=true" "$(out blocked)" "true"
+check_contains "S11p reason names the PR, not just the branch" "$(out reason)" "pr #77"
+REASON="$(out reason)"; export REASON
+run_step 'auto-update-spec-kit__act__*decline*pre-existing-branch-or-pull-request*.sh' >/dev/null 2>&1
+check_contains "S11p summary names the PR" "$(summary)" "pr #77"
+check "S11p branch not overwritten (still exactly one ref)" "$(remote_refs 'refs/heads/auto-update-spec-kit/v0.15.1')" "1"
+check "S11p no new PR created (still exactly 1)" "$("$PY" -c "import json,os;print(len(json.load(open(os.environ['GH_STATE']))['prs']))")" "1"
+cd - >/dev/null
+
 report "T5 act"
