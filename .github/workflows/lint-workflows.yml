@@ -1366,6 +1366,21 @@ jobs:
       - name: Gate 16 self-test — the detector actually detects
         run: python3 .github/scripts/verify-gate-16.py
 
+      # Gate 17 — every job checks the pipeline repository out to
+      # `.wing-commander-pipeline` inside the consumer's working tree, and
+      # that directory carries its own .git, so a bare `git add -A` records
+      # it as a GITLINK instead of recursing into it. PR #201 shipped one
+      # from `prepare`. #202 fixed the two deterministic sites in
+      # auto-update-spec-kit.yml and fixtured them, but not watchdog.yml,
+      # whose `act` job composes commits the same way in the same tree —
+      # both rungs would have shipped the same stray submodule entry into
+      # the first fix PR the watchdog ever opened. Neither rung has fired in
+      # ~200 runs, which is exactly why nothing observed it: this is the
+      # same never-executed-so-never-wrong shape as #201 itself and as the
+      # orphaned collector verifier of PR #158.
+      - name: Gate 17 — the watchdog's own fix commits exclude the pipeline checkout
+        run: python3 .github/scripts/verify-watchdog-fix-commit.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

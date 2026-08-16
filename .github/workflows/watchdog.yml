@@ -2389,7 +2389,17 @@ jobs:
           git config user.email "${BOT_SLUG}[bot]@users.noreply.github.com"
           git checkout -b "$branch"
           git apply "$diff_file"
-          git add -A
+          # Same gitlink exclusion as prepare's and act's commits in
+          # auto-update-spec-kit.yml, same reason — see the long comment on
+          # the first of those. This job checks the pipeline repository out
+          # to `.wing-commander-pipeline` inside the consumer's working tree,
+          # that directory carries its own .git, and a bare `git add -A`
+          # records it as a GITLINK rather than recursing into it. Neither
+          # rung has ever fired, so this would have shipped the stray
+          # submodule entry into the first fix PR the watchdog ever opened —
+          # the same way PR #201 shipped one the first time `act` got far
+          # enough to open anything.
+          git add -A -- . ':(exclude).wing-commander-pipeline'
           git commit -m "watchdog: fix $FINDING_CLASS (refs #$ISSUE_NUMBER)"
           git push origin "$branch"
           {
@@ -2436,7 +2446,8 @@ jobs:
           git config user.email "${BOT_SLUG}[bot]@users.noreply.github.com"
           git checkout -b "$branch"
           git apply "$diff_file"
-          git add -A
+          # Same gitlink exclusion, same reason as rung 2's commit above.
+          git add -A -- . ':(exclude).wing-commander-pipeline'
           git commit -m "watchdog: fix $FINDING_CLASS"
           git push origin "$branch"
           {
