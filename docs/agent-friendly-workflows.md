@@ -191,8 +191,13 @@ you have never seen fail is not monitoring.
 - **Upload the execution log as an artifact** on every agent step,
   `if: always()`. It is the only ground truth about what the agent did, and
   external verifiers need it (`is_error`, `num_turns`, fabrication checks).
-- **`gh api --paginate` breaks on `/jobs`**: it concatenates JSON documents
-  and jq chokes downstream. Use `?per_page=100`.
+- **`--paginate` applies `--jq` per page and concatenates the outputs**: any
+  filter must emit one JSON value per line (`--jq '.[] | ...'`), and the
+  caller slurps once with `jq -s '.'` if it needs a single array. Never a
+  filter that itself wraps results in `[...]`, and never no `--jq` at all on
+  an array/object endpoint — both resolve to page-shaped garbage once a read
+  passes its first page, silently, since neither raises a step failure.
+  Gate 18 (`lint-workflows.yml`) flags any call not written this way.
 - **Job display names are not job ids**: reusable workflows prefix
   (`watchdog / collect`), matrix jobs suffix (`triage (step-stalled, ...)`),
   and a matrix parameter can itself contain `/ `. Normalize suffix first,
