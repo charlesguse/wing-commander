@@ -44,6 +44,21 @@ build() { # build -> echoes work repo path; history 0.11.0 -> 0.12.4 -> 0.13.0
     "https://x-access-token:stub@github.com/$repo.git"            # every scenario exports GH_TOKEN=stub
   git config "url.$base/no-credentials-here.git.insteadOf" \
     "https://github.com/$repo.git"
+
+  # The same production fidelity, for the same reason, one directory over:
+  # act checks the pipeline repository out to `.wing-commander-pipeline` inside
+  # this working tree, and that checkout carries its own .git, so the rollback
+  # commit's `git add -A` records a gitlink unless it excludes the path. This
+  # fixture had no such directory, so t5 stayed green with that exclusion
+  # reverted — the rollback half of the PR #201 defect was untestable here. See
+  # t9_prepare.sh, which covers the version-bump half.
+  git init -q -b main .wing-commander-pipeline
+  (
+    cd .wing-commander-pipeline
+    git config user.email t@t; git config user.name t
+    echo 'name: ctx' > action.yml
+    git add -A; git commit -qm "pipeline checkout"
+  )
   cd - >/dev/null
   echo "$base/repo"
 }
@@ -82,6 +97,13 @@ echo "    pushed revert branch diff:"
 git --no-pager diff main auto-update-spec-kit/revert-v0.12.4 -- .specify/init-options.json | grep -E '^[-+] ' | sed 's/^/      /'
 check "S8 revert restores the pin to 0.12.4" "$(MSYS_NO_PATHCONV=1 git show auto-update-spec-kit/revert-v0.12.4:.specify/init-options.json | jq -r .speckit_version)" "0.12.4"
 check "S8 revert also restores the preflight constant" "$(MSYS_NO_PATHCONV=1 git show auto-update-spec-kit/revert-v0.12.4:.github/actions/wing-commander-preflight/action.yml | grep -c '0.12.4')" "1"
+# The rollback half of the PR #201 defect: a bare `git add -A` sweeps act's own
+# `.wing-commander-pipeline` checkout in as a gitlink, because that directory
+# has its own .git and so is recorded rather than recursed into.
+check "S8 the pipeline checkout is NOT in the revert commit" \
+  "$(git ls-tree --name-only auto-update-spec-kit/revert-v0.12.4 -- .wing-commander-pipeline | wc -l | tr -d ' ')" "0"
+check "S8 no gitlink of any kind in the revert commit" \
+  "$(git ls-tree -r auto-update-spec-kit/revert-v0.12.4 | awk '$2 == "commit"' | wc -l | tr -d ' ')" "0"
 ISSBODY="$("$PY" -c "import json,os;s=json.load(open(os.environ['GH_STATE']));print(list(s['issues'].values())[0]['body'])")"
 ISSLABELS="$("$PY" -c "import json,os;s=json.load(open(os.environ['GH_STATE']));print(list(s['issues'].values())[0]['labels'])")"
 check_contains "S8/SC-004 issue alone states which version failed" "$ISSBODY" "v0.13.0"

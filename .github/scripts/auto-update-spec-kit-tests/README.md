@@ -78,6 +78,7 @@ Suites:
 | `t6_reply.sh` | Scenarios 9, 12, 13, 14, 15 — self-recognition, maintainer gate, fail-safe read-backs, prompt-injection safety |
 | `t7_gating.py` | every scenario's job routing, plus the wrapper's pause kill-switch |
 | `t8_scaffold.sh` | e2e-stage's scaffold step run repeatedly against one scratch repository — the branch is reset to a single orphan commit each time, whatever the scratch repository's default branch happens to be; plus the agent stage's project-root resolution, run against the real pinned scripts in a nested consumer/scratch layout |
+| `t9_prepare.sh` | Scenario 5's other half — the version-bump commit itself: the regenerated pin in all three files that carry it, `-A` semantics across additions/deletions/files outside `.specify`, the pipeline checkout kept out of the commit, the bundle handed to verify/act round-tripping, the candidate's `uvx` CLI shape asserted verbatim, and both ways the regeneration can fail (`uvx` absent, upgrade-CLI moved) |
 
 ## Mutation results
 
@@ -101,8 +102,11 @@ against a deliberately broken workflow. Every mutant below is caught:
 | `SPECIFY_INIT_DIR` dropped from the agent step, so the stage verifies the consumer checkout instead of the scratch clone | `t8` (2 wiring assertions; the behavioural half asserts the unfixed resolution directly, so it holds either way) |
 | the read-back's `\|\| true` dropped, so `find` on a missing directory aborts the step | `t4` (5 — the step stops reporting at all, taking the pre-existing S5 assertions with it) |
 | either `act` push reverted to `git push origin`, which cannot authenticate under `persist-credentials: false` | `t5` (18, both step exit codes 128 — the production code) |
+| `prepare`'s commit reverted to a bare `git add -A`, which sweeps the `.wing-commander-pipeline` checkout in as a gitlink | `t9` (3 — the production code, shipped in PR #201) |
+| the same revert on `act`'s rollback commit | `t5` (2, Scenario 8) |
+| the gitlink excluded by narrowing `-A` to an explicit pathspec list (`.specify .github`) instead | `t9` (1 — the regenerated `.claude/skills` file silently stops being committed) |
 
-Two mutants deserve singling out, because they are about the harness rather
+Three mutants deserve singling out, because they are about the harness rather
 than the workflow — both are cases where the fixture was kinder than the
 runner, so a real defect passed here and fired in production.
 
@@ -115,6 +119,20 @@ step of the last job, after five earlier blockers had kept anything from
 getting that far. The fixture now points `origin` at a credential-less URL that
 resolves to nothing and the App-token URL at the bare repo, so which URL
 carries the push is what is actually under test.
+
+Neither `t5`'s fixture nor `t9`'s existed with a `.wing-commander-pipeline`
+directory in the working tree, though **every** job in the workflow checks the
+pipeline repository out to exactly that path (actions/checkout refuses a path
+outside `GITHUB_WORKSPACE`, so it has nowhere else to go). Because that
+checkout carries its own `.git`, a bare `git add -A` does not recurse into it —
+it records a **gitlink**, a submodule entry with no `.gitmodules` behind it,
+pointing at a commit in another repository. PR #201, the first version-bump PR
+this feature ever managed to open, shipped one. Nothing caught it because
+`prepare`'s commit step had no suite at all (hence `t9`) and `t5`'s fixture had
+no such directory to sweep, so `t5` stayed green with `act`'s half of the fix
+reverted — the same shape as the orphaned collector verifier that was green
+while checking a filter that does not ship (PR #158). Both fixtures now create
+the checkout, and both assert on `git ls-tree` of the resulting commit.
 
 `run_step` executed steps as `bash <file>` until the e2e-stage
 read-back died in production at a `find` whose directory was missing — a case
