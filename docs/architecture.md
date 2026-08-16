@@ -838,12 +838,27 @@ one active upgrade cycle at a time):
   found via a quoted-phrase `gh search issues` (the same tokenization gotcha
   `watchdog.yml` documents); a superseding candidate resets the count, and
   more than one open marker is a data-integrity condition left for a human.
-- `evaluate-path` is the one agent step (`claude-sonnet-5`, read-only,
-  structured output) deciding `clean-bump` (⇒ `prepare`), `needs-migration`
-  (⇒ routed to a maintainer, no diff), or `ambiguous-options` (⇒ a
-  `kind: action` question posted, the marker flagged `awaiting-decision=true`,
-  the cycle paused). Fetched release notes are framed as untrusted data,
-  never instructions (constitution V).
+- `evaluate-path` opens with a guard step, before any billed work: it lists
+  open PRs and declines with a fourth outcome, `guard-skip`, when this
+  feature's own version-bump marker is already open for the settled
+  candidate (`already-open`) or an older one (`queued-behind` — at most one
+  proposal stays in flight), or when more than one match exists
+  (`multiple-matches`, a data-integrity condition, never auto-resolved). A
+  failed lookup also declines (`lookup-failed`) rather than risk a duplicate
+  proposal. `guard-skip` reuses `prepare`'s existing `outcome == 'clean-bump'`
+  gate, so it skips `prepare`/`e2e-stage`/`verify`/`act` with no new job-level
+  plumbing — the same "route to a human" machinery `needs-migration`/
+  `ambiguous-options` already established. It applies identically to both
+  entry paths (a freshly settled candidate and a resumed maintainer
+  decision). The tracking issue's settle marker gains two sub-fields:
+  `guard-pr` (the narrated PR, written once per blocking PR) and
+  `guard-checked` (a liveness timestamp refreshed every guarded run).
+  The one agent step (`claude-sonnet-5`, read-only, structured output) that
+  follows decides `clean-bump` (⇒ `prepare`), `needs-migration` (⇒ routed to
+  a maintainer, no diff), or `ambiguous-options` (⇒ a `kind: action` question
+  posted, the marker flagged `awaiting-decision=true`, the cycle paused).
+  Fetched release notes are framed as untrusted data, never instructions
+  (constitution V).
 - `prepare` writes the version-bump diff (both `speckit_version` **and**
   `wing-commander-preflight`'s `SPECKIT_SUPPORTED_VERSION` in one commit, plus
   the candidate's own `.specify/` artifact regeneration) to a fresh branch —
@@ -886,7 +901,13 @@ one active upgrade cycle at a time):
   flags the issue on a fail, or opens the revert PR on a health-check
   failure. It never merges its own PR (constitution V, FR-017). Whenever the
   deeper tier ran, the narration (pass or fail) also names the scratch
-  repository and the branch holding that run's evidence.
+  repository and the branch holding that run's evidence. Before pushing, a
+  preflight check independent of `evaluate-path`'s guard — the residual
+  case where a branch was left behind by a run that failed after pushing, or
+  by a PR closed unmerged with its branch intact — declines with a message
+  naming the blocking branch or PR and the remedy, instead of a raw
+  non-fast-forward push rejection. It never force-pushes over an existing
+  branch.
 
 **Self-recognition** — the feature owns no `spec:<NNN>` identity and never
 assumes any other PR/issue is its own. PRs it opens carry a body marker
@@ -894,7 +915,12 @@ assumes any other PR/issue is its own. PRs it opens carry a body marker
 lifecycle issues carry the settle-tracking marker. The `pr-merged` entry job
 no-ops on any closed PR lacking the marker, and `comment-reply` no-ops on any
 commented-on issue lacking the settle marker or not carrying an outstanding
-`awaiting-decision=true` question. `comment-reply` additionally gates the
+`awaiting-decision=true` question. `evaluate-path`'s guard is the one place
+this feature reads *other* open PRs' markers rather than only its own — it
+scans every open PR's body for the version-bump marker (never the revert
+marker) to decide whether this candidate is already proposed, extracting
+which candidate a match proposes from its head branch name rather than its
+title or body text. `comment-reply` additionally gates the
 commenter (`OWNER`/`MEMBER`/`COLLABORATOR` or the issue author — the same
 actor gate `wing-commander-2-clarify.yml` uses) and interprets the reply with
 a read-only `claude-haiku-4-5` step before re-entering `prepare` → `verify` →
