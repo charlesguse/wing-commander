@@ -1063,7 +1063,9 @@ jobs:
           MATCHES: ${{ steps.decide-outcome.outputs.matches }}
         run: |
           set -uo pipefail
-          nums="$(printf '%s' "$MATCHES" | jq -r '[.[].number] | map("#" + (. | tostring)) | join(", ")')"
+          # lookup-failed never sets steps.guard.outputs.matches, so this
+          # would otherwise feed jq an empty string — default to "[]".
+          nums="$(printf '%s' "${MATCHES:-[]}" | jq -r '[.[].number] | map("#" + (. | tostring)) | join(", ")')"
 
           case "$REASON" in
             already-open)
