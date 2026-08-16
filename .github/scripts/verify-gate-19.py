@@ -32,6 +32,7 @@ Requires: bash, jq. See wc_shell_harness.py for running this on Windows.
 """
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -161,6 +162,7 @@ SCENARIOS = [
         anns={1: anns_pages([ann("warning", "page 1 warning")],
                             [ann("failure", "page 2 failure")])},
         expect=[("warning", "page 1 warning"), ("failure", "page 2 failure")],
+        expect_outcome="ok",
     ),
     dict(
         name="evidence gathered by earlier collectors is preserved",
@@ -195,6 +197,7 @@ SCENARIOS = [
         jobs=jobs_pages([job(1, "build")]),
         anns={1: anns_pages([ann("notice", "informational, not warning or failure")])},
         expect=[],
+        expect_outcome="ok",
     ),
     dict(
         name="a page boundary landing exactly on the last item: second page "
@@ -202,6 +205,17 @@ SCENARIOS = [
         jobs=jobs_pages([job(1, "build")]),
         anns={1: anns_pages([ann("warning", "last item on page 1")], [])},
         expect=[("warning", "last item on page 1")],
+    ),
+    dict(
+        name="a failed annotations read is distinguishable from an empty "
+             "one: collector-outcomes.json records collect-annotations as "
+             "failed, not merely an empty signals.json contribution "
+             "(FR-010, quickstart.md item 7)",
+        jobs=jobs_pages([job(1, "build")]),
+        anns={1: anns_pages([ann("warning", "never collected")])},
+        extra_env={"GH_STUB_FAIL_ANNOTATIONS": "1"},
+        expect=[],
+        expect_outcome="failed",
     ),
 ]
 
@@ -216,7 +230,11 @@ def write_fixtures(fixture_dir, jobs, anns):
 
 
 def run_one(script, env, sc, tmproot):
-    """Execute the collector against one fixture; return (rc, out, signals)."""
+    """Execute the collector against one fixture; return (rc, out, signals,
+    outcomes) — outcomes is the parsed collector-outcomes.json, the same
+    accumulate-and-merge file every collector in watchdog.yml's `collect`
+    job writes to (T016), pre-seeded here the way "Initialize
+    collector-outcomes file" does in the real job."""
     workdir = tempfile.mkdtemp(dir=tmproot)
     runner_temp = tempfile.mkdtemp(dir=tmproot)
     fixtures = tempfile.mkdtemp(dir=tmproot)
@@ -224,6 +242,9 @@ def run_one(script, env, sc, tmproot):
 
     with open(os.path.join(runner_temp, "signals.json"), "w", encoding="utf-8") as fh:
         json.dump(sc.get("existing_signals", []), fh)
+    with open(os.path.join(runner_temp, "collector-outcomes.json"), "w",
+              encoding="utf-8") as fh:
+        fh.write("[]")
     write_fixtures(fixtures, sc["jobs"], sc["anns"])
     stub_gh(bindir, fixtures.replace("\\", "/"))
 
@@ -236,16 +257,18 @@ def run_one(script, env, sc, tmproot):
     rc, out, _, _ = run_step(BASH, script, workdir, env, runner_temp)
     with open(os.path.join(runner_temp, "signals.json"), encoding="utf-8") as fh:
         signals = json.load(fh)
+    with open(os.path.join(runner_temp, "collector-outcomes.json"), encoding="utf-8") as fh:
+        outcomes = json.load(fh)
     for d in (workdir, runner_temp, fixtures, bindir):
         shutil.rmtree(d, ignore_errors=True)
-    return rc, out, signals
+    return rc, out, signals, outcomes
 
 
 def suite(script, env, tmproot):
     failures = []
     for sc in SCENARIOS:
         tag = f"[{sc['name']}]"
-        rc, out, signals = run_one(script, env, sc, tmproot)
+        rc, out, signals, outcomes = run_one(script, env, sc, tmproot)
         if rc != 0:
             failures.append(f"{tag} the collector exited {rc}:\n{out}")
             continue
@@ -266,6 +289,19 @@ def suite(script, env, tmproot):
                 f"{tag} wrong annotations collected.\n"
                 f"    expected: {want or '(none)'}\n"
                 f"    actual:   {got or '(none)'}")
+
+        expect_outcome = sc.get("expect_outcome")
+        if expect_outcome is not None:
+            entries = [o for o in outcomes
+                      if isinstance(o, dict) and o.get("collector") == "collect-annotations"]
+            got_outcome = entries[-1].get("outcome") if entries else None
+            if got_outcome != expect_outcome:
+                failures.append(
+                    f"{tag} collector-outcomes.json for collect-annotations "
+                    f"reads {got_outcome!r}, expected {expect_outcome!r} "
+                    f"(FR-010: a failed read must be distinguishable from an "
+                    f"empty one, not merely absent from signals.json). "
+                    f"outcomes: {outcomes}")
     return failures
 
 
@@ -289,6 +325,100 @@ MUTATIONS = [
     ("the annotations filter collecting results into an array per page",
      mut_array_collecting_annotations),
 ]
+
+
+# --------------------------------------------------------------------------
+# T022: the `collect` job's "Aggregate signals" step — folds each
+# collector's own read-outcome tracking (T016-T017) into the additive
+# untrusted-collectors output, without changing collectors-failed or
+# evidence-available's existing behavior (contracts/watchdog-read-outcome.md).
+# --------------------------------------------------------------------------
+AGGREGATE_STEP = "Aggregate signals"
+COLLECTOR_IDS = ["collect-execution-output", "collect-branch-drift",
+                 "collect-spec-meta", "collect-step-summary",
+                 "collect-annotations"]
+
+AGGREGATE_CASES = [
+    dict(
+        name="every collector's read succeeded: untrusted-collectors is []",
+        why="Acceptance Scenario 4 / FR-005/SC-007 — this is every "
+            "historical run, and nothing about this feature may change "
+            "its outcome.",
+        outcomes=[{"collector": c, "outcome": "ok"} for c in COLLECTOR_IDS],
+        step_outcomes={c: "success" for c in COLLECTOR_IDS},
+        expect_untrusted=[],
+        expect_evidence_available="true",
+    ),
+    dict(
+        name="one collector's read failed, the other four succeeded",
+        why="Acceptance Scenario 3 — untrusted-collectors names exactly the "
+            "failed collector, evidence-available stays true (a partial "
+            "failure still reaches a verdict), and this is true even though "
+            "the failed collector's own STEP outcome is 'success' (T016: "
+            "outcome is never derived from the step's overall exit code).",
+        outcomes=([{"collector": c, "outcome": "ok"} for c in COLLECTOR_IDS
+                   if c != "collect-annotations"]
+                  + [{"collector": "collect-annotations", "outcome": "failed"}]),
+        step_outcomes={c: "success" for c in COLLECTOR_IDS},
+        expect_untrusted=["collect-annotations"],
+        expect_evidence_available="true",
+    ),
+]
+
+
+def render_aggregate(step, subst):
+    """The aggregate step embeds ${{ steps.<id>.outcome }} directly in its
+    run: text (no env: block routes it), so it needs its own substitution
+    pass — the same EXPR->VALUE convention
+    auto-update-spec-kit-tests/subst.py uses."""
+    script = str(step["run"])
+
+    def repl(m):
+        return subst.get(m.group(1).strip(), "")
+    return re.sub(r"\$\{\{(.*?)\}\}", repl, script)
+
+
+def run_aggregate(outcomes, step_outcomes):
+    step = find_step(WATCHDOG, AGGREGATE_STEP)
+    subst = {f"steps.{cid}.outcome": val for cid, val in step_outcomes.items()}
+    script = render_aggregate(step, subst)
+    if "${{" in script:
+        sys.exit(f"::error file={WATCHDOG}::verify-gate-19 could not resolve "
+                 f"every ${{{{ }}}} expression in the {AGGREGATE_STEP!r} step.")
+
+    workdir = tempfile.mkdtemp()
+    runner_temp = tempfile.mkdtemp()
+    try:
+        with open(os.path.join(runner_temp, "collector-outcomes.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump(outcomes, fh)
+        with open(os.path.join(runner_temp, "signals.json"), "w", encoding="utf-8") as fh:
+            fh.write("[]")
+        return run_step(BASH, script, workdir, {}, runner_temp)
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+        shutil.rmtree(runner_temp, ignore_errors=True)
+
+
+def run_aggregate_suite():
+    failures = []
+    for case in AGGREGATE_CASES:
+        tag = f"[aggregate: {case['name']}]"
+        rc, out, outputs, _ = run_aggregate(case["outcomes"], case["step_outcomes"])
+        if rc != 0:
+            failures.append(f"{tag} the aggregate step exited {rc}:\n{out}")
+            continue
+        got_untrusted = json.loads(outputs.get("untrusted-collectors", "null") or "null")
+        if got_untrusted != case["expect_untrusted"]:
+            failures.append(
+                f"{tag} untrusted-collectors = {got_untrusted!r}, expected "
+                f"{case['expect_untrusted']!r}. {case['why']}")
+        got_avail = outputs.get("evidence-available")
+        if got_avail != case["expect_evidence_available"]:
+            failures.append(
+                f"{tag} evidence-available = {got_avail!r}, expected "
+                f"{case['expect_evidence_available']!r}. {case['why']}")
+    return failures
 
 
 def main():
@@ -331,7 +461,13 @@ def main():
     finally:
         shutil.rmtree(tmproot, ignore_errors=True)
 
+    aggregate_failures = run_aggregate_suite()
+    for f in aggregate_failures:
+        print(f"::error::{f}")
+    failures.extend(aggregate_failures)
+
     print(f"annotation collector: {len(SCENARIOS)} scenario(s); "
+          f"aggregate: {len(AGGREGATE_CASES)} case(s); "
           f"{len(failures)} failure(s).")
     sys.exit(1 if failures else 0)
 
