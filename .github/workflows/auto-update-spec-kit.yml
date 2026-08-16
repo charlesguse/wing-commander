@@ -1237,7 +1237,19 @@ jobs:
           sed -i -E "s/SPECKIT_SUPPORTED_VERSION: \"[^\"]+\"/SPECKIT_SUPPORTED_VERSION: \"$CANDIDATE\"/" \
             .github/actions/wing-commander-preflight/action.yml
 
-          git add -A
+          # Excluding the pipeline checkout is correctness, not tidiness. Every
+          # job in this file checks the pipeline repository out to
+          # `.wing-commander-pipeline` INSIDE the consumer's working tree — it
+          # has to, since actions/checkout refuses a path outside
+          # GITHUB_WORKSPACE — and that directory carries its own .git. A bare
+          # `git add -A` therefore does not recurse into it; it records a
+          # GITLINK. PR #201, the first version-bump PR this feature ever
+          # managed to open, shipped one: a `.wing-commander-pipeline` submodule
+          # entry with no .gitmodules behind it, pointing at a commit in another
+          # repository. git warns about it at the time ("adding embedded git
+          # repository"), in a step log nobody had read — because `act` had
+          # never got far enough to open a PR for anyone to look at the diff of.
+          git add -A -- . ':(exclude).wing-commander-pipeline'
           git commit -m "chore: bump Spec Kit to v$CANDIDATE" --quiet
 
           git bundle create "$RUNNER_TEMP/prepare.bundle" "$branch"
@@ -2159,7 +2171,11 @@ jobs:
           mv "$RUNNER_TEMP/init-options.json.tmp" .specify/init-options.json
           sed -i -E "s/SPECKIT_SUPPORTED_VERSION: \"[^\"]+\"/SPECKIT_SUPPORTED_VERSION: \"$ROLLBACK_TARGET\"/" \
             .github/actions/wing-commander-preflight/action.yml
-          git add -A
+          # Same gitlink exclusion as prepare's commit, same reason — see the
+          # long comment there. This path has never run against a real
+          # repository, so it would have shipped the stray submodule entry into
+          # a rollback PR the first time a health check ever failed for real.
+          git add -A -- . ':(exclude).wing-commander-pipeline'
           git commit -m "revert: Spec Kit v$PINNED_VERSION regression — restore v$ROLLBACK_TARGET" --quiet
           # Authenticated URL rather than `origin`: see the version-bump
           # push's copy of this line.
