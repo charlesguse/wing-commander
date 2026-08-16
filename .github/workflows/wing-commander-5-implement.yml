@@ -74,6 +74,26 @@ jobs:
       spec-prefix: ${{ vars.WING_COMMANDER_SPEC_PREFIX || 'spec/' }}
       self-workflow: wing-commander-5-implement.yml
       next-workflow: wing-commander-6-finalize.yml
+      # Wrapper-side, not stage-side: implement.yml is the PUBLISHED reusable
+      # stage and its default allowlist can only name tools every adopter has.
+      # These two paths are THIS repository's own test suites, so the grant
+      # belongs here (specs/026-configurable-tool-lists gave the stage this
+      # input for exactly that reason).
+      #
+      # Why it exists: specs/036-paginate-jq-correctness reached a finalize PR
+      # with T001/T023/T024/T025 unrun and tasks.md recording "the allowlist
+      # for this run permits only actionlint, yamllint, shellcheck and jq, so
+      # python3 .github/scripts/run-local-gates.py ... is auto-denied". A stage
+      # whose task list says "run the gate suite" cannot run it.
+      #
+      # Kept to two exact command prefixes rather than a wildcard over
+      # .github/scripts: `*` spans spaces in Claude Code's matcher, so
+      # `python3 .github/scripts/verify-*.py` would also match
+      # `python3 .github/scripts/verify- -c '<anything>' .py` — the same
+      # reasoning that declined mid-pattern wildcards in #99. run-local-gates.py
+      # takes a substring filter (`run-local-gates.py gate-19`), so one entry
+      # reaches every PR-time gate without widening the grant.
+      extra-allowed-tools: "Bash(python3 .github/scripts/run-local-gates.py:*),Bash(bash .github/scripts/auto-update-spec-kit-tests/run-tests.sh:*)"
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
