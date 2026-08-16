@@ -124,6 +124,25 @@ def issue_json(iss, fields):
     return out
 
 
+def pr_json(pr, fields):
+    """Project a PR onto --json fields using REAL gh output shapes.
+
+    `headRefName` is `gh`'s field name; the stub stores it as `head` (the
+    same key `pr create` already writes and `--head` already filters on).
+    Every stub PR is implicitly open (no closed-PR modelling exists — see
+    `sub == "list"` below), so `state` is fixed at "OPEN".
+    """
+    out = {}
+    for f in fields:
+        if f == "headRefName":
+            out[f] = pr.get("head")
+        elif f == "state":
+            out[f] = "OPEN"
+        else:
+            out[f] = pr.get(f)
+    return out
+
+
 def maybe_fail(argv):
     """Simulate an API failure for a subcommand named in $GH_STUB_FAIL.
 
@@ -263,13 +282,26 @@ def main():
                                 "base": opt(argv, "--base"), "head": opt(argv, "--head"),
                                 "mergedAt": None}
             save(s); print(url); return 0
+        if sub == "list":
+            head = opt(argv, "--head")
+            # No PR in the stub is ever closed (no `pr close`/`pr merge`
+            # mutator exists), so `--state closed` matches nothing and
+            # `--state open`/`--state all` match everything — sufficient for
+            # every scenario this feature's guard needs (research.md).
+            state = opt(argv, "--state", "open")
+            hits = [] if state == "closed" else list(s["prs"].values())
+            if head is not None:
+                hits = [p for p in hits if p.get("head") == head]
+            fields = (opt(argv, "--json") or "number").split(",")
+            emit([pr_json(p, fields) for p in hits], argv)
+            return 0
         num = argv[2]
         pr = s["prs"].get(str(num))
         if sub == "view":
             if not pr:
                 sys.stderr.write("gh: pr not found\n"); return 1
             fields = (opt(argv, "--json") or "body").split(",")
-            emit({f: pr.get(f) for f in fields}, argv)
+            emit(pr_json(pr, fields), argv)
             return 0
 
     # ---- gh label create ------------------------------------------------

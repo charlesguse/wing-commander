@@ -44,6 +44,13 @@ build() { # build -> echoes work repo path; history 0.11.0 -> 0.12.4 -> 0.13.0
     "https://x-access-token:stub@github.com/$repo.git"            # every scenario exports GH_TOKEN=stub
   git config "url.$base/no-credentials-here.git.insteadOf" \
     "https://github.com/$repo.git"
+  # A third rewrite, so a scenario can make an authenticated remote read FAIL
+  # without leaving the machine: the preflight step builds its URL from
+  # GITHUB_REPOSITORY, so exporting `o/unreachable` sends it here — to a path
+  # that does not exist — instead of out to the real github.com, where a
+  # public repository would answer and the assertion would test nothing.
+  git config "url.$base/unreachable.git.insteadOf" \
+    "https://x-access-token:stub@github.com/o/unreachable.git"
 
   # The same production fidelity, for the same reason, one directory over:
   # act checks the pipeline repository out to `.wing-commander-pipeline` inside
@@ -209,6 +216,91 @@ check "P1 issue never closed" "$(grep -c 'issue close' "$GH_CALLS")" "0"
 check "P1 no PR opened" "$("$PY" -c "import json,os;print(len(json.load(open(os.environ['GH_STATE']))['prs']))")" "0"
 check "P1 nothing pushed to origin" "$(remote_refs 'refs/heads/auto-update-spec-kit/*')" "0"
 check "P1 pin left untouched" "$(git show main:.specify/init-options.json | jq -r .speckit_version)" "0.13.0"
+cd - >/dev/null
+
+echo
+echo "=== 035-auto-update-pr-guard Scenario 10: preflight meets a pre-existing branch, no open PR ==="
+R7="$(build)"; new_step_env; cd "$R7"
+git checkout -q -B auto-update-spec-kit/v0.15.1 main
+mkopts 0.15.1; git add -A; git commit -qm "chore: bump Spec Kit to v0.15.1"
+# Pushed here (fixture setup, via the authenticated URL build() wires up) so
+# the branch is already on the remote BEFORE the preflight step under test
+# ever runs — that step only reads, it never pushes.
+git push -q "https://x-access-token:stub@github.com/${GITHUB_REPOSITORY}.git" \
+  "refs/heads/auto-update-spec-kit/v0.15.1:refs/heads/auto-update-spec-kit/v0.15.1"
+git checkout -q main
+printf '{"issues":{},"prs":{},"labels":[],"next_issue":50,"next_pr":70,"default_branch":"main"}' > "$GH_STATE"
+export GH_TOKEN=stub BRANCH="auto-update-spec-kit/v0.15.1"
+run_step 'auto-update-spec-kit__act__*check-for-a-pre-existing-branch-or-pull-request*.sh' >"$WORK/preflight1.log" 2>&1
+PF_RC=$?
+sed 's/^/      /' "$WORK/preflight1.log" | head -5
+check "S10p preflight step exit code" "$PF_RC" "0"
+check "S10p blocked=true" "$(out blocked)" "true"
+check_contains "S10p reason names the branch" "$(out reason)" "auto-update-spec-kit/v0.15.1"
+check_contains "S10p reason states the remedy" "$(out reason)" "delete it and re-dispatch"
+REASON="$(out reason)"; export REASON
+run_step 'auto-update-spec-kit__act__*decline*pre-existing-branch-or-pull-request*.sh' >/dev/null 2>&1
+check_contains "S10p summary names the branch and remedy" "$(summary)" "delete it and re-dispatch"
+check "S10p branch not overwritten (still exactly one ref)" "$(remote_refs 'refs/heads/auto-update-spec-kit/v0.15.1')" "1"
+check "S10p no PR created" "$("$PY" -c "import json,os;print(len(json.load(open(os.environ['GH_STATE']))['prs']))")" "0"
+cd - >/dev/null
+
+echo
+echo "=== 035-auto-update-pr-guard Scenario 11: preflight meets a pre-existing open PR (defense-in-depth backstop) ==="
+R8="$(build)"; new_step_env; cd "$R8"
+git checkout -q -B auto-update-spec-kit/v0.15.1 main
+mkopts 0.15.1; git add -A; git commit -qm "chore: bump Spec Kit to v0.15.1"
+git push -q "https://x-access-token:stub@github.com/${GITHUB_REPOSITORY}.git" \
+  "refs/heads/auto-update-spec-kit/v0.15.1:refs/heads/auto-update-spec-kit/v0.15.1"
+git checkout -q main
+printf '{"issues":{},"prs":{"77":{"number":77,"title":"chore: bump Spec Kit to v0.15.1","body":"<!-- wing-commander-auto-update-spec-kit: version-bump -->","url":"https://github.com/o/r/pull/77","base":"main","head":"auto-update-spec-kit/v0.15.1","mergedAt":null}},"labels":[],"next_issue":50,"next_pr":70,"default_branch":"main"}' > "$GH_STATE"
+export GH_TOKEN=stub BRANCH="auto-update-spec-kit/v0.15.1"
+run_step 'auto-update-spec-kit__act__*check-for-a-pre-existing-branch-or-pull-request*.sh' >"$WORK/preflight2.log" 2>&1
+PF_RC2=$?
+sed 's/^/      /' "$WORK/preflight2.log" | head -5
+check "S11p preflight step exit code" "$PF_RC2" "0"
+check "S11p blocked=true" "$(out blocked)" "true"
+check_contains "S11p reason names the PR, not just the branch" "$(out reason)" "pr #77"
+REASON="$(out reason)"; export REASON
+run_step 'auto-update-spec-kit__act__*decline*pre-existing-branch-or-pull-request*.sh' >/dev/null 2>&1
+check_contains "S11p summary names the PR" "$(summary)" "pr #77"
+check "S11p branch not overwritten (still exactly one ref)" "$(remote_refs 'refs/heads/auto-update-spec-kit/v0.15.1')" "1"
+check "S11p no new PR created (still exactly 1)" "$("$PY" -c "import json,os;print(len(json.load(open(os.environ['GH_STATE']))['prs']))")" "1"
+cd - >/dev/null
+
+echo
+echo "=== 035-auto-update-pr-guard: preflight on a clear remote lets the push proceed ==="
+# Without this, a step that answered "blocked" unconditionally would satisfy
+# every assertion above. Nothing is pushed here, so the branch is absent and
+# `git ls-remote --exit-code` exits 2 — the one code that may proceed.
+R9="$(build)"; new_step_env; cd "$R9"
+printf '{"issues":{},"prs":{},"labels":[],"next_issue":50,"next_pr":70,"default_branch":"main"}' > "$GH_STATE"
+export GH_TOKEN=stub BRANCH="auto-update-spec-kit/v0.15.1"
+run_step 'auto-update-spec-kit__act__*check-for-a-pre-existing-branch-or-pull-request*.sh' >"$WORK/preflight3.log" 2>&1
+PF_RC3=$?
+sed 's/^/      /' "$WORK/preflight3.log" | head -5
+check "S12p preflight step exit code" "$PF_RC3" "0"
+check "S12p blocked=false — nothing on the remote blocks this candidate" "$(out blocked)" "false"
+cd - >/dev/null
+
+echo
+echo "=== 035-auto-update-pr-guard: the preflight lookup itself fails — decline, never fall through ==="
+# The failure mode the `origin` read had: with the error discarded, "could not
+# reach the remote" is indistinguishable from "no such branch", so the step
+# waves the push through and overwrites the branch it exists to protect
+# (FR-015). git exits 128 here, not 2, and only 2 may proceed.
+R10="$(build)"; new_step_env; cd "$R10"
+printf '{"issues":{},"prs":{},"labels":[],"next_issue":50,"next_pr":70,"default_branch":"main"}' > "$GH_STATE"
+REAL_REPO="$GITHUB_REPOSITORY"   # build() reads this, so put it back below
+export GH_TOKEN=stub BRANCH="auto-update-spec-kit/v0.15.1" GITHUB_REPOSITORY="o/unreachable"
+run_step 'auto-update-spec-kit__act__*check-for-a-pre-existing-branch-or-pull-request*.sh' >"$WORK/preflight4.log" 2>&1
+PF_RC4=$?
+sed 's/^/      /' "$WORK/preflight4.log" | head -5
+export GITHUB_REPOSITORY="$REAL_REPO"
+check "S13p preflight step exit code" "$PF_RC4" "0"
+check "S13p an unreadable remote blocks, it does not fall through" "$(out blocked)" "true"
+check_contains "S13p reason says the lookup failed, not that a branch exists" "$(out reason)" "could not read"
+check_contains "S13p reason names the branch it declined to risk" "$(out reason)" "auto-update-spec-kit/v0.15.1"
 cd - >/dev/null
 
 report "T5 act"

@@ -5,6 +5,8 @@ a faithful model of the Actions subset in use (==, !=, &&, ||, parens,
 always(), contains(fromJSON(...), x)), and driven through each quickstart
 scenario's job-result matrix. GitHub semantics modelled:
   * a skipped/never-run job's `needs.X.outputs.Y` renders as the empty string
+  * an unset `steps.X.outputs.Y` (a step that has not run yet) also renders
+    as the empty string, the same way
   * `needs.X.result` is one of success | failure | cancelled | skipped
   * a job with a custom `if:` does NOT get the implicit success() check
 """
@@ -52,7 +54,7 @@ def evaluate(expr, ctx):
     e = re.sub(r"contains\(\s*fromJSON\('(\[[^)]*?\])'\)\s*,\s*([^)]+?)\s*\)", _contains, e)
     e = e.replace("&&", " and ").replace("||", " or ").replace("'", '"')
 
-    e = re.sub(r"\b(inputs|needs|vars)\.[A-Za-z0-9_.\-]+", lambda m: repr(lookup(m.group(0), ctx)), e)
+    e = re.sub(r"\b(inputs|needs|vars|steps)\.[A-Za-z0-9_.\-]+", lambda m: repr(lookup(m.group(0), ctx)), e)
     return bool(eval(e, {"__builtins__": {}}, {}))
 
 
@@ -135,7 +137,19 @@ def act_steps(ifs_steps, ctx, arm):
         "verify passed": [
             "Download prepared branch bundle",
             "Fetch prepared branch from bundle",
+            "Check for a pre-existing branch or pull request",
             "Open version-bump PR",
+        ],
+        # 035-auto-update-pr-guard (US4): the preflight step's own gate is
+        # identical to "Open version-bump PR"'s base condition, so it always
+        # runs alongside it — but when it BLOCKS, "Open version-bump PR"
+        # must NOT, and the decline steps must run instead.
+        "verify passed, preflight blocked": [
+            "Download prepared branch bundle",
+            "Fetch prepared branch from bundle",
+            "Check for a pre-existing branch or pull request",
+            "Decline — a pre-existing branch or pull request blocks this candidate",
+            "Post the preflight decline on the issue",
         ],
         "rollback": ["Rollback (health-check failed)"],
     }[arm])
@@ -226,6 +240,52 @@ def main():
         "needs.evaluate-path.result": "success", "needs.evaluate-path.outputs.outcome": "needs-migration",
         "needs.prepare.result": "skipped", "needs.verify.result": "skipped",
     }, {"prepare": False, "verify": False, "act": False})
+
+    # ---- 035-auto-update-pr-guard: guard-skip outcome routing ----------
+    scenario("guard-skip: no prepare, no verify, no act (US1, same 'route to a human' matrix as ambiguous-options)", ifs, {
+        "inputs.trigger": "scheduled",
+        "needs.health-check.result": "success", "needs.health-check.outputs.pinned-ok": "true",
+        "needs.detect.result": "success", "needs.detect.outputs.newer": "true",
+        "needs.settle.result": "success", "needs.settle.outputs.settled": "true",
+        "needs.comment-reply.result": "skipped",
+        "needs.evaluate-path.result": "success", "needs.evaluate-path.outputs.outcome": "guard-skip",
+        "needs.prepare.result": "skipped", "needs.verify.result": "skipped",
+    }, {"evaluate-path": True, "prepare": False, "verify": False, "act": False})
+
+    scenario("no matching open PR: proceeds through prepare/verify/act exactly as clean-bump (US1 Acceptance #4)", ifs, {
+        "inputs.trigger": "scheduled",
+        "needs.health-check.result": "success", "needs.health-check.outputs.pinned-ok": "true",
+        "needs.detect.result": "success", "needs.detect.outputs.newer": "true",
+        "needs.settle.result": "success", "needs.settle.outputs.settled": "true",
+        "needs.comment-reply.result": "skipped",
+        "needs.evaluate-path.result": "success", "needs.evaluate-path.outputs.outcome": "clean-bump",
+        "needs.prepare.result": "success", "needs.verify.result": "success",
+    }, {"evaluate-path": True, "prepare": True, "verify": True, "act": True})
+
+    # ---- evaluate-path's own guard step, at step level (US1, FR-004) ---
+    # Job-level gating alone would not catch a regression that widens the
+    # job's outcome switch but forgets the step-level `if:` — the guard
+    # must suppress the judgment step ITSELF (FR-004), not just its
+    # downstream outcome. Only the two billed steps are asserted here
+    # (not the full step set act_steps() checks) because evaluate-path has
+    # many always-run bootstrap steps with no `if:` of their own that are
+    # irrelevant to this guard.
+    ep_steps = load_step_ifs(STAGE, "evaluate-path")
+    ep_billed = [(n, e) for n, e in ep_steps
+                 if n in ("Fetch candidate release notes", "Decide upgrade path")]
+    print("\nevaluate-path billed-step gates (verbatim from the workflow):")
+    for name, expr in ep_billed:
+        print("  %-32s if: %s" % (name, re.sub(r"\s+", " ", expr) or "(none)"))
+
+    step_scenario("evaluate-path steps — guard fires: billed steps do not run", ep_billed, {
+        "steps.entry.outputs.resumed": "false",
+        "steps.guard.outputs.skip": "true",
+    }, [])
+
+    step_scenario("evaluate-path steps — no matching PR: billed steps run", ep_billed, {
+        "steps.entry.outputs.resumed": "false",
+        "steps.guard.outputs.skip": "false",
+    }, ["Fetch candidate release notes", "Decide upgrade path"])
 
     # ---- Scenario 9: pr-merged ----------------------------------------
     scenario("Scenario 9 — merged PR", ifs, {
@@ -413,6 +473,15 @@ def main():
         "needs.prepare.result": "success", "needs.verify.result": "success",
         "needs.verify.outputs.passed": "true",
     }, "verify passed")
+
+    # 035-auto-update-pr-guard (US4, FR-015): the preflight step blocks —
+    # "Open version-bump PR" must NOT run, and the decline steps must.
+    act_steps(act, {
+        "needs.health-check.outputs.pinned-ok": "true",
+        "needs.prepare.result": "success", "needs.verify.result": "success",
+        "needs.verify.outputs.passed": "true",
+        "steps.preflight.outputs.blocked": "true",
+    }, "verify passed, preflight blocked")
 
     # health-check failure short-circuits the whole chain, so prepare is
     # skipped rather than successful — the rollback arm must not depend on

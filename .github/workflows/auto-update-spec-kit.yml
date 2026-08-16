@@ -820,12 +820,53 @@ jobs:
             echo "resumed=$resumed"
           } >> "$GITHUB_OUTPUT"
 
+      # Guards against re-proposing a candidate whose version-bump PR is
+      # already open (FR-001..FR-014). Applies to both entry paths (fresh
+      # settle and resumed maintainer decision, FR-012) since it runs after
+      # `entry` unifies them. "don't know means don't act" — a failed lookup
+      # declines rather than risking a duplicate proposal (settle's own
+      # #167-vs-#162 lesson, research.md), so this never falls back to
+      # `|| echo '[]'`.
+      - name: Guard against an already-open version-bump PR
+        id: guard
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          CANDIDATE: ${{ steps.entry.outputs.candidate-version }}
+        run: |
+          set -uo pipefail
+          if ! prs_json="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open \
+                --json number,body,headRefName 2>"$RUNNER_TEMP/guard-err.txt")"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "reason=lookup-failed" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          matches="$(printf '%s' "$prs_json" | jq -c '[
+            .[] | select((.body // "") | contains("<!-- wing-commander-auto-update-spec-kit: version-bump -->"))
+                | {number: .number,
+                   candidate: (.headRefName | sub("^auto-update-spec-kit/v"; ""))} ]')"
+          count="$(printf '%s' "$matches" | jq 'length')"
+          if [ "$count" -eq 0 ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          elif [ "$count" -gt 1 ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "reason=multiple-matches" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            matched_candidate="$(printf '%s' "$matches" | jq -r '.[0].candidate')"
+            if [ "$matched_candidate" = "$CANDIDATE" ]; then
+              echo "reason=already-open" >> "$GITHUB_OUTPUT"
+            else
+              echo "reason=queued-behind" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+          echo "matches=$matches" >> "$GITHUB_OUTPUT"
+
       # evaluate-path's own untrusted-data fetch (research.md): release
       # notes bodies, never live-browsed, framed as data below — the same
       # convention every comment-triggered stage uses for issue bodies.
       - name: Fetch candidate release notes
         id: notes
-        if: steps.entry.outputs.resumed != 'true'
+        if: steps.entry.outputs.resumed != 'true' && steps.guard.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           PINNED: ${{ steps.entry.outputs.pinned-version }}
@@ -845,7 +886,7 @@ jobs:
 
       - name: Decide upgrade path
         id: decide
-        if: steps.entry.outputs.resumed != 'true'
+        if: steps.entry.outputs.resumed != 'true' && steps.guard.outputs.skip != 'true'
         continue-on-error: true
         timeout-minutes: 10
         uses: anthropics/claude-code-action@v1
@@ -936,8 +977,25 @@ jobs:
         env:
           RESUMED: ${{ steps.entry.outputs.resumed }}
           ISSUE: ${{ steps.entry.outputs.issue-number }}
+          GUARD_SKIP: ${{ steps.guard.outputs.skip }}
+          GUARD_REASON: ${{ steps.guard.outputs.reason }}
+          GUARD_MATCHES: ${{ steps.guard.outputs.matches }}
         run: |
           set -uo pipefail
+          if [ "$GUARD_SKIP" = "true" ]; then
+            # Checked ahead of the RESUMED branch below: the guard applies to
+            # both entry paths (FR-012), and prepare's existing
+            # `outcome == 'clean-bump'` gate already treats guard-skip like
+            # needs-migration/ambiguous-options — "do not run" — with no
+            # further plumbing (research.md).
+            {
+              echo "outcome=guard-skip"
+              echo "reason=$GUARD_REASON"
+              echo "matches=$GUARD_MATCHES"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           if [ "$RESUMED" = "true" ]; then
             # US4's T027 fills this branch in — comment-reply already
             # decided and commented; evaluate-path just forwards clean-bump
@@ -983,6 +1041,97 @@ jobs:
             echo "options=$options"
           } >> "$GITHUB_OUTPUT"
           echo "evaluate-path: outcome=$outcome for #$ISSUE." >> "$GITHUB_STEP_SUMMARY"
+
+      # Legible narration for a guarded run (US2, FR-006/FR-007): the step
+      # summary always names the candidate, the blocking PR(s), and the
+      # reason. The tracking issue's marker gains a `guard-checked` liveness
+      # timestamp refreshed every guarded run, and a one-time narration
+      # comment fires only when the blocking PR differs from the marker's
+      # existing `guard-pr` (a fresh PR, or the first guarded run ever) — no
+      # guarded run ever adds a second comment for a PR already narrated.
+      # `multiple-matches` is a data-integrity condition and gets a warning
+      # every run instead, matching settle's own count > 1 precedent of
+      # never maintaining dedup state for it.
+      - name: Compose the guard-skip narration
+        id: guard-narrate
+        if: steps.decide-outcome.outputs.outcome == 'guard-skip'
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ISSUE: ${{ steps.entry.outputs.issue-number }}
+          CANDIDATE: ${{ steps.entry.outputs.candidate-version }}
+          REASON: ${{ steps.decide-outcome.outputs.reason }}
+          MATCHES: ${{ steps.decide-outcome.outputs.matches }}
+        run: |
+          set -uo pipefail
+          # lookup-failed never sets steps.guard.outputs.matches, so this
+          # would otherwise feed jq an empty string — default to "[]".
+          nums="$(printf '%s' "${MATCHES:-[]}" | jq -r '[.[].number] | map("#" + (. | tostring)) | join(", ")')"
+
+          case "$REASON" in
+            already-open)
+              summary="evaluate-path: v$CANDIDATE already has an open version-bump PR ($nums) — declined this cycle, awaiting review."
+              ;;
+            queued-behind)
+              summary="evaluate-path: v$CANDIDATE is queued behind $nums, an older open version-bump PR — declined this cycle (at most one proposal stays in flight)."
+              ;;
+            multiple-matches)
+              summary="evaluate-path: $nums open PRs carry the version-bump marker for v$CANDIDATE — data-integrity condition, left for a human."
+              ;;
+            lookup-failed)
+              summary="evaluate-path: the open-PR lookup failed — declined this cycle rather than risk a duplicate proposal."
+              ;;
+            *)
+              summary="evaluate-path: declined this cycle (guard reason: $REASON)."
+              ;;
+          esac
+          echo "$summary" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$REASON" = "multiple-matches" ]; then
+            echo "::warning::wing-commander auto-update-spec-kit: $nums open PRs carry the version-bump marker for v$CANDIDATE — data-integrity condition, never auto-resolved."
+            echo "narrate=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$REASON" = "lookup-failed" ]; then
+            echo "narrate=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          blocking_pr="$(printf '%s' "$MATCHES" | jq -r '.[0].number')"
+          blocked_candidate="$(printf '%s' "$MATCHES" | jq -r '.[0].candidate')"
+          pr_link="https://github.com/$GITHUB_REPOSITORY/pull/$blocking_pr"
+          checked="$(date -u +%Y-%m-%dT%H:%MZ)"
+
+          body="$(gh issue view "$ISSUE" --json body --jq .body)"
+          # `|| true`: see the comment-reply guard's copy of this line.
+          marker_line="$(printf '%s' "$body" | grep -o '<!-- wing-commander-auto-update-spec-kit:[^>]*-->' | head -1 || true)"
+          prior_pr="$(printf '%s' "$marker_line" | sed -n 's/.*guard-pr=\([0-9]*\).*/\1/p')"
+
+          stripped="$(printf '%s' "$marker_line" | sed -E 's/ guard-pr=[0-9]+//; s/ guard-checked=[^ ]+//')"
+          new_marker="$(printf '%s' "$stripped" | sed "s/ *-->/ guard-pr=$blocking_pr guard-checked=$checked -->/")"
+          printf '%s' "$body" | sed "s|$marker_line|$new_marker|" > "$RUNNER_TEMP/guard-issue-body.md"
+          gh issue edit "$ISSUE" --body-file "$RUNNER_TEMP/guard-issue-body.md"
+
+          if [ "$prior_pr" != "$blocking_pr" ]; then
+            if [ "$REASON" = "already-open" ]; then
+              echo "v$CANDIDATE already has an open version-bump pull request awaiting review: $pr_link. This run declined to re-propose it." > "$RUNNER_TEMP/guard-narration.md"
+            else
+              echo "v$CANDIDATE is queued behind an older open version-bump pull request proposing v$blocked_candidate: $pr_link. At most one version-bump proposal stays in flight at a time." > "$RUNNER_TEMP/guard-narration.md"
+            fi
+            echo "narrate=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "narrate=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Post the guard-skip narration
+        if: steps.guard-narrate.outputs.narrate == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ steps.entry.outputs.issue-number }}
+          kind: info
+          summary: "Declined to act — a version-bump pull request is already open"
+          body-file: ${{ runner.temp }}/guard-narration.md
 
       # clean-bump reasoning + sources are recorded on the issue regardless
       # of outcome (FR-013) — needs-migration/ambiguous-options record their
@@ -2231,11 +2380,80 @@ jobs:
           set -euo pipefail
           git fetch "$RUNNER_TEMP/prepare-bundle/prepare.bundle" "$BRANCH:refs/heads/$BRANCH"
 
+      # Independent of evaluate-path's guard (research.md): that guard only
+      # ever observes an OPEN PR, so it cannot see a branch left behind by a
+      # run that failed after pushing, or by a PR closed unmerged without its
+      # branch being deleted (US4, FR-015). No force-push is introduced here
+      # (FR-018, Out of Scope) — a decline names the blocker and the remedy
+      # instead of a raw non-fast-forward push rejection.
+      - name: Check for a pre-existing branch or pull request
+        id: preflight
+        if: needs.health-check.outputs.pinned-ok != 'false' && needs.prepare.result == 'success' && needs.verify.outputs.passed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          BRANCH: ${{ needs.prepare.outputs.branch }}
+        run: |
+          set -uo pipefail
+          # Through the authenticated URL, not `origin` — the same reason the
+          # push below spells its remote out in full: `persist-credentials:
+          # false` leaves `origin` a bare https URL with no credential helper,
+          # so `git ls-remote origin` cannot read a private consumer
+          # repository. Reading through `origin` would have made this step
+          # fail open — a failed lookup is indistinguishable from "no such
+          # branch" once the error is discarded, so the very branch this step
+          # exists to protect would have been pushed over (FR-015).
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          # `|| rc=$?` rather than a bare call: a `run:` block executes as
+          # `bash -e {0}`, and `set -uo pipefail` above does not turn errexit
+          # back off, so an unguarded non-zero exit here kills the step before
+          # it can decide anything.
+          rc=0
+          git ls-remote --exit-code "$remote" "refs/heads/$BRANCH" \
+            >/dev/null 2>"$RUNNER_TEMP/preflight-ls-remote.txt" || rc=$?
+
+          # --exit-code makes 2 mean "reached the remote, no such ref" — the
+          # only code that may proceed. 0 is a hit; anything else is the
+          # lookup itself failing, and "don't know means don't act" (the
+          # guard step's copy of this rule) blocks rather than risks the
+          # overwrite.
+          if [ "$rc" -eq 2 ]; then
+            echo "blocked=false" >> "$GITHUB_OUTPUT"
+          elif [ "$rc" -ne 0 ]; then
+            echo "blocked=true" >> "$GITHUB_OUTPUT"
+            echo "reason=could not read refs/heads/$BRANCH on the remote (git exit $rc) — declined rather than risk overwriting it" >> "$GITHUB_OUTPUT"
+            sed 's/^/  /' "$RUNNER_TEMP/preflight-ls-remote.txt"
+          else
+            existing_pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" \
+              --state open --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+            echo "blocked=true" >> "$GITHUB_OUTPUT"
+            if [ -n "$existing_pr" ]; then
+              echo "reason=pr #$existing_pr already proposes this candidate" >> "$GITHUB_OUTPUT"
+            else
+              echo "reason=branch $BRANCH already exists with no open PR — delete it and re-dispatch" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Decline — a pre-existing branch or pull request blocks this candidate
+        if: steps.preflight.outputs.blocked == 'true'
+        env:
+          REASON: ${{ steps.preflight.outputs.reason }}
+        run: |
+          echo "act: declined to open a version-bump PR — $REASON." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post the preflight decline on the issue
+        if: steps.preflight.outputs.blocked == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ needs.prepare.outputs.issue-number }}
+          kind: info
+          summary: "Declined to open a version-bump pull request — ${{ steps.preflight.outputs.reason }}"
+
       # Pass path (T014): verification passed — push the prepared branch and
       # open a version-bump PR. This feature never merges it itself
       # (constitution V, FR-017).
       - name: Open version-bump PR
-        if: needs.health-check.outputs.pinned-ok != 'false' && needs.prepare.result == 'success' && needs.verify.outputs.passed == 'true'
+        if: needs.health-check.outputs.pinned-ok != 'false' && needs.prepare.result == 'success' && needs.verify.outputs.passed == 'true' && steps.preflight.outputs.blocked != 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           BRANCH: ${{ needs.prepare.outputs.branch }}
