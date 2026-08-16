@@ -149,7 +149,7 @@ Single-project CI/CD feature, no `src/`/`tests/` split. All file paths below are
 - [ ] T023 [P] Run `python3 .github/scripts/run-local-gates.py` and confirm every PR-time gate — including the new Gate 18 and Gate 19 — passes cleanly against the repository as it stands after all five user stories land (quickstart.md step 2, SC-004).
 - [ ] T024 [P] Run the quickstart.md "reintroduce a broken shape" drill (step 3): temporarily revert the `collect-annotations` step to its pre-fix shape, confirm `run-local-gates.py` fails naming `watchdog.yml` and the offending line with error text alone sufficient to write the fix back (SC-006), then restore the file.
 - [ ] T025 Run `bash .github/scripts/auto-update-spec-kit-tests/run-tests.sh` (full suite) and `python3 .github/scripts/verify-gate-19.py` to confirm nothing else regressed (quickstart.md steps 4-6).
-- [ ] T026 Confirm no published stage's declared `workflow_call` inputs, outputs, or secrets other than `watchdog.yml`'s new `untrusted-collectors` output were widened (FR-015): diff `watchdog.yml`'s and `auto-update-spec-kit.yml`'s `on: workflow_call` blocks against the pre-feature versions.
+- [X] T026 Confirm no published stage's declared `workflow_call` inputs, outputs, or secrets other than `watchdog.yml`'s new `untrusted-collectors` output were widened (FR-015): diff `watchdog.yml`'s and `auto-update-spec-kit.yml`'s `on: workflow_call` blocks against the pre-feature versions.
 
 ---
 
