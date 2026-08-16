@@ -55,6 +55,11 @@ should never pass it deliberately. See research.md D3.
   through to `anthropics/claude-code-action@v1`'s own `--allowedTools`/
   `--disallowedTools` parsing; a malformed tool pattern surfaces as that
   action's own error, not a pipeline-specific one (spec Assumptions).
+- **These composed lists also drive a stage's stated-tooling output, where
+  one exists**: on stages whose prompt states its own shell tooling
+  (`implement.yml`), that statement is rendered from the same composed
+  allowed/disallowed lists these four inputs produce — see
+  [tool-composition-action.md#outputs](tool-composition-action.md#outputs).
 
 ## Example (wrapper/consumer usage)
 

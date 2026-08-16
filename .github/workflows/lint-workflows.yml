@@ -1563,6 +1563,23 @@ jobs:
       - name: Gate 19 — the watchdog's annotation collector sees every page
         run: python3 .github/scripts/verify-gate-19.py
 
+      # Gate 20 — wing-commander-tool-args's declared and emitted outputs
+      # agree, in both directions, with each other and with the published
+      # contract. `shell-commands` shipped in #214 already emitted and
+      # already declared in action.yml's own outputs: block, but with no
+      # check keeping it that way — this is the machine check
+      # specs/037-rendered-tooling-list exists to add (research.md D9).
+      - name: Gate 20 — every output the tool-args composite emits is declared, and every declared output is emitted
+        run: python3 .github/scripts/verify-tool-args-contract.py
+
+      # Gate 21 — the tooling statement wing-commander-tool-args hands a
+      # stage's prompt matches what that run's composed tool lists actually
+      # permit. The render walked the allowed list alone with no
+      # subtraction, no bare-Bash case, and no exact/prefix distinction, so
+      # a denied command could still read as permitted (research.md D8).
+      - name: Gate 21 — the tooling statement matches what the run actually permits
+        run: python3 .github/scripts/verify-tooling-statement.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

@@ -813,6 +813,9 @@ Common to every stage below:
   everything each internal step needs. The per-stage default tool lists are
   documented in
   [stage-interfaces.md](../specs/010-reusable-pipeline/contracts/stage-interfaces.md#per-stage-default-tool-lists).
+  These composed lists also drive the stage's own stated-tooling prompt where
+  one exists (`implement.yml`'s cycle/retry steps) — see
+  [tool-composition-action.md#outputs](../specs/026-configurable-tool-lists/contracts/tool-composition-action.md#outputs).
 - **Common secrets**: `claude-code-oauth-token` / `anthropic-api-key`
   (one-of, see [Credentials](#credentials)); `speckit-app-id` /
   `speckit-app-private-key` (required — the App writes pushes/PRs/comments);
