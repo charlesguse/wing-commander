@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,23 +31,26 @@
 
 ## Notes
 
-- **Three `[NEEDS CLARIFICATION]` markers remain open** (FR-010, FR-011, FR-012). They are
-  posted to lifecycle issue #182 for the requester to answer; the clarify stage folds the
-  answers back into the spec. They are the maximum this project allows, and each one changes
-  what gets built rather than only how:
-  1. **FR-010 — scope**: does this feature also make the watchdog's soft-failed evidence
-     reads distinguishable from empty ones (roughly thirty-five sites), or is that a
-     follow-up? The source issue raises the observation without asking for it. Answering
-     "yes" roughly triples the change surface and pulls in every collector, not just the
-     annotation one.
-  2. **FR-011 — gate strictness**: should the check flag the two reads the source issue
-     calls "safe by accident, but safe", forcing them into a safe-by-construction form?
-     "Yes" adds two more edits and a stricter rule that will bind future authors; "no"
-     leaves a shape whose correctness depends on its consumer staying as it is.
-  3. **FR-012 — coverage depth**: do the three fixed sites gain executable multi-page
-     coverage, and for which of them? The auto-update pair already has a harness that
-     extracts and runs the shipped steps; the watchdog site does not, so requiring it
-     there is a materially larger piece of work than requiring it for the pair.
+- **All three `[NEEDS CLARIFICATION]` markers are resolved** (answered on lifecycle issue
+  #182 on 2026-08-16; recorded in the spec's Clarifications section). Each answer widened
+  the feature, so the notes below record what changed:
+  1. **FR-010 — scope → all collectors.** Every one of the watchdog's evidence reads now
+     distinguishes a failed read from an empty one, and the diagnosis step is told which
+     collectors it cannot trust. This is the largest of the three answers: it adds
+     User Story 5 (P2), FR-016 and FR-017, and SC-008/SC-009, and it touches every
+     collector plus the evidence the diagnosis reads. It is deliberately P2 so it cannot
+     delay the time-sensitive release-detection fix.
+  2. **FR-011 — gate strictness → strict.** The gate requires every paginated read to be
+     safe by construction, so the two reads the source issue calls "safe by accident, but
+     safe" are flagged and rewritten. FR-008 was rewritten accordingly: the exemption is
+     now "emits one item per line", not "is consumed as a stream", and FR-018 pins the
+     rewrite as shape-only. This also makes the gate easier to implement reliably, since
+     it no longer has to tell two nearly identical shapes apart.
+  3. **FR-012 — coverage depth → all three sites.** The auto-update pair goes through the
+     existing extraction harness; equivalent multi-page coverage is stood up for the
+     watchdog's annotation collector, which has none today. SC-010 states the outcome:
+     reverting any one fix fails a test, not only the static check. The cost of building
+     the watchdog harness is recorded as an assumption rather than assumed away.
 - Requirements are phrased as outcomes ("yields exactly one well-formed document",
   "every annotation reaches the evidence set") rather than as the shell rewrite that
   achieves them. The specific call sites are named in the Input and in the user stories
