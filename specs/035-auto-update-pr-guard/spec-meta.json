@@ -2,7 +2,7 @@
   "issue": 204,
   "spec_dir": "specs/035-auto-update-pr-guard",
   "feature_num": "035",
-  "stage": "plan",
+  "stage": "tasks",
   "iteration": 0,
   "spec_branch": "spec/035-auto-update-pr-guard"
 }
