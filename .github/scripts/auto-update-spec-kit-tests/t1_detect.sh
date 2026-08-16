@@ -12,6 +12,26 @@ mkfixture() { # mkfixture <out> <tag:prerelease> ...
   printf '[%s]\n' "$(IFS=,; echo "${items[*]}")" > "$out"
 }
 
+# mkfixture_bulk <out>: a >30-release fixture spanning the gh_stub's PAGE_SIZE
+# boundary (research.md D4). The first 30 entries (page 1) are all stable and
+# all lower than the true highest release; page 2 (entries 31-34) carries a
+# higher-numbered PRERELEASE that must still be excluded, then the true
+# highest STABLE release, then two more stable releases lower than it — so a
+# detector that only looked at page 1, or that let a page-2 prerelease win,
+# would resolve the wrong version (Acceptance Scenarios 1-3, FR-012).
+mkfixture_bulk() {
+  local out="$1"
+  local items=() i
+  for i in $(seq 1 30); do
+    items+=("{\"tag_name\":\"v0.1.$i\",\"prerelease\":false,\"html_url\":\"https://github.com/github/spec-kit/releases/tag/v0.1.$i\",\"body\":\"notes for v0.1.$i\"}")
+  done
+  items+=("{\"tag_name\":\"v0.99.0\",\"prerelease\":true,\"html_url\":\"https://github.com/github/spec-kit/releases/tag/v0.99.0\",\"body\":\"notes for v0.99.0\"}")
+  items+=("{\"tag_name\":\"v0.20.0\",\"prerelease\":false,\"html_url\":\"https://github.com/github/spec-kit/releases/tag/v0.20.0\",\"body\":\"notes for v0.20.0\"}")
+  items+=("{\"tag_name\":\"v0.1.32\",\"prerelease\":false,\"html_url\":\"https://github.com/github/spec-kit/releases/tag/v0.1.32\",\"body\":\"notes for v0.1.32\"}")
+  items+=("{\"tag_name\":\"v0.1.33\",\"prerelease\":false,\"html_url\":\"https://github.com/github/spec-kit/releases/tag/v0.1.33\",\"body\":\"notes for v0.1.33\"}")
+  printf '[%s]\n' "$(IFS=,; echo "${items[*]}")" > "$out"
+}
+
 detect() { # detect <pinned> <releases-file>  -> sets D_NEWER D_LATEST D_TYPE
   new_step_env
   "$PY" -c "
@@ -73,5 +93,16 @@ echo "    live: pinned=0.12.4 latest=$D_LATEST newer=$D_NEWER type=$D_TYPE"
 check "live newer" "$D_NEWER" "true"
 check "live latest" "$D_LATEST" "0.15.1"
 check "live release-type" "$D_TYPE" "minor"
+
+echo "--- Multi-page: >30 releases, sort/eligibility still correct across the page boundary (Acceptance Scenarios 1-3, FR-012) ---"
+BULK="$(mktemp)"; mkfixture_bulk "$BULK"
+detect "0.1.1" "$BULK"
+check "multi-page: exactly one version resolved" "$D_NEWER" "true"
+check "multi-page: highest eligible release selected even though it lands on page 2" "$D_LATEST" "0.20.0"
+check_not_contains "multi-page: the page-2 prerelease is not selected" "$D_LATEST" "0.99.0"
+
+echo "--- Multi-page: a single-page list still produces today's outcome unchanged (Acceptance Scenario 5, FR-005) ---"
+detect "0.15.1" "$F"
+check "single-page detection unaffected by the pagination change" "$D_NEWER" "false"
 
 report "T1 detect"

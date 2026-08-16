@@ -92,6 +92,26 @@ def emit(data_obj, argv):
         sys.stdout.write(s)
 
 
+PAGE_SIZE = 30
+
+
+def emit_paginated(data_list, argv):
+    """Print JSON the way real `gh api ... --paginate` does: split into
+    PAGE_SIZE-item pages and call emit() once per page, writing directly to
+    stdout with no added separator between pages — reproducing the N
+    concatenated JSON documents shape --jq produces across real pagination
+    (research.md D4, spec 036). Falls back to a single emit() when
+    --paginate is absent, unchanged from before this feature."""
+    if "--paginate" not in argv:
+        emit(data_list, argv)
+        return
+    if not data_list:
+        emit([], argv)
+        return
+    for i in range(0, len(data_list), PAGE_SIZE):
+        emit(data_list[i:i + PAGE_SIZE], argv)
+
+
 def issue_json(iss, fields):
     """Project an issue onto --json fields using REAL gh output shapes.
 
@@ -183,7 +203,7 @@ def main():
         if "spec-kit/releases" in path:
             rf = s.get("releases_file")
             data = json.load(open(rf, encoding="utf-8")) if rf else []
-            emit(data, argv)
+            emit_paginated(data, argv)
             return 0
         if "/issues/comments/" in path:
             cid = path.rstrip("/").split("/")[-1]

@@ -422,8 +422,8 @@ jobs:
           PINNED_VERSION: ${{ needs.health-check.outputs.pinned-version }}
         run: |
           set -uo pipefail
-          releases_json="$(gh api repos/github/spec-kit/releases --paginate 2>/dev/null || echo '[]')"
-          latest="$(printf '%s' "$releases_json" | jq -c '[.[] | select(.prerelease == false)] | sort_by(.tag_name | ltrimstr("v") | split(".") | map(tonumber? // 0)) | last // empty')"
+          releases_json="$(gh api repos/github/spec-kit/releases --paginate --jq '.[] | select(.prerelease == false)' 2>/dev/null | jq -s '.')"
+          latest="$(printf '%s' "$releases_json" | jq -c 'sort_by(.tag_name | ltrimstr("v") | split(".") | map(tonumber? // 0)) | last // empty')"
           if [ -z "$latest" ] || [ "$latest" = "null" ]; then
             echo "::warning::wing-commander auto-update-spec-kit: could not resolve any stable release from repos/github/spec-kit/releases — treating this cycle as 'up to date'."
             echo "newer=false" >> "$GITHUB_OUTPUT"
@@ -873,12 +873,12 @@ jobs:
           CANDIDATE: ${{ steps.entry.outputs.candidate-version }}
         run: |
           set -uo pipefail
-          releases_json="$(gh api repos/github/spec-kit/releases --paginate 2>/dev/null || echo '[]')"
+          releases_json="$(gh api repos/github/spec-kit/releases --paginate --jq '.[] | select(.prerelease == false)' 2>/dev/null | jq -s '.')"
           printf '%s' "$releases_json" | jq -c \
             --arg pinned "$PINNED" --arg candidate "$CANDIDATE" '
             ($pinned | split(".") | map(tonumber)) as $pp
             | ($candidate | split(".") | map(tonumber)) as $cc
-            | [ .[] | select(.prerelease == false)
+            | [ .[]
                 | select((.tag_name | ltrimstr("v") | split(".") | map(tonumber? // 0)) as $vv
                          | $vv > $pp and $vv <= $cc)
                 | {tag: .tag_name, url: .html_url, body: .body} ]
