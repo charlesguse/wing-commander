@@ -820,12 +820,53 @@ jobs:
             echo "resumed=$resumed"
           } >> "$GITHUB_OUTPUT"
 
+      # Guards against re-proposing a candidate whose version-bump PR is
+      # already open (FR-001..FR-014). Applies to both entry paths (fresh
+      # settle and resumed maintainer decision, FR-012) since it runs after
+      # `entry` unifies them. "don't know means don't act" — a failed lookup
+      # declines rather than risking a duplicate proposal (settle's own
+      # #167-vs-#162 lesson, research.md), so this never falls back to
+      # `|| echo '[]'`.
+      - name: Guard against an already-open version-bump PR
+        id: guard
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          CANDIDATE: ${{ steps.entry.outputs.candidate-version }}
+        run: |
+          set -uo pipefail
+          if ! prs_json="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open \
+                --json number,body,headRefName 2>"$RUNNER_TEMP/guard-err.txt")"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "reason=lookup-failed" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          matches="$(printf '%s' "$prs_json" | jq -c '[
+            .[] | select((.body // "") | contains("<!-- wing-commander-auto-update-spec-kit: version-bump -->"))
+                | {number: .number,
+                   candidate: (.headRefName | sub("^auto-update-spec-kit/v"; ""))} ]')"
+          count="$(printf '%s' "$matches" | jq 'length')"
+          if [ "$count" -eq 0 ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          elif [ "$count" -gt 1 ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "reason=multiple-matches" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            matched_candidate="$(printf '%s' "$matches" | jq -r '.[0].candidate')"
+            if [ "$matched_candidate" = "$CANDIDATE" ]; then
+              echo "reason=already-open" >> "$GITHUB_OUTPUT"
+            else
+              echo "reason=queued-behind" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+          echo "matches=$matches" >> "$GITHUB_OUTPUT"
+
       # evaluate-path's own untrusted-data fetch (research.md): release
       # notes bodies, never live-browsed, framed as data below — the same
       # convention every comment-triggered stage uses for issue bodies.
       - name: Fetch candidate release notes
         id: notes
-        if: steps.entry.outputs.resumed != 'true'
+        if: steps.entry.outputs.resumed != 'true' && steps.guard.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           PINNED: ${{ steps.entry.outputs.pinned-version }}
@@ -845,7 +886,7 @@ jobs:
 
       - name: Decide upgrade path
         id: decide
-        if: steps.entry.outputs.resumed != 'true'
+        if: steps.entry.outputs.resumed != 'true' && steps.guard.outputs.skip != 'true'
         continue-on-error: true
         timeout-minutes: 10
         uses: anthropics/claude-code-action@v1
@@ -936,8 +977,25 @@ jobs:
         env:
           RESUMED: ${{ steps.entry.outputs.resumed }}
           ISSUE: ${{ steps.entry.outputs.issue-number }}
+          GUARD_SKIP: ${{ steps.guard.outputs.skip }}
+          GUARD_REASON: ${{ steps.guard.outputs.reason }}
+          GUARD_MATCHES: ${{ steps.guard.outputs.matches }}
         run: |
           set -uo pipefail
+          if [ "$GUARD_SKIP" = "true" ]; then
+            # Checked ahead of the RESUMED branch below: the guard applies to
+            # both entry paths (FR-012), and prepare's existing
+            # `outcome == 'clean-bump'` gate already treats guard-skip like
+            # needs-migration/ambiguous-options — "do not run" — with no
+            # further plumbing (research.md).
+            {
+              echo "outcome=guard-skip"
+              echo "reason=$GUARD_REASON"
+              echo "matches=$GUARD_MATCHES"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           if [ "$RESUMED" = "true" ]; then
             # US4's T027 fills this branch in — comment-reply already
             # decided and commented; evaluate-path just forwards clean-bump
