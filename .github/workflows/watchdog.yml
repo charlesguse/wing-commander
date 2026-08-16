@@ -737,12 +737,13 @@ jobs:
           # `.../check-runs/.../annotations` needs Checks:read — the App
           # token has neither (docs/setup.md); use the job's default token,
           # which the top-level permissions: block grants both.
-          jobs_json="$(GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" --paginate 2>/dev/null || echo '{"jobs":[]}')"
+          jobs_json="$(GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" --paginate --jq '.jobs[]' 2>/dev/null | jq -s '.')"
+          [ -n "$jobs_json" ] || jobs_json='[]'
           entries='[]'
-          for job_id in $(printf '%s' "$jobs_json" | jq -r '.jobs[]?.id // empty'); do
-            anns="$(GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/check-runs/$job_id/annotations" --paginate 2>/dev/null || echo '[]')"
-            filtered="$(printf '%s' "$anns" | jq -c '[ .[]? | select(.annotation_level=="warning" or .annotation_level=="failure") | {source:"annotations","class-hint":null,facts:{level:.annotation_level,message:.message}} ]' 2>/dev/null || echo '[]')"
-            entries="$(printf '%s' "$entries" | jq -c --argjson f "$filtered" '. + $f')"
+          for job_id in $(printf '%s' "$jobs_json" | jq -r '.[]?.id // empty'); do
+            anns="$(GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/check-runs/$job_id/annotations" --paginate --jq '.[] | select(.annotation_level=="warning" or .annotation_level=="failure") | {source:"annotations","class-hint":null,facts:{level:.annotation_level,message:.message}}' 2>/dev/null | jq -s '.')"
+            [ -n "$anns" ] || anns='[]'
+            entries="$(printf '%s' "$entries" | jq -c --argjson f "$anns" '. + $f')"
           done
           jq -c --argjson new "$entries" '. + $new' "$RUNNER_TEMP/signals.json" > "$RUNNER_TEMP/signals.json.tmp" && mv "$RUNNER_TEMP/signals.json.tmp" "$RUNNER_TEMP/signals.json"
 

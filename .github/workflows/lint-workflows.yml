@@ -1381,6 +1381,22 @@ jobs:
       - name: Gate 17 — the watchdog's own fix commits exclude the pipeline checkout
         run: python3 .github/scripts/verify-watchdog-fix-commit.py
 
+      # Gate 19 — the watchdog's annotation collector ("Collect: annotations")
+      # sees every page. `gh api --paginate` applies its `--jq` filter to each
+      # page separately and concatenates the raw outputs; a filter that wraps
+      # its result in `[...]` (or no `--jq` at all, feeding a separate
+      # array-collecting `jq` pass downstream, this step's pre-fix shape)
+      # silently drops every annotation past page 1 under `set -uo pipefail`
+      # with no `-e` — the failure never surfaces, it just reads as "nothing
+      # to report" (spec 036, issue #182). Nothing exercised this step before
+      # this feature; Gate 9 covers only its neighbor, "Collect: step
+      # summaries". Same discipline as Gate 9: the shipped step is extracted
+      # and executed against synthetic multi-page `gh` responses, and a
+      # mutation reintroduces the array-collecting shape to prove the suite
+      # can fail.
+      - name: Gate 19 — the watchdog's annotation collector sees every page
+        run: python3 .github/scripts/verify-gate-19.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when
