@@ -576,8 +576,15 @@ jobs:
             exit 0
           fi
 
-          fetch_log="$(git fetch --no-tags --quiet origin "refs/heads/$HEAD_BRANCH:refs/remotes/origin/$HEAD_BRANCH" 2>&1)"
-          fetch_rc=$?
+          # Captured through `|| fetch_rc=$?` rather than a bare `$?` on the
+          # next line: a `run:` block's default shell is `bash -e {0}`, and
+          # `set -uo pipefail` above does not turn errexit back off — so a
+          # bare failing command aborts the whole step before it can record
+          # WHY it failed, which is the one thing FR-010 needs it to do.
+          # The left side of a `||` is exempt from errexit, so this captures
+          # the code instead of dying on it.
+          fetch_rc=0
+          fetch_log="$(git fetch --no-tags --quiet origin "refs/heads/$HEAD_BRANCH:refs/remotes/origin/$HEAD_BRANCH" 2>&1)" || fetch_rc=$?
           # A fetch failure caused by the ref genuinely no longer existing
           # (branch already torn down) is expected and does not make this
           # collector's read untrusted; any other fetch failure does
@@ -701,8 +708,18 @@ jobs:
           # substitution, whose own PIPESTATUS would only ever report jq's
           # exit code) so this collector can tell a failed jobs-listing
           # read apart from a legitimately empty one (FR-010).
-          GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" --paginate --jq '.jobs[]' 2>/dev/null | jq -s '.' > "$RUNNER_TEMP/cs-jobs.json"
-          jobs_rc="${PIPESTATUS[0]}"
+          #
+          # The trailing `|| jobs_rc=...` is load-bearing, not defensive: a
+          # `run:` block's default shell is `bash -e {0}` and `set -uo
+          # pipefail` above does not turn errexit back off, so an unguarded
+          # failing pipeline would abort this step before it could record
+          # that the read failed — exactly the "behaved as though there was
+          # nothing to see" outcome this feature exists to end. The left
+          # side of a `||` is exempt from errexit, and PIPESTATUS still
+          # holds that pipeline's per-command codes when the right side's
+          # expansion runs.
+          jobs_rc=0
+          GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" --paginate --jq '.jobs[]' 2>/dev/null | jq -s '.' > "$RUNNER_TEMP/cs-jobs.json" || jobs_rc="${PIPESTATUS[0]}"
           jobs_json="$(cat "$RUNNER_TEMP/cs-jobs.json" 2>/dev/null)"
           [ -n "$jobs_json" ] || jobs_json='[]'
           so_failed=0
@@ -711,8 +728,8 @@ jobs:
           for job_id in $(printf '%s' "$jobs_json" | jq -r '.[]?.id // empty'); do
             job_name="$(printf '%s' "$jobs_json" | jq -r --arg id "$job_id" '.[] | select((.id|tostring) == $id) | .name')"
             job_conclusion="$(printf '%s' "$jobs_json" | jq -r --arg id "$job_id" '.[] | select((.id|tostring) == $id) | .conclusion // "in_progress"')"
-            log="$(GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$job_id/logs" 2>/dev/null)"
-            log_rc=$?
+            log_rc=0
+            log="$(GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$job_id/logs" 2>/dev/null)" || log_rc=$?
             [ "$log_rc" = "0" ] || so_failed=1
             [ -n "$log" ] || continue
             # Match RUNTIME OUTPUT only. Actions echoes every step's own
@@ -790,16 +807,24 @@ jobs:
           # substitution, whose own PIPESTATUS would only ever report jq's
           # exit code) so this collector can tell a failed read apart from
           # a legitimately empty one (FR-010).
-          GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" --paginate --jq '.jobs[]' 2>/dev/null | jq -s '.' > "$RUNNER_TEMP/ca-jobs.json"
-          jobs_rc="${PIPESTATUS[0]}"
+          #
+          # The trailing `|| jobs_rc=...` is load-bearing: a `run:` block's
+          # default shell is `bash -e {0}` and `set -uo pipefail` above does
+          # not turn errexit back off, so an unguarded failing pipeline
+          # would abort this step before it could record that the read
+          # failed. The left side of a `||` is exempt from errexit, and
+          # PIPESTATUS still holds that pipeline's codes when the right
+          # side's expansion runs.
+          jobs_rc=0
+          GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" --paginate --jq '.jobs[]' 2>/dev/null | jq -s '.' > "$RUNNER_TEMP/ca-jobs.json" || jobs_rc="${PIPESTATUS[0]}"
           jobs_json="$(cat "$RUNNER_TEMP/ca-jobs.json" 2>/dev/null)"
           [ -n "$jobs_json" ] || jobs_json='[]'
           an_failed=0
           [ "$jobs_rc" = "0" ] || an_failed=1
           entries='[]'
           for job_id in $(printf '%s' "$jobs_json" | jq -r '.[]?.id // empty'); do
-            GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/check-runs/$job_id/annotations" --paginate --jq '.[] | select(.annotation_level=="warning" or .annotation_level=="failure") | {source:"annotations","class-hint":null,facts:{level:.annotation_level,message:.message}}' 2>/dev/null | jq -s '.' > "$RUNNER_TEMP/ca-anns.json"
-            anns_rc="${PIPESTATUS[0]}"
+            anns_rc=0
+            GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/check-runs/$job_id/annotations" --paginate --jq '.[] | select(.annotation_level=="warning" or .annotation_level=="failure") | {source:"annotations","class-hint":null,facts:{level:.annotation_level,message:.message}}' 2>/dev/null | jq -s '.' > "$RUNNER_TEMP/ca-anns.json" || anns_rc="${PIPESTATUS[0]}"
             [ "$anns_rc" = "0" ] || an_failed=1
             anns="$(cat "$RUNNER_TEMP/ca-anns.json" 2>/dev/null)"
             [ -n "$anns" ] || anns='[]'
