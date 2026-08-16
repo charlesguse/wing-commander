@@ -2,7 +2,7 @@
   "issue": 216,
   "spec_dir": "specs/037-rendered-tooling-list",
   "feature_num": "037",
-  "stage": "spec",
+  "stage": "plan",
   "iteration": 0,
-  "spec_branch": null
+  "spec_branch": "spec/037-rendered-tooling-list"
 }
