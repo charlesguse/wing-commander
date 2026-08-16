@@ -400,7 +400,11 @@ jobs:
                answer, updating any affected requirements/scenarios so the spec
                stays consistent. Update the checklist under
                ${{ steps.ctx.outputs.spec-dir }}/checklists/ accordingly.
-            4. Commit ("spec: resolve clarifications from #${{ inputs.issue-number }}")
+            4. Stage ONLY the spec directory (git add ${{ steps.ctx.outputs.spec-dir }}) —
+               never `git add -A` or `git add .`, which sweep this checkout's
+               .wing-commander-pipeline/ directory in as a stray submodule
+               pointer. Then commit
+               ("spec: resolve clarifications from #${{ inputs.issue-number }}")
                and push to the current branch (the draft PR updates automatically).
             5. Update the draft PR description so it matches the spec: find the PR
                (gh pr list --head <current branch> --json number,body), then rewrite
