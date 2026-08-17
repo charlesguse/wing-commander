@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,9 +31,9 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain, at the maximum the specify workflow allows, and all three are scope-or-behaviour decisions with no reasonable default:
-  - **FR-016** — the boundary against #193. Whether this feature subsumes #193's rescue wiring for the six agent steps that have no rescue at all, or delivers only the healthy-versus-failed discrimination that #193 then consumes. The two readings differ by a substantial amount of work and by which issue closes.
-  - **FR-017** — what a healthy-but-over-budget run should do. The issue establishes that the budget must be enforced on the counted counter but not what enforcement means: fail, warn-and-continue, or per-stage policy. `implement` consumes exhaustion as a signal and continues; other stages have no such consumer, so a single answer may not fit all of them.
-  - **FR-018** — whether the upstream report is a deliverable. The issue lists it as one of three non-exclusive options. The pipeline does not open issues in repositories it does not own, so if it is in scope the deliverable is most likely a drafted report rather than a filed one.
-- Per the intake deviation for CI, these questions are posted to the lifecycle issue rather than asked interactively; the markers stay in `spec.md` until `/speckit-clarify` folds the answers in.
+- All three [NEEDS CLARIFICATION] markers were resolved from the maintainer's answer on the lifecycle issue (2026-08-17) and are recorded in the spec's **Clarifications** section:
+  - **FR-016** — the boundary against #193 is closed by owning both: this feature delivers the shared verdict *and* the rescue wiring at every agent call site, so #193 is subsumed rather than sequenced after it. User Story 3 gained a scenario covering the steps that had no rescue wiring before.
+  - **FR-017** — a healthy run that reaches its intended budget continues and reports loudly rather than failing. The intended budget is now an observability instrument and the runaway ceiling is the only hard stop, which is why SC-008's ceiling sizing carries the cost protection and SC-009 was added.
+  - **FR-018** — the upstream report is in scope as a *drafted* artifact committed with the feature; filing it upstream is optional and at the maintainers' discretion, so SC-010 measures the draft's existence and Out of Scope excludes the filing itself.
+- Per the intake deviation for CI, the questions were posted to the lifecycle issue rather than asked interactively, and the answers were folded back in by the clarify stage.
 - The specification deliberately names the counters by what they measure rather than by their field names in the run transcript. The literal field names appear only in the verbatim **Input** quote, which is the requester's own description.
