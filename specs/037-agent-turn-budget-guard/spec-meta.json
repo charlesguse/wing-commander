@@ -2,7 +2,7 @@
   "issue": 206,
   "spec_dir": "specs/037-agent-turn-budget-guard",
   "feature_num": "037",
-  "stage": "spec",
+  "stage": "plan",
   "iteration": 0,
-  "spec_branch": null
+  "spec_branch": "spec/037-agent-turn-budget-guard"
 }
