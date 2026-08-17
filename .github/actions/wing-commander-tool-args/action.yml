@@ -60,13 +60,19 @@ outputs:
     value: ${{ steps.compose.outputs.disallowed-tools }}
   shell-commands:
     description: >
-      The Bash(...) entries of the composed allowed list, unwrapped to the
-      bare command prefixes they authorize and joined with ", " — the same
-      information a stage's prompt would otherwise hard-code in prose. A
-      prompt that names its tools by hand drifts from the list actually
-      passed to --allowedTools the first time either is edited alone, which
-      is how specs/036 reached a finalize PR with four validation tasks
-      unrun: the grant said one thing and the prompt said another.
+      A complete sentence stating exactly which shell commands this run
+      permits, derived from the composed allowed list after subtracting
+      anything the composed disallowed list fully covers
+      (specs/037-rendered-tooling-list/contracts/tooling-statement-render.md):
+      "This run permits no shell command.", "This run permits any shell
+      command.", "This run permits any shell command except: `cmd`.", or
+      "This run permits these shell commands: `cmd1`, `cmd2` (exact command
+      only)." — never a denied command named, never a bare list or dangling
+      fragment. A stage's prompt that names its tools by hand drifts from
+      the list actually passed to --allowedTools the first time either is
+      edited alone, which is how specs/036 reached a finalize PR with four
+      validation tasks unrun: the grant said one thing and the prompt said
+      another.
     value: ${{ steps.compose.outputs.shell-commands }}
 
 runs:
@@ -177,38 +183,177 @@ runs:
         effective_allowed="$(compose_list "$raw_allowed" "")"
         effective_disallowed="$(compose_list "$raw_disallowed" "subtract")"
 
-        # 4. Render the Bash(...) entries as the bare command prefixes they
-        #    authorize, so a prompt can state its own tooling from the list
-        #    that is actually enforced instead of a hand-maintained copy.
-        #    `Bash(git status:*)` and the equivalent `Bash(git status *)`
-        #    both authorize the prefix `git status`; the trailing wildcard is
-        #    matcher syntax, not part of the command, so it is dropped.
-        #    Non-Bash entries (Read, Grep, Skill, ...) are omitted — they are
-        #    tools, not shell commands, and the sentence this feeds is about
-        #    what may be run in a shell.
-        shell_commands=""
+        # 4. Render "shell-commands" as a complete sentence stating exactly
+        #    which shell commands this run permits
+        #    (specs/037-rendered-tooling-list/contracts/tooling-statement-render.md):
+        #    classify each effective_allowed/effective_disallowed entry as
+        #    ANY (bare `Bash`), PREFIX(cmd) (`Bash(cmd:*)`/`Bash(cmd *)`,
+        #    any arguments), EXACT(cmd) (`Bash(cmd)`, no trailing wildcard,
+        #    that literal invocation only), or NOT_SHELL (any other tool
+        #    entry — excluded from this render entirely). An allow grant is
+        #    dropped only when some disallowed grant for the same command
+        #    (or, for an ANY allow, any disallowed grant at all) has a scope
+        #    that is a superset of the allow's scope; effective_allowed/
+        #    effective_disallowed themselves are never rewritten — this is a
+        #    read, not a recomputation. A surviving ANY allow under a
+        #    partial (command-specific) deny is stated as unrestricted with
+        #    the denied commands named as exceptions, not silently narrowed.
+        #    A command with any surviving PREFIX grant is stated once, in
+        #    the PREFIX form; a command with only EXACT grant(s) surviving
+        #    is stated once with an "(exact command only)" qualifier.
+        classify_shell_grant() {
+          local item="$1" cmd
+          case "$item" in
+            'Bash')
+              printf 'ANY|'
+              ;;
+            'Bash('*')')
+              cmd="${item#Bash(}"
+              cmd="${cmd%)}"
+              case "$cmd" in
+                *:\*)
+                  printf 'PREFIX|%s' "$(trim "${cmd%:\*}")"
+                  ;;
+                *' *')
+                  printf 'PREFIX|%s' "$(trim "${cmd% \*}")"
+                  ;;
+                *)
+                  printf 'EXACT|%s' "$(trim "$cmd")"
+                  ;;
+              esac
+              ;;
+            *)
+              printf 'NOT_SHELL|'
+              ;;
+          esac
+        }
+
+        allowed_forms=()
+        allowed_cmds=()
         IFS=',' read -ra allowed_items <<< "$effective_allowed"
         for item in "${allowed_items[@]}"; do
           item="$(trim "$item")"
-          case "$item" in
-            'Bash('*')') ;;
-            *) continue ;;
-          esac
-          cmd="${item#Bash(}"
-          cmd="${cmd%)}"
-          cmd="${cmd%:\*}"
-          cmd="${cmd% \*}"
-          cmd="$(trim "$cmd")"
-          [ -z "$cmd" ] && continue
-          if [ -z "$shell_commands" ]; then
-            shell_commands="\`$cmd\`"
-          else
-            shell_commands="$shell_commands, \`$cmd\`"
-          fi
+          [ -z "$item" ] && continue
+          IFS='|' read -r form cmd <<< "$(classify_shell_grant "$item")"
+          [ "$form" = "NOT_SHELL" ] && continue
+          allowed_forms+=("$form")
+          allowed_cmds+=("$cmd")
         done
+
+        disallowed_forms=()
+        disallowed_cmds=()
+        IFS=',' read -ra disallowed_items <<< "$effective_disallowed"
+        for item in "${disallowed_items[@]}"; do
+          item="$(trim "$item")"
+          [ -z "$item" ] && continue
+          IFS='|' read -r form cmd <<< "$(classify_shell_grant "$item")"
+          [ "$form" = "NOT_SHELL" ] && continue
+          disallowed_forms+=("$form")
+          disallowed_cmds+=("$cmd")
+        done
+
+        allowed_has_any=0
+        for form in "${allowed_forms[@]}"; do
+          [ "$form" = "ANY" ] && allowed_has_any=1
+        done
+
+        disallowed_has_any=0
+        for form in "${disallowed_forms[@]}"; do
+          [ "$form" = "ANY" ] && disallowed_has_any=1
+        done
+
+        if [ "$allowed_has_any" = "1" ] && [ "$disallowed_has_any" != "1" ]; then
+          # UNRESTRICTED / UNRESTRICTED_EXCEPT (research.md D3).
+          exceptions=""
+          declare -A exception_seen=()
+          idx=0
+          for form in "${disallowed_forms[@]}"; do
+            cmd="${disallowed_cmds[$idx]}"
+            idx=$((idx + 1))
+            [ "$form" = "PREFIX" ] || [ "$form" = "EXACT" ] || continue
+            [ -n "${exception_seen[$cmd]+x}" ] && continue
+            exception_seen["$cmd"]=1
+            if [ -z "$exceptions" ]; then
+              exceptions="\`$cmd\`"
+            else
+              exceptions="$exceptions, \`$cmd\`"
+            fi
+          done
+          if [ -z "$exceptions" ]; then
+            shell_commands="This run permits any shell command."
+          else
+            shell_commands="This run permits any shell command except: $exceptions."
+          fi
+        else
+          # ENUMERATED / EMPTY (research.md D2/D4). A disallowed ANY grant
+          # covers every PREFIX/EXACT allow regardless of command.
+          declare -A broadest=()
+          idx=0
+          for form in "${allowed_forms[@]}"; do
+            cmd="${allowed_cmds[$idx]}"
+            idx=$((idx + 1))
+            [ "$form" = "PREFIX" ] || [ "$form" = "EXACT" ] || continue
+
+            covered=0
+            if [ "$disallowed_has_any" = "1" ]; then
+              covered=1
+            else
+              didx=0
+              for dform in "${disallowed_forms[@]}"; do
+                dcmd="${disallowed_cmds[$didx]}"
+                didx=$((didx + 1))
+                [ "$dcmd" = "$cmd" ] || continue
+                if [ "$dform" = "PREFIX" ]; then
+                  covered=1
+                  break
+                fi
+                if [ "$dform" = "EXACT" ] && [ "$form" = "EXACT" ]; then
+                  covered=1
+                  break
+                fi
+              done
+            fi
+            [ "$covered" = "1" ] && continue
+
+            if [ "$form" = "PREFIX" ]; then
+              broadest["$cmd"]="PREFIX"
+            elif [ -z "${broadest[$cmd]+x}" ]; then
+              broadest["$cmd"]="EXACT"
+            fi
+          done
+
+          entries=""
+          declare -A entry_seen=()
+          idx=0
+          for form in "${allowed_forms[@]}"; do
+            cmd="${allowed_cmds[$idx]}"
+            idx=$((idx + 1))
+            [ "$form" = "PREFIX" ] || [ "$form" = "EXACT" ] || continue
+            [ -n "${broadest[$cmd]+x}" ] || continue
+            [ -n "${entry_seen[$cmd]+x}" ] && continue
+            entry_seen["$cmd"]=1
+            if [ "${broadest[$cmd]}" = "PREFIX" ]; then
+              rendered="\`$cmd\`"
+            else
+              rendered="\`$cmd\` (exact command only)"
+            fi
+            if [ -z "$entries" ]; then
+              entries="$rendered"
+            else
+              entries="$entries, $rendered"
+            fi
+          done
+
+          if [ -z "$entries" ]; then
+            shell_commands="This run permits no shell command."
+          else
+            shell_commands="This run permits these shell commands: $entries."
+          fi
+        fi
 
         # 5. Emit (only reached once validation in step 1 passes).
         echo "allowed-tools=$effective_allowed" >> "$GITHUB_OUTPUT"
         echo "disallowed-tools=$effective_disallowed" >> "$GITHUB_OUTPUT"
         echo "shell-commands=$shell_commands" >> "$GITHUB_OUTPUT"
         echo "✅ wing-commander-tool-args ($STEP_LABEL): composed tool lists." >> "$GITHUB_STEP_SUMMARY"
+        echo "**Tooling statement**: $shell_commands" >> "$GITHUB_STEP_SUMMARY"

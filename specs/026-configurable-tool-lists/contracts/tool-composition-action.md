@@ -35,7 +35,7 @@ run with a clear error if the inputs conflict (FR-010).
 |---|---|
 | `allowed-tools` | Composed, deduplicated, comma-joined effective allowed list — the exact value to splice into that step's `claude_args:` after `--allowedTools`. |
 | `disallowed-tools` | Composed, deduplicated, comma-joined effective disallowed list — spliced after `--disallowedTools`. |
-| `shell-commands` | Prose rendering of the `Bash(...)` entries in `allowed-tools`, unwrapped to the bare command prefixes they authorize and comma-joined as backticked text — for a prompt to state its own shell tooling from the list that is actually enforced, instead of a hand-maintained copy. Non-`Bash` entries (`Read`, `Grep`, `Skill`, …) are omitted: they are tools, not shell commands. Added after this feature shipped, by the change that made `implement.yml`'s tooling paragraph derive; **specified retroactively in `specs/037-rendered-tooling-list/`**, which is also where its known divergences are being fixed — see the caveats below. |
+| `shell-commands` | A complete, grammatical sentence stating exactly which shell commands this run permits — derived from `allowed-tools` after subtracting anything `disallowed-tools` fully covers, distinguishing an unrestricted grant, a command grant with any arguments, and an exact-command-only grant. Non-`Bash` entries (`Read`, `Grep`, `Skill`, …) are omitted: they are tools, not shell commands. Added after this feature shipped, by the change that made `implement.yml`'s tooling paragraph derive; the render contract is `specs/037-rendered-tooling-list/contracts/tooling-statement-render.md` — see the guarantees below. |
 
 ## Behavior
 
@@ -56,38 +56,44 @@ run with a clear error if the inputs conflict (FR-010).
    whitespace, drop exact-duplicate entries (edge case: same tool named
    twice collapses to one), rejoin with `,` preserving first-seen order for
    determinism (stable, reviewable `GITHUB_STEP_SUMMARY`/log output).
-4. **Render `shell-commands`** from `effective_allowed`: keep the
-   `Bash(<cmd>)` entries, strip the wrapper and a trailing `:*` or ` *`
-   (matcher syntax, not part of the command), and join the survivors as
-   backticked text.
+4. **Render `shell-commands`** from `effective_allowed` and
+   `effective_disallowed` together, per
+   `specs/037-rendered-tooling-list/contracts/tooling-statement-render.md`:
+   classify every entry as unrestricted (bare `Bash`), a command prefix
+   (`Bash(cmd:*)`/`Bash(cmd *)`, any arguments), an exact command
+   (`Bash(cmd)`, that literal invocation only), or not a shell grant at all
+   (any other tool entry — excluded from this render); subtract an allow
+   grant only when a disallowed grant for the same command (or, for an
+   unrestricted allow, any disallowed grant at all) fully covers its scope;
+   group surviving grants by command, stating the broader form once; and
+   emit one of four complete sentences chosen by the result.
 
-   **Caveats as shipped.** This render post-dates the feature and does not
-   yet meet the contract `specs/037-rendered-tooling-list/` sets for it.
-   Four divergences are known, all latent against the tool lists this
-   repository and its published stages actually use — none is reachable
-   without consumer configuration that no caller supplies today:
+   **Guarantees.**
 
-   - It walks `effective_allowed` only, so an entry that `effective_disallowed`
-     denies is still rendered as permitted. Deliberate at the composition
-     layer — see the `effective_disallowed` formula above and quickstart's
-     User Story 2 Acceptance #2, where an allowed list that still names a
-     separately-denied tool is the *specified* outcome, resolved downstream
-     by the engine's deny-precedence. It is only a defect in the render,
-     which states that list as if it were the enforced set (037 FR-002).
+   - Subtraction runs against `effective_disallowed`, not `effective_allowed`
+     alone — an entry `effective_disallowed` fully covers never reads as
+     permitted in the statement (037 FR-002, FR-003). `effective_allowed`/
+     `effective_disallowed` themselves are never rewritten by this step; the
+     render is a pure read of the already-composed lists.
    - A bare `Bash` grant (unrestricted shell — legal, and the most
-     permissive grant a consumer can give) renders as nothing, which reads
-     as the most restrictive (037 FR-005).
-   - `Bash(git status)` (exact) and `Bash(git status:*)` (prefix) both
-     render as `git status`, advertising arguments the exact form denies;
-     granting both renders the command twice, since dedupe happens before
-     the unwrap (037 FR-004, FR-007).
-   - An `effective_allowed` with no `Bash(...)` entry renders empty. The
-     agent-step guard is `allowed-tools != ''`, which such a list passes,
-     so the empty render reaches the model (037 FR-006, FR-008, FR-016).
+     permissive grant a consumer can give) renders as `` This run permits
+     any shell command. ``, or, under a partial deny, `` This run permits
+     any shell command except: `cmd`. `` — never as nothing (037 FR-005).
+   - `Bash(git status)` (exact) and `Bash(git status:*)` (prefix) granted
+     together render once, as `` `git status` `` (the broader, prefix
+     form); an exact-only grant renders with an
+     `` (exact command only) `` qualifier so it is never confused with the
+     any-arguments form (037 FR-004, FR-007).
+   - An `effective_allowed` with no surviving `Bash`/`Bash(...)` grant
+     renders `` This run permits no shell command. `` as a complete
+     sentence — never an empty string or dangling fragment, even though the
+     agent-step guard (`allowed-tools != ''`) still lets such a list reach
+     the model when other, non-shell tools remain granted (037 FR-006,
+     FR-008, FR-016).
 
    Callers must not read `shell-commands` as the enforced set. `allowed-tools`
    and `disallowed-tools` are the enforcement surface; this output is prose
-   derived from one of them.
+   derived from both of them, after the fact.
 5. **Emit outputs** via `$GITHUB_OUTPUT`, consistent with existing
    composite actions' output style (e.g. `wing-commander-context`).
 6. **Never reached on validation failure** — steps 2–5 only run once step 1

@@ -221,12 +221,15 @@ change to the tiering above.
   default list wholesale — the two are per-direction, mutually exclusive choices,
   composed by the `wing-commander-tool-args` composite action before the agent
   step runs (`specs/026-configurable-tool-lists/`). That composite also emits
-  `shell-commands` — the composed `Bash(...)` entries unwrapped to the command
-  prefixes they authorize — so a stage's prompt can state its own tooling from
-  the list actually enforced. `implement.yml` does; a prompt that hard-codes
-  the list instead drifts the first time either side is edited alone, which is
-  how `specs/036-paginate-jq-correctness` reached a finalize PR with four
-  validation tasks unrun. The per-stage default lists are catalogued in
+  `shell-commands` — a complete sentence stating exactly which shell commands
+  the run permits, derived from the composed allowed list *after subtracting*
+  whatever the composed disallowed list fully covers, so a stage's prompt can
+  state its own tooling from what is actually enforced rather than from the
+  allowed list alone (`specs/037-rendered-tooling-list/`). `implement.yml`
+  does; a prompt that hard-codes the list instead drifts the first time either
+  side is edited alone, which is how `specs/036-paginate-jq-correctness`
+  reached a finalize PR with four validation tasks unrun. The per-stage
+  default lists are catalogued in
   [stage-interfaces.md](../specs/010-reusable-pipeline/contracts/stage-interfaces.md#per-stage-default-tool-lists).
 - Only trusted refs are checked out (main, repo-local `spec*/` branches) — never
   fork PR heads.
