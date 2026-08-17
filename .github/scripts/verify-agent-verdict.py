@@ -185,6 +185,32 @@ def case_exhausted():
          "from a generic failed")
 
 
+def case_streamed_chunks_count_once():
+    """Gate 11's own fixture shape (quickstart Scenario 7 / US2 Acceptance
+    Scenario 3): 87 responses streamed as 3 records each is 87 counted
+    turns, never 261 (records) or 198 (num_turns) — proving the shared
+    count-turns.sh extraction behaves identically for this composite and
+    for wing-commander-metrics-summary."""
+    outputs = expect("streamed chunks count once", transcript(main=87, chunks=3, num_turns=198),
+                     "healthy", intended_turns="200")
+    if outputs.get("counted-turns") != "87":
+        fail("streamed chunks count once",
+             f"expected counted-turns=87, got {outputs.get('counted-turns')!r}")
+
+
+def case_subagent_turns_reported_separately():
+    """Gate 11's other fixture shape: 94 main + 86 subagent responses ->
+    counted-turns=94, subagent-turns=86, never folded together."""
+    outputs = expect("subagent turns reported separately", transcript(main=94, sub=86, num_turns=118),
+                     "healthy", intended_turns="200")
+    if outputs.get("counted-turns") != "94":
+        fail("subagent turns reported separately",
+             f"expected counted-turns=94, got {outputs.get('counted-turns')!r}")
+    if outputs.get("subagent-turns") != "86":
+        fail("subagent turns reported separately",
+             f"expected subagent-turns=86, got {outputs.get('subagent-turns')!r}")
+
+
 def case_unreadable_missing():
     expect("unreadable: missing file", None, "unclassifiable")
 
@@ -259,6 +285,8 @@ CASES = [
     case_healthy_but_would_be_rejected,
     case_genuinely_errored,
     case_exhausted,
+    case_streamed_chunks_count_once,
+    case_subagent_turns_reported_separately,
     case_unreadable_missing,
     case_unreadable_empty,
     case_unreadable_invalid_json,
