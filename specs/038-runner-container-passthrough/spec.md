@@ -149,8 +149,9 @@ the stage completing normally.
 1. **Given** an adopter names a container image, **When** the stage runs, **Then**
    every job of that stage executes its steps inside that image.
 2. **Given** an adopter names an image that lacks a tool a stage requires, **When**
-   the stage runs, **Then** the failure identifies the missing prerequisite rather
-   than surfacing as an unexplained stage error.
+   the stage runs, **Then** it fails at the start of the stage — before any agent work
+   or cost — with a message naming every missing prerequisite, not an unexplained
+   mid-stage error.
 3. **Given** an adopter names an image, **When** the stage runs, **Then** the
    pipeline neither rewrites nor supplements the reference — no implicit registry,
    no implicit tag, no fallback image.
@@ -161,17 +162,20 @@ the stage completing normally.
 
 As a maintainer whose approved base image lives in a private registry, I want to
 supply the registry credentials to the stage without putting them in a workflow
-file, so that the pipeline can pull the image my policy requires.
+file — whether those credentials are a static pair or a token my cloud registry
+issues at run time — so that the pipeline can pull the image my policy requires.
 
 **Why this priority**: Approved-image policies and private registries travel
 together — an organization strict enough to mandate a base image rarely publishes it
-publicly. Without credentials, User Story 3 serves only adopters with public images.
-It sits below the image itself because it is inert until an image is named.
+publicly, and the registry is as often a cloud one (ECR, GCR, ACR) as a
+username/password one. Without credentials, User Story 3 serves only adopters with
+public images. It sits below the image itself because it is inert until an image is
+named.
 
 **Independent Test**: Point a stage at an image in a private registry, supply the
 credentials as repository secrets, and confirm the image is pulled and the stage
-completes; confirm the credential value never appears in logs or in the run's
-configuration.
+completes; repeat with a cloud registry whose token is short-lived; confirm the
+credential value never appears in logs or in the run's configuration.
 
 **Acceptance Scenarios**:
 
@@ -184,6 +188,9 @@ configuration.
    error.
 3. **Given** credentials are supplied, **When** the run's logs and job configuration
    are inspected, **Then** the credential value appears nowhere in them.
+4. **Given** an adopter's registry issues a short-lived token rather than accepting a
+   long-lived pair, **When** the stage runs, **Then** the same credential mechanism
+   serves them, with no published stage edited or forked.
 
 ---
 
@@ -217,6 +224,10 @@ it and confirm they pass.
 3. **Given** a job must deviate for a stated reason, **When** the checks run,
    **Then** they pass only because that exact stage-and-job pair is registered with
    its reason, not because the check was loosened.
+4. **Given** a stage or shared composite action starts depending on a tool that the
+   image-prerequisite check does not cover, **When** the checks run, **Then** they
+   fail and name the tool, so the checked list cannot drift from what the pipeline
+   actually needs.
 
 ---
 
@@ -279,7 +290,15 @@ the default runner — with no workflow file edited in either direction.
   composite actions each stage checks out run inside the same job, so they inherit the
   runner and the container. An image that cannot reach the pipeline repository, or
   lacks the tools those composites use, fails the stage — which is why the image's
-  prerequisites must be documented as a contract rather than discovered per adopter.
+  prerequisites are both documented as a contract and checked at the start of the
+  stage rather than discovered per adopter.
+- **A credential that does not exist yet when the job starts.** A registry credential
+  is consumed when the job's container is created, before the job's own steps run, so
+  a token minted by a step inside the stage is too late. Adopters on token-based or
+  cloud registries must be able to mint the credential before the stage's job starts
+  and hand it in as a secret; which side of the call mints it, and how a short-lived
+  token is refreshed for a long stage, is for planning to settle — but no shape that
+  requires an adopter to edit a published stage is acceptable.
 - **A stage bound to a deployment environment.** Runner and container selection is
   orthogonal to the environment binding of specs/031: a stage may be gated *and*
   redirected, and neither control changes the other's behavior.
@@ -311,29 +330,39 @@ the default runner — with no workflow file edited in either direction.
   exactly as it does without this feature — same runner, no container, no new
   warning, no new artifact, and no change to any stage output.
 - **FR-007**: When a control is set, it MUST apply uniformly to every job in that
-  stage file — no hidden per-job rule about which jobs move.
-  [NEEDS CLARIFICATION: is one runner selection per stage the right granularity, or
-  should agent-bearing jobs and lightweight bookkeeping jobs be separately
-  targetable? Uniform selection means an adopter with scarce self-hosted capacity
-  sends short label/comment jobs there too.]
+  stage file — no hidden per-job rule about which jobs move. The granularity for this
+  feature is one runner selection and one container image per stage call; separate
+  targeting for agent-bearing jobs versus lightweight bookkeeping jobs is deferred
+  until an adopter asks for it, and the design MUST leave that split addable later as
+  an additive, non-breaking change.
 - **FR-008**: Both values MUST be passed through unvalidated: the pipeline MUST NOT
   check that a runner label or an image exists, maintain an allowlist, rewrite an
-  image reference (no implicit registry, no implicit tag), or supply a fallback.
-- **FR-009**: Registry credentials for a private image MUST be accepted as stage
-  secrets — never as inputs — and MUST NOT appear in run logs or job configuration.
-  [NEEDS CLARIFICATION: is private-registry support in scope for this feature, and in
-  what shape — a username/password secret pair on every stage, or deferred to a
-  follow-up with public images and pre-authenticated self-hosted runners as the
-  documented interim?]
+  image reference (no implicit registry, no implicit tag), or supply a fallback. The
+  prerequisite check of FR-011 is not an exception: it inspects the environment the
+  job is already running in, never the adopter's values.
+- **FR-009**: Private-registry support is in scope. Registry credentials MUST be
+  accepted as stage secrets — never as inputs — MUST be inert unless an image is
+  named, and MUST NOT appear in run logs or job configuration.
+- **FR-009a**: The credential mechanism MUST be general enough to cover both a static
+  username/password pair and token-based or cloud-registry authentication (ECR, GCR,
+  ACR and similar), including flows whose credential is obtained or refreshed at run
+  time rather than stored as a long-lived secret. An adopter using such a flow MUST be
+  able to do so without editing or forking a published stage.
 - **FR-010**: When an image is named but a required credential is absent, the stage
   MUST fail with a message identifying the missing credential rather than only
   surfacing the registry's raw error.
 - **FR-011**: The prerequisites a container image must satisfy for the stages to run
   (the tools and runtimes every stage and shared composite action depends on) MUST be
-  stated as a documented contract.
-  [NEEDS CLARIFICATION: is documenting the prerequisites sufficient, or must the
-  pipeline actively verify them at the start of a stage and fail with an actionable
-  message naming what is missing?]
+  stated as a documented contract *and* actively verified: every published stage MUST
+  check them early, before any agent work is started or any cost incurred, and fail
+  with a message naming every missing prerequisite rather than only the first one
+  encountered. The check MUST NOT compromise FR-006: on a run with no image named it
+  MUST introduce no new failure mode and no change to the stage's outcome.
+- **FR-011a**: The verified prerequisite list MUST stay in agreement with what the
+  stages and their shared composite actions actually depend on. That agreement MUST be
+  machine-checked on the pipeline's own pull requests rather than maintained by
+  convention, so a newly introduced tool dependency cannot drift out of the checked
+  list.
 - **FR-012**: Both controls MUST be sourced solely from the stage's declared inputs.
   A stage MUST NOT read a runner or image from a repository variable, an environment
   variable, or any other ambient repository state (Constitution VII).
@@ -351,10 +380,12 @@ the default runner — with no workflow file edited in either direction.
   through its ordinary configuration mechanism, with defaults that reproduce today's
   behavior exactly.
 - **FR-017**: Adopter documentation MUST record: the multi-label convention with a
-  copy-pasteable example; the container image prerequisites; how to supply private
-  registry credentials (or, if deferred, that private registries are not yet
-  supported and what to do instead); that containers require a Linux runner with
-  Docker; that non-Linux runners are not supported; that runner *groups* and the
+  copy-pasteable example; the container image prerequisites and the fact that they are
+  checked at stage start; how to supply private registry credentials, covering both a
+  static pair and a token-based or cloud-registry credential; that both controls are
+  set once per stage call and apply to every job in that stage; that containers
+  require a Linux runner with Docker; that non-Linux runners are not supported; that
+  per-job targeting, runner *groups*, and the
   remaining container settings (volumes, ports, environment, extra options, service
   containers) are out of scope; and that self-hosted capacity interacts with the
   pipeline's parallel-spec design.
@@ -370,14 +401,17 @@ the default runner — with no workflow file edited in either direction.
 - **Container image reference**: The image a stage's jobs run inside, as the adopter
   writes it (registry, repository, tag or digest). Unset is meaningful and distinct
   from empty: it means no container at all.
-- **Registry credentials**: The secret pair needed to pull a non-public image.
-  Inert unless an image is named; carried as secrets, never as inputs, and never
-  logged.
+- **Registry credentials**: What the runner needs to pull a non-public image — a
+  static username/password pair, or a token-based or cloud-registry credential minted
+  before the job starts. Inert unless an image is named; carried as secrets, never as
+  inputs, and never logged.
 - **Published stage**: A `workflow_call`-only stage workflow that adopters pin —
   eleven of them at the time of writing, spanning thirty-three jobs. The unit both
   controls are set on, and the unit the parity check enumerates.
 - **Image prerequisite contract**: The tools and runtimes a chosen image must provide
-  for stages and their shared composite actions to run.
+  for stages and their shared composite actions to run. Both published as
+  documentation and checked at the start of each stage, from a single list kept in
+  agreement with what the pipeline actually uses.
 
 ## Success Criteria *(mandatory)*
 
@@ -393,11 +427,13 @@ the default runner — with no workflow file edited in either direction.
 - **SC-003**: 100% of jobs across all published stages honor both controls, verified
   by an automated check that fails on a job which does not — including a job added
   after this feature ships.
-- **SC-004**: An adopter whose approved base image lives in a private registry can
+- **SC-004**: An adopter whose approved base image lives in a private registry — using
+  either a static credential pair or a token-based or cloud-registry credential — can
   complete a full lifecycle with no credential value present in any workflow file,
-  log, or job configuration.
-- **SC-005**: An adopter who names an image missing a required tool learns which
-  prerequisite is missing from the run's own output, without reading pipeline source.
+  log, or job configuration, and without editing or forking a published stage.
+- **SC-005**: An adopter who names an image missing a required tool learns every
+  missing prerequisite from the run's own output, at the start of the stage and before
+  any agent cost is incurred, without reading pipeline source.
 - **SC-006**: The adoption documentation lets a new adopter enable each control from
   a copy-pasteable example, with the multi-label convention and the image
   prerequisites stated in one place.
@@ -410,7 +446,9 @@ the default runner — with no workflow file edited in either direction.
   array is read as a single label.
 - **Both controls are per stage call**, so an adopter whose wrapper calls a stage
   more than once can target the calls differently — the same granularity model as the
-  environment binding (specs/031), pending FR-007's clarification.
+  environment binding (specs/031). Per-job targeting (agent-bearing jobs on one
+  runner, bookkeeping jobs on another) is deliberately deferred until an adopter asks
+  for it; adding it later is additive and breaks nothing established here.
 - **Only the image and its credentials are configurable.** The remaining container
   settings (volumes, ports, environment variables, extra options) and service
   containers are out of scope for this feature; they can be added later without
@@ -420,8 +458,12 @@ the default runner — with no workflow file edited in either direction.
 - **Linux only.** Every stage's steps assume a Linux shell environment; the controls
   are pass-through and the pipeline does not attempt to support other platforms.
 - **The image must already contain the pipeline's prerequisites.** The pipeline does
-  not install tools into an adopter's image.
-- **No new permissions or App scopes** are required by either control.
+  not install tools into an adopter's image; it checks for them and fails fast when
+  they are absent.
+- **No new permissions or App scopes** are required by either control itself. An
+  adopter whose cloud registry issues credentials through their own identity flow may
+  need permissions on *their* side to mint one; that is adopter-side and outside what
+  the pipeline requests.
 - **Cost and capacity are the adopter's concern.** Choosing a runner may change what
   a run costs and how much of the pipeline can run in parallel; the pipeline does not
   manage or report on this.

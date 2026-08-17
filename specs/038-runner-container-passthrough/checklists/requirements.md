@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -32,7 +32,8 @@
 ## Notes
 
 **Validation run**: two passes over the draft. Two items failed on the first pass and
-were fixed; the rest passed as written.
+were fixed; the rest passed as written. A third pass after the clarification answers
+re-checked the items the answers touch.
 
 - **Failed then fixed — "All functional requirements have clear acceptance
   criteria"**: FR-010 (a named image with no credential fails with a message that
@@ -46,19 +47,30 @@ were fixed; the rest passed as written.
   three are now explicit non-goals in Edge Cases, Assumptions, and FR-017's
   documentation list.
 
-- **Three [NEEDS CLARIFICATION] markers remain** (the maximum), carried into the
-  clarification stage rather than guessed:
-  1. **FR-007 — granularity.** One runner selection per stage, or separate targeting
-     for agent-bearing versus lightweight jobs. Affects the size of the published
-     interface (a compatibility surface per Constitution VII) and whether adopters
-     with scarce self-hosted capacity must send trivial jobs there too.
-  2. **FR-009 — private-registry credentials.** In scope now as a secret pair on
-     every stage, or deferred. The requester raised `container.credentials` without
-     stating a requirement; the answer changes both the secret surface of all eleven
-     stages and whether User Story 3 serves anyone with a private image.
-  3. **FR-011 — image prerequisites.** Documented contract only, or actively verified
-     at stage start. The difference is a documentation task versus a check added to
-     every stage, and it decides whether SC-005 is met by the run's own output.
+- **All three [NEEDS CLARIFICATION] markers are resolved** by the requester's answers
+  on issue #219 (`Q1: C, Q2: C, Q3: B`), folded into the spec:
+  1. **FR-007 — granularity → one selection per stage, split deferred.** Both controls
+     are set once per stage call and apply uniformly to every job; per-job targeting
+     for agent-bearing versus bookkeeping jobs waits until an adopter asks and stays
+     additive. Recorded in FR-007, the Assumptions entry on per-call granularity, and
+     FR-017's documentation list.
+  2. **FR-009 — private-registry credentials → in scope and generalized.** Credentials
+     are stage secrets covering a static pair *and* token-based or cloud-registry
+     (ECR/GCR/ACR) authentication, including credentials minted at run time. Split
+     into FR-009 (secrets, inert, never logged) and FR-009a (the generalized
+     mechanism), with User Story 4 scenario 4, SC-004, the Key Entities entry, and a
+     new edge case for a credential that must exist *before* the job's container is
+     created.
+  3. **FR-011 — image prerequisites → documented *and* verified.** Every stage checks
+     the prerequisites early and fails naming every missing one before agent cost is
+     incurred (FR-011), and FR-011a machine-checks the list against what the stages
+     and composites actually use so it cannot drift. Reflected in User Story 3
+     scenario 2, User Story 5 scenario 4, and SC-005.
+
+- **Open after clarification**: none. One design question is *flagged for planning
+  rather than left unspecified*: how a short-lived registry token is minted before the
+  job starts and refreshed for a long stage. The requirement is fixed (no adopter edits
+  a published stage); only the mechanism is for the plan to choose.
 
 - **Resolved with a documented default instead of a fourth marker**: the multi-label
   convention. The requester proposed a JSON array read from a string input, and it is
