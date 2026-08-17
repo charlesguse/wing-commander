@@ -16,8 +16,9 @@ description: >
   (198%)" plus a budget warning for a run that used 87 of its 100 and was
   never at risk. Meanwhile every genuinely exhausted run stopped at exactly
   100 distinct main-loop assistant messages (13 of 13), which is what the
-  cap actually counts. So this action counts that itself — see the
-  `main_turns` block below.
+  cap actually counts. So this action counts that itself, via the shared
+  `_shared/count-turns.sh` script every caller of `--max-turns` now reads
+  from — see the `count-turns.sh` invocation below.
 
 inputs:
   transcript-path:
@@ -52,6 +53,22 @@ inputs:
       summary block's heading. Empty is fine for single-invocation stages.
     required: false
     default: ''
+  verdict:
+    description: >
+      ${{ steps.<verdict-id>.outputs.verdict }} from a wing-commander-agent-verdict
+      step at this same call site (healthy/exhausted/failed/unclassifiable).
+      Optional and display-only: when this AND verdict-reason are both
+      non-empty, one additional line renders beneath the existing table
+      stating the verdict and reason. When either is empty, rendering is
+      byte-for-byte identical to a caller that never passes them.
+    required: false
+    default: ''
+  verdict-reason:
+    description: >
+      ${{ steps.<verdict-id>.outputs.reason }} from the same
+      wing-commander-agent-verdict step. See verdict above.
+    required: false
+    default: ''
 
 runs:
   using: composite
@@ -64,6 +81,8 @@ runs:
         MAX_TURNS: ${{ inputs.max-turns }}
         WARN_FRACTION: ${{ inputs.warn-fraction }}
         RUN_LABEL: ${{ inputs.run-label }}
+        VERDICT: ${{ inputs.verdict }}
+        VERDICT_REASON: ${{ inputs.verdict-reason }}
       run: |
         set -uo pipefail
 
@@ -72,6 +91,8 @@ runs:
         MAX_TURNS="${MAX_TURNS:-}"
         WARN_FRACTION="${WARN_FRACTION:-0.8}"
         RUN_LABEL="${RUN_LABEL:-}"
+        VERDICT="${VERDICT:-}"
+        VERDICT_REASON="${VERDICT_REASON:-}"
         SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 
         # Heading shared by both the normal and unavailable cases (T006/T007).
@@ -93,30 +114,10 @@ runs:
               availability=ok
             fi
 
-            # The counter --max-turns actually enforces: distinct assistant
-            # API responses on the MAIN loop. Two details are load-bearing.
-            #
-            # Distinct .message.id, because one response is streamed as
-            # several assistant records (a text chunk, then a tool_use
-            # chunk) that all share an id — counting records inflates by
-            # roughly 1.6x.
-            #
-            # parent_tool_use_id == null, because subagent (Task tool)
-            # responses are inlined into the same transcript and do NOT
-            # count against the parent's budget. A 2026-07-24 retry ran 180
-            # distinct assistant responses under a 100 cap without tripping
-            # it; 86 of them belonged to subagents. Counting those would
-            # make delegation look like budget exhaustion.
-            main_turns="$(jq -r 'if type=="array" then . else [.] end
-              | map(select(.type=="assistant"
-                           and (.parent_tool_use_id // null) == null)
-                    | .message.id // empty)
-              | unique | length' "$TRANSCRIPT" 2>/dev/null || true)"
-            sub_turns="$(jq -r 'if type=="array" then . else [.] end
-              | map(select(.type=="assistant"
-                           and (.parent_tool_use_id // null) != null)
-                    | .message.id // empty)
-              | unique | length' "$TRANSCRIPT" 2>/dev/null || true)"
+            # Shared with wing-commander-agent-verdict — one canonical copy of
+            # the counting rule instead of a second, driftable one
+            # (research.md R5, specs/037-agent-turn-budget-guard/).
+            eval "$(bash "$GITHUB_ACTION_PATH/../_shared/count-turns.sh" "$TRANSCRIPT")"
           fi
         fi
 
@@ -238,6 +239,13 @@ runs:
           printf '|---|---|---|---|---|\n'
           printf '| %s | %s | %s | %s | %s |\n\n' \
             "$MODEL_IN" "$turns_cell" "$duration_disp" "$tokens_disp" "$cost_disp"
+          # Additive-only (research.md R6): renders only when BOTH verdict
+          # and verdict-reason are non-empty, so a caller that hasn't wired
+          # wing-commander-agent-verdict yet renders byte-for-byte the same
+          # as before this input pair existed.
+          if [ -n "$VERDICT" ] && [ -n "$VERDICT_REASON" ]; then
+            printf '**Verdict**: %s — %s\n\n' "$VERDICT" "$VERDICT_REASON"
+          fi
           # Ground truth, and it outranks the ratio: the runtime itself says
           # the budget ran out. Reported whether or not counting succeeded.
           if [ "$subtype" = "error_max_turns" ]; then

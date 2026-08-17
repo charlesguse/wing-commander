@@ -40,6 +40,12 @@ drift out of sync — the same discipline as gates 5-9, and gate 5 exists
 precisely because a hand-copied fixture kept asserting against a filter that
 no longer shipped.
 
+The counting itself now lives in the shared `.github/actions/_shared/
+count-turns.sh` script the shipped block calls via `$GITHUB_ACTION_PATH`
+(specs/037-agent-turn-budget-guard/research.md R5) — this harness sets
+GITHUB_ACTION_PATH to the real action's own directory so that resolution
+finds and exercises the real, current shared script, not a copy.
+
 It ends with mutation checks that reintroduce each defect and assert this
 suite goes red. A detector that has never fired is indistinguishable from
 one that cannot.
@@ -95,6 +101,10 @@ def shipped_script():
 
 SCRIPT = shipped_script()
 
+SHARED_SCRIPT_PATH = ".github/actions/_shared/count-turns.sh"
+with open(SHARED_SCRIPT_PATH, encoding="utf-8") as _f:
+    SHARED_SCRIPT = _f.read()
+
 
 # --- transcript builders ---------------------------------------------------
 def assistant(mid, parent=None, chunks=1):
@@ -148,13 +158,29 @@ def run_case(name, records, max_turns="100", warn_fraction=None, raw=None):
             with open(os.path.join(tmp, TRANSCRIPT_NAME), "w",
                       encoding="utf-8") as f:
                 json.dump(records, f)
+
+        # The shipped block resolves the shared counting script as
+        # "$GITHUB_ACTION_PATH/../_shared/count-turns.sh" — lay out a
+        # sibling "_shared/" next to a stand-in action dir so that
+        # resolution finds THIS run's (possibly mutated) SHARED_SCRIPT,
+        # never the real repo file, keeping mutation testing isolated from
+        # the checkout on disk.
+        action_dir = os.path.join(tmp, "actiondir")
+        shared_dir = os.path.join(tmp, "_shared")
+        os.makedirs(action_dir, exist_ok=True)
+        os.makedirs(shared_dir, exist_ok=True)
+        with open(os.path.join(shared_dir, "count-turns.sh"), "w",
+                  encoding="utf-8", newline="\n") as f:
+            f.write(SHARED_SCRIPT)
+
         rc, output, _outputs, summary = run_step(
             BASH, SCRIPT, tmp,
             {"TRANSCRIPT_PATH": TRANSCRIPT_NAME,
              "MODEL": "claude-sonnet-5",
              "MAX_TURNS": max_turns,
              "RUN_LABEL": "cycle",
-             "WARN_FRACTION": warn_fraction or "0.8"},
+             "WARN_FRACTION": warn_fraction or "0.8",
+             "GITHUB_ACTION_PATH": action_dir},
             tmp)
         return rc, output, summary
     finally:
@@ -290,16 +316,19 @@ CASES = [
 
 
 # --- mutation checks -------------------------------------------------------
-# Each mutation reintroduces a real defect into the shipped script and
-# asserts this suite catches it. Without these, a rewrite that quietly stops
-# counting anything would leave every case above passing on a constant.
+# Each mutation reintroduces a real defect and asserts this suite catches it.
+# Without these, a rewrite that quietly stops counting anything would leave
+# every case above passing on a constant. Two of the three now key on
+# .github/actions/_shared/count-turns.sh (research.md R5's extraction) rather
+# than the action's own run: block — the "target" tells run_case() which one
+# to mutate for that pass.
 MUTATIONS = [
-    ("reads .num_turns for the ratio again",
+    ("reads .num_turns for the ratio again", "action",
      lambda s: s.replace('turns_used="$main_turns"',
                          'turns_used="$reported_turns"')),
-    ("counts assistant records instead of distinct message ids",
+    ("counts assistant records instead of distinct message ids", "shared",
      lambda s: s.replace("| unique | length", "| length")),
-    ("counts subagent turns against the parent's budget",
+    ("counts subagent turns against the parent's budget", "shared",
      lambda s: s.replace('and (.parent_tool_use_id // null) == null)', ')')),
 ]
 
@@ -323,27 +352,34 @@ def main():
         print(f"Gate 11: {len(real)} failure(s) against the shipped action.")
         return 1
 
-    global SCRIPT, MUTATING
-    original = SCRIPT
+    global SCRIPT, SHARED_SCRIPT, MUTATING
+    original_script = SCRIPT
+    original_shared = SHARED_SCRIPT
     mutation_failures = 0
     MUTATING = True
-    for label, mutate in MUTATIONS:
+    for label, target, mutate in MUTATIONS:
+        original = original_script if target == "action" else original_shared
+        source_file = ACTION if target == "action" else SHARED_SCRIPT_PATH
         mutated = mutate(original)
         if mutated == original:
-            print(f"::error file={ACTION}::gate 11's mutation {label!r} no "
-                  f"longer changes the script — the code it keys on has been "
-                  f"rewritten, so this mutation proves nothing. Re-point it "
-                  f"at the current implementation.")
+            print(f"::error file={source_file}::gate 11's mutation {label!r} "
+                  f"no longer changes the script — the code it keys on has "
+                  f"been rewritten, so this mutation proves nothing. "
+                  f"Re-point it at the current implementation.")
             mutation_failures += 1
             continue
-        SCRIPT = mutated
+        if target == "action":
+            SCRIPT = mutated
+        else:
+            SHARED_SCRIPT = mutated
         caught = run_suite()
-        SCRIPT = original
+        SCRIPT = original_script
+        SHARED_SCRIPT = original_shared
         if not caught:
-            print(f"::error file={ACTION}::gate 11 mutation {label!r} was NOT "
-                  f"caught — the suite passed against a knowingly broken "
-                  f"action, so its green verdict on the real one means "
-                  f"nothing. Add a case that fails on this mutation.")
+            print(f"::error file={source_file}::gate 11 mutation {label!r} "
+                  f"was NOT caught — the suite passed against a knowingly "
+                  f"broken script, so its green verdict on the real one "
+                  f"means nothing. Add a case that fails on this mutation.")
             mutation_failures += 1
         else:
             print(f"note: mutation caught ({label}): "
