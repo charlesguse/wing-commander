@@ -141,7 +141,7 @@ def main():
     # Fixture 1: a fourth outputs: entry, declared but never emitted.
     fixture1 = action_text.replace(
         "outputs:\n  allowed-tools:",
-        "outputs:\n  gate-18-fixture-output:\n"
+        "outputs:\n  gate-20-fixture-output:\n"
         "    description: Fixture only — declared, never emitted.\n"
         "    value: unused\n  allowed-tools:",
         1)
@@ -152,7 +152,7 @@ def main():
     else:
         problems = check(fixture1, contract_text)
         joined = " ".join(problems)
-        if "gate-18-fixture-output" not in joined:
+        if "gate-20-fixture-output" not in joined:
             self_test_failures.append(
                 "fixture 1 (declared but never emitted) was not caught: "
                 f"{problems!r}")

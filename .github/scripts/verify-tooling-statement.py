@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 19 — the tooling statement matches what the run actually permits.
+"""Gate 21 — the tooling statement matches what the run actually permits.
 
 WHY THIS EXISTS
 ---------------
@@ -62,7 +62,7 @@ def shipped_script():
             run = step.get("run")
             if run:
                 return run
-    print(f"::error file={ACTION}::gate 19 could not find the step named "
+    print(f"::error file={ACTION}::gate 21 could not find the step named "
           f"{STEP_NAME!r}. If it was renamed, update this gate and the "
           f"action together — silently checking nothing is the failure mode "
           f"this gate exists to prevent.")
@@ -297,7 +297,7 @@ def main():
 
     real = run_suite()
     if real:
-        print(f"Gate 19: {len(real)} failure(s) against the shipped action.")
+        print(f"Gate 21: {len(real)} failure(s) against the shipped action.")
         return 1
 
     global SCRIPT, MUTATING
@@ -307,7 +307,7 @@ def main():
     for label, mutate in MUTATIONS:
         mutated = mutate(original)
         if mutated == original:
-            print(f"::error file={ACTION}::gate 19's mutation {label!r} no "
+            print(f"::error file={ACTION}::gate 21's mutation {label!r} no "
                   f"longer changes the script — the code it keys on has "
                   f"been rewritten, so this mutation proves nothing. "
                   f"Re-point it at the current implementation.")
@@ -317,7 +317,7 @@ def main():
         caught = run_suite()
         SCRIPT = original
         if not caught:
-            print(f"::error file={ACTION}::gate 19 mutation {label!r} was "
+            print(f"::error file={ACTION}::gate 21 mutation {label!r} was "
                   f"NOT caught — the suite passed against a knowingly "
                   f"broken action, so its green verdict on the real one "
                   f"means nothing. Add a case that fails on this mutation.")
@@ -329,11 +329,11 @@ def main():
     MUTATING = False
     residual = run_suite()
     if residual:
-        print(f"::error::gate 19 left the script mutated; {len(residual)} "
+        print(f"::error::gate 21 left the script mutated; {len(residual)} "
               f"failure(s) on the re-run.")
         mutation_failures += 1
 
-    print(f"Gate 19: {len(CASES)} case(s) and {len(MUTATIONS)} mutation(s) "
+    print(f"Gate 21: {len(CASES)} case(s) and {len(MUTATIONS)} mutation(s) "
           f"checked; {mutation_failures} failure(s).")
     return 1 if mutation_failures else 0
 
