@@ -2,7 +2,7 @@
   "issue": 182,
   "spec_dir": "specs/036-paginate-jq-correctness",
   "feature_num": "036",
-  "stage": "spec",
-  "iteration": 0,
-  "spec_branch": null
+  "stage": "review",
+  "iteration": 2,
+  "spec_branch": "spec/036-paginate-jq-correctness"
 }

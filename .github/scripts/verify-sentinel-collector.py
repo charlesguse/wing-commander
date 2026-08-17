@@ -170,7 +170,17 @@ def render_step(step):
 
 
 def stub_gh(bindir, fixture_dir):
-    """A `gh` that answers the two api calls this step makes, from files."""
+    """A `gh` that answers the two api calls this step makes, from files.
+
+    The jobs listing is read with `--paginate --jq '.jobs[]'` (spec 036):
+    under `--paginate` gh applies the filter to each page and emits one JSON
+    value per line, and the step slurps that back with `jq -s '.'`. A stub
+    that dumped the raw `{"jobs":[...]}` fixture would therefore hand the
+    step `[{"jobs":[...]}]`, whose `.[]?.id` is empty — every scenario would
+    report "no sentinels collected" and read as a defect in the collector.
+    Applying the step's own `--jq` here keeps the fixture honest about the
+    shape gh actually produces.
+    """
     path = os.path.join(bindir, "gh")
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(
@@ -178,8 +188,16 @@ def stub_gh(bindir, fixture_dir):
             '# Stub for the two `gh api` reads the collector performs.\n'
             'p="$2"\n'
             f'd="{fixture_dir}"\n'
+            'jqexpr=""\n'
+            'prev=""\n'
+            'for arg in "$@"; do\n'
+            '  if [ "$prev" = "--jq" ]; then jqexpr="$arg"; fi\n'
+            '  prev="$arg"\n'
+            'done\n'
             'case "$p" in\n'
-            '  */jobs) cat "$d/jobs.json" ;;\n'
+            '  */jobs)\n'
+            '    if [ -n "$jqexpr" ]; then jq -c "$jqexpr" "$d/jobs.json"; '
+            'else cat "$d/jobs.json"; fi ;;\n'
             '  */logs) id="${p#*/actions/jobs/}"; id="${id%/logs}"; '
             'cat "$d/log-$id.txt" ;;\n'
             '  *) echo "unexpected gh api path: $p" >&2; exit 1 ;;\n'
@@ -195,6 +213,13 @@ def run_one(script, env, sc, tmproot):
     bindir = tempfile.mkdtemp(dir=tmproot)
 
     with open(os.path.join(runner_temp, "signals.json"), "w",
+              encoding="utf-8") as fh:
+        fh.write("[]")
+    # Seeded the way the collect job's "Initialize collector-outcomes file"
+    # step does (spec 036 T016): every collector now appends its own
+    # read-outcome record here, and jq reading a file that does not exist is
+    # a hard failure under the runner's `bash -e`.
+    with open(os.path.join(runner_temp, "collector-outcomes.json"), "w",
               encoding="utf-8") as fh:
         fh.write("[]")
     with open(os.path.join(fixtures, "jobs.json"), "w", encoding="utf-8") as fh:
