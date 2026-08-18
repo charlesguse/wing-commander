@@ -196,6 +196,22 @@ lines like "198 / 100 turns (198%)" for runs that used 87 of 100 and were
 never at risk. `.github/scripts/verify-metrics-turn-accounting.py`
 (lint-workflows gate 11) holds that distinction to fixtures.
 
+`--max-turns` itself now enforces a value distinct from each stage's intended
+budget (`specs/037-agent-turn-budget-guard/`): the action's own post-hoc check
+compares `.num_turns` — not the counted total — against `--max-turns`, so a
+healthy run whose *counted* turns stayed well under budget could still be
+rejected once its inflated `.num_turns` crossed the same number. Every call
+site now feeds `--max-turns` a runaway ceiling (`wing-commander-turn-ceiling`,
+intended budget × 2.5, rounded up) instead of the intended budget directly,
+and a `wing-commander-agent-verdict` step classifies each run
+(healthy/exhausted/failed/unclassifiable) from the transcript alone, so a
+stage can tell a post-hoc-rejected-but-healthy run from a genuine failure and
+continue rather than fail loud on the former. Gate 22
+(`verify-agent-verdict.py`) proves that classification under mutation; Gate 23
+(`verify-gate-23.py`) proves every agent call site in the repository carries
+the full ceiling/verdict/fail-loud wiring and catches both a newly-added
+unprotected site and a ceiling regressed back to its intended budget.
+
 **Bedrock pass-through** (`specs/016-bedrock-support/`): the per-stage
 `use-bedrock` input changes only which backend serves these already-tiered
 `model` inputs — the consumer supplies Bedrock-compatible identifiers directly
