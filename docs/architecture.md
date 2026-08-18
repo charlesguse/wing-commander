@@ -63,6 +63,16 @@ forward it either. There is no wrapper-side syntax to reject in favor of, so
 the gate is published-contract surface instead — registered here, not
 silently absorbed, per constitution VII's registration requirement.
 
+**A third, structurally identical deviation**: `specs/038-runner-container-
+passthrough` binds every job in every published stage to an adopter-chosen
+runner and container image (`runner`/`container-image` `workflow_call`
+inputs, job-level `runs-on:`/`container:`) — the same deviation as
+specs/031's, for the same reason. `jobs.<job_id>.runs-on` and
+`jobs.<job_id>.container` are equally illegal on a job whose body is `uses:
+<reusable workflow>`, so a wrapper cannot bind its own call to the stage
+onto a different runner or image; the controls have to live in the stage
+itself. Registered here, not silently absorbed.
+
 Mechanics worth knowing:
 
 - **Composite-action self-checkout** (research.md D3): inside a called
