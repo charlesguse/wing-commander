@@ -48,8 +48,12 @@ jobs:
       e2e-stage-model: ${{ vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_STAGE_MODEL || 'claude-sonnet-5' }}
       e2e-stage-max-turns: ${{ vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_STAGE_MAX_TURNS || '20' }}
       e2e-scratch-repo: ${{ vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_SCRATCH_REPO || '' }}
+      runner: ${{ vars.WING_COMMANDER_RUNNER || 'ubuntu-latest' }}
+      container-image: ${{ vars.WING_COMMANDER_CONTAINER_IMAGE || '' }}
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
       speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
       speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
+      container-registry-username: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME }}
+      container-registry-password: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD }}
