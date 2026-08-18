@@ -226,9 +226,61 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  verify-image-prerequisites:
+    # runner/container-image passthrough (specs/038): checks the
+    # adopter-named image before any other job's own container is
+    # created. Deliberately no container: — must run directly on the
+    # runner to invoke Docker itself (contracts/runner-container-
+    # passthrough.md "The verify-image-prerequisites job").
+    if: inputs.container-image != ''
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    steps:
+      - name: Pull image and verify prerequisites
+        env:
+          IMAGE: ${{ inputs.container-image }}
+          REGISTRY_USERNAME: ${{ secrets.container-registry-username }}
+          REGISTRY_PASSWORD: ${{ secrets.container-registry-password }}
+        run: |
+          # Canonical required-tool list: .github/scripts/required-tools.txt
+          # (kept in agreement by Gate 23, specs/038 FR-011a).
+          REQUIRED_TOOLS="git gh jq curl python3 bash node"
+
+          if [ -n "$REGISTRY_USERNAME" ] && [ -n "$REGISTRY_PASSWORD" ]; then
+            registry="${IMAGE%%/*}"
+            if ! echo "$REGISTRY_PASSWORD" | docker login "$registry" --username "$REGISTRY_USERNAME" --password-stdin 2>docker-login-error.log; then
+              echo "::error::wing-commander verify-image-prerequisites: the registry rejected the supplied credentials for $IMAGE -- $(cat docker-login-error.log)"
+              exit 1
+            fi
+          fi
+
+          if ! docker pull "$IMAGE" 2>docker-pull-error.log; then
+            if [ -z "$REGISTRY_USERNAME" ] && [ -z "$REGISTRY_PASSWORD" ]; then
+              echo "::error::wing-commander verify-image-prerequisites: failed to pull $IMAGE -- no credentials were supplied for this image. $(cat docker-pull-error.log)"
+            else
+              echo "::error::wing-commander verify-image-prerequisites: failed to pull $IMAGE -- the registry rejected the supplied credentials or image reference. $(cat docker-pull-error.log)"
+            fi
+            exit 1
+          fi
+
+          missing=""
+          for tool in $REQUIRED_TOOLS; do
+            if ! docker run --rm --entrypoint sh "$IMAGE" -c "command -v $tool" >/dev/null 2>&1; then
+              missing="$missing $tool"
+            fi
+          done
+
+          if [ -n "$missing" ]; then
+            echo "::error::wing-commander verify-image-prerequisites: $IMAGE is missing required tool(s):$missing"
+            exit 1
+          fi
+
   # Deterministic evidence gathering — five FR-006 collectors into one
   # normalized signals.json. No agent step in this job (research.md).
   collect:
+    needs: verify-image-prerequisites
+    if: >-
+      needs.verify-image-prerequisites.result == 'success' ||
+      needs.verify-image-prerequisites.result == 'skipped'
     # runner/container-image passthrough (specs/038). Empty
     # container-image is expected to be a no-op (research.md D3); live
     # verification requires a workflow_dispatch trigger this automated
@@ -2277,7 +2329,7 @@ jobs:
   # coexistence check) still run this job but perform no write beyond the
   # shared report step.
   act:
-    needs: [collect, diagnose, triage]
+    needs: [collect, diagnose, triage, verify-image-prerequisites]
     # `!cancelled()` is load-bearing. `triage` is a fail-fast: false matrix,
     # but a JOB's result is `failure` if any leg failed — and a job with no
     # status-check function of its own is skipped whenever anything in its
@@ -2305,7 +2357,8 @@ jobs:
       needs.diagnose.result == 'success' &&
       needs.diagnose.outputs.outcome != 'passed-inspection' &&
       needs.collect.outputs.evidence-available != 'false' &&
-      needs.diagnose.outputs.findings != '[]'
+      needs.diagnose.outputs.findings != '[]' &&
+      (needs.verify-image-prerequisites.result == 'success' || needs.verify-image-prerequisites.result == 'skipped')
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -2840,8 +2893,10 @@ jobs:
   # so this last line of defense cannot itself become a new single point of
   # failure — unlike collect's identical-looking but hard-failing versions.
   report-unhandled-failure:
-    needs: [collect, diagnose, triage, act]
-    if: always()
+    needs: [collect, diagnose, triage, act, verify-image-prerequisites]
+    if: >-
+      always() &&
+      (needs.verify-image-prerequisites.result == 'success' || needs.verify-image-prerequisites.result == 'skipped')
     # runner/container-image passthrough (specs/038). Empty
     # container-image is expected to be a no-op (research.md D3); live
     # verification requires a workflow_dispatch trigger this automated

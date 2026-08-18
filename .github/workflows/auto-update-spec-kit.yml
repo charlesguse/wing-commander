@@ -210,6 +210,54 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  verify-image-prerequisites:
+    # runner/container-image passthrough (specs/038): checks the
+    # adopter-named image before any other job's own container is
+    # created. Deliberately no container: — must run directly on the
+    # runner to invoke Docker itself (contracts/runner-container-
+    # passthrough.md "The verify-image-prerequisites job").
+    if: inputs.container-image != ''
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    steps:
+      - name: Pull image and verify prerequisites
+        env:
+          IMAGE: ${{ inputs.container-image }}
+          REGISTRY_USERNAME: ${{ secrets.container-registry-username }}
+          REGISTRY_PASSWORD: ${{ secrets.container-registry-password }}
+        run: |
+          # Canonical required-tool list: .github/scripts/required-tools.txt
+          # (kept in agreement by Gate 23, specs/038 FR-011a).
+          REQUIRED_TOOLS="git gh jq curl python3 bash node"
+
+          if [ -n "$REGISTRY_USERNAME" ] && [ -n "$REGISTRY_PASSWORD" ]; then
+            registry="${IMAGE%%/*}"
+            if ! echo "$REGISTRY_PASSWORD" | docker login "$registry" --username "$REGISTRY_USERNAME" --password-stdin 2>docker-login-error.log; then
+              echo "::error::wing-commander verify-image-prerequisites: the registry rejected the supplied credentials for $IMAGE -- $(cat docker-login-error.log)"
+              exit 1
+            fi
+          fi
+
+          if ! docker pull "$IMAGE" 2>docker-pull-error.log; then
+            if [ -z "$REGISTRY_USERNAME" ] && [ -z "$REGISTRY_PASSWORD" ]; then
+              echo "::error::wing-commander verify-image-prerequisites: failed to pull $IMAGE -- no credentials were supplied for this image. $(cat docker-pull-error.log)"
+            else
+              echo "::error::wing-commander verify-image-prerequisites: failed to pull $IMAGE -- the registry rejected the supplied credentials or image reference. $(cat docker-pull-error.log)"
+            fi
+            exit 1
+          fi
+
+          missing=""
+          for tool in $REQUIRED_TOOLS; do
+            if ! docker run --rm --entrypoint sh "$IMAGE" -c "command -v $tool" >/dev/null 2>&1; then
+              missing="$missing $tool"
+            fi
+          done
+
+          if [ -n "$missing" ]; then
+            echo "::error::wing-commander verify-image-prerequisites: $IMAGE is missing required tool(s):$missing"
+            exit 1
+          fi
+
   # Re-verifies the CURRENTLY PINNED version first (research.md: this is
   # what makes FR-006's "already applied and found not to work" branch
   # discoverable at all). Only runs for scheduled/dispatch — pr-merged and
@@ -217,7 +265,10 @@ jobs:
   # straight to its rollback branch and short-circuits detect/settle/
   # evaluate-path/prepare/verify entirely for this run (T006).
   health-check:
-    if: inputs.trigger == 'scheduled' || inputs.trigger == 'dispatch'
+    needs: verify-image-prerequisites
+    if: >-
+      (needs.verify-image-prerequisites.result == 'success' || needs.verify-image-prerequisites.result == 'skipped') &&
+      (inputs.trigger == 'scheduled' || inputs.trigger == 'dispatch')
     # runner/container-image passthrough (specs/038). Empty
     # container-image is expected to be a no-op (research.md D3); live
     # verification requires a workflow_dispatch trigger this automated
@@ -764,9 +815,10 @@ jobs:
   # ambiguous-options. Also the re-entry point for a resumed
   # ambiguous-options decision (comment-reply, US4) — same job, two ways in.
   evaluate-path:
-    needs: [settle, comment-reply]
+    needs: [settle, comment-reply, verify-image-prerequisites]
     if: >-
       always() &&
+      (needs.verify-image-prerequisites.result == 'success' || needs.verify-image-prerequisites.result == 'skipped') &&
       ((needs.settle.result == 'success' && needs.settle.outputs.settled == 'true') ||
        (needs.comment-reply.result == 'success' && needs.comment-reply.outputs.resumed == 'true'))
     # runner/container-image passthrough (specs/038). Empty
@@ -1348,7 +1400,7 @@ jobs:
   # (the branch is handed to `verify`/`act` as a git-bundle artifact, since
   # each job is a fresh runner and nothing is pushed to origin until `act`).
   prepare:
-    needs: evaluate-path
+    needs: [evaluate-path, verify-image-prerequisites]
     # `always() &&` is load-bearing. `evaluate-path` needs both `settle` and
     # `comment-reply` and only survives the skipped one via its own
     # `always()`; a skipped ancestor keeps suppressing descendants through
@@ -1360,6 +1412,7 @@ jobs:
     # cancelled run leaves result=cancelled.
     if: >-
       always() &&
+      (needs.verify-image-prerequisites.result == 'success' || needs.verify-image-prerequisites.result == 'skipped') &&
       needs.evaluate-path.result == 'success' &&
       needs.evaluate-path.outputs.outcome == 'clean-bump'
     # runner/container-image passthrough (specs/038). Empty
@@ -1546,7 +1599,7 @@ jobs:
   # deeper tier only applies to minor/major, unchanged gating condition from
   # the lightweight tier's own end-to-end step.
   e2e-stage:
-    needs: prepare
+    needs: [prepare, verify-image-prerequisites]
     # Two guards, both load-bearing. `always()` because a skipped ancestor
     # keeps suppressing descendants through the needs graph, so without a
     # status-check function this job is skipped before its `if` is read.
@@ -1555,6 +1608,7 @@ jobs:
     # is TRUE — the stage would scaffold a candidate that was never prepared.
     if: >-
       always() &&
+      (needs.verify-image-prerequisites.result == 'success' || needs.verify-image-prerequisites.result == 'skipped') &&
       needs.prepare.result == 'success' &&
       needs.prepare.outputs.release-type != 'patch'
     # runner/container-image passthrough (specs/038). Empty
@@ -2038,10 +2092,13 @@ jobs:
 
   # Tiered smoke test against the prepared candidate.
   verify:
-    needs: [prepare, e2e-stage]
+    needs: [prepare, e2e-stage, verify-image-prerequisites]
     # Same reason as `prepare` above: guarding only `prepare` would have
     # moved the silence one job down instead of ending it.
-    if: always() && needs.prepare.result == 'success'
+    if: >-
+      always() &&
+      (needs.verify-image-prerequisites.result == 'success' || needs.verify-image-prerequisites.result == 'skipped') &&
+      needs.prepare.result == 'success'
     # runner/container-image passthrough (specs/038). Empty
     # container-image is expected to be a no-op (research.md D3); live
     # verification requires a workflow_dispatch trigger this automated
@@ -2380,7 +2437,7 @@ jobs:
   # `always()` because this job must still run when upstream jobs were
   # skipped by design (e.g. reached only via health-check's failure path).
   act:
-    needs: [health-check, evaluate-path, prepare, verify]
+    needs: [health-check, evaluate-path, prepare, verify, verify-image-prerequisites]
     # The prepare-failure arm (#157) is load-bearing, not defensive. verify
     # requires `needs.prepare.result == 'success'`, so a failed prepare
     # skips verify, which used to skip act too — leaving the lifecycle issue
@@ -2392,6 +2449,7 @@ jobs:
     # on a real minor/major jump.
     if: >-
       always() &&
+      (needs.verify-image-prerequisites.result == 'success' || needs.verify-image-prerequisites.result == 'skipped') &&
       (needs.health-check.outputs.pinned-ok == 'false' ||
        needs.prepare.result == 'failure' ||
        needs.verify.result == 'success' ||
@@ -2788,7 +2846,9 @@ jobs:
   # feature's own marker is a no-op — never assume any other PR belongs to
   # this feature.
   pr-merged:
+    needs: verify-image-prerequisites
     if: >-
+      (needs.verify-image-prerequisites.result == 'success' || needs.verify-image-prerequisites.result == 'skipped') &&
       inputs.trigger == 'pr-merged' &&
       inputs.pr-merged
     # runner/container-image passthrough (specs/038). Empty
@@ -2939,7 +2999,9 @@ jobs:
   # to an untrusted commenter). evaluate-path's `needs.comment-reply` gate
   # then sees a skipped (non-success) result and does not re-enter.
   comment-reply:
+    needs: verify-image-prerequisites
     if: >-
+      (needs.verify-image-prerequisites.result == 'success' || needs.verify-image-prerequisites.result == 'skipped') &&
       inputs.trigger == 'comment-reply' &&
       (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), inputs.commenter-association) || inputs.commenter-id == inputs.issue-author-id)
     # runner/container-image passthrough (specs/038). Empty
