@@ -1,4 +1,25 @@
 #!/usr/bin/env python3
+"""Gate 23 dispatcher — two unrelated features independently landed a
+"Gate 23" (specs/037-agent-turn-budget-guard and
+specs/038-runner-container-passthrough) and both named their script
+.github/scripts/verify-gate-23.py. Rather than let one silently clobber the
+other at rebase time, this file holds both bodies verbatim and dispatches on
+an argument, so lint-workflows.yml's two "Gate 23" steps each keep the exact
+behavior they shipped with.
+
+    python3 .github/scripts/verify-gate-23.py             -> 037's Gate 23:
+        every agent call site carries the full turn-budget protection.
+    python3 .github/scripts/verify-gate-23.py --selftest   -> 038's Gate 23
+        self-test: the image-prerequisites gate's detector actually detects.
+
+Each body below is the complete, unmodified source of the script that used
+to live at this path on its own branch, compiled and executed in its own
+fresh namespace so the two scripts' many same-named helpers (main, note,
+job, stage, ...) never collide with each other.
+"""
+import sys
+
+_TURN_BUDGET_GATE_SOURCE = r'''
 """Gate 23 — every agent call site carries the full turn-budget protection.
 
 WHY THIS EXISTS
@@ -337,3 +358,429 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+'''
+
+_IMAGE_PREREQ_SELFTEST_SOURCE = r'''
+"""Self-test for lint-workflows.yml's Gate 23.
+
+Gate 23 asserts two things (specs/038-runner-container-passthrough):
+  1. every published stage declares verify-image-prerequisites, gated on
+     `if: inputs.container-image != ''` with no container: of its own, and
+     every entry job / always()/!cancelled()-style survival job depends on
+     it via the skip-tolerant if: (FR-006, FR-010, FR-011).
+  2. the canonical required-tool list (.github/scripts/required-tools.txt)
+     is not missing a tool a run: block anywhere in the repository actually
+     invokes (FR-011a's drift check).
+
+The fleet it guards is uniform today and should stay that way, so the gate
+will print "0 failure(s)" forever — whether its detection works or not. This
+script feeds Gate 23 synthetic fixtures that each carry one known defect (or
+one known NON-defect) and asserts the verdict, including what the error text
+names — same discipline as verify-gate-7.py / verify-gate-22.py.
+
+Drift-proofing: the gate's source is EXTRACTED from lint-workflows.yml at run
+time rather than copied here, so there is no second copy to fall out of sync.
+
+Usage: python3 .github/scripts/verify-gate-23.py
+"""
+import io
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+import yaml
+
+LINT_WORKFLOW = ".github/workflows/lint-workflows.yml"
+STEP_PREFIX = "Gate 23"
+HEREDOC_OPEN = "python3 - <<'PYEOF'"
+HEREDOC_CLOSE = "PYEOF"
+
+
+def extract_gate(path=LINT_WORKFLOW):
+    """Return Gate 23's python source, read out of the shipped workflow."""
+    wf = yaml.safe_load(io.open(path, encoding="utf-8")) or {}
+    run = None
+    for job in (wf.get("jobs") or {}).values():
+        for step in (job or {}).get("steps") or []:
+            name = (step or {}).get("name", "")
+            if name.startswith(STEP_PREFIX) and "self-test" not in name:
+                run = step.get("run")
+    if run is None:
+        sys.exit(f"::error file={path}::verify-gate-23 could not find a step named "
+                 f"{STEP_PREFIX!r}. If it was renamed, update this script and the "
+                 f"workflow together.")
+
+    lines = run.splitlines()
+    try:
+        start = next(i for i, l in enumerate(lines) if l.strip() == HEREDOC_OPEN)
+        end = next(i for i, l in enumerate(lines)
+                   if i > start and l.strip() == HEREDOC_CLOSE)
+    except StopIteration:
+        sys.exit(f"::error file={path}::verify-gate-23 found the {STEP_PREFIX} step but "
+                 f"not the {HEREDOC_OPEN} ... {HEREDOC_CLOSE} block it keys on — the "
+                 f"step's shape has changed.")
+    return "\n".join(lines[start + 1:end]) + "\n"
+
+
+# ---------------------------------------------------------------- fixtures
+
+TOLERANT = ("(needs.verify-image-prerequisites.result == 'success' || "
+           "needs.verify-image-prerequisites.result == 'skipped')")
+
+
+def yaml_str(s):
+    """A YAML scalar guaranteed to parse back as the literal string `s`.
+
+    Several fixture if: values start with `!` (e.g. `!cancelled()`), which
+    YAML 1.1 reads as a custom tag, not the start of a string, and blows up
+    the parse entirely rather than producing a wrong-but-parseable value.
+    JSON double-quoted syntax is valid YAML flow-scalar syntax, so this is
+    safe for every fixture string used here.
+    """
+    return json.dumps(s)
+
+
+def vip_job(if_expr="inputs.container-image != ''", with_container=False):
+    lines = ["  verify-image-prerequisites:", f"    if: {yaml_str(if_expr)}",
+             "    runs-on: ubuntu-latest"]
+    if with_container:
+        lines.append("    container:\n      image: alpine")
+    lines += ["    steps:", "      - run: echo check"]
+    return "\n".join(lines) + "\n"
+
+
+def job(name, needs=None, if_expr=None, run="echo work"):
+    lines = [f"  {name}:"]
+    if needs:
+        needs_str = needs if isinstance(needs, str) else "[" + ", ".join(needs) + "]"
+        lines.append(f"    needs: {needs_str}")
+    if if_expr:
+        lines.append(f"    if: {yaml_str(if_expr)}")
+    lines.append("    runs-on: ubuntu-latest")
+    lines.append("    steps:")
+    lines.append("      - run: |")
+    for l in run.splitlines():
+        lines.append(f"          {l}")
+    return "\n".join(lines) + "\n"
+
+
+def stage(*jobs, vip=None, inputs_needed=True):
+    if vip is None:
+        vip = vip_job()
+    inputs = ("    inputs:\n      container-image:\n        type: string\n"
+             "        required: false\n        default: \"\"\n") if inputs_needed else ""
+    return (f"name: stage\non:\n  workflow_call:\n{inputs}"
+            f"jobs:\n{vip}{''.join(jobs)}")
+
+
+PLAIN_WORKFLOW = """\
+name: not a stage
+on:
+  pull_request: {}
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo no wiring here, and none wanted
+"""
+
+CALLER_JOB = """\
+  call-other:
+    uses: ./.github/workflows/other.yml
+"""
+
+HEALTHY_ENTRY = job("entry", needs="verify-image-prerequisites", if_expr=TOLERANT)
+
+WIRING_CASES = [
+    # name, files, expect_fail, must_mention
+    ("healthy: entry job correctly wired to verify-image-prerequisites",
+     {"stage.yml": stage(HEALTHY_ENTRY)},
+     False, ()),
+
+    ("the defect this gate exists for: entry job has no needs: at all",
+     {"stage.yml": stage(job("entry"))},
+     True, ("'entry'", "entry job")),
+
+    ("entry job needs verify-image-prerequisites but if: lacks the tolerant clause",
+     {"stage.yml": stage(job("entry", needs="verify-image-prerequisites", if_expr="true"))},
+     True, ("'entry'", "tolerant")),
+
+    ("a downstream job with no status-check function inherits automatically "
+     "and needs no separate wiring",
+     {"stage.yml": stage(HEALTHY_ENTRY, job("downstream", needs="entry"))},
+     False, ()),
+
+    ("the always()-survivor defect: needs the upstream job but not "
+     "verify-image-prerequisites directly, defeating skip propagation",
+     {"stage.yml": stage(HEALTHY_ENTRY,
+                         job("survivor", needs="entry", if_expr="always()"))},
+     True, ("'survivor'", "status-check function")),
+
+    ("an always()-survivor correctly wired directly to verify-image-prerequisites",
+     {"stage.yml": stage(HEALTHY_ENTRY,
+                         job("survivor", needs=["entry", "verify-image-prerequisites"],
+                             if_expr=f"always() && {TOLERANT}"))},
+     False, ()),
+
+    ("a !cancelled() survivor is guarded exactly like an always() survivor",
+     {"stage.yml": stage(HEALTHY_ENTRY,
+                         job("survivor", needs="entry", if_expr="!cancelled()"))},
+     True, ("'survivor'",)),
+
+    ("verify-image-prerequisites job missing entirely",
+     {"stage.yml": ("name: stage\non:\n  workflow_call:\n    inputs:\n"
+                    "      container-image:\n        type: string\n"
+                    "        required: false\n        default: \"\"\n"
+                    "jobs:\n" + job("only", needs="verify-image-prerequisites",
+                                    if_expr=TOLERANT))},
+     True, ("no verify-image-prerequisites job",)),
+
+    ("verify-image-prerequisites has the wrong if: condition",
+     {"stage.yml": stage(HEALTHY_ENTRY, vip=vip_job(if_expr="true"))},
+     True, ("the contract requires exactly",)),
+
+    ("verify-image-prerequisites declares its own container: block",
+     {"stage.yml": stage(HEALTHY_ENTRY, vip=vip_job(with_container=True))},
+     True, ("its own container",)),
+
+    ("no false positive: a workflow that is not a published stage",
+     {"lint.yml": PLAIN_WORKFLOW},
+     True, ("checked nothing",)),
+
+    ("no false positive: a job that calls another workflow needs no wiring",
+     {"stage.yml": stage(HEALTHY_ENTRY) + CALLER_JOB},
+     False, ()),
+]
+
+DRIFT_CASES = [
+    ("the defect this gate exists for: an unrecognized tool is invoked and "
+     "absent from the canonical list",
+     {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
+                             if_expr=TOLERANT, run="somefancytool --check-version"))},
+     True, ("somefancytool",)),
+
+    ("no false positive: canonical tools (git, gh, jq, curl, python3, bash, node)",
+     {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
+                             if_expr=TOLERANT,
+                             run="git status && gh pr list && jq '.' f.json && "
+                                 "curl -s url && python3 x.py && bash y.sh && node z.js"))},
+     False, ()),
+
+    ("no false positive: POSIX/coreutils/bash-builtin commands",
+     {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
+                             if_expr=TOLERANT,
+                             run="echo hi && mkdir -p /tmp/x && sed -n 1p f && "
+                                 "grep foo f | sort | uniq"))},
+     False, ()),
+
+    ("no false positive: a maintenance-only tool this repo's own CI uses, "
+     "never a published stage's adopter-facing image",
+     {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
+                             if_expr=TOLERANT, run="docker build -t x ."))},
+     False, ()),
+
+    ("heredoc bodies are not scanned for command tokens — a look-alike word "
+     "inside an embedded python/jq/js script must not be flagged",
+     {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
+                             if_expr=TOLERANT,
+                             run="python3 - <<'PYEOF'\n"
+                                 "somefancytool --this-is-python-source-not-shell\n"
+                                 "PYEOF"))},
+     False, ()),
+
+    ("drift is repository-wide, not scoped to published stages — a plain "
+     "workflow's run: block is scanned too",
+     {"lint.yml": PLAIN_WORKFLOW.replace(
+         "echo no wiring here, and none wanted",
+         "somefancytool3 --lint")},
+     True, ("somefancytool3",)),
+
+    ("composite actions under .github/actions/** are scanned for drift too",
+     {},
+     True, ("somefancytool4",)),
+]
+
+
+def norm(path):
+    p = path.strip().replace("\\", "/")
+    return p[2:] if p.startswith("./") else p
+
+
+def check_derivations_agree(gate_path):
+    """Gate 23's inline stage detection vs the shared wc_published_stages module.
+
+    Same reasoning as verify-gate-7.py / verify-gate-22.py: a stage visible
+    to one derivation and invisible to the other is issue #149 again.
+    """
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    try:
+        from wc_published_stages import published_stages
+    except ImportError as exc:
+        return [("shared stage derivation", [f"cannot import "
+                 f"wc_published_stages ({exc}); release.yml's pass 1 depends "
+                 f"on it"], "")]
+
+    module_stages = {norm(p) for p in published_stages()}
+    proc = subprocess.run([sys.executable, gate_path], cwd=".",
+                          capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
+    out = (proc.stdout or "") + (proc.stderr or "")
+    m = re.search(r"Gate 23: (\d+) published stage\(s\)", out)
+    if not m:
+        return [("shared stage derivation",
+                 ["could not read the stage count out of Gate 23's own output; "
+                  "its summary line has changed shape"], out.strip())]
+
+    gate_count = int(m.group(1))
+    gate_stages = {norm(p) for p in
+                   re.findall(r"^note: (.+): published stage$", out, re.M)}
+    if len(gate_stages) != gate_count:
+        return [("shared stage derivation", [
+            f"Gate 23's summary says {gate_count} published stage(s) but it "
+            f"named {len(gate_stages)} of them."], out.strip())]
+
+    if gate_stages != module_stages:
+        only_gate = sorted(gate_stages - module_stages)
+        only_module = sorted(module_stages - gate_stages)
+        return [("shared stage derivation", [
+            f"Gate 23 and wc_published_stages.py disagree about which "
+            f"workflows are published stages. Seen only by Gate 23: "
+            f"{only_gate or '(none)'}. Seen only by wc_published_stages.py: "
+            f"{only_module or '(none)'}."], "")]
+    print(f"ok    the shared stage derivation agrees with Gate 23 "
+          f"({gate_count} published stages)")
+    return []
+
+
+def check_real_fleet(gate_path):
+    """Gate 23 must actually PASS against this repository's own real files.
+
+    Covers both halves at once: the wiring check against the eleven real
+    stages (T029/T033) AND the FR-011a drift check against every real run:
+    block in .github/workflows and .github/actions — the fixtures above
+    prove the DETECTOR works; this proves the thing it detects on has
+    actually been fixed, and that the drift check's allowlists are wide
+    enough not to false-positive on this repository's own scripts.
+    """
+    proc = subprocess.run([sys.executable, gate_path], cwd=".",
+                          capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
+    out = (proc.stdout or "") + (proc.stderr or "")
+    if proc.returncode != 0:
+        return [("Gate 23 against the real repository",
+                 ["Gate 23 fails when run against this repository's own "
+                  "real workflows/actions — the fixtures above can be "
+                  "green while the real surface is not."], out.strip())]
+    print("ok    Gate 23 passes against this repository's own real fleet")
+    return []
+
+
+def main():
+    if not os.path.isfile(LINT_WORKFLOW):
+        sys.exit(f"::error::run this from the repository root; {LINT_WORKFLOW} not found.")
+
+    gate_src = extract_gate()
+    root = tempfile.mkdtemp(prefix="verify_gate23_")
+    gate_path = os.path.join(root, "gate23.py")
+    io.open(gate_path, "w", encoding="utf-8").write(gate_src)
+
+    tools_path = ".github/scripts/required-tools.txt"
+    if not os.path.isfile(tools_path):
+        sys.exit(f"::error::run this from the repository root; {tools_path} not found.")
+    required_tools_text = io.open(tools_path, encoding="utf-8").read()
+
+    failures = []
+
+    def record(name, problems, out):
+        failures.append((name, problems, out))
+        print(f"FAIL  {name}")
+        for problem in problems:
+            print(f"        - {problem}")
+        for line in (out or "").strip().splitlines():
+            print(f"        | {line}")
+
+    for name, problems, out in check_derivations_agree(gate_path):
+        record(name, problems, out)
+    for name, problems, out in check_real_fleet(gate_path):
+        record(name, problems, out)
+
+    all_cases = list(WIRING_CASES) + list(DRIFT_CASES)
+    try:
+        for name, files, expect_fail, must_mention in all_cases:
+            case_dir = tempfile.mkdtemp(prefix="case_", dir=root)
+            wf_dir = os.path.join(case_dir, ".github", "workflows")
+            scripts_dir = os.path.join(case_dir, ".github", "scripts")
+            os.makedirs(wf_dir)
+            os.makedirs(scripts_dir)
+            io.open(os.path.join(scripts_dir, "required-tools.txt"), "w",
+                   encoding="utf-8").write(required_tools_text)
+            for fname, body in files.items():
+                io.open(os.path.join(wf_dir, fname), "w", encoding="utf-8").write(body)
+
+            # The composite-action fixture carries no `files` of its own —
+            # it exercises the .github/actions/**/action.yml glob path
+            # instead, alongside a minimal healthy stage so the wiring half
+            # of the gate has something to pass on.
+            if name.startswith("composite actions"):
+                io.open(os.path.join(wf_dir, "stage.yml"), "w",
+                       encoding="utf-8").write(stage(HEALTHY_ENTRY))
+                act_dir = os.path.join(case_dir, ".github", "actions", "fancy")
+                os.makedirs(act_dir)
+                io.open(os.path.join(act_dir, "action.yml"), "w", encoding="utf-8").write(
+                    "name: fancy\nruns:\n  using: composite\n  steps:\n"
+                    "    - run: somefancytool4 --check\n      shell: bash\n")
+
+            proc = subprocess.run([sys.executable, gate_path], cwd=case_dir,
+                                  capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace")
+            out = (proc.stdout or "") + (proc.stderr or "")
+            fired = proc.returncode != 0
+
+            problems = []
+            if fired != expect_fail:
+                problems.append(
+                    f"expected the gate to {'FAIL' if expect_fail else 'PASS'}, "
+                    f"it {'FAILED' if fired else 'PASSED'}")
+            for token in must_mention:
+                if token not in out:
+                    problems.append(f"error text never mentions {token!r}")
+
+            if problems:
+                record(name, problems, out)
+            else:
+                print(f"ok    {name}")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+    total = len(all_cases) + 2
+    print()
+    if failures:
+        print(f"::error file={LINT_WORKFLOW}::Gate 23 self-test: "
+              f"{len(failures)} of {total} check(s) behaved wrongly "
+              f"({', '.join(name for name, _, _ in failures)}). Gate 23's "
+              f"detection logic does not do what its name claims, so a green Gate 23 "
+              f"on the real fleet means nothing.")
+        return 1
+    print(f"Gate 23 self-test: all {total} checks behaved as expected.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+'''
+
+
+def _run(source):
+    namespace = {"__name__": "__main__"}
+    exec(compile(source, "<verify-gate-23>", "exec"), namespace)
+
+
+if __name__ == "__main__":
+    if "--selftest" in sys.argv:
+        _run(_IMAGE_PREREQ_SELFTEST_SOURCE)
+    else:
+        _run(_TURN_BUDGET_GATE_SOURCE)
