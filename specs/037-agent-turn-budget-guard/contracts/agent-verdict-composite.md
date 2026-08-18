@@ -135,7 +135,7 @@ substituted:
       ...
 
 - id: agent-verdict
-  if: always()
+  if: always() && steps.agent.outcome != 'skipped'
   uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
   with:
     intended-turns: ${{ inputs.max-turns }}
@@ -145,7 +145,7 @@ substituted:
 # `steps.agent-verdict.outputs.verdict == 'healthy'`; body unchanged.
 
 - name: Fail loud on non-healthy agent verdict
-  if: always() && steps.agent-verdict.outputs.verdict != 'healthy'
+  if: always() && steps.agent.outcome != 'skipped' && steps.agent-verdict.outputs.verdict != 'healthy'
   env:
     VERDICT: ${{ steps.agent-verdict.outputs.verdict }}
     REASON: ${{ steps.agent-verdict.outputs.reason }}
@@ -170,5 +170,19 @@ substituted:
       (${{ steps.agent-ceiling.outputs.ceiling }}) is the only hard
       stop; this is an observability note, not a failure.
 ```
+
+**The skip guard on both new steps is `steps.<agent>.outcome !=
+'skipped'` and nothing else.** Do not restate the agent step's own `if:`
+conditions there — a copy drifts the moment either side gains a
+condition, and when it does, an ordinary skip (the agent step correctly
+declining to run) produces `verdict: unclassifiable`, which the fail-loud
+step reads as a defect and fails an otherwise-green job over. Two sites
+shipped with exactly that drift and had to be corrected: `finalize.yml`
+(verdict gated on `is-open`, agent step also required
+`steps.diff.outputs.skip != 'true'`, so every idempotent no-diff re-run
+went red) and `auto-update-spec-kit.yml` (verdict gated on `resumed`,
+agent step also required `steps.guard.outputs.skip != 'true'`, so every
+deduped run went red). The agent step's `outcome` already reflects every
+guard on that step, so it cannot drift by construction (PR #221 review).
 
 Validated per user story and edge case in `../quickstart.md`.

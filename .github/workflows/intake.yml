@@ -607,7 +607,7 @@ jobs:
       # be trusted to reflect (specs/037-agent-turn-budget-guard/).
       - name: Compute agent run verdict
         id: agent-verdict
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && always()
+        if: always() && steps.agent.outcome != 'skipped'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
         with:
           intended-turns: ${{ inputs.max-turns }}
@@ -1022,7 +1022,7 @@ jobs:
       # research.md R7 step 5; clarify.yml exits in place instead because it
       # has no such housekeeping left to run by this point in its own job).
       - name: Fail loud on non-healthy agent verdict
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.agent-verdict.outputs.verdict != 'healthy'
+        if: always() && steps.agent.outcome != 'skipped' && steps.agent-verdict.outputs.verdict != 'healthy'
         env:
           VERDICT: ${{ steps.agent-verdict.outputs.verdict }}
           REASON: ${{ steps.agent-verdict.outputs.reason }}

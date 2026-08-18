@@ -134,7 +134,10 @@ degrades to `verdict: unclassifiable` on any internal read failure
 contract, FR-009 in that action's original spec). The actual job-failing
 action — `exit 1` after printing `::error::` — lives in each call site's
 own "Fail loud on non-healthy verdict" step, gated on
-`always() && steps.<verdict>.outputs.verdict != 'healthy'`.
+`always() && steps.<agent>.outcome != 'skipped' && steps.<verdict>.outputs.verdict != 'healthy'`
+(the skipped-agent term is load-bearing: without it a skipped agent step
+yields an empty `verdict`, which is `!= 'healthy'` and fails the job —
+see R7 step 5).
 
 **Rationale**: A composite that sometimes fails its own step and
 sometimes doesn't would need `continue-on-error: true` at some sites and
@@ -223,7 +226,8 @@ around its existing agent step:
    (or the literal budget for sites with no published input, e.g.
    `implement.yml`'s `progress` at a fixed 15).
 3. NEW: a `wing-commander-agent-verdict` step immediately after the
-   agent step, `if: always()`, `id: <name>-verdict`,
+   agent step, `if: always() && steps.<agent>.outcome != 'skipped'`,
+   `id: <name>-verdict`,
    `transcript-path`/`run-label` matching whatever
    `wing-commander-metrics-summary` already uses at that site (or, for
    the 5 sites with no metrics-summary invocation today — `pr-conversation.yml`
@@ -237,8 +241,24 @@ around its existing agent step:
    metrics-summary invocation (added where missing) gains the `verdict`/
    `verdict-reason` passthrough from R6.
 5. NEW (uniform glue, ~5 lines, not centralized — see R4): a "Fail loud
-   on non-healthy verdict" step, `if: always() && steps.<verdict-id>.outputs.verdict != 'healthy'`,
+   on non-healthy verdict" step,
+   `if: always() && steps.<agent>.outcome != 'skipped' && steps.<verdict-id>.outputs.verdict != 'healthy'`,
    printing `::error::` with the reason and exiting 1.
+
+   **`steps.<agent>.outcome != 'skipped'` is the ONLY skip guard either
+   step carries** — never a hand-copied restatement of the agent step's
+   own `if:` conditions. Those conditions drift: `finalize.yml`'s
+   verdict was gated on `is-open` while its agent step also required
+   `steps.diff.outputs.skip != 'true'`, and
+   `auto-update-spec-kit.yml`'s was gated on `resumed` while its agent
+   step also required `steps.guard.outputs.skip != 'true'`. Both shipped
+   in this feature's own rewire, and both turned an ordinary skip — the
+   idempotent no-diff finalize re-run, the deduped auto-update decline
+   from PR #211 — into an `unclassifiable` verdict that the fail-loud
+   step then read as a defect and failed the job over. The agent step's
+   `outcome` already encodes every guard on that step, however many it
+   grows later, so gating on it cannot drift by construction
+   (PR #221 review).
 6. NEW, only at sites whose job already posts to the lifecycle issue
    (14 of 19 — see the call-site table below): a "Report over-budget"
    step, `if: steps.<verdict-id>.outputs.verdict == 'healthy' && steps.<verdict-id>.outputs.over-budget == 'true'`,

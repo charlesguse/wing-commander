@@ -727,7 +727,7 @@ jobs:
       # (specs/037-agent-turn-budget-guard/).
       - name: Compute agent run verdict
         id: agent-verdict
-        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && steps.relay-resume.outputs.resumed != 'true' && always()
+        if: always() && steps.agent.outcome != 'skipped'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
         with:
           intended-turns: ${{ inputs.max-turns }}
@@ -781,7 +781,7 @@ jobs:
       # cause; a healthy-but-post-hoc-rejected run skips this entirely and
       # the stage continues.
       - name: Fail loud on non-healthy agent verdict
-        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && steps.relay-resume.outputs.resumed != 'true' && always() && steps.agent-verdict.outputs.verdict != 'healthy'
+        if: always() && steps.agent.outcome != 'skipped' && steps.agent-verdict.outputs.verdict != 'healthy'
         env:
           VERDICT: ${{ steps.agent-verdict.outputs.verdict }}
           REASON: ${{ steps.agent-verdict.outputs.reason }}
@@ -1579,7 +1579,7 @@ jobs:
       # (specs/037-agent-turn-budget-guard/).
       - name: Compute agent run verdict
         id: agent-verdict
-        if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && always()
+        if: always() && steps.agent.outcome != 'skipped'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
         with:
           intended-turns: ${{ inputs.max-turns }}
@@ -1694,7 +1694,7 @@ jobs:
       # cause; a healthy-but-post-hoc-rejected run skips this entirely and
       # the stage continues.
       - name: Fail loud on non-healthy agent verdict
-        if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && always() && steps.agent-verdict.outputs.verdict != 'healthy'
+        if: always() && steps.agent.outcome != 'skipped' && steps.agent-verdict.outputs.verdict != 'healthy'
         env:
           VERDICT: ${{ steps.agent-verdict.outputs.verdict }}
           REASON: ${{ steps.agent-verdict.outputs.reason }}

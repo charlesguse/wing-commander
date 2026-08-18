@@ -529,7 +529,7 @@ jobs:
       # longer be trusted to reflect (specs/037-agent-turn-budget-guard/).
       - name: Compute agent run verdict
         id: summarize-verdict
-        if: steps.idempotency.outputs.skip != 'true' && always()
+        if: always() && steps.summarize.outcome != 'skipped'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
         with:
           intended-turns: ${{ inputs.max-turns }}
@@ -537,7 +537,7 @@ jobs:
       # Uniform across every rewired call site (research.md R7 step 5): the
       # single point where a non-healthy verdict actually fails the job.
       - name: Fail loud on non-healthy agent verdict
-        if: steps.idempotency.outputs.skip != 'true' && always() && steps.summarize-verdict.outputs.verdict != 'healthy'
+        if: always() && steps.summarize.outcome != 'skipped' && steps.summarize-verdict.outputs.verdict != 'healthy'
         env:
           VERDICT: ${{ steps.summarize-verdict.outputs.verdict }}
           REASON: ${{ steps.summarize-verdict.outputs.reason }}

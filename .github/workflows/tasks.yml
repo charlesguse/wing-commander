@@ -579,19 +579,23 @@ jobs:
       # Deterministic, transcript-only verdict (healthy/exhausted/failed/
       # unclassifiable) — replaces raw steps.agent-auto.outcome checks, which
       # the action's own post-hoc turn-budget rejection could no longer be
-      # trusted to reflect (specs/037-agent-turn-budget-guard/). Scoped to
-      # mode == 'auto' (not just steps.guard) so this never fires against the
-      # agent-pr branch's transcript when the other mode ran instead.
+      # trusted to reflect (specs/037-agent-turn-budget-guard/). Gated on
+      # steps.agent-auto.outcome alone — the one condition that cannot drift
+      # from the agent step's own `if:`, however many guards that grows. It
+      # keeps this off the agent-pr branch's transcript when the other mode
+      # ran, and it keeps a legitimately skipped agent step from producing an
+      # `unclassifiable` verdict that the fail-loud step below reads as a
+      # defect (PR #221 review).
       - name: Compute agent run verdict (auto)
         id: agent-auto-verdict
-        if: steps.guard.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto' && always()
+        if: always() && steps.agent-auto.outcome != 'skipped'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
         with:
           intended-turns: ${{ inputs.max-turns }}
           run-label: "auto"
 
       - name: Fail loud on non-healthy agent verdict (auto)
-        if: always() && steps.guard.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto' && steps.agent-auto-verdict.outputs.verdict != 'healthy'
+        if: always() && steps.agent-auto.outcome != 'skipped' && steps.agent-auto-verdict.outputs.verdict != 'healthy'
         env:
           VERDICT: ${{ steps.agent-auto-verdict.outputs.verdict }}
           REASON: ${{ steps.agent-auto-verdict.outputs.reason }}
@@ -719,28 +723,23 @@ jobs:
       # Deterministic, transcript-only verdict (healthy/exhausted/failed/
       # unclassifiable) — replaces raw steps.agent-pr.outcome checks, which
       # the action's own post-hoc turn-budget rejection could no longer be
-      # trusted to reflect (specs/037-agent-turn-budget-guard/). Scoped to
-      # mode == 'pr' (not just steps.guard) so this never fires against the
-      # agent-auto branch's transcript when the other mode ran instead.
+      # trusted to reflect (specs/037-agent-turn-budget-guard/). Gated on
+      # steps.agent-pr.outcome alone — the one condition that cannot drift
+      # from the agent step's own `if:`, however many guards that grows. It
+      # keeps this off the agent-auto branch's transcript when the other mode
+      # ran, and it keeps a legitimately skipped agent step from producing an
+      # `unclassifiable` verdict that the fail-loud step below reads as a
+      # defect (PR #221 review).
       - name: Compute agent run verdict (pr)
         id: agent-pr-verdict
-        if: >-
-          steps.guard.outputs.skip != 'true' &&
-          steps.mode.outputs.mode == 'pr' &&
-          steps.dupe.outputs.skip != 'true' &&
-          always()
+        if: always() && steps.agent-pr.outcome != 'skipped'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
         with:
           intended-turns: ${{ inputs.max-turns }}
           run-label: "pr"
 
       - name: Fail loud on non-healthy agent verdict (pr)
-        if: >-
-          always() &&
-          steps.guard.outputs.skip != 'true' &&
-          steps.mode.outputs.mode == 'pr' &&
-          steps.dupe.outputs.skip != 'true' &&
-          steps.agent-pr-verdict.outputs.verdict != 'healthy'
+        if: always() && steps.agent-pr.outcome != 'skipped' && steps.agent-pr-verdict.outputs.verdict != 'healthy'
         env:
           VERDICT: ${{ steps.agent-pr-verdict.outputs.verdict }}
           REASON: ${{ steps.agent-pr-verdict.outputs.reason }}

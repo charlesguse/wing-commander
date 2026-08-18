@@ -965,16 +965,22 @@ jobs:
 
       # Deterministic, transcript-only verdict — replaces the raw
       # steps.decide.outcome checks below (specs/037-agent-turn-budget-guard/).
+      # Gated on steps.decide.outcome alone: it tracks that step's own `if:`
+      # without drifting from it, so a dedup decline (steps.guard skip=true —
+      # already-open/queued-behind/multiple-matches, PR #211) still reaches
+      # "Read back decision" below, which treats GUARD_SKIP=true as a normal
+      # exit 0, instead of producing an `unclassifiable` verdict the fail-loud
+      # step reads as a defect (PR #221 review).
       - name: Compute agent run verdict
         id: decide-verdict
-        if: steps.entry.outputs.resumed != 'true' && always()
+        if: always() && steps.decide.outcome != 'skipped'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
         with:
           intended-turns: 30
           run-label: evaluate-path
 
       - name: Fail loud on non-healthy agent verdict
-        if: steps.entry.outputs.resumed != 'true' && always() && steps.decide-verdict.outputs.verdict != 'healthy'
+        if: always() && steps.decide.outcome != 'skipped' && steps.decide-verdict.outputs.verdict != 'healthy'
         env:
           VERDICT: ${{ steps.decide-verdict.outputs.verdict }}
           REASON: ${{ steps.decide-verdict.outputs.reason }}
@@ -1815,14 +1821,14 @@ jobs:
       # steps.decide.outcome checks below (specs/037-agent-turn-budget-guard/).
       - name: Compute agent run verdict
         id: decide-verdict
-        if: always()
+        if: always() && steps.decide.outcome != 'skipped'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
         with:
           intended-turns: ${{ inputs.e2e-stage-max-turns }}
           run-label: e2e-stage
 
       - name: Fail loud on non-healthy agent verdict
-        if: always() && steps.decide-verdict.outputs.verdict != 'healthy'
+        if: always() && steps.decide.outcome != 'skipped' && steps.decide-verdict.outputs.verdict != 'healthy'
         env:
           VERDICT: ${{ steps.decide-verdict.outputs.verdict }}
           REASON: ${{ steps.decide-verdict.outputs.reason }}
@@ -2955,14 +2961,14 @@ jobs:
       # steps.interpret.outcome checks below (specs/037-agent-turn-budget-guard/).
       - name: Compute agent run verdict
         id: interpret-verdict
-        if: steps.guard.outputs.proceed == 'true' && always()
+        if: always() && steps.interpret.outcome != 'skipped'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
         with:
           intended-turns: 8
           run-label: comment-reply
 
       - name: Fail loud on non-healthy agent verdict
-        if: steps.guard.outputs.proceed == 'true' && always() && steps.interpret-verdict.outputs.verdict != 'healthy'
+        if: always() && steps.interpret.outcome != 'skipped' && steps.interpret-verdict.outputs.verdict != 'healthy'
         env:
           VERDICT: ${{ steps.interpret-verdict.outputs.verdict }}
           REASON: ${{ steps.interpret-verdict.outputs.reason }}

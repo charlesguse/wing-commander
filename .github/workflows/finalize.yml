@@ -508,9 +508,15 @@ jobs:
       # unclassifiable) — replaces the raw steps.summarize.outcome checks
       # below, which the action's own post-hoc turn-budget rejection could
       # no longer be trusted to reflect (specs/037-agent-turn-budget-guard/).
+      # Gated on steps.summarize.outcome alone: it tracks that step's own
+      # `if:` without drifting from it, so the idempotent no-diff re-run —
+      # where steps.diff sets skip=true and summarize never runs — still
+      # ends green on the "Announce finalize anomaly (no diff)" path above,
+      # instead of producing an `unclassifiable` verdict the fail-loud step
+      # reads as a defect (PR #221 review).
       - name: Compute agent run verdict
         id: summarize-verdict
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && always()
+        if: always() && steps.summarize.outcome != 'skipped'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
         with:
           intended-turns: ${{ inputs.max-turns }}
@@ -518,7 +524,7 @@ jobs:
       # Uniform across every rewired call site (research.md R7 step 5): the
       # single point where a non-healthy verdict actually fails the job.
       - name: Fail loud on non-healthy agent verdict
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.summarize-verdict.outputs.verdict != 'healthy'
+        if: always() && steps.summarize.outcome != 'skipped' && steps.summarize-verdict.outputs.verdict != 'healthy'
         env:
           VERDICT: ${{ steps.summarize-verdict.outputs.verdict }}
           REASON: ${{ steps.summarize-verdict.outputs.reason }}
