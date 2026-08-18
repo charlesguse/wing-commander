@@ -2,7 +2,7 @@
   "issue": 219,
   "spec_dir": "specs/038-runner-container-passthrough",
   "feature_num": "038",
-  "stage": "spec",
+  "stage": "plan",
   "iteration": 0,
-  "spec_branch": null
+  "spec_branch": "spec/038-runner-container-passthrough"
 }
