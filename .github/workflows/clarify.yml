@@ -199,12 +199,19 @@ jobs:
 
           if [ -n "$REGISTRY_USERNAME" ] && [ -n "$REGISTRY_PASSWORD" ]; then
             # A bare/namespaced Docker Hub reference (no "." or ":" or
-            # "localhost" in its first path component) has no registry
-            # host to pass to `docker login` -- passing one anyway (e.g.
-            # a namespace) makes login target a nonexistent registry and
-            # fail. Only pass a server argument when the component looks
-            # like a real host (specs/038 T052).
-            candidate="${IMAGE%%/*}"
+            # "localhost" in its first path component, or no "/" at
+            # all) has no registry host to pass to `docker login` --
+            # passing one anyway (e.g. a namespace, or the whole
+            # slash-free reference whose own tag/digest colon would
+            # otherwise be mistaken for a host) makes login target a
+            # nonexistent registry and fail. Only pass a server
+            # argument when the reference actually has a path
+            # component distinct from the rest, and that component
+            # looks like a real host (specs/038 T052/T054).
+            candidate=""
+            case "$IMAGE" in
+              */*) candidate="${IMAGE%%/*}" ;;
+            esac
             case "$candidate" in
               *.*|*:*|localhost) login_args=("$candidate") ;;
               *) login_args=() ;;
