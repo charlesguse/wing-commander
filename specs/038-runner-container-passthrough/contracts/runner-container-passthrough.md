@@ -242,6 +242,15 @@ exception (`docs/adoption.md:704-712`) — carries a registered reason in the
 gate's own exception table, checked by the same mechanism, never an
 undeclared deviation and never a code comment alone (constitution VII).
 
+**Confirmed at implementation (2026-08-18, T017)**: the pinned actionlint
+run over all eleven wired stage files produced zero new diagnostics
+attributable to `container:`/`image:`/`credentials:` or the `runs-on:`
+ternary — every finding actionlint reports on these files (the pre-existing
+`environment.deployment`/`github.job_workflow_sha`/shellcheck-style hints)
+was already present before this feature's edits, just at shifted line
+numbers. `container:`/`image:`/`credentials:` are standard published
+Actions syntax, as plan.md's Testing section predicted.
+
 Both gates need a synthetic-fixture self-test
 (`.github/scripts/verify-gate-22.py`, `verify-gate-23.py`), run against
 synthetic stage fixtures each carrying one known defect, mirroring Gate

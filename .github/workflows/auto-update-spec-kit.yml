@@ -157,6 +157,24 @@ on:
         type: boolean
         required: false
         default: true
+      runner:
+        description: >
+          Runner label(s) for every job in this stage. A single label
+          (e.g. ubuntu-latest) or a JSON array of labels applied as a
+          conjunction (e.g. '["self-hosted","linux","x64"]') — a value
+          starting with "[" is parsed as JSON, anything else is used
+          verbatim (specs/038-runner-container-passthrough).
+        type: string
+        required: false
+        default: ubuntu-latest
+      container-image:
+        description: >
+          Container image every job in this stage runs inside. Empty
+          (default) means no container — every job runs directly on the
+          runner, unchanged from today (specs/038-runner-container-passthrough).
+        type: string
+        required: false
+        default: ""
     secrets:
       claude-code-oauth-token:
         description: "Claude OAuth token (claude setup-token) — one of the two credentials"
@@ -170,6 +188,12 @@ on:
       speckit-app-private-key:
         description: "GitHub App private key"
         required: true
+      container-registry-username:
+        description: "Username for container-image's registry, if private. Inert when container-image is empty (specs/038-runner-container-passthrough)."
+        required: false
+      container-registry-password:
+        description: "Password or token for container-image's registry, if private. May be a short-lived token minted by the calling wrapper before its uses: call. Inert when container-image is empty (specs/038-runner-container-passthrough)."
+        required: false
 
 # Top-level (not per-job): every job needs the same write surface (issues for
 # the lifecycle issue, pull-requests/contents for the version-bump/revert
@@ -194,7 +218,20 @@ jobs:
   # evaluate-path/prepare/verify entirely for this run (T006).
   health-check:
     if: inputs.trigger == 'scheduled' || inputs.trigger == 'dispatch'
-    runs-on: ubuntu-latest
+    # runner/container-image passthrough (specs/038). Empty
+    # container-image is expected to be a no-op (research.md D3); live
+    # verification requires a workflow_dispatch trigger this automated
+    # implementation run could not perform (T001) and remains deferred to
+    # a human/scratch-adopter-repo pass. The runs-on ternary's JSON-array
+    # branch is likewise unverified beyond single-element arrays —
+    # multi-label self-hosted conjunction is scratch-adopter-repo-verified
+    # only (research.md D2).
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials:
+        username: ${{ secrets.container-registry-username }}
+        password: ${{ secrets.container-registry-password }}
     # Empirically verified 2026-08-05/06 against GitHub-hosted runners
     # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
     # form accepts an expression in both name and deployment, and a
@@ -396,7 +433,20 @@ jobs:
   detect:
     needs: health-check
     if: needs.health-check.result == 'success' && needs.health-check.outputs.pinned-ok != 'false'
-    runs-on: ubuntu-latest
+    # runner/container-image passthrough (specs/038). Empty
+    # container-image is expected to be a no-op (research.md D3); live
+    # verification requires a workflow_dispatch trigger this automated
+    # implementation run could not perform (T001) and remains deferred to
+    # a human/scratch-adopter-repo pass. The runs-on ternary's JSON-array
+    # branch is likewise unverified beyond single-element arrays —
+    # multi-label self-hosted conjunction is scratch-adopter-repo-verified
+    # only (research.md D2).
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials:
+        username: ${{ secrets.container-registry-username }}
+        password: ${{ secrets.container-registry-password }}
     # Empirically verified 2026-08-05/06 against GitHub-hosted runners
     # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
     # form accepts an expression in both name and deployment, and a
@@ -479,7 +529,20 @@ jobs:
   settle:
     needs: detect
     if: needs.detect.result == 'success' && needs.detect.outputs.newer == 'true'
-    runs-on: ubuntu-latest
+    # runner/container-image passthrough (specs/038). Empty
+    # container-image is expected to be a no-op (research.md D3); live
+    # verification requires a workflow_dispatch trigger this automated
+    # implementation run could not perform (T001) and remains deferred to
+    # a human/scratch-adopter-repo pass. The runs-on ternary's JSON-array
+    # branch is likewise unverified beyond single-element arrays —
+    # multi-label self-hosted conjunction is scratch-adopter-repo-verified
+    # only (research.md D2).
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials:
+        username: ${{ secrets.container-registry-username }}
+        password: ${{ secrets.container-registry-password }}
     # Empirically verified 2026-08-05/06 against GitHub-hosted runners
     # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
     # form accepts an expression in both name and deployment, and a
@@ -706,7 +769,20 @@ jobs:
       always() &&
       ((needs.settle.result == 'success' && needs.settle.outputs.settled == 'true') ||
        (needs.comment-reply.result == 'success' && needs.comment-reply.outputs.resumed == 'true'))
-    runs-on: ubuntu-latest
+    # runner/container-image passthrough (specs/038). Empty
+    # container-image is expected to be a no-op (research.md D3); live
+    # verification requires a workflow_dispatch trigger this automated
+    # implementation run could not perform (T001) and remains deferred to
+    # a human/scratch-adopter-repo pass. The runs-on ternary's JSON-array
+    # branch is likewise unverified beyond single-element arrays —
+    # multi-label self-hosted conjunction is scratch-adopter-repo-verified
+    # only (research.md D2).
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials:
+        username: ${{ secrets.container-registry-username }}
+        password: ${{ secrets.container-registry-password }}
     # Empirically verified 2026-08-05/06 against GitHub-hosted runners
     # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
     # form accepts an expression in both name and deployment, and a
@@ -1286,7 +1362,20 @@ jobs:
       always() &&
       needs.evaluate-path.result == 'success' &&
       needs.evaluate-path.outputs.outcome == 'clean-bump'
-    runs-on: ubuntu-latest
+    # runner/container-image passthrough (specs/038). Empty
+    # container-image is expected to be a no-op (research.md D3); live
+    # verification requires a workflow_dispatch trigger this automated
+    # implementation run could not perform (T001) and remains deferred to
+    # a human/scratch-adopter-repo pass. The runs-on ternary's JSON-array
+    # branch is likewise unverified beyond single-element arrays —
+    # multi-label self-hosted conjunction is scratch-adopter-repo-verified
+    # only (research.md D2).
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials:
+        username: ${{ secrets.container-registry-username }}
+        password: ${{ secrets.container-registry-password }}
     # Empirically verified 2026-08-05/06 against GitHub-hosted runners
     # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
     # form accepts an expression in both name and deployment, and a
@@ -1468,7 +1557,20 @@ jobs:
       always() &&
       needs.prepare.result == 'success' &&
       needs.prepare.outputs.release-type != 'patch'
-    runs-on: ubuntu-latest
+    # runner/container-image passthrough (specs/038). Empty
+    # container-image is expected to be a no-op (research.md D3); live
+    # verification requires a workflow_dispatch trigger this automated
+    # implementation run could not perform (T001) and remains deferred to
+    # a human/scratch-adopter-repo pass. The runs-on ternary's JSON-array
+    # branch is likewise unverified beyond single-element arrays —
+    # multi-label self-hosted conjunction is scratch-adopter-repo-verified
+    # only (research.md D2).
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials:
+        username: ${{ secrets.container-registry-username }}
+        password: ${{ secrets.container-registry-password }}
     # Empirically verified 2026-08-05/06 against GitHub-hosted runners
     # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
     # form accepts an expression in both name and deployment, and a
@@ -1940,7 +2042,20 @@ jobs:
     # Same reason as `prepare` above: guarding only `prepare` would have
     # moved the silence one job down instead of ending it.
     if: always() && needs.prepare.result == 'success'
-    runs-on: ubuntu-latest
+    # runner/container-image passthrough (specs/038). Empty
+    # container-image is expected to be a no-op (research.md D3); live
+    # verification requires a workflow_dispatch trigger this automated
+    # implementation run could not perform (T001) and remains deferred to
+    # a human/scratch-adopter-repo pass. The runs-on ternary's JSON-array
+    # branch is likewise unverified beyond single-element arrays —
+    # multi-label self-hosted conjunction is scratch-adopter-repo-verified
+    # only (research.md D2).
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials:
+        username: ${{ secrets.container-registry-username }}
+        password: ${{ secrets.container-registry-password }}
     # Empirically verified 2026-08-05/06 against GitHub-hosted runners
     # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
     # form accepts an expression in both name and deployment, and a
@@ -2281,7 +2396,20 @@ jobs:
        needs.prepare.result == 'failure' ||
        needs.verify.result == 'success' ||
        needs.verify.result == 'failure')
-    runs-on: ubuntu-latest
+    # runner/container-image passthrough (specs/038). Empty
+    # container-image is expected to be a no-op (research.md D3); live
+    # verification requires a workflow_dispatch trigger this automated
+    # implementation run could not perform (T001) and remains deferred to
+    # a human/scratch-adopter-repo pass. The runs-on ternary's JSON-array
+    # branch is likewise unverified beyond single-element arrays —
+    # multi-label self-hosted conjunction is scratch-adopter-repo-verified
+    # only (research.md D2).
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials:
+        username: ${{ secrets.container-registry-username }}
+        password: ${{ secrets.container-registry-password }}
     # Empirically verified 2026-08-05/06 against GitHub-hosted runners
     # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
     # form accepts an expression in both name and deployment, and a
@@ -2663,7 +2791,20 @@ jobs:
     if: >-
       inputs.trigger == 'pr-merged' &&
       inputs.pr-merged
-    runs-on: ubuntu-latest
+    # runner/container-image passthrough (specs/038). Empty
+    # container-image is expected to be a no-op (research.md D3); live
+    # verification requires a workflow_dispatch trigger this automated
+    # implementation run could not perform (T001) and remains deferred to
+    # a human/scratch-adopter-repo pass. The runs-on ternary's JSON-array
+    # branch is likewise unverified beyond single-element arrays —
+    # multi-label self-hosted conjunction is scratch-adopter-repo-verified
+    # only (research.md D2).
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials:
+        username: ${{ secrets.container-registry-username }}
+        password: ${{ secrets.container-registry-password }}
     # Empirically verified 2026-08-05/06 against GitHub-hosted runners
     # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
     # form accepts an expression in both name and deployment, and a
@@ -2801,7 +2942,20 @@ jobs:
     if: >-
       inputs.trigger == 'comment-reply' &&
       (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), inputs.commenter-association) || inputs.commenter-id == inputs.issue-author-id)
-    runs-on: ubuntu-latest
+    # runner/container-image passthrough (specs/038). Empty
+    # container-image is expected to be a no-op (research.md D3); live
+    # verification requires a workflow_dispatch trigger this automated
+    # implementation run could not perform (T001) and remains deferred to
+    # a human/scratch-adopter-repo pass. The runs-on ternary's JSON-array
+    # branch is likewise unverified beyond single-element arrays —
+    # multi-label self-hosted conjunction is scratch-adopter-repo-verified
+    # only (research.md D2).
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials:
+        username: ${{ secrets.container-registry-username }}
+        password: ${{ secrets.container-registry-password }}
     # Empirically verified 2026-08-05/06 against GitHub-hosted runners
     # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
     # form accepts an expression in both name and deployment, and a
