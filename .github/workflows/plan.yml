@@ -530,9 +530,22 @@ jobs:
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
           step-label: "plan.direct-commit"
 
+      - name: Compute agent turn ceiling (auto)
+        id: agent-auto-ceiling
+        if: steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto' && steps.tool-args-plan-direct-commit.outputs.allowed-tools != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
+        with:
+          intended-turns: ${{ inputs.max-turns }}
+
       - name: Generate implementation plan (direct commit)
         id: agent-auto
         if: steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto' && steps.tool-args-plan-direct-commit.outputs.allowed-tools != ''
+        # The action rejects a healthy, finished run post-hoc when its own
+        # inflated .num_turns reads above --max-turns (which is now the
+        # runaway ceiling, not the intended budget) — without this, that
+        # rejection stops the whole job before the verdict step below can
+        # even run (specs/037-agent-turn-budget-guard/, issue #204).
+        continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -620,9 +633,34 @@ jobs:
             above, or record the limitation for the human and move on.
           claude_args: |
             --model ${{ inputs.model }}
-            --max-turns ${{ inputs.max-turns }}
+            --max-turns ${{ steps.agent-auto-ceiling.outputs.ceiling }}
             --allowedTools "${{ steps.tool-args-plan-direct-commit.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-plan-direct-commit.outputs.disallowed-tools }}"
+
+      # Deterministic, transcript-only verdict (healthy/exhausted/failed/
+      # unclassifiable) — replaces the raw steps.agent-auto.outcome checks,
+      # which the action's own post-hoc turn-budget rejection could no longer
+      # be trusted to reflect (specs/037-agent-turn-budget-guard/). Scoped to
+      # mode == 'auto' — agent-pr's run (if any) shares this job's default
+      # transcript path and must not be misread as this step's result.
+      - name: Compute agent run verdict (auto)
+        id: agent-auto-verdict
+        if: always() && steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
+        with:
+          intended-turns: ${{ inputs.max-turns }}
+          run-label: "plan (auto)"
+
+      # Uniform across every rewired call site (research.md R7 step 5): the
+      # single point where a non-healthy verdict actually fails the job.
+      - name: Fail loud on non-healthy agent verdict (auto)
+        if: always() && steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto' && steps.agent-auto-verdict.outputs.verdict != 'healthy'
+        env:
+          VERDICT: ${{ steps.agent-auto-verdict.outputs.verdict }}
+          REASON: ${{ steps.agent-auto-verdict.outputs.reason }}
+        run: |
+          echo "::error::wing-commander plan stage (auto): agent step rejected — verdict=$VERDICT: $REASON"
+          exit 1
 
       # Pr mode — the plan arrives as a reviewable PR against the spec
       # branch; nothing lands on the spec branch directly and the tasks
@@ -639,9 +677,22 @@ jobs:
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
           step-label: "plan.pr"
 
+      - name: Compute agent turn ceiling (pr)
+        id: agent-pr-ceiling
+        if: steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'pr' && steps.tool-args-plan-pr.outputs.allowed-tools != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
+        with:
+          intended-turns: ${{ inputs.max-turns }}
+
       - name: Generate implementation plan
         id: agent-pr
         if: steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'pr' && steps.tool-args-plan-pr.outputs.allowed-tools != ''
+        # The action rejects a healthy, finished run post-hoc when its own
+        # inflated .num_turns reads above --max-turns (which is now the
+        # runaway ceiling, not the intended budget) — without this, that
+        # rejection stops the whole job before the verdict step below can
+        # even run (specs/037-agent-turn-budget-guard/, issue #204).
+        continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -733,9 +784,34 @@ jobs:
             above, or record the limitation for the human and move on.
           claude_args: |
             --model ${{ inputs.model }}
-            --max-turns ${{ inputs.max-turns }}
+            --max-turns ${{ steps.agent-pr-ceiling.outputs.ceiling }}
             --allowedTools "${{ steps.tool-args-plan-pr.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-plan-pr.outputs.disallowed-tools }}"
+
+      # Deterministic, transcript-only verdict (healthy/exhausted/failed/
+      # unclassifiable) — replaces the raw steps.agent-pr.outcome checks,
+      # which the action's own post-hoc turn-budget rejection could no longer
+      # be trusted to reflect (specs/037-agent-turn-budget-guard/). Scoped to
+      # mode == 'pr' — agent-auto's run (if any) shares this job's default
+      # transcript path and must not be misread as this step's result.
+      - name: Compute agent run verdict (pr)
+        id: agent-pr-verdict
+        if: always() && steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'pr'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
+        with:
+          intended-turns: ${{ inputs.max-turns }}
+          run-label: "plan (pr)"
+
+      # Uniform across every rewired call site (research.md R7 step 5): the
+      # single point where a non-healthy verdict actually fails the job.
+      - name: Fail loud on non-healthy agent verdict (pr)
+        if: always() && steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'pr' && steps.agent-pr-verdict.outputs.verdict != 'healthy'
+        env:
+          VERDICT: ${{ steps.agent-pr-verdict.outputs.verdict }}
+          REASON: ${{ steps.agent-pr-verdict.outputs.reason }}
+        run: |
+          echo "::error::wing-commander plan stage (pr): agent step rejected — verdict=$VERDICT: $REASON"
+          exit 1
 
       # Only flip the stage label once the plan PR verifiably exists
       # (deterministic — no agent turns spent on labels). Pr mode only — it
@@ -854,3 +930,41 @@ jobs:
         with:
           model: ${{ inputs.model }}
           max-turns: ${{ inputs.max-turns }}
+          verdict: ${{ steps.agent-auto-verdict.outputs.verdict || steps.agent-pr-verdict.outputs.verdict }}
+          verdict-reason: ${{ steps.agent-auto-verdict.outputs.reason || steps.agent-pr-verdict.outputs.reason }}
+
+      # Observability, not failure (FR-017) — the intended budget was fully
+      # used but the run finished healthy; the runaway ceiling above is the
+      # only hard stop.
+      - name: Report over-budget agent run (auto)
+        if: steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto' && steps.agent-auto-verdict.outputs.verdict == 'healthy' && steps.agent-auto-verdict.outputs.over-budget == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ steps.meta.outputs.issue || steps.newissue.outputs.issue }}
+          kind: info
+          summary: "This step used its full intended turn budget."
+          body: >-
+            Counted ${{ steps.agent-auto-verdict.outputs.counted-turns }} of an
+            intended ${{ inputs.max-turns }} turns. The run continued and
+            finished successfully — the runaway ceiling
+            (${{ steps.agent-auto-ceiling.outputs.ceiling }}) is the only hard
+            stop; this is an observability note, not a failure.
+
+      # Observability, not failure (FR-017) — the intended budget was fully
+      # used but the run finished healthy; the runaway ceiling above is the
+      # only hard stop.
+      - name: Report over-budget agent run (pr)
+        if: steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'pr' && steps.agent-pr-verdict.outputs.verdict == 'healthy' && steps.agent-pr-verdict.outputs.over-budget == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ steps.meta.outputs.issue || steps.newissue.outputs.issue }}
+          kind: info
+          summary: "This step used its full intended turn budget."
+          body: >-
+            Counted ${{ steps.agent-pr-verdict.outputs.counted-turns }} of an
+            intended ${{ inputs.max-turns }} turns. The run continued and
+            finished successfully — the runaway ceiling
+            (${{ steps.agent-pr-ceiling.outputs.ceiling }}) is the only hard
+            stop; this is an observability note, not a failure.

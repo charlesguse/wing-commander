@@ -128,7 +128,7 @@ new_step_env
 HERE="$PWD"; cd "$RUNNER_TEMP" || exit 1
 mkdir -p e2e-scratch/specs/001-throwaway
 printf '# Throwaway feature\n' > e2e-scratch/specs/001-throwaway/spec.md
-export DECIDE_OUTCOME=success
+export DECIDE_OUTCOME=healthy
 GHA_SUBST=()
 run_step 'auto-update-spec-kit__e2e-stage__*read-back-stage-result*.sh' >/dev/null 2>&1
 cd "$HERE" || exit 1
@@ -244,7 +244,7 @@ echo
 echo "--- Scenario 4: e2e-stage did not complete -> passed=false, distinct wording (FR-021) ---"
 new_step_env
 HERE="$PWD"; cd "$RUNNER_TEMP" || exit 1
-export DECIDE_OUTCOME=failure
+export DECIDE_OUTCOME=failed
 GHA_SUBST=()
 run_step 'auto-update-spec-kit__e2e-stage__*read-back-stage-result*.sh' >/dev/null 2>&1
 cd "$HERE" || exit 1
@@ -252,10 +252,10 @@ check "S4 incomplete stage -> not passed" "$(out passed)" "false"
 S4_DETAIL="$(out failure-detail)"
 check_contains "S4 detail states the stage did not complete" "$S4_DETAIL" "did not complete"
 
-echo "  (or: the agent step never reached a success outcome at all, simulating a timeout)"
+echo "  (or: the agent step never reached a healthy verdict at all, simulating a timeout)"
 new_step_env
 HERE="$PWD"; cd "$RUNNER_TEMP" || exit 1
-export DECIDE_OUTCOME=cancelled
+export DECIDE_OUTCOME=unclassifiable
 GHA_SUBST=()
 run_step 'auto-update-spec-kit__e2e-stage__*read-back-stage-result*.sh' >/dev/null 2>&1
 cd "$HERE" || exit 1
@@ -266,7 +266,7 @@ echo "--- Scenario 5: e2e-stage completes but produces no/wrong-shaped output (F
 new_step_env
 HERE="$PWD"; cd "$RUNNER_TEMP" || exit 1
 mkdir -p e2e-scratch   # no specs/*/spec.md at all
-export DECIDE_OUTCOME=success
+export DECIDE_OUTCOME=healthy
 GHA_SUBST=()
 run_step 'auto-update-spec-kit__e2e-stage__*read-back-stage-result*.sh' >/dev/null 2>&1
 cd "$HERE" || exit 1
@@ -286,7 +286,7 @@ echo "  (and with no e2e-scratch/specs directory at all — run 31906592089)"
 # their values.
 new_step_env
 HERE="$PWD"; cd "$RUNNER_TEMP" || exit 1
-export DECIDE_OUTCOME=success
+export DECIDE_OUTCOME=healthy
 GHA_SUBST=()
 run_step 'auto-update-spec-kit__e2e-stage__*read-back-stage-result*.sh' >/dev/null 2>&1
 RB_RC=$?
@@ -300,7 +300,7 @@ new_step_env
 HERE="$PWD"; cd "$RUNNER_TEMP" || exit 1
 mkdir -p e2e-scratch/specs/001-throwaway
 : > e2e-scratch/specs/001-throwaway/spec.md
-export DECIDE_OUTCOME=success
+export DECIDE_OUTCOME=healthy
 GHA_SUBST=()
 run_step 'auto-update-spec-kit__e2e-stage__*read-back-stage-result*.sh' >/dev/null 2>&1
 cd "$HERE" || exit 1

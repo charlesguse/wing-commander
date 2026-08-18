@@ -214,11 +214,19 @@ def evaluate_if(expr, ctx, step_name, path):
             f"verify-clarification-gating.py rather than dropping the step."
         )
     for term in expr.split("&&"):
+        term = term.strip()
+        # always() only cancels the implicit success() GitHub Actions would
+        # otherwise AND onto every `if:` — it says nothing about any ctx
+        # value. Every caller already tracks job_failed separately from this
+        # evaluator (see the `not job_failed and evaluate_if(...)` call
+        # sites), so a bare always() term is a no-op here, not a hard error.
+        if term == "always()":
+            continue
         m = TERM.match(term)
         if not m:
             sys.exit(
                 f"::error file={path}::step {step_name!r} has an if: term this "
-                f"harness cannot parse ({term.strip()!r}). Extend evaluate_if()."
+                f"harness cannot parse ({term!r}). Extend evaluate_if()."
             )
         actual = ctx.get(m.group("lhs"), "")
         if m.group("op") == "==":
@@ -664,6 +672,12 @@ def run_scenario(stage, steps, sc, tmproot):
     ctx = {
         "steps.lifecycle-gate.outputs.is-open": "true",
         "steps.agent.outcome": "success",
+        # Baseline for every scenario here: a healthy agent run. These
+        # scenarios exercise clarification-shape defects downstream of the
+        # verdict, not the verdict computation itself (that is Gate 22's
+        # job) — specs/037-agent-turn-budget-guard/ replaced both stages'
+        # validation-gate condition with this output.
+        "steps.agent-verdict.outputs.verdict": "healthy",
         "steps.created.outputs.spec-dir": sc["spec_dir"],
     }
 

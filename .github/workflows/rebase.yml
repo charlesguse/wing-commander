@@ -564,6 +564,18 @@ jobs:
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
           step-label: "rebase"
 
+      # specs/037-agent-turn-budget-guard/: turns the intended turn budget
+      # (inputs.max-turns) into the literal --max-turns ceiling passed to the
+      # agent below — the action's own post-hoc rejection of a healthy run
+      # whose .num_turns reads above the intended budget no longer stops this
+      # job before the verdict step can run.
+      - name: Compute agent turn ceiling
+        id: agent-ceiling
+        if: steps.attempt.outputs.outcome == 'conflict' && steps.tool-args-rebase.outputs.allowed-tools != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
+        with:
+          intended-turns: ${{ inputs.max-turns }}
+
       - name: Resolve conflicts
         id: agent
         if: steps.attempt.outputs.outcome == 'conflict' && steps.tool-args-rebase.outputs.allowed-tools != ''
@@ -621,9 +633,23 @@ jobs:
             conflicted files.
           claude_args: |
             --model ${{ inputs.model }}
-            --max-turns ${{ inputs.max-turns }}
+            --max-turns ${{ steps.agent-ceiling.outputs.ceiling }}
             --allowedTools "${{ steps.tool-args-rebase.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-rebase.outputs.disallowed-tools }}"
+
+      # Deterministic, transcript-only verdict (healthy/exhausted/failed/
+      # unclassifiable) — replaces the raw steps.agent.outcome reads below,
+      # which the action's own post-hoc turn-budget rejection could no longer
+      # be trusted to reflect (specs/037-agent-turn-budget-guard/). Gated the
+      # same way the other post-agent steps in this job already are: only
+      # when the agent step actually ran (a clean, non-conflict rebase never
+      # reaches the agent, and there is nothing to classify).
+      - name: Compute agent run verdict
+        id: agent-verdict
+        if: always() && steps.agent.outcome != 'skipped'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
+        with:
+          intended-turns: ${{ inputs.max-turns }}
 
       - name: Upload Claude execution log
         if: always() && steps.agent.outcome != 'skipped'
@@ -643,6 +669,31 @@ jobs:
         with:
           model: ${{ inputs.model }}
           max-turns: ${{ inputs.max-turns }}
+          verdict: ${{ steps.agent-verdict.outputs.verdict }}
+          verdict-reason: ${{ steps.agent-verdict.outputs.reason }}
+
+      # Observability, not failure (FR-017) — the intended budget was fully
+      # used but the run finished healthy; the runaway ceiling above is the
+      # only hard stop. Reuses this file's own escalation path: the same
+      # wing-commander-callout + lifecycle-issue addressing "Publish rebased
+      # branch" and "Announce the rebase escalation" already use, addressed
+      # via matrix.issue (this branch's own lifecycle issue, discovered
+      # up front) rather than steps.escalate.outputs.issue, which only the
+      # abandon-and-escalate arm below ever populates.
+      - name: Report over-budget agent run
+        if: matrix.issue != '' && steps.agent-verdict.outputs.verdict == 'healthy' && steps.agent-verdict.outputs.over-budget == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ matrix.issue }}
+          kind: info
+          summary: "This step used its full intended turn budget."
+          body: >-
+            Counted ${{ steps.agent-verdict.outputs.counted-turns }} of an
+            intended ${{ inputs.max-turns }} turns. The run continued and
+            finished successfully — the runaway ceiling
+            (${{ steps.agent-ceiling.outputs.ceiling }}) is the only hard
+            stop; this is an observability note, not a failure.
 
       # Deterministic scope verification of the AI result. Treat an
       # incomplete rebase or an errored/timed-out agent as failure. Otherwise
@@ -655,7 +706,12 @@ jobs:
         if: always() && steps.attempt.outputs.outcome == 'conflict'
         env:
           SLUG: ${{ matrix.slug }}
-          AGENT_OUTCOME: ${{ steps.agent.outcome }}
+          # specs/037-agent-turn-budget-guard/: the deterministic verdict,
+          # not the raw action outcome — steps.agent.outcome went 'failure'
+          # for a genuinely healthy run whose .num_turns read above the old
+          # (intended-budget) --max-turns, and that false negative is exactly
+          # what sent healthy resolutions down this abandon-and-escalate path.
+          AGENT_VERDICT: ${{ steps.agent-verdict.outputs.verdict }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
         run: |
           set -uo pipefail
@@ -664,8 +720,8 @@ jobs:
 
           if [ -d "$(git rev-parse --git-path rebase-merge)" ] || \
              [ -d "$(git rev-parse --git-path rebase-apply)" ] || \
-             [ "$AGENT_OUTCOME" != "success" ]; then
-            echo "::warning::${SPEC_PREFIX}$SLUG: AI rebase did not complete (agent outcome=$AGENT_OUTCOME) — abandoning."
+             [ "$AGENT_VERDICT" != "healthy" ]; then
+            echo "::warning::${SPEC_PREFIX}$SLUG: AI rebase did not complete (agent verdict=$AGENT_VERDICT) — abandoning."
             echo "${SPEC_PREFIX}$SLUG: AI resolution incomplete — abandoning and escalating." >> "$GITHUB_STEP_SUMMARY"
             escalate=true
           else
@@ -707,6 +763,22 @@ jobs:
 
           echo "push=$push"         >> "$GITHUB_OUTPUT"
           echo "escalate=$escalate" >> "$GITHUB_OUTPUT"
+
+      # Uniform across every rewired call site (research.md R7 step 5): the
+      # single point where a non-healthy verdict actually fails the job, so a
+      # genuinely errored/exhausted/unreadable conflict-resolution run shows
+      # red with a named cause instead of ending green because the abandon-
+      # and-escalate path below already handled it gracefully. Gated the same
+      # way "Compute agent run verdict" above is — only when the agent step
+      # actually ran.
+      - name: Fail loud on non-healthy agent verdict
+        if: always() && steps.agent.outcome != 'skipped' && steps.agent-verdict.outputs.verdict != 'healthy'
+        env:
+          VERDICT: ${{ steps.agent-verdict.outputs.verdict }}
+          REASON: ${{ steps.agent-verdict.outputs.reason }}
+        run: |
+          echo "::error::wing-commander rebase stage: agent step rejected — verdict=$VERDICT: $REASON"
+          exit 1
 
       # The single shared publish path for a clean rebase and a scope-verified
       # AI resolution. The lease compares against the branch tip recorded at

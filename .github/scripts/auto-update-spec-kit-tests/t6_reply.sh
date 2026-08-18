@@ -95,7 +95,13 @@ echo "=== Scenario 13: reply interpretation read-back (deterministic, fail-safe)
 readback() { # readback <is_error> <subtype> <result> <step-outcome>
   new_step_env
   agent_out "$1" "$2" "$3"
-  GHA_SUBST=("runner.temp=$RUNNER_TEMP" "steps.interpret.outcome=$4" "steps.guard.outputs.proceed=true")
+  local verdict=""
+  case "$4" in
+    success) verdict="healthy" ;;
+    failure) verdict="failed" ;;
+    skipped) verdict="" ;;
+  esac
+  GHA_SUBST=("runner.temp=$RUNNER_TEMP" "steps.interpret-verdict.outputs.verdict=$verdict" "steps.guard.outputs.proceed=true")
   run_step 'auto-update-spec-kit__comment-reply__*read-back-interpretation*.sh' >/dev/null 2>&1
   D_REC="$(out recognized)"; D_CHOSEN="$(out chosen)"
 }
@@ -140,7 +146,13 @@ echo "=== Scenarios 12/14: evaluate-path decision read-back ==="
 epath() { # epath <is_error> <subtype> <result> <step-outcome> <resumed> [guard-skip] [guard-reason] [guard-matches]
   new_step_env
   agent_out "$1" "$2" "$3"
-  GHA_SUBST=("runner.temp=$RUNNER_TEMP" "steps.decide.outcome=$4")
+  local verdict=""
+  case "$4" in
+    success) verdict="healthy" ;;
+    failure) verdict="failed" ;;
+    skipped) verdict="" ;;
+  esac
+  GHA_SUBST=("runner.temp=$RUNNER_TEMP" "steps.decide-verdict.outputs.verdict=$verdict")
   # extract.py takes the `run:` body alone, so every `env:` the step declares
   # has to be exported here. The guard trio defaults to empty because that is
   # what Actions renders for an output a step never set — not "unset": the
@@ -208,7 +220,7 @@ result = json.dumps({"outcome":"ambiguous-options","reasoning":payload,
   "options":[{"label":payload,"description":payload}]})
 json.dump([{"type":"result","is_error":False,"subtype":"success","result":result}], open(path,"w",encoding="utf-8"))
 PY
-GHA_SUBST=("runner.temp=$RUNNER_TEMP" "steps.decide.outcome=success")
+GHA_SUBST=("runner.temp=$RUNNER_TEMP" "steps.decide-verdict.outputs.verdict=healthy")
 export RESUMED=false ISSUE=42 GUARD_SKIP= GUARD_REASON= GUARD_MATCHES=   # see epath()
 run_step 'auto-update-spec-kit__evaluate-path__*read-back-decision*.sh' >/dev/null 2>&1
 INJ_REASON="$(out reasoning)"; INJ_OPTS="$(out options)"

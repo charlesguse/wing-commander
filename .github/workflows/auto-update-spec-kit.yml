@@ -893,6 +893,13 @@ jobs:
                 | {tag: .tag_name, url: .html_url, body: .body} ]
           ' > "$RUNNER_TEMP/release-notes.json" 2>/dev/null || echo '[]' > "$RUNNER_TEMP/release-notes.json"
 
+      - name: Compute agent turn ceiling
+        id: decide-ceiling
+        if: steps.entry.outputs.resumed != 'true' && steps.guard.outputs.skip != 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
+        with:
+          intended-turns: 30
+
       - name: Decide upgrade path
         id: decide
         if: steps.entry.outputs.resumed != 'true' && steps.guard.outputs.skip != 'true'
@@ -942,31 +949,38 @@ jobs:
             sources as the release URLs from release-notes.json — never
             fabricate a source, and never invent options that aren't actually
             described in the release notes.
-          # --max-turns is 30, not the 15 this shipped with, for two
-          # compounding reasons found on run 31898987431:
-          #
-          #   1. The action fails the step by comparing the result record's
-          #      `.num_turns` against this cap, and those are different
-          #      counters — the same mismatch Gate 11
-          #      (verify-metrics-turn-accounting.py) exists to catch, where
-          #      `.num_turns` measured 1.0x-2.3x the main-loop responses
-          #      `--max-turns` actually enforces. So the cap has to absorb
-          #      that inflation or a run well inside its budget still fails.
-          #   2. The evidence grows on its own. The agent reads every release
-          #      between the pin and the candidate: 22 entries on 2026-08-13
-          #      (passed), 24 on 2026-08-15 (failed at .num_turns 16 after
-          #      reaching a verdict). Every upstream release narrows a fixed
-          #      cap further.
-          #
-          # 30 is ~2x the observed steady-state read, which bounds the
-          # worst-case spend (that run cost $0.75) while leaving room for the
-          # release list to keep growing.
+          # Intended-turns is 30 — ~2x the observed steady-state read (22-24
+          # release entries between the pin and the candidate on run
+          # 31898987431), leaving room for the release list to keep growing.
+          # wing-commander-turn-ceiling turns that into the actual --max-turns
+          # runaway cap, absorbing the .num_turns-vs.-turns-actually-enforced
+          # inflation that used to reject a healthy run well inside its budget
+          # (specs/037-agent-turn-budget-guard/).
           claude_args: |
             --model ${{ inputs.model }}
-            --max-turns 30
+            --max-turns ${{ steps.decide-ceiling.outputs.ceiling }}
             --allowedTools "Read,Grep,Bash(gh api:*),Bash(git diff:*)"
             --disallowedTools "WebSearch,WebFetch,Write,Edit,Bash(git commit:*),Bash(git push:*)"
             --json-schema '{"type":"object","properties":{"outcome":{"type":"string","enum":["clean-bump","needs-migration","ambiguous-options"]},"reasoning":{"type":"string"},"sources":{"type":"array","items":{"type":"object","properties":{"title":{"type":"string"},"url":{"type":"string"}},"required":["title","url"]}},"options":{"type":["array","null"],"items":{"type":"object","properties":{"label":{"type":"string"},"description":{"type":"string"}},"required":["label","description"]}}},"required":["outcome","reasoning","sources"]}'
+
+      # Deterministic, transcript-only verdict — replaces the raw
+      # steps.decide.outcome checks below (specs/037-agent-turn-budget-guard/).
+      - name: Compute agent run verdict
+        id: decide-verdict
+        if: steps.entry.outputs.resumed != 'true' && always()
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
+        with:
+          intended-turns: 30
+          run-label: evaluate-path
+
+      - name: Fail loud on non-healthy agent verdict
+        if: steps.entry.outputs.resumed != 'true' && always() && steps.decide-verdict.outputs.verdict != 'healthy'
+        env:
+          VERDICT: ${{ steps.decide-verdict.outputs.verdict }}
+          REASON: ${{ steps.decide-verdict.outputs.reason }}
+        run: |
+          echo "::error::wing-commander auto-update-spec-kit evaluate-path: agent step rejected — verdict=$VERDICT: $REASON"
+          exit 1
 
       - name: Upload Claude execution log
         if: always() && steps.decide.outcome != 'skipped'
@@ -1023,7 +1037,7 @@ jobs:
           reasoning="evaluate-path agent step did not complete successfully — routed to a human rather than guessing."
           sources="[]"
           options="null"
-          if [ "${{ steps.decide.outcome }}" = "success" ] && [ -f "$file" ]; then
+          if [ "${{ steps.decide-verdict.outputs.verdict }}" = "healthy" ] && [ -f "$file" ]; then
             agent_ok="$(jq -r '([.[] | select(.type=="result")] | last) as $r
               | if $r != null and $r.is_error == false and $r.subtype == "success"
                 then "true" else "false" end' "$file" 2>/dev/null || echo false)"
@@ -1699,6 +1713,12 @@ jobs:
       # create-new-feature.sh plus Write/Edit inside e2e-scratch/ only;
       # --disallowedTools blocks web tools and any agent-issued push — the
       # workflow's own deterministic steps (T009/T012) do all pushing.
+      - name: Compute agent turn ceiling
+        id: decide-ceiling
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
+        with:
+          intended-turns: ${{ inputs.e2e-stage-max-turns }}
+
       - name: Run e2e agent-driven stage
         id: decide
         continue-on-error: true
@@ -1787,9 +1807,28 @@ jobs:
           # dispatch. Both spellings are allowed so neither can deadlock it.
           claude_args: |
             --model ${{ inputs.e2e-stage-model }}
-            --max-turns ${{ inputs.e2e-stage-max-turns }}
+            --max-turns ${{ steps.decide-ceiling.outputs.ceiling }}
             --allowedTools "Bash(e2e-scratch/.specify/scripts/bash/create-new-feature.sh:*),Bash(bash e2e-scratch/.specify/scripts/bash/create-new-feature.sh:*),Write(e2e-scratch/**),Edit(e2e-scratch/**),Write(${{ github.workspace }}/e2e-scratch/**),Edit(${{ github.workspace }}/e2e-scratch/**)"
             --disallowedTools "WebSearch,WebFetch,Bash(git push:*)"
+
+      # Deterministic, transcript-only verdict — replaces the raw
+      # steps.decide.outcome checks below (specs/037-agent-turn-budget-guard/).
+      - name: Compute agent run verdict
+        id: decide-verdict
+        if: always()
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
+        with:
+          intended-turns: ${{ inputs.e2e-stage-max-turns }}
+          run-label: e2e-stage
+
+      - name: Fail loud on non-healthy agent verdict
+        if: always() && steps.decide-verdict.outputs.verdict != 'healthy'
+        env:
+          VERDICT: ${{ steps.decide-verdict.outputs.verdict }}
+          REASON: ${{ steps.decide-verdict.outputs.reason }}
+        run: |
+          echo "::error::wing-commander auto-update-spec-kit e2e-stage: agent step rejected — verdict=$VERDICT: $REASON"
+          exit 1
 
       # Same convention as evaluate-path's `decide` and comment-reply's
       # `interpret`: `always()` so the log survives precisely the runs where
@@ -1811,13 +1850,13 @@ jobs:
       - name: Read back stage result
         id: readback
         env:
-          DECIDE_OUTCOME: ${{ steps.decide.outcome }}
+          DECIDE_OUTCOME: ${{ steps.decide-verdict.outputs.verdict }}
         run: |
           set -uo pipefail
           pass=true
           detail=""
 
-          if [ "$DECIDE_OUTCOME" != "success" ]; then
+          if [ "$DECIDE_OUTCOME" != "healthy" ]; then
             pass=false
             detail="the e2e-stage agent step did not complete (outcome: $DECIDE_OUTCOME) — this is a stage/infrastructure problem, not a candidate defect."
           fi
@@ -2864,6 +2903,13 @@ jobs:
       # T026: claude-haiku-4-5, bounded, read-only — map the reply onto one
       # of the previously posted options, or "unrecognized". The comment body
       # is framed as untrusted data throughout (constitution V, Scenario 15).
+      - name: Compute agent turn ceiling
+        id: interpret-ceiling
+        if: steps.guard.outputs.proceed == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
+        with:
+          intended-turns: 8
+
       - name: Interpret the maintainer's reply
         id: interpret
         if: steps.guard.outputs.proceed == 'true'
@@ -2900,10 +2946,29 @@ jobs:
             option that was not posted.
           claude_args: |
             --model claude-haiku-4-5
-            --max-turns 8
+            --max-turns ${{ steps.interpret-ceiling.outputs.ceiling }}
             --allowedTools "Read"
             --disallowedTools "WebSearch,WebFetch,Write,Edit,Bash"
             --json-schema '{"type":"object","properties":{"recognized":{"type":"boolean"},"chosen_option":{"type":["string","null"]}},"required":["recognized"]}'
+
+      # Deterministic, transcript-only verdict — replaces the raw
+      # steps.interpret.outcome checks below (specs/037-agent-turn-budget-guard/).
+      - name: Compute agent run verdict
+        id: interpret-verdict
+        if: steps.guard.outputs.proceed == 'true' && always()
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
+        with:
+          intended-turns: 8
+          run-label: comment-reply
+
+      - name: Fail loud on non-healthy agent verdict
+        if: steps.guard.outputs.proceed == 'true' && always() && steps.interpret-verdict.outputs.verdict != 'healthy'
+        env:
+          VERDICT: ${{ steps.interpret-verdict.outputs.verdict }}
+          REASON: ${{ steps.interpret-verdict.outputs.reason }}
+        run: |
+          echo "::error::wing-commander auto-update-spec-kit comment-reply: agent step rejected — verdict=$VERDICT: $REASON"
+          exit 1
 
       - name: Upload Claude execution log
         if: always() && steps.interpret.outcome != 'skipped'
@@ -2924,7 +2989,7 @@ jobs:
           file="${{ runner.temp }}/claude-execution-output.json"
           recognized=false
           chosen=""
-          if [ "${{ steps.interpret.outcome }}" = "success" ] && [ -f "$file" ]; then
+          if [ "${{ steps.interpret-verdict.outputs.verdict }}" = "healthy" ] && [ -f "$file" ]; then
             agent_ok="$(jq -r '([.[] | select(.type=="result")] | last) as $r
               | if $r != null and $r.is_error == false and $r.subtype == "success"
                 then "true" else "false" end' "$file" 2>/dev/null || echo false)"
