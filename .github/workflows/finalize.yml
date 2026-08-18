@@ -205,8 +205,18 @@ jobs:
           REQUIRED_TOOLS="git gh jq curl python3 bash node"
 
           if [ -n "$REGISTRY_USERNAME" ] && [ -n "$REGISTRY_PASSWORD" ]; then
-            registry="${IMAGE%%/*}"
-            if ! echo "$REGISTRY_PASSWORD" | docker login "$registry" --username "$REGISTRY_USERNAME" --password-stdin 2>docker-login-error.log; then
+            # A bare/namespaced Docker Hub reference (no "." or ":" or
+            # "localhost" in its first path component) has no registry
+            # host to pass to `docker login` -- passing one anyway (e.g.
+            # a namespace) makes login target a nonexistent registry and
+            # fail. Only pass a server argument when the component looks
+            # like a real host (specs/038 T052).
+            candidate="${IMAGE%%/*}"
+            case "$candidate" in
+              *.*|*:*|localhost) login_args=("$candidate") ;;
+              *) login_args=() ;;
+            esac
+            if ! echo "$REGISTRY_PASSWORD" | docker login "${login_args[@]}" --username "$REGISTRY_USERNAME" --password-stdin 2>docker-login-error.log; then
               echo "::error::wing-commander verify-image-prerequisites: the registry rejected the supplied credentials for $IMAGE -- $(cat docker-login-error.log)"
               exit 1
             fi
@@ -215,6 +225,10 @@ jobs:
           if ! docker pull "$IMAGE" 2>docker-pull-error.log; then
             if [ -z "$REGISTRY_USERNAME" ] && [ -z "$REGISTRY_PASSWORD" ]; then
               echo "::error::wing-commander verify-image-prerequisites: failed to pull $IMAGE -- no credentials were supplied for this image. $(cat docker-pull-error.log)"
+            elif [ -z "$REGISTRY_USERNAME" ]; then
+              echo "::error::wing-commander verify-image-prerequisites: failed to pull $IMAGE -- container-registry-username was not supplied (container-registry-password was), so no login was attempted. $(cat docker-pull-error.log)"
+            elif [ -z "$REGISTRY_PASSWORD" ]; then
+              echo "::error::wing-commander verify-image-prerequisites: failed to pull $IMAGE -- container-registry-password was not supplied (container-registry-username was), so no login was attempted. $(cat docker-pull-error.log)"
             else
               echo "::error::wing-commander verify-image-prerequisites: failed to pull $IMAGE -- the registry rejected the supplied credentials or image reference. $(cat docker-pull-error.log)"
             fi
