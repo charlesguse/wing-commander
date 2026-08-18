@@ -75,6 +75,14 @@ verification happens — implementation must record the result (success or a
 needed mechanism change) here or in a linked follow-up, the same way
 specs/031's contract records its own probe evidence inline.
 
+**Still unverified after implementation (2026-08-18)**: the implement stage
+that wired this feature has no `gh workflow run`/`gh run view`/`gh api`
+access under its fixed tool allowlist, so it could not dispatch T001's
+throwaway probe workflow or observe the result. See research.md D2's T001
+outcome note. A human (or a future run with broader tool access) must still
+perform this probe against a scratch adopter repository before this claim
+is treated as proven.
+
 ### Container image: empty means no container (FR-004, FR-005)
 
 **Not yet empirically verified** (research D3, restated here as the
@@ -91,6 +99,13 @@ record the outcome — including the contingency spec.md's Edge Cases section
 already names if the probe disproves the hoped-for behavior: "the pipeline
 needs another way to express 'no container' — and whatever that is must
 still leave unset adopters byte-for-byte unchanged."
+
+**Still unverified after implementation (2026-08-18)**: the same tooling
+gap noted above (no `gh workflow run`/`gh run view`/`gh api` access) applies
+here too — see research.md D3's T001 outcome note. The design proceeds on
+the requester's stated expectation only; this remains an unproven claim
+pending a human (or a future run with broader tool access) running the
+probe.
 
 ## Timing invariant — why credentials and the prerequisite check cannot live inside the real job (research D4, D5)
 

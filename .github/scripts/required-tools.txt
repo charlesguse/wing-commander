@@ -1,0 +1,26 @@
+# Canonical required-tool list for adopter-chosen container images
+# (specs/038-runner-container-passthrough research.md D6, contracts/
+# runner-container-passthrough.md "Image prerequisite contract").
+#
+# Read by two consumers that must stay in agreement structurally, not by
+# convention (FR-011a):
+#   - every stage file's verify-image-prerequisites job (T003) embeds this
+#     same list literally as REQUIRED_TOOLS in its tool-check step;
+#   - lint-workflows.yml's Gate 23 (T032) compares each stage's embedded
+#     list against this file and fails on drift.
+#
+# One tool name per line. '#'-prefixed and blank lines are ignored.
+#
+# node is an INFERRED dependency, not one this repository's own run:
+# blocks directly invoke: anthropics/claude-code-action@v1 (used by every
+# agent-bearing job across all eleven stages) is a JavaScript action, which
+# implies a Node.js runtime requirement this repository's own source cannot
+# confirm or deny (research.md D6). Included on that inference, not on
+# direct evidence — a decision recorded here rather than silently assumed.
+git
+gh
+jq
+curl
+python3
+bash
+node

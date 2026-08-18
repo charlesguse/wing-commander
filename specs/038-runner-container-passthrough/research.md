@@ -80,6 +80,18 @@ smoke test, both for a single label and a JSON-array multi-label value)
 before the mechanism ships — the same discipline specs/031's D8 applied to
 its own actionlint-schema uncertainty, deferred rather than guessed.
 
+**T001 outcome (implementation, 2026-08-18)**: not empirically verified by
+this implementation run either. The automated implement stage that wired
+this feature runs under a fixed, pre-approved shell-command allowlist that
+includes no `gh workflow run`, `gh run view`, or `gh api` — there is no way
+for this run to dispatch a `workflow_dispatch` workflow or observe its
+result. This is recorded here rather than fabricated: the `startsWith(...)
+&& fromJSON(...) || ...` idiom on `runs-on:`, for both a plain-string value
+and a single-element JSON-array value, remains an open live-runner
+verification that a human (or a future run with broader tool access) must
+perform against a scratch adopter repository before this claim can be
+treated as proven, per FR-018.
+
 A value that is not a JSON array (e.g. `"self-hosted"`, a bare label with no
 brackets) is read as a single label — `startsWith(..., '[')` is `false`, so
 `fromJSON` is never evaluated on it (short-circuit), avoiding a `fromJSON`
@@ -145,6 +157,17 @@ Edge Cases section already names the fallback obligation: "the pipeline
 needs another way to express 'no container' — and whatever that is must
 still leave unset adopters byte-for-byte unchanged" — solving that
 contingency is out of this plan's scope unless the probe forces it.
+
+**T001 outcome (implementation, 2026-08-18)**: still not verified. The same
+tooling gap recorded against D2 above applies here — this implementation
+run has no `gh workflow run`/`gh run view`/`gh api` access, so it could not
+dispatch the throwaway probe workflow T001 describes or observe a live
+container-less job. The design proceeds on the requester's stated
+expectation exactly as this decision already says; the empty-`image`
+no-op remains an unproven claim pending a human (or a future run with
+broader tool access) running the probe against a scratch adopter repository,
+per FR-005/FR-018. Nothing downstream in this implementation treats it as
+proven.
 
 **Alternatives considered**:
 - Duplicate every job (with/without `container:`) gated by `if:` — rejected
