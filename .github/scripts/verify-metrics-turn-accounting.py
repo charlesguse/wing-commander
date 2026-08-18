@@ -41,10 +41,14 @@ precisely because a hand-copied fixture kept asserting against a filter that
 no longer shipped.
 
 The counting itself now lives in the shared `.github/actions/_shared/
-count-turns.sh` script the shipped block calls via `$GITHUB_ACTION_PATH`
-(specs/037-agent-turn-budget-guard/research.md R5) — this harness sets
-GITHUB_ACTION_PATH to the real action's own directory so that resolution
-finds and exercises the real, current shared script, not a copy.
+count-turns.sh` script the shipped block calls via
+`$GITHUB_ACTION_PATH/../_shared/count-turns.sh`
+(specs/037-agent-turn-budget-guard/research.md R5). Each case reads that
+real file's current contents and lays them out beside a stand-in action
+directory inside the case's own temp tree, pointing GITHUB_ACTION_PATH
+there. The bytes under test are always the shipped script's — but staging
+them per case is what lets the mutation checks below swap in a defective
+copy without touching the checkout on disk.
 
 It ends with mutation checks that reintroduce each defect and assert this
 suite goes red. A detector that has never fired is indistinguishable from
@@ -138,7 +142,8 @@ TRANSCRIPT_NAME = "claude-execution-output.json"
 BASH = None          # resolved once in main()
 
 
-def run_case(name, records, max_turns="100", warn_fraction=None, raw=None):
+def run_case(name, records, max_turns="100", warn_fraction=None, raw=None,
+             ceiling=""):
     """Execute the shipped script over one transcript; return (rc, summary).
 
     run_step() is the shared harness gates 8 and 9 use: it hands the block
@@ -178,6 +183,7 @@ def run_case(name, records, max_turns="100", warn_fraction=None, raw=None):
             {"TRANSCRIPT_PATH": TRANSCRIPT_NAME,
              "MODEL": "claude-sonnet-5",
              "MAX_TURNS": max_turns,
+             "CEILING": ceiling,
              "RUN_LABEL": "cycle",
              "WARN_FRACTION": warn_fraction or "0.8",
              "GITHUB_ACTION_PATH": action_dir},
@@ -187,8 +193,9 @@ def run_case(name, records, max_turns="100", warn_fraction=None, raw=None):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def expect(case, records, want, unwanted=(), max_turns="100", exit_zero=True):
-    rc, output, summary = run_case(case, records, max_turns)
+def expect(case, records, want, unwanted=(), max_turns="100", exit_zero=True,
+           ceiling=""):
+    rc, output, summary = run_case(case, records, max_turns, ceiling=ceiling)
     if exit_zero and rc != 0:
         fail(case, f"the action exited {rc}, breaking its never-fail-the-step "
                    f"contract. output: {output.strip()[:300]}")
@@ -242,6 +249,68 @@ def case_exhausted_is_called_out():
            want=["Turn budget exhausted", "100-turn cap", "| 100 / 100 |"])
     note("an error_max_turns run says the budget ran out in words, rather "
          "than leaving a reader to infer it from a ratio")
+
+
+def case_exhaustion_names_the_ceiling_not_the_intended_budget():
+    """The number a run is cut off at is the ceiling, and only the ceiling.
+
+    Since specs/037-agent-turn-budget-guard the runtime enforces
+    ceil(intended * 2.5), so `error_max_turns` at a site with a 15-turn
+    intended budget means the run made 38 turns, not 15. Naming max-turns
+    in that banner sends a maintainer looking for a 15-turn cap that no
+    longer exists anywhere (PR #221 review).
+    """
+    expect("the exhaustion banner names the enforced ceiling",
+           transcript(main=38, subtype="error_max_turns", num_turns=44),
+           max_turns="15", ceiling="38",
+           want=["Turn budget exhausted", "38-turn runaway ceiling",
+                 "15-turn intended budget", "2.5x"],
+           unwanted=["15-turn cap"])
+    expect("with no ceiling given it still names the cap it was told about",
+           transcript(main=100, subtype="error_max_turns", num_turns=101),
+           want=["100-turn cap"])
+    note("the exhaustion banner names the ceiling the runtime enforced and "
+         "the intended budget it derives from, never the intended budget "
+         "alone")
+
+
+def case_over_intended_is_not_a_warning():
+    """Exceeding the intended budget is now ordinary, and reads that way.
+
+    Before the ceiling existed, used > budget was impossible — the runtime
+    stopped you at the budget. Now a healthy run routinely passes it and
+    keeps going. Rendering that through the threshold-warning branch
+    reprints exactly the "198 / 100 turns (198%)" alarm this file's header
+    documents as the bug it was written to kill.
+    """
+    summary = expect("over the intended budget reads as information",
+                     transcript(main=24, num_turns=30),
+                     max_turns="15", ceiling="38",
+                     want=["Over intended budget", "24 turns", "38-turn "
+                           "runaway ceiling"],
+                     unwanted=["Turn budget warning", "Turn budget "
+                               "exhausted"])
+    if "160%" not in summary:
+        fail("over the intended budget reads as information",
+             f"expected the true ratio (160%) to still be stated, got:\n"
+             f"{summary.strip()[:400]}")
+    expect("at/below the intended budget the threshold warning still fires",
+           transcript(main=14, num_turns=20),
+           max_turns="15", ceiling="38",
+           want=["Turn budget warning", "14/15"],
+           unwanted=["Over intended budget"])
+    # The ceiling clause is an inline command substitution that exits 1 when
+    # CEILING is empty, and composite `shell: bash` steps run under -e that
+    # the action's own `set` cannot remove. A caller that has not wired
+    # `ceiling` yet must still get the line, and the step must still exit 0.
+    expect("a caller with no ceiling wired still renders the line and exits 0",
+           transcript(main=24, num_turns=30),
+           max_turns="15", ceiling="",
+           want=["Over intended budget", "24 turns", "160%"],
+           unwanted=["runaway ceiling", "Turn budget warning"])
+    note("a run past its intended budget but inside the ceiling is reported "
+         "as information, not as a threshold warning — the warning is still "
+         "the right voice below the budget")
 
 
 def case_warning_boundary():
@@ -308,6 +377,8 @@ CASES = [
     case_streamed_chunks_are_one_turn,
     case_subagent_turns_excluded,
     case_exhausted_is_called_out,
+    case_exhaustion_names_the_ceiling_not_the_intended_budget,
+    case_over_intended_is_not_a_warning,
     case_warning_boundary,
     case_no_budget_no_ratio,
     case_uncountable_falls_back_labelled,

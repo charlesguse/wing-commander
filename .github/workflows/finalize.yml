@@ -549,6 +549,7 @@ jobs:
         with:
           model: ${{ inputs.summary-model }}
           max-turns: ${{ inputs.max-turns }}
+          ceiling: ${{ steps.summarize-ceiling.outputs.ceiling }}
           verdict: ${{ steps.summarize-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.summarize-verdict.outputs.reason }}
 

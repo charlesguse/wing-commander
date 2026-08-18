@@ -44,12 +44,12 @@ jobs:
             --model claude-sonnet-5
             --max-turns ${{ steps.agent-ceiling.outputs.ceiling }}
       - id: agent-verdict
-        if: always()
+        if: always() && steps.agent.outcome != 'skipped'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
         with:
           intended-turns: 40
       - name: Fail loud on non-healthy agent verdict
-        if: always() && steps.agent-verdict.outputs.verdict != 'healthy'
+        if: always() && steps.agent.outcome != 'skipped' && steps.agent-verdict.outputs.verdict != 'healthy'
         run: |
           echo "::error::agent step rejected"
           exit 1
@@ -74,7 +74,7 @@ RAW_PASSTHROUGH_MAX_TURNS = replace_once(
 
 MISSING_VERDICT_STEP = replace_once(GOOD_JOB, """\
       - id: agent-verdict
-        if: always()
+        if: always() && steps.agent.outcome != 'skipped'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
         with:
           intended-turns: 40
@@ -82,11 +82,65 @@ MISSING_VERDICT_STEP = replace_once(GOOD_JOB, """\
 
 MISSING_FAIL_LOUD = replace_once(GOOD_JOB, """\
       - name: Fail loud on non-healthy agent verdict
-        if: always() && steps.agent-verdict.outputs.verdict != 'healthy'
+        if: always() && steps.agent.outcome != 'skipped' && steps.agent-verdict.outputs.verdict != 'healthy'
         run: |
           echo "::error::agent step rejected"
           exit 1
 """, "")
+
+# The pre-PR-#221 shape: `always()` and nothing else. The verdict step runs
+# even when the agent step was legitimately skipped, answers
+# `unclassifiable`, and the fail-loud arm fails a green job.
+VERDICT_UNGUARDED = replace_once(
+    GOOD_JOB,
+    "      - id: agent-verdict\n"
+    "        if: always() && steps.agent.outcome != 'skipped'\n",
+    "      - id: agent-verdict\n        if: always()\n")
+
+FAIL_LOUD_UNGUARDED = replace_once(
+    GOOD_JOB,
+    "        if: always() && steps.agent.outcome != 'skipped' && "
+    "steps.agent-verdict.outputs.verdict != 'healthy'\n",
+    "        if: always() && steps.agent-verdict.outputs.verdict "
+    "!= 'healthy'\n")
+
+# The subtler shape, and the one that actually shipped twice: a hand-copied
+# SUBSET of the agent step's conditions instead of its outcome. It looks
+# guarded, and it is — against exactly the skips it happens to name.
+VERDICT_RESTATES_AGENT_CONDITIONS = replace_once(
+    GOOD_JOB,
+    "      - id: agent-verdict\n"
+    "        if: always() && steps.agent.outcome != 'skipped'\n",
+    "      - id: agent-verdict\n"
+    "        if: steps.lifecycle-gate.outputs.is-open == 'true' && always()\n")
+
+# Order within the `&&` chain carries no meaning; watchdog.yml writes the
+# guard first. This must PASS.
+GUARD_BEFORE_ALWAYS = replace_once(
+    GOOD_JOB,
+    "        if: always() && steps.agent.outcome != 'skipped'\n"
+    "        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict\n",
+    "        if: steps.agent.outcome != 'skipped' && always()\n"
+    "        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict\n")
+
+# multiplier: 1 is a raw inputs.max-turns passthrough wearing the
+# composite's clothes — the ceiling equals the intended budget, so the
+# agent is cut off at exactly the number this feature exists to stop
+# cutting it off at. Only detectable by reading the ceiling step's
+# `with:` (T025).
+CEILING_WITH = "        with:\n          intended-turns: 40\n"
+
+MULTIPLIER_OF_ONE = replace_once(
+    GOOD_JOB, CEILING_WITH, CEILING_WITH + "          multiplier: '1'\n")
+
+MULTIPLIER_EXPRESSION_IS_NOT_STATICALLY_KNOWABLE = replace_once(
+    GOOD_JOB, CEILING_WITH,
+    CEILING_WITH + "          multiplier: ${{ inputs.ceiling-multiplier }}\n")
+
+UNPARSEABLE_ALONGSIDE_A_GOOD_SITE = {
+    "stage.yml": GOOD_JOB,
+    "broken.yml": "name: broken\njobs:\n   - [unclosed\n  bad: : :\n",
+}
 
 NO_SITES_AT_ALL = """\
 name: not a stage
@@ -113,6 +167,28 @@ CASES = [
      MISSING_VERDICT_STEP, True, ("agent", "no wing-commander-agent-verdict")),
     ("missing fail-loud arm fails, named",
      MISSING_FAIL_LOUD, True, ("agent", "no fail-loud step")),
+    ("verdict step gated on a bare always(), with no skip guard, fails",
+     VERDICT_UNGUARDED, True, ("agent", "not skip-guarded")),
+    ("fail-loud step with no skip guard fails",
+     FAIL_LOUD_UNGUARDED, True, ("agent", "not skip-guarded")),
+    ("verdict step restating a subset of the agent step's own conditions "
+     "instead of its outcome fails (PR #221's two shipped drifts)",
+     VERDICT_RESTATES_AGENT_CONDITIONS, True,
+     ("agent", "not skip-guarded", "steps.lifecycle-gate")),
+    ("the skip guard written before always() still passes — order in the "
+     "&& chain is not meaning",
+     GUARD_BEFORE_ALWAYS, False, ()),
+    ("a ceiling step declaring multiplier: 1 fails — the ceiling would "
+     "equal the intended budget (T025)",
+     MULTIPLIER_OF_ONE, True, ("agent", "multiplier: 1")),
+    ("a multiplier given as an expression passes — not statically knowable "
+     "here, and the action validates it at runtime",
+     MULTIPLIER_EXPRESSION_IS_NOT_STATICALLY_KNOWABLE, False, ()),
+    ("a workflow that does not parse as YAML fails the gate rather than "
+     "dropping out of coverage — checked alongside a compliant workflow so "
+     "the zero-in-scope-sites guard cannot be what fails the run",
+     UNPARSEABLE_ALONGSIDE_A_GOOD_SITE, True,
+     ("could not parse", "silently dropping")),
 ]
 
 
@@ -121,8 +197,12 @@ def run_case(name, workflow_text, expect_fail, must_mention):
     try:
         wf_dir = os.path.join(root, ".github", "workflows")
         os.makedirs(wf_dir)
-        with open(os.path.join(wf_dir, "stage.yml"), "w", encoding="utf-8") as f:
-            f.write(workflow_text)
+        files = (workflow_text if isinstance(workflow_text, dict)
+                 else {"stage.yml": workflow_text})
+        for filename, text in files.items():
+            with open(os.path.join(wf_dir, filename), "w",
+                      encoding="utf-8") as f:
+                f.write(text)
         proc = subprocess.run([sys.executable, GATE_SCRIPT], cwd=root,
                               capture_output=True, text=True,
                               encoding="utf-8", errors="replace")

@@ -762,6 +762,7 @@ jobs:
         with:
           model: ${{ inputs.model }}
           max-turns: ${{ inputs.max-turns }}
+          ceiling: ${{ steps.agent-auto-ceiling.outputs.ceiling || steps.agent-pr-ceiling.outputs.ceiling }}
           verdict: ${{ steps.agent-auto-verdict.outputs.verdict || steps.agent-pr-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.agent-auto-verdict.outputs.reason || steps.agent-pr-verdict.outputs.reason }}
 

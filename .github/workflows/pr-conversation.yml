@@ -798,6 +798,7 @@ jobs:
         with:
           model: ${{ inputs.model }}
           max-turns: ${{ inputs.max-turns }}
+          ceiling: ${{ steps.agent-ceiling.outputs.ceiling }}
           verdict: ${{ steps.agent-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.agent-verdict.outputs.reason }}
 
@@ -1711,6 +1712,7 @@ jobs:
         with:
           model: ${{ inputs.model }}
           max-turns: ${{ inputs.max-turns }}
+          ceiling: ${{ steps.agent-ceiling.outputs.ceiling }}
           verdict: ${{ steps.agent-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.agent-verdict.outputs.reason }}
 

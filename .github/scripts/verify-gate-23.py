@@ -30,13 +30,31 @@ WHAT EACH IN-SCOPE SITE MUST HAVE, ALL FOUR
 (a) A `wing-commander-turn-ceiling` step earlier in the same job (only other
     non-agent-step setup between them), and the site's `--max-turns` value is
     EXACTLY `${{ steps.<that-step-id>.outputs.ceiling }}` — never a literal,
-    never a raw `inputs.max-turns` passthrough.
+    never a raw `inputs.max-turns` passthrough, and never a ceiling step
+    whose `multiplier` is `1` or less (T025). A multiplier of 1 makes the
+    ceiling equal the intended budget, which is a `--max-turns
+    ${{ inputs.max-turns }}` passthrough wearing the composite's clothes —
+    the agent gets cut off at exactly the budget this feature exists to stop
+    it being cut off at.
 (b) `continue-on-error: true` on the agent step itself.
 (c) A `wing-commander-agent-verdict` step later in the same job, `if:`
     containing `always()`, before any step that reads its outputs.
 (d) A later step in the same job, gated `if: ... always() ... != 'healthy'`
     (referencing that verdict step's `verdict` output), whose body both
     prints an `::error::`-shaped message and can exit non-zero.
+(e) BOTH of those steps skip-guarded on `steps.<agent-id>.outcome !=
+    'skipped'` and on NOTHING ELSE — no restatement of the agent step's own
+    `if:` conditions. This one is not cosmetic. `always()` alone means the
+    verdict step runs even when the agent step was legitimately skipped; it
+    then finds no transcript, answers `unclassifiable`, and the fail-loud
+    arm in (d) fails an otherwise-green job. Restating a SUBSET of the agent
+    step's guards instead is the same bug with extra steps — it papers over
+    the skips it happens to name and drifts the moment either side gains a
+    condition. Two sites shipped with exactly that drift (finalize.yml's
+    idempotent no-diff re-run, auto-update-spec-kit.yml's deduped run; PR
+    #221 review). The agent step's own `outcome` already reflects every
+    guard on that step, so it is the one guard that cannot drift by
+    construction.
 
 Usage: python3 .github/scripts/verify-gate-23.py
 """
@@ -86,16 +104,43 @@ def truthy(value):
 
 
 def find_ceiling_ref(steps, agent_idx, prev_agent_idx):
-    """The wing-commander-turn-ceiling step id closest to (but before)
+    """The wing-commander-turn-ceiling step closest to (but before)
     agent_idx, bounded below by the PRIOR agent step in this job (exclusive)
-    so a multi-agent job cannot borrow a sibling site's ceiling step."""
+    so a multi-agent job cannot borrow a sibling site's ceiling step.
+    Returns (id, step) — the step itself so its `multiplier` can be checked."""
     for j in range(agent_idx - 1, prev_agent_idx, -1):
         step = steps[j]
         if is_ceiling_step(step):
-            return step.get("id")
+            return step.get("id"), step
         if is_agent_step(step):
             break
-    return None
+    return None, None
+
+
+def check_multiplier(site, ceiling_step):
+    """A declared multiplier must exceed 1. Omitted is fine — the action's own
+    default (2.5) applies. An expression (`${{ ... }}`) is not statically
+    knowable here, so it passes; the action validates at runtime."""
+    raw = (ceiling_step.get("with") or {}).get("multiplier")
+    if raw is None:
+        return True
+    text = str(raw).strip()
+    if "${{" in text:
+        return True
+    try:
+        value = float(text)
+    except ValueError:
+        fail(site, f"the ceiling step declares multiplier: {text!r}, which "
+                   f"is not a number.")
+        return False
+    if value <= 1:
+        fail(site, f"the ceiling step declares multiplier: {text} — a "
+                   f"multiplier of 1 or less makes the ceiling equal to (or "
+                   f"smaller than) the intended budget, which is the raw "
+                   f"--max-turns passthrough this gate rejects in the first "
+                   f"place, just routed through the composite.")
+        return False
+    return True
 
 
 def find_verdict_step(steps, agent_idx, next_agent_idx):
@@ -115,6 +160,8 @@ FAIL_LOUD_VERDICT_REF = re.compile(
 
 
 def find_fail_loud(steps, verdict_idx, next_agent_idx, verdict_id):
+    """The fail-loud step itself, not just a boolean — requirement (e) has to
+    inspect its `if:`, so the caller needs the step rather than a yes/no."""
     for j in range(verdict_idx + 1, next_agent_idx):
         step = steps[j]
         cond = str(step.get("if") or "")
@@ -125,8 +172,43 @@ def find_fail_loud(steps, verdict_idx, next_agent_idx, verdict_id):
             continue
         run = str(step.get("run") or "")
         if "::error" in run and re.search(r"\bexit\s+[1-9]", run):
-            return True
-    return False
+            return step
+    return None
+
+
+STEP_REF = re.compile(r"steps\.\s*([A-Za-z0-9_-]+)\s*\.")
+
+
+def skip_guard_re(agent_id):
+    return re.compile(
+        r"steps\.\s*" + re.escape(agent_id)
+        + r"\s*\.\s*outcome\s*!=\s*['\"]skipped['\"]")
+
+
+def check_skip_guard(site, label, step, agent_id, also_allowed):
+    """Requirement (e): this step carries the agent step's outcome guard and
+    references no other step's state. Position within the `&&` chain is not
+    checked — `always() && steps.x.outcome != 'skipped'` and the reverse are
+    the same expression, and two shipped sites legitimately write it the
+    other way round."""
+    cond = str((step or {}).get("if") or "")
+    ok = True
+    if not skip_guard_re(agent_id).search(cond):
+        fail(site, f"the {label} step is not skip-guarded on "
+                   f"steps.{agent_id}.outcome != 'skipped' — when the agent "
+                   f"step is legitimately skipped, this step still runs, "
+                   f"finds no transcript, and turns a green path red.")
+        ok = False
+    strays = sorted(set(STEP_REF.findall(cond)) - ({agent_id} | set(also_allowed)))
+    if strays:
+        fail(site, f"the {label} step's if: also references "
+                   f"{', '.join('steps.' + r for r in strays)} — a "
+                   f"hand-copied subset of the agent step's own conditions, "
+                   f"which drifts. steps.{agent_id}.outcome != 'skipped' "
+                   f"already reflects every guard on the agent step; drop "
+                   f"the rest.")
+        ok = False
+    return ok
 
 
 def check_max_turns_ref(claude_args, ceiling_id):
@@ -147,8 +229,12 @@ def check_job(path, job_name, steps):
 
         claude_args = str((step.get("with") or {}).get("claude_args") or "")
 
-        ceiling_id = find_ceiling_ref(steps, agent_idx, prev_agent_idx)
+        ceiling_id, ceiling_step = find_ceiling_ref(steps, agent_idx,
+                                                    prev_agent_idx)
         ok = True
+        if ceiling_step is not None and not check_multiplier(site,
+                                                             ceiling_step):
+            ok = False
         if not ceiling_id:
             fail(site, "no wing-commander-turn-ceiling step precedes this "
                        "agent step in the same job — --max-turns has no "
@@ -165,6 +251,13 @@ def check_job(path, job_name, steps):
             fail(site, "the agent step is missing continue-on-error: true.")
             ok = False
 
+        agent_id = step.get("id")
+        if not agent_id:
+            fail(site, "the agent step has no `id:` — without one nothing "
+                       "downstream can skip-guard on its outcome (see (e) "
+                       "in this script's header).")
+            ok = False
+
         verdict_idx, verdict_step = find_verdict_step(steps, agent_idx, next_agent_idx)
         verdict_id = None
         if verdict_step is None:
@@ -178,14 +271,23 @@ def check_job(path, job_name, steps):
                            "gated if: always() — it would be skipped on a "
                            "non-success outcome.")
                 ok = False
+            if agent_id and not check_skip_guard(
+                    site, "wing-commander-agent-verdict", verdict_step,
+                    agent_id, ()):
+                ok = False
 
         if verdict_id:
-            if not find_fail_loud(steps, verdict_idx, next_agent_idx, verdict_id):
+            fail_loud = find_fail_loud(steps, verdict_idx, next_agent_idx,
+                                       verdict_id)
+            if fail_loud is None:
                 fail(site, f"no fail-loud step found: expected a later step "
                            f"in the same job gated "
                            f"if: always() && steps.{verdict_id}.outputs."
                            f"verdict != 'healthy', printing ::error and "
                            f"exiting non-zero.")
+                ok = False
+            elif agent_id and not check_skip_guard(
+                    site, "fail-loud", fail_loud, agent_id, (verdict_id,)):
                 ok = False
 
         if ok:
@@ -201,8 +303,16 @@ def main():
         try:
             wf = yaml.safe_load(open(path, encoding="utf-8")) or {}
         except yaml.YAMLError as exc:
+            # Not a bare `continue`: dropping the file from coverage while
+            # still returning 0 is how a workflow stops being checked
+            # without anyone noticing. An unreadable workflow is an
+            # unchecked workflow, which is the exact outcome this gate
+            # exists to prevent.
+            failures.append(((path, "-", "-"), "unparseable"))
             print(f"::error file={path}::Gate 23: could not parse this "
-                 f"workflow as YAML ({exc}); skipping.")
+                 f"workflow as YAML ({exc}) — cannot confirm its agent call "
+                 f"sites are protected, so this gate fails rather than "
+                 f"silently dropping the file from coverage.")
             continue
         for job_name, job in (wf.get("jobs") or {}).items():
             steps = (job or {}).get("steps") or []

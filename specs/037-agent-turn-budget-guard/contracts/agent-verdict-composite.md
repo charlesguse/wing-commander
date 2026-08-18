@@ -32,6 +32,14 @@ flag. The only composite this feature adds that fails its own step.
   deliberate: constitution II requires every stage to run under a
   bounded budget, and a call site that can't produce a valid intended
   budget must not silently proceed to an agent step with no real cap.
+- Rejects a `multiplier` that is non-numeric **or `<= 0`**. The shape
+  check alone admits `0` and `0.0` while the error text already calls
+  them invalid, and either would compute `ceiling=0` — i.e.
+  `--max-turns 0`, the unbounded-step outcome above with a different
+  spelling. The magnitude test runs in `awk` because the value is a
+  decimal and `[ ]` cannot compare those. (Gate 23 separately rejects a
+  call site that declares `multiplier: 1`, where the ceiling would equal
+  the intended budget; see `coverage-gate.md`.)
 - Pure arithmetic (`awk`), no network, no repository read beyond its own
   inputs.
 - Never rounds down — `ceil`, not truncation, so a small intended
@@ -90,12 +98,33 @@ across the fleet (research.md R3/R4).
 
 `.github/actions/wing-commander-metrics-summary/action.yml`
 
-**New inputs** (both optional, default `""`, backward compatible):
+**New inputs** (all optional, default `""`, backward compatible):
 
 | Name | Notes |
 |---|---|
 | `verdict` | Pass `${{ steps.<verdict-id>.outputs.verdict }}`. |
 | `verdict-reason` | Pass `${{ steps.<verdict-id>.outputs.reason }}`. |
+| `ceiling` | Pass `${{ steps.<ceiling-id>.outputs.ceiling }}`. The cap the runtime actually enforced, as distinct from `max-turns`, which stays the *intended* budget the used/budgeted ratio is measured against. |
+
+`max-turns` and `ceiling` are now two different numbers and the summary
+has to keep them apart. `error_max_turns` means the run hit the
+**ceiling** — at a site with a 15-turn intended budget and a 2.5x
+margin, the run made 38 turns, so a banner reading "cut this run off at
+its 15-turn cap" sends a maintainer looking for a cap that exists
+nowhere. The banner names the ceiling and the intended budget it derives
+from; with `ceiling` omitted it falls back to naming `max-turns`, which
+is what this action did before a ceiling existed (PR #221 review).
+
+Exceeding the intended budget is also a *new and ordinary* outcome:
+before the ceiling, the runtime stopped the run at the budget, so
+`used > budget` was unreachable; now a healthy run passes it routinely
+and keeps going. That case renders as an informational
+"**Over intended budget**" line rather than through the `⚠️` threshold
+branch — routing it through the warning would reprint the
+"198 / 100 turns (198%)" alarm this action's own description documents
+as the bug it was rewritten to kill. The threshold warning keeps its
+existing voice for runs at or above `warn-fraction` but still *within*
+the intended budget.
 
 **Behavioral contract change**: when both are non-empty, the rendered
 block gains one additional line beneath the existing table, stating the
@@ -154,8 +183,12 @@ substituted:
     exit 1
 
 # existing wing-commander-metrics-summary invocation (added where absent):
-# gains `verdict: ${{ steps.agent-verdict.outputs.verdict }}` and
-# `verdict-reason: ${{ steps.agent-verdict.outputs.reason }}`.
+# gains `verdict: ${{ steps.agent-verdict.outputs.verdict }}`,
+# `verdict-reason: ${{ steps.agent-verdict.outputs.reason }}`, and
+# `ceiling: ${{ steps.agent-ceiling.outputs.ceiling }}` — `max-turns`
+# stays the intended budget. At the two sites whose single summary step
+# covers either of two agent steps (plan.yml, tasks.yml), `ceiling` uses
+# the same `a || b` fallback their `verdict` input already uses.
 
 - name: Report over-budget agent run   # only at sites that already post to a lifecycle issue
   if: steps.agent-verdict.outputs.verdict == 'healthy' && steps.agent-verdict.outputs.over-budget == 'true'

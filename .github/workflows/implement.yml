@@ -647,7 +647,7 @@ jobs:
       # never attempted.
       - name: Compute agent run verdict (cycle)
         id: cycle-verdict
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.cycle.outcome != 'skipped'
+        if: always() && steps.cycle.outcome != 'skipped'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
         with:
           intended-turns: ${{ inputs.max-turns }}
@@ -665,7 +665,7 @@ jobs:
       # failed-but-continued step in the run); it just doesn't take the job
       # down with it, so the existing retry/stall decision is unchanged.
       - name: Fail loud on non-healthy agent verdict (cycle)
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.cycle.outcome != 'skipped' && steps.cycle-verdict.outputs.verdict != 'healthy'
+        if: always() && steps.cycle.outcome != 'skipped' && steps.cycle-verdict.outputs.verdict != 'healthy'
         continue-on-error: true
         env:
           VERDICT: ${{ steps.cycle-verdict.outputs.verdict }}
@@ -677,7 +677,7 @@ jobs:
       # Uploaded before any retry runs so the retry's transcript (same temp
       # path) doesn't clobber the primary attempt's.
       - name: Upload Claude execution log (cycle)
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.cycle.outcome != 'skipped'
+        if: always() && steps.cycle.outcome != 'skipped'
         uses: actions/upload-artifact@v4
         with:
           name: claude-execution-output-cycle
@@ -688,13 +688,14 @@ jobs:
       # shared transcript path. run-label distinguishes it from the retry and
       # progress-comment blocks in this same job's summary.
       - name: Agent run metrics summary (cycle)
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.cycle.outcome != 'skipped'
+        if: always() && steps.cycle.outcome != 'skipped'
         # Belt-and-braces for the action's own "never fail the job" contract.
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
         with:
           model: ${{ inputs.model }}
           max-turns: ${{ inputs.max-turns }}
+          ceiling: ${{ steps.cycle-ceiling.outputs.ceiling }}
           run-label: cycle
           verdict: ${{ steps.cycle-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.cycle-verdict.outputs.reason }}
@@ -928,7 +929,7 @@ jobs:
       # (e.g. the primary attempt already succeeded).
       - name: Compute agent run verdict (retry)
         id: retry-verdict
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.retry.outcome != 'skipped'
+        if: always() && steps.retry.outcome != 'skipped'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
         with:
           intended-turns: ${{ inputs.max-turns }}
@@ -940,7 +941,7 @@ jobs:
       # gets its final-ok output regardless of why the retry produced no
       # progress.
       - name: Fail loud on non-healthy agent verdict (retry)
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.retry.outcome != 'skipped' && steps.retry-verdict.outputs.verdict != 'healthy'
+        if: always() && steps.retry.outcome != 'skipped' && steps.retry-verdict.outputs.verdict != 'healthy'
         continue-on-error: true
         env:
           VERDICT: ${{ steps.retry-verdict.outputs.verdict }}
@@ -950,7 +951,7 @@ jobs:
           exit 1
 
       - name: Upload Claude execution log (retry)
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.retry.outcome != 'skipped'
+        if: always() && steps.retry.outcome != 'skipped'
         uses: actions/upload-artifact@v4
         with:
           name: claude-execution-output-retry
@@ -960,13 +961,14 @@ jobs:
       # Retry run's metrics — read after the retry's own upload and before the
       # haiku progress-comment step overwrites the shared transcript path.
       - name: Agent run metrics summary (retry)
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.retry.outcome != 'skipped'
+        if: always() && steps.retry.outcome != 'skipped'
         # Belt-and-braces for the action's own "never fail the job" contract.
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
         with:
           model: ${{ inputs.escalation-model }}
           max-turns: ${{ inputs.max-turns }}
+          ceiling: ${{ steps.retry-ceiling.outputs.ceiling }}
           run-label: retry
           verdict: ${{ steps.retry-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.retry-verdict.outputs.reason }}
@@ -1171,7 +1173,7 @@ jobs:
       # never ran.
       - name: Compute agent run verdict (progress comment)
         id: progress-verdict
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.progress.outcome != 'skipped'
+        if: always() && steps.progress.outcome != 'skipped'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
         with:
           intended-turns: 15
@@ -1184,7 +1186,7 @@ jobs:
       # exit here would silently drop the next-cycle/finalize dispatch over
       # nothing worse than a missing progress comment.
       - name: Fail loud on non-healthy agent verdict (progress comment)
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.progress.outcome != 'skipped' && steps.progress-verdict.outputs.verdict != 'healthy'
+        if: always() && steps.progress.outcome != 'skipped' && steps.progress-verdict.outputs.verdict != 'healthy'
         continue-on-error: true
         env:
           VERDICT: ${{ steps.progress-verdict.outputs.verdict }}
@@ -1201,7 +1203,7 @@ jobs:
       # A distinct artifact name because -cycle and -retry were already
       # uploaded from this same job.
       - name: Upload Claude execution log (progress)
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.progress.outcome != 'skipped'
+        if: always() && steps.progress.outcome != 'skipped'
         uses: actions/upload-artifact@v4
         with:
           name: claude-execution-output-progress
@@ -1212,13 +1214,14 @@ jobs:
       # step and its transcript upload — every agent invocation gets its own
       # summary block.
       - name: Agent run metrics summary (progress comment)
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.progress.outcome != 'skipped'
+        if: always() && steps.progress.outcome != 'skipped'
         # Belt-and-braces for the action's own "never fail the job" contract.
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
         with:
           model: ${{ inputs.summary-model }}
           max-turns: 15
+          ceiling: ${{ steps.progress-ceiling.outputs.ceiling }}
           run-label: progress comment
           verdict: ${{ steps.progress-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.progress-verdict.outputs.reason }}

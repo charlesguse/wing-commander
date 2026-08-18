@@ -81,7 +81,12 @@ missed, matching Gate 7's stated rationale for the same choice):
      (research.md R9). A regex/text match on the `--max-turns` value is
      deliberately not used alone; the referenced step id must resolve to
      an actual `wing-commander-turn-ceiling` step in the same job, the
-     same resolution discipline Gate 7 uses for `input_ref()`.
+     same resolution discipline Gate 7 uses for `input_ref()`. If that
+     ceiling step declares a literal `multiplier`, it must exceed `1`:
+     `multiplier: 1` makes the ceiling equal the intended budget, which
+     is the raw passthrough this rule rejects, merely routed through the
+     composite. A `${{ }}` expression is not statically knowable and
+     passes here — the action validates it at runtime.
    - The agent step itself carries `continue-on-error: true`.
    - Some later step in the same job, gated `if: always() && ... != 'healthy'`
      (or an equivalent expression referencing that verdict step's
@@ -91,6 +96,25 @@ missed, matching Gate 7's stated rationale for the same choice):
    - A `wing-commander-agent-verdict` step exists in the same job,
      `if: always()`, positioned between the agent step and any step that
      reads its outputs.
+   - **Both** that verdict step and the fail-loud arm are skip-guarded on
+     `steps.<agent-id>.outcome != 'skipped'`, and on nothing else — no
+     restatement of any other condition from the agent step's own `if:`.
+     `always()` on its own means the verdict step runs even when the agent
+     step was legitimately skipped; it then finds no transcript, answers
+     `unclassifiable`, and the fail-loud arm fails an otherwise-green job.
+     Restating a *subset* of the agent step's guards is the same bug with
+     extra steps: it covers the skips it happens to name and drifts the
+     moment either side gains a condition. Two sites shipped with exactly
+     that drift — `finalize.yml` (verdict gated on `is-open` while the
+     agent step also required `steps.diff.outputs.skip != 'true'`, so
+     every idempotent no-diff re-run went red) and
+     `auto-update-spec-kit.yml` (verdict gated on `resumed` while the
+     agent step also required `steps.guard.outputs.skip != 'true'`, so
+     every deduped run went red) — and neither was catchable by a gate
+     that only looked for `always()` (PR #221 review). Position within the
+     `&&` chain carries no meaning and is not checked. The agent step must
+     therefore carry an `id:`; without one nothing downstream can name its
+     outcome.
 3. Print one `note:` line per in-scope site confirming coverage (mirrors
    Gate 7's per-stage `note:` lines), so a passing run is auditable
    site-by-site, not just a bare "0 failures."
@@ -98,6 +122,10 @@ missed, matching Gate 7's stated rationale for the same choice):
    "detector saw nothing" guard every enumeration gate in this
    repository already carries — Gate 1a, Gate 7 both fail this way
    rather than reading an empty derivation as a clean pass).
+5. `sys.exit(1)` if any workflow file fails to parse as YAML. Printing
+   the parse error and moving on drops that file from coverage while the
+   gate still reports green — an unreadable workflow is an unchecked
+   workflow, which is the one outcome this gate exists to prevent.
 
 **Self-test**: runs the shipped Gate 23 logic against synthetic
 workflow-file trees with (a) a known-good site (passes), (b) a site
@@ -105,7 +133,18 @@ missing `continue-on-error` (fails, names it), (c) a site whose
 `--max-turns` is a literal number instead of a ceiling-step output
 (fails, names it — this is the direct proof of User Story 3 Acceptance
 Scenario 3), (d) a site missing the verdict step entirely (fails, names
-it), (e) a site missing the fail-loud arm (fails, names it).
+it), (e) a site missing the fail-loud arm (fails, names it), (f) a
+verdict step on a bare `always()` with no skip guard (fails), (g) a
+fail-loud arm with no skip guard (fails), (h) a verdict step restating a
+subset of the agent step's own conditions instead of its outcome (fails
+— the shape that shipped twice), (i) the skip guard written *before*
+`always()` (passes: order in the `&&` chain is not meaning, and two
+shipped sites write it that way), (j) a ceiling step declaring
+`multiplier: 1` (fails) and one declaring an expression (passes), and
+(k) an unparseable workflow **alongside a compliant one** (fails). The
+pairing in (k) is deliberate: an unparseable file on its own also trips
+the zero-in-scope-sites guard, so that case would pass even if the parse
+arm still returned 0.
 
 ## Doc/registry updates required alongside both gates
 

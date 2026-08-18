@@ -1434,7 +1434,7 @@ jobs:
       # reintroducing a job-level failure this workflow's design elsewhere
       # explicitly guards against.
       - name: Fail loud on non-healthy agent verdict
-        if: steps.diagnose.outcome != 'skipped' && always() && steps.diagnose-verdict.outputs.verdict != 'healthy'
+        if: always() && steps.diagnose.outcome != 'skipped' && steps.diagnose-verdict.outputs.verdict != 'healthy'
         continue-on-error: true
         env:
           VERDICT: ${{ steps.diagnose-verdict.outputs.verdict }}
@@ -1458,6 +1458,7 @@ jobs:
         with:
           model: ${{ steps.resolve-diagnose-model.outputs.model }}
           max-turns: ${{ inputs.diagnose-max-turns }}
+          ceiling: ${{ steps.diagnose-ceiling.outputs.ceiling }}
           run-label: diagnose
           verdict: ${{ steps.diagnose-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.diagnose-verdict.outputs.reason }}
@@ -1999,7 +2000,7 @@ jobs:
       # failure) — continue-on-error keeps this loud without reintroducing
       # a leg-level failure.
       - name: Fail loud on non-healthy agent verdict (propose-fix)
-        if: steps.propose-fix.outcome != 'skipped' && always() && steps.propose-fix-verdict.outputs.verdict != 'healthy'
+        if: always() && steps.propose-fix.outcome != 'skipped' && steps.propose-fix-verdict.outputs.verdict != 'healthy'
         continue-on-error: true
         env:
           VERDICT: ${{ steps.propose-fix-verdict.outputs.verdict }}
@@ -2023,6 +2024,7 @@ jobs:
         with:
           model: ${{ steps.resolve-propose-fix-model.outputs.model }}
           max-turns: ${{ inputs.propose-fix-max-turns }}
+          ceiling: ${{ steps.propose-fix-ceiling.outputs.ceiling }}
           run-label: propose-fix (${{ matrix.class }})
           verdict: ${{ steps.propose-fix-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.propose-fix-verdict.outputs.reason }}

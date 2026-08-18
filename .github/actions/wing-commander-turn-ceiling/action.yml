@@ -54,7 +54,12 @@ runs:
           echo "::error::wing-commander-turn-ceiling: intended-turns must be a positive integer, got '${INTENDED_TURNS}'. Constitution II requires every agent step to run under a bounded turn budget; refusing to compute an unbounded ceiling."
           exit 1
         fi
-        if ! printf '%s' "$MULTIPLIER" | grep -Eq '^[0-9]+([.][0-9]+)?$'; then
+        # The shape check alone admits '0' and '0.0', which the message
+        # below already calls invalid — and which would compute ceiling=0,
+        # i.e. --max-turns 0, the unbounded-step outcome this action exists
+        # to refuse. awk does the magnitude check because the value is a
+        # decimal and [ ] cannot compare those.
+        if ! printf '%s' "$MULTIPLIER" | grep -Eq '^[0-9]+([.][0-9]+)?$'            || [ "$(awk -v m="$MULTIPLIER" 'BEGIN{print (m > 0) ? 1 : 0}')" != "1" ]; then
           echo "::error::wing-commander-turn-ceiling: multiplier must be a positive number, got '${MULTIPLIER}'."
           exit 1
         fi
