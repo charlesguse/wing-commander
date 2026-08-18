@@ -3,6 +3,6 @@
   "spec_dir": "specs/038-runner-container-passthrough",
   "feature_num": "038",
   "stage": "implement",
-  "iteration": 2,
+  "iteration": 3,
   "spec_branch": "spec/038-runner-container-passthrough"
 }
