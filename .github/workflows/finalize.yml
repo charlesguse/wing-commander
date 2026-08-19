@@ -428,9 +428,21 @@ jobs:
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
           step-label: "finalize"
 
+      - name: Compute agent turn ceiling
+        id: summarize-ceiling
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true' && steps.tool-args-finalize.outputs.allowed-tools != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
+        with:
+          intended-turns: ${{ inputs.max-turns }}
+
       - name: Summarize change and extract remaining manual work
         id: summarize
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true' && steps.tool-args-finalize.outputs.allowed-tools != ''
+        # The action rejects a healthy, finished run post-hoc when its own
+        # inflated .num_turns reads above --max-turns (which is now the
+        # runaway ceiling, not the intended budget) — without this, that
+        # rejection stops the whole job before the verdict step below can
+        # even run (specs/037-agent-turn-budget-guard/, issue #204).
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
@@ -488,9 +500,47 @@ jobs:
             above.
           claude_args: |
             --model ${{ inputs.summary-model }}
-            --max-turns ${{ inputs.max-turns }}
+            --max-turns ${{ steps.summarize-ceiling.outputs.ceiling }}
             --allowedTools "${{ steps.tool-args-finalize.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-finalize.outputs.disallowed-tools }}"
+
+      # Deterministic, transcript-only verdict (healthy/exhausted/failed/
+      # unclassifiable) — replaces the raw steps.summarize.outcome checks
+      # below, which the action's own post-hoc turn-budget rejection could
+      # no longer be trusted to reflect (specs/037-agent-turn-budget-guard/).
+      # Gated on steps.summarize.outcome alone: it tracks that step's own
+      # `if:` without drifting from it, so the idempotent no-diff re-run —
+      # where steps.diff sets skip=true and summarize never runs — still
+      # ends green on the "Announce finalize anomaly (no diff)" path above,
+      # instead of producing an `unclassifiable` verdict the fail-loud step
+      # reads as a defect (PR #221 review).
+      - name: Compute agent run verdict
+        id: summarize-verdict
+        if: always() && steps.summarize.outcome != 'skipped'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
+        with:
+          intended-turns: ${{ inputs.max-turns }}
+
+      # Uniform across every rewired call site (research.md R7 step 5): the
+      # single point where a non-healthy verdict is reported. Here it is a
+      # continue-on-error — see cleanup.yml's copy of this note. "Verify
+      # agent output" below is this site's degradation path: it reads the
+      # same verdict, emits the maintainer-facing ::error::, and exits 1
+      # itself, so the run still goes red — but only after
+      # `verify-agent-output.outputs.failed` is set, which is what the
+      # always()-gated "Announce finalize failure (agent output)" callout
+      # reads. Failing here instead skips the verify step, leaves `failed`
+      # empty, and silently swallows that callout despite its always()
+      # (PR #221 review).
+      - name: Fail loud on non-healthy agent verdict
+        if: always() && steps.summarize.outcome != 'skipped' && steps.summarize-verdict.outputs.verdict != 'healthy'
+        continue-on-error: true
+        env:
+          VERDICT: ${{ steps.summarize-verdict.outputs.verdict }}
+          REASON: ${{ steps.summarize-verdict.outputs.reason }}
+        run: |
+          echo "::error::wing-commander finalize stage: agent step rejected — verdict=$VERDICT: $REASON"
+          exit 1
 
       - name: Upload Claude execution log
         if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.summarize.outcome != 'skipped'
@@ -509,15 +559,36 @@ jobs:
         with:
           model: ${{ inputs.summary-model }}
           max-turns: ${{ inputs.max-turns }}
+          ceiling: ${{ steps.summarize-ceiling.outputs.ceiling }}
+          verdict: ${{ steps.summarize-verdict.outputs.verdict }}
+          verdict-reason: ${{ steps.summarize-verdict.outputs.reason }}
+
+      # Observability, not failure (FR-017) — the intended budget was fully
+      # used but the run finished healthy; the runaway ceiling above is the
+      # only hard stop.
+      - name: Report over-budget agent run
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.summarize-verdict.outputs.verdict == 'healthy' && steps.summarize-verdict.outputs.over-budget == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: info
+          summary: "This step used its full intended turn budget."
+          body: >-
+            Counted ${{ steps.summarize-verdict.outputs.counted-turns }} of an
+            intended ${{ inputs.max-turns }} turns. The run continued and
+            finished successfully — the runaway ceiling
+            (${{ steps.summarize-ceiling.outputs.ceiling }}) is the only hard
+            stop; this is an observability note, not a failure.
 
       # Fail loudly rather than opening a PR with incomplete content.
       - name: Verify agent output
         id: verify-agent-output
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
         env:
-          SUMMARIZE_OUTCOME: ${{ steps.summarize.outcome }}
+          SUMMARIZE_VERDICT: ${{ steps.summarize-verdict.outputs.verdict }}
         run: |
-          if [ "$SUMMARIZE_OUTCOME" != "success" ] \
+          if [ "$SUMMARIZE_VERDICT" != "healthy" ] \
              || [ ! -f "${{ runner.temp }}/finalize-summary.md" ] \
              || [ ! -f "${{ runner.temp }}/finalize-remaining.md" ]; then
             msg="wing-commander finalize stage: the change-summary/remaining-work step did not complete successfully."

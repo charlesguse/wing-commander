@@ -483,9 +483,22 @@ jobs:
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
           step-label: "tasks.direct-commit"
 
+      - name: Compute agent turn ceiling (auto)
+        id: agent-auto-ceiling
+        if: steps.guard.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto' && steps.tool-args-tasks-direct-commit.outputs.allowed-tools != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
+        with:
+          intended-turns: ${{ inputs.max-turns }}
+
       - name: Generate task list (direct commit)
         id: agent-auto
         if: steps.guard.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto' && steps.tool-args-tasks-direct-commit.outputs.allowed-tools != ''
+        # The action rejects a healthy, finished run post-hoc when its own
+        # inflated .num_turns reads above --max-turns (which is now the
+        # runaway ceiling, not the intended budget) — without this, that
+        # rejection stops the whole job before the verdict step below can
+        # even run (specs/037-agent-turn-budget-guard/, issue #204).
+        continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -559,9 +572,36 @@ jobs:
             above, or record the limitation for the human and move on.
           claude_args: |
             --model ${{ inputs.model }}
-            --max-turns ${{ inputs.max-turns }}
+            --max-turns ${{ steps.agent-auto-ceiling.outputs.ceiling }}
             --allowedTools "${{ steps.tool-args-tasks-direct-commit.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-tasks-direct-commit.outputs.disallowed-tools }}"
+
+      # Deterministic, transcript-only verdict (healthy/exhausted/failed/
+      # unclassifiable) — replaces raw steps.agent-auto.outcome checks, which
+      # the action's own post-hoc turn-budget rejection could no longer be
+      # trusted to reflect (specs/037-agent-turn-budget-guard/). Gated on
+      # steps.agent-auto.outcome alone — the one condition that cannot drift
+      # from the agent step's own `if:`, however many guards that grows. It
+      # keeps this off the agent-pr branch's transcript when the other mode
+      # ran, and it keeps a legitimately skipped agent step from producing an
+      # `unclassifiable` verdict that the fail-loud step below reads as a
+      # defect (PR #221 review).
+      - name: Compute agent run verdict (auto)
+        id: agent-auto-verdict
+        if: always() && steps.agent-auto.outcome != 'skipped'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
+        with:
+          intended-turns: ${{ inputs.max-turns }}
+          run-label: "auto"
+
+      - name: Fail loud on non-healthy agent verdict (auto)
+        if: always() && steps.agent-auto.outcome != 'skipped' && steps.agent-auto-verdict.outputs.verdict != 'healthy'
+        env:
+          VERDICT: ${{ steps.agent-auto-verdict.outputs.verdict }}
+          REASON: ${{ steps.agent-auto-verdict.outputs.reason }}
+        run: |
+          echo "::error::agent step rejected — verdict=$VERDICT: $REASON"
+          exit 1
 
       # Pr mode — the task list arrives as a reviewable PR targeting the spec
       # branch; nothing lands on the spec branch directly and implementation
@@ -578,6 +618,17 @@ jobs:
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
           step-label: "tasks.pr"
 
+      - name: Compute agent turn ceiling (pr)
+        id: agent-pr-ceiling
+        if: >-
+          steps.guard.outputs.skip != 'true' &&
+          steps.mode.outputs.mode == 'pr' &&
+          steps.dupe.outputs.skip != 'true' &&
+          steps.tool-args-tasks-pr.outputs.allowed-tools != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
+        with:
+          intended-turns: ${{ inputs.max-turns }}
+
       - name: Generate task list (review PR)
         id: agent-pr
         if: >-
@@ -585,6 +636,12 @@ jobs:
           steps.mode.outputs.mode == 'pr' &&
           steps.dupe.outputs.skip != 'true' &&
           steps.tool-args-tasks-pr.outputs.allowed-tools != ''
+        # The action rejects a healthy, finished run post-hoc when its own
+        # inflated .num_turns reads above --max-turns (which is now the
+        # runaway ceiling, not the intended budget) — without this, that
+        # rejection stops the whole job before the verdict step below can
+        # even run (specs/037-agent-turn-budget-guard/, issue #204).
+        continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -659,9 +716,36 @@ jobs:
             above, or record the limitation for the human and move on.
           claude_args: |
             --model ${{ inputs.model }}
-            --max-turns ${{ inputs.max-turns }}
+            --max-turns ${{ steps.agent-pr-ceiling.outputs.ceiling }}
             --allowedTools "${{ steps.tool-args-tasks-pr.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-tasks-pr.outputs.disallowed-tools }}"
+
+      # Deterministic, transcript-only verdict (healthy/exhausted/failed/
+      # unclassifiable) — replaces raw steps.agent-pr.outcome checks, which
+      # the action's own post-hoc turn-budget rejection could no longer be
+      # trusted to reflect (specs/037-agent-turn-budget-guard/). Gated on
+      # steps.agent-pr.outcome alone — the one condition that cannot drift
+      # from the agent step's own `if:`, however many guards that grows. It
+      # keeps this off the agent-auto branch's transcript when the other mode
+      # ran, and it keeps a legitimately skipped agent step from producing an
+      # `unclassifiable` verdict that the fail-loud step below reads as a
+      # defect (PR #221 review).
+      - name: Compute agent run verdict (pr)
+        id: agent-pr-verdict
+        if: always() && steps.agent-pr.outcome != 'skipped'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
+        with:
+          intended-turns: ${{ inputs.max-turns }}
+          run-label: "pr"
+
+      - name: Fail loud on non-healthy agent verdict (pr)
+        if: always() && steps.agent-pr.outcome != 'skipped' && steps.agent-pr-verdict.outputs.verdict != 'healthy'
+        env:
+          VERDICT: ${{ steps.agent-pr-verdict.outputs.verdict }}
+          REASON: ${{ steps.agent-pr-verdict.outputs.reason }}
+        run: |
+          echo "::error::agent step rejected — verdict=$VERDICT: $REASON"
+          exit 1
 
       # One metrics step shared across the two mutually-exclusive agent steps
       # above (both configure the same model/max-turns inputs): exactly one of
@@ -678,11 +762,17 @@ jobs:
         with:
           model: ${{ inputs.model }}
           max-turns: ${{ inputs.max-turns }}
+          ceiling: ${{ steps.agent-auto-ceiling.outputs.ceiling || steps.agent-pr-ceiling.outputs.ceiling }}
+          verdict: ${{ steps.agent-auto-verdict.outputs.verdict || steps.agent-pr-verdict.outputs.verdict }}
+          verdict-reason: ${{ steps.agent-auto-verdict.outputs.reason || steps.agent-pr-verdict.outputs.reason }}
 
       # Deterministic verification — no agent turns spent on checking facts.
       # Auto mode: tasks.md and the stage flip must be on the spec branch.
+      # Gated on the verdict (not a raw steps.agent-auto.outcome check) —
+      # agent-auto now runs with continue-on-error, so its outcome alone can
+      # no longer be trusted to reflect a genuine failure.
       - name: Verify tasks committed (auto)
-        if: steps.guard.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto'
+        if: steps.guard.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto' && steps.agent-auto-verdict.outputs.verdict == 'healthy'
         env:
           SLUG: ${{ needs.resolve-spec.outputs.slug }}
           SPEC_DIR: ${{ needs.resolve-spec.outputs.spec-dir }}
@@ -699,12 +789,16 @@ jobs:
             exit 1
           fi
 
-      # Pr mode: the review PR must verifiably exist.
+      # Pr mode: the review PR must verifiably exist. Gated on the verdict
+      # (not a raw steps.agent-pr.outcome check) — agent-pr now runs with
+      # continue-on-error, so its outcome alone can no longer be trusted to
+      # reflect a genuine failure.
       - name: Verify tasks PR (pr)
         if: >-
           steps.guard.outputs.skip != 'true' &&
           steps.mode.outputs.mode == 'pr' &&
-          steps.dupe.outputs.skip != 'true'
+          steps.dupe.outputs.skip != 'true' &&
+          steps.agent-pr-verdict.outputs.verdict == 'healthy'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           SLUG: ${{ needs.resolve-spec.outputs.slug }}
@@ -775,6 +869,44 @@ jobs:
           name: claude-execution-output
           path: ${{ runner.temp }}/claude-execution-output.json
           if-no-files-found: ignore
+
+      # Observability, not failure (FR-017) — the intended budget was fully
+      # used but the run finished healthy; the runaway ceiling above is the
+      # only hard stop.
+      - name: Report over-budget agent run (auto)
+        if: steps.guard.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto' && steps.agent-auto-verdict.outputs.verdict == 'healthy' && steps.agent-auto-verdict.outputs.over-budget == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ steps.meta.outputs.issue }}
+          kind: info
+          summary: "This step used its full intended turn budget."
+          body: >-
+            Counted ${{ steps.agent-auto-verdict.outputs.counted-turns }} of an
+            intended ${{ inputs.max-turns }} turns. The run continued and
+            finished successfully — the runaway ceiling
+            (${{ steps.agent-auto-ceiling.outputs.ceiling }}) is the only hard
+            stop; this is an observability note, not a failure.
+
+      - name: Report over-budget agent run (pr)
+        if: >-
+          steps.guard.outputs.skip != 'true' &&
+          steps.mode.outputs.mode == 'pr' &&
+          steps.dupe.outputs.skip != 'true' &&
+          steps.agent-pr-verdict.outputs.verdict == 'healthy' &&
+          steps.agent-pr-verdict.outputs.over-budget == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ steps.meta.outputs.issue }}
+          kind: info
+          summary: "This step used its full intended turn budget."
+          body: >-
+            Counted ${{ steps.agent-pr-verdict.outputs.counted-turns }} of an
+            intended ${{ inputs.max-turns }} turns. The run continued and
+            finished successfully — the runaway ceiling
+            (${{ steps.agent-pr-ceiling.outputs.ceiling }}) is the only hard
+            stop; this is an observability note, not a failure.
 
   # mode: approved — a tasks PR merged by a maintainer is the review-mode
   # acceptance signal; the stage flip rode in with the merge. No agent work:

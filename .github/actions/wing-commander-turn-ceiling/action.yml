@@ -1,0 +1,76 @@
+name: wing-commander-turn-ceiling
+description: >
+  Turn a call site's intended turn budget into the literal runaway-ceiling
+  value handed to claude-code-action's --max-turns flag. The intended budget
+  keeps its unchanged public meaning (what a maintainer tunes, what usage is
+  reported against); the ceiling is a real, bounded stop sized to absorb this
+  repository's own observed .num_turns-vs-counted divergence (1.0x-2.3x,
+  always upward — see wing-commander-metrics-summary's own description) with
+  a margin, so a genuinely healthy run is never rejected post-hoc while a
+  genuinely runaway agent is still cut off at a real, finite turn count
+  (specs/037-agent-turn-budget-guard/research.md R1).
+
+  The ONE composite in this feature that fails its own step: constitution II
+  requires every stage to run under a bounded turn budget, so a call site
+  that cannot produce a valid intended budget must not silently proceed to an
+  unbounded agent step.
+
+inputs:
+  intended-turns:
+    description: >
+      The call site's existing --max-turns source (a workflow_call input or
+      a literal). Must resolve to a positive integer.
+    required: true
+  multiplier:
+    description: >
+      Factor applied to intended-turns. Single source of truth for the whole
+      fleet — no call site overrides this at this feature's landing.
+    required: false
+    default: '2.5'
+
+outputs:
+  ceiling:
+    description: ceil(intended-turns * multiplier), the literal --max-turns value.
+    value: ${{ steps.compute.outputs.ceiling }}
+
+runs:
+  using: composite
+  steps:
+    - name: Compute runaway ceiling
+      id: compute
+      shell: bash
+      env:
+        INTENDED_TURNS: ${{ inputs.intended-turns }}
+        MULTIPLIER: ${{ inputs.multiplier }}
+      run: |
+        set -uo pipefail
+
+        INTENDED_TURNS="${INTENDED_TURNS:-}"
+        MULTIPLIER="${MULTIPLIER:-2.5}"
+
+        if [ -z "$INTENDED_TURNS" ] \
+           || ! printf '%s' "$INTENDED_TURNS" | grep -Eq '^[0-9]+$' \
+           || [ "$INTENDED_TURNS" -le 0 ]; then
+          echo "::error::wing-commander-turn-ceiling: intended-turns must be a positive integer, got '${INTENDED_TURNS}'. Constitution II requires every agent step to run under a bounded turn budget; refusing to compute an unbounded ceiling."
+          exit 1
+        fi
+        # The shape check alone admits '0' and '0.0', which the message
+        # below already calls invalid — and which would compute ceiling=0,
+        # i.e. --max-turns 0, the unbounded-step outcome this action exists
+        # to refuse. awk does the magnitude check because the value is a
+        # decimal and [ ] cannot compare those.
+        if ! printf '%s' "$MULTIPLIER" | grep -Eq '^[0-9]+([.][0-9]+)?$'            || [ "$(awk -v m="$MULTIPLIER" 'BEGIN{print (m > 0) ? 1 : 0}')" != "1" ]; then
+          echo "::error::wing-commander-turn-ceiling: multiplier must be a positive number, got '${MULTIPLIER}'."
+          exit 1
+        fi
+
+        # ceil, never truncation — a non-exact product (15 * 2.5 = 37.5) must
+        # round UP to 38, not down to 37.
+        ceiling="$(awk -v i="$INTENDED_TURNS" -v m="$MULTIPLIER" 'BEGIN{
+          p = i * m
+          c = int(p)
+          if (p > c) c += 1
+          printf "%d", c
+        }')"
+
+        echo "ceiling=$ceiling" >> "$GITHUB_OUTPUT"

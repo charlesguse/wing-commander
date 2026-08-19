@@ -1580,6 +1580,59 @@ jobs:
       - name: Gate 21 — the tooling statement matches what the run actually permits
         run: python3 .github/scripts/verify-tooling-statement.py
 
+      # Gate 22 — wing-commander-agent-verdict (specs/037-agent-turn-budget-guard/)
+      # classifies a transcript correctly. Same discipline as Gate 11: the
+      # shipped run: block, extracted and executed against synthetic
+      # transcripts covering healthy-but-would-be-rejected, genuinely errored,
+      # exhausted, and unreadable, plus mutations reintroducing each defect
+      # class (reading is_error/subtype from the wrong record, collapsing
+      # unclassifiable/failed together, computing over-budget from the
+      # reported rather than counted total) to prove the suite can go red.
+      - name: Gate 22 — the agent verdict composite classifies transcripts correctly
+        run: python3 .github/scripts/verify-agent-verdict.py
+
+      # Gate 23 — every agent call site carries the full ceiling/verdict/
+      # fail-loud protection, dynamically enumerated (YAML-parsed, never
+      # grepped) rather than checked against a maintained list — the same
+      # "derive, don't hardcode" discipline Gates 6/7/12 already use. This is
+      # the mechanical proof that closes issue #193 for good: the real defect
+      # was fixed once by hand at one site and re-hit 31 hours later at
+      # another, unfixed one. A site missing any of the four pieces, or whose
+      # ceiling has regressed back to a literal/raw `inputs.max-turns`
+      # passthrough (User Story 3 Acceptance Scenario 3), fails by name.
+      - name: Gate 23 — every agent call site carries the full turn-budget protection
+        run: python3 .github/scripts/verify-gate-23.py
+
+      # Gate 23 says nothing about whether Gate 23 works — same reasoning as
+      # Gates 7/15/16/18's self-tests: the fleet this runs against should stay
+      # uniformly compliant, so a green Gate 23 could just as easily mean its
+      # detection is broken.
+      - name: Gate 23 self-test — the detector actually detects
+        run: python3 .github/scripts/verify-gate-23-selftest.py
+
+      # Gate 24 — the placement half of Gate 23. Gate 23 asserts every agent
+      # call site HAS a fail-loud step; it says nothing about where that step
+      # sits, and PR #221 shipped five sites where it sat directly above the
+      # deterministic fallback its own `continue-on-error` existed for.
+      # `continue-on-error: true` is a promise that something below handles
+      # the failure; a later hard exit on that same failure skips everything
+      # unprotected beneath it, so the handler becomes unreachable dead code
+      # that still reads, top to bottom, as a present and correct safety net.
+      # Deliberately narrow — it fires only when the guard tests a tolerated
+      # signal NEGATIVELY and a later unprotected, non-mutually-exclusive
+      # step reads that same signal — because the fleet is full of hard exits
+      # that strand later steps entirely correctly.
+      - name: Gate 24 — a guard does not strand the degradation path it fires on
+        run: python3 .github/scripts/verify-gate-24.py
+
+      # Same reasoning as Gate 23's self-test, and more load-bearing here:
+      # Gate 24's three clauses each exclude a whole family of legitimate
+      # hard exits, so the way it breaks is not "crashes" but "quietly stops
+      # matching anything", which is indistinguishable from a compliant
+      # fleet. One fixture per clause, in both directions.
+      - name: Gate 24 self-test — the detector actually detects
+        run: python3 .github/scripts/verify-gate-24-selftest.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

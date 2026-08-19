@@ -1237,6 +1237,13 @@ jobs:
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
           step-label: "watchdog.diagnose"
 
+      - name: Compute agent turn ceiling
+        id: diagnose-ceiling
+        if: steps.tool-args-diagnose.outputs.allowed-tools != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
+        with:
+          intended-turns: ${{ inputs.diagnose-max-turns }}
+
       - name: Diagnose
         id: diagnose
         if: steps.tool-args-diagnose.outputs.allowed-tools != ''
@@ -1401,10 +1408,40 @@ jobs:
           # should be 'object'"); the read-back step below unwraps .findings.
           claude_args: |
             --model ${{ steps.resolve-diagnose-model.outputs.model }}
-            --max-turns ${{ inputs.diagnose-max-turns }}
+            --max-turns ${{ steps.diagnose-ceiling.outputs.ceiling }}
             --json-schema '${{ steps.class-vocab.outputs.schema }}'
             --allowedTools "${{ steps.tool-args-diagnose.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-diagnose.outputs.disallowed-tools }}"
+
+      # Deterministic, transcript-only verdict (healthy/exhausted/failed/
+      # unclassifiable) — see clarify.yml's identical step
+      # (specs/037-agent-turn-budget-guard/).
+      - name: Compute agent run verdict
+        id: diagnose-verdict
+        if: always() && steps.diagnose.outcome != 'skipped'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
+        with:
+          intended-turns: ${{ inputs.diagnose-max-turns }}
+
+      # Unlike clarify.yml, this job is deliberately never allowed to fail
+      # outright (see "Diagnose" step's own comment, and
+      # report-unhandled-failure's "Every agent step in this stage is
+      # continue-on-error" comment below) — triage/act key off
+      # needs.diagnose.result == 'success' and the "Read back diagnose
+      # outcome"/"Report diagnose failed" steps below already carry this
+      # verdict forward via outcome=diagnose-failed. continue-on-error here
+      # keeps this step loud (an ::error:: annotation + red step) without
+      # reintroducing a job-level failure this workflow's design elsewhere
+      # explicitly guards against.
+      - name: Fail loud on non-healthy agent verdict
+        if: always() && steps.diagnose.outcome != 'skipped' && steps.diagnose-verdict.outputs.verdict != 'healthy'
+        continue-on-error: true
+        env:
+          VERDICT: ${{ steps.diagnose-verdict.outputs.verdict }}
+          REASON: ${{ steps.diagnose-verdict.outputs.reason }}
+        run: |
+          echo "::error::wing-commander watchdog diagnose stage: agent step rejected — verdict=$VERDICT: $REASON"
+          exit 1
 
       - name: Upload Claude execution log
         if: always() && steps.diagnose.outcome != 'skipped'
@@ -1421,7 +1458,10 @@ jobs:
         with:
           model: ${{ steps.resolve-diagnose-model.outputs.model }}
           max-turns: ${{ inputs.diagnose-max-turns }}
+          ceiling: ${{ steps.diagnose-ceiling.outputs.ceiling }}
           run-label: diagnose
+          verdict: ${{ steps.diagnose-verdict.outputs.verdict }}
+          verdict-reason: ${{ steps.diagnose-verdict.outputs.reason }}
 
       # Deterministic parse of the agent's structured JSON result (the same
       # terminal "result" record wing-commander-metrics-summary reads) —
@@ -1891,6 +1931,13 @@ jobs:
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
           step-label: "watchdog.propose-fix"
 
+      - name: Compute agent turn ceiling (propose-fix)
+        id: propose-fix-ceiling
+        if: steps.suppress.outputs.suppressed != 'true' && steps.fix-eligible.outputs.eligible == 'true' && steps.tool-args-propose-fix.outputs.allowed-tools != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
+        with:
+          intended-turns: ${{ inputs.propose-fix-max-turns }}
+
       - name: Propose fix
         id: propose-fix
         if: steps.suppress.outputs.suppressed != 'true' && steps.fix-eligible.outputs.eligible == 'true' && steps.tool-args-propose-fix.outputs.allowed-tools != ''
@@ -1933,9 +1980,34 @@ jobs:
             deterministic step commits whatever you leave in the worktree.
           claude_args: |
             --model ${{ steps.resolve-propose-fix-model.outputs.model }}
-            --max-turns ${{ inputs.propose-fix-max-turns }}
+            --max-turns ${{ steps.propose-fix-ceiling.outputs.ceiling }}
             --allowedTools "${{ steps.tool-args-propose-fix.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-propose-fix.outputs.disallowed-tools }}"
+
+      # Deterministic, transcript-only verdict (healthy/exhausted/failed/
+      # unclassifiable) — see clarify.yml's identical step
+      # (specs/037-agent-turn-budget-guard/).
+      - name: Compute agent run verdict (propose-fix)
+        id: propose-fix-verdict
+        if: always() && steps.propose-fix.outcome != 'skipped'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
+        with:
+          intended-turns: ${{ inputs.propose-fix-max-turns }}
+
+      # Same rationale as diagnose's identical step: this leg must stay
+      # green so "Check propose-fix diff"/"Rung gate" still run (a decline
+      # or a rejected run degrades to rung 3/dedup-only, never a hard
+      # failure) — continue-on-error keeps this loud without reintroducing
+      # a leg-level failure.
+      - name: Fail loud on non-healthy agent verdict (propose-fix)
+        if: always() && steps.propose-fix.outcome != 'skipped' && steps.propose-fix-verdict.outputs.verdict != 'healthy'
+        continue-on-error: true
+        env:
+          VERDICT: ${{ steps.propose-fix-verdict.outputs.verdict }}
+          REASON: ${{ steps.propose-fix-verdict.outputs.reason }}
+        run: |
+          echo "::error::wing-commander watchdog propose-fix stage: agent step rejected — verdict=$VERDICT: $REASON"
+          exit 1
 
       - name: Upload Claude execution log (propose-fix)
         if: always() && steps.propose-fix.outcome != 'skipped'
@@ -1952,7 +2024,10 @@ jobs:
         with:
           model: ${{ steps.resolve-propose-fix-model.outputs.model }}
           max-turns: ${{ inputs.propose-fix-max-turns }}
+          ceiling: ${{ steps.propose-fix-ceiling.outputs.ceiling }}
           run-label: propose-fix (${{ matrix.class }})
+          verdict: ${{ steps.propose-fix-verdict.outputs.verdict }}
+          verdict-reason: ${{ steps.propose-fix-verdict.outputs.reason }}
 
       # Deterministic: a decline (or no attempt at all) is an empty diff —
       # never trust the agent's own narration of what it did.

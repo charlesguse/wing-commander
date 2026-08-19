@@ -16,8 +16,9 @@ description: >
   (198%)" plus a budget warning for a run that used 87 of its 100 and was
   never at risk. Meanwhile every genuinely exhausted run stopped at exactly
   100 distinct main-loop assistant messages (13 of 13), which is what the
-  cap actually counts. So this action counts that itself — see the
-  `main_turns` block below.
+  cap actually counts. So this action counts that itself, via the shared
+  `_shared/count-turns.sh` script every caller of `--max-turns` now reads
+  from — see the `count-turns.sh` invocation below.
 
 inputs:
   transcript-path:
@@ -35,9 +36,24 @@ inputs:
     required: true
   max-turns:
     description: >
-      The literal --max-turns value the caller's own step configured. When
-      omitted, the rendered summary reports turns used and omits the
-      used/budgeted ratio and the turn-budget warning entirely.
+      The caller's INTENDED turn budget — what a maintainer tunes for this
+      stage, and the denominator the used/budgeted ratio is measured
+      against. Since specs/037-agent-turn-budget-guard this is NOT the
+      value the runtime enforces; see `ceiling`. When omitted, the rendered
+      summary reports turns used and omits the ratio and the turn-budget
+      warning entirely.
+    required: false
+  ceiling:
+    description: >
+      The literal --max-turns value the runtime actually enforced — i.e.
+      ${{ steps.<site>-ceiling.outputs.ceiling }} from this site's
+      wing-commander-turn-ceiling step, which is max-turns multiplied by the
+      runaway margin (2.5x by default). Only the exhaustion banner uses it,
+      and it has to: `error_max_turns` means the run hit THIS number, not
+      the intended budget, so naming max-turns there tells a maintainer the
+      run stopped at 15 when it actually stopped at 38. Optional; when
+      omitted the banner falls back to naming max-turns, which is what this
+      action did before a ceiling existed.
     required: false
   warn-fraction:
     description: >
@@ -52,6 +68,22 @@ inputs:
       summary block's heading. Empty is fine for single-invocation stages.
     required: false
     default: ''
+  verdict:
+    description: >
+      ${{ steps.<verdict-id>.outputs.verdict }} from a wing-commander-agent-verdict
+      step at this same call site (healthy/exhausted/failed/unclassifiable).
+      Optional and display-only: when this AND verdict-reason are both
+      non-empty, one additional line renders beneath the existing table
+      stating the verdict and reason. When either is empty, rendering is
+      byte-for-byte identical to a caller that never passes them.
+    required: false
+    default: ''
+  verdict-reason:
+    description: >
+      ${{ steps.<verdict-id>.outputs.reason }} from the same
+      wing-commander-agent-verdict step. See verdict above.
+    required: false
+    default: ''
 
 runs:
   using: composite
@@ -62,16 +94,22 @@ runs:
         TRANSCRIPT_PATH: ${{ inputs.transcript-path }}
         MODEL: ${{ inputs.model }}
         MAX_TURNS: ${{ inputs.max-turns }}
+        CEILING: ${{ inputs.ceiling }}
         WARN_FRACTION: ${{ inputs.warn-fraction }}
         RUN_LABEL: ${{ inputs.run-label }}
+        VERDICT: ${{ inputs.verdict }}
+        VERDICT_REASON: ${{ inputs.verdict-reason }}
       run: |
         set -uo pipefail
 
         TRANSCRIPT="${TRANSCRIPT_PATH:-}"
         MODEL_IN="${MODEL:-}"
         MAX_TURNS="${MAX_TURNS:-}"
+        CEILING="${CEILING:-}"
         WARN_FRACTION="${WARN_FRACTION:-0.8}"
         RUN_LABEL="${RUN_LABEL:-}"
+        VERDICT="${VERDICT:-}"
+        VERDICT_REASON="${VERDICT_REASON:-}"
         SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 
         # Heading shared by both the normal and unavailable cases (T006/T007).
@@ -93,30 +131,10 @@ runs:
               availability=ok
             fi
 
-            # The counter --max-turns actually enforces: distinct assistant
-            # API responses on the MAIN loop. Two details are load-bearing.
-            #
-            # Distinct .message.id, because one response is streamed as
-            # several assistant records (a text chunk, then a tool_use
-            # chunk) that all share an id — counting records inflates by
-            # roughly 1.6x.
-            #
-            # parent_tool_use_id == null, because subagent (Task tool)
-            # responses are inlined into the same transcript and do NOT
-            # count against the parent's budget. A 2026-07-24 retry ran 180
-            # distinct assistant responses under a 100 cap without tripping
-            # it; 86 of them belonged to subagents. Counting those would
-            # make delegation look like budget exhaustion.
-            main_turns="$(jq -r 'if type=="array" then . else [.] end
-              | map(select(.type=="assistant"
-                           and (.parent_tool_use_id // null) == null)
-                    | .message.id // empty)
-              | unique | length' "$TRANSCRIPT" 2>/dev/null || true)"
-            sub_turns="$(jq -r 'if type=="array" then . else [.] end
-              | map(select(.type=="assistant"
-                           and (.parent_tool_use_id // null) != null)
-                    | .message.id // empty)
-              | unique | length' "$TRANSCRIPT" 2>/dev/null || true)"
+            # Shared with wing-commander-agent-verdict — one canonical copy of
+            # the counting rule instead of a second, driftable one
+            # (research.md R5, specs/037-agent-turn-budget-guard/).
+            eval "$(bash "$GITHUB_ACTION_PATH/../_shared/count-turns.sh" "$TRANSCRIPT")"
           fi
         fi
 
@@ -154,6 +172,7 @@ runs:
 
         # --- T004: turn-budget fields (only when max-turns AND turns_used known)
         turn_warning=false
+        over_intended=false
         turns_pct=""
         warn_pct=""
         if [ "$turns_counted" = "true" ] && [ -n "$MAX_TURNS" ] \
@@ -162,9 +181,28 @@ runs:
           # steps with -e (the `set` above adds flags, it can't remove -e), and
           # `read` exits 1 at EOF because awk's printf emits no trailing
           # newline — the variables are populated regardless.
-          read -r turns_pct turn_warning < <(awk -v u="$turns_used" -v b="$MAX_TURNS" -v w="$WARN_FRACTION" 'BEGIN{
+          # over_intended is tracked separately from turn_warning because
+          # the two mean different things now: at/above the warn fraction is
+          # "getting close to the budget", while ABOVE the budget is a state
+          # that used to be impossible (the runtime stopped you) and is now
+          # an ordinary healthy outcome — the run simply continued up to the
+          # ceiling. Rendering that as a threshold warning would reprint the
+          # "198 / 100 turns (198%)" nonsense this action's description
+          # already apologises for.
+          #
+          # The boundary is `>=`, not `>`, so it agrees with
+          # wing-commander-agent-verdict's `over-budget`
+          # (counted-turns >= intended-turns) at exactly 100% of the budget.
+          # They are meant to be the same signal, and a caller reads both:
+          # the verdict's output gates the "used its full intended turn
+          # budget" callout on the lifecycle issue, while this flag picks
+          # the line the run summary renders. At `>` the two disagreed on
+          # the one run that lands exactly on the budget — the callout said
+          # "full intended budget" while the summary printed the threshold
+          # warning it is describing (PR #221 review).
+          read -r turns_pct turn_warning over_intended < <(awk -v u="$turns_used" -v b="$MAX_TURNS" -v w="$WARN_FRACTION" 'BEGIN{
             r=(b+0>0)?u/b:0
-            printf "%d %s", (r*100)+0.5, (r>=w)?"true":"false"
+            printf "%d %s %s", (r*100)+0.5, (r>=w)?"true":"false", (r>=1)?"true":"false"
           }') || true
           warn_pct="$(awk -v w="$WARN_FRACTION" 'BEGIN{ printf "%d", (w*100)+0.5 }')"
         fi
@@ -238,11 +276,30 @@ runs:
           printf '|---|---|---|---|---|\n'
           printf '| %s | %s | %s | %s | %s |\n\n' \
             "$MODEL_IN" "$turns_cell" "$duration_disp" "$tokens_disp" "$cost_disp"
+          # Additive-only (research.md R6): renders only when BOTH verdict
+          # and verdict-reason are non-empty, so a caller that hasn't wired
+          # wing-commander-agent-verdict yet renders byte-for-byte the same
+          # as before this input pair existed.
+          if [ -n "$VERDICT" ] && [ -n "$VERDICT_REASON" ]; then
+            printf '**Verdict**: %s — %s\n\n' "$VERDICT" "$VERDICT_REASON"
+          fi
           # Ground truth, and it outranks the ratio: the runtime itself says
           # the budget ran out. Reported whether or not counting succeeded.
           if [ "$subtype" = "error_max_turns" ]; then
-            printf '🛑 **Turn budget exhausted**: the runtime cut this run off at its %s-turn cap. Work after that point was never attempted — treat any "done" narration in the transcript as unfinished.\n\n' \
-              "${MAX_TURNS:-configured}"
+            # The cap the run hit is the ceiling, not the intended budget.
+            # Name both when they are known and different — "cut off at 38"
+            # alone leaves a maintainer hunting for where 38 came from.
+            if [ -n "$CEILING" ] && [ -n "$MAX_TURNS" ] && [ "$CEILING" != "$MAX_TURNS" ]; then
+              printf '🛑 **Turn budget exhausted**: the runtime cut this run off at its %s-turn runaway ceiling (%sx the %s-turn intended budget). Work after that point was never attempted — treat any "done" narration in the transcript as unfinished.\n\n' \
+                "$CEILING" "$(awk -v c="$CEILING" -v b="$MAX_TURNS" 'BEGIN{ printf "%.1f", (b+0>0)?c/b:0 }')" "$MAX_TURNS"
+            else
+              printf '🛑 **Turn budget exhausted**: the runtime cut this run off at its %s-turn cap. Work after that point was never attempted — treat any "done" narration in the transcript as unfinished.\n\n' \
+                "${CEILING:-${MAX_TURNS:-configured}}"
+            fi
+          elif [ "$over_intended" = "true" ]; then
+            printf 'ℹ️ **Over intended budget**: this run used %s turns against an intended budget of %s (%s%%) and still finished%s. Not a failure — the intended budget is a tuning number, not a stop. Worth raising if this stage does it routinely.\n\n' \
+              "$turns_used" "$MAX_TURNS" "$turns_pct" \
+              "$([ -n "$CEILING" ] && printf ' well inside its %s-turn runaway ceiling' "$CEILING")"
           elif [ "$turn_warning" = "true" ]; then
             printf '⚠️ **Turn budget warning**: this run used %s/%s turns (%s%%) — at or above the %s%% warning threshold.\n\n' \
               "$turns_used" "$MAX_TURNS" "$turns_pct" "$warn_pct"

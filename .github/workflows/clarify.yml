@@ -342,9 +342,22 @@ jobs:
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
           step-label: "clarify"
 
+      - name: Compute agent turn ceiling
+        id: agent-ceiling
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.tool-args-clarify.outputs.allowed-tools != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
+        with:
+          intended-turns: ${{ inputs.max-turns }}
+
       - name: Fold answers into the draft spec
         id: agent
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.tool-args-clarify.outputs.allowed-tools != ''
+        # The action rejects a healthy, finished run post-hoc when its own
+        # inflated .num_turns reads above --max-turns (which is now the
+        # runaway ceiling, not the intended budget) — without this, that
+        # rejection stops the whole job before the verdict step below can
+        # even run (specs/037-agent-turn-budget-guard/, issue #204).
+        continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -429,10 +442,21 @@ jobs:
             Never merge, approve, close, or relabel anything except as stated.
           claude_args: |
             --model ${{ inputs.model }}
-            --max-turns ${{ inputs.max-turns }}
+            --max-turns ${{ steps.agent-ceiling.outputs.ceiling }}
             --json-schema '{"type":"object","properties":{"answered":{"type":"boolean"},"clarifications":{"type":"array","items":{"type":"object","properties":{"question":{"type":"string"},"context":{"type":["string","null"]},"options":{"type":"array","items":{"type":"object","properties":{"answer":{"type":"string"},"implications":{"type":["string","null"]}},"required":["answer"]}}},"required":["question"]}}},"required":["answered","clarifications"]}'
             --allowedTools "${{ steps.tool-args-clarify.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-clarify.outputs.disallowed-tools }}"
+
+      # Deterministic, transcript-only verdict (healthy/exhausted/failed/
+      # unclassifiable) — replaces the raw steps.agent.outcome checks below,
+      # which the action's own post-hoc turn-budget rejection could no longer
+      # be trusted to reflect (specs/037-agent-turn-budget-guard/).
+      - name: Compute agent run verdict
+        id: agent-verdict
+        if: always() && steps.agent.outcome != 'skipped'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
+        with:
+          intended-turns: ${{ inputs.max-turns }}
 
       # The action exits zero even when the agent run itself errored (e.g. a
       # 401 from an invalid credential), and clarify has no downstream
@@ -458,7 +482,7 @@ jobs:
       # says the fold may already be committed, so whoever reads the red run
       # checks the PR rather than assuming nothing happened.
       - name: Fail on agent API error
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent.outcome == 'success'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent-verdict.outputs.verdict == 'healthy'
         run: |
           f="$RUNNER_TEMP/claude-execution-output.json"
           agent_ok="$(jq -r '([.[] | select(.type=="result")] | last) as $r
@@ -479,6 +503,20 @@ jobs:
             exit 1
           fi
 
+      # Uniform across every rewired call site (research.md R7 step 5): the
+      # single point where a non-healthy verdict actually fails the job.
+      # Genuinely errored/exhausted/unreadable runs stop here with a named
+      # cause; a healthy-but-post-hoc-rejected run skips this entirely and
+      # the stage continues (FR-001-FR-003, FR-005).
+      - name: Fail loud on non-healthy agent verdict
+        if: always() && steps.agent.outcome != 'skipped' && steps.agent-verdict.outputs.verdict != 'healthy'
+        env:
+          VERDICT: ${{ steps.agent-verdict.outputs.verdict }}
+          REASON: ${{ steps.agent-verdict.outputs.reason }}
+        run: |
+          echo "::error::wing-commander clarify stage: agent step rejected — verdict=$VERDICT: $REASON"
+          exit 1
+
       # Deterministic kind decision (contracts/callout-points.md rows 3/4).
       # outcome=none covers the agent's early-STOP path (step 2: the reply
       # didn't answer any open question) — the agent's own gh issue comment
@@ -486,7 +524,7 @@ jobs:
       # posted here.
       - name: Determine clarification follow-up outcome
         id: clarification
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent.outcome == 'success'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent-verdict.outputs.verdict == 'healthy'
         env:
           SPEC_DIR: ${{ steps.ctx.outputs.spec-dir }}
         run: |
@@ -666,6 +704,27 @@ jobs:
         with:
           model: ${{ inputs.model }}
           max-turns: ${{ inputs.max-turns }}
+          ceiling: ${{ steps.agent-ceiling.outputs.ceiling }}
+          verdict: ${{ steps.agent-verdict.outputs.verdict }}
+          verdict-reason: ${{ steps.agent-verdict.outputs.reason }}
+
+      # Observability, not failure (FR-017) — the intended budget was fully
+      # used but the run finished healthy; the runaway ceiling above is the
+      # only hard stop.
+      - name: Report over-budget agent run
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent-verdict.outputs.verdict == 'healthy' && steps.agent-verdict.outputs.over-budget == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: info
+          summary: "This step used its full intended turn budget."
+          body: >-
+            Counted ${{ steps.agent-verdict.outputs.counted-turns }} of an
+            intended ${{ inputs.max-turns }} turns. The run continued and
+            finished successfully — the runaway ceiling
+            (${{ steps.agent-ceiling.outputs.ceiling }}) is the only hard
+            stop; this is an observability note, not a failure.
 
       # The cross-check's veto, turned into the red run (see the identical
       # step in intake.yml). Deferred to last so the transcript upload and

@@ -508,6 +508,18 @@ jobs:
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
           step-label: "implement.cycle"
 
+      # The intended budget (inputs.max-turns) keeps its public meaning; the
+      # ceiling handed to --max-turns below is a wider, real stop sized to
+      # absorb this repository's observed .num_turns-vs-counted divergence
+      # so a genuinely healthy cycle is never rejected post-hoc
+      # (specs/037-agent-turn-budget-guard/research.md R1).
+      - name: Compute agent turn ceiling (cycle)
+        id: cycle-ceiling
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.tool-args-cycle.outputs.allowed-tools != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
+        with:
+          intended-turns: ${{ inputs.max-turns }}
+
       - name: Implement and converge (cycle)
         id: cycle
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.tool-args-cycle.outputs.allowed-tools != ''
@@ -621,14 +633,51 @@ jobs:
               of that phase, not one edit per task.
           claude_args: |
             --model ${{ inputs.model }}
-            --max-turns ${{ inputs.max-turns }}
+            --max-turns ${{ steps.cycle-ceiling.outputs.ceiling }}
             --allowedTools "${{ steps.tool-args-cycle.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-cycle.outputs.disallowed-tools }}"
+
+      # Deterministic, transcript-only verdict (healthy/exhausted/failed/
+      # unclassifiable) — same shared composite as every other rewired site
+      # (specs/037-agent-turn-budget-guard/). Guarded like the upload/metrics
+      # steps below (steps.cycle.outcome != 'skipped'), not like "Read back
+      # cycle outcome"'s own broader guard — the runner.temp transcript path
+      # is shared across this job's three agent steps, so this must not run
+      # (and misclassify a leftover transcript) when the cycle step itself
+      # never attempted.
+      - name: Compute agent run verdict (cycle)
+        id: cycle-verdict
+        if: always() && steps.cycle.outcome != 'skipped'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
+        with:
+          intended-turns: ${{ inputs.max-turns }}
+          run-label: cycle
+
+      # continue-on-error, unlike this same step at every other rewired site:
+      # "Read back cycle outcome" below is this stage's existing git-state
+      # stall-detection path (research.md R13) and must still run —
+      # including deciding whether "retry" fires — regardless of *why* this
+      # cycle produced no progress. A hard exit here would kill the job
+      # before that step, before "retry", and before "Consolidate final
+      # outcome" ever sets final-ok, silently starving the stalled job
+      # downstream of the very output it needs to report anything at all.
+      # This step still names the reason and still exits 1 (visible as a
+      # failed-but-continued step in the run); it just doesn't take the job
+      # down with it, so the existing retry/stall decision is unchanged.
+      - name: Fail loud on non-healthy agent verdict (cycle)
+        if: always() && steps.cycle.outcome != 'skipped' && steps.cycle-verdict.outputs.verdict != 'healthy'
+        continue-on-error: true
+        env:
+          VERDICT: ${{ steps.cycle-verdict.outputs.verdict }}
+          REASON: ${{ steps.cycle-verdict.outputs.reason }}
+        run: |
+          echo "::error::wing-commander implement stage: cycle agent step rejected — verdict=$VERDICT: $REASON"
+          exit 1
 
       # Uploaded before any retry runs so the retry's transcript (same temp
       # path) doesn't clobber the primary attempt's.
       - name: Upload Claude execution log (cycle)
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.cycle.outcome != 'skipped'
+        if: always() && steps.cycle.outcome != 'skipped'
         uses: actions/upload-artifact@v4
         with:
           name: claude-execution-output-cycle
@@ -639,14 +688,35 @@ jobs:
       # shared transcript path. run-label distinguishes it from the retry and
       # progress-comment blocks in this same job's summary.
       - name: Agent run metrics summary (cycle)
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.cycle.outcome != 'skipped'
+        if: always() && steps.cycle.outcome != 'skipped'
         # Belt-and-braces for the action's own "never fail the job" contract.
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
         with:
           model: ${{ inputs.model }}
           max-turns: ${{ inputs.max-turns }}
+          ceiling: ${{ steps.cycle-ceiling.outputs.ceiling }}
           run-label: cycle
+          verdict: ${{ steps.cycle-verdict.outputs.verdict }}
+          verdict-reason: ${{ steps.cycle-verdict.outputs.reason }}
+
+      # Observability, not failure (FR-017) — the intended budget was fully
+      # used but the run finished healthy; the runaway ceiling above is the
+      # only hard stop.
+      - name: Report over-budget agent run (cycle)
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.cycle.outcome != 'skipped' && steps.cycle-verdict.outputs.verdict == 'healthy' && steps.cycle-verdict.outputs.over-budget == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: info
+          summary: "The implement cycle used its full intended turn budget."
+          body: >-
+            Counted ${{ steps.cycle-verdict.outputs.counted-turns }} of an
+            intended ${{ inputs.max-turns }} turns. The run continued and
+            finished successfully — the runaway ceiling
+            (${{ steps.cycle-ceiling.outputs.ceiling }}) is the only hard
+            stop; this is an observability note, not a failure.
 
       # Failure detection + convergence signal, all deterministic (no agent
       # turns): the attempt "completed" only if the action exited zero AND
@@ -718,6 +788,18 @@ jobs:
           allowed-tools-override: ${{ inputs.allowed-tools-override }}
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
           step-label: "implement.retry"
+
+      - name: Compute agent turn ceiling (retry)
+        id: retry-ceiling
+        if: >-
+          steps.lifecycle-gate.outputs.is-open == 'true' &&
+          steps.guard.outputs.skip != 'true' &&
+          steps.outcome.outputs.ok == 'false' &&
+          inputs.model != inputs.escalation-model &&
+          steps.tool-args-retry.outputs.allowed-tools != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
+        with:
+          intended-turns: ${{ inputs.max-turns }}
 
       - name: Implement and converge (retry at escalation model)
         id: retry
@@ -837,12 +919,39 @@ jobs:
               of that phase, not one edit per task.
           claude_args: |
             --model ${{ inputs.escalation-model }}
-            --max-turns ${{ inputs.max-turns }}
+            --max-turns ${{ steps.retry-ceiling.outputs.ceiling }}
             --allowedTools "${{ steps.tool-args-retry.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-retry.outputs.disallowed-tools }}"
 
+      # See "Compute agent run verdict (cycle)" above — same shared
+      # composite, same steps.retry.outcome != 'skipped' guard so this
+      # doesn't misclassify a leftover transcript when retry never ran
+      # (e.g. the primary attempt already succeeded).
+      - name: Compute agent run verdict (retry)
+        id: retry-verdict
+        if: always() && steps.retry.outcome != 'skipped'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
+        with:
+          intended-turns: ${{ inputs.max-turns }}
+          run-label: retry
+
+      # continue-on-error — see "Fail loud on non-healthy agent verdict
+      # (cycle)" above (research.md R13). "Read back retry outcome" and
+      # "Consolidate final outcome" below must still run so the stalled job
+      # gets its final-ok output regardless of why the retry produced no
+      # progress.
+      - name: Fail loud on non-healthy agent verdict (retry)
+        if: always() && steps.retry.outcome != 'skipped' && steps.retry-verdict.outputs.verdict != 'healthy'
+        continue-on-error: true
+        env:
+          VERDICT: ${{ steps.retry-verdict.outputs.verdict }}
+          REASON: ${{ steps.retry-verdict.outputs.reason }}
+        run: |
+          echo "::error::wing-commander implement stage: retry agent step rejected — verdict=$VERDICT: $REASON"
+          exit 1
+
       - name: Upload Claude execution log (retry)
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.retry.outcome != 'skipped'
+        if: always() && steps.retry.outcome != 'skipped'
         uses: actions/upload-artifact@v4
         with:
           name: claude-execution-output-retry
@@ -852,14 +961,34 @@ jobs:
       # Retry run's metrics — read after the retry's own upload and before the
       # haiku progress-comment step overwrites the shared transcript path.
       - name: Agent run metrics summary (retry)
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.retry.outcome != 'skipped'
+        if: always() && steps.retry.outcome != 'skipped'
         # Belt-and-braces for the action's own "never fail the job" contract.
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
         with:
           model: ${{ inputs.escalation-model }}
           max-turns: ${{ inputs.max-turns }}
+          ceiling: ${{ steps.retry-ceiling.outputs.ceiling }}
           run-label: retry
+          verdict: ${{ steps.retry-verdict.outputs.verdict }}
+          verdict-reason: ${{ steps.retry-verdict.outputs.reason }}
+
+      # Observability, not failure (FR-017) — see "Report over-budget agent
+      # run (cycle)" above.
+      - name: Report over-budget agent run (retry)
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.retry.outcome != 'skipped' && steps.retry-verdict.outputs.verdict == 'healthy' && steps.retry-verdict.outputs.over-budget == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: info
+          summary: "The implement retry used its full intended turn budget."
+          body: >-
+            Counted ${{ steps.retry-verdict.outputs.counted-turns }} of an
+            intended ${{ inputs.max-turns }} turns. The run continued and
+            finished successfully — the runaway ceiling
+            (${{ steps.retry-ceiling.outputs.ceiling }}) is the only hard
+            stop; this is an observability note, not a failure.
 
       - name: Read back retry outcome
         id: retry-outcome
@@ -982,6 +1111,13 @@ jobs:
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
           step-label: "implement.post-progress-comment"
 
+      - name: Compute agent turn ceiling (progress)
+        id: progress-ceiling
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.final.outputs.ok == 'true' && steps.tool-args-post-progress-comment.outputs.allowed-tools != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
+        with:
+          intended-turns: 15
+
       - name: Post progress comment (haiku)
         id: progress
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.final.outputs.ok == 'true' && steps.tool-args-post-progress-comment.outputs.allowed-tools != ''
@@ -1027,9 +1163,37 @@ jobs:
             Do not edit any files.
           claude_args: |
             --model ${{ inputs.summary-model }}
-            --max-turns 15
+            --max-turns ${{ steps.progress-ceiling.outputs.ceiling }}
             --allowedTools "${{ steps.tool-args-post-progress-comment.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-post-progress-comment.outputs.disallowed-tools }}"
+
+      # See "Compute agent run verdict (cycle)" above — same shared
+      # composite, same steps.progress.outcome != 'skipped' guard so this
+      # doesn't misclassify a leftover transcript when the progress comment
+      # never ran.
+      - name: Compute agent run verdict (progress comment)
+        id: progress-verdict
+        if: always() && steps.progress.outcome != 'skipped'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
+        with:
+          intended-turns: 15
+          run-label: progress comment
+
+      # continue-on-error — see "Fail loud on non-healthy agent verdict
+      # (cycle)" above (research.md R13). "Flip stage label (first cycle)"
+      # and "Dispatch next step" below both run later in this same job and
+      # gate only on steps.final.outputs.ok, not on this agent step; a hard
+      # exit here would silently drop the next-cycle/finalize dispatch over
+      # nothing worse than a missing progress comment.
+      - name: Fail loud on non-healthy agent verdict (progress comment)
+        if: always() && steps.progress.outcome != 'skipped' && steps.progress-verdict.outputs.verdict != 'healthy'
+        continue-on-error: true
+        env:
+          VERDICT: ${{ steps.progress-verdict.outputs.verdict }}
+          REASON: ${{ steps.progress-verdict.outputs.reason }}
+        run: |
+          echo "::error::wing-commander implement stage: progress-comment agent step rejected — verdict=$VERDICT: $REASON"
+          exit 1
 
       # Same `always()` reasoning as the cycle and retry uploads above: this
       # agent runs under continue-on-error, so a failure here leaves the job
@@ -1039,7 +1203,7 @@ jobs:
       # A distinct artifact name because -cycle and -retry were already
       # uploaded from this same job.
       - name: Upload Claude execution log (progress)
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.progress.outcome != 'skipped'
+        if: always() && steps.progress.outcome != 'skipped'
         uses: actions/upload-artifact@v4
         with:
           name: claude-execution-output-progress
@@ -1050,14 +1214,34 @@ jobs:
       # step and its transcript upload — every agent invocation gets its own
       # summary block.
       - name: Agent run metrics summary (progress comment)
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.progress.outcome != 'skipped'
+        if: always() && steps.progress.outcome != 'skipped'
         # Belt-and-braces for the action's own "never fail the job" contract.
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
         with:
           model: ${{ inputs.summary-model }}
           max-turns: 15
+          ceiling: ${{ steps.progress-ceiling.outputs.ceiling }}
           run-label: progress comment
+          verdict: ${{ steps.progress-verdict.outputs.verdict }}
+          verdict-reason: ${{ steps.progress-verdict.outputs.reason }}
+
+      # Observability, not failure (FR-017) — see "Report over-budget agent
+      # run (cycle)" above.
+      - name: Report over-budget agent run (progress comment)
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.progress.outcome != 'skipped' && steps.progress-verdict.outputs.verdict == 'healthy' && steps.progress-verdict.outputs.over-budget == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: info
+          summary: "The implement progress-comment step used its full intended turn budget."
+          body: >-
+            Counted ${{ steps.progress-verdict.outputs.counted-turns }} of an
+            intended 15 turns. The run continued and finished successfully —
+            the runaway ceiling
+            (${{ steps.progress-ceiling.outputs.ceiling }}) is the only hard
+            stop; this is an observability note, not a failure.
 
       # The loop announces itself on the lifecycle issue from the first
       # completed cycle onward; later cycles change nothing.

@@ -40,6 +40,16 @@ drift out of sync — the same discipline as gates 5-9, and gate 5 exists
 precisely because a hand-copied fixture kept asserting against a filter that
 no longer shipped.
 
+The counting itself now lives in the shared `.github/actions/_shared/
+count-turns.sh` script the shipped block calls via
+`$GITHUB_ACTION_PATH/../_shared/count-turns.sh`
+(specs/037-agent-turn-budget-guard/research.md R5). Each case reads that
+real file's current contents and lays them out beside a stand-in action
+directory inside the case's own temp tree, pointing GITHUB_ACTION_PATH
+there. The bytes under test are always the shipped script's — but staging
+them per case is what lets the mutation checks below swap in a defective
+copy without touching the checkout on disk.
+
 It ends with mutation checks that reintroduce each defect and assert this
 suite goes red. A detector that has never fired is indistinguishable from
 one that cannot.
@@ -95,6 +105,10 @@ def shipped_script():
 
 SCRIPT = shipped_script()
 
+SHARED_SCRIPT_PATH = ".github/actions/_shared/count-turns.sh"
+with open(SHARED_SCRIPT_PATH, encoding="utf-8") as _f:
+    SHARED_SCRIPT = _f.read()
+
 
 # --- transcript builders ---------------------------------------------------
 def assistant(mid, parent=None, chunks=1):
@@ -128,7 +142,8 @@ TRANSCRIPT_NAME = "claude-execution-output.json"
 BASH = None          # resolved once in main()
 
 
-def run_case(name, records, max_turns="100", warn_fraction=None, raw=None):
+def run_case(name, records, max_turns="100", warn_fraction=None, raw=None,
+             ceiling=""):
     """Execute the shipped script over one transcript; return (rc, summary).
 
     run_step() is the shared harness gates 8 and 9 use: it hands the block
@@ -148,21 +163,39 @@ def run_case(name, records, max_turns="100", warn_fraction=None, raw=None):
             with open(os.path.join(tmp, TRANSCRIPT_NAME), "w",
                       encoding="utf-8") as f:
                 json.dump(records, f)
+
+        # The shipped block resolves the shared counting script as
+        # "$GITHUB_ACTION_PATH/../_shared/count-turns.sh" — lay out a
+        # sibling "_shared/" next to a stand-in action dir so that
+        # resolution finds THIS run's (possibly mutated) SHARED_SCRIPT,
+        # never the real repo file, keeping mutation testing isolated from
+        # the checkout on disk.
+        action_dir = os.path.join(tmp, "actiondir")
+        shared_dir = os.path.join(tmp, "_shared")
+        os.makedirs(action_dir, exist_ok=True)
+        os.makedirs(shared_dir, exist_ok=True)
+        with open(os.path.join(shared_dir, "count-turns.sh"), "w",
+                  encoding="utf-8", newline="\n") as f:
+            f.write(SHARED_SCRIPT)
+
         rc, output, _outputs, summary = run_step(
             BASH, SCRIPT, tmp,
             {"TRANSCRIPT_PATH": TRANSCRIPT_NAME,
              "MODEL": "claude-sonnet-5",
              "MAX_TURNS": max_turns,
+             "CEILING": ceiling,
              "RUN_LABEL": "cycle",
-             "WARN_FRACTION": warn_fraction or "0.8"},
+             "WARN_FRACTION": warn_fraction or "0.8",
+             "GITHUB_ACTION_PATH": action_dir},
             tmp)
         return rc, output, summary
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def expect(case, records, want, unwanted=(), max_turns="100", exit_zero=True):
-    rc, output, summary = run_case(case, records, max_turns)
+def expect(case, records, want, unwanted=(), max_turns="100", exit_zero=True,
+           ceiling=""):
+    rc, output, summary = run_case(case, records, max_turns, ceiling=ceiling)
     if exit_zero and rc != 0:
         fail(case, f"the action exited {rc}, breaking its never-fail-the-step "
                    f"contract. output: {output.strip()[:300]}")
@@ -216,6 +249,80 @@ def case_exhausted_is_called_out():
            want=["Turn budget exhausted", "100-turn cap", "| 100 / 100 |"])
     note("an error_max_turns run says the budget ran out in words, rather "
          "than leaving a reader to infer it from a ratio")
+
+
+def case_exhaustion_names_the_ceiling_not_the_intended_budget():
+    """The number a run is cut off at is the ceiling, and only the ceiling.
+
+    Since specs/037-agent-turn-budget-guard the runtime enforces
+    ceil(intended * 2.5), so `error_max_turns` at a site with a 15-turn
+    intended budget means the run made 38 turns, not 15. Naming max-turns
+    in that banner sends a maintainer looking for a 15-turn cap that no
+    longer exists anywhere (PR #221 review).
+    """
+    expect("the exhaustion banner names the enforced ceiling",
+           transcript(main=38, subtype="error_max_turns", num_turns=44),
+           max_turns="15", ceiling="38",
+           want=["Turn budget exhausted", "38-turn runaway ceiling",
+                 "15-turn intended budget", "2.5x"],
+           unwanted=["15-turn cap"])
+    expect("with no ceiling given it still names the cap it was told about",
+           transcript(main=100, subtype="error_max_turns", num_turns=101),
+           want=["100-turn cap"])
+    note("the exhaustion banner names the ceiling the runtime enforced and "
+         "the intended budget it derives from, never the intended budget "
+         "alone")
+
+
+def case_over_intended_is_not_a_warning():
+    """Exceeding the intended budget is now ordinary, and reads that way.
+
+    Before the ceiling existed, used > budget was impossible — the runtime
+    stopped you at the budget. Now a healthy run routinely passes it and
+    keeps going. Rendering that through the threshold-warning branch
+    reprints exactly the "198 / 100 turns (198%)" alarm this file's header
+    documents as the bug it was written to kill.
+    """
+    summary = expect("over the intended budget reads as information",
+                     transcript(main=24, num_turns=30),
+                     max_turns="15", ceiling="38",
+                     want=["Over intended budget", "24 turns", "38-turn "
+                           "runaway ceiling"],
+                     unwanted=["Turn budget warning", "Turn budget "
+                               "exhausted"])
+    if "160%" not in summary:
+        fail("over the intended budget reads as information",
+             f"expected the true ratio (160%) to still be stated, got:\n"
+             f"{summary.strip()[:400]}")
+    expect("at/below the intended budget the threshold warning still fires",
+           transcript(main=14, num_turns=20),
+           max_turns="15", ceiling="38",
+           want=["Turn budget warning", "14/15"],
+           unwanted=["Over intended budget"])
+    # The boundary is shared with wing-commander-agent-verdict, whose
+    # `over-budget` is counted-turns >= intended-turns. A caller renders
+    # both: that output gates the "used its full intended turn budget"
+    # callout on the lifecycle issue, this one picks the summary line. While
+    # this side used a strict `>`, the single run that lands exactly on the
+    # budget got the callout AND the threshold warning the callout is
+    # describing (PR #221 review).
+    expect("exactly at the intended budget agrees with the verdict action",
+           transcript(main=15, num_turns=20),
+           max_turns="15", ceiling="38",
+           want=["Over intended budget", "15 turns", "(100%)"],
+           unwanted=["Turn budget warning"])
+    # The ceiling clause is an inline command substitution that exits 1 when
+    # CEILING is empty, and composite `shell: bash` steps run under -e that
+    # the action's own `set` cannot remove. A caller that has not wired
+    # `ceiling` yet must still get the line, and the step must still exit 0.
+    expect("a caller with no ceiling wired still renders the line and exits 0",
+           transcript(main=24, num_turns=30),
+           max_turns="15", ceiling="",
+           want=["Over intended budget", "24 turns", "160%"],
+           unwanted=["runaway ceiling", "Turn budget warning"])
+    note("a run past its intended budget but inside the ceiling is reported "
+         "as information, not as a threshold warning — the warning is still "
+         "the right voice below the budget")
 
 
 def case_warning_boundary():
@@ -282,6 +389,8 @@ CASES = [
     case_streamed_chunks_are_one_turn,
     case_subagent_turns_excluded,
     case_exhausted_is_called_out,
+    case_exhaustion_names_the_ceiling_not_the_intended_budget,
+    case_over_intended_is_not_a_warning,
     case_warning_boundary,
     case_no_budget_no_ratio,
     case_uncountable_falls_back_labelled,
@@ -290,16 +399,19 @@ CASES = [
 
 
 # --- mutation checks -------------------------------------------------------
-# Each mutation reintroduces a real defect into the shipped script and
-# asserts this suite catches it. Without these, a rewrite that quietly stops
-# counting anything would leave every case above passing on a constant.
+# Each mutation reintroduces a real defect and asserts this suite catches it.
+# Without these, a rewrite that quietly stops counting anything would leave
+# every case above passing on a constant. Two of the three now key on
+# .github/actions/_shared/count-turns.sh (research.md R5's extraction) rather
+# than the action's own run: block — the "target" tells run_case() which one
+# to mutate for that pass.
 MUTATIONS = [
-    ("reads .num_turns for the ratio again",
+    ("reads .num_turns for the ratio again", "action",
      lambda s: s.replace('turns_used="$main_turns"',
                          'turns_used="$reported_turns"')),
-    ("counts assistant records instead of distinct message ids",
+    ("counts assistant records instead of distinct message ids", "shared",
      lambda s: s.replace("| unique | length", "| length")),
-    ("counts subagent turns against the parent's budget",
+    ("counts subagent turns against the parent's budget", "shared",
      lambda s: s.replace('and (.parent_tool_use_id // null) == null)', ')')),
 ]
 
@@ -323,27 +435,34 @@ def main():
         print(f"Gate 11: {len(real)} failure(s) against the shipped action.")
         return 1
 
-    global SCRIPT, MUTATING
-    original = SCRIPT
+    global SCRIPT, SHARED_SCRIPT, MUTATING
+    original_script = SCRIPT
+    original_shared = SHARED_SCRIPT
     mutation_failures = 0
     MUTATING = True
-    for label, mutate in MUTATIONS:
+    for label, target, mutate in MUTATIONS:
+        original = original_script if target == "action" else original_shared
+        source_file = ACTION if target == "action" else SHARED_SCRIPT_PATH
         mutated = mutate(original)
         if mutated == original:
-            print(f"::error file={ACTION}::gate 11's mutation {label!r} no "
-                  f"longer changes the script — the code it keys on has been "
-                  f"rewritten, so this mutation proves nothing. Re-point it "
-                  f"at the current implementation.")
+            print(f"::error file={source_file}::gate 11's mutation {label!r} "
+                  f"no longer changes the script — the code it keys on has "
+                  f"been rewritten, so this mutation proves nothing. "
+                  f"Re-point it at the current implementation.")
             mutation_failures += 1
             continue
-        SCRIPT = mutated
+        if target == "action":
+            SCRIPT = mutated
+        else:
+            SHARED_SCRIPT = mutated
         caught = run_suite()
-        SCRIPT = original
+        SCRIPT = original_script
+        SHARED_SCRIPT = original_shared
         if not caught:
-            print(f"::error file={ACTION}::gate 11 mutation {label!r} was NOT "
-                  f"caught — the suite passed against a knowingly broken "
-                  f"action, so its green verdict on the real one means "
-                  f"nothing. Add a case that fails on this mutation.")
+            print(f"::error file={source_file}::gate 11 mutation {label!r} "
+                  f"was NOT caught — the suite passed against a knowingly "
+                  f"broken script, so its green verdict on the real one "
+                  f"means nothing. Add a case that fails on this mutation.")
             mutation_failures += 1
         else:
             print(f"note: mutation caught ({label}): "

@@ -596,9 +596,22 @@ jobs:
       # constitution V). classifications is an array (1..N) so one comment
       # can decompose into independently-routed parts (edge case: "request
       # mixes in-scope and out-of-scope items").
+      - name: Compute agent turn ceiling
+        id: agent-ceiling
+        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && steps.relay-resume.outputs.resumed != 'true' && steps.tool-args-classify.outputs.allowed-tools != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
+        with:
+          intended-turns: ${{ inputs.max-turns }}
+
       - name: Classify the PR conversation request
         id: agent
         if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && steps.relay-resume.outputs.resumed != 'true' && steps.tool-args-classify.outputs.allowed-tools != ''
+        # The action rejects a healthy, finished run post-hoc when its own
+        # inflated .num_turns reads above --max-turns (now the runaway
+        # ceiling, not the intended budget) — without this, that rejection
+        # stops the whole job before the verdict step below can even run
+        # (specs/037-agent-turn-budget-guard/, issue #204).
+        continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -703,10 +716,21 @@ jobs:
             the classifications array matching the provided schema.
           claude_args: |
             --model ${{ inputs.model }}
-            --max-turns ${{ inputs.max-turns }}
+            --max-turns ${{ steps.agent-ceiling.outputs.ceiling }}
             --json-schema '{"type":"object","required":["classifications"],"properties":{"classifications":{"type":"array","minItems":1,"items":{"type":"object","required":["category","summary","planned-action"],"properties":{"category":{"enum":["in-scope-change","question","needs-info","push-back","new-functionality","small-unrelated-change","manual-step-permission","stop","no-action"]},"summary":{"type":"string"},"planned-action":{"type":"string"},"drafted-content":{"type":"object"},"fold-target":{"enum":["current-spec","new-spec",null]},"constitution-conflict":{"type":["string","null"]},"relayed":{"type":"object","properties":{"risk":{"type":"boolean"},"risk-note":{"type":["string","null"]}}}},"allOf":[{"if":{"required":["category"],"properties":{"category":{"const":"question"}}},"then":{"required":["drafted-content"],"properties":{"drafted-content":{"required":["answer"],"properties":{"answer":{"type":"string","minLength":1}}}}}},{"if":{"required":["category"],"properties":{"category":{"const":"needs-info"}}},"then":{"required":["drafted-content"],"properties":{"drafted-content":{"required":["clarifying-question"],"properties":{"clarifying-question":{"type":"string","minLength":1}}}}}}]}}}}'
             --allowedTools "${{ steps.tool-args-classify.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-classify.outputs.disallowed-tools }}"
+
+      # Deterministic, transcript-only verdict (healthy/exhausted/failed/
+      # unclassifiable) — replaces the raw steps.agent.outcome checks below,
+      # which continue-on-error above means can no longer be trusted alone
+      # (specs/037-agent-turn-budget-guard/).
+      - name: Compute agent run verdict
+        id: agent-verdict
+        if: always() && steps.agent.outcome != 'skipped'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
+        with:
+          intended-turns: ${{ inputs.max-turns }}
 
       # The action writes its full transcript — every tool call, including
       # permission denials — to claude-execution-output.json in the runner
@@ -731,7 +755,7 @@ jobs:
       # must be caught explicitly before anything downstream trusts it.
       - name: Fail on agent API error
         id: schema-check
-        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && steps.agent.outcome == 'success'
+        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && steps.agent-verdict.outputs.verdict == 'healthy'
         run: |
           f="$RUNNER_TEMP/claude-execution-output.json"
           agent_ok="$(jq -r '([.[] | select(.type=="result")] | last) as $r
@@ -750,6 +774,52 @@ jobs:
           fi
           echo "ok=true" >> "$GITHUB_OUTPUT"
           printf '%s' "$raw" | jq -c '.classifications' > "$RUNNER_TEMP/classifications-raw.json"
+
+      # Uniform across every rewired call site (research.md R7 step 5): the
+      # single point where a non-healthy verdict actually fails the job.
+      # Genuinely errored/exhausted/unreadable runs stop here with a named
+      # cause; a healthy-but-post-hoc-rejected run skips this entirely and
+      # the stage continues.
+      - name: Fail loud on non-healthy agent verdict
+        if: always() && steps.agent.outcome != 'skipped' && steps.agent-verdict.outputs.verdict != 'healthy'
+        env:
+          VERDICT: ${{ steps.agent-verdict.outputs.verdict }}
+          REASON: ${{ steps.agent-verdict.outputs.reason }}
+        run: |
+          echo "::error::wing-commander pr-conversation stage: classify agent step rejected — verdict=$VERDICT: $REASON"
+          exit 1
+
+      # Surface this run's own metrics in the run summary (see clarify.yml).
+      - name: Classify agent run metrics summary
+        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && always() && steps.agent.outcome != 'skipped'
+        # Belt-and-braces for the action's own "never fail the job" contract.
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
+        with:
+          model: ${{ inputs.model }}
+          max-turns: ${{ inputs.max-turns }}
+          ceiling: ${{ steps.agent-ceiling.outputs.ceiling }}
+          verdict: ${{ steps.agent-verdict.outputs.verdict }}
+          verdict-reason: ${{ steps.agent-verdict.outputs.reason }}
+
+      # Observability, not failure (FR-017) — the intended budget was fully
+      # used but the run finished healthy; the runaway ceiling above is the
+      # only hard stop.
+      - name: Report over-budget agent run
+        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && steps.agent-verdict.outputs.verdict == 'healthy' && steps.agent-verdict.outputs.over-budget == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ inputs.pr-number }}
+          kind: info
+          summary: "This step used its full intended turn budget."
+          body: >-
+            Counted ${{ steps.agent-verdict.outputs.counted-turns }} of an
+            intended ${{ inputs.max-turns }} turns classifying this PR
+            conversation request. The run continued and finished
+            successfully — the runaway ceiling
+            (${{ steps.agent-ceiling.outputs.ceiling }}) is the only hard
+            stop; this is an observability note, not a failure.
 
       # T007/FR-020: requires-confirmation is a plain set-membership check
       # against confirm-categories — NEVER agent-decided, so autonomy
@@ -1396,9 +1466,22 @@ jobs:
       # merges/approves/closes anything (SC-003) — no such tool is allowed.
       # Performs the drafting content ALREADY produced by classify (T006);
       # it does not re-decide category or content, only executes it.
+      - name: Compute agent turn ceiling
+        id: agent-ceiling
+        if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && steps.tool-args-act.outputs.allowed-tools != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
+        with:
+          intended-turns: ${{ inputs.max-turns }}
+
       - name: Act on this classification
         id: agent
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && steps.tool-args-act.outputs.allowed-tools != ''
+        # The action rejects a healthy, finished run post-hoc when its own
+        # inflated .num_turns reads above --max-turns (now the runaway
+        # ceiling, not the intended budget) — without this, that rejection
+        # stops the whole job before the verdict step below can even run
+        # (specs/037-agent-turn-budget-guard/, issue #204).
+        continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -1486,10 +1569,21 @@ jobs:
             fold-in routes, or a performed/not-performed manual step).
           claude_args: |
             --model ${{ inputs.model }}
-            --max-turns ${{ inputs.max-turns }}
+            --max-turns ${{ steps.agent-ceiling.outputs.ceiling }}
             --json-schema '{"type":"object","required":["mutated","summary"],"properties":{"mutated":{"type":"boolean"},"summary":{"type":"string"},"artifact-url":{"type":["string","null"]}}}'
             --allowedTools "${{ steps.tool-args-act.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-act.outputs.disallowed-tools }}"
+
+      # Deterministic, transcript-only verdict (healthy/exhausted/failed/
+      # unclassifiable) — replaces the raw steps.agent.outcome checks below,
+      # which continue-on-error above means can no longer be trusted alone
+      # (specs/037-agent-turn-budget-guard/).
+      - name: Compute agent run verdict
+        id: agent-verdict
+        if: always() && steps.agent.outcome != 'skipped'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
+        with:
+          intended-turns: ${{ inputs.max-turns }}
 
       # Same reasoning as the classify upload — and it matters more here,
       # because this is the MUTATING agent: the schema check below `exit 1`s
@@ -1508,7 +1602,7 @@ jobs:
 
       - name: Fail on agent API error
         id: act-result
-        if: steps.agent.outcome == 'success'
+        if: steps.agent-verdict.outputs.verdict == 'healthy'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           PR_NUMBER: ${{ inputs.pr-number }}
@@ -1594,6 +1688,52 @@ jobs:
             echo "mutated=$mutated"
             echo "artifact-url=$artifact_url"
           } >> "$GITHUB_OUTPUT"
+
+      # Uniform across every rewired call site (research.md R7 step 5): the
+      # single point where a non-healthy verdict actually fails the job.
+      # Genuinely errored/exhausted/unreadable runs stop here with a named
+      # cause; a healthy-but-post-hoc-rejected run skips this entirely and
+      # the stage continues.
+      - name: Fail loud on non-healthy agent verdict
+        if: always() && steps.agent.outcome != 'skipped' && steps.agent-verdict.outputs.verdict != 'healthy'
+        env:
+          VERDICT: ${{ steps.agent-verdict.outputs.verdict }}
+          REASON: ${{ steps.agent-verdict.outputs.reason }}
+        run: |
+          echo "::error::wing-commander pr-conversation stage: act agent step rejected — verdict=$VERDICT: $REASON"
+          exit 1
+
+      # Surface this run's own metrics in the run summary (see clarify.yml).
+      - name: Act agent run metrics summary
+        if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && always() && steps.agent.outcome != 'skipped'
+        # Belt-and-braces for the action's own "never fail the job" contract.
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
+        with:
+          model: ${{ inputs.model }}
+          max-turns: ${{ inputs.max-turns }}
+          ceiling: ${{ steps.agent-ceiling.outputs.ceiling }}
+          verdict: ${{ steps.agent-verdict.outputs.verdict }}
+          verdict-reason: ${{ steps.agent-verdict.outputs.reason }}
+
+      # Observability, not failure (FR-017) — the intended budget was fully
+      # used but the run finished healthy; the runaway ceiling above is the
+      # only hard stop.
+      - name: Report over-budget agent run
+        if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && steps.agent-verdict.outputs.verdict == 'healthy' && steps.agent-verdict.outputs.over-budget == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ inputs.pr-number }}
+          kind: info
+          summary: "This step used its full intended turn budget."
+          body: >-
+            Counted ${{ steps.agent-verdict.outputs.counted-turns }} of an
+            intended ${{ inputs.max-turns }} turns acting on this PR
+            conversation classification. The run continued and finished
+            successfully — the runaway ceiling
+            (${{ steps.agent-ceiling.outputs.ceiling }}) is the only hard
+            stop; this is an observability note, not a failure.
 
       # T012/T013 (contracts/converge-fold-in.md steps 6-7): dispatch the
       # consumer's EXISTING implement wrapper unchanged, with a best-effort,
@@ -1687,7 +1827,7 @@ jobs:
       # and this is the only step that posts one for a non-dispatch outcome.
       - name: Report mutation outcome
         if: >-
-          steps.agent.outcome == 'success' && steps.act-result.outputs.mutated != '' &&
+          steps.agent-verdict.outputs.verdict == 'healthy' && steps.act-result.outputs.mutated != '' &&
           !(steps.act-result.outputs.mutated == 'true' &&
             (steps.route.outputs.effective-category == 'in-scope-change' ||
              (steps.route.outputs.effective-category == 'new-functionality' && steps.route.outputs.effective-fold-target == 'current-spec')))

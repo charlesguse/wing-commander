@@ -1,0 +1,148 @@
+name: wing-commander-agent-verdict
+description: >
+  Read one already-produced execution transcript and answer, deterministically
+  and without a network call or a second agent invocation, "was this agent
+  run healthy" — replacing the hand-copied is_error/subtype checks duplicated
+  (and, at ~11 sites, entirely absent) across the fleet
+  (specs/037-agent-turn-budget-guard/research.md R3/R4, subsuming issue #193's
+  rescue wiring per that spec's FR-016).
+
+  Never fails its own step (always exit 0) — mirrors
+  wing-commander-metrics-summary's never-fail contract. Callers that need the
+  job to fail on a non-healthy verdict add their own "Fail loud" step gated on
+  `steps.<this-id>.outputs.verdict != 'healthy'`; this action's job is only to
+  answer the question.
+
+  Does NOT validate any call site's declared JSON Schema — that remains each
+  site's own existing shape-check step, now gated on this action's verdict
+  output (research.md R2).
+
+inputs:
+  transcript-path:
+    description: >
+      Path to the execution transcript to read. Same default as
+      wing-commander-metrics-summary, so most call sites need not repeat it.
+    required: false
+    default: ${{ runner.temp }}/claude-execution-output.json
+  intended-turns:
+    description: >
+      The same value passed to wing-commander-turn-ceiling at this site.
+      Used only for the over-budget comparison — never to gate the verdict
+      itself.
+    required: true
+  run-label:
+    description: >
+      Free-text label distinguishing this invocation within a job that has
+      more than one agent step sharing a transcript path convention. Passed
+      straight through into the reason text when non-empty.
+    required: false
+    default: ''
+
+outputs:
+  verdict:
+    description: "healthy | exhausted | failed | unclassifiable"
+    value: ${{ steps.classify.outputs.verdict }}
+  reason:
+    description: Free-text explanation of the verdict.
+    value: ${{ steps.classify.outputs.reason }}
+  counted-turns:
+    description: Distinct main-loop assistant message count, or empty if uncountable.
+    value: ${{ steps.classify.outputs.counted-turns }}
+  reported-turns:
+    description: The transcript's own .num_turns — display/diagnosis only, never a gate condition.
+    value: ${{ steps.classify.outputs.reported-turns }}
+  over-budget:
+    description: "'true' only when verdict == 'healthy' && counted-turns >= intended-turns."
+    value: ${{ steps.classify.outputs.over-budget }}
+  subagent-turns:
+    description: Distinct subagent (Task-tool) message count, or empty if uncountable.
+    value: ${{ steps.classify.outputs.subagent-turns }}
+
+runs:
+  using: composite
+  steps:
+    - name: Classify agent run verdict
+      id: classify
+      shell: bash
+      env:
+        TRANSCRIPT_PATH: ${{ inputs.transcript-path }}
+        INTENDED_TURNS: ${{ inputs.intended-turns }}
+        RUN_LABEL: ${{ inputs.run-label }}
+      run: |
+        set -uo pipefail
+
+        TRANSCRIPT="${TRANSCRIPT_PATH:-}"
+        INTENDED_TURNS="${INTENDED_TURNS:-}"
+        RUN_LABEL="${RUN_LABEL:-}"
+        label_suffix=""
+        [ -n "$RUN_LABEL" ] && label_suffix=" ($RUN_LABEL)"
+
+        verdict="unclassifiable"
+        reason="transcript missing or unparseable${label_suffix}"
+        result_json=""
+
+        if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ] && [ -s "$TRANSCRIPT" ] \
+           && jq -e . "$TRANSCRIPT" >/dev/null 2>&1; then
+          result_json="$(jq -c 'if type=="array" then . else [.] end
+            | map(select(.type=="result")) | last // empty' "$TRANSCRIPT" 2>/dev/null || true)"
+
+          if [ -z "$result_json" ] || [ "$result_json" = "null" ]; then
+            verdict="failed"
+            reason="no terminal result record${label_suffix}"
+          else
+            jqget() { printf '%s' "$result_json" | jq -r "$1 // empty" 2>/dev/null || true; }
+            subtype="$(jqget '.subtype')"
+            is_error="$(jqget '.is_error')"
+
+            # Order matters: error_max_turns is checked BEFORE is_error, since
+            # a genuine exhaustion is a real, distinguishable outcome
+            # (research.md R3) even though the runtime also sets is_error=true
+            # for it — collapsing the two into one generic "failed" would hide
+            # exactly the outcome FR-009 asks to keep distinguishable.
+            if [ "$subtype" = "error_max_turns" ]; then
+              verdict="exhausted"
+              reason="runtime cut off at its configured turn ceiling before finishing${label_suffix}"
+            elif [ "$is_error" = "true" ]; then
+              verdict="failed"
+              reason="is_error=true (subtype=${subtype:-missing})${label_suffix}"
+            elif [ "$subtype" != "success" ]; then
+              verdict="failed"
+              reason="unexpected terminal subtype=${subtype:-missing}${label_suffix}"
+            else
+              verdict="healthy"
+              reason="terminal result subtype=success, is_error=false${label_suffix}"
+            fi
+          fi
+        fi
+
+        # Turn counting is independent of the verdict above — a counting
+        # failure (unexpected transcript shape) never demotes a genuinely
+        # healthy result to a lesser verdict (spec.md edge case).
+        counted_turns=""
+        subagent_turns=""
+        reported_turns=""
+        if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ] && [ -s "$TRANSCRIPT" ]; then
+          eval "$(bash "$GITHUB_ACTION_PATH/../_shared/count-turns.sh" "$TRANSCRIPT")"
+          counted_turns="$main_turns"
+          subagent_turns="$sub_turns"
+          reported_turns="$reported"
+        fi
+
+        over_budget="false"
+        if [ "$verdict" = "healthy" ] \
+           && printf '%s' "$counted_turns" | grep -Eq '^[0-9]+$' \
+           && printf '%s' "$INTENDED_TURNS" | grep -Eq '^[0-9]+$' \
+           && [ "$counted_turns" -ge "$INTENDED_TURNS" ]; then
+          over_budget="true"
+        fi
+
+        {
+          echo "verdict=$verdict"
+          echo "reason=$reason"
+          echo "counted-turns=$counted_turns"
+          echo "reported-turns=$reported_turns"
+          echo "over-budget=$over_budget"
+          echo "subagent-turns=$subagent_turns"
+        } >> "$GITHUB_OUTPUT"
+
+        exit 0

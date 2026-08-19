@@ -464,6 +464,13 @@ jobs:
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
           step-label: "cleanup"
 
+      - name: Compute agent turn ceiling
+        id: summarize-ceiling
+        if: steps.idempotency.outputs.skip != 'true' && steps.tool-args-cleanup.outputs.allowed-tools != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
+        with:
+          intended-turns: ${{ inputs.max-turns }}
+
       - name: Completion summary
         id: summarize
         if: steps.idempotency.outputs.skip != 'true' && steps.tool-args-cleanup.outputs.allowed-tools != ''
@@ -512,9 +519,48 @@ jobs:
             gh command; do not edit any file other than the temp file above.
           claude_args: |
             --model ${{ inputs.summary-model }}
-            --max-turns ${{ inputs.max-turns }}
+            --max-turns ${{ steps.summarize-ceiling.outputs.ceiling }}
             --allowedTools "${{ steps.tool-args-cleanup.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-cleanup.outputs.disallowed-tools }}"
+
+      # Deterministic, transcript-only verdict (healthy/exhausted/failed/
+      # unclassifiable) — replaces the raw steps.summarize.outcome checks
+      # below, which the action's own post-hoc turn-budget rejection could no
+      # longer be trusted to reflect (specs/037-agent-turn-budget-guard/).
+      - name: Compute agent run verdict
+        id: summarize-verdict
+        if: always() && steps.summarize.outcome != 'skipped'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
+        with:
+          intended-turns: ${{ inputs.max-turns }}
+
+      # Uniform across every rewired call site (research.md R7 step 5): the
+      # single point where a non-healthy verdict is reported. Here it is a
+      # continue-on-error, NOT a hard job failure: every step below this
+      # one IS the degradation path this site's `continue-on-error` on the
+      # agent step was added for — the fallback summary text, closing the
+      # lifecycle issue, flipping stage:done, deleting the five pipeline
+      # branches — and none of them carries always()/!cancelled(). A red
+      # step here skips all of them, so a summary agent that 401s would
+      # leave the spec with an open lifecycle issue, a stale stage: label
+      # and five undeleted branches, and would make the
+      # `verdict != 'healthy'` fallback at "Resolve completion summary"
+      # below unreachable dead code (PR #221 review).
+      #
+      # The rule, uniform with implement.yml and watchdog.yml: where the
+      # agent step is continue-on-error BECAUSE a deterministic fallback
+      # exists, the fallback owns the run's outcome and this step owns only
+      # the ::error:: annotation. Where there is no fallback (clarify, plan,
+      # tasks, pr-conversation) this step exits and that is the outcome.
+      - name: Fail loud on non-healthy agent verdict
+        if: always() && steps.summarize.outcome != 'skipped' && steps.summarize-verdict.outputs.verdict != 'healthy'
+        continue-on-error: true
+        env:
+          VERDICT: ${{ steps.summarize-verdict.outputs.verdict }}
+          REASON: ${{ steps.summarize-verdict.outputs.reason }}
+        run: |
+          echo "::error::wing-commander cleanup stage: agent step rejected — verdict=$VERDICT: $REASON"
+          exit 1
 
       - name: Upload Claude execution log
         if: always() && steps.summarize.outcome != 'skipped'
@@ -533,6 +579,27 @@ jobs:
         with:
           model: ${{ inputs.summary-model }}
           max-turns: ${{ inputs.max-turns }}
+          ceiling: ${{ steps.summarize-ceiling.outputs.ceiling }}
+          verdict: ${{ steps.summarize-verdict.outputs.verdict }}
+          verdict-reason: ${{ steps.summarize-verdict.outputs.reason }}
+
+      # Observability, not failure (FR-017) — the intended budget was fully
+      # used but the run finished healthy; the runaway ceiling above is the
+      # only hard stop.
+      - name: Report over-budget agent run
+        if: steps.idempotency.outputs.skip != 'true' && steps.summarize-verdict.outputs.verdict == 'healthy' && steps.summarize-verdict.outputs.over-budget == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ steps.meta.outputs.issue }}
+          kind: info
+          summary: "This step used its full intended turn budget."
+          body: >-
+            Counted ${{ steps.summarize-verdict.outputs.counted-turns }} of an
+            intended ${{ inputs.max-turns }} turns. The run continued and
+            finished successfully — the runaway ceiling
+            (${{ steps.summarize-ceiling.outputs.ceiling }}) is the only hard
+            stop; this is an observability note, not a failure.
 
       # A summary-generation failure must not block the teardown.
       - name: Resolve completion summary (with fallback)
@@ -540,7 +607,7 @@ jobs:
         if: steps.idempotency.outputs.skip != 'true'
         run: |
           f="${{ runner.temp }}/cleanup-summary.md"
-          if [ "${{ steps.summarize.outcome }}" != "success" ] || [ ! -s "$f" ]; then
+          if [ "${{ steps.summarize-verdict.outputs.verdict }}" != "healthy" ] || [ ! -s "$f" ]; then
             echo "Specification merged (automated summary unavailable)." > "$f"
           fi
           echo "summary-file=$f" >> "$GITHUB_OUTPUT"
