@@ -472,7 +472,7 @@ jobs:
               return inner[len("inputs."):].strip()
 
           failures = 0
-          stages = bound = 0
+          stages = bound = exempt = 0
           for f in sorted(glob.glob(".github/workflows/*.yml")
                           + glob.glob(".github/workflows/*.yaml")):
               wf = yaml.safe_load(open(f, encoding="utf-8")) or {}
@@ -521,6 +521,47 @@ jobs:
                             f"bindable job — skipped.")
                       continue
 
+                  if jname == "verify-image-prerequisites":
+                      # The one job deliberately left unbound
+                      # (specs/038-runner-container-passthrough). Its entire
+                      # body is a docker login/pull of the adopter's image,
+                      # performed BEFORE any other job of the stage starts —
+                      # so an environment: block here would create the
+                      # deployment record and prompt the approver without
+                      # gating the thing worth gating: the credential use and
+                      # image pull happen the instant the job starts, which
+                      # is already past the approval. What it would buy an
+                      # adopter is one more prompt per stage call, on a job
+                      # that needs no token scopes and writes nothing.
+                      # docs/adoption.md "Deployment environments" documents
+                      # it as the second registered exception, beside
+                      # pr-conversation.act.
+                      #
+                      # Asserted in the deviating direction rather than
+                      # merely skipped: an exemption that only ever says
+                      # "not my problem" cannot notice the binding coming
+                      # back, and the way it comes back is somebody making
+                      # all 11 files uniform without reading this comment.
+                      if "environment" in job:
+                          print(f"::error file={f}::job 'verify-image-prerequisites' "
+                                f"carries an environment: block. This is the one job "
+                                f"deliberately left unbound (specs/038-runner-"
+                                f"container-passthrough): it runs docker login/pull as "
+                                f"its whole body, before any other job of the stage, so "
+                                f"binding it gates the deployment record without gating "
+                                f"the credential use — and charges every adopter one "
+                                f"more approval prompt per stage call for it. Remove "
+                                f"the block, or change this gate and "
+                                f"docs/adoption.md's registered-exception list "
+                                f"together.")
+                          failures += 1
+                      else:
+                          print(f"note: {f}: job 'verify-image-prerequisites' is the "
+                                f"registered Gate 7 exemption — deliberately unbound, "
+                                f"not counted as bound.")
+                          exempt += 1
+                      continue
+
                   env = job.get("environment")
                   if env is None:
                       print(f"::error file={f}::job {jname!r} has no environment: block. "
@@ -556,8 +597,8 @@ jobs:
                           ok = False
                   bound += ok
 
-          print(f"Gate 7: {stages} published stage(s), {bound} bound job(s); "
-                f"{failures} failure(s).")
+          print(f"Gate 7: {stages} published stage(s), {bound} bound job(s), "
+                f"{exempt} exempt job(s); {failures} failure(s).")
           if stages == 0:
               # Every stage file vanishing (or an `on:` shape this gate no
               # longer recognizes) must not read as a pass.

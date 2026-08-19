@@ -236,11 +236,37 @@ required-tool list (Image prerequisite contract, above) is not missing any
 tool a `run:` block anywhere in the repository actually invokes (FR-011a's
 drift check).
 
-**Registered exceptions** (FR-015): none exist yet at plan time. A job that
-must deviate — mirroring Gate 7's one existing `pr-conversation.act`
-exception (`docs/adoption.md:704-712`) — carries a registered reason in the
-gate's own exception table, checked by the same mechanism, never an
-undeclared deviation and never a code comment alone (constitution VII).
+**Registered exceptions** (FR-015): none exist for Gate 22 or Gate 23. A
+job that must deviate — mirroring Gate 7's existing `pr-conversation.act`
+exception (`docs/adoption.md`, "Deployment environments") — carries a
+registered reason in the gate's own exception table, checked by the same
+mechanism, never an undeclared deviation and never a code comment alone
+(constitution VII).
+
+This feature does add **one exception to Gate 7** (specs/031), registered in
+that gate rather than in these: `verify-image-prerequisites` carries no
+`environment:` block in any of the eleven stage files. Binding it would gate
+nothing worth gating — its whole body is the `docker login`/`docker pull` of
+the adopter-named image, performed before any other job of the stage starts,
+so an approver's decision would land *after* the credential had been used —
+while charging every bound adopter one more approval prompt per stage call,
+on a job that needs no token scopes and writes nothing. Gate 7 asserts the
+deviation in the deviating direction (the job must have **no**
+`environment:` block, so re-adding the binding fails the gate rather than
+passing quietly), `verify-gate-7.py` covers both directions plus the
+job-name scoping with fixtures, and `docs/adoption.md`'s "Deployment
+environments" section lists it as the second documented exception beside
+`pr-conversation.act`.
+
+Found by review of PR #222, not at plan time: Gate 7 requires an
+`environment:` block on every non-`uses` job of every published stage, and
+T018-T028 added an eleventh job to every stage file without either binding
+it or registering it — so `lint-workflows.yml` failed with eleven errors on
+this feature's own PR. `verify-gate-7.py` stayed green throughout, because
+it only ever ran synthetic fixtures; it now carries the same
+`check_real_fleet()` helper `verify-gate-22.py` and `verify-gate-23.py` were
+written with, which runs the extracted gate against this repository's real
+eleven stages.
 
 **Confirmed at implementation (2026-08-18, T017)**: the pinned actionlint
 run over all eleven wired stage files produced zero new diagnostics

@@ -701,16 +701,29 @@ things to know before you bind one:
   timer is paid once per job, not once per call. A job skipped by its own
   `if:` never prompts.
 
-  **One documented exception — `pr-conversation`'s `act` job.** It does
-  **not** honour `inputs.environment`. Each of its matrix legs binds its own
-  `confirm-environment`, because whether a leg needs propose-and-confirm is
-  a property of that leg's own classification, not of the stage call (a job
-  may carry only one `environment:`, so it cannot do both). Binding
-  `environment` on this stage therefore gates the read-only
-  `classify-and-announce` job and **not** the job that actually writes — the
-  inverse of what you probably intend. To gate mutations here, set
-  `confirm-categories` (and `confirm-environment`) instead. This is a
-  registered, machine-checked Gate 7 exception, not an oversight.
+  **Two documented exceptions, both registered and machine-checked by Gate
+  7 — not oversights.**
+
+  1. **`pr-conversation`'s `act` job.** It does **not** honour
+     `inputs.environment`. Each of its matrix legs binds its own
+     `confirm-environment`, because whether a leg needs propose-and-confirm
+     is a property of that leg's own classification, not of the stage call
+     (a job may carry only one `environment:`, so it cannot do both).
+     Binding `environment` on this stage therefore gates the read-only
+     `classify-and-announce` job and **not** the job that actually
+     writes — the inverse of what you probably intend. To gate mutations
+     here, set `confirm-categories` (and `confirm-environment`) instead.
+  2. **Every stage's `verify-image-prerequisites` job**, which runs only
+     when you set `container-image` (see [Runners and container
+     images](#runners-and-container-images)). It is deliberately unbound, so
+     it costs you **no** approval prompt. Binding it would not buy you
+     anything: its entire body is a `docker login` and `docker pull` of the
+     image *you* named, performed before any other job of the stage starts,
+     so an approval would land after the credential had already been used,
+     not before. It needs no `GITHUB_TOKEN` permissions and writes nothing to your
+     repository.
+     The jobs it gates — the ones that actually run agents and push
+     commits — are bound normally.
 
   Counting the jobs that do run:
 
@@ -728,7 +741,10 @@ things to know before you bind one:
 
   So the cheapest possible gate is a one-job stage (`intake`, `clarify`,
   `finalize`), and `auto-update-spec-kit` is the most expensive by an order of
-  magnitude — seven serial approvals, each blocking the next.
+  magnitude — seven serial approvals, each blocking the next. Setting
+  `container-image` adds one more job to every row of that table
+  (`verify-image-prerequisites`) but no prompt to any of them, per exception
+  2 above.
 - **Approval is also per run, not per feature.** A required reviewer prompts
   on every iteration of a looping stage (`implement`, once per cycle) — there
   is no pipeline-side dedup or memory of a prior approval. For a single
