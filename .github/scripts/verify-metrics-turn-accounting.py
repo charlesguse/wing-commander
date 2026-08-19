@@ -299,6 +299,18 @@ def case_over_intended_is_not_a_warning():
            max_turns="15", ceiling="38",
            want=["Turn budget warning", "14/15"],
            unwanted=["Over intended budget"])
+    # The boundary is shared with wing-commander-agent-verdict, whose
+    # `over-budget` is counted-turns >= intended-turns. A caller renders
+    # both: that output gates the "used its full intended turn budget"
+    # callout on the lifecycle issue, this one picks the summary line. While
+    # this side used a strict `>`, the single run that lands exactly on the
+    # budget got the callout AND the threshold warning the callout is
+    # describing (PR #221 review).
+    expect("exactly at the intended budget agrees with the verdict action",
+           transcript(main=15, num_turns=20),
+           max_turns="15", ceiling="38",
+           want=["Over intended budget", "15 turns", "(100%)"],
+           unwanted=["Turn budget warning"])
     # The ceiling clause is an inline command substitution that exits 1 when
     # CEILING is empty, and composite `shell: bash` steps run under -e that
     # the action's own `set` cannot remove. A caller that has not wired

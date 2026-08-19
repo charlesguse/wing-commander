@@ -535,9 +535,26 @@ jobs:
           intended-turns: ${{ inputs.max-turns }}
 
       # Uniform across every rewired call site (research.md R7 step 5): the
-      # single point where a non-healthy verdict actually fails the job.
+      # single point where a non-healthy verdict is reported. Here it is a
+      # continue-on-error, NOT a hard job failure: every step below this
+      # one IS the degradation path this site's `continue-on-error` on the
+      # agent step was added for — the fallback summary text, closing the
+      # lifecycle issue, flipping stage:done, deleting the five pipeline
+      # branches — and none of them carries always()/!cancelled(). A red
+      # step here skips all of them, so a summary agent that 401s would
+      # leave the spec with an open lifecycle issue, a stale stage: label
+      # and five undeleted branches, and would make the
+      # `verdict != 'healthy'` fallback at "Resolve completion summary"
+      # below unreachable dead code (PR #221 review).
+      #
+      # The rule, uniform with implement.yml and watchdog.yml: where the
+      # agent step is continue-on-error BECAUSE a deterministic fallback
+      # exists, the fallback owns the run's outcome and this step owns only
+      # the ::error:: annotation. Where there is no fallback (clarify, plan,
+      # tasks, pr-conversation) this step exits and that is the outcome.
       - name: Fail loud on non-healthy agent verdict
         if: always() && steps.summarize.outcome != 'skipped' && steps.summarize-verdict.outputs.verdict != 'healthy'
+        continue-on-error: true
         env:
           VERDICT: ${{ steps.summarize-verdict.outputs.verdict }}
           REASON: ${{ steps.summarize-verdict.outputs.reason }}

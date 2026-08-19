@@ -1610,6 +1610,29 @@ jobs:
       - name: Gate 23 self-test — the detector actually detects
         run: python3 .github/scripts/verify-gate-23-selftest.py
 
+      # Gate 24 — the placement half of Gate 23. Gate 23 asserts every agent
+      # call site HAS a fail-loud step; it says nothing about where that step
+      # sits, and PR #221 shipped five sites where it sat directly above the
+      # deterministic fallback its own `continue-on-error` existed for.
+      # `continue-on-error: true` is a promise that something below handles
+      # the failure; a later hard exit on that same failure skips everything
+      # unprotected beneath it, so the handler becomes unreachable dead code
+      # that still reads, top to bottom, as a present and correct safety net.
+      # Deliberately narrow — it fires only when the guard tests a tolerated
+      # signal NEGATIVELY and a later unprotected, non-mutually-exclusive
+      # step reads that same signal — because the fleet is full of hard exits
+      # that strand later steps entirely correctly.
+      - name: Gate 24 — a guard does not strand the degradation path it fires on
+        run: python3 .github/scripts/verify-gate-24.py
+
+      # Same reasoning as Gate 23's self-test, and more load-bearing here:
+      # Gate 24's three clauses each exclude a whole family of legitimate
+      # hard exits, so the way it breaks is not "crashes" but "quietly stops
+      # matching anything", which is indistinguishable from a compliant
+      # fleet. One fixture per clause, in both directions.
+      - name: Gate 24 self-test — the detector actually detects
+        run: python3 .github/scripts/verify-gate-24-selftest.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

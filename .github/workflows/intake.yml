@@ -1035,12 +1035,23 @@ jobs:
       # cover: a healthy verdict whose structured result still has the wrong
       # shape. "Validate agent result" above is gated on verdict == 'healthy'
       # and already emitted its own ::error:: naming the bad shape; this step
-      # only turns that into the red run. always() replaces the old
-      # steps.agent.outcome == 'success' check: the agent step now carries
-      # continue-on-error, so its outcome can be 'failure' on a run this job
-      # still needs to evaluate here.
+      # only turns that into the red run.
+      #
+      # It carries that same verdict == 'healthy' gate rather than the
+      # always() it briefly had. always() also defeats the implicit
+      # success(), which made this fire on two runs it has nothing to say
+      # about: a legitimately skipped agent step (tool-args-intake emits no
+      # allowed-tools, so "Validate agent result" skips and `valid` is the
+      # empty string, not 'true'), and a cancelled run — both reporting "the
+      # agent result did not validate (see the error above)" when no such
+      # error was ever emitted. On a non-healthy verdict it also
+      # double-reported, since the fail-loud step above had already failed
+      # the job with the accurate cause (PR #221 review). The old
+      # steps.agent.outcome == 'success' check this replaced is not needed
+      # either: the agent step carries continue-on-error, so its own failure
+      # never clears success() here in the first place.
       - name: Fail on invalid agent result
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.agent-result.outputs.valid != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent-verdict.outputs.verdict == 'healthy' && steps.agent-result.outputs.valid != 'true'
         run: |
           echo "::error::wing-commander intake stage: failing the run — the agent result did not validate (see the error above)."
           exit 1

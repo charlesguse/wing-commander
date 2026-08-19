@@ -979,8 +979,16 @@ jobs:
           intended-turns: 30
           run-label: evaluate-path
 
+      # continue-on-error — see cleanup.yml's copy of this note. "Read back
+      # decision" below has no `if:` at all and is this site's degradation
+      # path: a non-healthy verdict there degrades to
+      # outcome=needs-migration and routes the candidate to a human. Failing
+      # the job here skips it, so nothing is posted and the human routing
+      # this site's `continue-on-error` on `decide` exists to guarantee
+      # never happens (PR #221 review).
       - name: Fail loud on non-healthy agent verdict
         if: always() && steps.decide.outcome != 'skipped' && steps.decide-verdict.outputs.verdict != 'healthy'
+        continue-on-error: true
         env:
           VERDICT: ${{ steps.decide-verdict.outputs.verdict }}
           REASON: ${{ steps.decide-verdict.outputs.reason }}
@@ -1827,8 +1835,16 @@ jobs:
           intended-turns: ${{ inputs.e2e-stage-max-turns }}
           run-label: e2e-stage
 
+      # continue-on-error — see cleanup.yml's copy of this note. "Read back
+      # stage result" below has no `if:` and is this site's degradation
+      # path: it turns a non-healthy verdict into pass=false with "a
+      # stage/infrastructure problem, not a candidate defect", which is what
+      # the candidate's pass/fail reporting reads. Failing the job here
+      # skips it and reports nothing about the candidate at all
+      # (PR #221 review).
       - name: Fail loud on non-healthy agent verdict
         if: always() && steps.decide.outcome != 'skipped' && steps.decide-verdict.outputs.verdict != 'healthy'
+        continue-on-error: true
         env:
           VERDICT: ${{ steps.decide-verdict.outputs.verdict }}
           REASON: ${{ steps.decide-verdict.outputs.reason }}
@@ -2967,8 +2983,15 @@ jobs:
           intended-turns: 8
           run-label: comment-reply
 
+      # continue-on-error — see cleanup.yml's copy of this note. "Read back
+      # interpretation" below is this site's degradation path: a non-healthy
+      # verdict degrades to recognized=false, which asks the maintainer for
+      # a clearer reply. Failing the job here skips it, so the maintainer's
+      # reply is silently dropped behind a red scheduled run instead
+      # (PR #221 review).
       - name: Fail loud on non-healthy agent verdict
         if: always() && steps.interpret.outcome != 'skipped' && steps.interpret-verdict.outputs.verdict != 'healthy'
+        continue-on-error: true
         env:
           VERDICT: ${{ steps.interpret-verdict.outputs.verdict }}
           REASON: ${{ steps.interpret-verdict.outputs.reason }}

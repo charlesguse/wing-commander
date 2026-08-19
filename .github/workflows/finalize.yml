@@ -522,9 +522,19 @@ jobs:
           intended-turns: ${{ inputs.max-turns }}
 
       # Uniform across every rewired call site (research.md R7 step 5): the
-      # single point where a non-healthy verdict actually fails the job.
+      # single point where a non-healthy verdict is reported. Here it is a
+      # continue-on-error — see cleanup.yml's copy of this note. "Verify
+      # agent output" below is this site's degradation path: it reads the
+      # same verdict, emits the maintainer-facing ::error::, and exits 1
+      # itself, so the run still goes red — but only after
+      # `verify-agent-output.outputs.failed` is set, which is what the
+      # always()-gated "Announce finalize failure (agent output)" callout
+      # reads. Failing here instead skips the verify step, leaves `failed`
+      # empty, and silently swallows that callout despite its always()
+      # (PR #221 review).
       - name: Fail loud on non-healthy agent verdict
         if: always() && steps.summarize.outcome != 'skipped' && steps.summarize-verdict.outputs.verdict != 'healthy'
+        continue-on-error: true
         env:
           VERDICT: ${{ steps.summarize-verdict.outputs.verdict }}
           REASON: ${{ steps.summarize-verdict.outputs.reason }}

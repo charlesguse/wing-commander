@@ -189,9 +189,20 @@ runs:
           # ceiling. Rendering that as a threshold warning would reprint the
           # "198 / 100 turns (198%)" nonsense this action's description
           # already apologises for.
+          #
+          # The boundary is `>=`, not `>`, so it agrees with
+          # wing-commander-agent-verdict's `over-budget`
+          # (counted-turns >= intended-turns) at exactly 100% of the budget.
+          # They are meant to be the same signal, and a caller reads both:
+          # the verdict's output gates the "used its full intended turn
+          # budget" callout on the lifecycle issue, while this flag picks
+          # the line the run summary renders. At `>` the two disagreed on
+          # the one run that lands exactly on the budget — the callout said
+          # "full intended budget" while the summary printed the threshold
+          # warning it is describing (PR #221 review).
           read -r turns_pct turn_warning over_intended < <(awk -v u="$turns_used" -v b="$MAX_TURNS" -v w="$WARN_FRACTION" 'BEGIN{
             r=(b+0>0)?u/b:0
-            printf "%d %s %s", (r*100)+0.5, (r>=w)?"true":"false", (r>1)?"true":"false"
+            printf "%d %s %s", (r*100)+0.5, (r>=w)?"true":"false", (r>=1)?"true":"false"
           }') || true
           warn_pct="$(awk -v w="$WARN_FRACTION" 'BEGIN{ printf "%d", (w*100)+0.5 }')"
         fi
