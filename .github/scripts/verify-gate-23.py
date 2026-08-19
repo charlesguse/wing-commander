@@ -17,6 +17,7 @@ to live at this path on its own branch, compiled and executed in its own
 fresh namespace so the two scripts' many same-named helpers (main, note,
 job, stage, ...) never collide with each other.
 """
+import os
 import sys
 
 _TURN_BUDGET_GATE_SOURCE = r'''
@@ -775,7 +776,14 @@ if __name__ == "__main__":
 
 
 def _run(source):
-    namespace = {"__name__": "__main__"}
+    # __file__ is NOT free here. exec() gives the compiled body only the
+    # globals this dict holds, and 038's self-test resolves its sibling
+    # modules with os.path.dirname(os.path.abspath(__file__)) — so without
+    # it that body died on NameError before running a single check, and the
+    # shipped "Gate 23 self-test" step exited 1 every time. Both bodies get
+    # the dispatcher's own path, which is the path they had when they were
+    # standalone files.
+    namespace = {"__name__": "__main__", "__file__": os.path.abspath(__file__)}
     exec(compile(source, "<verify-gate-23>", "exec"), namespace)
 
 
