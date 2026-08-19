@@ -229,12 +229,32 @@ defaults, and that every job with no local `uses:` carries the exact
 forwarding every named input/secret verbatim. Mirrors Gate 7's shape
 (specs/031) extended from one binding to three.
 
+`verify-image-prerequisites` is carved out of the `container:` half of that
+check — it must invoke Docker on the runner, not inside a container — but
+not out of the `runs-on:` half, and it must declare `permissions: {}` on the
+job itself. Nine stage files carry `permissions: {}` at file level and would
+grant it zero by construction; `watchdog.yml` and `auto-update-spec-kit.yml`
+carry the wide grants their other jobs need, and this job inherited all of
+them until review of PR #222. Declaring the grant on the job makes it a
+property of the job rather than of whichever file it sits in, so a later
+change to a file's top-level `permissions:` cannot widen it by accident.
+
 **Gate 23**: every stage file declares `verify-image-prerequisites`
 (skip-conditioned on `container-image`), every entry job (per the rule
 above) depends on it with a skip-tolerant `if:`, and the canonical
 required-tool list (Image prerequisite contract, above) is not missing any
 tool a `run:` block anywhere in the repository actually invokes (FR-011a's
 drift check).
+
+FR-011a runs in both directions. Besides the invoked-but-not-canonical scan,
+Gate 23 extracts each stage's embedded `REQUIRED_TOOLS` assignment and
+asserts it IS the canonical list, which is what `required-tools.txt`'s own
+header has always promised. The drift scan cannot see that disagreement: the
+embedded list is a shell assignment, skipped as a `VAR=value` prefix and
+never tokenized as an invocation, and the check loop iterates the variable
+rather than the tool names — so until review of PR #222 the twelve copies
+agreed by hand-coordination alone, with no CI signal if one edit missed a
+file.
 
 **Registered exceptions** (FR-015): none exist for Gate 22 or Gate 23. A
 job that must deviate — mirroring Gate 7's existing `pr-conversation.act`

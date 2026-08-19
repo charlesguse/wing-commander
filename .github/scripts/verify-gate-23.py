@@ -445,12 +445,40 @@ def yaml_str(s):
     return json.dumps(s)
 
 
-def vip_job(if_expr="inputs.container-image != ''", with_container=False):
+def canonical_tools():
+    """The canonical list, read from the same file the harness copies into
+    every fixture directory.
+
+    So a fixture's embedded REQUIRED_TOOLS agrees with its own
+    required-tools.txt by construction, and only the cases that MEAN to
+    disagree do. Hardcoding the list here instead would make every fixture
+    fail the moment the real list gained a tool — the kind of self-test that
+    gets deleted rather than fixed.
+    """
+    tools = []
+    for ln in io.open(os.path.join(".github", "scripts", "required-tools.txt"),
+                      encoding="utf-8"):
+        t = ln.split("#", 1)[0].strip()
+        if t:
+            tools.append(t)
+    return " ".join(tools)
+
+
+CANONICAL = object()   # sentinel: "the real list", vs None = "no list at all"
+
+
+def vip_job(if_expr="inputs.container-image != ''", with_container=False,
+            tools=CANONICAL, quote='"'):
     lines = ["  verify-image-prerequisites:", f"    if: {yaml_str(if_expr)}",
              "    runs-on: ubuntu-latest"]
     if with_container:
         lines.append("    container:\n      image: alpine")
-    lines += ["    steps:", "      - run: echo check"]
+    lines += ["    steps:", "      - run: |"]
+    if tools is CANONICAL:
+        tools = canonical_tools()
+    if tools is not None:
+        lines.append(f"          REQUIRED_TOOLS={quote}{tools}{quote}")
+    lines.append("          echo check")
     return "\n".join(lines) + "\n"
 
 
@@ -603,6 +631,50 @@ DRIFT_CASES = [
     ("composite actions under .github/actions/** are scanned for drift too",
      {},
      True, ("somefancytool4",)),
+
+    # FR-011a's other direction: each stage's EMBEDDED list must be the
+    # canonical one. The drift scan above cannot see this — the embedded
+    # list is a shell assignment (skipped as a VAR=value prefix, never
+    # tokenized as an invocation) and the check loop iterates the variable
+    # rather than the tool names — so until Gate 23 compared them, the
+    # twelve copies agreed by hand-coordination alone.
+    ("a stage whose embedded list drops a canonical tool",
+     {"stage.yml": stage(HEALTHY_ENTRY,
+                         vip=vip_job(tools=canonical_tools().replace(" node", "")))},
+     True, ("node", "not the canonical one")),
+
+    ("a stage whose embedded list adds a tool the canonical list disowns",
+     {"stage.yml": stage(HEALTHY_ENTRY,
+                         vip=vip_job(tools=canonical_tools() + " yq"))},
+     True, ("yq", "not the canonical one")),
+
+    ("a stage that embeds no REQUIRED_TOOLS list at all",
+     {"stage.yml": stage(HEALTHY_ENTRY, vip=vip_job(tools=None))},
+     True, ("REQUIRED_TOOLS",)),
+
+    ("no false positive: the single-quoted assignment form is read too",
+     {"stage.yml": stage(HEALTHY_ENTRY,
+                         vip=vip_job(tools=canonical_tools(), quote="'"))},
+     False, ()),
+
+    # The tokenizer's own placeholders. strip_command_substitutions emits
+    # DOLLARSUBST and the expression pass emits GHEXPR, both of which match
+    # TOKEN_RE — so a statement STARTING with either idiom used to be
+    # reported as "a run: block invokes dollarsubst", naming a tool that
+    # does not exist.
+    ("no false positive: a statement starting with a command substitution "
+     "is not reported as an invocation of 'dollarsubst'",
+     {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
+                             if_expr=TOLERANT,
+                             run="$(command -v git) --version"))},
+     False, ()),
+
+    ("no false positive: a statement starting with an Actions expression "
+     "is not reported as an invocation of 'ghexpr'",
+     {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
+                             if_expr=TOLERANT,
+                             run="${{ inputs.runner }} --version"))},
+     False, ()),
 ]
 
 

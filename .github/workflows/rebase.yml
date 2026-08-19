@@ -190,6 +190,16 @@ jobs:
     # runner to invoke Docker itself (contracts/runner-container-
     # passthrough.md "The verify-image-prerequisites job").
     if: inputs.container-image != ''
+    # Zero scopes, declared rather than inherited. This job's whole body is
+    # docker login/pull/run against the adopter's own registry: it makes no
+    # GitHub API call and writes nothing. Nine of the eleven stage files
+    # carry `permissions: {}` at file level, so this job got zero there by
+    # construction -- but watchdog.yml and auto-update-spec-kit.yml carry
+    # the wide top-level grants their other jobs need, and this job silently
+    # inherited all of them. Declared on all eleven so the grant is a
+    # property of the job rather than of whichever file it happens to sit
+    # in (Gate 22 asserts it).
+    permissions: {}
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     steps:
       - name: Pull image and verify prerequisites
@@ -240,12 +250,24 @@ jobs:
             exit 1
           fi
 
-          missing=""
-          for tool in $REQUIRED_TOOLS; do
-            if ! docker run --rm --entrypoint sh "$IMAGE" -c "command -v $tool" >/dev/null 2>&1; then
-              missing="$missing $tool"
-            fi
-          done
+          # One container start for the whole list, not one per tool: the
+          # loop runs INSIDE the image, over $REQUIRED_TOOLS forwarded as an
+          # environment variable. FR-011's fail-all-at-once contract is
+          # preserved -- the inner loop still visits every tool and collects
+          # every miss before the container exits, rather than stopping at
+          # the first one.
+          #
+          # Failing to start a shell at all is reported as itself, not as
+          # "every tool is missing". An image with no POSIX shell cannot run
+          # this pipeline's steps either, but saying which of the two went
+          # wrong is the difference between a fixable message and a puzzle.
+          if ! missing=$(docker run --rm -e REQUIRED_TOOLS="$REQUIRED_TOOLS" \
+            --entrypoint sh "$IMAGE" -c \
+            'for t in $REQUIRED_TOOLS; do command -v "$t" >/dev/null 2>&1 || printf " %s" "$t"; done' \
+            2>docker-inspect-error.log); then
+            echo "::error::wing-commander verify-image-prerequisites: could not run a POSIX shell inside $IMAGE to check its prerequisites -- $(cat docker-inspect-error.log)"
+            exit 1
+          fi
 
           if [ -n "$missing" ]; then
             echo "::error::wing-commander verify-image-prerequisites: $IMAGE is missing required tool(s):$missing"

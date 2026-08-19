@@ -165,6 +165,33 @@ BOUND_MATRIX_LEG = """\
 """
 
 
+# The one job Gate 22 special-cases: no container: of its own (it invokes
+# Docker directly on the runner, before any other job's container exists),
+# but the runner ternary like every other job, and a zero permission grant
+# DECLARED rather than inherited from whatever the file's top-level
+# permissions happen to be.
+PREREQ_OK = """\
+    permissions: {}
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+"""
+
+PREREQ_NO_PERMISSIONS = """\
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+"""
+
+PREREQ_WIDE_PERMISSIONS = """\
+    permissions:
+      contents: write
+      issues: write
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+"""
+
+PREREQ_PINNED_RUNNER = """\
+    permissions: {}
+    runs-on: ubuntu-latest
+"""
+
+
 def job(name, binding):
     return f"  {name}:\n{binding}    steps:\n      - run: echo work\n"
 
@@ -266,6 +293,40 @@ CASES = [
      "even in a file/job name that would plausibly be exempted later",
      {"pr-conversation.yml": stage(job("act", BOUND_MATRIX_LEG))},
      True, ("'act'",)),
+
+    # The verify-image-prerequisites carve-out. Gate 22 exempts this job
+    # from the container: check — it must invoke Docker on the runner, not
+    # inside a container — but not from the runner ternary, and it requires
+    # the zero grant to be declared on the job rather than inherited.
+    ("healthy: the special-cased verify-image-prerequisites job",
+     {"stage.yml": stage(job("first", BOUND),
+                         job("verify-image-prerequisites", PREREQ_OK))},
+     False, ()),
+
+    ("verify-image-prerequisites with no permissions: block silently "
+     "inherits the file's top-level grants",
+     {"stage.yml": stage(job("first", BOUND),
+                         job("verify-image-prerequisites",
+                             PREREQ_NO_PERMISSIONS))},
+     True, ("verify-image-prerequisites", "permissions")),
+
+    ("verify-image-prerequisites with a non-empty grant",
+     {"stage.yml": stage(job("first", BOUND),
+                         job("verify-image-prerequisites",
+                             PREREQ_WIDE_PERMISSIONS))},
+     True, ("verify-image-prerequisites", "permissions")),
+
+    ("the carve-out excuses the container: block, not the runner ternary",
+     {"stage.yml": stage(job("first", BOUND),
+                         job("verify-image-prerequisites",
+                             PREREQ_PINNED_RUNNER))},
+     True, ("verify-image-prerequisites", "runs-on")),
+
+    ("the carve-out is job-name-scoped: another job cannot skip its "
+     "container: block by wearing the same shape",
+     {"stage.yml": stage(job("first", BOUND),
+                         job("other", PREREQ_NO_PERMISSIONS))},
+     True, ("'other'", "container")),
 ]
 
 

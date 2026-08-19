@@ -1810,6 +1810,7 @@ jobs:
                       # (FR-002/FR-003) — just never gets the container:
                       # check below.
                       runs_on = norm_expr(job.get("runs-on"))
+                      ok = True
                       if runs_on != EXPECTED_RUNS_ON:
                           print(f"::error file={f}::job 'verify-image-prerequisites' "
                                 f"has runs-on: {job.get('runs-on')!r}; it must carry "
@@ -1817,8 +1818,30 @@ jobs:
                                 f"other job, even though it never gets a container: "
                                 f"block (FR-002/FR-003).")
                           failures += 1
-                      else:
-                          bound += 1
+                          ok = False
+                      # Declared, never inherited. This job runs docker
+                      # login/pull/run against the adopter's registry and
+                      # makes no GitHub API call, so its correct grant is
+                      # zero — but nine stage files reach zero only because
+                      # their FILE-level permissions happen to be empty,
+                      # while watchdog.yml and auto-update-spec-kit.yml
+                      # carry the wide grants their other jobs need. Asking
+                      # for the block on the job itself makes the grant a
+                      # property of this job rather than of whichever file
+                      # it sits in, so a future change to a file's top-level
+                      # permissions cannot widen it by accident.
+                      if job.get("permissions") != {}:
+                          print(f"::error file={f}::job 'verify-image-prerequisites' "
+                                f"declares permissions: {job.get('permissions')!r}; it "
+                                f"must declare an explicit empty grant "
+                                f"(permissions: {{}}). Omitting the block inherits the "
+                                f"file's top-level grants, which in watchdog.yml and "
+                                f"auto-update-spec-kit.yml are contents/issues/"
+                                f"pull-requests write — handed to a job whose whole "
+                                f"body is a docker pull of an adopter-named image.")
+                          failures += 1
+                          ok = False
+                      bound += ok
                       continue
 
                   reason = EXCEPTIONS.get((os.path.basename(f), jname))
@@ -1914,6 +1937,11 @@ jobs:
           import glob, os, re, sys, yaml
 
           STATUS_FN = re.compile(r"\b(always|success|failure|cancelled)\s*\(")
+          TOOLS_PATH = ".github/scripts/required-tools.txt"
+          # The literal list each stage's tool-check step embeds. Quoted
+          # either way, since the shell accepts both and a future edit
+          # should not have to know which one this gate keys on.
+          REQUIRED_TOOLS_RE = re.compile(r"""REQUIRED_TOOLS=(["'])(.*?)\1""")
 
           def needs_of(spec):
               n = (spec or {}).get("needs") or []
@@ -1934,6 +1962,7 @@ jobs:
 
           failures = 0
           stages = 0
+          embedded = {}
           for f in sorted(glob.glob(".github/workflows/*.yml")
                           + glob.glob(".github/workflows/*.yaml")):
               wf = yaml.safe_load(open(f, encoding="utf-8")) or {}
@@ -1974,6 +2003,23 @@ jobs:
                             f"runner so it can invoke Docker itself, before any other "
                             f"job's own container is created (contract).")
                       failures += 1
+                  # The list this job actually checks, harvested for the
+                  # comparison against required-tools.txt below. That file's
+                  # own header promises this gate makes it; until it did,
+                  # the twelve copies agreed by hand-coordination alone
+                  # (found in review of PR #222).
+                  vip_run = chr(10).join(str((s or {}).get("run", "") or "")
+                                        for s in (vip.get("steps") or [])
+                                        if isinstance(s, dict))
+                  m = REQUIRED_TOOLS_RE.search(vip_run)
+                  if m is None:
+                      print(f"::error file={f}::verify-image-prerequisites embeds no "
+                            f"REQUIRED_TOOLS= list, so there is nothing for FR-011a to "
+                            f"hold against {TOOLS_PATH}, and nothing proving this "
+                            f"stage checks the same tools as the other ten.")
+                      failures += 1
+                  else:
+                      embedded[f] = set(m.group(2).split())
 
               for jname, job in sorted(jobs.items()):
                   if jname == "verify-image-prerequisites" or not isinstance(job, dict):
@@ -2018,7 +2064,7 @@ jobs:
           # contract") must not be missing a tool a run: block anywhere in
           # the repository actually invokes, or Gate 23's own wiring check
           # above is enforcing a contract nobody can satisfy honestly.
-          tools_path = ".github/scripts/required-tools.txt"
+          tools_path = TOOLS_PATH
           try:
               canonical = {ln.split("#", 1)[0].strip()
                           for ln in open(tools_path, encoding="utf-8")}
@@ -2028,6 +2074,35 @@ jobs:
                     f"required-tool list — FR-011a's drift check cannot run.")
               failures += 1
               canonical = set()
+
+          # FR-011a in the direction required-tools.txt's own header
+          # promises: every stage's embedded list must BE the canonical
+          # list. The drift scan further down catches a tool INVOKED but not
+          # canonical; this catches the twelve copies disagreeing with each
+          # other, which no amount of run:-block scanning can see — the
+          # embedded list is a shell assignment (never tokenized as an
+          # invocation) and the check loop iterates the variable, not the
+          # tool names.
+          #
+          # Skipped when canonical is empty: the unreadable-file error above
+          # has already fired, and eleven cascade errors would bury it.
+          if canonical:
+              for f, tools in sorted(embedded.items()):
+                  if tools != canonical:
+                      absent = sorted(canonical - tools)
+                      extra = sorted(tools - canonical)
+                      print(f"::error file={f}::verify-image-prerequisites checks a "
+                            f"tool list that is not the canonical one. Missing from "
+                            f"this stage: {absent or '(none)'}. Present here but not "
+                            f"in {tools_path}: {extra or '(none)'}. An adopter whose "
+                            f"image lacks a tool this stage forgot to check gets a "
+                            f"runtime failure blamed on their image; a stage that "
+                            f"checks a tool the contract disowns enforces a promise "
+                            f"nobody else makes.")
+                      failures += 1
+              agree = sum(1 for t in embedded.values() if t == canonical)
+              print(f"note: {len(embedded)} stage(s) embed a REQUIRED_TOOLS list; "
+                    f"{agree} agree with {tools_path}.")
 
           # Tools this repository's OWN CI relies on but that no published
           # stage's steps invoke inside an adopter's container — they run on
@@ -2071,7 +2146,21 @@ jobs:
           # Shell keyword/operator tokens that a naive first-word split can
           # still surface (e.g. after a line continuation or a `then` on its
           # own line) — never a tool invocation.
-          NOT_A_COMMAND = ALWAYS_AVAILABLE | {"[", "[[", "]]", "]", "{", "}"}
+          #
+          # DOLLARSUBST and GHEXPR are this tokenizer's OWN output, not
+          # anything an author wrote: strip_command_substitutions replaces
+          # every well-formed command substitution with the first, and the
+          # GHEXPR.sub below replaces every dollar-brace-brace expression
+          # with the second, precisely so neither can be split on. Both
+          # match TOKEN_RE, so a statement that STARTS with either idiom —
+          # `$(resolve-tool) --check`, or the documented Actions form
+          # `<expr> --check` — would otherwise be reported as "a run: block
+          # invokes dollarsubst", naming a tool that does not exist and
+          # sending the author into this gate's internals to find out why.
+          # No run: block starts a statement that way today; this is here so
+          # the first one that does gets a real error or none, not a riddle.
+          NOT_A_COMMAND = ALWAYS_AVAILABLE | {"[", "[[", "]]", "]", "{", "}",
+                                              "DOLLARSUBST", "GHEXPR"}
 
           HEREDOC_OPEN = re.compile(r"<<[-~]?\s*['\"]?(\w+)['\"]?")
           TOKEN_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.+-]*$")

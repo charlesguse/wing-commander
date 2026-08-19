@@ -831,7 +831,8 @@ know before you set either:
   `node` (an inferred dependency of the Claude Code action, not something
   this repository's own scripts invoke directly). A missing tool fails the
   stage fast, before any billable agent step, naming every missing tool at
-  once — never just the first one found.
+  once — never just the first one found. An image with no POSIX shell at all
+  is reported as that, rather than as "every tool is missing".
 - **Private registry credentials** are two optional secrets,
   `container-registry-username` and `container-registry-password`, meaningful
   only when `container-image` is set:
