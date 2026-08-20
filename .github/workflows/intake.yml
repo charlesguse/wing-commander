@@ -167,6 +167,24 @@ on:
         type: boolean
         required: false
         default: true
+      runner:
+        description: >
+          Runner label(s) for every job in this stage. A single label
+          (e.g. ubuntu-latest) or a JSON array of labels applied as a
+          conjunction (e.g. '["self-hosted","linux","x64"]') — a value
+          starting with "[" is parsed as JSON, anything else is used
+          verbatim (specs/038-runner-container-passthrough).
+        type: string
+        required: false
+        default: ubuntu-latest
+      container-image:
+        description: >
+          Container image every job in this stage runs inside. Empty
+          (default) means no container — every job runs directly on the
+          runner, unchanged from today (specs/038-runner-container-passthrough).
+        type: string
+        required: false
+        default: ""
     secrets:
       claude-code-oauth-token:
         description: "Claude OAuth token (claude setup-token) — one of the two credentials"
@@ -183,6 +201,12 @@ on:
       speckit-app-private-key:
         description: "GitHub App private key"
         required: true
+      container-registry-username:
+        description: "Username for container-image's registry, if private. Inert when container-image is empty (specs/038-runner-container-passthrough)."
+        required: false
+      container-registry-password:
+        description: "Password or token for container-image's registry, if private. May be a short-lived token minted by the calling wrapper before its uses: call. Inert when container-image is empty (specs/038-runner-container-passthrough)."
+        required: false
     outputs:
       spec-dir:
         description: "specs/NNN-slug directory the intake created (empty if no spec was produced)"
@@ -194,8 +218,112 @@ on:
 permissions: {}
 
 jobs:
+  verify-image-prerequisites:
+    # runner/container-image passthrough (specs/038): checks the
+    # adopter-named image before any other job's own container is
+    # created. Deliberately no container: — must run directly on the
+    # runner to invoke Docker itself (contracts/runner-container-
+    # passthrough.md "The verify-image-prerequisites job").
+    if: inputs.container-image != ''
+    # Zero scopes, declared rather than inherited. This job's whole body is
+    # docker login/pull/run against the adopter's own registry: it makes no
+    # GitHub API call and writes nothing. Nine of the eleven stage files
+    # carry `permissions: {}` at file level, so this job got zero there by
+    # construction -- but watchdog.yml and auto-update-spec-kit.yml carry
+    # the wide top-level grants their other jobs need, and this job silently
+    # inherited all of them. Declared on all eleven so the grant is a
+    # property of the job rather than of whichever file it happens to sit
+    # in (Gate 22 asserts it).
+    permissions: {}
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    steps:
+      - name: Pull image and verify prerequisites
+        env:
+          IMAGE: ${{ inputs.container-image }}
+          REGISTRY_USERNAME: ${{ secrets.container-registry-username }}
+          REGISTRY_PASSWORD: ${{ secrets.container-registry-password }}
+        run: |
+          # Canonical required-tool list: .github/scripts/required-tools.txt
+          # (kept in agreement by Gate 23, specs/038 FR-011a).
+          REQUIRED_TOOLS="git gh jq curl python3 bash node"
+
+          if [ -n "$REGISTRY_USERNAME" ] && [ -n "$REGISTRY_PASSWORD" ]; then
+            # A bare/namespaced Docker Hub reference (no "." or ":" or
+            # "localhost" in its first path component, or no "/" at
+            # all) has no registry host to pass to `docker login` --
+            # passing one anyway (e.g. a namespace, or the whole
+            # slash-free reference whose own tag/digest colon would
+            # otherwise be mistaken for a host) makes login target a
+            # nonexistent registry and fail. Only pass a server
+            # argument when the reference actually has a path
+            # component distinct from the rest, and that component
+            # looks like a real host (specs/038 T052/T054).
+            candidate=""
+            case "$IMAGE" in
+              */*) candidate="${IMAGE%%/*}" ;;
+            esac
+            case "$candidate" in
+              *.*|*:*|localhost) login_args=("$candidate") ;;
+              *) login_args=() ;;
+            esac
+            if ! echo "$REGISTRY_PASSWORD" | docker login "${login_args[@]}" --username "$REGISTRY_USERNAME" --password-stdin 2>docker-login-error.log; then
+              echo "::error::wing-commander verify-image-prerequisites: the registry rejected the supplied credentials for $IMAGE -- $(cat docker-login-error.log)"
+              exit 1
+            fi
+          fi
+
+          if ! docker pull "$IMAGE" 2>docker-pull-error.log; then
+            if [ -z "$REGISTRY_USERNAME" ] && [ -z "$REGISTRY_PASSWORD" ]; then
+              echo "::error::wing-commander verify-image-prerequisites: failed to pull $IMAGE -- no credentials were supplied for this image. $(cat docker-pull-error.log)"
+            elif [ -z "$REGISTRY_USERNAME" ]; then
+              echo "::error::wing-commander verify-image-prerequisites: failed to pull $IMAGE -- container-registry-username was not supplied (container-registry-password was), so no login was attempted. $(cat docker-pull-error.log)"
+            elif [ -z "$REGISTRY_PASSWORD" ]; then
+              echo "::error::wing-commander verify-image-prerequisites: failed to pull $IMAGE -- container-registry-password was not supplied (container-registry-username was), so no login was attempted. $(cat docker-pull-error.log)"
+            else
+              echo "::error::wing-commander verify-image-prerequisites: failed to pull $IMAGE -- the registry rejected the supplied credentials or image reference. $(cat docker-pull-error.log)"
+            fi
+            exit 1
+          fi
+
+          # One container start for the whole list, not one per tool: the
+          # loop runs INSIDE the image, over $REQUIRED_TOOLS forwarded as an
+          # environment variable. FR-011's fail-all-at-once contract is
+          # preserved -- the inner loop still visits every tool and collects
+          # every miss before the container exits, rather than stopping at
+          # the first one.
+          #
+          # Failing to start a shell at all is reported as itself, not as
+          # "every tool is missing". An image with no POSIX shell cannot run
+          # this pipeline's steps either, but saying which of the two went
+          # wrong is the difference between a fixable message and a puzzle.
+          if ! missing=$(docker run --rm -e REQUIRED_TOOLS="$REQUIRED_TOOLS" \
+            --entrypoint sh "$IMAGE" -c \
+            'for t in $REQUIRED_TOOLS; do command -v "$t" >/dev/null 2>&1 || printf " %s" "$t"; done' \
+            2>docker-inspect-error.log); then
+            echo "::error::wing-commander verify-image-prerequisites: could not run a POSIX shell inside $IMAGE to check its prerequisites -- $(cat docker-inspect-error.log)"
+            exit 1
+          fi
+
+          if [ -n "$missing" ]; then
+            echo "::error::wing-commander verify-image-prerequisites: $IMAGE is missing required tool(s):$missing"
+            exit 1
+          fi
+
   intake:
-    runs-on: ubuntu-latest
+    # runner/container-image passthrough (specs/038). Empty
+    # container-image is expected to be a no-op (research.md D3); live
+    # verification requires a workflow_dispatch trigger this automated
+    # implementation run could not perform (T001) and remains deferred to
+    # a human/scratch-adopter-repo pass. The runs-on ternary's JSON-array
+    # branch is likewise unverified beyond single-element arrays —
+    # multi-label self-hosted conjunction is scratch-adopter-repo-verified
+    # only (research.md D2).
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials:
+        username: ${{ secrets.container-registry-username }}
+        password: ${{ secrets.container-registry-password }}
     # Empirically verified 2026-08-05/06 against GitHub-hosted runners
     # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
     # form accepts an expression in both name and deployment, and a
@@ -212,6 +340,10 @@ jobs:
     concurrency:
       group: wing-commander-intake
       cancel-in-progress: false
+    needs: verify-image-prerequisites
+    if: |
+      needs.verify-image-prerequisites.result == 'success' ||
+      needs.verify-image-prerequisites.result == 'skipped'
     permissions:
       contents: write
       pull-requests: write

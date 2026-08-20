@@ -472,7 +472,7 @@ jobs:
               return inner[len("inputs."):].strip()
 
           failures = 0
-          stages = bound = 0
+          stages = bound = exempt = 0
           for f in sorted(glob.glob(".github/workflows/*.yml")
                           + glob.glob(".github/workflows/*.yaml")):
               wf = yaml.safe_load(open(f, encoding="utf-8")) or {}
@@ -521,6 +521,47 @@ jobs:
                             f"bindable job — skipped.")
                       continue
 
+                  if jname == "verify-image-prerequisites":
+                      # The one job deliberately left unbound
+                      # (specs/038-runner-container-passthrough). Its entire
+                      # body is a docker login/pull of the adopter's image,
+                      # performed BEFORE any other job of the stage starts —
+                      # so an environment: block here would create the
+                      # deployment record and prompt the approver without
+                      # gating the thing worth gating: the credential use and
+                      # image pull happen the instant the job starts, which
+                      # is already past the approval. What it would buy an
+                      # adopter is one more prompt per stage call, on a job
+                      # that needs no token scopes and writes nothing.
+                      # docs/adoption.md "Deployment environments" documents
+                      # it as the second registered exception, beside
+                      # pr-conversation.act.
+                      #
+                      # Asserted in the deviating direction rather than
+                      # merely skipped: an exemption that only ever says
+                      # "not my problem" cannot notice the binding coming
+                      # back, and the way it comes back is somebody making
+                      # all 11 files uniform without reading this comment.
+                      if "environment" in job:
+                          print(f"::error file={f}::job 'verify-image-prerequisites' "
+                                f"carries an environment: block. This is the one job "
+                                f"deliberately left unbound (specs/038-runner-"
+                                f"container-passthrough): it runs docker login/pull as "
+                                f"its whole body, before any other job of the stage, so "
+                                f"binding it gates the deployment record without gating "
+                                f"the credential use — and charges every adopter one "
+                                f"more approval prompt per stage call for it. Remove "
+                                f"the block, or change this gate and "
+                                f"docs/adoption.md's registered-exception list "
+                                f"together.")
+                          failures += 1
+                      else:
+                          print(f"note: {f}: job 'verify-image-prerequisites' is the "
+                                f"registered Gate 7 exemption — deliberately unbound, "
+                                f"not counted as bound.")
+                          exempt += 1
+                      continue
+
                   env = job.get("environment")
                   if env is None:
                       print(f"::error file={f}::job {jname!r} has no environment: block. "
@@ -556,8 +597,8 @@ jobs:
                           ok = False
                   bound += ok
 
-          print(f"Gate 7: {stages} published stage(s), {bound} bound job(s); "
-                f"{failures} failure(s).")
+          print(f"Gate 7: {stages} published stage(s), {bound} bound job(s), "
+                f"{exempt} exempt job(s); {failures} failure(s).")
           if stages == 0:
               # Every stage file vanishing (or an `on:` shape this gate no
               # longer recognizes) must not read as a pass.
@@ -1632,6 +1673,839 @@ jobs:
       # fleet. One fixture per clause, in both directions.
       - name: Gate 24 self-test — the detector actually detects
         run: python3 .github/scripts/verify-gate-24-selftest.py
+
+      # Gate 22 — specs/038-runner-container-passthrough FR-007: an adopter
+      # binds a whole stage's jobs to their own runner/container image with
+      # two inputs and two secrets, and the contract is that the binding is
+      # uniform — EVERY job in the stage carries the exact runs-on:/
+      # container: block, with no hidden per-job selector. A job that
+      # silently lacks the block is the worst possible shape of that defect:
+      # it keeps running on ubuntu-latest with no container while the rest of
+      # the stage moved, and nothing in the UI says so. The 33 bindings were
+      # placed by hand (T006-T016) and only ever verified by hand.
+      #
+      # Extends Gate 7's shape (specs/031-stage-environment-binding) from one
+      # binding to three: the runs-on: ternary, container.image, and
+      # container.credentials.username/password. The stage set is DERIVED
+      # (any workflow declaring on.workflow_call), never listed — a hardcoded
+      # list is how watchdog.yml and auto-update-spec-kit.yml went unlinted
+      # by release.yml's Gate 1a for a whole release (issue #149).
+      - name: Gate 22 — every job of every published stage carries the runner/container-image passthrough
+        run: |
+          python3 - <<'PYEOF'
+          import glob, os, re, sys, yaml
+
+          # input -> (type, default). The defaults ARE the contract: an
+          # unset runner/container-image must reproduce today's behavior
+          # byte-for-byte (FR-001, FR-004).
+          DECLARED_INPUTS = {"runner": ("string", "ubuntu-latest"),
+                              "container-image": ("string", "")}
+          # secret -> required flag. Never required: a stage with no image
+          # named must never demand a credential (FR-009).
+          DECLARED_SECRETS = ("container-registry-username",
+                              "container-registry-password")
+
+          # Built via concatenation, never as one literal dollar-brace-brace
+          # run of characters: GitHub's own template engine substitutes ANY
+          # such span in a run: block before bash/python ever sees it — even
+          # one sitting inside a python string inside a single-quoted
+          # heredoc — which would corrupt these comparison constants at the
+          # SOURCE. Same technique Gate 7's OPEN/CLOSE split uses.
+          DOLLAR_OPEN, DOLLAR_CLOSE = "${" + "{", "}" + "}"
+          GH_EXPR_RE = re.compile(r"\$\{\{(.*?)\}\}")
+          EXPECTED_RUNS_ON = (DOLLAR_OPEN + " startsWith(inputs.runner, '[') && "
+                              "fromJSON(inputs.runner) || inputs.runner " + DOLLAR_CLOSE)
+          EXPECTED_IMAGE = DOLLAR_OPEN + " inputs.container-image " + DOLLAR_CLOSE
+          EXPECTED_CREDENTIALS = {
+              "username": DOLLAR_OPEN + " secrets.container-registry-username " + DOLLAR_CLOSE,
+              "password": DOLLAR_OPEN + " secrets.container-registry-password " + DOLLAR_CLOSE,
+          }
+
+          # (workflow filename, job name) -> reason. Constitution VII: a job
+          # that must deviate carries a registered, machine-checked
+          # exception naming the reason — never an undeclared one. None
+          # exist yet at plan time (contract's own "Registered exceptions"
+          # section) — T014 registered no deviation for pr-conversation.act
+          # either, since runs-on:/container: bind uniformly with no
+          # exception, unlike that job's orthogonal environment: exception.
+          EXCEPTIONS = {}
+
+          def norm_expr(s):
+              """Collapse whitespace inside every dollar-brace-brace
+              expression in a scalar (GH_EXPR_RE, below).
+
+              The gate compares the input/secret a value forwards, not the
+              byte string, so a tightly-packed expression and a spaced-out
+              one must compare equal.
+              """
+              if not isinstance(s, str):
+                  return s
+              def repl(m):
+                  return DOLLAR_OPEN + " " + re.sub(r"\s+", " ", m.group(1).strip()) + " " + DOLLAR_CLOSE
+              return GH_EXPR_RE.sub(repl, s.strip())
+
+          failures = 0
+          stages = bound = 0
+          for f in sorted(glob.glob(".github/workflows/*.yml")
+                          + glob.glob(".github/workflows/*.yaml")):
+              wf = yaml.safe_load(open(f, encoding="utf-8")) or {}
+              # PyYAML resolves the bare key `on` to the boolean True (YAML
+              # 1.1); quoted "on" stays a string. Accept either.
+              on = wf.get(True, wf.get("on"))
+              if isinstance(on, dict) and "workflow_call" in on:
+                  call = on.get("workflow_call") or {}
+              elif isinstance(on, list) and "workflow_call" in on:
+                  call = {}
+              else:
+                  continue          # not a published stage
+              stages += 1
+              # Named, not just counted — verify-gate-22.py compares this set
+              # against wc_published_stages.py's, so two derivations seeing
+              # the same NUMBER of different files cannot pass as agreeing.
+              print(f"note: {f}: published stage")
+
+              inputs = (call.get("inputs") or {}) if isinstance(call, dict) else {}
+              for iname, (itype, idefault) in DECLARED_INPUTS.items():
+                  spec = inputs.get(iname)
+                  if not isinstance(spec, dict):
+                      print(f"::error file={f}::published stage does not declare the "
+                            f"{iname!r} workflow_call input, so an adopter cannot bind "
+                            f"this stage the way every other stage binds "
+                            f"(specs/038-runner-container-passthrough FR-001/FR-004).")
+                      failures += 1
+                      continue
+                  if spec.get("type") != itype or spec.get("default") != idefault:
+                      print(f"::error file={f}::input {iname!r} is declared "
+                            f"type={spec.get('type')!r} default={spec.get('default')!r}; "
+                            f"the contract is type={itype!r} default={idefault!r}. The "
+                            f"defaults are load-bearing — they are what makes an unbound "
+                            f"adopter's behavior identical to before the feature.")
+                      failures += 1
+
+              secrets_decl = (call.get("secrets") or {}) if isinstance(call, dict) else {}
+              for sname in DECLARED_SECRETS:
+                  spec = secrets_decl.get(sname)
+                  if not isinstance(spec, dict) or spec.get("required") is not False:
+                      print(f"::error file={f}::published stage does not declare secret "
+                            f"{sname!r} with required: false — a stage with no image "
+                            f"named must never demand a registry credential (FR-009).")
+                      failures += 1
+
+              for jname, job in (wf.get("jobs") or {}).items():
+                  job = job or {}
+                  if "uses" in job:
+                      # A job that calls another workflow runs that
+                      # workflow's jobs; the binding belongs to them —
+                      # runs-on:/container: are illegal here (contract).
+                      print(f"note: {f}: job {jname!r} is a workflow call, not a "
+                            f"bindable job — skipped.")
+                      continue
+
+                  if jname == "verify-image-prerequisites":
+                      # Gate 23 owns this job's shape (research.md D5): it
+                      # deliberately carries no container: of its own, so it
+                      # can invoke Docker directly on the runner before any
+                      # other job's container is created. It still forwards
+                      # the runner ternary like every other job
+                      # (FR-002/FR-003) — just never gets the container:
+                      # check below.
+                      runs_on = norm_expr(job.get("runs-on"))
+                      ok = True
+                      if runs_on != EXPECTED_RUNS_ON:
+                          print(f"::error file={f}::job 'verify-image-prerequisites' "
+                                f"has runs-on: {job.get('runs-on')!r}; it must carry "
+                                f"the exact runner-passthrough ternary like every "
+                                f"other job, even though it never gets a container: "
+                                f"block (FR-002/FR-003).")
+                          failures += 1
+                          ok = False
+                      # Declared, never inherited. This job runs docker
+                      # login/pull/run against the adopter's registry and
+                      # makes no GitHub API call, so its correct grant is
+                      # zero — but nine stage files reach zero only because
+                      # their FILE-level permissions happen to be empty,
+                      # while watchdog.yml and auto-update-spec-kit.yml
+                      # carry the wide grants their other jobs need. Asking
+                      # for the block on the job itself makes the grant a
+                      # property of this job rather than of whichever file
+                      # it sits in, so a future change to a file's top-level
+                      # permissions cannot widen it by accident.
+                      if job.get("permissions") != {}:
+                          print(f"::error file={f}::job 'verify-image-prerequisites' "
+                                f"declares permissions: {job.get('permissions')!r}; it "
+                                f"must declare an explicit empty grant "
+                                f"(permissions: {{}}). Omitting the block inherits the "
+                                f"file's top-level grants, which in watchdog.yml and "
+                                f"auto-update-spec-kit.yml are contents/issues/"
+                                f"pull-requests write — handed to a job whose whole "
+                                f"body is a docker pull of an adopter-named image.")
+                          failures += 1
+                          ok = False
+                      bound += ok
+                      continue
+
+                  reason = EXCEPTIONS.get((os.path.basename(f), jname))
+                  if reason is not None:
+                      print(f"note: {f}: job {jname!r} is a registered Gate 22 "
+                            f"exception — {reason}")
+                      bound += 1
+                      continue
+
+                  ok = True
+                  runs_on = norm_expr(job.get("runs-on"))
+                  if runs_on != EXPECTED_RUNS_ON:
+                      print(f"::error file={f}::job {jname!r} has runs-on: "
+                            f"{job.get('runs-on')!r}; every job of every published "
+                            f"stage must carry the exact runner-passthrough ternary "
+                            f"so a JSON-array runner selection reaches it "
+                            f"(FR-002/FR-003/FR-007).")
+                      failures += 1
+                      ok = False
+
+                  container = job.get("container")
+                  if not isinstance(container, dict):
+                      print(f"::error file={f}::job {jname!r} has no container: "
+                            f"mapping block. An adopter who names a container-image "
+                            f"gets it on every OTHER job and not this one — the stage "
+                            f"looks containerized while this job runs bare, with "
+                            f"nothing to see in the UI (FR-004/FR-007).")
+                      failures += 1
+                      ok = False
+                  else:
+                      image = norm_expr(container.get("image"))
+                      if image != EXPECTED_IMAGE:
+                          print(f"::error file={f}::job {jname!r} wires container.image "
+                                f"to {container.get('image')!r}; the contract requires "
+                                f"{EXPECTED_IMAGE!r} verbatim, or this job's container "
+                                f"selection diverges from the rest of its own stage.")
+                          failures += 1
+                          ok = False
+                      creds = container.get("credentials")
+                      if not isinstance(creds, dict):
+                          print(f"::error file={f}::job {jname!r}'s container: block "
+                                f"has no credentials: mapping — a private image named "
+                                f"by this stage's caller could never be pulled by this "
+                                f"job (FR-009).")
+                          failures += 1
+                          ok = False
+                      else:
+                          for sub, expected in EXPECTED_CREDENTIALS.items():
+                              got = norm_expr(creds.get(sub))
+                              if got != expected:
+                                  print(f"::error file={f}::job {jname!r} wires "
+                                        f"container.credentials.{sub} to "
+                                        f"{creds.get(sub)!r}; the contract requires "
+                                        f"{expected!r} verbatim.")
+                                  failures += 1
+                                  ok = False
+                  bound += ok
+
+          print(f"Gate 22: {stages} published stage(s), {bound} bound job(s); "
+                f"{failures} failure(s).")
+          if stages == 0:
+              # Every stage file vanishing (or an `on:` shape this gate no
+              # longer recognizes) must not read as a pass.
+              print("::error::Gate 22 found no workflow declaring on.workflow_call — it "
+                    "checked nothing. Either the published stages moved or this gate's "
+                    "detection of them has broken.")
+              sys.exit(1)
+          sys.exit(1 if failures else 0)
+          PYEOF
+
+      # Same reasoning as Gate 7's self-test: this gate's whole value is
+      # firing on a defect that nobody has made yet, and the fleet it runs
+      # against is (and should stay) uniform, so a green Gate 22 says
+      # nothing about whether Gate 22 works.
+      - name: Gate 22 self-test — the detector actually detects
+        run: python3 .github/scripts/verify-gate-22.py
+
+      # Gate 23 — specs/038-runner-container-passthrough FR-010/FR-011: an
+      # adopter-named container image must be checked for every required
+      # tool, and the registry-credential failure path must say why it
+      # failed, BEFORE any agent-bearing job's own container is created —
+      # research.md D4/D5 established that no step inside that job can ever
+      # improve a failed pull's error message or inspect the image's
+      # contents beforehand, so the check has to live in a separate job
+      # (verify-image-prerequisites) that every entry job and every
+      # always()/!cancelled()-style survival job depends on. FR-011a further
+      # requires the canonical tool list itself to stay truthful — checked
+      # against actual `run:` invocations, not just asserted once at plan
+      # time. T018-T028 wired all three by hand across eleven files.
+      - name: Gate 23 — every published stage checks adopter-chosen image prerequisites before any real job starts
+        run: |
+          python3 - <<'PYEOF'
+          import glob, os, re, sys, yaml
+
+          STATUS_FN = re.compile(r"\b(always|success|failure|cancelled)\s*\(")
+          TOOLS_PATH = ".github/scripts/required-tools.txt"
+          # The literal list each stage's tool-check step embeds. Quoted
+          # either way, since the shell accepts both and a future edit
+          # should not have to know which one this gate keys on.
+          REQUIRED_TOOLS_RE = re.compile(r"""REQUIRED_TOOLS=(["'])(.*?)\1""")
+
+          def needs_of(spec):
+              n = (spec or {}).get("needs") or []
+              return [n] if isinstance(n, str) else list(n)
+
+          def has_tolerant_gate(spec):
+              """T005's skip-tolerant if:, order- and whitespace-agnostic.
+
+              Checked as substrings rather than one exact regex: the real
+              jobs AND every combine the tolerant clause with their own
+              prior condition in different orders (`always() && (...)` vs
+              `(...) && needs.x...`), and a byte-exact match would make this
+              check more brittle than the property it is verifying.
+              """
+              iftext = str((spec or {}).get("if", "") or "")
+              return ("needs.verify-image-prerequisites.result" in iftext
+                      and "'success'" in iftext and "'skipped'" in iftext)
+
+          failures = 0
+          stages = 0
+          embedded = {}
+          for f in sorted(glob.glob(".github/workflows/*.yml")
+                          + glob.glob(".github/workflows/*.yaml")):
+              wf = yaml.safe_load(open(f, encoding="utf-8")) or {}
+              on = wf.get(True, wf.get("on"))
+              if isinstance(on, dict) and "workflow_call" in on:
+                  call = on.get("workflow_call") or {}
+              elif isinstance(on, list) and "workflow_call" in on:
+                  call = {}
+              else:
+                  continue          # not a published stage
+              stages += 1
+              print(f"note: {f}: published stage")
+
+              jobs = wf.get("jobs") or {}
+              if not isinstance(jobs, dict):
+                  jobs = {}
+
+              vip = jobs.get("verify-image-prerequisites")
+              if not isinstance(vip, dict):
+                  print(f"::error file={f}::published stage has no "
+                        f"verify-image-prerequisites job — an adopter-chosen "
+                        f"container image is never checked for required tools or a "
+                        f"credential failure before an agent-bearing job's own "
+                        f"container is created (FR-010/FR-011).")
+                  failures += 1
+              else:
+                  vip_if = " ".join(str(vip.get("if", "") or "").split())
+                  if vip_if != "inputs.container-image != ''":
+                      print(f"::error file={f}::verify-image-prerequisites job's "
+                            f"if: is {vip.get('if')!r}; the contract requires exactly "
+                            f"if: inputs.container-image != '' so the job is a true "
+                            f"no-op — no added job, no added latency — when no image "
+                            f"is named (FR-006).")
+                      failures += 1
+                  if "container" in vip:
+                      print(f"::error file={f}::verify-image-prerequisites declares "
+                            f"its own container: block; it must run directly on the "
+                            f"runner so it can invoke Docker itself, before any other "
+                            f"job's own container is created (contract).")
+                      failures += 1
+                  # The list this job actually checks, harvested for the
+                  # comparison against required-tools.txt below. That file's
+                  # own header promises this gate makes it; until it did,
+                  # the twelve copies agreed by hand-coordination alone
+                  # (found in review of PR #222).
+                  vip_run = chr(10).join(str((s or {}).get("run", "") or "")
+                                        for s in (vip.get("steps") or [])
+                                        if isinstance(s, dict))
+                  m = REQUIRED_TOOLS_RE.search(vip_run)
+                  if m is None:
+                      print(f"::error file={f}::verify-image-prerequisites embeds no "
+                            f"REQUIRED_TOOLS= list, so there is nothing for FR-011a to "
+                            f"hold against {TOOLS_PATH}, and nothing proving this "
+                            f"stage checks the same tools as the other ten.")
+                      failures += 1
+                  else:
+                      embedded[f] = set(m.group(2).split())
+
+              for jname, job in sorted(jobs.items()):
+                  if jname == "verify-image-prerequisites" or not isinstance(job, dict):
+                      continue
+                  if "uses" in job:
+                      continue      # a workflow-call job has no if:/needs: to gate
+
+                  needs_other = [n for n in needs_of(job)
+                                if n != "verify-image-prerequisites"]
+                  is_entry = not needs_other
+                  guarded = bool(STATUS_FN.search(str(job.get("if", "") or "")))
+                  if not (is_entry or guarded):
+                      # Ordinary needs: skip-propagation already gates this
+                      # job transitively — no separate wiring required or
+                      # wanted (contract's "downstream job... needs no
+                      # separate wiring" rule).
+                      continue
+
+                  if "verify-image-prerequisites" not in needs_of(job):
+                      why = ("is an entry job (no other in-stage predecessor)" if is_entry
+                            else "is guarded by a status-check function "
+                                 "(always()/success()/failure()/cancelled()), which "
+                                 "defeats ordinary needs: skip-propagation")
+                      print(f"::error file={f}::job {jname!r} {why} and must directly "
+                            f"depend on verify-image-prerequisites, but its needs: "
+                            f"does not name it. A real image-check failure would "
+                            f"never stop this job (FR-010/FR-011).")
+                      failures += 1
+                      continue
+
+                  if not has_tolerant_gate(job):
+                      print(f"::error file={f}::job {jname!r} needs "
+                            f"verify-image-prerequisites but its if: does not carry "
+                            f"the skip-tolerant condition (needs.verify-image-"
+                            f"prerequisites.result == 'success' or == 'skipped'). "
+                            f"Without it this job either never runs when no image is "
+                            f"named (verify-image-prerequisites is skipped, not "
+                            f"successful) or runs unchecked past a real pull failure.")
+                      failures += 1
+
+          # FR-011a — the canonical list (data-model.md "Image prerequisite
+          # contract") must not be missing a tool a run: block anywhere in
+          # the repository actually invokes, or Gate 23's own wiring check
+          # above is enforcing a contract nobody can satisfy honestly.
+          tools_path = TOOLS_PATH
+          try:
+              canonical = {ln.split("#", 1)[0].strip()
+                          for ln in open(tools_path, encoding="utf-8")}
+              canonical = {t for t in canonical if t}
+          except OSError:
+              print(f"::error file={tools_path}::Gate 23 could not read the canonical "
+                    f"required-tool list — FR-011a's drift check cannot run.")
+              failures += 1
+              canonical = set()
+
+          # FR-011a in the direction required-tools.txt's own header
+          # promises: every stage's embedded list must BE the canonical
+          # list. The drift scan further down catches a tool INVOKED but not
+          # canonical; this catches the twelve copies disagreeing with each
+          # other, which no amount of run:-block scanning can see — the
+          # embedded list is a shell assignment (never tokenized as an
+          # invocation) and the check loop iterates the variable, not the
+          # tool names.
+          #
+          # Skipped when canonical is empty: the unreadable-file error above
+          # has already fired, and eleven cascade errors would bury it.
+          if canonical:
+              for f, tools in sorted(embedded.items()):
+                  if tools != canonical:
+                      absent = sorted(canonical - tools)
+                      extra = sorted(tools - canonical)
+                      print(f"::error file={f}::verify-image-prerequisites checks a "
+                            f"tool list that is not the canonical one. Missing from "
+                            f"this stage: {absent or '(none)'}. Present here but not "
+                            f"in {tools_path}: {extra or '(none)'}. An adopter whose "
+                            f"image lacks a tool this stage forgot to check gets a "
+                            f"runtime failure blamed on their image; a stage that "
+                            f"checks a tool the contract disowns enforces a promise "
+                            f"nobody else makes.")
+                      failures += 1
+              agree = sum(1 for t in embedded.values() if t == canonical)
+              print(f"note: {len(embedded)} stage(s) embed a REQUIRED_TOOLS list; "
+                    f"{agree} agree with {tools_path}.")
+
+          # Tools this repository's OWN CI relies on but that no published
+          # stage's steps invoke inside an adopter's container — they run on
+          # the bare runner (or inside a composite action) that lint-
+          # workflows.yml itself uses, never inside inputs.container-image.
+          # Recorded here, not silently absorbed by a token blacklist, so a
+          # tool moved INTO a published stage's own run: block still trips
+          # this check the next time someone edits this list.
+          MAINTENANCE_ONLY = {
+              "actionlint", "yamllint", "shellcheck", "npm", "npx", "pip",
+              "pip3", "docker", "act",
+          }
+          # POSIX shell builtins and coreutils assumed present on any Linux
+          # image capable of running bash at all — the same bar research.md
+          # D6 applied when it seeded the canonical list from what this
+          # repository's OWN run: blocks invoke rather than an exhaustive
+          # POSIX audit. Not itself part of the adopter contract (FR-011's
+          # canonical list stays deliberately narrow); this set exists only
+          # so this check does not flag `echo`/`mkdir`/`sed` as "newly
+          # invoked tools" on every single PR.
+          ALWAYS_AVAILABLE = {
+              "alias", "awk", "base64", "basename", "bg", "break", "case",
+              "cat", "cd", "chmod", "chown", "cmp", "comm", "command",
+              "continue", "cp", "cut", "date", "dd", "declare", "diff",
+              "dirname", "do", "done", "echo", "egrep", "elif", "else",
+              "env", "esac", "eval", "exec", "exit", "export", "expr",
+              "false", "fg", "fi", "find", "fold", "for", "function",
+              "getopts", "grep", "head", "history", "if", "in", "jobs",
+              "join", "kill", "let", "ln", "local", "ls", "md5sum",
+              "mkdir", "mktemp", "mv", "nohup", "od", "paste", "printenv",
+              "printf", "ps", "pwd", "read", "readlink", "realpath", "return",
+              "rev", "rm", "rmdir", "sed", "select", "seq", "set",
+              "sha1sum", "sha256sum", "shift", "sleep", "sort", "source",
+              "split", "tac", "tail", "tar", "tee", "test", "then", "time",
+              "timeout", "touch", "tr", "trap", "true", "type", "uname",
+              "unalias", "uniq", "unset", "until", "wait", "wc", "while",
+              "xargs", "xxd", "yes", "gzip", "gunzip", "zip", "unzip",
+              "mapfile", "readarray", "popd", "pushd", "dirs", "hash",
+              "ulimit", "umask", "compgen", "complete",
+          }
+          # Shell keyword/operator tokens that a naive first-word split can
+          # still surface (e.g. after a line continuation or a `then` on its
+          # own line) — never a tool invocation.
+          #
+          # DOLLARSUBST and GHEXPR are this tokenizer's OWN output, not
+          # anything an author wrote: strip_command_substitutions replaces
+          # every well-formed command substitution with the first, and the
+          # GHEXPR.sub below replaces every dollar-brace-brace expression
+          # with the second, precisely so neither can be split on. Both
+          # match TOKEN_RE, so a statement that STARTS with either idiom —
+          # `$(resolve-tool) --check`, or the documented Actions form
+          # `<expr> --check` — would otherwise be reported as "a run: block
+          # invokes dollarsubst", naming a tool that does not exist and
+          # sending the author into this gate's internals to find out why.
+          # No run: block starts a statement that way today; this is here so
+          # the first one that does gets a real error or none, not a riddle.
+          NOT_A_COMMAND = ALWAYS_AVAILABLE | {"[", "[[", "]]", "]", "{", "}",
+                                              "DOLLARSUBST", "GHEXPR"}
+
+          HEREDOC_OPEN = re.compile(r"<<[-~]?\s*['\"]?(\w+)['\"]?")
+          TOKEN_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.+-]*$")
+
+          def run_texts():
+              """Every run: script body in workflows and composite actions."""
+              paths = (glob.glob(".github/workflows/*.yml")
+                      + glob.glob(".github/workflows/*.yaml")
+                      + glob.glob(".github/actions/**/action.yml", recursive=True)
+                      + glob.glob(".github/actions/**/action.yaml", recursive=True))
+              for path in sorted(set(paths)):
+                  doc = yaml.safe_load(open(path, encoding="utf-8")) or {}
+                  steps = []
+                  if "jobs" in doc:
+                      for job in (doc.get("jobs") or {}).values():
+                          steps.extend((job or {}).get("steps") or [])
+                  if "runs" in doc:
+                      steps.extend(((doc.get("runs") or {}).get("steps")) or [])
+                  for step in steps:
+                      run = (step or {}).get("run")
+                      if isinstance(run, str):
+                          yield path, run
+
+          # A `case "$x" in` arm — `skipped|cancelled)`, `*)`, or a one-liner
+          # like `OWNER|MEMBER) echo authorized=true ;;` — uses `|` to mean
+          # "or" between patterns, not a shell pipe, and the first `)` ends
+          # the pattern, not a subshell. Matched only at the START of a
+          # line (a bare `<pattern>)` prefix with no unmatched `(` before
+          # it — case arms are the only valid bash shape with that
+          # signature), so a real command is never mistaken for one; the
+          # prefix is dropped and whatever follows the `)` is still
+          # tokenized normally.
+          CASE_ARM_PREFIX = re.compile(r'^([A-Za-z0-9_*.\[\]?"\'|-]+)\)(.*)$')
+
+          def strip_heredocs(script):
+              """Remove every heredoc BODY *and* its opening/closing marker
+              lines entirely, so an embedded python/JS/jq script's prose and
+              function names never reach the shell tokenizer below, and the
+              bare closer token itself (PYEOF, EOF, ...) is never mistaken
+              for a command. Also strips a leading `case` arm pattern off
+              any line that opens with one (CASE_ARM_PREFIX, above).
+              """
+              lines = script.splitlines()
+              out = []
+              i = 0
+              while i < len(lines):
+                  stripped = lines[i].strip()
+                  m = HEREDOC_OPEN.search(stripped)
+                  if m and not stripped.startswith("#"):
+                      closer = m.group(1)
+                      i += 1
+                      while i < len(lines) and lines[i].strip() != closer:
+                          i += 1
+                      i += 1  # skip the closer line too
+                      continue
+                  m2 = CASE_ARM_PREFIX.match(stripped)
+                  out.append(m2.group(2) if m2 else lines[i])
+                  i += 1
+              return "\n".join(out)
+
+          def shell_segments(text):
+              """Split a whole shell script into top-level statements.
+
+              Quote/paren state is tracked across the ENTIRE text, not reset
+              per line — this repository's `--jq '<filter>'` arguments
+              routinely span many lines inside one single-quoted string, and
+              jq's own `|` inside that string is not a shell pipe. A `\\`
+              immediately before a newline is a line continuation, not a
+              statement break. A `#` only starts a comment at the start of a
+              word (outside quotes), matching real shell behavior.
+              """
+              segments, current = [], []
+              in_s = in_d = in_comment = False
+              depth = 0
+              at_word_start = True
+              i, n = 0, len(text)
+              while i < n:
+                  ch = text[i]
+                  if in_comment:
+                      if ch == "\n":
+                          in_comment = False
+                          segments.append("".join(current))
+                          current = []
+                          at_word_start = True
+                      i += 1
+                      continue
+                  if in_s:
+                      current.append(ch)
+                      in_s = ch != "'"
+                      i += 1
+                      continue
+                  if in_d:
+                      current.append(ch)
+                      if ch == "\\" and i + 1 < n:
+                          current.append(text[i + 1])
+                          i += 2
+                          continue
+                      in_d = ch != '"'
+                      i += 1
+                      continue
+                  if ch == "\\" and i + 1 < n and text[i + 1] == "\n":
+                      current.append(" ")
+                      i += 2
+                      continue
+                  if ch == "'":
+                      in_s = True
+                      current.append(ch)
+                      i += 1
+                      at_word_start = False
+                      continue
+                  if ch == '"':
+                      in_d = True
+                      current.append(ch)
+                      i += 1
+                      at_word_start = False
+                      continue
+                  if ch == "(":
+                      depth += 1
+                      current.append(ch)
+                      i += 1
+                      at_word_start = False
+                      continue
+                  if ch == ")":
+                      depth = max(0, depth - 1)
+                      current.append(ch)
+                      i += 1
+                      at_word_start = False
+                      continue
+                  if depth == 0:
+                      if ch == "#" and (at_word_start
+                                        or (current and current[-1] in " \t")):
+                          in_comment = True
+                          i += 1
+                          continue
+                      if text[i:i + 2] in ("&&", "||"):
+                          segments.append("".join(current))
+                          current = []
+                          i += 2
+                          at_word_start = True
+                          continue
+                      if ch in "|;\n":
+                          segments.append("".join(current))
+                          current = []
+                          i += 1
+                          at_word_start = True
+                          continue
+                  at_word_start = ch in " \t"
+                  current.append(ch)
+                  i += 1
+              segments.append("".join(current))
+              return segments
+
+          GHEXPR = re.compile(r"\$\{\{.*?\}\}", re.S)
+          FUNC_DEF = re.compile(
+              r"^(?:function\s+)?([A-Za-z_][A-Za-z0-9_-]*)\s*(?:\(\s*\))?\s*\{$")
+
+          def strip_command_substitutions(text):
+              """Collapse every well-formed $(...) to one opaque placeholder.
+
+              `"$(git rev-parse ...)"` nests a fresh, independent quoting
+              context INSIDE an outer double-quoted string — real bash
+              semantics shell_segments' single (in_s, in_d) pair cannot
+              represent. Rather than model a full context stack, this finds
+              each $(...)'s TRUE matching close-paren with its own local
+              quote tracking (so a quoted `)` inside does not end it early)
+              and removes the whole span, so shell_segments never sees the
+              inner text — including a nested `git rev-parse` — as top-level
+              shell syntax. This under-detects tools invoked ONLY inside a
+              substitution (a safe false negative), rather than risk
+              mis-parsing the surrounding line into fake extra "commands"
+              (an unsafe false positive that would block real PRs).
+              """
+              out = []
+              i, n = 0, len(text)
+              while i < n:
+                  if text[i] == "$" and i + 1 < n and text[i + 1] == "(":
+                      depth = 1
+                      j = i + 2
+                      in_s = in_d = False
+                      while j < n and depth > 0:
+                          c = text[j]
+                          if in_s:
+                              in_s = c != "'"
+                              j += 1
+                              continue
+                          if in_d:
+                              if c == "\\" and j + 1 < n:
+                                  j += 2
+                                  continue
+                              in_d = c != '"'
+                              j += 1
+                              continue
+                          if c == "'":
+                              in_s = True
+                          elif c == '"':
+                              in_d = True
+                          elif c == "(":
+                              depth += 1
+                          elif c == ")":
+                              depth -= 1
+                          j += 1
+                      out.append("DOLLARSUBST")
+                      i = j
+                      continue
+                  out.append(text[i])
+                  i += 1
+              return "".join(out)
+
+          def read_word(s, i):
+              """Read one whitespace-delimited shell WORD from s[i:], quote-aware.
+
+              `msg="a long quoted sentence; with semicolons | and pipes"` is
+              ONE shell word, not a run of whitespace-split python tokens —
+              a plain `.split()` after quote-aware segmenting throws that
+              information away and treats the sentence's second word as if
+              it were a fresh command. This walks character by character,
+              staying inside a quote across embedded whitespace, and
+              concatenating adjacent quoted/unquoted runs (`foo"bar baz"` is
+              one word `foobar baz`) the way bash itself would. Returns
+              (word_with_quotes_stripped, next_index) or (None, i) at EOF.
+              """
+              n = len(s)
+              while i < n and s[i] in " \t":
+                  i += 1
+              if i >= n:
+                  return None, i
+              buf = []
+              while i < n and s[i] not in " \t":
+                  c = s[i]
+                  if c == "'":
+                      i += 1
+                      while i < n and s[i] != "'":
+                          buf.append(s[i])
+                          i += 1
+                      i += 1
+                      continue
+                  if c == '"':
+                      i += 1
+                      while i < n and s[i] != '"':
+                          if s[i] == "\\" and i + 1 < n:
+                              buf.append(s[i + 1])
+                              i += 2
+                              continue
+                          buf.append(s[i])
+                          i += 1
+                      i += 1
+                      continue
+                  buf.append(c)
+                  i += 1
+              return "".join(buf), i
+
+          def first_command_word(segment):
+              """The command name a segment invokes, or None.
+
+              Walks WORDS (read_word, not python's whitespace .split(), for
+              the reason above), skipping a leading negation, subshell/group
+              markers, and any run of VAR=value environment assignments —
+              `msg="..."` is itself one such word once correctly read, so
+              this consumes it whole and moves on, rather than mistaking its
+              second quoted word for the command.
+              """
+              i = 0
+              while True:
+                  word, i = read_word(segment, i)
+                  if word is None:
+                      return None
+                  if word in ("!", "(", ")", "{", "}", "sudo", "exec", "env",
+                              "time", "command"):
+                      continue
+                  if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", word):
+                      continue
+                  return word
+
+          def command_tokens(script):
+              """First-word command names from a shell script, best-effort."""
+              # GitHub renders every dollar-brace-brace expression to a
+              # plain value BEFORE bash ever sees this text — its interior spaces and
+              # operators (||, &&, '...') are Actions-expression syntax, not
+              # shell syntax, and would otherwise get mis-split into fake
+              # extra "commands". Collapsed to one opaque, whitespace-free
+              # placeholder before any shell-level tokenizing, same as every
+              # $(...) command substitution.
+              text = strip_command_substitutions(
+                  GHEXPR.sub("GHEXPR", strip_heredocs(script)))
+              segments = shell_segments(text)
+
+              # A shell function DEFINITION's own name (`delete_branch() {`,
+              # `function foo {`) is not a tool invocation, and every later
+              # CALL to that same name in this script is a local call, not
+              # an external dependency the adopter's image needs to
+              # provide. Collected first so both are excluded below.
+              local_funcs = {m.group(1).lower() for m in
+                             (FUNC_DEF.match(seg.strip()) for seg in segments) if m}
+
+              tokens = set()
+              for segment in segments:
+                  word = first_command_word(segment)
+                  if word is None:
+                      continue
+                  if TOKEN_RE.match(word) and word not in NOT_A_COMMAND \
+                          and word.lower() not in local_funcs \
+                          and word not in ("if", "then", "elif", "else", "fi",
+                                            "case", "esac", "do", "done", "for",
+                                            "while", "until", "select", "in",
+                                            "function"):
+                      tokens.add(word.lower())
+              return tokens
+
+          invoked = set()
+          for path, script in run_texts():
+              invoked |= command_tokens(script)
+
+          drift = sorted(invoked - canonical - MAINTENANCE_ONLY - ALWAYS_AVAILABLE)
+          if drift:
+              print(f"::error file={tools_path}::Gate 23 (FR-011a): a run: block "
+                    f"somewhere in this repository invokes {', '.join(drift)}, which "
+                    f"is in neither the canonical required-tool list nor a recorded "
+                    f"maintenance-only/always-available exclusion. Add it to "
+                    f"{tools_path} if a published stage's steps or a shared composite "
+                    f"action genuinely needs it inside the adopter's container image, "
+                    f"or to this gate's MAINTENANCE_ONLY/ALWAYS_AVAILABLE set if it is "
+                    f"runner-level tooling this repository's own CI uses instead.")
+              failures += 1
+
+          print(f"Gate 23: {stages} published stage(s), {len(invoked)} distinct "
+                f"command token(s) scanned; {failures} failure(s).")
+          if stages == 0:
+              print("::error::Gate 23 found no workflow declaring on.workflow_call — it "
+                    "checked nothing. Either the published stages moved or this gate's "
+                    "detection of them has broken.")
+              sys.exit(1)
+          sys.exit(1 if failures else 0)
+          PYEOF
+
+      # Same reasoning as Gate 22's self-test: the fleet this gate runs
+      # against is (and should stay) uniform, so a green Gate 23 on the real
+      # repository says nothing about whether Gate 23's detection works.
+      #
+      # This Gate 23 and the turn-budget Gate 23 above it (specs/037-agent-
+      # turn-budget-guard) collided on both the gate number and the script
+      # filename when this feature's branch rebased onto that one. Both
+      # halves now live in .github/scripts/verify-gate-23.py, dispatched by
+      # argument — --selftest runs this one.
+      - name: Gate 23 self-test — the detector actually detects
+        run: python3 .github/scripts/verify-gate-23.py --selftest
 
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and

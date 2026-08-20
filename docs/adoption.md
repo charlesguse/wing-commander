@@ -701,16 +701,29 @@ things to know before you bind one:
   timer is paid once per job, not once per call. A job skipped by its own
   `if:` never prompts.
 
-  **One documented exception — `pr-conversation`'s `act` job.** It does
-  **not** honour `inputs.environment`. Each of its matrix legs binds its own
-  `confirm-environment`, because whether a leg needs propose-and-confirm is
-  a property of that leg's own classification, not of the stage call (a job
-  may carry only one `environment:`, so it cannot do both). Binding
-  `environment` on this stage therefore gates the read-only
-  `classify-and-announce` job and **not** the job that actually writes — the
-  inverse of what you probably intend. To gate mutations here, set
-  `confirm-categories` (and `confirm-environment`) instead. This is a
-  registered, machine-checked Gate 7 exception, not an oversight.
+  **Two documented exceptions, both registered and machine-checked by Gate
+  7 — not oversights.**
+
+  1. **`pr-conversation`'s `act` job.** It does **not** honour
+     `inputs.environment`. Each of its matrix legs binds its own
+     `confirm-environment`, because whether a leg needs propose-and-confirm
+     is a property of that leg's own classification, not of the stage call
+     (a job may carry only one `environment:`, so it cannot do both).
+     Binding `environment` on this stage therefore gates the read-only
+     `classify-and-announce` job and **not** the job that actually
+     writes — the inverse of what you probably intend. To gate mutations
+     here, set `confirm-categories` (and `confirm-environment`) instead.
+  2. **Every stage's `verify-image-prerequisites` job**, which runs only
+     when you set `container-image` (see [Runners and container
+     images](#runners-and-container-images)). It is deliberately unbound, so
+     it costs you **no** approval prompt. Binding it would not buy you
+     anything: its entire body is a `docker login` and `docker pull` of the
+     image *you* named, performed before any other job of the stage starts,
+     so an approval would land after the credential had already been used,
+     not before. It needs no `GITHUB_TOKEN` permissions and writes nothing to your
+     repository.
+     The jobs it gates — the ones that actually run agents and push
+     commits — are bound normally.
 
   Counting the jobs that do run:
 
@@ -728,7 +741,10 @@ things to know before you bind one:
 
   So the cheapest possible gate is a one-job stage (`intake`, `clarify`,
   `finalize`), and `auto-update-spec-kit` is the most expensive by an order of
-  magnitude — seven serial approvals, each blocking the next.
+  magnitude — seven serial approvals, each blocking the next. Setting
+  `container-image` adds one more job to every row of that table
+  (`verify-image-prerequisites`) but no prompt to any of them, per exception
+  2 above.
 - **Approval is also per run, not per feature.** A required reviewer prompts
   on every iteration of a looping stage (`implement`, once per cycle) — there
   is no pipeline-side dedup or memory of a prior approval. For a single
@@ -781,6 +797,84 @@ things to know before you bind one:
   exists, the binding works, and the rule simply never fires (see
   [docs/setup.md](setup.md)).
 
+## Runners and container images
+
+Every stage accepts `runner` (string, default `ubuntu-latest`) and
+`container-image` (string, default `""`) so you can run the pipeline's jobs
+on your own infrastructure or inside your own container image, instead of
+GitHub's hosted `ubuntu-latest` runner — see [Stage reference](#stage-reference)
+below for the full per-stage input list. Leaving both unset (the default)
+changes nothing: same runner, no container, no new failure mode. What to
+know before you set either:
+
+- **`runner` accepts one label or a JSON array of labels (a conjunction).**
+  A value that does not start with `[` is used as a single label verbatim
+  (`runner: my-self-hosted-label`). A value starting with `[` is parsed as
+  JSON and applied as a list — GitHub's own `runs-on:` conjunction semantics,
+  meaning the runner must carry *every* named label:
+
+  ```yaml
+      with:
+        runner: '["self-hosted", "linux", "x64"]'
+  ```
+
+  There is no third form and no pipeline-side validation of the string —
+  a malformed JSON-looking value (starts with `[` but doesn't parse) fails at
+  GitHub's own expression-evaluation time, not with a pipeline-authored
+  error.
+- **`container-image` runs every job of the stage inside that image**,
+  exactly as written (registry, repository, tag or digest — whatever you'd
+  hand `docker pull`). Before any agent-bearing job's own container is
+  created, a dedicated `verify-image-prerequisites` job pulls the named
+  image and checks it for every tool the pipeline's own steps and shared
+  composite actions need: `git`, `gh`, `jq`, `curl`, `python3`, `bash`, and
+  `node` (an inferred dependency of the Claude Code action, not something
+  this repository's own scripts invoke directly). A missing tool fails the
+  stage fast, before any billable agent step, naming every missing tool at
+  once — never just the first one found. An image with no POSIX shell at all
+  is reported as that, rather than as "every tool is missing".
+- **Private registry credentials** are two optional secrets,
+  `container-registry-username` and `container-registry-password`, meaningful
+  only when `container-image` is set:
+
+  ```yaml
+      with:
+        container-image: ghcr.io/your-org/your-image:latest
+      secrets:
+        container-registry-username: ${{ secrets.YOUR_REGISTRY_USERNAME }}
+        container-registry-password: ${{ secrets.YOUR_REGISTRY_PASSWORD }}
+  ```
+
+  `container-registry-password` can be a static value or a short-lived token
+  your wrapper mints in its own step, before its `uses:` call to the
+  stage — a cloud registry (ECR/GCR/ACR) credential, for instance. The stage
+  itself never mints, refreshes, or manages a credential's lifecycle; it only
+  ever forwards what you hand it. A pull failure's error message tells you
+  whether no credentials were supplied at all, or the registry rejected the
+  ones you gave it.
+- **Both controls are set once per stage call and apply to every job in
+  that call — there is no per-job selector.** `tasks.yml`, called twice by
+  `wing-commander-4-tasks.yml` (`mode: generate` and `mode: approved`),
+  already gives you the two call sites you'd need to run only the
+  agent-running call on your own infrastructure: set `runner`/`container-image`
+  on the `generate` call and leave the `approved` call at its defaults.
+- **A container needs a Linux runner with Docker available.** Every stage's
+  steps are Linux shell scripts; a non-Linux runner label is accepted (there
+  is no pipeline-side validation of the runner value) but will fail once a
+  step actually runs.
+- **Out of scope**: runner groups (a different targeting shape than a label
+  list); per-job targeting within one stage call; and the remaining
+  `container:` settings GitHub Actions supports — volumes, ports,
+  environment variables, extra Docker options, service containers. Pass-through
+  matches Actions' own behavior everywhere else in this pipeline: no implicit
+  registry, no implicit tag, no rewriting.
+- **Self-hosted runner capacity interacts with this pipeline's per-spec
+  concurrency design.** Each stage serializes per spec via its own
+  `concurrency:` group (see [Deployment environments](#deployment-environments)
+  above for how a pending job holds that slot); pointing multiple specs at a
+  small self-hosted pool can queue jobs behind each other the way GitHub's
+  hosted runners never do.
+
 ## Stage reference
 
 Common to every stage below:
@@ -797,7 +891,11 @@ Common to every stage below:
   `gh repo view`) — stages never assume `main`. `environment` (string,
   default `""`) / `environment-deployment` (boolean, default `true`) — bind
   every job in the stage to a deployment environment; see
-  [Deployment environments](#deployment-environments) above.
+  [Deployment environments](#deployment-environments) above. `runner`
+  (string, default `ubuntu-latest`) / `container-image` (string, default
+  `""`) — run every job in the stage on your own runner(s) and/or inside
+  your own container image; see
+  [Runners and container images](#runners-and-container-images) above.
 - **Tool-list inputs** (every agent-running stage): `extra-allowed-tools` /
   `extra-disallowed-tools` (string, default `""`) *append* to that stage's
   built-in default allow/deny tool lists (union — you don't restate the

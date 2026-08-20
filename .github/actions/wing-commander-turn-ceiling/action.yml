@@ -59,7 +59,7 @@ runs:
         # i.e. --max-turns 0, the unbounded-step outcome this action exists
         # to refuse. awk does the magnitude check because the value is a
         # decimal and [ ] cannot compare those.
-        if ! printf '%s' "$MULTIPLIER" | grep -Eq '^[0-9]+([.][0-9]+)?$'            || [ "$(awk -v m="$MULTIPLIER" 'BEGIN{print (m > 0) ? 1 : 0}')" != "1" ]; then
+        if ! printf '%s' "$MULTIPLIER" | grep -Eq '^[0-9]+([.][0-9]+)?$' || [ "$(awk -v m="$MULTIPLIER" 'BEGIN{print (m > 0) ? 1 : 0}')" != "1" ]; then
           echo "::error::wing-commander-turn-ceiling: multiplier must be a positive number, got '${MULTIPLIER}'."
           exit 1
         fi

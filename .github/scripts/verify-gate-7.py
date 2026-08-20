@@ -235,6 +235,28 @@ CASES = [
      "DIFFERENT file still fails — the exception is not file-agnostic",
      {"stage.yml": stage(job("act", BOUND_MATRIX_LEG))},
      True, ("'act'",)),
+
+    # specs/038-runner-container-passthrough: verify-image-prerequisites is
+    # the one job deliberately left UNBOUND, and the gate asserts that in
+    # the deviating direction — an exemption that only skips its job cannot
+    # notice the binding being added back.
+    ("registered exemption: an unbound verify-image-prerequisites passes "
+     "beside bound siblings",
+     {"stage.yml": stage(job("first", BOUND),
+                         job("verify-image-prerequisites", UNBOUND))},
+     False, ()),
+
+    ("the exemption is asserted, not merely skipped: binding "
+     "verify-image-prerequisites back fails",
+     {"stage.yml": stage(job("first", BOUND),
+                         job("verify-image-prerequisites", BOUND))},
+     True, ("verify-image-prerequisites", "environment:")),
+
+    ("the exemption is job-name-scoped: a differently named unbound job in "
+     "a file that also has the exempt one still fails",
+     {"stage.yml": stage(job("verify-image-prerequisites", UNBOUND),
+                         job("other", UNBOUND))},
+     True, ("'other'", "no environment")),
 ]
 
 
@@ -319,6 +341,32 @@ def check_derivations_agree(gate_path):
     return []
 
 
+def check_real_fleet(gate_path):
+    """Gate 7 must actually PASS against this repository's own eleven stages.
+
+    The fixture cases above prove the DETECTOR works; this proves the thing
+    it detects on is actually clean. A self-test that only ever runs
+    synthetic fixtures ships green next to a real fleet that fails Gate 7
+    for real, and nobody finds out until CI runs — which is exactly what
+    happened when specs/038 added `verify-image-prerequisites` to all
+    eleven stage files with no environment: block and no exemption here:
+    every fixture in this file stayed green while the real Gate 7 returned
+    eleven failures. verify-gate-22.py and verify-gate-23.py carry the same
+    helper for the same reason.
+    """
+    proc = subprocess.run([sys.executable, gate_path], cwd=".",
+                          capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
+    out = (proc.stdout or "") + (proc.stderr or "")
+    if proc.returncode != 0:
+        return [("Gate 7 against the real repository",
+                 ["Gate 7 fails when run against this repository's own "
+                  "eleven published stages — the fixtures above can be "
+                  "green while the real surface is not."], out.strip())]
+    print("ok    Gate 7 passes against this repository's own real fleet")
+    return []
+
+
 def main():
     if not os.path.isfile(LINT_WORKFLOW):
         sys.exit(f"::error::run this from the repository root; {LINT_WORKFLOW} not found.")
@@ -348,6 +396,8 @@ def main():
             print(f"        | {line}")
 
     for name, problems, out in check_derivations_agree(gate_path):
+        record(name, problems, out)
+    for name, problems, out in check_real_fleet(gate_path):
         record(name, problems, out)
     try:
         for name, files, expect_fail, must_mention in CASES:
@@ -379,10 +429,10 @@ def main():
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
-    # +1: the shared-derivation check is a check too, and counting only the
-    # fixtures made a derivation failure read as "1 of 14 scenarios" when all
-    # 14 scenarios had just passed.
-    total = len(CASES) + 1
+    # +2: the shared-derivation and real-fleet checks are checks too, and
+    # counting only the fixtures made a derivation failure read as "1 of 14
+    # scenarios" when all 14 scenarios had just passed.
+    total = len(CASES) + 2
     print()
     if failures:
         print(f"::error file={LINT_WORKFLOW}::Gate 7 self-test: "

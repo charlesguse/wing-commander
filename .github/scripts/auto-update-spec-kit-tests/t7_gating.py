@@ -61,6 +61,15 @@ def evaluate(expr, ctx):
 def lookup(ref, ctx):
     if ref in ctx:
         return ctx[ref]
+    if ref == "needs.verify-image-prerequisites.result":
+        # specs/038-runner-container-passthrough: every scenario in this
+        # file exercises the default no-container-image path, where
+        # verify-image-prerequisites is always 'skipped' for real — its
+        # skip-tolerant if: clause treats 'skipped' the same as 'success',
+        # so defaulting it here (rather than retrofitting it into every
+        # scenario's context dict below) keeps this file's actual subject —
+        # the OTHER gating logic — legible.
+        return "skipped"
     # unset needs.*.outputs.* / inputs.* render as empty string
     return ""
 
