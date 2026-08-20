@@ -653,7 +653,10 @@ jobs:
           intended-turns: ${{ inputs.max-turns }}
           run-label: cycle
 
-      # continue-on-error, unlike this same step at every other rewired site:
+      # continue-on-error, as at every fail-loud site that sits above a step
+      # which must still run — the retry and progress-comment copies in this
+      # same job included — and never as a blanket default; the sites that
+      # strand nothing below them keep the hard exit.
       # "Read back cycle outcome" below is this stage's existing git-state
       # stall-detection path (research.md R13) and must still run —
       # including deciding whether "retry" fires — regardless of *why* this

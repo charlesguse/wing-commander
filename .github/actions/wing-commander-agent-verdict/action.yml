@@ -121,6 +121,17 @@ runs:
         counted_turns=""
         subagent_turns=""
         reported_turns=""
+        # The three names count-turns.sh's output defines, seeded because
+        # `set -u` is in force above. That script always prints all three,
+        # so the eval below normally binds them -- but if the script is ever
+        # absent from the caller's self-checkout the eval contributes
+        # nothing, and reading an unbound $main_turns would kill this step
+        # outright: the one thing this action promises never to do.
+        # wing-commander-metrics-summary seeds the names it reads the same
+        # way, for the same reason.
+        main_turns=""
+        sub_turns=""
+        reported=""
         if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ] && [ -s "$TRANSCRIPT" ]; then
           eval "$(bash "$GITHUB_ACTION_PATH/../_shared/count-turns.sh" "$TRANSCRIPT")"
           counted_turns="$main_turns"
