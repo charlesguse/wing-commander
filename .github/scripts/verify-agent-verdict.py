@@ -100,7 +100,7 @@ TRANSCRIPT_NAME = "claude-execution-output.json"
 BASH = None
 
 
-def run_case(name, records, intended_turns="40", raw=None):
+def run_case(name, records, intended_turns="40", raw=None, with_shared=True):
     tmp = tempfile.mkdtemp(prefix="wc-verdict-")
     if raw is not None:
         with open(os.path.join(tmp, TRANSCRIPT_NAME), "w",
@@ -119,9 +119,12 @@ def run_case(name, records, intended_turns="40", raw=None):
     shared_dir = os.path.join(tmp, "_shared")
     os.makedirs(action_dir, exist_ok=True)
     os.makedirs(shared_dir, exist_ok=True)
-    with open(os.path.join(shared_dir, "count-turns.sh"), "w",
-              encoding="utf-8", newline="\n") as f:
-        f.write(SHARED_SCRIPT)
+    # with_shared=False leaves _shared/ empty, standing in for a partial or
+    # misplaced .wing-commander-pipeline/ self-checkout.
+    if with_shared:
+        with open(os.path.join(shared_dir, "count-turns.sh"), "w",
+                  encoding="utf-8", newline="\n") as f:
+            f.write(SHARED_SCRIPT)
 
     rc, output, outputs, _summary = run_step(
         BASH, SCRIPT, tmp,
@@ -281,6 +284,43 @@ def case_never_fails():
          "exit 0 (the never-fail-the-step contract)")
 
 
+def case_shared_counter_absent():
+    """_shared/count-turns.sh is not in the checkout at all.
+
+    That script prints its three key=value lines unconditionally and never
+    exits non-zero, so the only way its `eval` here binds nothing is the
+    file being absent — a partial or misplaced .wing-commander-pipeline/
+    self-checkout. The classify block runs under `set -u`, so an unbound
+    $main_turns on the next line kills the step before $GITHUB_OUTPUT is
+    ever written: no verdict at all, from the one action documented never
+    to fail its own step. The verdict itself never depended on turn
+    counting, so it must still be answered from the transcript; only the
+    three turn fields go empty.
+    """
+    case = "shared count-turns.sh absent from the checkout"
+    rc, output, outputs = run_case(case, transcript(main=36, num_turns=47),
+                                   with_shared=False)
+    if rc != 0:
+        fail(case, f"the action exited {rc} with no _shared/count-turns.sh "
+                   f"to read, breaking its never-fail-the-step contract. "
+                   f"output: {output.strip()[:300]}")
+        return
+    if outputs.get("verdict") != "healthy":
+        fail(case, f"expected the verdict to still be answered from the "
+                   f"transcript alone (healthy), got "
+                   f"{outputs.get('verdict')!r}")
+    for key in ("counted-turns", "subagent-turns", "reported-turns"):
+        if outputs.get(key) not in ("", None):
+            fail(case, f"expected {key} to be empty when the counter is "
+                       f"absent — never a fabricated zero — got "
+                       f"{outputs.get(key)!r}")
+    if outputs.get("over-budget") != "false":
+        fail(case, f"expected over-budget=false with no counted turns to "
+                   f"compare, got {outputs.get('over-budget')!r}")
+    note("a missing _shared/count-turns.sh empties the three turn fields "
+         "and still exits 0 with a verdict")
+
+
 CASES = [
     case_healthy_but_would_be_rejected,
     case_genuinely_errored,
@@ -295,6 +335,7 @@ CASES = [
     case_under_budget_healthy,
     case_bad_subtype,
     case_only_the_last_result_record_is_authoritative,
+    case_shared_counter_absent,
     case_never_fails,
 ]
 
@@ -308,6 +349,9 @@ MUTATIONS = [
          "map(select(.type==\"result\")) | first // empty")),
     ("collapses unclassifiable and failed into one case", "action",
      lambda s: s.replace('verdict="unclassifiable"', 'verdict="failed"')),
+    ("stops seeding the three names count-turns.sh's eval defines, so an "
+     "absent counter kills the step under set -u", "action",
+     lambda s: s.replace('main_turns=""\nsub_turns=""\nreported=""\n', "", 1)),
     ("computes over-budget from reported-turns instead of counted-turns",
      "action",
      lambda s: s.replace('printf \'%s\' "$counted_turns" | grep -Eq \'^[0-9]+$\'',
