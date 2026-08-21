@@ -39,6 +39,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -116,6 +117,69 @@ def stub_gh(bindir, fixture_dir):
         fh.write(content)
     os.chmod(path, 0o755)
 
+
+STUB_JQ_TEMPLATE = r'''#!/usr/bin/env bash
+# jq's Windows build opens stdout in text mode and terminates each line
+# with CRLF. The shipped collector then does
+#
+#     for job_id in $(printf '%s' "$jobs_json" | jq -r '.[]?.id // empty')
+#
+# and word-splitting leaves the CR attached, so the next line requests
+# `.../check-runs/1<CR>/annotations`, gets nothing back, and every job but
+# the last contributes no annotations. On an Actions ubuntu runner jq
+# emits LF and the same code is correct - which is why the scenario named
+# "no job's annotations displace another's" was reporting a defect the
+# shipped collector does not have (#213).
+#
+# Normalised here rather than by adding a `tr -d` to the shipped shell:
+# the collector is not wrong, the local jq is different. `set -o pipefail`
+# keeps jq's own exit status visible, which several scenarios assert on.
+set -o pipefail
+__REAL_JQ__ "$@" | tr -d '\r'
+'''
+
+
+CRLF = bytes((13, 10))
+_JQ_EMITS_CRLF = None
+
+
+def jq_emits_crlf():
+    """Does the jq on PATH terminate lines with CRLF? Probed once.
+
+    False on every Actions runner, so CI installs no wrapper and behaves
+    exactly as it did before this probe existed - the normalisation is a
+    local-machine correction, not a change to what CI tests. It is also
+    why the probe is worth doing: wrapping jq unconditionally costs an
+    extra bash + tr process per invocation, and this harness makes
+    hundreds of them.
+    """
+    global _JQ_EMITS_CRLF
+    if _JQ_EMITS_CRLF is None:
+        try:
+            out = subprocess.run(["jq", "-r", ".a"],
+                                 input=b'{"a":1}',
+                                 stdout=subprocess.PIPE,
+                                 timeout=30).stdout
+        except (OSError, subprocess.SubprocessError):
+            out = b""
+        _JQ_EMITS_CRLF = CRLF in out
+    return _JQ_EMITS_CRLF
+
+
+def stub_jq(bindir):
+    """Put a CRLF-normalising `jq` on PATH ahead of the real one, where
+    the local jq needs it. A no-op on LF platforms."""
+    if not jq_emits_crlf():
+        return
+    real = shutil.which("jq")
+    if not real:
+        sys.exit("::error::verify-gate-19: jq not found on PATH")
+    path = os.path.join(bindir, "jq")
+    content = STUB_JQ_TEMPLATE.replace(
+        "__REAL_JQ__", shell_quote(real.replace(os.sep, "/")))
+    with open(path, "w", encoding="utf-8", newline=chr(10)) as fh:
+        fh.write(content)
+    os.chmod(path, 0o755)
 
 def render_step(step):
     """The step's run: block with its `${{ }}` env wired to fixture values."""
@@ -234,6 +298,31 @@ def write_fixtures(fixture_dir, jobs, anns):
             json.dump(pages, fh)
 
 
+# Environment variables the Actions runner exports into every step, which a
+# shipped `run:` block therefore reads without declaring in its own `env:`.
+# Outside CI nothing exports them, so under `set -u` the step aborts on its
+# first line and the scenario asserts nothing about the code it names - it
+# only proves that an unbound variable stops bash. Two of the three suites
+# here had exactly that hole: `run_one` compensated by hand and the other two
+# did not, so the execution-output scenarios passed in CI only because the
+# real runner leaked GITHUB_REPOSITORY in, and failed everywhere else (#213).
+#
+# Seeded in ONE place so a fourth suite cannot reintroduce the gap by
+# forgetting, and seeded rather than inherited so a green run means the same
+# thing on a maintainer's machine as it does on a runner.
+ACTIONS_DEFAULT_ENV = {
+    "GITHUB_REPOSITORY": "charlesguse/wing-commander",
+}
+
+
+def with_actions_defaults(env):
+    """Base env plus the runner-provided defaults, without clobbering the
+    step's own declared values."""
+    out = dict(ACTIONS_DEFAULT_ENV)
+    out.update(env)
+    return out
+
+
 def run_one(script, env, sc, tmproot):
     """Execute the collector against one fixture; return (rc, out, signals,
     outcomes) — outcomes is the parsed collector-outcomes.json, the same
@@ -252,10 +341,10 @@ def run_one(script, env, sc, tmproot):
         fh.write("[]")
     write_fixtures(fixtures, sc["jobs"], sc["anns"])
     stub_gh(bindir, fixtures.replace("\\", "/"))
+    stub_jq(bindir)
 
-    env = dict(env)
+    env = with_actions_defaults(env)
     env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
-    env["GITHUB_REPOSITORY"] = "charlesguse/wing-commander"
     for k, v in (sc.get("extra_env") or {}).items():
         env[k] = v
 
@@ -483,8 +572,9 @@ def run_exec_one(script, env, sc, tmproot):
     with open(os.path.join(runner_temp, "signals.json"), "w", encoding="utf-8") as fh:
         fh.write("[]")
     stub_bin(bindir, "gh", STUB_GH_DOWNLOAD_TEMPLATE, sc["msg"])
+    stub_jq(bindir)
 
-    run_env = dict(env)
+    run_env = with_actions_defaults(env)
     run_env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
     if sc["fail"]:
         run_env["GH_STUB_DOWNLOAD_FAIL"] = "1"
@@ -525,8 +615,9 @@ def run_bd_one(script, env, sc, tmproot):
     with open(os.path.join(runner_temp, "signals.json"), "w", encoding="utf-8") as fh:
         fh.write("[]")
     stub_bin(bindir, "git", STUB_GIT_TEMPLATE, sc["fetch_msg"])
+    stub_jq(bindir)
 
-    run_env = dict(env)
+    run_env = with_actions_defaults(env)
     run_env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
     run_env["RUN_NAME"] = "Wing Commander · 5 implement"
     run_env["RUN_CONCLUSION"] = "success"

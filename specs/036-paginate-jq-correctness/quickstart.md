@@ -27,8 +27,15 @@ python3 .github/scripts/run-local-gates.py
 ```
 
 This derives and runs every PR-time gate `lint-workflows.yml` invokes,
-Gate 18 among them (no separate registration needed — see
-`wc_gate_registry.py`). Expected: clean, once all three broken sites and
+Gate 18 among them — both halves: the repository scan
+(`verify-gate-18-scan.py`) and its self-test (`verify-gate-18.py`). No
+separate registration is needed, because `wc_gate_registry.py` reads the
+directory rather than a list.
+
+> This was not true when this quickstart was written. The scan was then an
+> inline `python3 - <<'PYEOF'` heredoc, which the file-based registry could
+> not see, so `run-local-gates.py` reached only the self-test. #213 gave the
+> scan a file; step 3 below could not fail until it did. Expected: clean, once all three broken sites and
 the two accidentally-safe sites are rewritten (spec's Acceptance Scenario
 3 for User Story 3).
 
@@ -48,7 +55,17 @@ python3 .github/scripts/run-local-gates.py
 
 Expected: Gate 18 fails, naming `watchdog.yml` and the offending line, and
 its error text alone (per SC-006) is enough to write the correct form
-back. Restore the file:
+back.
+
+> Run against this repository before #213, this step reported **all green**
+> on a deliberately broken tree — the only Gate 18 piece the runner could
+> reach was the self-test, which passes on a broken repository by design
+> because it tests the detector against its own fixtures rather than against
+> the tree. A drill whose command cannot fail is worth less than no drill:
+> performing it produces evidence of the wrong thing. If this step ever goes
+> green again, suspect the wiring before the detector.
+
+Restore the file:
 
 ```bash
 git checkout -- .github/workflows/watchdog.yml

@@ -1067,6 +1067,11 @@ jobs:
           app_perms = parse_app_permissions()
           failures = []
           notes = []
+          # #215: category C's two halves, filled during the pass below and
+          # cross-checked after it, because a call site in one file names an
+          # agent step in another and the files are visited in glob order.
+          agent_contexts = {}   # workflow path -> [(job, step, tok_kind, tok_detail, perms)]
+          callsite_grants = []  # (caller, caller-job, called-workflow, [(v1, v2, input)])
 
           for f in sorted(glob.glob(".github/workflows/*.yml") + glob.glob(".github/workflows/*.yaml")):
               try:
@@ -1080,6 +1085,26 @@ jobs:
                   job_env = job.get("env") or {}
                   job_perms = effective_job_permissions(wf, job)
                   pending_tools = []  # (verb1, verb2, source-step-name)
+
+                  # --- category C: tools granted where a stage is CALLED -----
+                  # A job with `uses:` has no steps, so the loop below never
+                  # sees it. The tools it passes reach the called stage's agent
+                  # steps all the same, arriving at the tool-args composite as
+                  # `${{ inputs.extra-allowed-tools }}` - a literal category B
+                  # cannot read anything out of (#215).
+                  job_uses = str(job.get("uses") or "")
+                  if job_uses.startswith("./.github/workflows/"):
+                      called = job_uses.split("@")[0][2:]
+                      cs_with = job.get("with") or {}
+                      cs_grants = []
+                      for key in ("extra-allowed-tools", "allowed-tools-override"):
+                          val = cs_with.get(key)
+                          if not isinstance(val, str) or "${{" in val:
+                              continue
+                          for gm in TOOL_GH_RE.finditer(val):
+                              cs_grants.append((gm.group(1), gm.group(2), key))
+                      if cs_grants:
+                          callsite_grants.append((f, jname, called, cs_grants))
 
                   for step in job.get("steps") or []:
                       step = step or {}
@@ -1161,6 +1186,16 @@ jobs:
 
                       if uses.startswith("anthropics/claude-code-action"):
                           tok_kind, tok_detail = resolve_token(None, step_env, job_env)
+                          # #215: the same context category C needs, recorded here
+                          # rather than re-derived, so the two checks can never
+                          # disagree about which token a step runs under.
+                          # glob() yields OS separators; a `uses:` path is always
+                          # posix. Keying on the raw value matched on Linux and
+                          # never on Windows, where the cross-check then reported
+                          # "no agent step found" for a stage that has several.
+                          agent_contexts.setdefault(
+                              f.replace("\\", "/"), []).append(
+                              (jname, sname, tok_kind, tok_detail, job_perms))
                           where = f"{f} :: {jname} / {sname} (agent tool grant)"
                           for verb1, verb2, source in pending_tools:
                               key = (verb1, verb2)
@@ -1172,6 +1207,34 @@ jobs:
                                          perm_cat, level, tok_kind, tok_detail,
                                          app_perms, job_perms, failures, notes)
                           pending_tools = []
+
+          # --- category C cross-check (#215) ---------------------------------
+          # Every tool granted at a call site is checked against EVERY agent
+          # step in the stage it is passed to: a stage-level input reaches all
+          # of them, so a grant is only safe if it is safe for the least
+          # privileged one.
+          for src_file, src_job, called, cs_grants in callsite_grants:
+              ctxs = agent_contexts.get(called)
+              if not ctxs:
+                  failures.append(
+                      f"{src_file} :: {src_job} grants agent tools to "
+                      f"{called!r}, but Gate 12 found no agent step there to "
+                      f"check them against - the workflow may have moved or "
+                      f"the path may be wrong. Unresolvable is a failure here "
+                      f"for the same reason an unknown subcommand is.")
+                  continue
+              for verb1, verb2, key in cs_grants:
+                  ckey = (verb1, verb2)
+                  if ckey not in SUBCOMMAND_PERMS:
+                      continue   # same policy as category B: not this gate's job
+                  perm_cat, level = SUBCOMMAND_PERMS[ckey]
+                  for jname, sname, tok_kind, tok_detail, job_perms in ctxs:
+                      check_call(
+                          f"{src_file} :: {src_job} -> {called} :: {jname} / "
+                          f"{sname} (granted at the call site via {key!r})",
+                          f"Bash(gh {verb1} {verb2 or ''})".strip(),
+                          perm_cat, level, tok_kind, tok_detail,
+                          app_perms, job_perms, failures, notes)
 
           for n in notes:
               print(f"note: {n}")
@@ -1482,146 +1545,7 @@ jobs:
       # count.
       - name: Gate 18 — every paginated read is safe by construction
         run: |
-          python3 - <<'PYEOF'
-          import glob, os, re, sys, yaml
-
-          EXCLUDE_DIR = ".wing-commander-pipeline"
-          GH_INVOKE_RE = re.compile(r'\bgh\s+api\b.*?--paginate\b')
-          JQ_ARG_RE = re.compile(
-              r"--jq\s+'((?:[^'\\]|\\.)*)'|--jq\s+\"((?:[^\"\\]|\\.)*)\"")
-          EXEMPT_RE = re.compile(r'wc-pagination-exempt:\s*\S')
-          CORRECT_FORM = ('gh api "<path>" --paginate --jq '
-                          '\'.[] | <per-item filter>\' | jq -s \'.\'')
-
-
-          def check_line(line):
-              """None if not a --paginate call; else (ok, rule)."""
-              if not GH_INVOKE_RE.search(line):
-                  return None
-              m = JQ_ARG_RE.search(line)
-              if m is None:
-                  if "--jq" in line:
-                      return True, None       # unparseable form: do not guess
-                  return False, "no-filter"
-              expr = (m.group(1) if m.group(1) is not None else m.group(2)).strip()
-              if expr.startswith("["):
-                  return False, "array-collecting"
-              return True, None
-
-
-          def is_exempt(lines, idx):
-              for i in (idx, idx - 1):
-                  if 0 <= i < len(lines) and EXEMPT_RE.search(lines[i]):
-                      return True
-              return False
-
-
-          def logical_lines(lines):
-              """Join backslash-continued physical lines into one logical
-              line each, keyed by the FIRST physical line's index. A
-              `gh api ... --paginate \\` call whose `--jq` argument is on a
-              continuation line (intake.yml, Gate 1's own workflow-listing
-              read) must be judged as one command, or the continuation's
-              `--jq` is invisible to a per-line scanner and every such
-              legitimate call misreports as a false no-filter failure."""
-              i, n = 0, len(lines)
-              while i < n:
-                  first = i
-                  parts = [lines[i]]
-                  while parts[-1].rstrip().endswith("\\") and i + 1 < n:
-                      i += 1
-                      parts.append(lines[i])
-                  joined = " ".join(p.rstrip().rstrip("\\").rstrip() for p in parts)
-                  yield joined, first
-                  i += 1
-
-
-          def scan(path, lines, offset, failures):
-              for line, i in logical_lines(lines):
-                  verdict = check_line(line)
-                  if verdict is None:
-                      continue
-                  ok, rule = verdict
-                  if ok or is_exempt(lines, i):
-                      continue
-                  failures.append(
-                      f"::error file={path},line={offset + i + 1}::Gate 18: "
-                      f"this --paginate `gh api` call ({rule}) does not emit "
-                      f"one JSON value per line, so it resolves to "
-                      f"page-shaped garbage past the first page. Rewrite it "
-                      f"as `{CORRECT_FORM}`, or if this read must genuinely "
-                      f"produce one array per page, add a same-line or "
-                      f"immediately-preceding `# wc-pagination-exempt: "
-                      f"<reason>` comment.")
-
-
-          def find_run_blocks(path):
-              with open(path, encoding="utf-8") as fh:
-                  raw = fh.read()
-              raw_lines = raw.splitlines()
-              try:
-                  doc = yaml.safe_load(raw) or {}
-              except yaml.YAMLError:
-                  return
-              if not isinstance(doc, dict):
-                  return
-              steps = []
-              jobs = doc.get("jobs")
-              if isinstance(jobs, dict):
-                  for job in jobs.values():
-                      if isinstance(job, dict):
-                          steps.extend(job.get("steps") or [])
-              runs_block = doc.get("runs")
-              if isinstance(runs_block, dict):
-                  steps.extend(runs_block.get("steps") or [])
-              cursor = 0
-              for step in steps:
-                  if not isinstance(step, dict):
-                      continue
-                  run = step.get("run")
-                  if not run:
-                      continue
-                  run = str(run)
-                  inner = run.splitlines()
-                  anchor_idx = next((i for i, l in enumerate(inner) if l.strip()), None)
-                  if anchor_idx is None:
-                      continue
-                  anchor_text = inner[anchor_idx].strip()
-                  found = next((i for i in range(cursor, len(raw_lines))
-                               if raw_lines[i].strip() == anchor_text), None)
-                  if found is None:
-                      found = next((i for i in range(len(raw_lines))
-                                   if raw_lines[i].strip() == anchor_text), None)
-                  if found is None:
-                      continue
-                  first_line_no = found - anchor_idx + 1
-                  cursor = found + 1
-                  yield inner, first_line_no - 1
-
-
-          failures = []
-          for path in sorted(glob.glob(".github/workflows/*.yml")
-                             + glob.glob(".github/workflows/*.yaml")
-                             + glob.glob(".github/actions/**/action.yml", recursive=True)
-                             + glob.glob(".github/actions/**/action.yaml", recursive=True)):
-              for inner_lines, offset in find_run_blocks(path):
-                  scan(path, inner_lines, offset, failures)
-
-          for path in sorted(set(glob.glob("**/*.sh", recursive=True)
-                                 + glob.glob("**/*.py", recursive=True))):
-              norm = path.replace(os.sep, "/")
-              if norm == EXCLUDE_DIR or norm.startswith(EXCLUDE_DIR + "/"):
-                  continue
-              with open(path, encoding="utf-8") as fh:
-                  lines = fh.read().splitlines()
-              scan(norm, lines, 0, failures)
-
-          for f in failures:
-              print(f)
-          print(f"Gate 18: scanned every workflow, composite action, and "
-                f"checked-in script; {len(failures)} failure(s).")
-          sys.exit(1 if failures else 0)
-          PYEOF
+          python3 .github/scripts/verify-gate-18-scan.py
 
       # Gate 18 says nothing about whether Gate 18 works — same reasoning as
       # gates 15/16/17's self-tests.
@@ -2603,6 +2527,27 @@ jobs:
       - name: Gate 23 self-test — the detector actually detects
         run: python3 .github/scripts/verify-gate-23.py --selftest
 
+      # Gate 27 — the per-stage default tool-list table matches the 16
+      # `wing-commander-tool-args` call sites. FR-013/SC-006 promise a
+      # consumer can read each stage's defaults out of documentation; that
+      # documentation was hand-maintained with nothing holding it to the
+      # literals, and had already drifted — the 026 draft was missing both
+      # pr-conversation rows while its own prose cited one of them (#147).
+      # The draft is now a pointer, so there is one table and one check.
+      - name: Gate 27 — the documented per-stage tool lists match the call sites
+        run: python3 .github/scripts/verify-stage-tool-lists.py
+
+      - name: Gate 27 self-test — the tool-list check detects what it claims to
+        run: python3 .github/scripts/verify-stage-tool-lists.py --self-test
+
+      # Gate 26 self-test — the refs check can tell its failures apart.
+      # The live half of Gate 26 runs in the `registered` job below, against
+      # the real remote; on a pull request there is nothing to check, because
+      # a tag desync is never something the PR introduced. What a PR CAN
+      # break is the checker, so that is what runs here.
+      - name: Gate 26 self-test — the versioning-refs check detects what it claims to
+        run: python3 .github/scripts/verify-versioning-refs.py --self-test
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when
@@ -2769,3 +2714,17 @@ jobs:
             sleep 15
           done
           exit 1
+
+      # Gate 26 — the published tags obey the versioning contract. Runs here
+      # rather than on pull requests for the same reason Gate 1 does: it reads
+      # the repository's real refs, which a PR's files cannot tell us, and a
+      # desync is not something a PR introduces. The daily `schedule:` above
+      # is what bounds the exposure — #218 sat unnoticed for three days
+      # because nothing ever looked.
+      #
+      # `git ls-remote` and not `gh api`: one unauthenticated call answers
+      # both questions at once, because an annotated tag brings its `^{}` peel
+      # line and a lightweight tag does not. No token, so nothing for Gate 12
+      # to resolve and no new API_CATEGORY_PERM entry to keep honest.
+      - name: Gate 26 — every release tag is annotated and every vX is current
+        run: python3 .github/scripts/verify-versioning-refs.py --remote origin

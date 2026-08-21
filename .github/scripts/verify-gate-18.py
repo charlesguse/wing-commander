@@ -30,36 +30,28 @@ import sys
 import tempfile
 
 LINT_WORKFLOW = ".github/workflows/lint-workflows.yml"
+SCAN_SCRIPT = ".github/scripts/verify-gate-18-scan.py"
 STEP_PREFIX = "Gate 18"
 HEREDOC_OPEN = "python3 - <<'PYEOF'"
 HEREDOC_CLOSE = "PYEOF"
 
 
-def extract_gate(path=LINT_WORKFLOW):
-    """Return Gate 18's python source, read out of the shipped workflow."""
-    import yaml
-    wf = yaml.safe_load(io.open(path, encoding="utf-8")) or {}
-    run = None
-    for job in (wf.get("jobs") or {}).values():
-        for step in (job or {}).get("steps") or []:
-            name = (step or {}).get("name", "")
-            if name.startswith(STEP_PREFIX) and "self-test" not in name:
-                run = step.get("run")
-    if run is None:
-        sys.exit(f"::error file={path}::verify-gate-18 could not find a step named "
-                 f"{STEP_PREFIX!r}. If it was renamed, update this script and the "
-                 f"workflow together.")
+def extract_gate(path=SCAN_SCRIPT):
+    """Return Gate 18's python source.
 
-    lines = run.splitlines()
-    try:
-        start = next(i for i, l in enumerate(lines) if l.strip() == HEREDOC_OPEN)
-        end = next(i for i, l in enumerate(lines)
-                   if i > start and l.strip() == HEREDOC_CLOSE)
-    except StopIteration:
-        sys.exit(f"::error file={path}::verify-gate-18 found the {STEP_PREFIX} step but "
-                 f"not the {HEREDOC_OPEN} ... {HEREDOC_CLOSE} block it keys on — the "
-                 f"step's shape has changed.")
-    return "\n".join(lines[start + 1:end]) + "\n"
+    Read from the shipped script rather than copied here, for exactly the
+    reason it was previously extracted from the workflow heredoc: there
+    must be no second copy to fall out of sync (verify-gate-16.py's
+    discipline). What #213 changed is only WHERE the single copy lives -
+    a file the gate registry can see and run-local-gates.py can run,
+    instead of a heredoc that matched neither.
+    """
+    if not os.path.exists(path):
+        sys.exit("::error::verify-gate-18 could not find {0!r}. Gate 18's "
+                 "repository scan is expected to live in that file; if it "
+                 "moved, update this script and lint-workflows.yml "
+                 "together.".format(path))
+    return io.open(path, encoding="utf-8").read()
 
 
 # ---------------------------------------------------------------- fixtures
