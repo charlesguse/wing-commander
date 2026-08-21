@@ -247,6 +247,29 @@ SUCCESS_UNRECOGNISED_VALUE = _expect_failure(
     calls=1,
     contains=["unrecognized state", "MERGED"])
 
+# Convergence Phase 8 (missing coverage found after the first implement
+# pass) — a transient failure followed by a permanent one must stop
+# retrying at the permanent failure rather than treating it as more
+# transient noise (US3/AC3), and a rate-limited 403 must retry rather
+# than being mistaken for a rejected credential (Edge Case "The API
+# rejects the read for rate-limiting reasons", research.md D2).
+TRANSIENT_THEN_NOT_FOUND = _expect_failure(
+    "transient-then-not-found",
+    [(1, "", "HTTP 502: 502 Bad Gateway (https://api.github.com/graphql)"),
+     (1, "", "Could not resolve to an issue with the number of 184.")],
+    calls=2,
+    contains=["may not exist"],
+    excludes=["retried attempts", "recognised transient class",
+              "could not be classified"])
+
+RATE_LIMITED_403 = _expect_failure(
+    "rate-limited 403 retries rather than failing immediately",
+    [(1, "", "HTTP 403: API rate limit exceeded for installation ID "
+             "12345678.")],
+    calls=3,
+    contains=["after 3"],
+    excludes=["was rejected"])
+
 SCENARIOS = [
     FIRST_ATTEMPT_SUCCESS,
     TRANSIENT_THEN_SUCCEED,
@@ -257,6 +280,8 @@ SCENARIOS = [
     ALWAYS_NOT_FOUND,
     ALWAYS_CREDENTIAL_REJECTED,
     SUCCESS_UNRECOGNISED_VALUE,
+    TRANSIENT_THEN_NOT_FOUND,
+    RATE_LIMITED_403,
 ]
 
 
