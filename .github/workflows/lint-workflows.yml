@@ -1714,6 +1714,21 @@ jobs:
       - name: Gate 24 self-test — the detector actually detects
         run: python3 .github/scripts/verify-gate-24-selftest.py
 
+      # specs/039-lifecycle-gate-retry: run 31597186484 died at
+      # wing-commander-lifecycle-gate's single `gh issue view` read on a
+      # transient HTTP 502 — one attempt, no retry, and the reported error
+      # asserted the issue "may not exist, or the token lacks issues: read"
+      # (neither true) because only stdout was ever captured. This drives
+      # the shipped step against a stubbed gh: a transient failure must be
+      # retried and eventually succeed, a permanent failure (not-found,
+      # credential-rejected) must fail after exactly one attempt, and every
+      # reported failure must quote what the API actually said. Gate 14's
+      # shape — one script, its own mutation coverage inline, no separate
+      # self-test step — since this gate directly executes the shipped
+      # step's own bash against stubs rather than detecting drift elsewhere.
+      - name: Gate 25 — the lifecycle gate retries transient failures and fails fast on permanent ones
+        run: python3 .github/scripts/verify-lifecycle-gate-retry.py
+
       # Gate 22 — specs/038-runner-container-passthrough FR-007: an adopter
       # binds a whole stage's jobs to their own runner/container image with
       # two inputs and two secrets, and the contract is that the binding is

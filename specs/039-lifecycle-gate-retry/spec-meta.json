@@ -2,7 +2,7 @@
   "issue": 188,
   "spec_dir": "specs/039-lifecycle-gate-retry",
   "feature_num": "039",
-  "stage": "spec",
-  "iteration": 0,
-  "spec_branch": null
+  "stage": "review",
+  "iteration": 3,
+  "spec_branch": "spec/039-lifecycle-gate-retry"
 }
