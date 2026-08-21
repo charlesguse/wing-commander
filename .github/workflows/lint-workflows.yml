@@ -1090,7 +1090,8 @@ jobs:
                   # A job with `uses:` has no steps, so the loop below never
                   # sees it. The tools it passes reach the called stage's agent
                   # steps all the same, arriving at the tool-args composite as
-                  # `${{ inputs.extra-allowed-tools }}` - a literal category B
+                  # an unexpanded `inputs.extra-allowed-tools` expression - a
+                  # literal that category B
                   # cannot read anything out of (#215).
                   job_uses = str(job.get("uses") or "")
                   if job_uses.startswith("./.github/workflows/"):
@@ -1099,7 +1100,10 @@ jobs:
                       cs_grants = []
                       for key in ("extra-allowed-tools", "allowed-tools-override"):
                           val = cs_with.get(key)
-                          if not isinstance(val, str) or "${{" in val:
+                          # EXPR_OPEN, not the literal: GitHub's parser scans
+                          # run: text for expressions and rejects the WHOLE file
+                          # on one, while yaml.safe_load and bash -n both pass it.
+                          if not isinstance(val, str) or EXPR_OPEN in val:
                               continue
                           for gm in TOOL_GH_RE.finditer(val):
                               cs_grants.append((gm.group(1), gm.group(2), key))
