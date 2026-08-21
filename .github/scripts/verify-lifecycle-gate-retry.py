@@ -270,6 +270,63 @@ RATE_LIMITED_403 = _expect_failure(
     contains=["after 3"],
     excludes=["was rejected"])
 
+# Convergence Phase 9 (missing coverage found after the second implement
+# pass) — sanitize() (research.md D4, FR-017, FR-018) is implemented in
+# action.yml but nothing in this feature's own coverage had ever driven a
+# diagnostic long/multi-line/percent-bearing enough to prove the truncation,
+# whitespace-folding, and %-escaping actually run rather than merely ship.
+# The percent sign and both newline forms sit well inside the retained
+# first-300-characters, so this exercises sanitize() folding real content,
+# not content it discarded anyway.
+_LONG_MULTILINE_PERCENT_DIAGNOSTIC = (
+    "Could not resolve to an issue with the number of 184. "
+    "Line one carries a literal percent 100% sign.\r\n"
+    "Line two arrives after a CRLF sequence.\n"
+    "Line three arrives after a bare LF.\n"
+    + ("Padding to push this diagnostic past the sanitize() 300 character "
+       "cap so truncation actually executes. " * 4)
+)
+
+
+def _check_long_multiline_percent_not_found(rc, out, outputs, call_count):
+    name = ("not-found diagnostic longer than 300 chars, with an embedded "
+            "percent sign and raw CRLF/LF newlines")
+    failures = []
+    if rc == 0:
+        failures.append(f"{name}: expected the step to fail, but it "
+                        f"succeeded (state={outputs.get('state')!r})")
+        return failures
+    if call_count != 1:
+        failures.append(f"{name}: expected exactly 1 gh call, got "
+                        f"{call_count} — a not-found diagnostic must fail "
+                        f"on the first attempt regardless of its length.")
+    if "may not exist" not in out:
+        failures.append(f"{name}: expected the reported failure to contain "
+                        f"'may not exist'; got: {out.strip()}")
+    if "… (truncated)" not in out:
+        failures.append(f"{name}: expected the reported failure to contain "
+                        f"the truncation marker '… (truncated)'; got: "
+                        f"{out.strip()}")
+    if "%25" not in out:
+        failures.append(f"{name}: expected the reported failure to contain "
+                        f"the escaped percent sign '%25'; got: {out.strip()}")
+    for line in out.split("\n"):
+        if line.strip() and not (line.startswith("::error::")
+                                  or line.startswith("::warning::")):
+            failures.append(f"{name}: expected every non-blank line to be "
+                            f"an ::error::/::warning:: annotation command, "
+                            f"but a raw diagnostic line reached the output "
+                            f"unescaped: {line!r}")
+    return failures
+
+
+LONG_MULTILINE_PERCENT_NOT_FOUND = {
+    "name": ("not-found diagnostic longer than 300 chars, with an embedded "
+             "percent sign and raw CRLF/LF newlines"),
+    "behaviors": [(1, "", _LONG_MULTILINE_PERCENT_DIAGNOSTIC)],
+    "check": _check_long_multiline_percent_not_found,
+}
+
 SCENARIOS = [
     FIRST_ATTEMPT_SUCCESS,
     TRANSIENT_THEN_SUCCEED,
@@ -282,6 +339,7 @@ SCENARIOS = [
     SUCCESS_UNRECOGNISED_VALUE,
     TRANSIENT_THEN_NOT_FOUND,
     RATE_LIMITED_403,
+    LONG_MULTILINE_PERCENT_NOT_FOUND,
 ]
 
 
