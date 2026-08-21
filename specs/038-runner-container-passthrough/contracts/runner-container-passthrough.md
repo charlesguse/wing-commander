@@ -126,6 +126,31 @@ load-bearing for this contract's shape:
    which case nothing runs at all). This is why the prerequisite check and
    the credential-failure message (below) live in a *separate* job.
 
+## Private-registry credentials — FR-009, as corrected (#227)
+
+The `credentials:` mapping specs/038 put on every job's `container:` block
+is not in the shipped stages, and cannot be. Measured against real runners
+(PR #226, 2026-08-21):
+
+| Shape | Result |
+|---|---|
+| `image: ''`, no `credentials:` | runs, no container — FR-005 holds |
+| `image: ''`, `credentials:` with empty values | template error, job never starts |
+| `image: ''`, `credentials:` with placeholder values | runs, no container |
+| `image: <public>`, `credentials:` with bogus values | `Docker login ... failed` |
+| `credentials: ${{ fromJSON('null') }}` | template error — null is rejected like `''` |
+| `credentials: ${{ fromJSON('{...}') }}` | runs — the mapping may come from an expression, if it is an object |
+
+Once written, the key can never be absent; empty stops the job before its
+first step; non-empty is always acted on. No single block serves both a
+public image and a private one, and the default (no image named) needs the
+key gone. So the stages carry `image:` alone.
+
+The two secrets remain declared and are still used by
+`verify-image-prerequisites`'s own `docker login` — which works, and which
+now warns that its reach ends there. A private image must come from a runner
+already authenticated to the registry. #227 tracks a real mechanism.
+
 ## The `verify-image-prerequisites` job (research D5) — FR-010, FR-011
 
 Every stage file gains one new job:

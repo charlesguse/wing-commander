@@ -851,6 +851,21 @@ know before you set either:
   ever forwards what you hand it. A pull failure's error message tells you
   whether no credentials were supplied at all, or the registry rejected the
   ones you gave it.
+
+  **These credentials reach the prerequisite check and nothing else, today.**
+  They authenticate `verify-image-prerequisites`, which pulls the image and
+  checks it for the required tools. Every *other* job pulls with whatever
+  authentication its runner already has. GitHub's job-level
+  `container.credentials` cannot be conditionally omitted — once the key is
+  written, an empty value is a template error that stops the job before its
+  first step, and that is every run that names no image — so the stages do
+  not carry one ([#227](https://github.com/charlesguse/wing-commander/issues/227),
+  measured against real runners in
+  [PR #226](https://github.com/charlesguse/wing-commander/pull/226)).
+
+  **For a private image, use a runner that is already logged in** to the
+  registry — the same `runner` input above is how you point the stage at
+  one. A public (or otherwise unauthenticated) image needs nothing.
 - **Both controls are set once per stage call and apply to every job in
   that call — there is no per-job selector.** `tasks.yml`, called twice by
   `wing-commander-4-tasks.yml` (`mode: generate` and `mode: approved`),

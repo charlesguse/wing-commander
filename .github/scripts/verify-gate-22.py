@@ -96,9 +96,6 @@ BOUND = """\
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-      credentials:
-        username: ${{ secrets.container-registry-username }}
-        password: ${{ secrets.container-registry-password }}
 """
 
 # Same binding, no whitespace inside the expressions — the gate compares the
@@ -107,9 +104,6 @@ BOUND_TIGHT = """\
     runs-on: ${{startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner}}
     container:
       image: ${{inputs.container-image}}
-      credentials:
-        username: ${{secrets.container-registry-username}}
-        password: ${{secrets.container-registry-password}}
 """
 
 BOUND_NO_CONTAINER = """\
@@ -126,27 +120,24 @@ BOUND_LITERAL_IMAGE = """\
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: python:3.12
-      credentials:
-        username: ${{ secrets.container-registry-username }}
-        password: ${{ secrets.container-registry-password }}
 """
 
 BOUND_PLAIN_RUNS_ON = """\
     runs-on: ubuntu-latest
     container:
       image: ${{ inputs.container-image }}
-      credentials:
-        username: ${{ secrets.container-registry-username }}
-        password: ${{ secrets.container-registry-password }}
 """
 
-BOUND_WRONG_CREDENTIAL = """\
+# Any credentials: mapping at all is the defect now (PR #226): the key
+# cannot be conditionally absent, and an empty value stops the job before
+# its first step.
+BOUND_WITH_CREDENTIALS = """\
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
       credentials:
         username: ${{ secrets.container-registry-username }}
-        password: ${{ secrets.container-registry-username }}
+        password: ${{ secrets.container-registry-password }}
 """
 
 UNBOUND = ""
@@ -159,9 +150,6 @@ BOUND_MATRIX_LEG = """\
     runs-on: my-runner
     container:
       image: pinned-image:latest
-      credentials:
-        username: ${{ secrets.container-registry-username }}
-        password: ${{ secrets.container-registry-password }}
 """
 
 
@@ -239,9 +227,10 @@ CASES = [
      {"stage.yml": stage(job("only", BOUND_NO_CONTAINER))},
      True, ("'only'", "no container")),
 
-    ("container: block has no credentials: mapping",
+    ("no false positive: a container: block with no credentials: mapping is "
+     "the required shape",
      {"stage.yml": stage(job("only", BOUND_NO_CREDENTIALS))},
-     True, ("'only'", "credentials")),
+     False, ()),
 
     ("container.image hardcoded instead of forwarding the input",
      {"stage.yml": stage(job("only", BOUND_LITERAL_IMAGE))},
@@ -251,9 +240,10 @@ CASES = [
      {"stage.yml": stage(job("only", BOUND_PLAIN_RUNS_ON))},
      True, ("'only'", "runs-on")),
 
-    ("container.credentials.password forwards the wrong secret",
-     {"stage.yml": stage(job("only", BOUND_WRONG_CREDENTIAL))},
-     True, ("'only'", "credentials.password")),
+    ("the PR #226 defect: a credentials: mapping stops every job that names "
+     "no image before its first step",
+     {"stage.yml": stage(job("only", BOUND_WITH_CREDENTIALS))},
+     True, ("'only'", "credentials")),
 
     ("jobs bound but the inputs are never declared",
      {"stage.yml": stage(job("only", BOUND), inputs=INPUTS_MISSING)},
