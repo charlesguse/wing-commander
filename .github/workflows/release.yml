@@ -130,7 +130,18 @@ jobs:
           # Stages knowingly outside pass 2 (issue #149). Anything published
           # and NOT in shell_linted must be listed here, so the exemption is
           # a decision someone wrote down rather than a file nobody added.
-          shell_exempt=(.github/workflows/watchdog.yml .github/workflows/auto-update-spec-kit.yml)
+          #
+          # pr-conversation.yml (specs/033) is here because this gate caught
+          # it: it shipped as a published stage without joining either list,
+          # and the check below turned every release dispatch red from that
+          # merge onwards -- the 2026-08-20 attempt included, which is how it
+          # was found. Exempting it changes nothing about what is linted
+          # today (pass 2 has never seen it); it writes the decision down and
+          # unblocks releases. It is an agent-bearing stage of watchdog's
+          # size and shape, so it joins watchdog and auto-update-spec-kit in
+          # waiting on #149 rather than opting into shellcheck untested in a
+          # release-blocking gate.
+          shell_exempt=(.github/workflows/watchdog.yml .github/workflows/auto-update-spec-kit.yml .github/workflows/pr-conversation.yml)
           known='unexpected key "deployment" for "environment" section'
           fail=0
 
