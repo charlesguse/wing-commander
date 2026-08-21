@@ -51,8 +51,70 @@ runs:
       run: |
         set -uo pipefail
 
-        if ! state="$(gh issue view "$ISSUE_NUMBER" --json state --jq .state)" || [ -z "$state" ]; then
-          echo "::error::wing-commander-lifecycle-gate: could not determine state of issue #$ISSUE_NUMBER — it may not exist, or the token lacks issues: read."
+        max_attempts=3
+        attempt=0
+        state=""
+        last_diagnostic=""
+        last_class_phrase=""
+
+        sanitize() {
+          local text="$1"
+          text="$(printf '%s' "$text" | tr '\r\n\t' '   ')"
+          text="$(printf '%s' "$text" | tr -s ' ')"
+          if [ "${#text}" -gt 300 ]; then
+            text="${text:0:300}… (truncated)"
+          fi
+          printf '%s' "${text//%/%25}"
+        }
+
+        while [ "$attempt" -lt "$max_attempts" ]; do
+          attempt=$((attempt + 1))
+          stderr_file="$(mktemp)"
+
+          if state="$(timeout 4 gh issue view "$ISSUE_NUMBER" --json state --jq .state 2>"$stderr_file")"; then
+            diagnostic="$(cat "$stderr_file")"
+            rm -f "$stderr_file"
+            if [ -n "$state" ]; then
+              break
+            fi
+            [ -z "$diagnostic" ] && diagnostic="gh exited 0 but returned an empty state"
+          else
+            diagnostic="$(cat "$stderr_file")"
+            rm -f "$stderr_file"
+            [ -z "$diagnostic" ] && diagnostic="no diagnostic output"
+          fi
+
+          if printf '%s' "$diagnostic" | grep -qiE 'Could not resolve to an.*issue|HTTP 404'; then
+            safe="$(sanitize "$diagnostic")"
+            echo "::error::wing-commander-lifecycle-gate: could not determine state of issue #$ISSUE_NUMBER — it may not exist, or the token lacks issues: read. ($safe)"
+            exit 1
+          fi
+
+          if printf '%s' "$diagnostic" | grep -qiE 'HTTP 401|Bad credentials|Resource not accessible by integration|requires authentication|insufficient .*scope|missing .*scope'; then
+            safe="$(sanitize "$diagnostic")"
+            echo "::error::wing-commander-lifecycle-gate: the token used to authenticate this request was rejected: $safe"
+            exit 1
+          fi
+
+          if printf '%s' "$diagnostic" | grep -qiE 'HTTP 5[0-9]{2}|timed out|Could not connect|connection reset'; then
+            last_class_phrase="the failures were a recognised transient class"
+          else
+            last_class_phrase="the failures could not be classified"
+          fi
+          last_diagnostic="$diagnostic"
+          state=""
+
+          safe="$(sanitize "$diagnostic")"
+          echo "::warning::wing-commander-lifecycle-gate: attempt $attempt/$max_attempts to read state of issue #$ISSUE_NUMBER failed: $safe"
+
+          if [ "$attempt" -lt "$max_attempts" ]; then
+            sleep 1
+          fi
+        done
+
+        if [ -z "$state" ]; then
+          safe="$(sanitize "$last_diagnostic")"
+          echo "::error::wing-commander-lifecycle-gate: could not determine state of issue #$ISSUE_NUMBER after $attempt retried attempts; $last_class_phrase. Last attempt reported: $safe"
           exit 1
         fi
 

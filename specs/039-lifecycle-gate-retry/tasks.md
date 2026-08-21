@@ -29,7 +29,7 @@ Single-project CI/CD feature, no `src/`/`tests/` split. All file paths below are
 
 **Purpose**: Confirm the gate number this feature claims is actually free, and establish the pre-feature baseline every scenario below is compared against.
 
-- [ ] T001 Run `grep -n "name: Gate [0-9]" .github/workflows/lint-workflows.yml` and confirm no step is already named `Gate 25` (research.md D7, data-model.md's Gate registry entry — the highest number in use today is 24). Record the current `Check lifecycle issue state` step's byte-for-byte text (`git show HEAD:.github/actions/wing-commander-lifecycle-gate/action.yml`) as the SC-005 first-attempt-success baseline T012 will diff against.
+- [X] T001 Run `grep -n "name: Gate [0-9]" .github/workflows/lint-workflows.yml` and confirm no step is already named `Gate 25` (research.md D7, data-model.md's Gate registry entry — the highest number in use today is 24). Record the current `Check lifecycle issue state` step's byte-for-byte text (`git show HEAD:.github/actions/wing-commander-lifecycle-gate/action.yml`) as the SC-005 first-attempt-success baseline T012 will diff against.
 
 **Checkpoint**: Gate 25 numbering is free; the pre-feature baseline is captured.
 
@@ -49,7 +49,7 @@ Single-project CI/CD feature, no `src/`/`tests/` split. All file paths below are
 
 ### Implementation for User Story 1
 
-- [ ] T002 [US1] Rewrite `Check lifecycle issue state`'s `run:` block in `.github/actions/wing-commander-lifecycle-gate/action.yml` (lines 51-82) per research.md D1-D5 and contracts/wing-commander-lifecycle-gate.md's "Behavior — CHANGED" section:
+- [X] T002 [US1] Rewrite `Check lifecycle issue state`'s `run:` block in `.github/actions/wing-commander-lifecycle-gate/action.yml` (lines 51-82) per research.md D1-D5 and contracts/wing-commander-lifecycle-gate.md's "Behavior — CHANGED" section:
   - Wrap the existing `gh issue view "$ISSUE_NUMBER" --json state --jq .state` read in a loop of up to 3 attempts. Each attempt: `timeout 4` around the `gh` call; stderr redirected to a per-attempt `mktemp` file (`2>"$stderr_file"`), read and removed immediately after the attempt (research.md D3) — stdout (`state="$(...)"`) stays isolated from stderr, unlike today's stdout-only capture.
   - On success (non-empty `state`), break the loop immediately and fall through to the existing `case`/`is-open` logic unchanged (FR-007, FR-008 — this path is untouched by the retry).
   - On failure (non-zero exit or empty `state`), capture the diagnostic: the stderr file's contents, or the synthetic string `"gh exited 0 but returned an empty state"` when the call exited 0 with nothing to quote (research.md D5). Classify it against two permanent, case-insensitive patterns, checked in order (research.md D2, data-model.md's Failure classification table): (1) not-found — `Could not resolve to an.*[Ii]ssue` or `HTTP 404`; (2) credential-rejected — `HTTP 401`, `Bad credentials`, `Resource not accessible by integration`, or scope-shaped wording (`requires authentication`, `insufficient .* scope`, `missing .* scope`). Do **not** match a bare `HTTP 403` against the credential pattern (research.md D2's rationale — a rate-limited 403 must fall through to retry).
