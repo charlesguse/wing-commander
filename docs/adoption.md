@@ -713,10 +713,10 @@ things to know before you bind one:
      `classify-and-announce` job and **not** the job that actually
      writes — the inverse of what you probably intend. To gate mutations
      here, set `confirm-categories` (and `confirm-environment`) instead.
-  2. **Every stage's `verify-image-prerequisites` job**, which runs only
-     when you set `container-image` (see [Runners and container
-     images](#runners-and-container-images)). It is deliberately unbound, so
-     it costs you **no** approval prompt. Binding it would not buy you
+  2. **Every stage's `verify-image-prerequisites` job**, which runs on
+     every stage call and does nothing unless you set `container-image` (see
+     [Runners and container images](#runners-and-container-images)). It is
+     deliberately unbound, so it costs you **no** approval prompt. Binding it would not buy you
      anything: its entire body is a `docker login` and `docker pull` of the
      image *you* named, performed before any other job of the stage starts,
      so an approval would land after the credential had already been used,
@@ -741,10 +741,9 @@ things to know before you bind one:
 
   So the cheapest possible gate is a one-job stage (`intake`, `clarify`,
   `finalize`), and `auto-update-spec-kit` is the most expensive by an order of
-  magnitude — seven serial approvals, each blocking the next. Setting
-  `container-image` adds one more job to every row of that table
-  (`verify-image-prerequisites`) but no prompt to any of them, per exception
-  2 above.
+  magnitude — seven serial approvals, each blocking the next. Every row of
+  that table also carries a `verify-image-prerequisites` job, but no prompt
+  for it, per exception 2 above.
 - **Approval is also per run, not per feature.** A required reviewer prompts
   on every iteration of a looping stage (`implement`, once per cycle) — there
   is no pipeline-side dedup or memory of a prior approval. For a single

@@ -429,7 +429,12 @@ def extract_gate(path=LINT_WORKFLOW):
 
 # ---------------------------------------------------------------- fixtures
 
-TOLERANT = ("(needs.verify-image-prerequisites.result == 'success' || "
+# Post-#224: verify-image-prerequisites never skips, so there is no
+# skipped result to tolerate. A status-guarded job still has to check the
+# check's result explicitly — its status function is what defeats ordinary
+# skip-propagation — and an unguarded job must NOT restate it.
+RESULT_GUARD = "needs.verify-image-prerequisites.result == 'success'"
+STALE_TOLERANT = ("(needs.verify-image-prerequisites.result == 'success' || "
            "needs.verify-image-prerequisites.result == 'skipped')")
 
 
@@ -467,13 +472,23 @@ def canonical_tools():
 CANONICAL = object()   # sentinel: "the real list", vs None = "no list at all"
 
 
-def vip_job(if_expr="inputs.container-image != ''", with_container=False,
-            tools=CANONICAL, quote='"'):
-    lines = ["  verify-image-prerequisites:", f"    if: {yaml_str(if_expr)}",
-             "    runs-on: ubuntu-latest"]
+def vip_job(if_expr=None, step_if="inputs.container-image != ''",
+            with_container=False, tools=CANONICAL, quote='"'):
+    """The check job. `if_expr` is the DEFECT case (#224): a job-level
+    condition here skips the job, and a skipped job takes its whole
+    descendant closure with it. The healthy shape conditions the step."""
+    lines = ["  verify-image-prerequisites:"]
+    if if_expr is not None:
+        lines.append(f"    if: {yaml_str(if_expr)}")
+    lines.append("    runs-on: ubuntu-latest")
     if with_container:
         lines.append("    container:\n      image: alpine")
-    lines += ["    steps:", "      - run: |"]
+    lines += ["    steps:"]
+    if step_if is not None:
+        lines.append(f"      - if: {yaml_str(step_if)}")
+        lines.append("        run: |")
+    else:
+        lines.append("      - run: |")
     if tools is CANONICAL:
         tools = canonical_tools()
     if tools is not None:
@@ -522,7 +537,7 @@ CALLER_JOB = """\
     uses: ./.github/workflows/other.yml
 """
 
-HEALTHY_ENTRY = job("entry", needs="verify-image-prerequisites", if_expr=TOLERANT)
+HEALTHY_ENTRY = job("entry", needs="verify-image-prerequisites")
 
 WIRING_CASES = [
     # name, files, expect_fail, must_mention
@@ -534,9 +549,16 @@ WIRING_CASES = [
      {"stage.yml": stage(job("entry"))},
      True, ("'entry'", "entry job")),
 
-    ("entry job needs verify-image-prerequisites but if: lacks the tolerant clause",
-     {"stage.yml": stage(job("entry", needs="verify-image-prerequisites", if_expr="true"))},
-     True, ("'entry'", "tolerant")),
+    ("the #224 defect: an entry job restates the check's result with no "
+     "status function, so GitHub never reads it",
+     {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
+                             if_expr=STALE_TOLERANT))},
+     True, ("'entry'", "never read")),
+
+    ("no false positive: an entry job may carry an unrelated condition",
+     {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
+                             if_expr="inputs.trigger == 'scheduled'"))},
+     False, ()),
 
     ("a downstream job with no status-check function inherits automatically "
      "and needs no separate wiring",
@@ -552,8 +574,15 @@ WIRING_CASES = [
     ("an always()-survivor correctly wired directly to verify-image-prerequisites",
      {"stage.yml": stage(HEALTHY_ENTRY,
                          job("survivor", needs=["entry", "verify-image-prerequisites"],
-                             if_expr=f"always() && {TOLERANT}"))},
+                             if_expr=f"always() && {RESULT_GUARD}"))},
      False, ()),
+
+    ("a survivor wired to the check but not guarding on its result would "
+     "run straight past a failed pull",
+     {"stage.yml": stage(HEALTHY_ENTRY,
+                         job("survivor", needs=["entry", "verify-image-prerequisites"],
+                             if_expr="always()"))},
+     True, ("'survivor'", "unchecked")),
 
     ("a !cancelled() survivor is guarded exactly like an always() survivor",
      {"stage.yml": stage(HEALTHY_ENTRY,
@@ -564,13 +593,19 @@ WIRING_CASES = [
      {"stage.yml": ("name: stage\non:\n  workflow_call:\n    inputs:\n"
                     "      container-image:\n        type: string\n"
                     "        required: false\n        default: \"\"\n"
-                    "jobs:\n" + job("only", needs="verify-image-prerequisites",
-                                    if_expr=TOLERANT))},
+                    "jobs:\n" + job("only", needs="verify-image-prerequisites"))},
      True, ("no verify-image-prerequisites job",)),
 
-    ("verify-image-prerequisites has the wrong if: condition",
-     {"stage.yml": stage(HEALTHY_ENTRY, vip=vip_job(if_expr="true"))},
-     True, ("the contract requires exactly",)),
+    ("the other half of #224: the check job is skip-conditioned, which "
+     "silently suppresses the whole stage",
+     {"stage.yml": stage(HEALTHY_ENTRY,
+                         vip=vip_job(if_expr="inputs.container-image != ''"))},
+     True, ("must never skip",)),
+
+    ("the check job runs unconditionally but its step is not conditioned, "
+     "so a run naming no image would try to pull nothing",
+     {"stage.yml": stage(HEALTHY_ENTRY, vip=vip_job(step_if=None))},
+     True, ("every step of",)),
 
     ("verify-image-prerequisites declares its own container: block",
      {"stage.yml": stage(HEALTHY_ENTRY, vip=vip_job(with_container=True))},
@@ -589,19 +624,19 @@ DRIFT_CASES = [
     ("the defect this gate exists for: an unrecognized tool is invoked and "
      "absent from the canonical list",
      {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
-                             if_expr=TOLERANT, run="somefancytool --check-version"))},
+                             run="somefancytool --check-version"))},
      True, ("somefancytool",)),
 
     ("no false positive: canonical tools (git, gh, jq, curl, python3, bash, node)",
      {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
-                             if_expr=TOLERANT,
+                             
                              run="git status && gh pr list && jq '.' f.json && "
                                  "curl -s url && python3 x.py && bash y.sh && node z.js"))},
      False, ()),
 
     ("no false positive: POSIX/coreutils/bash-builtin commands",
      {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
-                             if_expr=TOLERANT,
+                             
                              run="echo hi && mkdir -p /tmp/x && sed -n 1p f && "
                                  "grep foo f | sort | uniq"))},
      False, ()),
@@ -609,13 +644,13 @@ DRIFT_CASES = [
     ("no false positive: a maintenance-only tool this repo's own CI uses, "
      "never a published stage's adopter-facing image",
      {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
-                             if_expr=TOLERANT, run="docker build -t x ."))},
+                             run="docker build -t x ."))},
      False, ()),
 
     ("heredoc bodies are not scanned for command tokens — a look-alike word "
      "inside an embedded python/jq/js script must not be flagged",
      {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
-                             if_expr=TOLERANT,
+                             
                              run="python3 - <<'PYEOF'\n"
                                  "somefancytool --this-is-python-source-not-shell\n"
                                  "PYEOF"))},
@@ -665,14 +700,14 @@ DRIFT_CASES = [
     ("no false positive: a statement starting with a command substitution "
      "is not reported as an invocation of 'dollarsubst'",
      {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
-                             if_expr=TOLERANT,
+                             
                              run="$(command -v git) --version"))},
      False, ()),
 
     ("no false positive: a statement starting with an Actions expression "
      "is not reported as an invocation of 'ghexpr'",
      {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
-                             if_expr=TOLERANT,
+                             
                              run="${{ inputs.runner }} --version"))},
      False, ()),
 ]

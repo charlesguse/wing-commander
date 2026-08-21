@@ -239,7 +239,17 @@ jobs:
     # created. Deliberately no container: — must run directly on the
     # runner to invoke Docker itself (contracts/runner-container-
     # passthrough.md "The verify-image-prerequisites job").
-    if: inputs.container-image != ''
+    # No job-level `if:`, deliberately: this job must NEVER skip.
+    # GitHub applies its implicit success() over a job's whole needs-
+    # CLOSURE, so a skipped check suppresses every job in the stage that
+    # carries no status-check function of its own -- whatever their `if:`
+    # says, and without failing anything. Between PR #222 and this fix
+    # this job was skip-conditioned on `container-image`, which is unset
+    # by default, and all eleven stages did nothing at all for a day
+    # (#224). The image work is conditioned one level down, on the step,
+    # so a run that names no image still pays only this job's idle
+    # seconds -- the cost FR-006 was written to avoid, and the cheapest
+    # honest price for the guarantee it was protecting.
     # Zero scopes, declared rather than inherited. This job's whole body is
     # docker login/pull/run against the adopter's own registry: it makes no
     # GitHub API call and writes nothing. Nine of the eleven stage files
@@ -253,6 +263,7 @@ jobs:
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     steps:
       - name: Pull image and verify prerequisites
+        if: inputs.container-image != ''
         env:
           IMAGE: ${{ inputs.container-image }}
           REGISTRY_USERNAME: ${{ secrets.container-registry-username }}
@@ -348,10 +359,12 @@ jobs:
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
+    # No `if:` of its own -- ordinary needs: skip-propagation is the
+    # gate here: a failed image check skips this job and everything
+    # behind it. verify-image-prerequisites never skips, so there is no
+    # skipped result to tolerate; the `if:` that used to say otherwise
+    # was never evaluated at all (#224).
     needs: verify-image-prerequisites
-    if: |
-      needs.verify-image-prerequisites.result == 'success' ||
-      needs.verify-image-prerequisites.result == 'skipped'
     permissions:
       contents: read
       pull-requests: write

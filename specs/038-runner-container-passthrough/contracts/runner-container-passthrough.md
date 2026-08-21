@@ -132,12 +132,13 @@ Every stage file gains one new job:
 
 ```yaml
 verify-image-prerequisites:
-  if: inputs.container-image != ''
+  # No job-level `if:` — see "Why this job must never skip" below.
   runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
   # Deliberately no container: — this job must run directly on the runner
   # so it can invoke Docker itself, before the real per-job container is
   # created by any other job in this file.
   steps:
+  - if: inputs.container-image != ''
     # 1. Attempt registry login (only if both credential secrets are
     #    non-empty) and pull inputs.container-image.
     # 2. On failure: fail the job with a message distinguishing "no
@@ -149,31 +150,55 @@ verify-image-prerequisites:
     #    missing tool named at once — FR-011.
 ```
 
-Skipped outright (`if: inputs.container-image != ''` evaluates false) when
-no image is named — zero added latency, zero added Docker invocation, zero
-new failure mode on the default path (FR-006; FR-011's own "MUST NOT
-compromise FR-006" clause).
+### Why this job must never skip (#224)
+
+The condition sits on the **step**, not the job. It shipped on the job, and
+that took the entire pipeline down for a day: GitHub applies its implicit
+`success()` over a job's whole needs-**closure**, so a *skipped*
+`verify-image-prerequisites` suppressed every job of every stage that
+carries no status-check function of its own — silently, and reported as
+`skipped` rather than as a failure. `container-image` is unset by default,
+so that was every ordinary run of all eleven stages.
+
+What FR-006 protects is the *behavior* of the default path: same runner, no
+container, no new failure mode. The job now runs, finds no image named,
+skips its one step and succeeds in a few idle seconds. That is the honest
+price of the guarantee. Zero added Docker invocation and zero added failure
+mode still hold; "no added job" does not, and could not — a check that can
+skip cannot be depended on by anything.
 
 Every other job in the stage file with no other in-stage predecessor (an
-"entry" job), or that survives a skipped ancestor via `if: always()` or
-equivalent (the same class of job Gate 15 already catalogues —
-`auto-update-spec-kit.yml`'s `evaluate-path` is the repository's own
-existing example of this shape), gains:
+"entry" job) gains the dependency and **nothing else**:
+
+```yaml
+needs: [..., verify-image-prerequisites]
+# no `if:` clause about the check — see below
+```
+
+Ordinary `needs:` skip-propagation is the whole gate: a failed image check
+skips the entry job and, transitively, everything behind it. An entry job
+must NOT restate that as `result == 'success' || result == 'skipped'`.
+Without a status-check function of its own such a clause is never read —
+GitHub has already applied the implicit `success()` — so it gates nothing
+while reading exactly like a working guard. That was #224.
+
+A job that survives a skipped ancestor via `if: always()` or equivalent
+(the same class Gate 15 catalogues — `auto-update-spec-kit.yml`'s
+`evaluate-path` is this repository's own existing example) is the one
+exception, because its status function defeats that propagation. It carries
+the dependency *and* an explicit result guard:
 
 ```yaml
 needs: [..., verify-image-prerequisites]
 if: |
-  (needs.verify-image-prerequisites.result == 'success' ||
-   needs.verify-image-prerequisites.result == 'skipped')
-  <combined with the job's own existing condition, if any>
+  always() &&
+  needs.verify-image-prerequisites.result == 'success' &&
+  <the job's own existing condition>
 ```
 
-A downstream job that already depends (directly or transitively) on an
-entry job wired this way needs no separate wiring of its own — GitHub's
-ordinary `needs:` skip-propagation already gates it, exactly as it gates
-today's `if: inputs.merged`-style conditions. Only jobs whose own survival
-logic (`always()` or similar) would otherwise defeat that propagation need
-the explicit tolerant `if:` above.
+There is no `'skipped'` arm anywhere: the check no longer skips, and an arm
+for a result that cannot occur is indistinguishable, on the page, from one
+that is never evaluated.
 
 **Cost note**: when an image IS named, this job pulls it once; the real
 containerized job(s) that follow pull the same image again (GitHub does not
@@ -239,9 +264,10 @@ them until review of PR #222. Declaring the grant on the job makes it a
 property of the job rather than of whichever file it sits in, so a later
 change to a file's top-level `permissions:` cannot widen it by accident.
 
-**Gate 23**: every stage file declares `verify-image-prerequisites`
-(skip-conditioned on `container-image`), every entry job (per the rule
-above) depends on it with a skip-tolerant `if:`, and the canonical
+**Gate 23**: every stage file declares `verify-image-prerequisites` with
+no job-level `if:` and its condition on the step, every entry job depends on
+it (and does not restate its result), every status-guarded job depends on it
+AND guards on `result == 'success'`, and the canonical
 required-tool list (Image prerequisite contract, above) is not missing any
 tool a `run:` block anywhere in the repository actually invokes (FR-011a's
 drift check).

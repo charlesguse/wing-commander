@@ -137,6 +137,50 @@ CASES = [
     ("no false positive: a lone conditional job with no dependents",
      {"w.yml": wf([("only", [], "always() && github.event_name == 'push'")])},
      False, ()),
+
+    # --- second rule: an `if` arm that can never be read (#224) ----------
+    #
+    # The chain above is not the only way a job goes silent. specs/038 gave
+    # every stage a `verify-image-prerequisites` job skip-conditioned on a
+    # plain `if: inputs.container-image != ''` — no status-check function, so
+    # invisible to the walk above — and had its dependents "tolerate" the
+    # skip with `result == 'skipped'`. GitHub never read that arm: the
+    # implicit success() over needs had already skipped those jobs. Eleven
+    # stages ran as no-ops for a day and every run stayed green.
+
+    ("the second defect: an if: arm for a skipped need, with no status "
+     "function to make it readable",
+     {"w.yml": wf([("check", [], "inputs.image != ''"),
+                   ("entry", ["check"],
+                    "needs.check.result == 'success' || "
+                    "needs.check.result == 'skipped'")])},
+     True, ("'entry'", "implicit success()", "!cancelled()")),
+
+    ("the fix: the same arm under always()",
+     {"w.yml": wf([("check", [], "inputs.image != ''"),
+                   ("entry", ["check"],
+                    "always() && (needs.check.result == 'success' || "
+                    "needs.check.result == 'skipped')")])},
+     False, ()),
+
+    ("the fix: the same arm under !cancelled() (quoted — a leading `!` is a "
+     "YAML anchor)",
+     {"w.yml": wf([("check", [], "inputs.image != ''"),
+                   ("entry", ["check"],
+                    '"!cancelled() && (needs.check.result == \'success\' || '
+                    'needs.check.result == \'skipped\')"')])},
+     False, ()),
+
+    ("a failure arm is unreadable for the same reason",
+     {"w.yml": wf([("a", [], None),
+                   ("b", ["a"], "needs.a.result == 'failure'")])},
+     True, ("'b'",)),
+
+    ("no false positive: an ordinary success-only guard needs no status "
+     "function",
+     {"w.yml": wf([("a", [], None),
+                   ("b", ["a"], "needs.a.result == 'success'")])},
+     False, ()),
 ]
 
 
