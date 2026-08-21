@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,9 +31,9 @@
 
 ## Notes
 
-- Two `[NEEDS CLARIFICATION]` markers remain, both deliberate and both scope-bearing. They are posted to the lifecycle issue for the requester to answer rather than guessed:
-  - **FR-009** — how a read that exits successfully but yields an empty state is treated, and by extension what the default treatment is for any failure class the gate cannot classify. The source request names the retryable classes (server fault, timeout, connection reset) and the fast-fail classes (missing issue, rejected credential) but does not cover the residue, and the existing gate already folds an empty result into the same failure as a non-zero exit. The two answers differ in whether an unclassifiable failure costs the retry budget or fails at once.
-  - **FR-016** — whether this feature also addresses the consequence the source request describes under "blast radius": an `implement` run that dies at the gate stops the chain without recording anything or posting to the lifecycle issue. The request documents this but does not ask for it to be fixed, and fixing it reaches beyond the composite into a stage's job graph. The retry lowers the probability; it cannot remove it.
-- Validation ran once. No item other than the marker line failed on the first pass; the remaining unchecked box is expected to clear when the two questions are answered.
+- Both `[NEEDS CLARIFICATION]` markers were answered by the requester on 2026-08-21 and are now resolved in the spec's Clarifications section:
+  - **FR-009** — how a read that exits successfully but yields an empty state is treated, and by extension what the default treatment is for any failure class the gate cannot classify. **Answered: retry it.** Only a failure positively identified as permanent fails immediately; everything else — unclassifiable faults, rate-limit rejections, and the empty-but-successful read — is retried, so an unfamiliar transient fault lands in the recoverable bucket rather than repeating the source incident. Folded into FR-009, with FR-006 carrying the diagnostic distinction the policy no longer draws, FR-008 separating an empty state from an unrecognised value, FR-013/SC-006 covering the narrowing regression, and SC-009 stating the outcome.
+  - **FR-016** — whether this feature also addresses the `implement` chain-stop the source request describes under "blast radius". **Answered: out of scope.** The feature changes the gate composite only and touches no calling stage's job graph; the chain-stop gets its own request. FR-016 now states that boundary as a requirement, and Out of Scope carries a matching entry.
+- Validation ran once before the questions were posted. No item other than the marker line failed on that pass, and that box now clears with the answers folded in.
 - **Content Quality**, third item: the spec names GitHub-hosted concepts (issues, stages, runs) because the product *is* a GitHub-native pipeline and those are its domain nouns, not implementation choices. It deliberately avoids naming the command, the API surface, the status codes, and the file the fix lands in — those appear only in the verbatim `Input` quotation of the source request.
 - **Success criteria**, SC-004: fifteen seconds is a bound the spec sets rather than one the source request supplied; it is recorded as a decision in FR-003 and its rationale (the gate is the first billable step of six stages) in the Assumptions section.
