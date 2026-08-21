@@ -62,14 +62,17 @@ def lookup(ref, ctx):
     if ref in ctx:
         return ctx[ref]
     if ref == "needs.verify-image-prerequisites.result":
-        # specs/038-runner-container-passthrough: every scenario in this
-        # file exercises the default no-container-image path, where
-        # verify-image-prerequisites is always 'skipped' for real — its
-        # skip-tolerant if: clause treats 'skipped' the same as 'success',
-        # so defaulting it here (rather than retrofitting it into every
-        # scenario's context dict below) keeps this file's actual subject —
-        # the OTHER gating logic — legible.
-        return "skipped"
+        # specs/038-runner-container-passthrough, as corrected by #224: the
+        # check job runs unconditionally and skips its own STEP when no
+        # image is named, so on the default no-container-image path every
+        # scenario in this file sees it 'success' — not 'skipped'. It was
+        # skip-conditioned when it shipped, and this default said so, and
+        # every scenario here still passed: this simulator reads each job's
+        # `if:` in isolation and has no model of GitHub suppressing a job
+        # whose needs-CLOSURE contains a skipped one. That is the blind spot
+        # #224 came through; Gate 15 and Gate 23 cover the shape now, and a
+        # scenario here proves nothing about it either way.
+        return "success"
     # unset needs.*.outputs.* / inputs.* render as empty string
     return ""
 

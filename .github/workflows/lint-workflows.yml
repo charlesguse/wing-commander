@@ -1242,6 +1242,13 @@ jobs:
           # part of its needs-closure was skipped.
           STATUS_FN = re.compile(r"\b(always|success|failure|cancelled)\s*\(")
 
+          # An `if` arm that only means anything when a need did NOT
+          # succeed. Reading one is the tell that the author expected the
+          # `if` to be evaluated in a case where GitHub does not evaluate
+          # it at all.
+          NON_SUCCESS_ARM = re.compile(
+              r"needs\.[A-Za-z0-9_-]+\.result\s*[=!]=\s*'(skipped|failure|cancelled)'")
+
 
           def needs_of(spec):
               n = (spec or {}).get("needs") or []
@@ -1260,7 +1267,40 @@ jobs:
                   if isinstance(s, dict) and STATUS_FN.search(str(s.get("if", "")))
               }
               for name, spec in sorted(jobs.items()):
-                  if not isinstance(spec, dict) or name in guarded:
+                  if not isinstance(spec, dict):
+                      continue
+
+                  # Second rule, and the one specs/038 needed: a job can be
+                  # suppressed by ANY ancestor that skips, not only by one
+                  # carrying a status-check function. The walk below keys on
+                  # `guarded` ancestors because that is the shape #189 was
+                  # written for; verify-image-prerequisites skips on a plain
+                  # `if: inputs.container-image != ''`, so it is invisible to
+                  # that walk while suppressing its dependents just as hard.
+                  #
+                  # Widening the walk is not the fix — every conditional job
+                  # would then flag every ordinary descendant, which is the
+                  # skip-propagation the fleet WANTS. Key on the contradiction
+                  # instead: an `if` that tests for a need's skipped/failed
+                  # result is asking to run in a case where, without a status-
+                  # check function of its own, it is already skipped. It is
+                  # unreachable code inside an expression, and it reads like a
+                  # working guard — which is how eleven stages shipped silent
+                  # for a day (#224, PR #222).
+                  cond = str(spec.get("if", "") or "")
+                  arm = NON_SUCCESS_ARM.search(cond)
+                  if arm and not STATUS_FN.search(cond):
+                      failures.append(
+                          f"::error file={path}::Gate 15: job {name!r} has an `if` arm "
+                          f"({arm.group(0)}) that only matters when a need did not "
+                          f"succeed, but carries no status-check function of its own. "
+                          f"GitHub applies an implicit success() over needs: in that "
+                          f"case, so the job is skipped before that arm is ever read "
+                          f"— it gates nothing and documents an intention that never "
+                          f"runs. Prefix the `if` with `!cancelled() &&` (or "
+                          f"`always() &&`), keeping every existing result guard.")
+
+                  if name in guarded:
                       continue
                   seen, stack, risky = set(), needs_of(spec), []
                   while stack:
@@ -1947,18 +1987,24 @@ jobs:
               n = (spec or {}).get("needs") or []
               return [n] if isinstance(n, str) else list(n)
 
-          def has_tolerant_gate(spec):
-              """T005's skip-tolerant if:, order- and whitespace-agnostic.
+          def has_result_guard(spec):
+              """The explicit result guard a status-guarded job must carry.
+
+              Only jobs with a status-check function need this: that function
+              is what defeats ordinary skip-propagation, so without a guard
+              of their own they would run straight past a failed image check.
+              Everything else is gated by propagation and must NOT restate it
+              (#224 — a restatement that GitHub never evaluates reads like a
+              working guard for as long as it takes someone to lose a day).
 
               Checked as substrings rather than one exact regex: the real
-              jobs AND every combine the tolerant clause with their own
-              prior condition in different orders (`always() && (...)` vs
-              `(...) && needs.x...`), and a byte-exact match would make this
-              check more brittle than the property it is verifying.
+              jobs combine this clause with their own prior condition in
+              different orders (`always() && (...)` vs `(...) && needs.x`),
+              and a byte-exact match would be more brittle than the property
+              it is verifying.
               """
-              iftext = str((spec or {}).get("if", "") or "")
-              return ("needs.verify-image-prerequisites.result" in iftext
-                      and "'success'" in iftext and "'skipped'" in iftext)
+              iftext = " ".join(str((spec or {}).get("if", "") or "").split())
+              return "needs.verify-image-prerequisites.result == 'success'" in iftext
 
           failures = 0
           stages = 0
@@ -1989,13 +2035,32 @@ jobs:
                         f"container is created (FR-010/FR-011).")
                   failures += 1
               else:
-                  vip_if = " ".join(str(vip.get("if", "") or "").split())
-                  if vip_if != "inputs.container-image != ''":
-                      print(f"::error file={f}::verify-image-prerequisites job's "
-                            f"if: is {vip.get('if')!r}; the contract requires exactly "
-                            f"if: inputs.container-image != '' so the job is a true "
-                            f"no-op — no added job, no added latency — when no image "
-                            f"is named (FR-006).")
+                  # The inversion of #224. A job-level `if:` here is not a
+                  # cheap no-op: GitHub's implicit success() spans a job's
+                  # whole needs-CLOSURE, so a SKIPPED check silently
+                  # suppresses every job of the stage that carries no
+                  # status-check function — which, when the condition is
+                  # `container-image != ''`, is every ordinary run. The
+                  # condition belongs on the step, one level down, where
+                  # skipping costs idle seconds instead of the pipeline.
+                  if "if" in vip:
+                      print(f"::error file={f}::verify-image-prerequisites carries a "
+                            f"job-level if: ({vip.get('if')!r}). This job must never "
+                            f"skip: a skipped job suppresses its entire descendant "
+                            f"closure regardless of what those jobs' own if: say, so "
+                            f"skip-conditioning the check turns the whole stage into a "
+                            f"silent no-op (#224). Condition the STEP instead.")
+                      failures += 1
+                  vip_steps = [s for s in (vip.get("steps") or []) if isinstance(s, dict)]
+                  unguarded = [s for s in vip_steps
+                               if " ".join(str(s.get("if", "") or "").split())
+                               != "inputs.container-image != ''"]
+                  if not vip_steps or unguarded:
+                      print(f"::error file={f}::every step of "
+                            f"verify-image-prerequisites must carry "
+                            f"if: inputs.container-image != '' — that is what keeps the "
+                            f"always-running check a no-op when no image is named "
+                            f"(FR-006, as re-established by #224).")
                       failures += 1
                   if "container" in vip:
                       print(f"::error file={f}::verify-image-prerequisites declares "
@@ -2050,14 +2115,23 @@ jobs:
                       failures += 1
                       continue
 
-                  if not has_tolerant_gate(job):
+                  if guarded and not has_result_guard(job):
                       print(f"::error file={f}::job {jname!r} needs "
-                            f"verify-image-prerequisites but its if: does not carry "
-                            f"the skip-tolerant condition (needs.verify-image-"
-                            f"prerequisites.result == 'success' or == 'skipped'). "
-                            f"Without it this job either never runs when no image is "
-                            f"named (verify-image-prerequisites is skipped, not "
-                            f"successful) or runs unchecked past a real pull failure.")
+                            f"verify-image-prerequisites and carries a status-check "
+                            f"function, which defeats ordinary skip-propagation, but "
+                            f"its if: does not check "
+                            f"needs.verify-image-prerequisites.result == 'success'. "
+                            f"It would run unchecked past a real image-prerequisite "
+                            f"failure.")
+                      failures += 1
+                  if not guarded and "verify-image-prerequisites.result" in str(
+                          job.get("if", "") or ""):
+                      print(f"::error file={f}::job {jname!r} tests "
+                            f"needs.verify-image-prerequisites.result without a "
+                            f"status-check function of its own. GitHub's implicit "
+                            f"success() over needs: means that test is never read — "
+                            f"propagation alone already gates this job. Delete the "
+                            f"clause (#224); Gate 15 catches the general shape.")
                       failures += 1
 
           # FR-011a — the canonical list (data-model.md "Image prerequisite

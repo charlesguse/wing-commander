@@ -216,7 +216,17 @@ jobs:
     # created. Deliberately no container: — must run directly on the
     # runner to invoke Docker itself (contracts/runner-container-
     # passthrough.md "The verify-image-prerequisites job").
-    if: inputs.container-image != ''
+    # No job-level `if:`, deliberately: this job must NEVER skip.
+    # GitHub applies its implicit success() over a job's whole needs-
+    # CLOSURE, so a skipped check suppresses every job in the stage that
+    # carries no status-check function of its own -- whatever their `if:`
+    # says, and without failing anything. Between PR #222 and this fix
+    # this job was skip-conditioned on `container-image`, which is unset
+    # by default, and all eleven stages did nothing at all for a day
+    # (#224). The image work is conditioned one level down, on the step,
+    # so a run that names no image still pays only this job's idle
+    # seconds -- the cost FR-006 was written to avoid, and the cheapest
+    # honest price for the guarantee it was protecting.
     # Zero scopes, declared rather than inherited. This job's whole body is
     # docker login/pull/run against the adopter's own registry: it makes no
     # GitHub API call and writes nothing. Nine of the eleven stage files
@@ -230,6 +240,7 @@ jobs:
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     steps:
       - name: Pull image and verify prerequisites
+        if: inputs.container-image != ''
         env:
           IMAGE: ${{ inputs.container-image }}
           REGISTRY_USERNAME: ${{ secrets.container-registry-username }}
@@ -308,9 +319,16 @@ jobs:
   # straight to its rollback branch and short-circuits detect/settle/
   # evaluate-path/prepare/verify entirely for this run (T006).
   health-check:
+    # The `if:` below gates on this run's trigger and nothing else.
+    # Ordinary needs: skip-propagation is what gates the image check: a
+    # failed check skips this job and everything behind it.
+    # verify-image-prerequisites never skips, so there is no skipped
+    # result to tolerate here -- and the clause that used to say
+    # otherwise was never evaluated at all, because a job with no
+    # status-check function is suppressed before its `if:` is read
+    # (#224).
     needs: verify-image-prerequisites
     if: >-
-      (needs.verify-image-prerequisites.result == 'success' || needs.verify-image-prerequisites.result == 'skipped') &&
       (inputs.trigger == 'scheduled' || inputs.trigger == 'dispatch')
     # runner/container-image passthrough (specs/038). Empty
     # container-image is expected to be a no-op (research.md D3); live
@@ -861,7 +879,7 @@ jobs:
     needs: [settle, comment-reply, verify-image-prerequisites]
     if: >-
       always() &&
-      (needs.verify-image-prerequisites.result == 'success' || needs.verify-image-prerequisites.result == 'skipped') &&
+      needs.verify-image-prerequisites.result == 'success' &&
       ((needs.settle.result == 'success' && needs.settle.outputs.settled == 'true') ||
        (needs.comment-reply.result == 'success' && needs.comment-reply.outputs.resumed == 'true'))
     # runner/container-image passthrough (specs/038). Empty
@@ -1455,7 +1473,7 @@ jobs:
     # cancelled run leaves result=cancelled.
     if: >-
       always() &&
-      (needs.verify-image-prerequisites.result == 'success' || needs.verify-image-prerequisites.result == 'skipped') &&
+      needs.verify-image-prerequisites.result == 'success' &&
       needs.evaluate-path.result == 'success' &&
       needs.evaluate-path.outputs.outcome == 'clean-bump'
     # runner/container-image passthrough (specs/038). Empty
@@ -1651,7 +1669,7 @@ jobs:
     # is TRUE — the stage would scaffold a candidate that was never prepared.
     if: >-
       always() &&
-      (needs.verify-image-prerequisites.result == 'success' || needs.verify-image-prerequisites.result == 'skipped') &&
+      needs.verify-image-prerequisites.result == 'success' &&
       needs.prepare.result == 'success' &&
       needs.prepare.outputs.release-type != 'patch'
     # runner/container-image passthrough (specs/038). Empty
@@ -2140,7 +2158,7 @@ jobs:
     # moved the silence one job down instead of ending it.
     if: >-
       always() &&
-      (needs.verify-image-prerequisites.result == 'success' || needs.verify-image-prerequisites.result == 'skipped') &&
+      needs.verify-image-prerequisites.result == 'success' &&
       needs.prepare.result == 'success'
     # runner/container-image passthrough (specs/038). Empty
     # container-image is expected to be a no-op (research.md D3); live
@@ -2492,7 +2510,7 @@ jobs:
     # on a real minor/major jump.
     if: >-
       always() &&
-      (needs.verify-image-prerequisites.result == 'success' || needs.verify-image-prerequisites.result == 'skipped') &&
+      needs.verify-image-prerequisites.result == 'success' &&
       (needs.health-check.outputs.pinned-ok == 'false' ||
        needs.prepare.result == 'failure' ||
        needs.verify.result == 'success' ||
@@ -2889,9 +2907,16 @@ jobs:
   # feature's own marker is a no-op — never assume any other PR belongs to
   # this feature.
   pr-merged:
+    # The `if:` below gates on this run's trigger and nothing else.
+    # Ordinary needs: skip-propagation is what gates the image check: a
+    # failed check skips this job and everything behind it.
+    # verify-image-prerequisites never skips, so there is no skipped
+    # result to tolerate here -- and the clause that used to say
+    # otherwise was never evaluated at all, because a job with no
+    # status-check function is suppressed before its `if:` is read
+    # (#224).
     needs: verify-image-prerequisites
     if: >-
-      (needs.verify-image-prerequisites.result == 'success' || needs.verify-image-prerequisites.result == 'skipped') &&
       inputs.trigger == 'pr-merged' &&
       inputs.pr-merged
     # runner/container-image passthrough (specs/038). Empty
@@ -3042,9 +3067,16 @@ jobs:
   # to an untrusted commenter). evaluate-path's `needs.comment-reply` gate
   # then sees a skipped (non-success) result and does not re-enter.
   comment-reply:
+    # The `if:` below gates on this run's trigger and nothing else.
+    # Ordinary needs: skip-propagation is what gates the image check: a
+    # failed check skips this job and everything behind it.
+    # verify-image-prerequisites never skips, so there is no skipped
+    # result to tolerate here -- and the clause that used to say
+    # otherwise was never evaluated at all, because a job with no
+    # status-check function is suppressed before its `if:` is read
+    # (#224).
     needs: verify-image-prerequisites
     if: >-
-      (needs.verify-image-prerequisites.result == 'success' || needs.verify-image-prerequisites.result == 'skipped') &&
       inputs.trigger == 'comment-reply' &&
       (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), inputs.commenter-association) || inputs.commenter-id == inputs.issue-author-id)
     # runner/container-image passthrough (specs/038). Empty
