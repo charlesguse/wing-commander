@@ -1,8 +1,9 @@
-# TEMPORARY probe (delete with this branch). Establishes what GitHub's
-# template evaluator accepts in a job-level container: block when the
-# adopter named no image, and whether credentials are attempted for a
-# public image. specs/038 assumed all of this; #224 showed the assumption
-# was never executed.
+# TEMPORARY probe (delete with this branch). Round 2: can the whole
+# credentials: mapping be an expression, so it can be ABSENT when no
+# credentials were supplied? Round 1 established: image:'' is a true
+# no-op (A), empty credential strings are a template error (B), a
+# placeholder is accepted and ignored when there is no image (C), and
+# credentials are always attempted when an image IS named (D).
 name: "tmp · container probe"
 
 on:
@@ -13,39 +14,34 @@ on:
 permissions: {}
 
 jobs:
-  a-empty-image-no-credentials:
+  e-null-credentials-no-image:
     runs-on: ubuntu-latest
     container:
       image: ${{ github.event.pull_request.title == 'never' && 'alpine:3.20' || '' }}
+      credentials: ${{ fromJSON('null') }}
     steps:
-      - run: echo "A ok; in container = $([ -f /.dockerenv ] && echo yes || echo no)"
+      - run: echo "E ok; in container = $([ -f /.dockerenv ] && echo yes || echo no)"
 
-  b-empty-image-empty-credentials:
+  f-object-credentials-no-image:
     runs-on: ubuntu-latest
     container:
       image: ${{ github.event.pull_request.title == 'never' && 'alpine:3.20' || '' }}
-      credentials:
-        username: ${{ github.event.pull_request.title == 'never' && 'u' || '' }}
-        password: ${{ github.event.pull_request.title == 'never' && 'p' || '' }}
+      credentials: ${{ fromJSON('{"username":"u","password":"p"}') }}
     steps:
-      - run: echo "B ok"
+      - run: echo "F ok"
 
-  c-empty-image-placeholder-credentials:
-    runs-on: ubuntu-latest
-    container:
-      image: ${{ github.event.pull_request.title == 'never' && 'alpine:3.20' || '' }}
-      credentials:
-        username: placeholder
-        password: placeholder
-    steps:
-      - run: echo "C ok; in container = $([ -f /.dockerenv ] && echo yes || echo no)"
-
-  d-public-image-bogus-credentials:
+  g-null-credentials-public-image:
     runs-on: ubuntu-latest
     container:
       image: alpine:3.20
-      credentials:
-        username: placeholder
-        password: placeholder
+      credentials: ${{ fromJSON('null') }}
     steps:
-      - run: echo "D ok; in container = $([ -f /.dockerenv ] && echo yes || echo no)"
+      - run: echo "G ok; in container = $([ -f /.dockerenv ] && echo yes || echo no)"
+
+  h-conditional-credentials-public-image:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:3.20
+      credentials: ${{ (github.event.pull_request.title == 'never') && fromJSON('{"username":"u","password":"p"}') || fromJSON('null') }}
+    steps:
+      - run: echo "H ok; in container = $([ -f /.dockerenv ] && echo yes || echo no)"
