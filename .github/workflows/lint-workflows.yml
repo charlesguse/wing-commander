@@ -1689,6 +1689,19 @@ jobs:
       - name: Gate 25 — the lifecycle gate retries transient failures and fails fast on permanent ones
         run: python3 .github/scripts/verify-lifecycle-gate-retry.py
 
+      # Gate 26 — specs/040-truncated-cycle-carry-forward: a cycle that runs
+      # out of its turn budget must be carried forward (no escalated redo,
+      # no cold-start of the next cycle) ONLY when the lifecycle record
+      # advanced AND the branch shows real progress, and must NEVER be
+      # reported converged merely because it never reached the step that
+      # writes a converge: commit. Drives the shipped "Read back cycle
+      # outcome"/"Read back retry outcome"/"Consolidate final outcome"/
+      # "Record truncated-cycle count"/"Dispatch next step" run: blocks
+      # directly out of implement.yml against synthetic git history and a
+      # stubbed upstream verdict (research.md D8).
+      - name: Gate 26 — a turn-exhausted cycle is classified truncated only with positive evidence, and carried forward without ever reporting converged
+        run: python3 .github/scripts/verify-truncated-cycle-carry-forward.py
+
       # Gate 22 — specs/038-runner-container-passthrough FR-007: an adopter
       # binds a whole stage's jobs to their own runner/container image with
       # two inputs and two secrets, and the contract is that the binding is
