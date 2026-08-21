@@ -2,7 +2,7 @@
   "issue": 179,
   "spec_dir": "specs/040-truncated-cycle-carry-forward",
   "feature_num": "040",
-  "stage": "plan",
+  "stage": "tasks",
   "iteration": 0,
   "spec_branch": "spec/040-truncated-cycle-carry-forward"
 }
