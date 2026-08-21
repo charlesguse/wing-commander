@@ -1,0 +1,51 @@
+# TEMPORARY probe (delete with this branch). Establishes what GitHub's
+# template evaluator accepts in a job-level container: block when the
+# adopter named no image, and whether credentials are attempted for a
+# public image. specs/038 assumed all of this; #224 showed the assumption
+# was never executed.
+name: "tmp · container probe"
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/tmp-container-probe.yml
+
+permissions: {}
+
+jobs:
+  a-empty-image-no-credentials:
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ github.event.pull_request.title == 'never' && 'alpine:3.20' || '' }}
+    steps:
+      - run: echo "A ok; in container = $([ -f /.dockerenv ] && echo yes || echo no)"
+
+  b-empty-image-empty-credentials:
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ github.event.pull_request.title == 'never' && 'alpine:3.20' || '' }}
+      credentials:
+        username: ${{ github.event.pull_request.title == 'never' && 'u' || '' }}
+        password: ${{ github.event.pull_request.title == 'never' && 'p' || '' }}
+    steps:
+      - run: echo "B ok"
+
+  c-empty-image-placeholder-credentials:
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ github.event.pull_request.title == 'never' && 'alpine:3.20' || '' }}
+      credentials:
+        username: placeholder
+        password: placeholder
+    steps:
+      - run: echo "C ok; in container = $([ -f /.dockerenv ] && echo yes || echo no)"
+
+  d-public-image-bogus-credentials:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:3.20
+      credentials:
+        username: placeholder
+        password: placeholder
+    steps:
+      - run: echo "D ok; in container = $([ -f /.dockerenv ] && echo yes || echo no)"
