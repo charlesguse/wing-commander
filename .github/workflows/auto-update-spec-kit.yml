@@ -251,6 +251,14 @@ jobs:
           REQUIRED_TOOLS="git gh jq curl python3 bash node"
 
           if [ -n "$REGISTRY_USERNAME" ] && [ -n "$REGISTRY_PASSWORD" ]; then
+            # Honest about reach: these credentials authenticate THIS
+            # check's pull and nothing else. A job-level container:
+            # credentials: mapping cannot be conditionally omitted -- once
+            # written, an empty value is a template error that stops the job
+            # before its first step, and that is every run naming no image
+            # (#227, measured in PR #226) -- so the stage does not carry one,
+            # and the other jobs pull as the runner is authenticated.
+            echo "::warning::wing-commander verify-image-prerequisites: registry credentials were supplied. They authenticate this check only -- the stage's other jobs pull with whatever authentication their runner already has (#227). For a private image, use a runner that is logged in to the registry."
             # A bare/namespaced Docker Hub reference (no "." or ":" or
             # "localhost" in its first path component, or no "/" at
             # all) has no registry host to pass to `docker login` --
@@ -341,9 +349,6 @@ jobs:
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-      credentials:
-        username: ${{ secrets.container-registry-username }}
-        password: ${{ secrets.container-registry-password }}
     # Empirically verified 2026-08-05/06 against GitHub-hosted runners
     # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
     # form accepts an expression in both name and deployment, and a
@@ -556,9 +561,6 @@ jobs:
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-      credentials:
-        username: ${{ secrets.container-registry-username }}
-        password: ${{ secrets.container-registry-password }}
     # Empirically verified 2026-08-05/06 against GitHub-hosted runners
     # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
     # form accepts an expression in both name and deployment, and a
@@ -652,9 +654,6 @@ jobs:
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-      credentials:
-        username: ${{ secrets.container-registry-username }}
-        password: ${{ secrets.container-registry-password }}
     # Empirically verified 2026-08-05/06 against GitHub-hosted runners
     # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
     # form accepts an expression in both name and deployment, and a
@@ -893,9 +892,6 @@ jobs:
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-      credentials:
-        username: ${{ secrets.container-registry-username }}
-        password: ${{ secrets.container-registry-password }}
     # Empirically verified 2026-08-05/06 against GitHub-hosted runners
     # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
     # form accepts an expression in both name and deployment, and a
@@ -1487,9 +1483,6 @@ jobs:
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-      credentials:
-        username: ${{ secrets.container-registry-username }}
-        password: ${{ secrets.container-registry-password }}
     # Empirically verified 2026-08-05/06 against GitHub-hosted runners
     # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
     # form accepts an expression in both name and deployment, and a
@@ -1683,9 +1676,6 @@ jobs:
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-      credentials:
-        username: ${{ secrets.container-registry-username }}
-        password: ${{ secrets.container-registry-password }}
     # Empirically verified 2026-08-05/06 against GitHub-hosted runners
     # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
     # form accepts an expression in both name and deployment, and a
@@ -2171,9 +2161,6 @@ jobs:
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-      credentials:
-        username: ${{ secrets.container-registry-username }}
-        password: ${{ secrets.container-registry-password }}
     # Empirically verified 2026-08-05/06 against GitHub-hosted runners
     # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
     # form accepts an expression in both name and deployment, and a
@@ -2526,9 +2513,6 @@ jobs:
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-      credentials:
-        username: ${{ secrets.container-registry-username }}
-        password: ${{ secrets.container-registry-password }}
     # Empirically verified 2026-08-05/06 against GitHub-hosted runners
     # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
     # form accepts an expression in both name and deployment, and a
@@ -2930,9 +2914,6 @@ jobs:
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-      credentials:
-        username: ${{ secrets.container-registry-username }}
-        password: ${{ secrets.container-registry-password }}
     # Empirically verified 2026-08-05/06 against GitHub-hosted runners
     # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
     # form accepts an expression in both name and deployment, and a
@@ -3090,9 +3071,6 @@ jobs:
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-      credentials:
-        username: ${{ secrets.container-registry-username }}
-        password: ${{ secrets.container-registry-password }}
     # Empirically verified 2026-08-05/06 against GitHub-hosted runners
     # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
     # form accepts an expression in both name and deployment, and a

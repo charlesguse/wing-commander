@@ -1756,10 +1756,6 @@ jobs:
           EXPECTED_RUNS_ON = (DOLLAR_OPEN + " startsWith(inputs.runner, '[') && "
                               "fromJSON(inputs.runner) || inputs.runner " + DOLLAR_CLOSE)
           EXPECTED_IMAGE = DOLLAR_OPEN + " inputs.container-image " + DOLLAR_CLOSE
-          EXPECTED_CREDENTIALS = {
-              "username": DOLLAR_OPEN + " secrets.container-registry-username " + DOLLAR_CLOSE,
-              "password": DOLLAR_OPEN + " secrets.container-registry-password " + DOLLAR_CLOSE,
-          }
 
           # (workflow filename, job name) -> reason. Constitution VII: a job
           # that must deviate carries a registered, machine-checked
@@ -1920,24 +1916,35 @@ jobs:
                                 f"selection diverges from the rest of its own stage.")
                           failures += 1
                           ok = False
-                      creds = container.get("credentials")
-                      if not isinstance(creds, dict):
+                      # The inverse of what this gate asserted when it
+                      # shipped, and the reason every job of every stage
+                      # failed to start once #224 let them run at all.
+                      # Measured against real runners (probe PR #226,
+                      # 2026-08-21), a job-level credentials: mapping:
+                      #   - is a template error when either value renders
+                      #     empty -- which is every run that names no image,
+                      #     and every run that names a public one;
+                      #   - cannot be made absent by an expression: the
+                      #     whole mapping may be supplied as an object
+                      #     (fromJSON), but null is rejected the same way an
+                      #     empty string is;
+                      #   - is always acted on when present, so a
+                      #     placeholder pair fails the docker login for a
+                      #     public image.
+                      # No single block serves both a public image and a
+                      # private one, so the key stays out. Private
+                      # registries need a pre-authenticated runner until a
+                      # verified mechanism exists (#227).
+                      if "credentials" in container:
                           print(f"::error file={f}::job {jname!r}'s container: block "
-                                f"has no credentials: mapping — a private image named "
-                                f"by this stage's caller could never be pulled by this "
-                                f"job (FR-009).")
+                                f"declares credentials:. Once that key is written it "
+                                f"can never be absent, and an empty value is a template "
+                                f"error that stops the job before its first step — "
+                                f"which is every run that names no image. Private "
+                                f"registries need a pre-authenticated runner instead "
+                                f"(#227, measured in PR #226).")
                           failures += 1
                           ok = False
-                      else:
-                          for sub, expected in EXPECTED_CREDENTIALS.items():
-                              got = norm_expr(creds.get(sub))
-                              if got != expected:
-                                  print(f"::error file={f}::job {jname!r} wires "
-                                        f"container.credentials.{sub} to "
-                                        f"{creds.get(sub)!r}; the contract requires "
-                                        f"{expected!r} verbatim.")
-                                  failures += 1
-                                  ok = False
                   bound += ok
 
           print(f"Gate 22: {stages} published stage(s), {bound} bound job(s); "
