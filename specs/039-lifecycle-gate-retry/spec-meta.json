@@ -3,6 +3,6 @@
   "spec_dir": "specs/039-lifecycle-gate-retry",
   "feature_num": "039",
   "stage": "implement",
-  "iteration": 2,
+  "iteration": 3,
   "spec_branch": "spec/039-lifecycle-gate-retry"
 }
