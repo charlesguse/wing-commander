@@ -221,3 +221,10 @@ User Story 1 stops the failure; User Story 2 fixes the misdirection that made th
 - T002 is the only task that edits `.github/actions/wing-commander-lifecycle-gate/action.yml` — every other task either builds or extends `verify-lifecycle-gate-retry.py`, wires it into `lint-workflows.yml` (T004), or validates the result. There is no task-level file collision to resolve.
 - Reverting T002 must fail T008's first mutation-check scenario, not only reduce test count — this is the FR-013/US4 bar the whole story exists to enforce.
 - This feature does not touch `.github/actions/wing-commander-lifecycle-gate`'s inputs/outputs, any of the six calling stage workflows, or the `implement` silent chain-stop tracked separately as #231 (FR-016, Out of Scope) — no task above should introduce such an edit.
+
+---
+
+## Phase 8: Convergence
+
+- [ ] T012 Add a transient-then-not-found scenario to `.github/scripts/verify-lifecycle-gate-retry.py`: stub `HTTP 502: 502 Bad Gateway` on call 1 and `Could not resolve to an issue with the number of 184.` on call 2. Assert `rc != 0`, `GH_CALL_COUNT == 2` (stops at the second read, does not retry a third time), and the reported failure is the not-found message (contains "may not exist"), not a budget-exhaustion or transient-warning message per US3/AC3 (missing)
+- [ ] T013 Add a rate-limited-403 scenario to `.github/scripts/verify-lifecycle-gate-retry.py`: stub `HTTP 403: API rate limit exceeded for installation ID 12345678.` (no scope/authentication wording) on every call. Assert the step retries rather than failing on the first attempt — `GH_CALL_COUNT == 3` and the reported failure is a budget-exhaustion message (recognised-transient or unclassified, not a credential-rejected message naming the token) per Edge Case "The API rejects the read for rate-limiting reasons" and research.md D2 (missing)
