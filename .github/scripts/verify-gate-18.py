@@ -207,7 +207,10 @@ def main():
                 io.open(full, "w", encoding="utf-8", newline="\n").write(body)
 
             env = dict(os.environ, PYTHONIOENCODING="utf-8")
-            proc = subprocess.run([sys.executable, gate_path], cwd=case_dir,
+            # --fixture-root: this case_dir IS the root being scanned, and
+            # some fixtures carry no .github/workflows/ by design.
+            proc = subprocess.run([sys.executable, gate_path, "--fixture-root"],
+                                  cwd=case_dir,
                                   capture_output=True, text=True, env=env,
                                   encoding="utf-8", errors="replace")
             out = (proc.stdout or "") + (proc.stderr or "")

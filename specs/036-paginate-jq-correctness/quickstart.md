@@ -35,9 +35,10 @@ directory rather than a list.
 > This was not true when this quickstart was written. The scan was then an
 > inline `python3 - <<'PYEOF'` heredoc, which the file-based registry could
 > not see, so `run-local-gates.py` reached only the self-test. #213 gave the
-> scan a file; step 3 below could not fail until it did. Expected: clean, once all three broken sites and
-the two accidentally-safe sites are rewritten (spec's Acceptance Scenario
-3 for User Story 3).
+> scan a file; step 3 below could not fail until it did.
+
+Expected: clean, once all three broken sites and the two accidentally-safe
+sites are rewritten (spec's Acceptance Scenario 3 for User Story 3).
 
 ## 3. Reintroduce a broken shape and watch the gate catch it
 

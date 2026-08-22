@@ -52,6 +52,7 @@ runs:
         set -uo pipefail
 
         max_attempts=3
+        read_timeout=4
         attempt=0
         state=""
         last_diagnostic=""
@@ -71,7 +72,7 @@ runs:
           attempt=$((attempt + 1))
           stderr_file="$(mktemp)"
 
-          if state="$(timeout 4 gh issue view "$ISSUE_NUMBER" --json state --jq .state 2>"$stderr_file")"; then
+          if state="$(timeout "$read_timeout" gh issue view "$ISSUE_NUMBER" --json state --jq .state 2>"$stderr_file")"; then
             diagnostic="$(cat "$stderr_file")"
             rm -f "$stderr_file"
             if [ -n "$state" ]; then
@@ -79,8 +80,27 @@ runs:
             fi
             [ -z "$diagnostic" ] && diagnostic="gh exited 0 but returned an empty state"
           else
+            rc=$?
             diagnostic="$(cat "$stderr_file")"
             rm -f "$stderr_file"
+            # A `timeout` expiry is the transient class FR-001 names first,
+            # and it is the one that says nothing for itself: `timeout` exits
+            # 124 having written NOTHING to stderr (the familiar "terminated"
+            # line comes from an interactive shell's job control, not from
+            # `timeout`). Left alone, the hung read reaches the classifier as
+            # "no diagnostic output", matches no transient pattern, and is
+            # reported as unclassifiable - the uninformative message this
+            # gate exists to remove, on the exact fault that motivated it.
+            # Name it from the exit code, which is the only witness there is.
+            # 137 covers a SIGKILL escalation should a --kill-after ever be
+            # added; today only 124 can occur.
+            if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+              if [ -n "$diagnostic" ]; then
+                diagnostic="timed out after ${read_timeout}s (exit $rc); last output before the timeout: $diagnostic"
+              else
+                diagnostic="timed out after ${read_timeout}s with no response (exit $rc)"
+              fi
+            fi
             [ -z "$diagnostic" ] && diagnostic="no diagnostic output"
           fi
 

@@ -147,6 +147,27 @@ def find_run_blocks(path):
         yield inner, first_line_no - 1
 
 
+LINT_WORKFLOW = ".github/workflows/lint-workflows.yml"
+
+# Without this, running from anywhere but the repository root makes the
+# workflow and action globs below match nothing while the `**/*.py` sweep
+# still matches whatever happens to be under the cwd, so the scan reports
+# "scanned every workflow, composite action, and checked-in script; 0
+# failure(s)" having scanned none of them - a pass it did not earn, and the
+# same shape as #213 in the very file #213 created. The globs are relative
+# by design (failure lines must be repo-relative for `::error file=` to
+# resolve), so the cwd is load-bearing and has to be asserted, not assumed.
+#
+# `--fixture-root` exists because verify-gate-18.py drives THIS scan against
+# synthetic trees, and two of its thirteen fixtures deliberately contain no
+# .github/workflows/ at all (a composite action alone; a bare scripts/*.sh)
+# - the reach-beyond-workflows coverage that is the point of those cases.
+# No content heuristic can tell such a tree from a wrong cwd, so the caller
+# that knows has to say so. Production never passes it: CI and
+# run-local-gates.py both invoke this bare, which is the guarded path.
+if "--fixture-root" not in sys.argv and not os.path.isfile(LINT_WORKFLOW):
+    sys.exit(f"::error::run this from the repository root; {LINT_WORKFLOW} not found.")
+
 failures = []
 for path in sorted(glob.glob(".github/workflows/*.yml")
                    + glob.glob(".github/workflows/*.yaml")

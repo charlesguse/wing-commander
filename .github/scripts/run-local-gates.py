@@ -16,8 +16,19 @@ ends up merged in a state where it cannot fail.
 It is also the single command for spec artifacts to point at. A quickstart
 that enumerates script paths goes stale the first time one is renamed; this
 one does not, because the gate list is DERIVED from what lint-workflows.yml
-actually invokes (wc_gate_registry.pr_time_gates). Adding a gate to CI adds
-it here, with nobody remembering to.
+actually invokes (wc_gate_registry.pr_time_invocations). Adding a gate to CI
+adds it here, with nobody remembering to.
+
+Arguments are derived too, and that part is load-bearing rather than tidy.
+This runner used to invoke every gate bare, which for most of them merely
+selected a default mode - but for `verify-versioning-refs.py` it changed the
+SUBJECT. CI runs that one `--self-test`; bare, it defaults to
+`--remote origin` and reaches across the network, so a maintainer running
+the sweep offline or in a restricted sandbox got a confident FAIL on a check
+the pull request never performs. A local suite that runs a different check
+than CI is not a rehearsal of CI, and the discrepancy hides well because
+both ends look green on a good day. A gate CI invokes twice with different
+flags now runs twice here too.
 
 WHAT IT DOES NOT RUN
 --------------------
@@ -32,12 +43,12 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from wc_gate_registry import pr_time_gates  # noqa: E402
+from wc_gate_registry import pr_time_invocations  # noqa: E402
 from wc_shell_harness import ensure_jq, resolve_bash, use_utf8_stdout  # noqa: E402
 
 
-def command_for(script, bash):
-    """How to invoke one gate.
+def command_for(script, bash, args=()):
+    """How to invoke one gate, with the arguments CI gives it.
 
     .py goes to THIS interpreter rather than to `python3`: on Windows the
     latter is usually the Microsoft Store stub, which exits 49 without
@@ -45,8 +56,8 @@ def command_for(script, bash):
     than about the code.
     """
     if script.endswith(".py"):
-        return [sys.executable, script]
-    return [bash, script]
+        return [sys.executable, script] + list(args)
+    return [bash, script] + list(args)
 
 
 def main(argv):
@@ -56,22 +67,30 @@ def main(argv):
     ensure_jq()
     bash = resolve_bash()
 
-    gates = pr_time_gates()
+    all_gates = pr_time_invocations()
+
+    def label_of(script, args):
+        base = os.path.basename(script)
+        return (base + " " + " ".join(args)).strip()
+
+    gates = all_gates
     if argv:
-        gates = [g for g in gates if any(a in g for a in argv)]
+        gates = [(sc, ar) for sc, ar in gates
+                 if any(t in label_of(sc, ar) or t in sc for t in argv)]
     if not gates:
         sys.exit(f"no gates matched {argv!r}. Available:\n  "
-                 + "\n  ".join(pr_time_gates()))
+                 + "\n  ".join(label_of(sc, ar)
+                                  for sc, ar in all_gates))
 
     print(f"Running {len(gates)} gate(s) with {sys.executable}\n"
           f"                and bash {bash}\n")
 
     results = []
-    for script in gates:
-        label = os.path.basename(script)
+    for script, args in gates:
+        label = label_of(script, args)
         print(f"--- {label} " + "-" * max(0, 60 - len(label)))
         start = time.time()
-        proc = subprocess.run(command_for(script, bash),
+        proc = subprocess.run(command_for(script, bash, args),
                               capture_output=True, text=True,
                               encoding="utf-8", errors="replace")
         elapsed = time.time() - start

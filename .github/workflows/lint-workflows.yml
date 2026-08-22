@@ -27,6 +27,17 @@ on:
       # collector fixture got in.
       - ".github/scripts/**"
       - ".specify/scripts/**"
+      # Two gates check a published contract document rather than code:
+      # Gate 27 holds the stage tool-list table in
+      # specs/010-reusable-pipeline/contracts/ to the shipped call sites,
+      # and verify-tool-args-contract.py does the same for
+      # specs/026-configurable-tool-lists/contracts/. Without this, a PR
+      # editing only the table - the change most likely to break either
+      # gate - never triggers this workflow, and the desync is caught by
+      # the daily `schedule:` up to a day later. Scoped to contracts/
+      # rather than all of specs/**, which would run the full lint suite on
+      # every spec, plan, and tasks PR the pipeline opens.
+      - "specs/**/contracts/**"
   # Gate 1 only — it reads how GitHub actually registered the workflows on
   # the default branch, which a PR's files cannot tell us.
   push:
@@ -2730,5 +2741,16 @@ jobs:
       # both questions at once, because an annotated tag brings its `^{}` peel
       # line and a lightweight tag does not. No token, so nothing for Gate 12
       # to resolve and no new API_CATEGORY_PERM entry to keep honest.
+      #
+      # `!cancelled()` and not a bare `run:`: Gate 1 above ends its retry
+      # loop with `exit 1`, and an unguarded step after it is skipped
+      # whenever Gate 1 goes red — so a registration race, or a `gh api`
+      # blip, would silently take the versioning check with it. The two
+      # gates share a job for cheapness, not because either depends on the
+      # other. Since the daily `schedule:` is the only thing bounding
+      # #218's exposure, letting an unrelated failure suppress this one
+      # would widen exactly the window it exists to close. `!cancelled()`
+      # rather than `always()` so a deliberate cancellation still stops it.
       - name: Gate 26 — every release tag is annotated and every vX is current
+        if: ${{ !cancelled() }}
         run: python3 .github/scripts/verify-versioning-refs.py --remote origin

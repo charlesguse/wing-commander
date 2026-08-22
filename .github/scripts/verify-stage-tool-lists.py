@@ -76,12 +76,21 @@ import glob
 import io
 import os
 import re
+import shutil
 import sys
+import tempfile
 
 import yaml
 
+_NL = chr(10)
+
 TABLE_DOC = "specs/010-reusable-pipeline/contracts/stage-interfaces.md"
-WORKFLOWS = ".github/workflows/*.yml"
+# Both extensions: GitHub accepts either, and every other gate in this
+# repository globs both. Globbing only *.yml would make a .yaml stage
+# invisible to Gate 27 - an undocumented tool grant passing the check
+# whose whole job is to catch it.
+WORKFLOW_DIR = ".github/workflows"
+WORKFLOW_GLOBS = ("*.yml", "*.yaml")
 COMPOSITE = "wing-commander-tool-args"
 BACKTICKED = re.compile(r"`([^`]*)`")
 SAME_AS = re.compile(r"^\s*same as\b", re.IGNORECASE)
@@ -92,13 +101,27 @@ def split_tools(text):
     return [t.strip() for t in text.split(",") if t.strip()]
 
 
-def call_sites(root="."):
-    """-> {step-label: (allowed, disallowed)} from the shipped workflows."""
+def collect_sites(root="."):
+    """-> ({step-label: (allowed, disallowed)}, [error, ...]).
+
+    `step-label` is the join key between a call site and its documented row,
+    so it has to be unique for the comparison to mean anything. A second
+    site reusing a label used to overwrite the first silently: the gate
+    would then compare the survivor against the row and report a clean
+    match, while the shadowed site's grants were never checked against
+    anything. A collision is therefore a failure, not a last-write-wins.
+    """
     sites = {}
-    pattern = os.path.join(root, WORKFLOWS).replace(os.sep, "/")
-    for path in sorted(glob.glob(pattern)):
+    origins = {}
+    errors = []
+    paths = []
+    for pat in WORKFLOW_GLOBS:
+        paths.extend(glob.glob(
+            os.path.join(root, WORKFLOW_DIR, pat).replace(os.sep, "/")))
+    for path in sorted(set(paths)):
         with io.open(path, encoding="utf-8") as fh:
             doc = yaml.safe_load(fh) or {}
+        rel = path.replace(os.sep, "/")
         for job in (doc.get("jobs") or {}).values():
             for step in (job or {}).get("steps") or []:
                 if COMPOSITE not in str((step or {}).get("uses", "")):
@@ -107,11 +130,26 @@ def call_sites(root="."):
                 label = with_.get("step-label")
                 if not label:
                     continue
-                sites[label] = (
+                entry = (
                     split_tools(str(with_.get("default-allowed-tools", ""))),
                     split_tools(str(with_.get("default-disallowed-tools", ""))),
                 )
-    return sites
+                if label in sites:
+                    errors.append(
+                        "step-label {0!r} is used by more than one `{1}` call "
+                        "site ({2} and {3}). Labels are the join key to {4}, "
+                        "so a duplicate leaves one site compared against "
+                        "nothing.".format(
+                            label, COMPOSITE, origins[label], rel, TABLE_DOC))
+                    continue
+                origins[label] = rel
+                sites[label] = entry
+    return sites, errors
+
+
+def call_sites(root="."):
+    """The sites alone, for callers that only need the mapping."""
+    return collect_sites(root)[0]
 
 
 def parse_table(text):
@@ -244,7 +282,8 @@ def compare(sites, table, relative=frozenset()):
 def run(root="."):
     with io.open(os.path.join(root, TABLE_DOC), encoding="utf-8") as fh:
         table, errors, relative = parse_table(fh.read())
-    return errors + compare(call_sites(root), table, relative)
+    sites, site_errors = collect_sites(root)
+    return site_errors + errors + compare(sites, table, relative)
 
 
 # --------------------------------------------------------------------------
@@ -297,6 +336,64 @@ BROKEN_REF_TABLE = """
 """
 
 
+_FIXTURE_STEP = """      - uses: ./.github/actions/{composite}
+        with:
+          step-label: "{label}"
+          default-allowed-tools: "Read,Glob"
+          default-disallowed-tools: "WebFetch"
+"""
+
+
+def _fixture_workflow(labels):
+    head = "name: fixture" + _NL + "on: [push]" + _NL + "jobs:" + _NL
+    head += "  j:" + _NL + "    runs-on: ubuntu-latest" + _NL + "    steps:" + _NL
+    return head + "".join(
+        _FIXTURE_STEP.format(composite=COMPOSITE, label=l) for l in labels)
+
+
+def _write_fixture(tmp, filename, labels):
+    wf_dir = os.path.join(tmp, WORKFLOW_DIR)
+    if not os.path.isdir(wf_dir):
+        os.makedirs(wf_dir)
+    with io.open(os.path.join(wf_dir, filename), "w",
+                 encoding="utf-8", newline=_NL) as fh:
+        fh.write(_fixture_workflow(labels))
+
+
+def _collector_fixtures():
+    """Drive the two collector branches that the real tree cannot reach.
+
+    Neither is reachable from this repository's own workflows: there is no
+    .yaml stage here, and no duplicated step-label - which is exactly why
+    both shipped unexercised. A branch a gate cannot reach in production is
+    a branch that has to be given a fixture, or it is not covered at all.
+    """
+    results = []
+
+    tmp = tempfile.mkdtemp()
+    try:
+        _write_fixture(tmp, "dup.yml", ["stage.agent", "stage.agent"])
+        _, errors = collect_sites(tmp)
+        hit = any("more than one" in e for e in errors)
+        results.append((
+            "a duplicated step-label is reported, not silently overwritten",
+            hit, errors))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    tmp = tempfile.mkdtemp()
+    try:
+        _write_fixture(tmp, "stage.yaml", ["yaml.agent"])
+        sites, errors = collect_sites(tmp)
+        results.append((
+            "a call site in a .yaml workflow is discovered",
+            "yaml.agent" in sites and not errors, sorted(sites)))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    return results
+
+
 def self_test(root="."):
     bad = 0
     sites = call_sites(root)
@@ -331,6 +428,13 @@ def self_test(root="."):
                   "expected {1!r}, got: {2}".format(name, expect, joined))
         else:
             print("[ok] mutation caught: {0}".format(name))
+
+    for name, ok, detail in _collector_fixtures():
+        if ok:
+            print("[ok] {0}".format(name))
+        else:
+            bad += 1
+            print("[FAIL] {0}; got: {1}".format(name, detail))
 
     _, ref_errors, _ = parse_table(BROKEN_REF_TABLE)
     if any("names a row that does not exist" in e for e in ref_errors):

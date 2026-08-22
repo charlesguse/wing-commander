@@ -35,6 +35,8 @@ import tempfile
 
 import yaml
 
+_N = chr(10)
+
 LINT_WORKFLOW = ".github/workflows/lint-workflows.yml"
 STEP_PREFIX = "Gate 12"
 HEREDOC_OPEN = "python3 - <<'PYEOF'"
@@ -121,6 +123,51 @@ def mkcase(job_perms, job_env, env_lines, run_lines, docs=DOCS_OK):
                                       job_perms=job_perms, job_env=job_env),
         "docs/setup.md": docs,
     }
+
+
+# --- category C fixtures (#215) -------------------------------------------
+# Category C reads tools passed at a REUSABLE-WORKFLOW call site, where they
+# arrive at the called stage as an unexpanded `inputs.extra-allowed-tools`
+# that category B cannot see through. This repository has exactly one such
+# call site with a literal list, and its grants are `Bash(python3 ...)` /
+# `Bash(bash ...)`, which TOOL_GH_RE matches nothing in - so `cs_grants` is
+# empty and neither the cross-check nor its "found no agent step" failure
+# branch runs against the real tree. The branch WAS proven by hand when it
+# landed (a temporary `Bash(gh run list:*)` grant, since reverted); these
+# fixtures are that experiment made permanent, because a proof that is not
+# checked in is not coverage.
+
+def caller_wf(grant, called="./.github/workflows/stage.yml",
+              key="extra-allowed-tools"):
+    return ("name: caller" + _N +
+            "on:" + _N + "  workflow_dispatch: {}" + _N +
+            "jobs:" + _N + "  call:" + _N +
+            "    uses: " + called + _N +
+            "    with:" + _N +
+            "      " + key + ': "' + grant + '"' + _N)
+
+
+def stage_wf(agent_env=APP_ENV, with_agent=True):
+    head = ("name: stage" + _N +
+            "on:" + _N + "  workflow_call: {}" + _N +
+            "jobs:" + _N + "  work:" + _N +
+            "    runs-on: ubuntu-latest" + _N +
+            "    steps:" + _N)
+    if not with_agent:
+        return head + "      - name: not an agent" + _N + "        run: echo hi" + _N
+    return head + ("      - name: agent" + _N +
+                   "        uses: anthropics/claude-code-action@v1" + _N +
+                   "        env:" + _N +
+                   "          " + agent_env + _N)
+
+
+def mkcase_c(grant, with_agent=True, called="./.github/workflows/stage.yml"):
+    files = {
+        ".github/workflows/caller.yml": caller_wf(grant, called=called),
+        ".github/workflows/stage.yml": stage_wf(with_agent=with_agent),
+        "docs/setup.md": DOCS_OK,
+    }
+    return files
 
 
 CASES = [
@@ -270,6 +317,34 @@ CASES = [
      mkcase("", "", [APP_ENV], ['gh issue view "$N"'],
             docs=DOCS_ISSUES_READONLY),
      False, ()),
+
+    # --- category C (#215) ------------------------------------------------
+    ("category C: a call site granting `gh run list` to a stage whose agent "
+     "runs on the App token fails - the App has no Actions permission",
+     mkcase_c("Bash(gh run list:*)"),
+     True, ("run list", "App token", "actions")),
+
+    ("category C: the second call-site key, allowed-tools-override, is read "
+     "too - not just extra-allowed-tools",
+     {".github/workflows/caller.yml":
+         caller_wf("Bash(gh run list:*)", key="allowed-tools-override"),
+      ".github/workflows/stage.yml": stage_wf(),
+      "docs/setup.md": DOCS_OK},
+     True, ("run list", "App token", "actions")),
+
+    ("category C: a grant the App token does cover passes",
+     mkcase_c("Bash(gh issue comment:*)"),
+     False, ()),
+
+    ("category C: a call site granting tools to a stage with no agent step "
+     "fails rather than passing quietly",
+     mkcase_c("Bash(gh run list:*)", with_agent=False),
+     True, ("no agent step",)),
+
+    ("category C: a call site naming a workflow that does not exist fails",
+     mkcase_c("Bash(gh run list:*)",
+              called="./.github/workflows/gone.yml"),
+     True, ("no agent step",)),
 ]
 
 
