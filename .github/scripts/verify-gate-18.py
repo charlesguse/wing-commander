@@ -31,9 +31,6 @@ import tempfile
 
 LINT_WORKFLOW = ".github/workflows/lint-workflows.yml"
 SCAN_SCRIPT = ".github/scripts/verify-gate-18-scan.py"
-STEP_PREFIX = "Gate 18"
-HEREDOC_OPEN = "python3 - <<'PYEOF'"
-HEREDOC_CLOSE = "PYEOF"
 
 
 def extract_gate(path=SCAN_SCRIPT):
