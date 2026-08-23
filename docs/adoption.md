@@ -20,7 +20,9 @@ path. When in doubt, read them — they are the living example.
 
 1. **Your own spec-kit artifacts.** Run
    [`specify init`](https://github.com/github/spec-kit) in your repository
-   (pin **spec-kit v0.12.4**, the version this pipeline supports; use
+   (pin **the spec-kit version this pipeline supports** — read
+   `SPECKIT_SUPPORTED_VERSION` from `.github/actions/wing-commander-preflight/action.yml`
+   at the tag you adopt; use
    `--integration claude --script sh`), then write your constitution with
    `/speckit-constitution`. The pipeline reads `.specify/`,
    `.claude/skills/speckit-*`, and `specs/` **only from your repository's
@@ -936,8 +938,8 @@ Common to every stage below:
 - **Preflight** — every stage fails fast, before any agent step, on: no
   credential, missing spec-kit artifacts, or missing stage preconditions,
   with a message naming the missing piece and the step that provides it. A
-  spec-kit version different from the supported pin (v0.12.4) produces a
-  warning, never a failure.
+  spec-kit version different from the supported pin (`SPECKIT_SUPPORTED_VERSION`
+  in the preflight action) produces a warning, never a failure.
 - **Side effects land in your repository only** — branches, commits, PRs,
   labels, comments. The branch *prefixes* — each configurable via its
   repository variable and defaulting to today's literal:

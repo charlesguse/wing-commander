@@ -165,9 +165,11 @@ gh label create model:opus      --color D93F0B --description "Use claude-opus-5 
 
 ## Notes
 
-- The pipeline pins **spec-kit v0.12.4** (see `.specify/init-options.json`). To
-  upgrade, re-run `specify init --here --force --integration claude --script sh`
-  with the newer version and re-verify `.specify/scripts` behavior before merging.
+- The pipeline pins **spec-kit** at the `speckit_version` in `.specify/init-options.json`
+  (mirrored as `SPECKIT_SUPPORTED_VERSION` in the preflight action). The
+  auto-update-spec-kit stage proposes upgrades as PRs; to do one by hand, re-run
+  `specify init --here --force --integration claude --script sh` with the newer
+  version, move both pins, and re-verify `.specify/scripts` behavior before merging.
 - Model usage draws on your Claude subscription limits. Intake/clarify run on
   `claude-sonnet-5` with bounded `--max-turns`; the heavy stages are where
   Opus opt-in matters.

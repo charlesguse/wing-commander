@@ -91,8 +91,8 @@ constitution governs this repository only — yours governs yours.
 
 To adopt it today:
 
-1. Run `specify init` in your repo (pin the same spec-kit version, currently
-   v0.12.4) so it has its own `.specify/` and `.claude/skills/speckit-*` —
+1. Run `specify init` in your repo (pin the same spec-kit version this repo
+   does — `speckit_version` in `.specify/init-options.json`) so it has its own `.specify/` and `.claude/skills/speckit-*` —
    then write your constitution with `/speckit-constitution`.
 2. Add thin wrapper workflows that call the published stage workflows
    (`intake.yml` … `rebase.yml`) by reference, version-pinned — copy-paste
@@ -160,7 +160,7 @@ Full stage-by-stage design: [docs/architecture.md](docs/architecture.md).
 .github/actions/wing-commander-context/   shared App-token + spec-identity resolution
 .github/actions/wing-commander-preflight/ credential + prerequisite fail-fast checks
 .github/actions/wing-commander-metrics-summary/  per-run agent metrics rendering
-.claude/skills/speckit-*/ spec-kit skills (installed by `specify init`, pinned v0.12.4)
+.claude/skills/speckit-*/ spec-kit skills (installed by `specify init`; pin in .specify/init-options.json)
 .specify/                 spec-kit scripts, templates, memory/constitution.md
 specs/NNN-slug/           one directory per feature: spec.md, plan.md, tasks.md,
                           spec-meta.json (lifecycle state), checklists/

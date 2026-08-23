@@ -1,4 +1,16 @@
 <!--
+Sync Impact Report — 2026-08-23
+Version change: 1.5.0 → 1.5.1 (PATCH: clarification — the Operational Constraints spec-kit pin no longer restates the version as a literal; it names the machine-readable source the auto-update stage maintains)
+Modified principles: none
+Modified sections: Operational Constraints — the spec-kit pin bullet
+Added sections: none
+Removed sections: none
+Templates requiring updates:
+  ✅ .specify/templates/*.md — no change needed (no version references)
+  ✅ README.md, CONTRIBUTING.md, docs/adoption.md, docs/setup.md — updated in the same PR: every "pinned v0.12.4" literal now points at the same source
+Notes: PR #203 (merged 2026-08-23) moved the pin 0.12.4 → 0.16.4 in init-options.json and the preflight action, as the auto-update stage is specified to; it left seven prose mentions behind, this line among them, because the stage was never asked to maintain prose. Rather than teach it to, the prose stops carrying a number: a literal that nothing maintains is a stale literal waiting to happen.
+-->
+<!--
 Sync Impact Report — 2026-08-22
 Version change: 1.4.1 → 1.5.0 (MINOR: new principle added — VIII. A Green Check Means What It Says, requiring that a gate be able to fail its own subject: reachable through the gate registry, same subject and arguments locally as in CI, triggered by the tree or document it checks, loud rather than vacuous when it cannot reach that subject, not suppressible by an unrelated gate sharing its job, and every shipped failure branch covered by a checked-in fixture)
 Modified principles: none
@@ -119,7 +131,7 @@ A check that cannot fail its own subject is a liability, not coverage: it reads 
 - Branch conventions: the pipeline's default branch prefixes are `spec-draft/<NNN-slug>` (draft spec PRs to main), `spec/<NNN-slug>` (long-lived per-spec integration branch), and `plan/<NNN-slug>`, `tasks/<NNN-slug>`, `impl/<NNN-slug>-iterN` (stage work branches). Each prefix is consumer-configurable via a repository variable, defaulting to the literal shown (see docs/setup.md).
 - The implement ⟲ converge loop is capped (default 5 iterations); the final converge report is always posted to the lifecycle issue.
 - Concurrent specs are supported: stages of one spec serialize via a per-spec concurrency group; different specs run in parallel.
-- Spec-kit is pinned (currently v0.12.4); upgrades re-verify `.specify/scripts` behavior before adoption.
+- Spec-kit is pinned. The pinned version is the `speckit_version` in `.specify/init-options.json`, mirrored as `SPECKIT_SUPPORTED_VERSION` in `.github/actions/wing-commander-preflight/action.yml`; the auto-update stage moves both, and no prose in this repository restates the number. Upgrades re-verify `.specify/scripts` behavior before adoption.
 
 ## Development Workflow
 
@@ -129,4 +141,4 @@ Stages and their gates: intake (`/speckit-specify`, human gate = maintainer labe
 
 This constitution supersedes ad-hoc practice in this repository. Every spec, plan, and implementation PR is checked against it during review; violations must be fixed or the constitution amended first. Amendments arrive as ordinary PRs that modify this file, state the motivation, and bump the version below (semver: breaking principle changes = MAJOR, new principles/sections = MINOR, clarifications = PATCH).
 
-**Version**: 1.5.0 | **Ratified**: 2026-07-04 | **Last Amended**: 2026-08-22
+**Version**: 1.5.1 | **Ratified**: 2026-07-04 | **Last Amended**: 2026-08-23

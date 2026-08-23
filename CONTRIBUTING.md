@@ -73,7 +73,7 @@ and keeps reporting success, which has already happened here once.
 | `.github/scripts/wc_*.py` | Shared support modules for those checks — stage derivation, gate registry, and the plumbing for executing shell extracted from a workflow. |
 | `docs/` | Setup, adoption, and architecture guides. |
 | `specs/NNN-slug/` | The historical record: every feature's spec, plan, and tasks. |
-| `.specify/`, `.claude/skills/speckit-*/` | Vendored [GitHub spec-kit](https://github.com/github/spec-kit) artifacts (pinned v0.12.4) — not this project's code; upgraded via `specify init`, not edited by hand. |
+| `.specify/`, `.claude/skills/speckit-*/` | Vendored [GitHub spec-kit](https://github.com/github/spec-kit) artifacts (pinned; the version is `speckit_version` in `.specify/init-options.json`) — not this project's code; upgraded via `specify init`, not edited by hand. |
 
 The project [constitution](.specify/memory/constitution.md) governs design
 decisions (model tiering, GitHub-native surfaces, security posture,
