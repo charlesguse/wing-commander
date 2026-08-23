@@ -72,6 +72,19 @@ diagnose (which then reports "passed inspection," FR-004), rather than
 skipping it, so the "no problem" path is exercised through the same code
 path as every other outcome, not a special early exit.
 
+**Attribution invariant** (FR-026, spec 024 FR-004/FR-005): every
+collector applies the same check before emitting a signal —
+
+| Field | Rule |
+|---|---|
+| Attribution: executed | The inspected run's `conclusion` MUST NOT be `skipped`/`cancelled` at the point the collector's evidence source is read. |
+| Attribution: owned | The evidence the collector reads MUST belong to a step/job/artifact the inspected run itself produced (already inherent for artifact-id-scoped and per-job-scoped reads; explicit for branch-drift's head-branch-ownership check). |
+
+A collector whose inspected run fails either check emits **no signal**
+for that condition — not a signal marked "unattributable," an absent
+entry. Before spec 024, only 2 of the 5 collectors (`collect-branch-drift`,
+`collect-spec-meta`) enforced this; after spec 024, all 5 do.
+
 ## Finding (diagnose step's structured output, one array entry per detected problem)
 
 | Field | Type | Notes |
@@ -132,9 +145,9 @@ gh search issues "wing-commander-watchdog: fingerprint=<sha256> in:body" --state
 
 ## Lifecycle issue (GitHub issue, one per spec, pre-existing — unchanged shape from stages 1–8)
 
-Every watchdog run's report lands here (FR-022), regardless of rung —
-this is *always written to*, unlike the pipeline-defect issue (created
-only for rung 2/3). For self-inspection (US4), "the lifecycle issue"
+Every watchdog run's report lands here (FR-022) — this is *always
+written to*, unlike the pipeline-defect issue (created or commented on
+only when a finding is filed). For self-inspection (US4), "the lifecycle issue"
 resolves to whichever spec the *inspected* watchdog run was itself
 invoked to check — no separate "watchdog's own issue" concept, so no
 special case is needed for FR-021.
@@ -146,6 +159,24 @@ special case is needed for FR-021.
 | One block per Finding: description + evidence + action taken + dedup outcome | One or more findings (FR-002, FR-022) |
 | "Self-dispatch cap reached — reporting only, no write performed." | Self-inspection past the configured cap (FR-018) |
 | "The watchdog's writes are paused (`WING_COMMANDER_WATCHDOG_PAUSED`) — reporting only." | FR-019 |
+
+## Precision criterion (SC-008, new entity — spec 024 FR-001)
+
+Not a runtime entity — a manual, maintainer-computed measure against the
+filed-finding record. No component of the watchdog computes or reports
+this itself (Constitution III forbids a new dashboard for it).
+
+| Field | Value |
+|---|---|
+| Numerator | Count of distinct pipeline-defect issues, among the most recent 20, carrying label `disposition:confirmed`. |
+| Denominator | Count of distinct pipeline-defect issues among the most recent 20 (post-dedup — one issue per fingerprint, regardless of how many runs recurred against it). |
+| Target | ≥70%. |
+| Not-yet-applicable state | Fewer than 10 distinct filed findings exist (including zero) — reported as "not applicable," never as a pass or a divide-by-zero failure. |
+| Computation | Manual: `gh issue list --label pipeline-defect --state all --limit 20 --json number,labels,createdAt`, sorted most-recent-first, counting `disposition:confirmed` vs. `disposition:false-positive` labels among the result. |
+
+The two disposition labels (`disposition:confirmed`, `disposition:false-positive`)
+are maintainer-applied, not watchdog-written — only a human reviewing a
+filed finding can know whether it was genuine.
 
 ## Triage decision (computed per Finding, not stored beyond the report above)
 

@@ -555,8 +555,22 @@ jobs:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ACTIONS_TOKEN: ${{ github.token }}
           RUN_ID: ${{ inputs.run-id }}
+          RUN_CONCLUSION: ${{ steps.run-meta.outputs.conclusion }}
         run: |
           set -uo pipefail
+          # Attribution invariant (spec 024 FR-004/FR-005): a run that
+          # skipped or was cancelled never executed the step that would
+          # have produced a denial artifact, so no denied-tool signal is
+          # attributable to it. Same check already proven for
+          # collect-branch-drift/collect-spec-meta (PRs #135/#137).
+          # Ownership is already implicit — the artifact below is
+          # downloaded by this run's own id.
+          case "$RUN_CONCLUSION" in
+            skipped|cancelled)
+              echo "execution-output: run conclusion is '$RUN_CONCLUSION' — nothing executed, so no denial artifact is attributable. Skipping." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+          esac
           dl_dir="$RUNNER_TEMP/execution-output"
           mkdir -p "$dl_dir"
           # Gate 12: artifact download needs Actions:read, which the App
@@ -902,6 +916,12 @@ jobs:
           for job_id in $(printf '%s' "$jobs_json" | jq -r '.[]?.id // empty'); do
             job_name="$(printf '%s' "$jobs_json" | jq -r --arg id "$job_id" '.[] | select((.id|tostring) == $id) | .name')"
             job_conclusion="$(printf '%s' "$jobs_json" | jq -r --arg id "$job_id" '.[] | select((.id|tostring) == $id) | .conclusion // "in_progress"')"
+            # Attribution invariant (spec 024 FR-004/FR-005), applied
+            # per-job: a job that itself never ran owes no step-summary
+            # sentinel, even if sibling jobs in the same run did.
+            case "$job_conclusion" in
+              skipped|cancelled) continue ;;
+            esac
             log_rc=0
             log="$(GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$job_id/logs" 2>/dev/null)" || log_rc=$?
             [ "$log_rc" = "0" ] || so_failed=1
@@ -997,6 +1017,13 @@ jobs:
           [ "$jobs_rc" = "0" ] || an_failed=1
           entries='[]'
           for job_id in $(printf '%s' "$jobs_json" | jq -r '.[]?.id // empty'); do
+            # Attribution invariant (spec 024 FR-004/FR-005), applied
+            # per-job: a job that itself never ran owes no annotation
+            # signal, even if sibling jobs in the same run did.
+            job_conclusion="$(printf '%s' "$jobs_json" | jq -r --arg id "$job_id" '.[] | select((.id|tostring) == $id) | .conclusion // "in_progress"')"
+            case "$job_conclusion" in
+              skipped|cancelled) continue ;;
+            esac
             anns_rc=0
             GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/check-runs/$job_id/annotations" --paginate --jq '.[] | select(.annotation_level=="warning" or .annotation_level=="failure") | {source:"annotations","class-hint":null,facts:{level:.annotation_level,message:.message}}' 2>/dev/null | jq -s '.' > "$RUNNER_TEMP/ca-anns.json" || anns_rc="${PIPESTATUS[0]}"
             [ "$anns_rc" = "0" ] || an_failed=1

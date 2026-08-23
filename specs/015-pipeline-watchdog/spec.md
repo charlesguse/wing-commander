@@ -123,7 +123,7 @@ including the loop-prevention cap so self-inspection cannot run away.
 - **FR-001**: The watchdog MUST inspect pipeline runs after they finish, for both succeeded and failed outcomes.
 - **FR-002**: The watchdog MUST derive findings from the run's own evidence and MUST cite, in every finding, the specific evidence it relied on (the run identifier and the offending turns/tools/branch state), sufficient for a human to confirm the diagnosis without opening raw artifacts.
 - **FR-003**: The watchdog MUST detect, at minimum for v1, the two problem classes from the motivating incident: (a) repeated invocation of a non-allowlisted read-only tool that is auto-denied, and (b) an interrupted run that left no progress (no commits) on its work branch.
-- **FR-004**: The watchdog MUST NOT produce a finding when a run exhibits no detectable problem; it MUST instead record that the run passed inspection.
+- **FR-004**: The watchdog MUST NOT produce a finding when a run exhibits no detectable problem; it MUST instead record that the run passed inspection. This false-positive-avoidance duty rests on the collectors that produce signals — the components able to observe the world — and MUST NOT rest solely on the `diagnose` step, which consumes pre-computed signals and cannot determine that one of them is wrong (FR-002 of spec 024).
 - **FR-005**: When a run's evidence is missing, expired, or unreadable, the watchdog MUST record that it could not inspect the run and MUST NOT fabricate a finding.
 - **FR-006**: The set of detection sources in scope for v1 is **all** of the following: step summaries, workflow annotations, `claude-execution-output-*` artifacts (turn/tool-denial patterns), `spec-meta.json` state vs. expected stage, and branch-vs-origin drift. The watchdog MUST be able to draw findings from any of these sources; broad coverage is accepted with the understanding that it carries a larger v1 surface and more false-positive tuning.
 
@@ -161,6 +161,10 @@ including the loop-prevention cap so self-inspection cannot run away.
 - **FR-024**: The watchdog MUST complement, not duplicate, existing stalled-run and cleanup automation; when such automation has already reported or handled a condition, the watchdog MUST NOT double-report it.
 - **FR-025**: The watchdog is invoked in v1 by two triggers: `workflow_run` on each pipeline stage's completion, plus on-demand manual dispatch (a maintainer-initiated re-run lever). A scheduled sweep for catch-up on missed runs is explicitly deferred beyond v1.
 
+#### Precision & determinism hardening (spec 024)
+
+- **FR-026**: A collector MUST emit a signal about a run only when the inspected run both executed (its `conclusion` is not `skipped`/`cancelled`) and owned the artifact whose condition the signal describes. This attribution invariant applies to all five collectors named in FR-006, stated once here rather than per-collector.
+
 ### Key Entities *(include if feature involves data)*
 
 - **Run under inspection**: A completed pipeline run (any stage, including the watchdog's own), identified by its run reference and associated with a lifecycle issue and, where applicable, a spec directory/stage.
@@ -172,13 +176,14 @@ including the loop-prevention cap so self-inspection cannot run away.
 
 ### Measurable Outcomes
 
-- **SC-001**: For the two v1 problem classes, the watchdog detects and reports the problem on 100% of runs that exhibit it in test scenarios, with a finding a maintainer can confirm without opening raw artifacts.
+- **SC-001**: For the two v1 problem classes, the watchdog detects and reports the problem on 100% of runs that exhibit it, verified against a labeled corpus of runs known to exhibit each problem class, with a finding a maintainer can confirm without opening raw artifacts.
 - **SC-002**: The watchdog never files a duplicate: given the same finding twice, exactly one open item exists afterward, and a recurrence against a closed item reopens rather than re-creates it, in 100% of dedup test scenarios.
 - **SC-003**: For the motivating incident class, the watchdog produces the same remediation a human produced manually (an allowlist grant and a commit-then-push ordering fix) as a proposed PR, without human diagnosis.
 - **SC-004**: No autonomous write occurs outside the configured allowlist and path restrictions in any test scenario, and every autonomous action the watchdog takes is recorded on a lifecycle issue.
 - **SC-005**: The watchdog cannot loop: across any test scenario, the number of watchdog runs it triggers on itself never exceeds the configured self-dispatch cap.
 - **SC-006**: When existing stalled/cleanup automation has already handled a condition, the watchdog adds zero duplicate reports for that condition.
-- **SC-007**: Median time from a run finishing to its findings appearing on the lifecycle issue is under 10 minutes, replacing the manual post-mortem for that run.
+- **SC-007**: Median time from a run finishing to its findings appearing on the lifecycle issue is under 10 minutes, replacing the manual post-mortem for that run — measured as `gh run view --json updatedAt` (the inspected run's completion) against the `createdAt` of the watchdog's own report comment on the lifecycle issue.
+- **SC-008**: Precision — among the most recent 20 distinct (post-dedup) pipeline-defect issues the watchdog has filed, at least 70% carry a maintainer-applied `disposition:confirmed` label rather than `disposition:false-positive`. Not evaluated until at least 10 distinct findings exist; below that threshold the criterion is reported "not applicable," never as a pass or a divide-by-zero failure.
 
 ## Assumptions
 

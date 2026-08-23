@@ -57,7 +57,12 @@ proceed in parallel:
 3. Five deterministic collector steps (one per FR-006 source, research.md
    table), each tolerating "this source produced nothing for this run"
    as success, never as a failure — a source being empty is data, not an
-   error.
+   error. All five MUST check, before emitting any signal, the
+   attribution invariant (FR-026): (a) the inspected run's relevant
+   scope (the whole run, or the specific job/artifact the collector
+   reads) did not conclude `skipped`/`cancelled`, and (b) the evidence
+   read belongs to something the inspected run itself produced. A
+   collector whose check fails emits no signal for that condition.
 4. Emit `signals.json` as a job output / uploaded artifact for `diagnose`
    to consume.
 

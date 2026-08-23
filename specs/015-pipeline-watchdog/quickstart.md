@@ -136,6 +136,37 @@ never silently repointed at an unrelated scenario.
    — confirm no unexpected write (comment, label, PR) occurred anywhere
    outside the normal finding-report flow.
 
+## Scenario 15 — Precision criterion is computable and reports not-applicable before 10 findings exist (US1, SC-008; spec 024)
+
+1. On a fresh checkout (or a scratch repo with fewer than 10 historical
+   pipeline-defect issues), run: `gh issue list --label pipeline-defect
+   --state all --json number,labels,createdAt`.
+2. Expected: fewer than 10 results ⇒ per the Precision criterion entity
+   (data-model.md), a maintainer computing SC-008 by hand reports "not
+   applicable," not a 0% or 100% figure.
+3. Label at least 10 distinct pipeline-defect issues
+   `disposition:confirmed` or `disposition:false-positive`.
+4. Re-run the query, restricted to the most recent 20:
+   `gh issue list --label pipeline-defect --state all --limit 20 --json
+   number,labels`. Expected: numerator = count with
+   `disposition:confirmed`, denominator = 20 (or however many exist
+   between 10 and 20), and the fraction is directly computable without
+   ambiguity.
+
+## Scenario 16 — Attribution invariant suppresses a signal from a collector that lacked the guard before (US2, FR-026; spec 024)
+
+1. Trigger a run that is `skipped` or `cancelled` before reaching the
+   step that would produce a denied-tool pattern, a step summary
+   sentinel, or an annotation (pick whichever of the three
+   newly-guarded collectors is easiest to reproduce in a scratch run).
+2. Wait for the watchdog to inspect that run.
+3. Expected: no finding of that class is reported — `gh issue view
+   <lifecycle-issue> --json comments` shows either "passed inspection" or
+   a report that omits the condition entirely, never a finding
+   attributing a condition to a run that never reached it. Confirm via
+   `signals.json` (job logs) that the collector emitted no entry for the
+   skipped/cancelled run.
+
 See `contracts/watchdog-workflow.md` for the exact trigger/job-gate
 contracts and `data-model.md` for the full Finding, fingerprint, and
 triage-decision shapes each scenario above exercises.
