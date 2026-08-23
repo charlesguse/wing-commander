@@ -54,65 +54,33 @@ files.
 
 ---
 
-### User Story 2 - Triage a finding to the right rung, without duplicating (Priority: P2)
+### User Story 2 - File or reopen an issue for a finding, without duplicating (Priority: P2)
 
-As a maintainer, I want the watchdog to route each finding to the lightest
-sufficient response — a PR when a fix is bigger than a one-liner, a new/reopened
-issue when the problem is large or has no home — and to never file the same
-finding twice, so that my backlog reflects real, distinct problems and recurrences
-are visible as recurrences rather than as noise.
+As a maintainer, I want the watchdog to file a pipeline-defect issue for a new
+finding, or comment on / reopen an existing one when the finding recurs, and to
+never file the same finding twice, so that my backlog reflects real, distinct
+problems and recurrences are visible as recurrences rather than as noise.
 
-**Why this priority**: Once findings exist (US1), routing and deduplication are
-what make them actionable rather than overwhelming. This layer files PRs and
-issues but does not autonomously mutate the repository's own source on its own
-judgement, so it can ship before the highest-trust rung.
+**Why this priority**: Once findings exist (US1), filing and deduplication are
+what make them actionable rather than overwhelming. This layer never mutates
+the repository's own source — it only manages the pipeline-defect issue
+tracker — so it can ship as the watchdog's complete remediation surface.
 
-**Independent Test**: Feed the watchdog a finding of "medium" size that is tied to
-an existing open pipeline issue and confirm it opens a PR referencing that issue.
-Then feed it the *same* finding again and confirm it comments on the existing item
-rather than opening a second one; feed it a matching **closed** issue and confirm
-it reopens that issue with the fresh evidence.
-
-**Acceptance Scenarios**:
-
-1. **Given** a finding bigger than a one-liner that is tied to an existing pipeline issue, **When** the watchdog triages it, **Then** it opens a PR with the fix and references that issue (rung 2).
-2. **Given** a finding that is large, or that has no existing issue to attach to, **When** the watchdog triages it, **Then** it opens a new issue (or a spec proposal) carrying the evidence (rung 3).
-3. **Given** a finding whose fingerprint matches an already-open issue, **When** the watchdog triages it, **Then** it adds the new evidence as a comment on that issue and files nothing new.
-4. **Given** a finding whose fingerprint matches a **closed** issue, **When** the watchdog triages it, **Then** it reopens that issue and attaches the fresh evidence, because a recurrence is signal.
-5. **Given** a finding whose fingerprint matches nothing open or closed, **When** the watchdog triages it, **Then** it creates exactly one new item.
-
----
-
-### User Story 3 - Fix a truly minor problem on sight (Priority: P3)
-
-As a maintainer, I want the watchdog to fix genuinely trivial, mechanical problems
-autonomously — the kind not worth a human's attention — within tight guardrails I
-control, so that the pipeline self-heals its smallest defects without paging me,
-while I retain the ability to inspect, veto, or pause it.
-
-**Why this priority**: Autonomous writes are the highest-trust, highest-risk rung.
-They deliver the "fix it on sight" promise but must be earned on top of reliable
-detection and triage, and are the most likely to be deferred, narrowed, or gated
-behind an allowlist. Sequencing it last keeps the earlier value shippable
-independently.
-
-**Independent Test**: Configure the minor-fix allowlist to permit a specific class
-of change (e.g. adding a named read-only tool to an allowlist). Feed the watchdog a
-finding of that exact class and confirm it produces the fix through the least-
-ceremony path allowed, records what it did on the lifecycle issue, and stays within
-the configured path and scope restrictions. Feed it a finding just outside the
-"minor" boundary and confirm it declines to auto-fix and falls back to rung 2.
+**Independent Test**: Feed the watchdog a finding with no existing pipeline
+issue and confirm it opens a new one carrying the evidence. Then feed it the
+*same* finding again and confirm it comments on the existing item rather than
+opening a second one; feed it a matching **closed** issue and confirm it
+reopens that issue with the fresh evidence.
 
 **Acceptance Scenarios**:
 
-1. **Given** a finding that meets the configured "minor" bar and falls within the allowed paths, **When** the watchdog triages it, **Then** it applies the fix through the lightest permitted path and records the action on the lifecycle issue.
-2. **Given** a finding that is mechanical but falls **outside** the "minor" bar or the allowed paths, **When** the watchdog triages it, **Then** it does **not** auto-fix and instead falls back to rung 2 (open a PR).
-3. **Given** a maintainer has paused/vetoed the watchdog's autonomous fixes, **When** any finding is triaged, **Then** the watchdog performs no autonomous write and instead reports the finding for human action.
-4. **Given** the watchdog has already dispatched itself up to its self-dispatch cap, **When** another watchdog action would trigger a further run, **Then** it stops instead of looping.
+1. **Given** a finding whose fingerprint matches nothing open or closed, **When** the watchdog triages it, **Then** it creates exactly one new pipeline-defect issue carrying the evidence.
+2. **Given** a finding whose fingerprint matches an already-open issue, **When** the watchdog triages it, **Then** it adds the new evidence as a comment on that issue and files nothing new.
+3. **Given** a finding whose fingerprint matches a **closed** issue, **When** the watchdog triages it, **Then** it reopens that issue and attaches the fresh evidence, because a recurrence is signal.
 
 ---
 
-### User Story 4 - Hold itself to the same ladder (Priority: P2)
+### User Story 4 - Hold itself to the same rules (Priority: P2)
 
 As a maintainer, I want the watchdog to inspect its **own** runs with the same
 detection, triage, and dedup rules as any other stage, so that a misbehaving
@@ -159,13 +127,13 @@ including the loop-prevention cap so self-inspection cannot run away.
 - **FR-005**: When a run's evidence is missing, expired, or unreadable, the watchdog MUST record that it could not inspect the run and MUST NOT fabricate a finding.
 - **FR-006**: The set of detection sources in scope for v1 is **all** of the following: step summaries, workflow annotations, `claude-execution-output-*` artifacts (turn/tool-denial patterns), `spec-meta.json` state vs. expected stage, and branch-vs-origin drift. The watchdog MUST be able to draw findings from any of these sources; broad coverage is accepted with the understanding that it carries a larger v1 surface and more false-positive tuning.
 
-#### Triage ladder
+#### Remediation
 
-- **FR-007**: For each finding, the watchdog MUST select the **lightest sufficient** response on the triage ladder and MUST NOT escalate beyond what the finding warrants.
-- **FR-008**: The watchdog MUST support rung 2 — opening a PR carrying the fix and referencing the existing pipeline issue the finding is tied to.
-- **FR-009**: The watchdog MUST support rung 3 — opening a new issue (or a spec proposal) carrying the evidence, used when a finding is large or has no existing issue to attach to.
-- **FR-010**: When a finding sits ambiguously between two rungs, the watchdog MUST resolve toward the higher rung (more human involvement).
-- **FR-011**: The boundary between rung 1 (autonomous auto-fix) and rung 2 (open a PR) MUST be defined by a crisp, testable rule, because rung 1 writes to the repository autonomously. A fix qualifies as rung-1 "minor" **only when it satisfies all three** of the following conditions: (a) the change is confined to an allowlisted change-class, (b) it touches only allowlisted paths, and (c) its diff is under a small, configurable line cap. A fix that fails **any** of these conditions is not rung-1 and MUST fall back to rung 2. The qualifying change-classes are enumerated up front in the guardrail configuration (see FR-017); the v1 seed set covers the motivating incident's classes (e.g. an allowlist grant of a read-only tool, a path/typo correction, a syntax fix).
+- **FR-007**: **Removed** — the triage ladder this requirement selected across no longer exists; the watchdog's remediation surface is a single path (FR-014 of spec 024).
+- **FR-008**: **Removed** — rung 2 (a PR referencing an existing issue) no longer exists (FR-014 of spec 024).
+- **FR-009**: The watchdog MUST support opening a new pipeline-defect issue carrying the evidence, used when a finding matches no existing issue.
+- **FR-010**: **Removed** — there is no longer a rung boundary to sit ambiguously between (FR-014 of spec 024).
+- **FR-011**: **Removed** — rung 1 (autonomous auto-fix) no longer exists, so there is no rung-1/rung-2 boundary to define (FR-014 of spec 024).
 
 #### Deduplication & recurrence
 
@@ -175,12 +143,12 @@ including the loop-prevention cap so self-inspection cannot run away.
 - **FR-015**: The watchdog MUST create a new item only when a finding matches nothing open or closed.
 - **FR-016**: The watchdog MUST assign each finding a stable fingerprint such that the same defect recurring across many runs maps to one issue (driving the dedup and reopen behavior), while genuinely distinct defects map to distinct fingerprints.
 
-#### Autonomous-fix guardrails (rung 1)
+#### Loop prevention & pause
 
-- **FR-017**: Autonomous rung-1 fixes MUST be constrained by a configurable allowlist of change-classes and path restrictions; a fix outside those constraints MUST fall back to rung 2.
+- **FR-017**: **Removed** — the rung-1 allowlist guardrail this requirement constrained no longer exists; there is no autonomous fix to constrain (FR-014 of spec 024).
 - **FR-018**: The watchdog MUST enforce a hard cap on self-dispatch so that its own actions cannot trigger an unbounded chain of watchdog runs (loop prevention).
-- **FR-019**: A maintainer MUST be able to veto or pause the watchdog's autonomous fixes; while paused, the watchdog MUST fall back to reporting findings for human action and perform no autonomous write.
-- **FR-020**: The watchdog MUST record every autonomous action it takes on the relevant lifecycle issue, so no autonomous change is silent.
+- **FR-019**: A maintainer MUST be able to veto or pause the watchdog's writes; while paused, the watchdog MUST fall back to reporting findings for human action and perform no write.
+- **FR-020**: The watchdog MUST record every write it takes — and every case where a write was suppressed (an invalid-evidence finding, a failed dedup lookup, a paused or capped run) — on the relevant lifecycle issue, so no outcome is silent.
 
 #### Self-inspection
 
@@ -198,8 +166,7 @@ including the loop-prevention cap so self-inspection cannot run away.
 - **Run under inspection**: A completed pipeline run (any stage, including the watchdog's own), identified by its run reference and associated with a lifecycle issue and, where applicable, a spec directory/stage.
 - **Finding**: A detected problem — its class, a human-readable description, the cited evidence, an assessed severity/rung, and a fingerprint.
 - **Fingerprint**: A stable identity for a finding that maps recurrences of the same defect to one issue and keeps distinct defects distinct.
-- **Triage decision**: The chosen rung (report-only / rung 1 auto-fix / rung 2 PR / rung 3 issue) and the dedup outcome (new / comment-on-open / reopen-closed).
-- **Guardrail configuration**: The allowlist of auto-fixable change-classes, permitted paths, the self-dispatch cap, and the pause/veto switch.
+- **Triage decision**: The single dedup-selected branch (create a new pipeline-defect issue / comment on an open match / reopen and comment on a closed match / suppress and report a failed lookup) — selected purely by the dedup outcome, since no autonomous-fix rung remains (FR-014 of spec 024).
 
 ## Success Criteria *(mandatory)*
 

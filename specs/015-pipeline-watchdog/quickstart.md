@@ -1,12 +1,11 @@
 # Quickstart: Validating the Pipeline Watchdog
 
 Prerequisites: a repo checkout with `gh` authenticated as a maintainer,
-`.specify/memory/watchdog-guardrails.json` present with at least the v1
-seed classes (data-model.md), and one or more scratch specifications
-with runs to inspect. Several scenarios need a *deliberately broken* run
-(e.g. a workflow file temporarily missing a tool from `--allowedTools`,
-or an interrupted implement dispatch) — stage these against a disposable
-scratch spec, never against a real in-flight one.
+and one or more scratch specifications with runs to inspect. Several
+scenarios need a *deliberately broken* run (e.g. a workflow file
+temporarily missing a tool from `--allowedTools`, or an interrupted
+implement dispatch) — stage these against a disposable scratch spec,
+never against a real in-flight one.
 
 ## Scenario 1 — Detect a denied-tool pattern and report it (US1, SC-001)
 
@@ -18,10 +17,9 @@ scratch spec, never against a real in-flight one.
 3. Expected: the lifecycle issue gets a comment describing a
    "denied-tool" finding, naming the specific tool and quoting the
    denied turns/tool calls (`gh issue view <lifecycle-issue> --json
-   comments` shows the report) — no repository file is modified by this
-   scenario alone if the guardrail config doesn't have an
-   `allowlist-grant` class yet, or a rung-1 PR appears if it does (see
-   Scenario 5).
+   comments` shows the report), and a pipeline-defect issue is filed
+   (or an existing one commented on) — the watchdog never opens a PR
+   (spec 024 FR-014).
 
 ## Scenario 2 — Detect lost progress on an interrupted run (US1, SC-001)
 
@@ -47,38 +45,17 @@ scratch spec, never against a real in-flight one.
 2. Expected: the lifecycle issue gets a "could not inspect this run"
    comment, not a fabricated finding.
 
-## Scenario 5 — Rung 1: auto-fix within the allowlist (US3, SC-004)
+## Scenarios 5–7 — Retired (spec 024 FR-014)
 
-1. Configure `.specify/memory/watchdog-guardrails.json` with an
-   `allowlist-grant` class covering `.github/workflows/**` with a small
-   line cap.
-2. Reproduce Scenario 1's denied-tool pattern.
-3. Expected: the watchdog opens a pull request to `main` adding the
-   missing tool to the relevant `--allowedTools` list, diff confined to
-   the allowlisted path and under the line cap; no prior pipeline-defect
-   issue is required for this PR to exist; the lifecycle issue records
-   the PR link as the action taken (FR-020). Confirm the diff is exactly
-   the minimal grant — nothing else changed.
-
-## Scenario 6 — Rung 1 boundary: falls back to rung 2 outside the minor bar (US3, Acceptance #2)
-
-1. Reproduce a finding whose only available fix touches a path outside
-   the allowlist (e.g. a `src/`-shaped path that doesn't exist in this
-   repo — substitute any path not under `.github/**`/`docs/**`) or whose
-   diff exceeds the configured line cap.
-2. Expected: no direct rung-1 PR appears; instead a pipeline-defect issue
-   is created/found and a PR referencing it is opened (rung 2) — confirm
-   via the PR body's `Refs #N` and the issue's fingerprint marker.
-
-## Scenario 7 — Pause switch: no autonomous write while vetoed (US3, Acceptance #3)
-
-1. Set `vars.WING_COMMANDER_WATCHDOG_PAUSED=true`.
-2. Reproduce Scenario 5's exact conditions.
-3. Expected: no PR is opened at any rung; the lifecycle issue explicitly
-   states autonomous fixes are paused and reports the finding for human
-   action instead.
-4. Unset the variable and re-run the same scenario to confirm normal
-   rung-1 behavior resumes.
+Rung 1 auto-fix, the rung-1-boundary fallback to rung 2, and the pause
+switch exercised against that boundary are retired: spec 024 removed
+rungs 1–2 entirely, so there is no autonomous-fix/PR path left to
+exercise. The pause switch itself still exists and is still exercised —
+see Scenario 8, whose self-dispatch-cap write-suppression shares the
+same enforcement point — but no scenario here reproduces a PR, because
+the watchdog never opens one (spec 024 FR-014). These numbers are kept
+retired rather than reused, so cross-references from other documents are
+never silently repointed at an unrelated scenario.
 
 ## Scenario 8 — Self-dispatch cap: cannot loop (US3 Acceptance #4, US4 Acceptance #2, SC-005)
 
@@ -107,7 +84,7 @@ scratch spec, never against a real in-flight one.
 
 ## Scenario 10 — Dedup: same finding twice comments, never duplicates (US2, SC-002)
 
-1. Reproduce Scenario 1 (or any rung-2/3 finding) once; confirm one
+1. Reproduce Scenario 1 (or any filed finding) once; confirm one
    pipeline-defect issue is created.
 2. Reproduce the *same* finding again (same tool, same class) from a
    different scratch run.
@@ -159,6 +136,6 @@ scratch spec, never against a real in-flight one.
    — confirm no unexpected write (comment, label, PR) occurred anywhere
    outside the normal finding-report flow.
 
-See `contracts/watchdog-workflow.md` for the exact trigger/job-gate/
-rung-gate contracts and `data-model.md` for the full Finding, fingerprint,
-and triage-decision shapes each scenario above exercises.
+See `contracts/watchdog-workflow.md` for the exact trigger/job-gate
+contracts and `data-model.md` for the full Finding, fingerprint, and
+triage-decision shapes each scenario above exercises.

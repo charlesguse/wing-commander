@@ -84,49 +84,28 @@ uses. Zero Findings in the output ⇒ `diagnose` sets
 Per Finding, deterministic (no agent):
 
 1. **Coexistence check** (research.md): if `finding.alreadyHandledBy` is
-   set, mark this finding `suppressed` — no fingerprint/dedup/act step
-   runs for it, but it's still listed in the final lifecycle-issue
-   report as "already reported by \<job\>."
+   set, mark this finding `suppressed` — no fingerprint/dedup step runs
+   for it, but it's still listed in the final lifecycle-issue report as
+   "already reported by \<job\>."
 2. **Fingerprint**: `sha256(class + canonical(normalizedFacts))`.
 3. **Dedup search**: `gh search issues --state all
    "wing-commander-watchdog: fingerprint=$FP in:body"`.
-4. **Fix attempt** (only for findings whose `class` matches a
-   `changeClasses[].id` in `.specify/memory/watchdog-guardrails.json`):
-   `claude-sonnet-5`, `--max-turns` bounded,
-   `--allowedTools "Read,Grep,Glob,Edit,Write"` scoped by prompt to
-   `.github/workflows/**`, `.github/actions/**`, `docs/**` only, no
-   `git`/`gh` write access — writes a diff to the job's own worktree, or
-   makes no changes if it can't confidently fix it (checked via `git diff
-   --stat` after the step: empty ⇒ declined).
-5. **Rung gate** (data-model.md's Triage decision table): evaluated
-   purely from the diff's own `git diff --stat` output against the
-   matched class's `pathGlobs`/`maxDiffLines` and the global
-   `maxDiffLines`, plus `vars.WING_COMMANDER_WATCHDOG_PAUSED` and the
-   self-dispatch-depth check (below) — never from the sonnet step's own
-   narration of what it did.
+
+No fix attempt is ever made — the watchdog is a pure reporter with no
+diff-producing step (FR-014 of spec 024).
 
 ### `act` (`needs: triage`, one matrix entry per non-suppressed Finding)
 
-Executes exactly what `triage`'s rung gate selected:
+Executes exactly what the dedup outcome selected:
 
-- **Rung 1**: commit the diff to a fresh branch
-  `watchdog-fix/<short-fingerprint>`, open a PR to `main` (title/body
-  auto-generated from the Finding's description + evidence, no prior
-  issue reference required), comment the PR link on the lifecycle issue.
-- **Rung 2**: same diff-commit-and-PR flow, but first ensure a
-  pipeline-defect issue exists (create if the dedup search found none,
-  reuse if it found one — reopening if closed), and the PR body/commit
-  reference it (`Refs #N`, deliberately not an auto-closing keyword —
-  research.md/data-model.md); comment on both the pipeline-defect issue
-  and the lifecycle issue.
-- **Rung 3**: no diff — create (or reuse/reopen per the dedup outcome) a
-  pipeline-defect issue carrying the Finding's evidence; comment on the
-  lifecycle issue linking it.
-- **Dedup hit, no new diff needed** (an existing open/closed
-  pipeline-defect issue already matches): comment the fresh evidence
-  there (open) or reopen-with-comment (closed); comment on the lifecycle
-  issue linking it. This is not a distinct "rung" — it's what rung 2/3
-  collapse to when dedup already found the target.
+- **Dedup miss**: create a new pipeline-defect issue carrying the
+  Finding's evidence; comment on the lifecycle issue linking it.
+- **Dedup hit, open**: comment the fresh evidence on the existing
+  pipeline-defect issue; comment on the lifecycle issue linking it.
+- **Dedup hit, closed**: reopen the existing pipeline-defect issue and
+  comment the fresh evidence; comment on the lifecycle issue linking it.
+
+No PR is ever opened by `act` (FR-014 of spec 024).
 
 Every `act` outcome, plus the `passed-inspection`/`could-not-inspect`
 short-circuits from `collect`/`diagnose`, is appended as one comment (or
@@ -142,23 +121,23 @@ databaseId,event,createdAt --limit <cap + 5>` backward from the inspected
 run, counting a consecutive chain of `event == "workflow_run"` entries.
 Depth `>= vars.WING_COMMANDER_WATCHDOG_SELF_DISPATCH_CAP` (default `3`)
 ⇒ every Finding this run produced is forced to report-only (as if paused,
-research.md) regardless of what the rung gate computed — `collect` and
-`diagnose` still ran and still get reported, only `act`'s writes are
-suppressed.
+research.md) regardless of what the dedup outcome would otherwise
+select — `collect` and `diagnose` still ran and still get reported, only
+`act`'s writes are suppressed.
 
 ## Pause contract (FR-019)
 
 `vars.WING_COMMANDER_WATCHDOG_PAUSED == 'true'` ⇒ identical short-circuit
-to the self-dispatch cap: `act` performs no write for any Finding at any
-rung, and the lifecycle-issue report says so explicitly.
+to the self-dispatch cap: `act` performs no write for any Finding, and
+the lifecycle-issue report says so explicitly.
 
 ## Non-goals (explicitly out of contract, per spec.md Assumptions)
 
 - A scheduled catch-up sweep for missed runs (FR-025 explicitly defers
   this beyond v1).
-- Auto-merging or auto-approving any pull request this stage opens —
-  every PR from this stage awaits an ordinary human merge click
-  (constitution V, research.md).
+- Opening a pull request of any kind — the watchdog's entire remediation
+  surface is the pipeline-defect issue tracker (FR-014 of spec 024); a
+  human decides on and makes any code change a filed finding warrants.
 - Detecting problem classes beyond the FR-003 v1 pair with the same
   crisp, pattern-matched confidence — other sources (step summaries,
   annotations, general `spec-meta.json` drift) feed the diagnose step's

@@ -80,7 +80,7 @@ path as every other outcome, not a special early exit.
 | `description` | string | Human-readable, must quote/cite the specific evidence (FR-002) |
 | `evidence` | array of {source, quote/locator} | What a human would need to confirm the diagnosis without opening raw artifacts |
 | `normalizedFacts` | object | Stable, class-specific facts the deterministic fingerprint step hashes (research.md) — e.g. `{tool: "webfetch"}`, never volatile fields like run IDs or turn numbers |
-| `severityHint` | enum: `minor` \| `notable` \| `large` | The diagnose step's *proposed* rung input — advisory only; the deterministic triage gate (below) makes the final call, and resolves any ambiguity in this field toward the higher rung (FR-010) |
+| `severityHint` | enum: `minor` \| `notable` \| `large` | Descriptive context only — retained in the lifecycle-issue report; never gates a write (FR-014 of spec 024 removed the rung it used to advise) |
 | `alreadyHandledBy` | nullable string | Set when the coexistence check (research.md) finds this exact condition already reported by `implement.yml`'s stalled job or `cleanup.yml`'s `mark-stalled` — suppresses a duplicate new finding of this class for this run (FR-024) |
 
 FR-004: zero Findings for a run ⇒ the watchdog records "passed
@@ -104,9 +104,9 @@ diagnose invocations never see each other's output.
 
 ## Pipeline-defect issue (GitHub issue, repo-scoped, not spec-scoped)
 
-The triage target for rung 2/rung 3 — distinct from the *lifecycle*
-issue below. One pipeline-defect issue tracks one fingerprint across
-however many spec runs happen to trip it (e.g. a `WebFetch` denial
+The triage target for a filed or recurring finding — distinct from the
+*lifecycle* issue below. One pipeline-defect issue tracks one fingerprint
+across however many spec runs happen to trip it (e.g. a `WebFetch` denial
 pattern could recur across many different specs' implement runs; they
 all map to the same pipeline-defect issue, not one each).
 
@@ -115,13 +115,16 @@ all map to the same pipeline-defect issue, not one each).
 | Body | On create: yes, includes `<!-- wing-commander-watchdog: fingerprint=<sha256> -->` marker (reused convention, research.md) plus the Finding's description/evidence | Never rewritten after creation — new occurrences are comments, not body edits |
 | State (open/closed/reopened) | Yes — created open (FR-015); reopened on a closed-issue match (FR-014) | Humans may close it once genuinely fixed; the watchdog only reopens, never closes |
 | Comments | Yes — every recurrence appends the fresh evidence (FR-013) | Comment body always includes the triggering run's `html_url` |
-| Attached PR | Rung 2 only | The fix PR references this issue (`Fixes #N` is deliberately *not* used — a human, not the merge, should be the one to decide the issue is actually resolved; use `Refs #N` instead) |
+
+No PR is ever attached — the watchdog is a pure reporter with no fix-diff
+path (FR-014 of spec 024); a human decides when the issue is actually
+resolved and closes it themselves.
 
 **Dedup resolution** (FR-012–FR-016, research.md):
 
 ```
 gh search issues "wing-commander-watchdog: fingerprint=<sha256> in:body" --state all
-  0 results            → create new (rung 2 or 3, per the triage gate)
+  0 results            → create new pipeline-defect issue
   1 OPEN result         → comment with fresh evidence, file nothing new
   1 CLOSED result        → reopen + comment with fresh evidence
   >1 result              → data-integrity finding of its own; reported, no auto action
@@ -140,45 +143,37 @@ special case is needed for FR-021.
 |---|---|
 | "Run passed inspection." | Zero findings (FR-004) |
 | "Could not inspect this run: \<reason\>." | Evidence unreadable (FR-005) |
-| One block per Finding: description + evidence + rung taken + dedup outcome | One or more findings (FR-002, FR-022) |
-| "Self-dispatch cap reached — reporting only, no autonomous action taken." | Self-inspection past the configured cap (FR-018) |
-| "Autonomous fixes are paused (`WING_COMMANDER_WATCHDOG_PAUSED`) — reporting only." | FR-019 |
+| One block per Finding: description + evidence + action taken + dedup outcome | One or more findings (FR-002, FR-022) |
+| "Self-dispatch cap reached — reporting only, no write performed." | Self-inspection past the configured cap (FR-018) |
+| "The watchdog's writes are paused (`WING_COMMANDER_WATCHDOG_PAUSED`) — reporting only." | FR-019 |
 
 ## Triage decision (computed per Finding, not stored beyond the report above)
 
 ```
-no diff attempted / propose-fix declined
-  └─ dedup match found (open or closed)  → rung 2 or 3 per existing item's own history; comment/reopen
-  └─ no dedup match                       → rung 3: create new pipeline-defect issue
-diff attempted
-  └─ passes all 3 FR-011 gates AND not paused AND under self-dispatch cap → rung 1: PR to main, no prior issue required
-  └─ fails any gate, or paused, or over cap                                → rung 2: create/find pipeline-defect issue, open PR referencing it
-ambiguous severity/rung on either branch above → resolves to the higher (more human-involved) rung (FR-010)
+dedup match found, open    → comment with fresh evidence
+dedup match found, closed  → reopen + comment with fresh evidence
+no dedup match              → create new pipeline-defect issue
 ```
 
-## Guardrail configuration (`.specify/memory/watchdog-guardrails.json`, consuming-repo-owned)
+Selected purely by the dedup outcome — no fix diff is ever attempted, so
+there is no rung/severity ambiguity left to resolve (FR-014 of spec 024
+removes the ladder FR-010's tie-break used to apply to).
 
-```json
-{
-  "maxDiffLines": 5,
-  "changeClasses": [
-    {"id": "allowlist-grant", "pathGlobs": [".github/workflows/**", ".github/actions/**"], "maxDiffLines": 3},
-    {"id": "path-or-typo-correction", "pathGlobs": [".github/workflows/**", ".github/actions/**", "docs/**"], "maxDiffLines": 3},
-    {"id": "syntax-fix", "pathGlobs": [".github/workflows/**", ".github/actions/**"], "maxDiffLines": 5}
-  ]
-}
-```
+## Guardrail configuration — removed
 
-Read-only from the watchdog's perspective — a maintainer edits it via an
-ordinary PR to `main` like any other file (FR-017's "configurable"). Not
-present or a class missing ⇒ that class is simply not rung-1-eligible
-(fails gate condition (a)); the watchdog never invents a default
-allowlist entry.
+`.specify/memory/watchdog-guardrails.json` and its allowlist/path/line-cap
+schema are removed in full (FR-014 of spec 024) — the config existed
+solely to gate rung 1, which no longer exists. No successor entity
+replaces it.
 
 | Companion knob | Home | FR |
 |---|---|---|
 | Pause/veto switch | `vars.WING_COMMANDER_WATCHDOG_PAUSED` | FR-019 |
 | Self-dispatch cap | `vars.WING_COMMANDER_WATCHDOG_SELF_DISPATCH_CAP` (default `3`) | FR-018 |
+
+Both still suppress the watchdog's one remaining write path (create/
+comment/reopen a pipeline-defect issue) — collect/diagnose/triage still
+run and are still reported; only the write itself is suppressed.
 
 ## State transition (the slice of pipeline state this stage reacts to and reports on)
 
@@ -187,17 +182,15 @@ allowlist entry.
                                                                           │
                                           no signals ──────────────────▶ "passed inspection" on lifecycle issue
                                           collection failed ────────────▶ "could not inspect" on lifecycle issue
-                                          ≥1 finding ──────────────────▶ fingerprint → dedup search → triage gate
+                                          ≥1 finding ──────────────────▶ fingerprint → dedup search
                                                                                 │
-                                                    diff + all 3 gates pass ──▶ rung 1: PR to main (no prior issue)
-                                                    diff + any gate fails  ──▶ rung 2: PR to main, refs pipeline-defect issue
-                                                    no diff, dedup miss    ──▶ rung 3: new pipeline-defect issue
-                                                    no diff, dedup hit-open──▶ comment on existing pipeline-defect issue
-                                                    no diff, dedup hit-closed▶ reopen + comment on pipeline-defect issue
+                                                    dedup miss             ──▶ create new pipeline-defect issue
+                                                    dedup hit, open        ──▶ comment on existing pipeline-defect issue
+                                                    dedup hit, closed      ──▶ reopen + comment on pipeline-defect issue
                                                                                 │
                                                                         every path also appends to the lifecycle issue (FR-022)
 ```
 
 This stage never writes `spec-meta.json` itself (unlike `cleanup.yml`'s
 `mark-stalled` write) — its own writes are confined to GitHub
-issues/comments/labels and, at rung 1/2, a pull request against `main`.
+issues/comments/labels; no pull request, ever (FR-014 of spec 024).
