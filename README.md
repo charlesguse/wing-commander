@@ -142,6 +142,10 @@ The project [constitution](.specify/memory/constitution.md) governs every change
    adopters; this repo's wrappers and spec-kit artifacts are one adopter's
    configuration. Stages read no ambient repository state; wrappers own
    triggers and gates.
+8. **A green check means what it says** — a gate must be able to fail its own
+   subject: registry-reachable, run with the same arguments locally as in CI,
+   triggered by what it checks, loud rather than vacuous when it cannot reach
+   it, and every failure branch it ships covered by a checked-in fixture.
 
 Full stage-by-stage design: [docs/architecture.md](docs/architecture.md).
 

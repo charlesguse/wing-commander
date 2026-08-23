@@ -1,4 +1,23 @@
 <!--
+Sync Impact Report — 2026-08-22
+Version change: 1.4.1 → 1.5.0 (MINOR: new principle added — VIII. A Green Check Means What It Says, requiring that a gate be able to fail its own subject: reachable through the gate registry, same subject and arguments locally as in CI, triggered by the tree or document it checks, loud rather than vacuous when it cannot reach that subject, not suppressible by an unrelated gate sharing its job, and every shipped failure branch covered by a checked-in fixture)
+Modified principles: none
+Modified sections: none
+Added sections: Principle VIII. A Green Check Means What It Says
+Removed sections: none
+Templates requiring updates:
+  ✅ .specify/templates/plan-template.md — no change needed (verified: its Constitution Check is the generic placeholder "[Gates determined based on constitution file]", so gates are derived from this file at plan time)
+  ✅ .specify/templates/spec-template.md — no change needed (verified: zero references to the constitution or to any principle)
+  ✅ .specify/templates/tasks-template.md — no change needed (verified: zero references to the constitution or to any principle)
+  ✅ .specify/templates/commands/*.md — directory does not exist in this repo; nothing to check
+  ✅ .specify/extensions.yml — absent; no before/after_constitution hooks apply
+  ✅ README.md — updated in same PR (the numbered principle list gains VIII)
+  ✅ docs/architecture.md, docs/adoption.md — no change needed (verified: both cite principles by numeral — II, V, VII — and VIII is appended, so nothing renumbers). No docs/quickstart.md exists.
+Motivation: commit e24a7e4 ("four gates that could not fail their own subject") named the theme in its own first line — "each of these is a check whose green result did not mean what its output said" — and a review of the branch that followed found six more instances of the same class in eight findings. The repository keeps rediscovering this per feature and restating a local version of it each time: specs/036 FR-009, specs/037-rendered-tooling-list FR-015, and specs/039 FR-011 are three phrasings of one rule, while specs/026 had no version of it at all, which is why the tool-list table went a year with nothing holding it to the shipped call sites (#147). A cross-cutting invariant restated per spec is a cross-cutting invariant that new work is born exempt from; the constitution is where it belongs, because Governance already checks every spec, plan, and implementation PR against this file.
+Worked example: the same PR that carries this amendment's sibling fixes applies the principle six times — Gate 26 gaining `!cancelled()` so an unrelated Gate 1 failure cannot suppress it; run-local-gates.py deriving each gate's ARGUMENTS from lint-workflows.yml, not just its path, after the bare invocation was found running verify-versioning-refs.py's live-network check where CI runs `--self-test`; verify-gate-18-scan.py gaining a repository-root guard so it can no longer report "0 failure(s)" having scanned nothing; Gate 27's collector gaining .yaml discovery and duplicate-label detection, each with a fixture; Gate 12's category C gaining five call-site fixtures that make permanent a branch previously proven only by a since-reverted manual experiment; and lint-workflows.yml's PR trigger gaining specs/**/contracts/** so the two gates whose subject is a contract document actually run when it changes.
+Follow-up TODOs: none
+-->
+<!--
 Sync Impact Report — 2026-08-09
 Version change: 1.4.0 → 1.4.1 (PATCH: clarification — the Opus tier's model identifier moves from claude-opus-4-8 to claude-opus-5; the tiering itself is unchanged, only which model the "Opus tier" names)
 Modified principles: II. Cost-Conscious Model Tiering (identifier only — spec/clarify tier, and the implementation opt-in tier)
@@ -91,6 +110,9 @@ This repository publishes one product and operates another. The **published cont
 
 Stage workflows own no triggers and read no ambient repository state: not `github.event.*`, not `vars.*`, and no secret beyond those their own `workflow_call` interface declares — a stage never relies on `secrets: inherit`. Every event fact and every knob arrives as a declared, typed input. Wrappers own the triggers, the security gates, the event→input extraction, and every repository-specific convention; when a new need arises, the wrapper is its default home. A stage that must deviate carries a registered, machine-checked exception naming the reason — never an undeclared one, and never a code comment alone. Every document states which layer it describes.
 
+### VIII. A Green Check Means What It Says
+A check that cannot fail its own subject is a liability, not coverage: it reads as evidence while proving nothing, and it displaces the scrutiny a maintainer would otherwise have applied. Every instance this repository has found was found by accident — a maintainer noticing a stall, a drill performed by hand — never by another check. Therefore: every gate MUST be reachable through the gate registry, and MUST run the same subject with the same arguments locally as it does in CI. Every gate MUST be triggered by changes to the tree or document it checks. A gate that cannot reach its subject — the wrong working directory, an empty file list, an unresolvable reference — MUST fail loudly rather than report a pass it did not earn. A gate MUST NOT be suppressible by the failure of an unrelated gate that merely shares its job. Every failure branch a gate ships MUST be exercised by a checked-in fixture; a manual demonstration during development is evidence for that reviewer, not coverage for the next one. Prior art: #139 and #158 (a verifier that sat green while checking a filter that did not ship), #169, #213, #215, #229, #147.
+
 ## Operational Constraints
 
 - Spec artifacts live in `specs/<NNN-slug>/` (spec.md, plan.md, tasks.md, spec-meta.json, checklists/). `spec-meta.json` is the machine-readable source of truth for a spec's lifecycle state.
@@ -107,4 +129,4 @@ Stages and their gates: intake (`/speckit-specify`, human gate = maintainer labe
 
 This constitution supersedes ad-hoc practice in this repository. Every spec, plan, and implementation PR is checked against it during review; violations must be fixed or the constitution amended first. Amendments arrive as ordinary PRs that modify this file, state the motivation, and bump the version below (semver: breaking principle changes = MAJOR, new principles/sections = MINOR, clarifications = PATCH).
 
-**Version**: 1.4.1 | **Ratified**: 2026-07-04 | **Last Amended**: 2026-08-09
+**Version**: 1.5.0 | **Ratified**: 2026-07-04 | **Last Amended**: 2026-08-22
