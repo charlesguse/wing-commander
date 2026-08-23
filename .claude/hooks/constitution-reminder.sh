@@ -22,8 +22,8 @@
 # minor versions later. That propagation audit is the skill step 4 that a
 # hand-edit skips.
 #
-# Fails open by construction. Absent jq, malformed stdin, or no file_path
-# at all, every path lands on the default case and exits 0 silently: a
+# Fails open by construction. Absent jq, awk, or tr, malformed stdin, or no
+# file_path at all, every path lands on the default case and exits 0 silently: a
 # broken reminder must not become a broken Edit tool.
 set -uo pipefail
 
@@ -32,7 +32,7 @@ set -uo pipefail
 # a mangled separator here would silently match nothing -- which is exactly
 # the failure this hook cannot report, since saying nothing is also what it
 # does when it correctly decides not to fire.
-bs="$(awk 'BEGIN { printf "%c", 92 }')"
+bs="$(awk 'BEGIN { printf "%c", 92 }' 2>/dev/null || true)"
 
 raw="$(jq -r '.tool_input.file_path // ""' 2>/dev/null || true)"
 
@@ -40,7 +40,7 @@ raw="$(jq -r '.tool_input.file_path // ""' 2>/dev/null || true)"
 # literal backslash. A lone one makes GNU tr warn "unescaped backslash at
 # end of string is not portable" on stderr -- once per Edit and once per
 # Write, for the whole session. Measured, not guessed. Do not simplify.
-path="$(printf '%s' "$raw" | tr "$bs$bs" '/')"
+path="$(printf '%s' "$raw" | tr "$bs$bs" '/' 2>/dev/null || true)"
 
 case "$path" in
   */.specify/memory/constitution.md|.specify/memory/constitution.md) ;;
