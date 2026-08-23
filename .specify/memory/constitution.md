@@ -6,10 +6,13 @@ Modified sections: none
 Added sections: Principle VIII. A Green Check Means What It Says
 Removed sections: none
 Templates requiring updates:
-  ✅ .specify/templates/plan-template.md — no change needed (Constitution Check is generic; gates are derived from this file at plan time)
-  ✅ .specify/templates/spec-template.md — no change needed (no principle references)
-  ✅ .specify/templates/tasks-template.md — no change needed (no principle references)
+  ✅ .specify/templates/plan-template.md — no change needed (verified: its Constitution Check is the generic placeholder "[Gates determined based on constitution file]", so gates are derived from this file at plan time)
+  ✅ .specify/templates/spec-template.md — no change needed (verified: zero references to the constitution or to any principle)
+  ✅ .specify/templates/tasks-template.md — no change needed (verified: zero references to the constitution or to any principle)
+  ✅ .specify/templates/commands/*.md — directory does not exist in this repo; nothing to check
+  ✅ .specify/extensions.yml — absent; no before/after_constitution hooks apply
   ✅ README.md — updated in same PR (the numbered principle list gains VIII)
+  ✅ docs/architecture.md, docs/adoption.md — no change needed (verified: both cite principles by numeral — II, V, VII — and VIII is appended, so nothing renumbers). No docs/quickstart.md exists.
 Motivation: commit e24a7e4 ("four gates that could not fail their own subject") named the theme in its own first line — "each of these is a check whose green result did not mean what its output said" — and a review of the branch that followed found six more instances of the same class in eight findings. The repository keeps rediscovering this per feature and restating a local version of it each time: specs/036 FR-009, specs/037-rendered-tooling-list FR-015, and specs/039 FR-011 are three phrasings of one rule, while specs/026 had no version of it at all, which is why the tool-list table went a year with nothing holding it to the shipped call sites (#147). A cross-cutting invariant restated per spec is a cross-cutting invariant that new work is born exempt from; the constitution is where it belongs, because Governance already checks every spec, plan, and implementation PR against this file.
 Worked example: the same PR that carries this amendment's sibling fixes applies the principle six times — Gate 26 gaining `!cancelled()` so an unrelated Gate 1 failure cannot suppress it; run-local-gates.py deriving each gate's ARGUMENTS from lint-workflows.yml, not just its path, after the bare invocation was found running verify-versioning-refs.py's live-network check where CI runs `--self-test`; verify-gate-18-scan.py gaining a repository-root guard so it can no longer report "0 failure(s)" having scanned nothing; Gate 27's collector gaining .yaml discovery and duplicate-label detection, each with a fixture; Gate 12's category C gaining five call-site fixtures that make permanent a branch previously proven only by a since-reverted manual experiment; and lint-workflows.yml's PR trigger gaining specs/**/contracts/** so the two gates whose subject is a contract document actually run when it changes.
 Follow-up TODOs: none
