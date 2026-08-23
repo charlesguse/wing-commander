@@ -1948,26 +1948,26 @@ jobs:
 
       # Fingerprint: sha256 over the finding's class plus the ids of the
       # SIGNALS it cites — both selections from fixed lists, neither prose an
-      # LLM wrote (issue #118).
+      # LLM wrote (issue #118). This is now the ONLY basis (spec 024
+      # FR-006/FR-007): the evidence-validity gate above guarantees every
+      # Finding reaching this step already carries at least one valid,
+      # evidence-grounded signal id, so the precondition a fallback branch
+      # used to exist for ("cites no usable signal id") can no longer occur.
       #
       # Earlier revisions hashed the agent's own normalizedFacts and tried to
       # tame it: pin the key vocabulary, project to the identifying keys,
       # canonicalize the values, fold synonym slots. Every one of those fixed
       # a genuine drift axis and every one was followed by a new axis, because
-      # the input was still free text. Signal ids are computed in collect from
-      # deterministic collector output, so equal problems produce equal ids by
-      # construction.
-      #
-      # The normalizedFacts machinery survives only as the fallback for a
-      # Finding that cites no usable signal — a Finding grounded in something
-      # the agent read itself rather than in a collected signal. It is
-      # drift-prone, which is exactly why it is no longer the primary path.
+      # the input was still free text — that fallback path is deleted, not
+      # hardened further, because deleting it is only safe now that the
+      # evidence-validity gate closes the gap it existed to paper over.
+      # Signal ids are computed in collect from deterministic collector
+      # output, so equal problems produce equal ids by construction.
       - name: Compute fingerprint
         id: fingerprint
         if: steps.suppress.outputs.suppressed != 'true' && steps.evidence-gate.outputs.valid != 'false'
         env:
           FINDING_CLASS: ${{ matrix.class }}
-          FACTS: ${{ toJson(matrix.normalizedFacts) }}
           EVIDENCE: ${{ toJson(matrix.evidence) }}
           SIGNALS: ${{ needs.collect.outputs.signals }}
         run: |
@@ -1983,86 +1983,14 @@ jobs:
           if [ "$(printf '%s' "$bogus" | jq 'length')" -gt 0 ]; then
             echo "::warning::watchdog dedup: finding cited signal id(s) $bogus that this run did not emit — ignored for fingerprinting."
           fi
-          if [ "$(printf '%s' "$valid" | jq 'length')" -gt 0 ]; then
-            basis="$(printf '%s' "$valid" | jq -r 'sort | join(",")')"
-            fp=$(printf '%s|signals:%s' "$FINDING_CLASS" "$basis" | sha256sum | cut -d' ' -f1)
-            echo "fingerprint=$fp" >> "$GITHUB_OUTPUT"
-            echo "short-fingerprint=${fp:0:12}" >> "$GITHUB_OUTPUT"
-            echo "canonical-facts=signals:[$basis]" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "::warning::watchdog dedup: finding cited no usable signal id — falling back to hashing the agent-authored normalizedFacts, which historically does not dedup reliably (#118)."
-          # ---- fallback path (agent-authored facts) ----
-          # Per-class projection: the identifying keys for each class, applied
-          # deterministically HERE rather than trusted from the model.
-          #
-          # The schema's key vocabulary alone was measured insufficient. It
-          # stops synonyms ("actual-stage" vs "actual") but not subset drift:
-          # two opus-5 runs over the identical finding emitted
-          #   {"actual","expected"}                          -> ee10c3d582bf
-          #   {"actual","expected","stage","workflow"}       -> 3b985ddc96a8
-          # both legal under the vocabulary, both different hashes. Projecting
-          # to the class's identifying keys makes the extra ones irrelevant.
-          # Project to the MINIMUM set of keys that actually discriminate.
-          # Every additional key is drift surface, not precision: observed
-          # live, `missing-spec-metadata` reported file as "spec-meta.json"
-          # on one run and as the full repo-relative path on another, which
-          # split one defect across two fingerprints. The file adds nothing
-          # here — the branch already identifies which spec is affected —
-          # so it is projected away.
-          case "$FINDING_CLASS" in
-            denied-tool)           keys='["tool"]' ;;
-            lost-progress)         keys='["branch"]' ;;
-            stage-mismatch)        keys='["expected","actual"]' ;;
-            missing-spec-artifact) keys='["branch"]' ;;
-            missing-spec-metadata) keys='["branch"]' ;;
-            token-budget-warning)  keys='["job"]' ;;
-            *)
-              # Classes are model-authored too, so this map is always
-              # partial. Unknown class falls back to every string key, which
-              # is the old (drift-prone) behaviour — flagged so the class can
-              # be added rather than quietly deduping badly forever.
-              keys='null'
-              echo "::warning::watchdog dedup: no fingerprint key projection for class '$FINDING_CLASS' — falling back to all string facts, which may not dedup stably. Add it to the case in watchdog.yml's Compute fingerprint step."
-              ;;
-          esac
-          # Per-key value canonicalization. Constraining WHICH keys are used
-          # does not stabilize WHAT the model writes in them: the same defect
-          # was reported with branch "spec/012-foo" on one run and "012-foo"
-          # on the next, and file as a full repo-relative path on one and a
-          # bare filename on another. Both axes are collapsed deterministically
-          # here — branch loses any known pipeline prefix, file reduces to its
-          # basename — so an equivalent fact hashes the same however the model
-          # chose to spell it.
-          strings=$(printf '%s' "$FACTS" \
-            | jq -cS 'with_entries(select(.value | type == "string"))
-                      | map_values(ascii_downcase)
-                      | with_entries(
-                          if   .key == "branch" then .value |= sub("^(spec-draft|spec|plan|tasks|impl)/"; "")
-                          elif .key == "file"   then .value |= sub("^.*/"; "")
-                          else . end)
-                      | (if (has("spec") and (has("branch") | not))
-                         then .branch = .spec else . end)
-                      | del(.spec)')
-          canonical=$(printf '%s' "$strings" \
-            | jq -cS --argjson keys "$keys" \
-                'if $keys == null then .
-                 else with_entries(select(.key as $k | $keys | index($k))) end')
-          # Projecting to nothing while real facts exist would hash every
-          # finding of this class to class|{} and merge unrelated defects
-          # onto one issue. Filing a duplicate is the safer failure than
-          # hiding a distinct problem, so fall back and say so.
-          if [ "$canonical" = '{}' ] && [ "$strings" != '{}' ]; then
-            echo "::warning::watchdog dedup: class '$FINDING_CLASS' supplied none of its identifying keys ($keys); falling back to all string facts to avoid merging unrelated findings."
-            canonical="$strings"
-          fi
-          fp=$(printf '%s|%s' "$FINDING_CLASS" "$canonical" | sha256sum | cut -d' ' -f1)
+          basis="$(printf '%s' "$valid" | jq -r 'sort | join(",")')"
+          fp=$(printf '%s|signals:%s' "$FINDING_CLASS" "$basis" | sha256sum | cut -d' ' -f1)
           echo "fingerprint=$fp" >> "$GITHUB_OUTPUT"
           echo "short-fingerprint=${fp:0:12}" >> "$GITHUB_OUTPUT"
           # Surfaced into the filed issue so a future fingerprint mismatch
           # is diagnosable from the tracker alone — #118 had to be argued
           # from differing hashes because the hashed input was invisible.
-          echo "canonical-facts=$canonical" >> "$GITHUB_OUTPUT"
+          echo "canonical-facts=signals:[$basis]" >> "$GITHUB_OUTPUT"
 
       # Dedup search (FR-012–FR-016, research.md): reuses rebase.yml's
       # marker-in-body convention. state=all so open/closed surface in one

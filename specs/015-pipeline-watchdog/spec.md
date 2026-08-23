@@ -141,7 +141,7 @@ including the loop-prevention cap so self-inspection cannot run away.
 - **FR-013**: When a finding matches an already-open issue, the watchdog MUST add the new evidence as a comment and MUST NOT open a duplicate.
 - **FR-014**: When a finding matches a **closed** issue, the watchdog MUST reopen that issue and attach the fresh evidence.
 - **FR-015**: The watchdog MUST create a new item only when a finding matches nothing open or closed.
-- **FR-016**: The watchdog MUST assign each finding a stable fingerprint such that the same defect recurring across many runs maps to one issue (driving the dedup and reopen behavior), while genuinely distinct defects map to distinct fingerprints.
+- **FR-016**: The watchdog MUST assign each finding a fingerprint that is **deterministic** — a pure function of its stated inputs, yielding an identical value on repeated computation — in addition to being stable across cosmetic run-to-run differences, such that the same defect recurring across many runs maps to one issue (driving the dedup and reopen behavior), while genuinely distinct defects map to distinct fingerprints. The basis MUST be the deterministic collector signal ids a finding cites (FR-006), never model-authored `normalizedFacts` text (FR-006 of spec 024).
 
 #### Loop prevention & pause
 

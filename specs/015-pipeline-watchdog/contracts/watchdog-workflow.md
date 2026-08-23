@@ -100,7 +100,10 @@ Per Finding, deterministic (no agent):
    or empty for its class's identifying keys, is marked
    `suppressed: invalid-evidence` here and MUST NOT proceed to
    fingerprinting, dedup, or any write.
-3. **Fingerprint**: `sha256(class + canonical(normalizedFacts))`.
+3. **Fingerprint**: `sha256(class + "|signals:" + sorted-joined(valid cited
+   signal ids))`. No fallback branch — step 2 guarantees every Finding
+   reaching this step already carries at least one valid signal id
+   (FR-006/FR-007 of spec 024).
 4. **Dedup search**: `gh search issues --state all
    "wing-commander-watchdog: fingerprint=$FP in:body"`.
 

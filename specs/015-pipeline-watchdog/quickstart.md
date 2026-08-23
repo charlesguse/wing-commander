@@ -180,6 +180,17 @@ never silently repointed at an unrelated scenario.
    list --label pipeline-defect --state all` shows no new issue was
    created for it.
 
+## Scenario 18 — Deterministic fingerprint: inspecting the same defect twice yields byte-identical fingerprints (US2, FR-016; spec 024)
+
+1. Reproduce the same genuine finding (e.g. Scenario 1 — a real
+   denied-tool pattern) from two different scratch runs.
+2. Capture each run's computed fingerprint from the `triage` job's step
+   logs (`Compute fingerprint`).
+3. Expected: the two fingerprints are byte-identical strings, and the
+   second finding's dedup lookup resolves to `match-open` against the
+   first's issue — confirm via `gh issue view <N> --json comments`
+   showing exactly one issue with two comments, never two issues.
+
 See `contracts/watchdog-workflow.md` for the exact trigger/job-gate
 contracts and `data-model.md` for the full Finding, fingerprint, and
 triage-decision shapes each scenario above exercises.

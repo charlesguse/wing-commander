@@ -92,7 +92,7 @@ entry. Before spec 024, only 2 of the 5 collectors (`collect-branch-drift`,
 | `class` | enum | One of the FR-003 v1 classes (`denied-tool`, `lost-progress`) or a diagnose-assigned class for signals with `class-hint: null` |
 | `description` | string | Human-readable, must quote/cite the specific evidence (FR-002) |
 | `evidence` | array of {source, quote/locator} | What a human would need to confirm the diagnosis without opening raw artifacts |
-| `normalizedFacts` | object | Stable, class-specific facts the deterministic fingerprint step hashes (research.md) — e.g. `{tool: "webfetch"}`, never volatile fields like run IDs or turn numbers |
+| `normalizedFacts` | object | Descriptive, class-specific facts (e.g. `{tool: "webfetch"}`) checked for presence/non-emptiness by the evidence-validity gate (below) and surfaced in the filed issue for human context — never volatile fields like run IDs or turn numbers, and never the fingerprint's basis (that is signal ids alone, FR-006/FR-007 of spec 024) |
 | `severityHint` | enum: `minor` \| `notable` \| `large` | Descriptive context only — retained in the lifecycle-issue report; never gates a write (FR-014 of spec 024 removed the rung it used to advise) |
 | `alreadyHandledBy` | nullable string | Set when the coexistence check (research.md) finds this exact condition already reported by `implement.yml`'s stalled job or `cleanup.yml`'s `mark-stalled` — suppresses a duplicate new finding of this class for this run (FR-024) |
 
@@ -129,15 +129,18 @@ positive actually carried — now fails this gate.
 ## Fingerprint (computed, not model-generated)
 
 ```
-fingerprint = sha256(finding.class + "|" + canonical(finding.normalizedFacts))
+fingerprint = sha256(finding.class + "|signals:" + sorted-joined(valid cited signal ids))
 ```
 
-`canonical()`: sort object keys, lowercase string values, drop any field
-a per-class schema marks volatile. Deterministic and reproducible across
-independent watchdog runs inspecting recurrences of the same defect
-(research.md) — this is what makes FR-016's "same defect → one issue,
-distinct defects → distinct issues" guarantee hold even though two
-diagnose invocations never see each other's output.
+This is the single, unconditional basis (FR-016, spec 024 FR-006/FR-007)
+— there is no fallback branch. `finding.class` and the cited signal ids
+are both deterministic, collector/stamping-derived values, never
+model-authored text, so the same defect recurring across independent
+runs — independent `diagnose` invocations, independent English wording —
+produces byte-identical fingerprints. This is possible only because the
+evidence-validity gate (above) guarantees every Finding that reaches
+this step already has at least one valid signal id — the precondition a
+`normalizedFacts`-based fallback used to exist for can no longer occur.
 
 ## Pipeline-defect issue (GitHub issue, repo-scoped, not spec-scoped)
 

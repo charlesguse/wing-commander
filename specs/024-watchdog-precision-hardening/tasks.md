@@ -148,11 +148,11 @@ Single-project CI/CD feature, no `src/`/`tests/` split (plan.md's Structure Deci
 
 ### Implementation for User Story 3
 
-- [ ] T030 [US3] In the `triage` job of `.github/workflows/watchdog.yml`'s `Compute fingerprint` step, delete the `normalizedFacts`-based fallback branch entirely, leaving `fingerprint = sha256(finding.class + "|signals:" + sorted-joined(valid cited signal ids))` as the sole, unconditional basis — safe only because T024's evidence-validity gate now guarantees every Finding reaching this step already carries at least one valid signal id (depends on T024).
-- [ ] T031 [US3] In `specs/015-pipeline-watchdog/spec.md`, amend **FR-016** to require the fingerprint be *deterministic* (a pure function of stated inputs yielding an identical value on repeated computation) in addition to stable, and to require the basis be the deterministic collector signal ids rather than model-authored `normalizedFacts` text.
-- [ ] T032 [P] [US3] In `specs/015-pipeline-watchdog/data-model.md`'s Fingerprint entity, replace the two-branch (primary/fallback) description with the single signal-id-only basis.
-- [ ] T033 [P] [US3] In `specs/015-pipeline-watchdog/contracts/watchdog-workflow.md`'s `triage` section, amend the fingerprint contract clause to drop the fallback branch.
-- [ ] T034 [P] [US3] In `specs/015-pipeline-watchdog/quickstart.md`, add the deterministic-fingerprint validation scenario (the same defect from two different runs yields byte-identical fingerprints and dedups to `match-open`) — this feature's `quickstart.md` Scenario C.
+- [X] T030 [US3] In the `triage` job of `.github/workflows/watchdog.yml`'s `Compute fingerprint` step, delete the `normalizedFacts`-based fallback branch entirely, leaving `fingerprint = sha256(finding.class + "|signals:" + sorted-joined(valid cited signal ids))` as the sole, unconditional basis — safe only because T024's evidence-validity gate now guarantees every Finding reaching this step already carries at least one valid signal id (depends on T024).
+- [X] T031 [US3] In `specs/015-pipeline-watchdog/spec.md`, amend **FR-016** to require the fingerprint be *deterministic* (a pure function of stated inputs yielding an identical value on repeated computation) in addition to stable, and to require the basis be the deterministic collector signal ids rather than model-authored `normalizedFacts` text.
+- [X] T032 [P] [US3] In `specs/015-pipeline-watchdog/data-model.md`'s Fingerprint entity, replace the two-branch (primary/fallback) description with the single signal-id-only basis.
+- [X] T033 [P] [US3] In `specs/015-pipeline-watchdog/contracts/watchdog-workflow.md`'s `triage` section, amend the fingerprint contract clause to drop the fallback branch.
+- [X] T034 [P] [US3] In `specs/015-pipeline-watchdog/quickstart.md`, add the deterministic-fingerprint validation scenario (the same defect from two different runs yields byte-identical fingerprints and dedups to `match-open`) — this feature's `quickstart.md` Scenario C.
 
 **Checkpoint**: Fingerprinting has exactly one basis; quickstart Scenario C passes; none of the nine historical duplicate issues could recur under this scheme.
 
