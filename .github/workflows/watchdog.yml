@@ -2001,41 +2001,39 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           FP: ${{ steps.fingerprint.outputs.fingerprint }}
+          FINDING_CLASS: ${{ matrix.class }}
         run: |
           set -uo pipefail
-          # Query shape matters twice over (issue #118):
-          #   - `--state all` is NOT a valid value for `gh search issues`
-          #     (only open|closed). The old call therefore exited non-zero on
-          #     EVERY run, and `2>/dev/null || echo '[]'` turned that into a
-          #     confident "no match" — which is why dedup never once matched
-          #     and "New occurrence" has never fired. Omitting --state
-          #     searches both states, which is what was wanted.
-          #   - The fingerprint must be a QUOTED phrase. Searching the whole
-          #     marker unquoted let GitHub tokenize "wing-commander-watchdog"
-          #     and "fingerprint" as words, matching every watchdog issue
-          #     regardless of hash — enough results to trip the >1
-          #     "data-integrity" branch below on a hash that in fact
-          #     appears exactly once.
-          # A failure here must stay loud: reporting "none" on a broken
-          # search is how this went unnoticed for so long.
-          if ! results=$(gh search issues --repo "$GITHUB_REPOSITORY" "\"$FP\" in:body" --json number,state 2>"$RUNNER_TEMP/dedup-search-err.txt"); then
-            echo "::warning::dedup search failed ($(tr -d '\n' < "$RUNNER_TEMP/dedup-search-err.txt" | head -c 200)) — this Finding is treated as new, which may file a duplicate issue."
-            results='[]'
+          # FR-018–FR-020 (spec 024): a bounded, strongly-consistent direct
+          # read scoped to the finding's own class label — not an
+          # eventually-consistent search index. The prior `gh search
+          # issues` call is what let the structurally identical bug
+          # (#167/#168, auto-update-spec-kit.yml) go unnoticed here too: a
+          # lookup failure swallowed by `2>/dev/null || echo '[]'`
+          # collapses into "nothing found, file it." A failure here MUST
+          # instead set outcome=unknown explicitly and MUST NOT fall
+          # through to `results='[]'`, which would silently reintroduce
+          # that exact bug.
+          class_label="🐕 · ${FINDING_CLASS}"
+          if ! results=$(gh issue list --repo "$GITHUB_REPOSITORY" --label "pipeline-defect" --label "$class_label" --state all --limit 200 --json number,state,body 2>"$RUNNER_TEMP/dedup-list-err.txt"); then
+            echo "::warning::dedup lookup failed ($(tr -d '\n' < "$RUNNER_TEMP/dedup-list-err.txt" | head -c 200)) — this finding is suppressed pending a maintainer's manual check, never treated as new."
+            {
+              echo "outcome=unknown"
+              echo "issue-number="
+            } >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-          count=$(printf '%s' "$results" | jq 'length')
+          # A local jq filter over this bounded, already-fetched result
+          # set — not a second server-side query — for the exact
+          # fingerprint marker in each candidate's body.
+          matches=$(printf '%s' "$results" | jq -c --arg fp "$FP" '[ .[] | select(.body | contains("fingerprint=" + $fp)) ]')
+          count=$(printf '%s' "$matches" | jq 'length')
           issue_number=""
           if [ "$count" -eq 0 ]; then
             outcome=none
           elif [ "$count" -eq 1 ]; then
-            # Case-normalized on purpose: `gh issue view --json state`
-            # yields "OPEN" but `gh search issues --json state` yields
-            # "open", and comparing the search's output against "OPEN"
-            # silently classified every live match as match-closed — so a
-            # recurrence was reported as a REGRESSION and the act job tried
-            # to reopen an already-open issue. Same defect class as
-            # f97408f, opposite casing.
-            state=$(printf '%s' "$results" | jq -r '.[0].state | ascii_upcase')
-            issue_number=$(printf '%s' "$results" | jq -r '.[0].number')
+            state=$(printf '%s' "$matches" | jq -r '.[0].state | ascii_upcase')
+            issue_number=$(printf '%s' "$matches" | jq -r '.[0].number')
             if [ "$state" = "OPEN" ]; then outcome=match-open; else outcome=match-closed; fi
           else
             # More than one result should not happen if the marker is unique
@@ -2346,7 +2344,8 @@ jobs:
           steps.decision.outputs.suppressed != 'true' &&
           steps.decision.outputs.evidence-valid != 'false' &&
           steps.write-suppression.outputs.suppressed != 'true' &&
-          steps.decision.outputs.dedup != 'data-integrity'
+          steps.decision.outputs.dedup != 'data-integrity' &&
+          steps.decision.outputs.dedup != 'unknown'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           DEDUP_OUTCOME: ${{ steps.decision.outputs.dedup }}
@@ -2440,6 +2439,8 @@ jobs:
               echo "_Already reported by existing automation: ${ALREADY_HANDLED_BY:-a prior stage}._"
             elif [ "$EVIDENCE_VALID" = "false" ]; then
               echo "_Suppressed: invalid evidence — ${EVIDENCE_REASON:-cited facts did not pass the evidence-validity gate}. Not filed._"
+            elif [ "$DEDUP_OUTCOME" = "unknown" ]; then
+              echo "_Dedup lookup failed — finding suppressed, needs a maintainer's manual check. Not filed as new (a broken lookup is never treated as \"nothing found\")._"
             elif [ "$WRITE_SUPPRESSED" = "true" ]; then
               case "$WRITE_SUPPRESS_REASON" in
                 self-dispatch-cap) echo "_Self-dispatch cap reached — reporting only, no write performed._" ;;

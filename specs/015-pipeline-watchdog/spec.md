@@ -140,7 +140,7 @@ including the loop-prevention cap so self-inspection cannot run away.
 - **FR-012**: Before filing anything, the watchdog MUST check **both open and closed** issues for a matching finding.
 - **FR-013**: When a finding matches an already-open issue, the watchdog MUST add the new evidence as a comment and MUST NOT open a duplicate.
 - **FR-014**: When a finding matches a **closed** issue, the watchdog MUST reopen that issue and attach the fresh evidence.
-- **FR-015**: The watchdog MUST create a new item only when a finding matches nothing open or closed.
+- **FR-015**: The watchdog MUST create a new item only when the dedup lookup completed and the finding matches nothing open or closed. A lookup that could not complete (FR-028) does not "match nothing" and MUST NOT be treated as if it did.
 - **FR-016**: The watchdog MUST assign each finding a fingerprint that is **deterministic** — a pure function of its stated inputs, yielding an identical value on repeated computation — in addition to being stable across cosmetic run-to-run differences, such that the same defect recurring across many runs maps to one issue (driving the dedup and reopen behavior), while genuinely distinct defects map to distinct fingerprints. The basis MUST be the deterministic collector signal ids a finding cites (FR-006), never model-authored `normalizedFacts` text (FR-006 of spec 024).
 
 #### Loop prevention & pause
@@ -165,6 +165,8 @@ including the loop-prevention cap so self-inspection cannot run away.
 
 - **FR-026**: A collector MUST emit a signal about a run only when the inspected run both executed (its `conclusion` is not `skipped`/`cancelled`) and owned the artifact whose condition the signal describes. This attribution invariant applies to all five collectors named in FR-006, stated once here rather than per-collector.
 - **FR-027**: A finding whose cited facts are absent, empty, or malformed for its class (FR-002) MUST be suppressed before fingerprinting, deduplication, or any write — even if it otherwise references a valid run.
+- **FR-028**: The dedup lookup (FR-012) MUST support a fourth outcome, `unknown`, distinct from `none` — the lookup itself could not be completed (e.g. the underlying read errored). `unknown` MUST suppress filing and MUST NOT share a code path with `none`.
+- **FR-029**: The dedup lookup MUST be a bounded, strongly-consistent direct read scoped to the finding's class, not an eventually-consistent search index. This requires filed findings to carry their class as a durable, queryable attribute.
 
 ### Key Entities *(include if feature involves data)*
 

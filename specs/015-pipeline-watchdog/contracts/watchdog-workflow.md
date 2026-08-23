@@ -104,8 +104,15 @@ Per Finding, deterministic (no agent):
    signal ids))`. No fallback branch — step 2 guarantees every Finding
    reaching this step already carries at least one valid signal id
    (FR-006/FR-007 of spec 024).
-4. **Dedup search**: `gh search issues --state all
-   "wing-commander-watchdog: fingerprint=$FP in:body"`.
+4. **Dedup lookup** (FR-020/FR-029 of spec 024): `gh issue list --repo
+   <repo> --label pipeline-defect --label "🐕 · <class>" --state all
+   --limit 200 --json number,state,body` — a bounded, strongly-consistent
+   direct read scoped to the finding's own class — followed by a local
+   `jq` filter over that bounded result set's bodies for the exact
+   `fingerprint=$FP` marker. Outcomes: `none` | `match-open` |
+   `match-closed` | `unknown` (the `gh issue list` call itself exited
+   non-zero) | `data-integrity` (>1 match). `unknown` MUST suppress
+   filing and MUST NOT share a code path with `none`.
 
 No fix attempt is ever made — the watchdog is a pure reporter with no
 diff-producing step (FR-014 of spec 024).
@@ -114,12 +121,19 @@ diff-producing step (FR-014 of spec 024).
 
 Executes exactly what the dedup outcome selected:
 
-- **Dedup miss**: create a new pipeline-defect issue carrying the
-  Finding's evidence; comment on the lifecycle issue linking it.
-- **Dedup hit, open**: comment the fresh evidence on the existing
-  pipeline-defect issue; comment on the lifecycle issue linking it.
-- **Dedup hit, closed**: reopen the existing pipeline-defect issue and
-  comment the fresh evidence; comment on the lifecycle issue linking it.
+- **Dedup miss (`none`)**: create a new pipeline-defect issue carrying
+  the Finding's evidence; comment on the lifecycle issue linking it.
+- **Dedup hit, open (`match-open`)**: comment the fresh evidence on the
+  existing pipeline-defect issue; comment on the lifecycle issue linking
+  it.
+- **Dedup hit, closed (`match-closed`)**: reopen the existing
+  pipeline-defect issue and comment the fresh evidence; comment on the
+  lifecycle issue linking it.
+- **Lookup failed (`unknown`)**: suppress every write for this Finding;
+  report "dedup lookup failed — finding suppressed, needs a maintainer's
+  manual check" on the lifecycle issue. Checked before, and sharing no
+  code path with, the `none` branch above.
+- **`data-integrity`**: report only, no auto action (unchanged).
 
 No PR is ever opened by `act` (FR-014 of spec 024).
 

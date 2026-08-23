@@ -191,6 +191,24 @@ never silently repointed at an unrelated scenario.
    first's issue — confirm via `gh issue view <N> --json comments`
    showing exactly one issue with two comments, never two issues.
 
+## Scenario 19 — Dedup lookup failure suppresses filing instead of creating a duplicate (US2, FR-028; spec 024)
+
+1. Temporarily break the dedup lookup's `gh issue list` call for a test
+   run — e.g. dispatch against a `run-id` while `GH_TOKEN` scope is
+   deliberately insufficient for issue reads, or any other reproducible
+   way to force the `gh issue list --label pipeline-defect --label
+   "🐕 · <class>"` call to exit non-zero.
+2. Feed the watchdog a genuine, previously-unseen finding under that
+   condition.
+3. Expected: `outcome=unknown`; no pipeline-defect issue is created; the
+   lifecycle issue reports "dedup lookup failed — finding suppressed,
+   needs a maintainer's manual check." Confirm `gh issue list --label
+   pipeline-defect --state all` shows no new issue.
+4. Restore normal `gh` access and re-run the same finding. Expected:
+   `outcome=none`, a new pipeline-defect issue is created normally —
+   confirming the fix only changes the *failure* path, not the working
+   path.
+
 See `contracts/watchdog-workflow.md` for the exact trigger/job-gate
 contracts and `data-model.md` for the full Finding, fingerprint, and
 triage-decision shapes each scenario above exercises.

@@ -160,15 +160,33 @@ No PR is ever attached — the watchdog is a pure reporter with no fix-diff
 path (FR-014 of spec 024); a human decides when the issue is actually
 resolved and closes it themselves.
 
-**Dedup resolution** (FR-012–FR-016, research.md):
+**Dedup resolution** (FR-012–FR-016, FR-028/FR-029 of spec 024, research.md):
+
+Lookup mechanism (FR-029): `gh issue list --repo <repo> --label
+pipeline-defect --label "🐕 · <class>" --state all --limit 200 --json
+number,state,body` — a bounded, strongly-consistent direct read scoped
+to the finding's own class, replacing the eventually-consistent `gh
+search issues` full-text query. The per-class label already exists on
+every filed pipeline-defect issue (unchanged from spec 015); it becomes,
+retroactively, the durable, queryable class attribute this bounded read
+needs. A local `jq` filter over that bounded result set's bodies then
+looks for the exact `fingerprint=<sha256>` marker:
 
 ```
-gh search issues "wing-commander-watchdog: fingerprint=<sha256> in:body" --state all
-  0 results            → create new pipeline-defect issue
-  1 OPEN result         → comment with fresh evidence, file nothing new
-  1 CLOSED result        → reopen + comment with fresh evidence
-  >1 result              → data-integrity finding of its own; reported, no auto action
+gh issue list --label pipeline-defect --label "🐕 · <class>" --state all --limit 200
+  lookup itself fails (network, rate limit, permissions) → unknown
+  0 matches                                               → create new pipeline-defect issue
+  1 OPEN match                                            → comment with fresh evidence, file nothing new
+  1 CLOSED match                                           → reopen + comment with fresh evidence
+  >1 match                                                 → data-integrity finding of its own; reported, no auto action
 ```
+
+**`unknown` (FR-028, new)**: the lookup itself could not be completed —
+distinct from `none`, which means the lookup completed and found
+nothing. `unknown` suppresses filing entirely and reports "dedup lookup
+failed — finding suppressed, needs a maintainer's manual check" on the
+lifecycle issue. It shares no code path with `none`'s create-new
+behavior — a broken lookup is never treated as "nothing found."
 
 ## Lifecycle issue (GitHub issue, one per spec, pre-existing — unchanged shape from stages 1–8)
 
@@ -212,6 +230,7 @@ filed finding can know whether it was genuine.
 dedup match found, open    → comment with fresh evidence
 dedup match found, closed  → reopen + comment with fresh evidence
 no dedup match              → create new pipeline-defect issue
+dedup lookup failed         → suppress; report the lookup failure (FR-028)
 ```
 
 Selected purely by the dedup outcome — no fix diff is ever attempted, so
@@ -244,11 +263,12 @@ run and are still reported; only the write itself is suppressed.
                                           ≥1 finding ──────────────────▶ evidence-validity gate
                                                                                 │
                                                         invalid ─────────────▶ "suppressed: invalid evidence" on lifecycle issue
-                                                        valid ────────────────▶ fingerprint → dedup search
+                                                        valid ────────────────▶ fingerprint → dedup lookup (bounded direct read)
                                                                                         │
                                                               dedup miss             ──▶ create new pipeline-defect issue
                                                               dedup hit, open        ──▶ comment on existing pipeline-defect issue
                                                               dedup hit, closed      ──▶ reopen + comment on pipeline-defect issue
+                                                              dedup lookup failed    ──▶ suppress; report lookup failure
                                                                                         │
                                                                         every non-suppressed path also appends to the lifecycle issue (FR-022)
 ```
