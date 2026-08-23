@@ -39,7 +39,10 @@ This closes it generally, in both directions:
             untriggered while this check reported no failures. Discovery
             reads workflow-embedded heredoc gates too, for the same reason
             #213 had to - a gate that lives in a run: block is invisible to
-            anything that only walks .github/scripts.
+            anything that only walks .github/scripts. Both the pattern and
+            the heredoc reader are themselves read by a second, dumber
+            reader, because a discovery rule cannot fail on a subject it
+            has been told not to look at.
 
 The rule is a naming convention read off the directory, not a list of gate
 names — see wc_gate_registry.py for why a list would recreate issue #149.
@@ -86,24 +89,58 @@ PY_HEREDOC_RE = re.compile(
     r"^[ \t]*python3? +- +<<'(\w+)'[^\n]*\n(.*?)^[ \t]*\1[ \t]*$",
     re.S | re.M)
 
+# The SECOND, deliberately dumber reader of the same sources. SUBJECT_PATH_RE
+# defines the set the triggers rule is enforced over, and a check cannot fail
+# on a subject it has been told not to look at: narrow that pattern and
+# discovery quietly returns fewer documents, every one of them passes, and the
+# gate prints a smaller number as though it were the whole story. Nothing
+# inside the rule can notice, because the mutation attacks its eyesight rather
+# than the property it enforces.
+#
+# So this asks a coarser question with no knowledge of the shapes above -- "is
+# this an .md file on disk that a gate names?" -- and the two answers are
+# compared. Same technique as _check_heredoc_reader and check_local_runner_parity:
+# one precise reader, one loose one, and disagreement is the failure.
+#
+# Measured against the tree: this finds exactly the four subject documents and
+# nothing else. Restricting it to .md is what keeps it quiet -- gates name
+# fourteen other existing files (workflows, composites, required-tools.txt),
+# all of them code, and all already covered by the tree-wide paths: entries.
+LOOSE_PATH_RE = re.compile(r"^[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+\.md$")
 
-def _subject_paths_in_source(source):
-    """Every subject-document path appearing as a string constant.
+# Markdown a gate names WITHOUT it being that gate's subject -- a fixture it
+# writes, say. Empty, and the emptiness is the point: unlike a manifest OF
+# subjects (#149's objection, and rightly), this list fails CLOSED. Forget to
+# add a genuine subject to a subject-manifest and the gate silently passes;
+# forget to add a non-subject here and the gate fails loudly and tells you.
+# An entry needs a comment saying why the document is not a subject.
+NOT_SUBJECT_DOCUMENTS = frozenset()
+
+
+def _string_constants(source):
+    """Every string constant in a python source, stripped.
 
     Read out of the SOURCE with ast, not by grepping, for two reasons: a
     path assembled by implicit string concatenation across a line wrap (as
     verify-clarification-gating.py's SCHEMA_CONTRACT is) reaches us joined
     rather than as its first fragment, and comments -- which mention spec
     directories constantly in this repository -- are not in the tree at all.
+
+    Both readers share this, so the only thing that can differ between them
+    is the pattern each applies -- which is the whole point of having two.
     """
     try:
         tree = ast.parse(source)
     except SyntaxError:
         return []             # not this gate's job; the script's own run fails
     return [node.value.strip() for node in ast.walk(tree)
-            if isinstance(node, ast.Constant)
-            and isinstance(node.value, str)
-            and SUBJECT_PATH_RE.match(node.value.strip())]
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)]
+
+
+def _subject_paths_in_source(source):
+    """Every subject-document path appearing as a string constant."""
+    return [value for value in _string_constants(source)
+            if SUBJECT_PATH_RE.match(value)]
 
 
 def _check_heredoc_reader(scanned):
@@ -139,25 +176,28 @@ def _check_heredoc_reader(scanned):
             "and heredoc gates are no longer being read at all."]
 
 
-def subject_paths_read_by_gates(scanned=None):
-    """-> {path: [reader, ...]} for every subject document a gate opens.
+def gate_sources(scanned=None):
+    """-> [(where, python source), ...] for everything that acts as a gate.
 
-    Readers are the gate scripts under .github/scripts AND the python
-    heredocs embedded in workflow and composite run: blocks, reported as
-    `<file>:<line>`. Skipping the second is how this check could have
-    reported "0 failure(s)" over an untriggered docs/setup.md: Gate 12's
-    live scan is a heredoc, and the only file-based trace of its subject is
-    a fixture key in its self-test -- discovery by accident.
+    The gate scripts under .github/scripts AND the python heredocs embedded
+    in workflow and composite run: blocks, the latter as `<file>:<line>`.
+    Skipping the second is how this check could have reported "0 failure(s)"
+    over an untriggered docs/setup.md: Gate 12's live scan is a heredoc, and
+    the only file-based trace of its subject is a fixture key in its
+    self-test -- discovery by accident.
+
+    Both readers below run over THIS list rather than gathering their own,
+    so a disagreement between them can only mean the patterns disagree --
+    never that one of them was looking at a different set of files.
 
     `scanned`, when given a list, collects (path, source, parsed) per
     workflow so _check_heredoc_reader can tell "no heredocs here" from
     "heredocs this pattern can no longer read".
     """
-    found = {}
+    sources = []
     for path in sorted(glob.glob(os.path.join(SCRIPTS_DIR, "*.py"))):
-        source = open(path, encoding="utf-8").read()
-        for value in _subject_paths_in_source(source):
-            found.setdefault(value, []).append(os.path.basename(path))
+        sources.append((os.path.basename(path),
+                        open(path, encoding="utf-8").read()))
 
     for path in workflow_files() + sorted(glob.glob(COMPOSITE_ACTIONS_GLOB)):
         source = open(path, encoding="utf-8").read()
@@ -172,13 +212,69 @@ def subject_paths_read_by_gates(scanned=None):
                 continue      # a shell heredoc, or one the bash gate reports
             parsed += 1
             line = source[:match.start()].count("\n") + 1
-            where = f"{os.path.basename(path)}:{line}"
-            for value in _subject_paths_in_source(body):
-                found.setdefault(value, []).append(where)
+            sources.append((f"{os.path.basename(path)}:{line}", body))
         if scanned is not None:
             scanned.append((path, source, parsed))
 
+    return sources
+
+
+def subject_paths_read_by_gates(scanned=None, sources=None):
+    """-> {path: [reader, ...]} for every subject document a gate opens."""
+    if sources is None:
+        sources = gate_sources(scanned)
+    found = {}
+    for where, source in sources:
+        for value in _subject_paths_in_source(source):
+            found.setdefault(value, []).append(where)
     return {k: sorted(set(v)) for k, v in found.items()}
+
+
+def _check_pattern_reader(sources, precise):
+    """-> list of failure strings. The loose reader's dissent.
+
+    See LOOSE_PATH_RE. Anything the dumb reader can see and the precise one
+    cannot is either a subject SUBJECT_PATH_RE has been narrowed past, or a
+    document that genuinely is not a subject and belongs in
+    NOT_SUBJECT_DOCUMENTS with a reason.
+    """
+    failures = []
+    loose = {}
+    for where, source in sources:
+        for value in _string_constants(source):
+            if (LOOSE_PATH_RE.match(value)
+                    and value not in NOT_SUBJECT_DOCUMENTS
+                    and os.path.isfile(value)):
+                loose.setdefault(value, []).append(where)
+
+    # Who watches this reader. Blunting LOOSE_PATH_RE would silently restore
+    # the blind spot it exists to cover, and nothing above would notice --
+    # the dissent it never files reads exactly like agreement. The regress
+    # stops here, on a tautology: a pattern claiming to match every .md path
+    # must match the .md subjects the precise reader just found. It cannot
+    # go quiet without contradicting its own description.
+    should_be_loose = {p for p in precise
+                       if p.endswith(".md") and os.path.isfile(p)
+                       and p not in NOT_SUBJECT_DOCUMENTS}
+    if should_be_loose - set(loose):
+        missing = ", ".join(sorted(should_be_loose - set(loose)))
+        failures.append(
+            f"LOOSE_PATH_RE does not match {missing}, which the precise "
+            f"reader found and which exist(s) on disk as markdown. The "
+            f"second reader can no longer dissent, so narrowing "
+            f"SUBJECT_PATH_RE would go unreported again. Restore the loose "
+            f"pattern to match any .md path.")
+
+    for path in sorted(set(loose) - set(precise)):
+        failures.append(
+            f"{path} is a document on disk named by "
+            f"{', '.join(sorted(set(loose[path])))}, but SUBJECT_PATH_RE does "
+            f"not classify it as a subject document, so the triggers rule "
+            f"below never checks whether editing it runs its gate. Either "
+            f"widen that pattern (and add the path to lint-workflows.yml's "
+            f"paths: filter), or add it to NOT_SUBJECT_DOCUMENTS with a "
+            f"comment saying why it is not a subject.")
+    return failures
 
 
 def _pattern_matches(pattern, path):
@@ -219,8 +315,10 @@ def pull_request_paths(workflow=LINT_WORKFLOW):
 def check_subject_triggers():
     """-> list of failure strings."""
     scanned = []
-    reading = subject_paths_read_by_gates(scanned)
+    sources = gate_sources(scanned)
+    reading = subject_paths_read_by_gates(sources=sources)
     failures = _check_heredoc_reader(scanned)
+    failures += _check_pattern_reader(sources, reading)
     if not reading:
         return failures + [
             "found no gate that reads a published subject document. "
