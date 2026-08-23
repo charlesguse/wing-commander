@@ -2,7 +2,7 @@
   "issue": 231,
   "spec_dir": "specs/041-implement-stall-notice",
   "feature_num": "041",
-  "stage": "spec",
+  "stage": "plan",
   "iteration": 0,
-  "spec_branch": null
+  "spec_branch": "spec/041-implement-stall-notice"
 }
