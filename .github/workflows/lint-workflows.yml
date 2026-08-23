@@ -2528,6 +2528,29 @@ jobs:
           for path, script in run_texts():
               invoked |= command_tokens(script)
 
+          # The two exclusion sets and the contract must name disjoint
+          # tools. An entry in both is dead — the canonical subtraction
+          # below already covers it — and worse than dead to read: someone
+          # asking "does the adopter contract cover this tool?" finds it
+          # listed among the ones the contract deliberately does NOT cover.
+          # That contradiction is not hypothetical. `timeout` sat in
+          # ALWAYS_AVAILABLE while specs/039 made the lifecycle gate depend
+          # on it inside the adopter's container, and nothing here objected
+          # for as long as the overlap stood.
+          for label, excluded in (("MAINTENANCE_ONLY", MAINTENANCE_ONLY),
+                                  ("ALWAYS_AVAILABLE", ALWAYS_AVAILABLE)):
+              both = sorted(canonical & excluded)
+              if both:
+                  print(f"::error file={tools_path}::Gate 23 (FR-011a): "
+                        f"{', '.join(both)} is named by BOTH the canonical "
+                        f"required-tool list and this gate's {label} "
+                        f"exclusion. The two mean opposite things — one says "
+                        f"an adopter image must provide the tool, the other "
+                        f"says this contract does not cover it. Remove it "
+                        f"from {label} if the image must provide it, or from "
+                        f"{tools_path} if it must not.")
+                  failures += 1
+
           drift = sorted(invoked - canonical - MAINTENANCE_ONLY - ALWAYS_AVAILABLE)
           if drift:
               print(f"::error file={tools_path}::Gate 23 (FR-011a): a run: block "

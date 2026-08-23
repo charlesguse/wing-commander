@@ -183,6 +183,24 @@ def _invocations_in_run(text, script):
     Returns a list of argument lists — one per call site — so a gate CI
     invokes twice with different flags is reproduced twice locally rather
     than collapsed into whichever call the reader happened to find first.
+    That promise used to hold only ACROSS lines: the token scan stopped at
+    the first match on each line, so `x.py --self-test && x.py --other`
+    yielded `--self-test` alone and the local suite quietly ran a different
+    check than CI — the exact defect this function exists to close, one
+    line-break away from being reintroduced. Today's two double-invoked
+    gates sit on separate lines, which is luck, not design.
+
+    Only the literal path is matched. Resolving a non-identical form
+    (`"$SCRIPTS/verify-x.py"`) by basename was attempted here and was dead
+    code — an `endswith` test followed immediately by an equality test that
+    could never let it through. It stays out deliberately rather than being
+    revived: two gate scripts sharing a basename would then cross-attribute
+    silently, and the tree already has a nested entrypoint
+    (auto-update-spec-kit-tests/run-tests.sh) that a future
+    .github/scripts/run-tests.sh would collide with. A gate invoked through
+    a form this does not resolve is not lost quietly either — `invocations`
+    matches on the same literal, so it reports as orphaned and fails
+    verify-gate-wiring.py loudly.
     """
     found = []
     for line in text.splitlines():
@@ -193,8 +211,6 @@ def _invocations_in_run(text, script):
         except ValueError:
             continue          # unbalanced quotes: a partial line, not a call
         for i, tok in enumerate(tokens):
-            if tok != script and not tok.endswith("/" + script.split("/")[-1]):
-                continue
             if tok != script:
                 continue
             args = []
@@ -203,7 +219,6 @@ def _invocations_in_run(text, script):
                     break
                 args.append(nxt)
             found.append(args)
-            break
     return found
 
 

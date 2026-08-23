@@ -23,6 +23,11 @@ This closes it generally, in both directions:
   modules   every wc_*.py shared module is imported by something. These are
             exempt from the wiring rule (nothing invokes them directly), so
             without this they are the one place an orphan could still hide.
+  argv      every gate the PR-time suite runs is one the local runner can
+            reproduce. The two answers come from different readers - one
+            substring-matches the workflow text, one tokenizes it - and a
+            gate only the first can see runs in CI and is silently absent
+            from the local sweep.
   triggers  every published contract document a gate script opens is named
             by lint-workflows.yml's pull_request paths: filter. A gate that
             is wired but never TRIGGERED by an edit to the one file it
@@ -44,8 +49,8 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_gate_registry import (  # noqa: E402
-    SCRIPTS_DIR, _self_check, invocations, referenced_script_paths,
-    shared_modules)
+    SCRIPTS_DIR, _self_check, invocations, pr_time_gates,
+    pr_time_invocations, referenced_script_paths, shared_modules)
 
 
 LINT_WORKFLOW = os.path.join(".github", "workflows", "lint-workflows.yml")
@@ -148,6 +153,32 @@ def check_contract_triggers():
     return failures
 
 
+def check_local_runner_parity():
+    """-> list of failure strings.
+
+    `pr_time_gates` finds a gate by substring; `pr_time_invocations`
+    tokenizes the same text to recover its argv, and run-local-gates.py
+    runs only what the second returns. A gate the tokenizer cannot parse
+    therefore vanishes from the local suite while still running in CI, and
+    the sweep keeps reporting the smaller number as if it were the whole
+    thing. Neither reader can notice that alone; comparing them can.
+    """
+    failures = []
+    invoked = {script for script, _ in pr_time_invocations()}
+    for script in pr_time_gates():
+        if script not in invoked:
+            failures.append(
+                f"{script} runs in the PR-time lint suite, but the local "
+                f"runner recovers no argv for it, so `run-local-gates.py` "
+                f"skips it entirely. Its call site is written in a form the "
+                f"registry's tokenizer cannot read - the local sweep is "
+                f"quietly rehearsing less than CI runs.")
+    if not failures:
+        print(f"ok    all {len(pr_time_gates())} PR-time gate(s) are "
+              f"reproducible locally ({len(pr_time_invocations())} invocation(s))")
+    return failures
+
+
 def main():
     failures = []
     _self_check()
@@ -200,6 +231,9 @@ def main():
                 f"imports. It is exempt from the invocation rule because "
                 f"nothing runs it directly, which makes an unused one "
                 f"invisible. Use it or delete it.")
+
+    # --- argv: CI's gate set and the local runner's agree -----------------
+    failures.extend(check_local_runner_parity())
 
     # --- triggers: every contract document a gate reads fires the suite ---
     failures.extend(check_contract_triggers())

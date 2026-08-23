@@ -685,6 +685,17 @@ DRIFT_CASES = [
                          vip=vip_job(tools=canonical_tools() + " yq"))},
      True, ("yq", "not the canonical one")),
 
+    # Unreachable while the shipped list and the exclusion sets are
+    # correct, which is exactly why the overlap that motivated this check
+    # stood unremarked: `cat` stands in for the real case (`timeout`).
+    ("a tool named by both the canonical list and an always-available "
+     "exclusion",
+     {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
+                             run="git status"))},
+     True, ("cat", "ALWAYS_AVAILABLE"),
+     chr(10).join(("git", "gh", "jq", "curl", "python3", "bash",
+                   "node", "timeout", "cat")) + chr(10)),
+
     ("a stage that embeds no REQUIRED_TOOLS list at all",
      {"stage.yml": stage(HEALTHY_ENTRY, vip=vip_job(tools=None))},
      True, ("REQUIRED_TOOLS",)),
@@ -820,14 +831,20 @@ def main():
 
     all_cases = list(WIRING_CASES) + list(DRIFT_CASES)
     try:
-        for name, files, expect_fail, must_mention in all_cases:
+        for case in all_cases:
+            # A 5th element overrides the canonical list for that case
+            # alone. Every other case copies the REAL file, so the fixtures
+            # stay honest by construction and only the ones that MEAN to
+            # disagree do.
+            name, files, expect_fail, must_mention = case[:4]
+            case_tools = case[4] if len(case) > 4 else required_tools_text
             case_dir = tempfile.mkdtemp(prefix="case_", dir=root)
             wf_dir = os.path.join(case_dir, ".github", "workflows")
             scripts_dir = os.path.join(case_dir, ".github", "scripts")
             os.makedirs(wf_dir)
             os.makedirs(scripts_dir)
             io.open(os.path.join(scripts_dir, "required-tools.txt"), "w",
-                   encoding="utf-8").write(required_tools_text)
+                   encoding="utf-8").write(case_tools)
             for fname, body in files.items():
                 io.open(os.path.join(wf_dir, fname), "w", encoding="utf-8").write(body)
 
