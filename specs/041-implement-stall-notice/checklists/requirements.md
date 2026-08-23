@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,10 +31,10 @@
 
 ## Notes
 
-- **Two [NEEDS CLARIFICATION] markers remain** (FR-005, FR-017), within the three-marker limit. Both are scope decisions the requester explicitly left open, and neither has a defensible default:
-  - **FR-005** — whether a pre-flight refusal that exits non-zero (missing credentials, missing spec-kit skill, malformed hand-off) should now be reported as a stall, or stay silent as today. The source request states the refusal contract must be preserved but does not say which failures fall inside it; the two readings produce materially different behaviour on the most common configuration errors an adopter hits.
-  - **FR-017** — whether the other five stages entering through the same gate get an equivalent notice. The source request names this as "a design question rather than a decided one" and it changes the size of the feature substantially.
-  - Per the CI intake deviation, these are not resolved interactively; they are posted to the lifecycle issue as questions and the markers stay in the spec until answered.
+- **Both [NEEDS CLARIFICATION] markers are resolved** by the requester's answer on the lifecycle issue (#231); no markers remain:
+  - **FR-005** — a pre-flight refusal and an unanticipated crash both speak, differently. A crash marks the record stalled and posts the restart runbook; a declared refusal leaves the record and labels alone and posts a lighter "this stage could not start" note naming what was missing and who fixes it. The refusal/crash distinction is carried by a positive signal the refusing step emits, never by an absent output — recorded as FR-005 and FR-005a, with US2 scenario 6, US3 scenarios 7–8, and SC-010.
+  - **FR-017** — all six gate-calling stages gain the notice, built once as a shared shape and re-gated at each entry rather than as six bespoke conditions; the five stages without a bookkeeping job today gain the minimal one the notice needs and nothing more — recorded as FR-017, FR-017a, FR-017b, with US1 scenario 6, US4 scenario 6, and SC-011.
+  - Scope grew accordingly: FR-001, FR-012, FR-013, FR-016, SC-001, SC-002, and SC-007 now read across all six stages, and the Out of Scope entry that deferred the other five stages is replaced by one bounding what those stages may gain.
 - **Content Quality, "no implementation details"**: the spec names pipeline-domain concepts (lifecycle record, stall label, job, run, condition, status-check function) because those *are* the subject of the feature — the defect is a job-scheduling behaviour visible to requesters as a silent stop. It names no file, no line, no expression syntax, and no concrete condition text; the specific file/line evidence from the source issue is preserved only in the quoted **Input** block, which is the requester's own description rather than specification content.
 - **"Written for non-technical stakeholders"**: satisfied at the level this repository's audience requires — the requester-facing effect (their specification stops moving and nothing says so) is stated in plain terms in User Story 1 and SC-001/SC-002 before any pipeline vocabulary appears.
-- Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.
+- All items are complete; the spec is ready for `/speckit-plan`.
