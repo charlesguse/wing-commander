@@ -627,11 +627,13 @@ DRIFT_CASES = [
                              run="somefancytool --check-version"))},
      True, ("somefancytool",)),
 
-    ("no false positive: canonical tools (git, gh, jq, curl, python3, bash, node)",
+    ("no false positive: canonical tools (git, gh, jq, curl, python3, bash, "
+     "node, timeout)",
      {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
                              
                              run="git status && gh pr list && jq '.' f.json && "
-                                 "curl -s url && python3 x.py && bash y.sh && node z.js"))},
+                                 "curl -s url && python3 x.py && bash y.sh && "
+                                 "node z.js && timeout 4 gh issue view 1"))},
      False, ()),
 
     ("no false positive: POSIX/coreutils/bash-builtin commands",

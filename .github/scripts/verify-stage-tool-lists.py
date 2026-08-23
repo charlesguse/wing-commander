@@ -161,6 +161,7 @@ def parse_table(text):
     """
     raw = {}
     order = []
+    errors = []
     for line in text.splitlines():
         if not line.startswith("|"):
             continue
@@ -173,10 +174,23 @@ def parse_table(text):
         label = spans[0]
         if label == "step-label":
             continue                      # the header's own backticked word
+        # The mirror image of collect_sites' duplicate guard, on the other
+        # half of the same join key. A plain assignment here was
+        # last-write-wins: two rows for one step-label left the FIRST row
+        # compared against nothing while the gate reported a clean match -
+        # the identical silent-overwrite defect the call-site side was
+        # deliberately hardened against, and no less silent for being on
+        # the documentation side of the join.
+        if label in raw:
+            errors.append(
+                "step-label {0!r} has more than one row in {1}. Labels are "
+                "the join key to the `{2}` call sites, so a duplicate leaves "
+                "one row compared against nothing.".format(
+                    label, TABLE_DOC, COMPOSITE))
+            continue
         raw[label] = (cells[2], cells[3])
         order.append(label)
 
-    errors = []
     resolved = {}
 
     def resolve(label, cell, seen):
@@ -335,6 +349,16 @@ BROKEN_REF_TABLE = """
 | a | `a.two` | same as `a.nonexistent` plus `Glob` | `WebFetch` |
 """
 
+# Unreachable from the shipped table (which has no duplicate row), which is
+# precisely why the hole it covers survived: a branch production cannot
+# reach is a branch that gets a fixture or no coverage at all.
+DUPLICATE_ROW_TABLE = """
+| Stage | Internal step (`step-label`) | Default allowed | Default disallowed |
+|---|---|---|---|
+| a | `a.one` | `Read,Write` | `WebFetch` |
+| a | `a.one` | `Read,Glob` | `WebFetch` |
+"""
+
 
 _FIXTURE_STEP = """      - uses: ./.github/actions/{composite}
         with:
@@ -435,6 +459,15 @@ def self_test(root="."):
         else:
             bad += 1
             print("[FAIL] {0}; got: {1}".format(name, detail))
+
+    dup_table, dup_errors, _ = parse_table(DUPLICATE_ROW_TABLE)
+    if any("more than one row" in e for e in dup_errors):
+        print("[ok] a duplicated table row is reported, not silently "
+              "overwritten")
+    else:
+        bad += 1
+        print("[FAIL] a duplicated table row was not reported: {0} "
+              "(parsed: {1})".format(dup_errors, sorted(dup_table)))
 
     _, ref_errors, _ = parse_table(BROKEN_REF_TABLE)
     if any("names a row that does not exist" in e for e in ref_errors):

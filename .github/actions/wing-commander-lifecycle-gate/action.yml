@@ -104,9 +104,20 @@ runs:
             [ -z "$diagnostic" ] && diagnostic="no diagnostic output"
           fi
 
-          if printf '%s' "$diagnostic" | grep -qiE 'Could not resolve to an.*issue|HTTP 404'; then
+          # `gh issue view --json` reads through GraphQL, whose
+          # not-found errors name the node they could not resolve: "Could
+          # not resolve to an Issue with the number N" when the issue is
+          # missing, but "Could not resolve to a Repository with the name
+          # 'owner/repo'" when the token cannot see the repository at all.
+          # Matching only the Issue form left the repository form matching
+          # nothing here AND nothing in the credential branch below, so a
+          # plain permission problem spent the whole retry budget and was
+          # then reported as "the failures could not be classified" - the
+          # uninformative verdict this gate exists to remove, on a fault
+          # that is permanent by definition and worth zero retries.
+          if printf '%s' "$diagnostic" | grep -qiE 'Could not resolve to an? .*(issue|repository)|HTTP 404'; then
             safe="$(sanitize "$diagnostic")"
-            echo "::error::wing-commander-lifecycle-gate: could not determine state of issue #$ISSUE_NUMBER — it may not exist, or the token lacks issues: read. ($safe)"
+            echo "::error::wing-commander-lifecycle-gate: could not determine state of issue #$ISSUE_NUMBER — the issue or the repository could not be resolved. It may not exist, or the token may lack access to it (issues: read on this repository). ($safe)"
             exit 1
           fi
 

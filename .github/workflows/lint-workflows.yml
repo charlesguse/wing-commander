@@ -27,17 +27,27 @@ on:
       # collector fixture got in.
       - ".github/scripts/**"
       - ".specify/scripts/**"
-      # Two gates check a published contract document rather than code:
-      # Gate 27 holds the stage tool-list table in
-      # specs/010-reusable-pipeline/contracts/ to the shipped call sites,
-      # and verify-tool-args-contract.py does the same for
-      # specs/026-configurable-tool-lists/contracts/. Without this, a PR
-      # editing only the table - the change most likely to break either
-      # gate - never triggers this workflow, and the desync is caught by
-      # the daily `schedule:` up to a day later. Scoped to contracts/
-      # rather than all of specs/**, which would run the full lint suite on
-      # every spec, plan, and tasks PR the pipeline opens.
-      - "specs/**/contracts/**"
+      # Three gates check a published contract document rather than code.
+      # Without these, a PR editing only the document - the change most
+      # likely to break its gate - never triggers this workflow, and the
+      # desync is caught by the daily `schedule:` up to a day later.
+      #
+      # Listed file by file rather than as `specs/**/contracts/**`. That
+      # glob looks like the cheaper way to say the same thing and is not:
+      # the plan stage GENERATES specs/NNN-*/contracts/* and opens a PR
+      # with it (plan.yml, "Open the plan PR"), so the glob fires the full
+      # gate suite on every plan PR the pipeline opens, for files no gate
+      # can read - a new spec directory did not exist when any gate was
+      # written. The comment that used to sit here claimed the opposite.
+      #
+      # The cost of a literal list is that a fourth contract document can
+      # be added without one, so verify-gate-wiring.py derives the paths
+      # gate scripts actually open and fails if this list does not cover
+      # them - the required-tools.txt/Gate 23 arrangement, applied to
+      # triggers instead of tools.
+      - "specs/010-reusable-pipeline/contracts/stage-interfaces.md"
+      - "specs/026-configurable-tool-lists/contracts/tool-composition-action.md"
+      - "specs/032-structured-clarification-gate/contracts/clarification-schema.md"
   # Gate 1 only — it reads how GitHub actually registered the workflows on
   # the default branch, which a PR's files cannot tell us.
   push:
@@ -2158,6 +2168,16 @@ jobs:
           # canonical list stays deliberately narrow); this set exists only
           # so this check does not flag `echo`/`mkdir`/`sed` as "newly
           # invoked tools" on every single PR.
+          #
+          # `timeout` used to be in here and is now canonical instead
+          # (specs/039-lifecycle-gate-retry). A tool must not be in both:
+          # the canonical subtraction below already covers it, so the
+          # entry here would be dead, and a reader checking whether the
+          # adopter contract covers a tool would find it listed as one the
+          # contract deliberately does NOT cover. That contradiction is
+          # what let a hard `timeout` dependency reach eleven stages
+          # unregistered — the tool was invoked, the drift scan subtracted
+          # it as always-available, and nothing asked the image for it.
           ALWAYS_AVAILABLE = {
               "alias", "awk", "base64", "basename", "bg", "break", "case",
               "cat", "cd", "chmod", "chown", "cmp", "comm", "command",
@@ -2172,7 +2192,7 @@ jobs:
               "rev", "rm", "rmdir", "sed", "select", "seq", "set",
               "sha1sum", "sha256sum", "shift", "sleep", "sort", "source",
               "split", "tac", "tail", "tar", "tee", "test", "then", "time",
-              "timeout", "touch", "tr", "trap", "true", "type", "uname",
+              "touch", "tr", "trap", "true", "type", "uname",
               "unalias", "uniq", "unset", "until", "wait", "wc", "while",
               "xargs", "xxd", "yes", "gzip", "gunzip", "zip", "unzip",
               "mapfile", "readarray", "popd", "pushd", "dirs", "hash",

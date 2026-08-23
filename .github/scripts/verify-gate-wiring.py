@@ -23,20 +23,129 @@ This closes it generally, in both directions:
   modules   every wc_*.py shared module is imported by something. These are
             exempt from the wiring rule (nothing invokes them directly), so
             without this they are the one place an orphan could still hide.
+  triggers  every published contract document a gate script opens is named
+            by lint-workflows.yml's pull_request paths: filter. A gate that
+            is wired but never TRIGGERED by an edit to the one file it
+            reads is wired in name only - the edit ships, the gate sits
+            out the PR, and the desync waits for the nightly schedule.
 
 The rule is a naming convention read off the directory, not a list of gate
 names — see wc_gate_registry.py for why a list would recreate issue #149.
 
 Usage: python3 .github/scripts/verify-gate-wiring.py
 """
+import ast
+import glob
 import os
 import re
 import sys
+
+import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_gate_registry import (  # noqa: E402
     SCRIPTS_DIR, _self_check, invocations, referenced_script_paths,
     shared_modules)
+
+
+LINT_WORKFLOW = os.path.join(".github", "workflows", "lint-workflows.yml")
+
+# A published contract document a gate reads: specs/<feature>/contracts/<file>.
+# Anchored and whitespace-free so a docstring that merely mentions a spec
+# directory across a line wrap cannot masquerade as one.
+CONTRACT_PATH_RE = re.compile(
+    r"^specs/[^\s*?\[\]]+/contracts/[^\s*?\[\]]+$")
+
+
+def contract_paths_read_by_gates():
+    """-> {path: [script, ...]} for every contract document a gate opens.
+
+    Read out of the SOURCE with ast, not by grepping, for two reasons: a
+    path assembled by implicit string concatenation across a line wrap (as
+    verify-clarification-gating.py's SCHEMA_CONTRACT is) reaches us joined
+    rather than as its first fragment, and comments -- which mention spec
+    directories constantly in this repository -- are not in the tree at all.
+    """
+    found = {}
+    for path in sorted(glob.glob(os.path.join(SCRIPTS_DIR, "*.py"))):
+        try:
+            tree = ast.parse(open(path, encoding="utf-8").read())
+        except SyntaxError:
+            continue          # not this gate's job; the script's own run fails
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                value = node.value.strip()
+                if CONTRACT_PATH_RE.match(value):
+                    found.setdefault(value, []).append(
+                        os.path.basename(path))
+    return {k: sorted(set(v)) for k, v in found.items()}
+
+
+def _pattern_matches(pattern, path):
+    """GitHub path-filter glob semantics, narrowed to what we emit.
+
+    `**` crosses directory separators, a single `*` does not, and everything
+    else is literal. Written out rather than handed to fnmatch, whose `*`
+    happily matches `/` and would call `specs/*/contracts/x.md` a match for
+    a path three directories deep.
+    """
+    out, i = [], 0
+    while i < len(pattern):
+        if pattern.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif pattern[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        else:
+            out.append(re.escape(pattern[i]))
+            i += 1
+    return re.fullmatch("".join(out), path) is not None
+
+
+def pull_request_paths(workflow=LINT_WORKFLOW):
+    """The pull_request paths: filter, or None if there is no filter."""
+    doc = yaml.safe_load(open(workflow, encoding="utf-8")) or {}
+    on = doc.get(True, doc.get("on"))
+    if not isinstance(on, dict):
+        return None
+    pr = on.get("pull_request")
+    if not isinstance(pr, dict):
+        return None
+    paths = pr.get("paths")
+    return list(paths) if isinstance(paths, list) else None
+
+
+def check_contract_triggers():
+    """-> list of failure strings."""
+    failures = []
+    reading = contract_paths_read_by_gates()
+    if not reading:
+        return ["found no gate script that reads a specs/*/contracts/* "
+                "document. Either they moved or this check's discovery has "
+                "broken; either way it is about to verify nothing."]
+
+    patterns = pull_request_paths()
+    if patterns is None:
+        # No filter at all means every PR runs the suite -- over-triggering,
+        # never under-triggering. Nothing to enforce, and saying so beats a
+        # confusing pass.
+        print("ok    lint-workflows.yml has no pull_request paths: filter; "
+              "every contract document triggers it by default")
+        return []
+
+    for path, scripts in sorted(reading.items()):
+        if any(_pattern_matches(pattern, path) for pattern in patterns):
+            print(f"ok    {path} triggers lint-workflows.yml "
+                  f"<- read by {', '.join(scripts)}")
+        else:
+            failures.append(
+                f"{path} is read by {', '.join(scripts)}, but no pattern in "
+                f"lint-workflows.yml's pull_request paths: filter matches it. "
+                f"A PR that edits only that document -- the change most likely "
+                f"to break that gate -- will not run the gate, and the desync "
+                f"waits for the nightly schedule. Add the path to the filter.")
+    return failures
 
 
 def main():
@@ -92,6 +201,9 @@ def main():
                 f"nothing runs it directly, which makes an unused one "
                 f"invisible. Use it or delete it.")
 
+    # --- triggers: every contract document a gate reads fires the suite ---
+    failures.extend(check_contract_triggers())
+
     print()
     for f in failures:
         print(f"::error::{f}")
@@ -99,7 +211,9 @@ def main():
     # where a cp1252 stdout cannot encode a dash and the gate would die in
     # the print instead of reporting its verdict.
     print(f"Gate wiring: {len(wiring)} check(s), "
-          f"{len(shared_modules())} shared module(s); {len(failures)} failure(s).")
+          f"{len(shared_modules())} shared module(s), "
+          f"{len(contract_paths_read_by_gates())} contract document(s); "
+          f"{len(failures)} failure(s).")
     return 1 if failures else 0
 
 

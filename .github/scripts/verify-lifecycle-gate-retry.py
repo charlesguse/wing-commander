@@ -301,6 +301,19 @@ TRANSIENT_THEN_NOT_FOUND = _expect_failure(
     excludes=["retried attempts", "recognised transient class",
               "could not be classified"])
 
+# The other GraphQL not-found form. `gh issue view --json` resolves the
+# repository before the issue, so a token that cannot see the repository
+# fails on the Repository node and never reaches the Issue one. Permanent
+# by definition and worth zero retries, exactly like the issue form.
+ALWAYS_REPOSITORY_UNRESOLVABLE = _expect_failure(
+    "always repository-unresolvable",
+    [(1, "", "GraphQL: Could not resolve to a Repository with the name "
+             "'charlesguse/wing-commander'.")],
+    calls=1,
+    contains=["could not be resolved", "#184"],
+    excludes=["could not be classified", "retried attempts",
+              "was rejected"])
+
 RATE_LIMITED_403 = _expect_failure(
     "rate-limited 403 retries rather than failing immediately",
     [(1, "", "HTTP 403: API rate limit exceeded for installation ID "
@@ -377,6 +390,7 @@ SCENARIOS = [
     BUDGET_EXHAUSTED_TIMEOUT,
     ALWAYS_NOT_FOUND,
     ALWAYS_CREDENTIAL_REJECTED,
+    ALWAYS_REPOSITORY_UNRESOLVABLE,
     SUCCESS_UNRECOGNISED_VALUE,
     TRANSIENT_THEN_NOT_FOUND,
     RATE_LIMITED_403,
@@ -394,11 +408,32 @@ def _mut_revert_retry(steps):
         "max_attempts=3", "max_attempts=1", 1)
 
 
+PERMANENT_PATTERN = "'Could not resolve to an? .*(issue|repository)|HTTP 404'"
+
+
 def _mut_widen_permanent_classifier(steps):
     """Make the not-found pattern also match a transient shape (HTTP 502)."""
-    old = "'Could not resolve to an.*issue|HTTP 404'"
-    new = "'Could not resolve to an.*issue|HTTP 404|HTTP 502'"
-    steps[STEP_NAME] = steps[STEP_NAME].replace(old, new, 1)
+    assert PERMANENT_PATTERN in steps[STEP_NAME], (
+        "the permanent-failure pattern is not where this mutation expects "
+        "it; a mutation that matches nothing proves nothing.")
+    new = PERMANENT_PATTERN[:-1] + "|HTTP 502'"
+    steps[STEP_NAME] = steps[STEP_NAME].replace(PERMANENT_PATTERN, new, 1)
+
+
+def _mut_narrow_permanent_to_issue_only(steps):
+    """Revert the classifier to the issue-only form it shipped with.
+
+    GraphQL names the node it could not resolve, so a token that cannot see
+    the repository at all reports a Repository, not an Issue. The original
+    pattern therefore matched neither it nor the credential branch below,
+    and a permanent permission fault spent the full retry budget before
+    being reported as unclassifiable.
+    """
+    assert PERMANENT_PATTERN in steps[STEP_NAME], (
+        "the permanent-failure pattern is not where this mutation expects "
+        "it; a mutation that matches nothing proves nothing.")
+    steps[STEP_NAME] = steps[STEP_NAME].replace(
+        PERMANENT_PATTERN, "'Could not resolve to an.*issue|HTTP 404'", 1)
 
 
 def _mut_narrow_retry(steps):
@@ -443,6 +478,12 @@ MUTATIONS = [
      _mut_narrow_retry,
      UNCLASSIFIED_THEN_SUCCEED,
      lambda rc, out, outputs, calls: rc != 0 and calls == 1),
+    ("narrow the permanent classifier back to issue-only, sending a "
+     "repository-permission fault down the retry path",
+     _mut_narrow_permanent_to_issue_only,
+     ALWAYS_REPOSITORY_UNRESOLVABLE,
+     lambda rc, out, outputs, calls: (rc != 0 and calls == 3
+                                      and "could not be classified" in out)),
     ("stop classifying a timeout, reporting the hang as unclassifiable",
      _mut_drop_timeout_classification,
      BUDGET_EXHAUSTED_TIMEOUT,
