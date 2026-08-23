@@ -84,22 +84,24 @@ reopens that issue with the fresh evidence.
 
 As a maintainer, I want the watchdog to inspect its **own** runs with the same
 detection, triage, and dedup rules as any other stage, so that a misbehaving
-watchdog is caught by the same mechanism and is not silently exempt.
+watchdog is caught by the same rules and is not silently exempt.
 
 **Why this priority**: The watchdog is a pipeline stage like any other; an
-un-inspected watchdog is a blind spot precisely where autonomous writes originate.
+un-inspected watchdog is a blind spot precisely where its writes originate.
 Self-inspection is a small addition on top of US1/US2 but is called out separately
 because it is an explicit non-negotiable of the request and is independently
 testable.
 
-**Independent Test**: Trigger the watchdog against a prior *watchdog* run that
-exhibited a problem, and confirm it produces and triages a finding using the same
-rules — with no special-case branch that skips or softens the checks for itself —
-including the loop-prevention cap so self-inspection cannot run away.
+**Independent Test**: Trigger the watchdog (or the deterministic self-checker
+that also satisfies this requirement, per FR-021) against a prior *watchdog*
+run that exhibited a problem, and confirm it produces and triages a finding
+under the same rules, unexempted — no special-case branch that skips or
+softens the checks for itself — including the loop-prevention cap so
+self-inspection cannot run away.
 
 **Acceptance Scenarios**:
 
-1. **Given** a completed watchdog run that exhibits a detectable problem, **When** the watchdog inspects it, **Then** it produces and triages a finding using the same rules applied to any other stage.
+1. **Given** a completed watchdog run that exhibits a detectable problem, **When** the watchdog (or the deterministic self-checker) inspects it, **Then** it produces and triages a finding under the same rules applied to any other stage, unexempted.
 2. **Given** the watchdog is inspecting its own runs, **When** it acts on a finding, **Then** the self-dispatch cap and loop-prevention guardrails still apply, so it cannot trigger an unbounded chain of watchdog runs.
 
 ---
@@ -152,7 +154,7 @@ including the loop-prevention cap so self-inspection cannot run away.
 
 #### Self-inspection
 
-- **FR-021**: The watchdog MUST be able to inspect its **own** prior runs and MUST apply the same detection, triage, dedup, and guardrail rules to them, with no special-case path that exempts or softens the checks for itself.
+- **FR-021**: The watchdog MUST be able to inspect its **own** prior runs and MUST be **unexempted**: its own runs are never skipped or softened relative to the same detection, triage, and dedup rules applied to any other stage. This is a requirement on outcome, not mechanism — a deterministic self-checker whose implementation differs from the watchdog's own code path (e.g. a dedicated, separately-shipped workflow) satisfies this requirement and is recognized as a valid, *stronger* form of unexempted self-inspection, not an exception to it.
 
 #### Reporting, security & coexistence
 

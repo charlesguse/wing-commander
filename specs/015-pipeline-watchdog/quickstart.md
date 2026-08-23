@@ -209,6 +209,19 @@ never silently repointed at an unrelated scenario.
    confirming the fix only changes the *failure* path, not the working
    path.
 
+## Scenario 20 — Self-inspection requirement text matches shipped behavior (US4, FR-021; spec 024)
+
+1. Read the amended FR-021 (formerly implying the inspection mechanism
+   itself must be identical to other stages', now requiring
+   "unexempted," and explicitly recognizing a deterministic self-checker
+   as a valid, stronger form) in this spec's Requirements section.
+2. Trigger `wing-commander-8b-watchdog-self.yml` against a stage-8 run
+   that exhibits a detectable problem.
+3. Expected: the deterministic self-checker inspects it, exactly as
+   before this feature — no behavior changes; the check is that the
+   requirement text a reviewer reads next to this run no longer
+   contradicts what actually happens.
+
 See `contracts/watchdog-workflow.md` for the exact trigger/job-gate
 contracts and `data-model.md` for the full Finding, fingerprint, and
 triage-decision shapes each scenario above exercises.

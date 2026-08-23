@@ -185,10 +185,10 @@ Single-project CI/CD feature, no `src/`/`tests/` split (plan.md's Structure Deci
 
 ### Implementation for User Story 5
 
-- [ ] T041 [US5] In `specs/015-pipeline-watchdog/spec.md`, amend **FR-021** to require self-inspection be *unexempted* (never skipped or softened for the watchdog's own runs) rather than requiring the inspection *mechanism* be identical to other stages', and to explicitly recognize a deterministic self-checker as a valid, stronger form of unexempted self-inspection.
-- [ ] T042 [US5] In `specs/015-pipeline-watchdog/spec.md`'s User Story 4, reword the acceptance scenarios to describe "the same rules, unexempted" rather than "identical mechanism," consistent with the amended FR-021 — depends on T041 (same file; continues T008's earlier ladder-framing reword of this same story).
-- [ ] T043 [P] [US5] In `specs/015-pipeline-watchdog/contracts/watchdog-workflow.md`, amend any self-inspection contract clause referencing FR-021's old "identical mechanism" wording to match the amended requirement.
-- [ ] T044 [P] [US5] In `specs/015-pipeline-watchdog/quickstart.md`, add the self-inspection-requirement-text validation scenario (read the amended FR-021 next to the shipped deterministic self-checker's behavior and confirm no contradiction) — this feature's `quickstart.md` Scenario G.
+- [X] T041 [US5] In `specs/015-pipeline-watchdog/spec.md`, amend **FR-021** to require self-inspection be *unexempted* (never skipped or softened for the watchdog's own runs) rather than requiring the inspection *mechanism* be identical to other stages', and to explicitly recognize a deterministic self-checker as a valid, stronger form of unexempted self-inspection.
+- [X] T042 [US5] In `specs/015-pipeline-watchdog/spec.md`'s User Story 4, reword the acceptance scenarios to describe "the same rules, unexempted" rather than "identical mechanism," consistent with the amended FR-021 — depends on T041 (same file; continues T008's earlier ladder-framing reword of this same story).
+- [X] T043 [P] [US5] In `specs/015-pipeline-watchdog/contracts/watchdog-workflow.md`, amend any self-inspection contract clause referencing FR-021's old "identical mechanism" wording to match the amended requirement. (Verified: no such clause exists in this file — nothing to change.)
+- [X] T044 [P] [US5] In `specs/015-pipeline-watchdog/quickstart.md`, add the self-inspection-requirement-text validation scenario (read the amended FR-021 next to the shipped deterministic self-checker's behavior and confirm no contradiction) — this feature's `quickstart.md` Scenario G.
 
 **Checkpoint**: FR-021's text matches the shipped deterministic self-checker; quickstart Scenario G passes with zero code changes.
 
