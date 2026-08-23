@@ -27,10 +27,10 @@ on:
       # collector fixture got in.
       - ".github/scripts/**"
       - ".specify/scripts/**"
-      # Three gates check a published contract document rather than code.
-      # Without these, a PR editing only the document - the change most
-      # likely to break its gate - never triggers this workflow, and the
-      # desync is caught by the daily `schedule:` up to a day later.
+      # Four gates check a published document rather than code. Without
+      # these, a PR editing only the document - the change most likely to
+      # break its gate - never triggers this workflow, and the desync is
+      # caught by the daily `schedule:` up to a day later.
       #
       # Listed file by file rather than as `specs/**/contracts/**`. That
       # glob looks like the cheaper way to say the same thing and is not:
@@ -40,14 +40,20 @@ on:
       # can read - a new spec directory did not exist when any gate was
       # written. The comment that used to sit here claimed the opposite.
       #
-      # The cost of a literal list is that a fourth contract document can
-      # be added without one, so verify-gate-wiring.py derives the paths
-      # gate scripts actually open and fails if this list does not cover
-      # them - the required-tools.txt/Gate 23 arrangement, applied to
-      # triggers instead of tools.
+      # The cost of a literal list is that a fifth document can be added
+      # without one, so verify-gate-wiring.py derives the paths gates
+      # actually open and fails if this list does not cover them - the
+      # required-tools.txt/Gate 23 arrangement, applied to triggers
+      # instead of tools.
       - "specs/010-reusable-pipeline/contracts/stage-interfaces.md"
       - "specs/026-configurable-tool-lists/contracts/tool-composition-action.md"
       - "specs/032-structured-clarification-gate/contracts/clarification-schema.md"
+      # Gate 12's subject: it parses this file's "Repository permissions"
+      # list as the single source of truth for what the wing-commander-bot
+      # App may do, and sys.exits if the list moves. A PR downgrading a
+      # grant here - the one edit that can invalidate every App-token call
+      # site the gate approves - ran no gate at all until this entry.
+      - "docs/setup.md"
   # Gate 1 only — it reads how GitHub actually registered the workflows on
   # the default branch, which a PR's files cannot tell us.
   push:

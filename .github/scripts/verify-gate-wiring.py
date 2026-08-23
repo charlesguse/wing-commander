@@ -28,11 +28,18 @@ This closes it generally, in both directions:
             substring-matches the workflow text, one tokenizes it - and a
             gate only the first can see runs in CI and is silently absent
             from the local sweep.
-  triggers  every published contract document a gate script opens is named
+  triggers  every published document a gate treats as its subject is named
             by lint-workflows.yml's pull_request paths: filter. A gate that
             is wired but never TRIGGERED by an edit to the one file it
             reads is wired in name only - the edit ships, the gate sits
             out the PR, and the desync waits for the nightly schedule.
+            "Subject" is deliberately wider than specs/*/contracts/*: Gate
+            12's is docs/setup.md, and scoping this rule to the contracts
+            tree let the one document most likely to invalidate its gate go
+            untriggered while this check reported no failures. Discovery
+            reads workflow-embedded heredoc gates too, for the same reason
+            #213 had to - a gate that lives in a run: block is invisible to
+            anything that only walks .github/scripts.
 
 The rule is a naming convention read off the directory, not a list of gate
 names — see wc_gate_registry.py for why a list would recreate issue #149.
@@ -44,26 +51,44 @@ import glob
 import os
 import re
 import sys
+import textwrap
 
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_gate_registry import (  # noqa: E402
     SCRIPTS_DIR, _self_check, invocations, pr_time_gates,
-    pr_time_invocations, referenced_script_paths, shared_modules)
+    pr_time_invocations, referenced_script_paths, shared_modules,
+    workflow_files)
 
 
 LINT_WORKFLOW = os.path.join(".github", "workflows", "lint-workflows.yml")
 
-# A published contract document a gate reads: specs/<feature>/contracts/<file>.
-# Anchored and whitespace-free so a docstring that merely mentions a spec
-# directory across a line wrap cannot masquerade as one.
-CONTRACT_PATH_RE = re.compile(
-    r"^specs/[^\s*?\[\]]+/contracts/[^\s*?\[\]]+$")
+# Composite actions can host a heredoc gate exactly as a workflow can, so
+# they are scanned alongside the workflows the registry already enumerates.
+COMPOSITE_ACTIONS_GLOB = os.path.join(".github", "actions", "*", "action.yml")
+
+# A published document a gate reads as its subject. Two shapes ship today:
+# specs/<feature>/contracts/<file>, and a document under docs/ - Gate 12
+# treats docs/setup.md as the single source of truth for what the App may
+# do and sys.exits if its permissions list moves. Anchored and
+# whitespace-free so a docstring that merely mentions a spec directory
+# across a line wrap cannot masquerade as one.
+SUBJECT_PATH_RE = re.compile(
+    r"^(?:specs/[^\s*?\[\]]+/contracts/[^\s*?\[\]]+"
+    r"|docs/[^\s*?\[\]]+\.md)$")
+
+# `python3 - <<'PYEOF' ... PYEOF` inside a run: block, which is how the
+# larger gates in lint-workflows.yml are written. The opener may carry a
+# redirect after the delimiter (Gate 23's does), and the terminator is
+# matched at any indentation so the YAML block's own nesting is irrelevant.
+PY_HEREDOC_RE = re.compile(
+    r"^[ \t]*python3? +- +<<'(\w+)'[^\n]*\n(.*?)^[ \t]*\1[ \t]*$",
+    re.S | re.M)
 
 
-def contract_paths_read_by_gates():
-    """-> {path: [script, ...]} for every contract document a gate opens.
+def _subject_paths_in_source(source):
+    """Every subject-document path appearing as a string constant.
 
     Read out of the SOURCE with ast, not by grepping, for two reasons: a
     path assembled by implicit string concatenation across a line wrap (as
@@ -71,18 +96,88 @@ def contract_paths_read_by_gates():
     rather than as its first fragment, and comments -- which mention spec
     directories constantly in this repository -- are not in the tree at all.
     """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []             # not this gate's job; the script's own run fails
+    return [node.value.strip() for node in ast.walk(tree)
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and SUBJECT_PATH_RE.match(node.value.strip())]
+
+
+def _check_heredoc_reader(scanned):
+    """Fail loudly if the heredoc half of discovery stopped reading anything.
+
+    docs/setup.md happens to be discoverable from .github/scripts too -- as
+    a FIXTURE KEY in verify-gate-12.py, not as the path the gate opens -- so
+    if this reader silently stopped matching, every subject document would
+    still be found and this check would still print 0 failures. That is the
+    same "green while proving nothing" shape the whole file exists to stop.
+    A style change to the heredocs (a different delimiter, `python -c`)
+    must therefore be a loud failure here, not a quiet loss of coverage.
+    """
+    if any(parsed for _, _, parsed in scanned):
+        return []
+
+    missed = [(path, source) for path, source, _ in scanned
+              if re.search(r"\bpython3? +- +<<", source)]
+    if missed:
+        path, source = missed[0]
+        opener = re.search(r"<<[^\n]*", source)
+        return [f"{path} contains a python heredoc that PY_HEREDOC_RE did "
+                f"not extract and parse, so no gate written as a run: block "
+                f"is being read for the documents it opens, and a subject "
+                f"document only such a gate names would go untriggered with "
+                f"nothing reported. Update the pattern to match how the "
+                f"heredocs are now written "
+                f"({opener.group(0).strip() if opener else 'unknown opener'})."]
+
+    return ["found no python heredoc in any workflow or composite action. "
+            "Either they were all extracted into .github/scripts -- in "
+            "which case delete this reader -- or its pattern has broken "
+            "and heredoc gates are no longer being read at all."]
+
+
+def subject_paths_read_by_gates(scanned=None):
+    """-> {path: [reader, ...]} for every subject document a gate opens.
+
+    Readers are the gate scripts under .github/scripts AND the python
+    heredocs embedded in workflow and composite run: blocks, reported as
+    `<file>:<line>`. Skipping the second is how this check could have
+    reported "0 failure(s)" over an untriggered docs/setup.md: Gate 12's
+    live scan is a heredoc, and the only file-based trace of its subject is
+    a fixture key in its self-test -- discovery by accident.
+
+    `scanned`, when given a list, collects (path, source, parsed) per
+    workflow so _check_heredoc_reader can tell "no heredocs here" from
+    "heredocs this pattern can no longer read".
+    """
     found = {}
     for path in sorted(glob.glob(os.path.join(SCRIPTS_DIR, "*.py"))):
-        try:
-            tree = ast.parse(open(path, encoding="utf-8").read())
-        except SyntaxError:
-            continue          # not this gate's job; the script's own run fails
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                value = node.value.strip()
-                if CONTRACT_PATH_RE.match(value):
-                    found.setdefault(value, []).append(
-                        os.path.basename(path))
+        source = open(path, encoding="utf-8").read()
+        for value in _subject_paths_in_source(source):
+            found.setdefault(value, []).append(os.path.basename(path))
+
+    for path in workflow_files() + sorted(glob.glob(COMPOSITE_ACTIONS_GLOB)):
+        source = open(path, encoding="utf-8").read()
+        parsed = 0
+        for match in PY_HEREDOC_RE.finditer(source):
+            # The body is indented by its YAML block; dedent before parsing
+            # or every heredoc is an IndentationError and vanishes silently.
+            body = textwrap.dedent(match.group(2))
+            try:
+                ast.parse(body)
+            except SyntaxError:
+                continue      # a shell heredoc, or one the bash gate reports
+            parsed += 1
+            line = source[:match.start()].count("\n") + 1
+            where = f"{os.path.basename(path)}:{line}"
+            for value in _subject_paths_in_source(body):
+                found.setdefault(value, []).append(where)
+        if scanned is not None:
+            scanned.append((path, source, parsed))
+
     return {k: sorted(set(v)) for k, v in found.items()}
 
 
@@ -121,14 +216,16 @@ def pull_request_paths(workflow=LINT_WORKFLOW):
     return list(paths) if isinstance(paths, list) else None
 
 
-def check_contract_triggers():
+def check_subject_triggers():
     """-> list of failure strings."""
-    failures = []
-    reading = contract_paths_read_by_gates()
+    scanned = []
+    reading = subject_paths_read_by_gates(scanned)
+    failures = _check_heredoc_reader(scanned)
     if not reading:
-        return ["found no gate script that reads a specs/*/contracts/* "
-                "document. Either they moved or this check's discovery has "
-                "broken; either way it is about to verify nothing."]
+        return failures + [
+            "found no gate that reads a published subject document. "
+            "Either they moved or this check's discovery has broken; "
+            "either way it is about to verify nothing."]
 
     patterns = pull_request_paths()
     if patterns is None:
@@ -136,16 +233,16 @@ def check_contract_triggers():
         # never under-triggering. Nothing to enforce, and saying so beats a
         # confusing pass.
         print("ok    lint-workflows.yml has no pull_request paths: filter; "
-              "every contract document triggers it by default")
-        return []
+              "every subject document triggers it by default")
+        return failures
 
-    for path, scripts in sorted(reading.items()):
+    for path, readers in sorted(reading.items()):
         if any(_pattern_matches(pattern, path) for pattern in patterns):
             print(f"ok    {path} triggers lint-workflows.yml "
-                  f"<- read by {', '.join(scripts)}")
+                  f"<- read by {', '.join(readers)}")
         else:
             failures.append(
-                f"{path} is read by {', '.join(scripts)}, but no pattern in "
+                f"{path} is read by {', '.join(readers)}, but no pattern in "
                 f"lint-workflows.yml's pull_request paths: filter matches it. "
                 f"A PR that edits only that document -- the change most likely "
                 f"to break that gate -- will not run the gate, and the desync "
@@ -235,8 +332,8 @@ def main():
     # --- argv: CI's gate set and the local runner's agree -----------------
     failures.extend(check_local_runner_parity())
 
-    # --- triggers: every contract document a gate reads fires the suite ---
-    failures.extend(check_contract_triggers())
+    # --- triggers: every subject document a gate reads fires the suite ----
+    failures.extend(check_subject_triggers())
 
     print()
     for f in failures:
@@ -246,7 +343,7 @@ def main():
     # the print instead of reporting its verdict.
     print(f"Gate wiring: {len(wiring)} check(s), "
           f"{len(shared_modules())} shared module(s), "
-          f"{len(contract_paths_read_by_gates())} contract document(s); "
+          f"{len(subject_paths_read_by_gates())} subject document(s); "
           f"{len(failures)} failure(s).")
     return 1 if failures else 0
 
