@@ -244,9 +244,14 @@ The list `verify-image-prerequisites` checks against a named image:
 | `python3` | A real, direct dependency of a published stage today — `watchdog.yml`'s `act` job invokes it directly, not just tooling/CI scripts. |
 | `bash` | Every `run:` step across every stage and composite assumes it. |
 | `node` (Node.js runtime) | *Inferred*, not directly observed in this repository's own source — `anthropics/claude-code-action@v1` (used by every agent-bearing job across all eleven stages) is a JavaScript action, which implies a Node.js runtime requirement this repository's own grep cannot confirm or deny (research D6). Implementation must decide how to treat this entry and record the decision. |
+| `timeout` | Direct invocation, required since **v2.5.1** (`1d1452c`): `wing-commander-lifecycle-gate` wraps its `gh issue view` read in `timeout "$read_timeout" ...` so a hung read becomes a retryable 124 rather than a stalled stage (specs/039-lifecycle-gate-retry). That composite runs inside the adopter's container at the entry of six stages. Previously assumed present under Gate 23's `ALWAYS_AVAILABLE` coreutils set, which is how a hard dependency reached eleven stages undeclared. |
 
 Kept in agreement with reality by Gate 23 (below), not by convention alone
-(FR-011a).
+(FR-011a): Gate 23 parses this table and fails on any set difference against
+`.github/scripts/required-tools.txt`, in both directions. Before that, "kept
+in agreement" was a claim this document made about itself — the table sat at
+seven tools while the canonical list grew an eighth, and nothing compared
+them.
 
 ## Pass-through, no validation on adopter-chosen values (FR-008)
 

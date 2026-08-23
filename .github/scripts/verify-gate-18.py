@@ -30,36 +30,25 @@ import sys
 import tempfile
 
 LINT_WORKFLOW = ".github/workflows/lint-workflows.yml"
-STEP_PREFIX = "Gate 18"
-HEREDOC_OPEN = "python3 - <<'PYEOF'"
-HEREDOC_CLOSE = "PYEOF"
+SCAN_SCRIPT = ".github/scripts/verify-gate-18-scan.py"
 
 
-def extract_gate(path=LINT_WORKFLOW):
-    """Return Gate 18's python source, read out of the shipped workflow."""
-    import yaml
-    wf = yaml.safe_load(io.open(path, encoding="utf-8")) or {}
-    run = None
-    for job in (wf.get("jobs") or {}).values():
-        for step in (job or {}).get("steps") or []:
-            name = (step or {}).get("name", "")
-            if name.startswith(STEP_PREFIX) and "self-test" not in name:
-                run = step.get("run")
-    if run is None:
-        sys.exit(f"::error file={path}::verify-gate-18 could not find a step named "
-                 f"{STEP_PREFIX!r}. If it was renamed, update this script and the "
-                 f"workflow together.")
+def extract_gate(path=SCAN_SCRIPT):
+    """Return Gate 18's python source.
 
-    lines = run.splitlines()
-    try:
-        start = next(i for i, l in enumerate(lines) if l.strip() == HEREDOC_OPEN)
-        end = next(i for i, l in enumerate(lines)
-                   if i > start and l.strip() == HEREDOC_CLOSE)
-    except StopIteration:
-        sys.exit(f"::error file={path}::verify-gate-18 found the {STEP_PREFIX} step but "
-                 f"not the {HEREDOC_OPEN} ... {HEREDOC_CLOSE} block it keys on — the "
-                 f"step's shape has changed.")
-    return "\n".join(lines[start + 1:end]) + "\n"
+    Read from the shipped script rather than copied here, for exactly the
+    reason it was previously extracted from the workflow heredoc: there
+    must be no second copy to fall out of sync (verify-gate-16.py's
+    discipline). What #213 changed is only WHERE the single copy lives -
+    a file the gate registry can see and run-local-gates.py can run,
+    instead of a heredoc that matched neither.
+    """
+    if not os.path.exists(path):
+        sys.exit("::error::verify-gate-18 could not find {0!r}. Gate 18's "
+                 "repository scan is expected to live in that file; if it "
+                 "moved, update this script and lint-workflows.yml "
+                 "together.".format(path))
+    return io.open(path, encoding="utf-8").read()
 
 
 # ---------------------------------------------------------------- fixtures
@@ -168,13 +157,26 @@ CASES = [
      {".github/workflows/w.yml": wf([BARE_EXEMPT])},
      True, ("array-collecting",)),
 
-    ("the same FAIL shape inside a composite action's action.yml",
+    # The `file=` path is asserted literally, and deliberately: the
+    # workflow/composite sweep passes glob's own output through, which on
+    # Windows carries the platform separator (`.github/actions\foo\action
+    # .yml`) while the `**/*.sh|py` sweep right below it normalises to
+    # posix. Two sweeps of one gate printing two path shapes is how a local
+    # run and CI come to disagree about where a defect lives, and it breaks
+    # any consumer that matches on the path. Naming both forms' expected
+    # shape here is what makes the normalisation fail-able.
+    ("the same FAIL shape inside a composite action's action.yml, reported "
+     "at a posix path (glob hands back os.sep components on Windows)",
      {".github/actions/foo/action.yml": action_yml([ARRAY_COLLECTING])},
-     True, ("array-collecting",)),
+     True, ("array-collecting", "file=.github/actions/foo/action.yml,")),
+
+    ("the same FAIL shape inside a workflow, reported at a posix path",
+     {".github/workflows/w.yml": wf([ARRAY_COLLECTING])},
+     True, ("array-collecting", "file=.github/workflows/w.yml,")),
 
     ("the same FAIL shape inside a checked-in .sh file",
      {"scripts/foo.sh": ARRAY_COLLECTING + "\n"},
-     True, ("array-collecting",)),
+     True, ("array-collecting", "file=scripts/foo.sh,")),
 
     ("the shipped, fixed forms of all three distinct filter shapes this "
      "feature's call sites use: none flagged (the regression case)",
@@ -218,7 +220,10 @@ def main():
                 io.open(full, "w", encoding="utf-8", newline="\n").write(body)
 
             env = dict(os.environ, PYTHONIOENCODING="utf-8")
-            proc = subprocess.run([sys.executable, gate_path], cwd=case_dir,
+            # --fixture-root: this case_dir IS the root being scanned, and
+            # some fixtures carry no .github/workflows/ by design.
+            proc = subprocess.run([sys.executable, gate_path, "--fixture-root"],
+                                  cwd=case_dir,
                                   capture_output=True, text=True, env=env,
                                   encoding="utf-8", errors="replace")
             out = (proc.stdout or "") + (proc.stderr or "")

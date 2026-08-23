@@ -129,6 +129,21 @@ the same `if ! state=... ; then` branch a `gh`-side failure would, and
 `timeout`'s own message ("terminated") on stderr, if any, is captured like
 any other diagnostic text.
 
+> **Correction (2026-08-22).** The last clause above is wrong, and the
+> "needs no special handling" conclusion it supports is wrong with it.
+> `timeout` writes NOTHING to stderr on expiry — measured: `timeout 1 sleep
+> 5` exits 124 having produced zero bytes. The familiar "terminated"
+> message comes from an interactive shell's job-control reporting a signal,
+> not from `timeout`, and no such shell exists in a workflow step. So a hung
+> read reached the classifier as `"no diagnostic output"`, matched no
+> transient pattern, and was reported as *"the failures could not be
+> classified"* — for the class FR-001 names first, and in direct violation
+> of SC-007. The step now branches on exit 124/137 explicitly and names the
+> timeout from the exit code, which is its only witness. Covered by
+> `verify-lifecycle-gate-retry.py`'s `TIMEOUT_THEN_SUCCEED` (which drives
+> the real `timeout` rather than simulating its status) and
+> `BUDGET_EXHAUSTED_TIMEOUT`, plus a mutation that reverts the branch.
+
 **Rationale**: This is the smallest change that fixes the source defect's
 second half (spec: "the command substitution captures stdout only, so the
 actual `HTTP 502` on stderr never reaches the error text"). It keeps the

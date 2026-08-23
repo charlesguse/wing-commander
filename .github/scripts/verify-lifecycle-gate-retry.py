@@ -83,20 +83,32 @@ def _sq(text):
 def gh_stub_script(behaviors):
     """A `#!/bin/sh` stub for `bindir/gh` that varies by call count.
 
-    `behaviors` is a list of (rc, stdout, stderr) tuples, 1-indexed by call.
-    A call beyond the list's length repeats the LAST entry — this is how
-    "always fails the same way" scenarios (a single-element list) and
+    `behaviors` is a list of (rc, stdout, stderr) tuples, 1-indexed by call,
+    optionally with a fourth element: seconds to sleep BEFORE producing any
+    of it. A call beyond the list's length repeats the LAST entry — this is
+    how "always fails the same way" scenarios (a single-element list) and
     "fails N times then succeeds" scenarios (an N+1-element list) share one
     generator (research.md D6).
+
+    The sleep exists so a scenario can drive the shipped step's real
+    `timeout` rather than simulating its exit code. A stub that sleeps
+    longer than the step's `read_timeout` is killed by it, and the step sees
+    124 from the same code path production does — including the detail that
+    made this worth covering: `timeout` writes NOTHING to stderr, so the
+    only witness to what happened is the exit code.
     """
     lines = ["#!/bin/sh",
              'n=$(cat "$GH_CALL_COUNT" 2>/dev/null || echo 0)',
              'n=$((n + 1))',
              'echo "$n" > "$GH_CALL_COUNT"',
              'case "$n" in']
-    for i, (rc, stdout, stderr) in enumerate(behaviors, start=1):
+    for i, behavior in enumerate(behaviors, start=1):
+        rc, stdout, stderr = behavior[0], behavior[1], behavior[2]
+        sleep_secs = behavior[3] if len(behavior) > 3 else 0
         label = str(i) if i < len(behaviors) else "*"
         lines.append(f"  {label})")
+        if sleep_secs:
+            lines.append(f"    sleep {sleep_secs}")
         if stdout:
             lines.append(f"    printf '%s' {_sq(stdout)}")
         if stderr:
@@ -224,6 +236,33 @@ BUDGET_EXHAUSTED_UNCLASSIFIED = _expect_failure(
     contains=["after 3", "code Q9", "could not be classified"],
     excludes=["recognised transient class"])
 
+# A hung read — the transient class FR-001 names first, and Acceptance
+# Scenario 5's subject. It is the only class that says nothing for itself:
+# `timeout` exits 124 having written nothing to stderr, so before this was
+# covered the step reported a hang as "could not be classified. Last attempt
+# reported: no diagnostic output" — the message SC-007 exists to prevent, on
+# the fault that motivated the feature.
+#
+# The two scenarios split deliberately. TIMEOUT_THEN_SUCCEED drives the
+# REAL `timeout`: the stub sleeps past `read_timeout` and is killed, so the
+# 124 comes from production's own code path and not from an assumption
+# about it. It costs one `read_timeout` of wall clock, which buys the only
+# proof that the exit code is what we think. BUDGET_EXHAUSTED_TIMEOUT then
+# has the stub exit 124 directly — `timeout` propagates the child's status
+# when it exits on its own — so the message wording is asserted across a
+# full budget without paying three more timeouts.
+TIMEOUT_THEN_SUCCEED = _expect_success(
+    "timeout-then-succeed (Acceptance Scenario 5, real timeout)",
+    [(0, "OPEN", "", 30), (0, "OPEN", "")],
+    "OPEN", "true", 2)
+
+BUDGET_EXHAUSTED_TIMEOUT = _expect_failure(
+    "budget exhausted, every read timed out",
+    [(124, "", "")],
+    calls=3,
+    contains=["after 3", "timed out", "recognised transient class"],
+    excludes=["could not be classified", "no diagnostic output"])
+
 # US3 (FR-002, FR-008, FR-012, SC-002) — a real failure still fails
 # immediately, spending none of the retry budget; the message content
 # assertions here also satisfy US2's Acceptance Scenarios 2-3 (T006).
@@ -261,6 +300,19 @@ TRANSIENT_THEN_NOT_FOUND = _expect_failure(
     contains=["may not exist"],
     excludes=["retried attempts", "recognised transient class",
               "could not be classified"])
+
+# The other GraphQL not-found form. `gh issue view --json` resolves the
+# repository before the issue, so a token that cannot see the repository
+# fails on the Repository node and never reaches the Issue one. Permanent
+# by definition and worth zero retries, exactly like the issue form.
+ALWAYS_REPOSITORY_UNRESOLVABLE = _expect_failure(
+    "always repository-unresolvable",
+    [(1, "", "GraphQL: Could not resolve to a Repository with the name "
+             "'charlesguse/wing-commander'.")],
+    calls=1,
+    contains=["could not be resolved", "#184"],
+    excludes=["could not be classified", "retried attempts",
+              "was rejected"])
 
 RATE_LIMITED_403 = _expect_failure(
     "rate-limited 403 retries rather than failing immediately",
@@ -334,8 +386,11 @@ SCENARIOS = [
     SUCCESS_EMPTY_STATE,
     BUDGET_EXHAUSTED_TRANSIENT,
     BUDGET_EXHAUSTED_UNCLASSIFIED,
+    TIMEOUT_THEN_SUCCEED,
+    BUDGET_EXHAUSTED_TIMEOUT,
     ALWAYS_NOT_FOUND,
     ALWAYS_CREDENTIAL_REJECTED,
+    ALWAYS_REPOSITORY_UNRESOLVABLE,
     SUCCESS_UNRECOGNISED_VALUE,
     TRANSIENT_THEN_NOT_FOUND,
     RATE_LIMITED_403,
@@ -353,11 +408,32 @@ def _mut_revert_retry(steps):
         "max_attempts=3", "max_attempts=1", 1)
 
 
+PERMANENT_PATTERN = "'Could not resolve to an? .*(issue|repository)|HTTP 404'"
+
+
 def _mut_widen_permanent_classifier(steps):
     """Make the not-found pattern also match a transient shape (HTTP 502)."""
-    old = "'Could not resolve to an.*issue|HTTP 404'"
-    new = "'Could not resolve to an.*issue|HTTP 404|HTTP 502'"
-    steps[STEP_NAME] = steps[STEP_NAME].replace(old, new, 1)
+    assert PERMANENT_PATTERN in steps[STEP_NAME], (
+        "the permanent-failure pattern is not where this mutation expects "
+        "it; a mutation that matches nothing proves nothing.")
+    new = PERMANENT_PATTERN[:-1] + "|HTTP 502'"
+    steps[STEP_NAME] = steps[STEP_NAME].replace(PERMANENT_PATTERN, new, 1)
+
+
+def _mut_narrow_permanent_to_issue_only(steps):
+    """Revert the classifier to the issue-only form it shipped with.
+
+    GraphQL names the node it could not resolve, so a token that cannot see
+    the repository at all reports a Repository, not an Issue. The original
+    pattern therefore matched neither it nor the credential branch below,
+    and a permanent permission fault spent the full retry budget before
+    being reported as unclassifiable.
+    """
+    assert PERMANENT_PATTERN in steps[STEP_NAME], (
+        "the permanent-failure pattern is not where this mutation expects "
+        "it; a mutation that matches nothing proves nothing.")
+    steps[STEP_NAME] = steps[STEP_NAME].replace(
+        PERMANENT_PATTERN, "'Could not resolve to an.*issue|HTTP 404'", 1)
 
 
 def _mut_narrow_retry(steps):
@@ -374,6 +450,21 @@ def _mut_narrow_retry(steps):
     steps[STEP_NAME] = steps[STEP_NAME].replace(old, new, 1)
 
 
+def _mut_drop_timeout_classification(steps):
+    """Stop naming a `timeout` expiry, sending it back to unclassified.
+
+    Indentation-independent on purpose: the literal below is the test
+    itself, not a whole line, so this mutation cannot quietly stop applying
+    if the surrounding block is ever re-indented — a mutation that no longer
+    mutates passes for the wrong reason.
+    """
+    old = '[ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]'
+    assert old in steps[STEP_NAME], (
+        "the timeout classifier is not where this mutation expects it; "
+        "a mutation that matches nothing proves nothing.")
+    steps[STEP_NAME] = steps[STEP_NAME].replace(old, "false", 1)
+
+
 MUTATIONS = [
     ("revert the retry to a single attempt",
      _mut_revert_retry,
@@ -387,6 +478,17 @@ MUTATIONS = [
      _mut_narrow_retry,
      UNCLASSIFIED_THEN_SUCCEED,
      lambda rc, out, outputs, calls: rc != 0 and calls == 1),
+    ("narrow the permanent classifier back to issue-only, sending a "
+     "repository-permission fault down the retry path",
+     _mut_narrow_permanent_to_issue_only,
+     ALWAYS_REPOSITORY_UNRESOLVABLE,
+     lambda rc, out, outputs, calls: (rc != 0 and calls == 3
+                                      and "could not be classified" in out)),
+    ("stop classifying a timeout, reporting the hang as unclassifiable",
+     _mut_drop_timeout_classification,
+     BUDGET_EXHAUSTED_TIMEOUT,
+     lambda rc, out, outputs, calls: (rc != 0
+                                      and "could not be classified" in out)),
 ]
 
 

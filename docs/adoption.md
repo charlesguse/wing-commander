@@ -828,12 +828,31 @@ know before you set either:
   hand `docker pull`). Before any agent-bearing job's own container is
   created, a dedicated `verify-image-prerequisites` job pulls the named
   image and checks it for every tool the pipeline's own steps and shared
-  composite actions need: `git`, `gh`, `jq`, `curl`, `python3`, `bash`, and
+  composite actions need: `git`, `gh`, `jq`, `curl`, `python3`, `bash`,
   `node` (an inferred dependency of the Claude Code action, not something
-  this repository's own scripts invoke directly). A missing tool fails the
-  stage fast, before any billable agent step, naming every missing tool at
-  once — never just the first one found. An image with no POSIX shell at all
-  is reported as that, rather than as "every tool is missing".
+  this repository's own scripts invoke directly), and `timeout`. A missing
+  tool fails the stage fast, before any billable agent step, naming every
+  missing tool at once — never just the first one found. An image with no
+  POSIX shell at all is reported as that, rather than as "every tool is
+  missing".
+
+  **`timeout` became a real requirement in v2.5.1, before it was listed
+  here or checked.** The shared lifecycle gate wraps its issue-state read
+  in `timeout` so that a hung GitHub API call becomes a retryable failure
+  instead of a stalled stage, and that gate runs inside your image at the
+  entry of six stages. If you pin `v2` or `v2.5.1` and your image lacks
+  `timeout`, those stages currently fail at their first step with a bare
+  exit 127 that the gate reports as an unclassifiable failure. From this
+  version the prerequisite check names it directly instead. Any image
+  already carrying the other seven tools almost certainly has it —
+  `timeout` is part of coreutils, and BusyBox provides an applet — so in
+  practice this changes the error message you would get, not whether your
+  image works.
+
+  Presence is all the check verifies, here as for every other tool. A
+  BusyBox build older than 1.30 (2018) provides `timeout` but requires
+  `-t DURATION`, so it would pass the check and still fail the call; an
+  image that old cannot run this pipeline for other reasons.
 - **Private registry credentials** are two optional secrets,
   `container-registry-username` and `container-registry-password`, meaningful
   only when `container-image` is set:

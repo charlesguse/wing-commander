@@ -471,6 +471,37 @@ def canonical_tools():
 
 CANONICAL = object()   # sentinel: "the real list", vs None = "no list at all"
 
+# The published document required-tools.txt's header names as the contract
+# it implements. Gate 23 compares its table against the canonical list, so
+# every fixture needs one — derived from that case's OWN canonical list, so
+# the two agree by construction and only the cases that MEAN to disagree do.
+CONTRACT_PATH = ("specs/038-runner-container-passthrough/contracts/"
+                 "runner-container-passthrough.md")
+NO_TABLE = object()    # sentinel: a contract document with no table at all
+
+
+def tool_names(tools_text):
+    """The tool names in a required-tools.txt body."""
+    out = []
+    for ln in tools_text.splitlines():
+        t = ln.split("#", 1)[0].strip()
+        if t:
+            out.append(t)
+    return out
+
+
+def contract_md(tools):
+    """A minimal stand-in for the published contract, table included."""
+    if tools is NO_TABLE:
+        return ("## Image prerequisite contract — canonical tool list\n\n"
+                "The table that used to be here has moved.\n")
+    rows = "".join(f"| `{t}` | Fixture basis. |\n" for t in tools)
+    return ("## Image prerequisite contract — canonical tool list\n\n"
+            "The list `verify-image-prerequisites` checks against a named "
+            "image:\n\n"
+            "| Tool | Basis |\n|---|---|\n" + rows +
+            "\nKept in agreement with reality by Gate 23.\n")
+
 
 def vip_job(if_expr=None, step_if="inputs.container-image != ''",
             with_container=False, tools=CANONICAL, quote='"'):
@@ -627,11 +658,13 @@ DRIFT_CASES = [
                              run="somefancytool --check-version"))},
      True, ("somefancytool",)),
 
-    ("no false positive: canonical tools (git, gh, jq, curl, python3, bash, node)",
+    ("no false positive: canonical tools (git, gh, jq, curl, python3, bash, "
+     "node, timeout)",
      {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
                              
                              run="git status && gh pr list && jq '.' f.json && "
-                                 "curl -s url && python3 x.py && bash y.sh && node z.js"))},
+                                 "curl -s url && python3 x.py && bash y.sh && "
+                                 "node z.js && timeout 4 gh issue view 1"))},
      False, ()),
 
     ("no false positive: POSIX/coreutils/bash-builtin commands",
@@ -682,6 +715,65 @@ DRIFT_CASES = [
      {"stage.yml": stage(HEALTHY_ENTRY,
                          vip=vip_job(tools=canonical_tools() + " yq"))},
      True, ("yq", "not the canonical one")),
+
+    # Unreachable while the shipped list and the exclusion sets are
+    # correct, which is exactly why the overlap that motivated this check
+    # stood unremarked: `cat` stands in for the real case (`timeout`).
+    ("a tool named by both the canonical list and an always-available "
+     "exclusion",
+     {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
+                             run="git status"))},
+     True, ("cat", "ALWAYS_AVAILABLE"),
+     chr(10).join(("git", "gh", "jq", "curl", "python3", "bash",
+                   "node", "timeout", "cat")) + chr(10)),
+
+    # The other half of the same loop. Only ALWAYS_AVAILABLE had a fixture,
+    # and the two halves are separate iterations over separate sets: delete
+    # the MAINTENANCE_ONLY one and every case above stays green, because
+    # nothing checked in ever names a canonical tool that is also
+    # maintenance-only. `yamllint` stands in — a real MAINTENANCE_ONLY
+    # member, wrongly declared canonical here.
+    ("a tool named by both the canonical list and a maintenance-only "
+     "exclusion",
+     {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
+                             run="git status"))},
+     True, ("yamllint", "MAINTENANCE_ONLY"),
+     chr(10).join(("git", "gh", "jq", "curl", "python3", "bash",
+                   "node", "timeout", "yamllint")) + chr(10)),
+
+    # FR-011a's third reader (#234 review). required-tools.txt's header
+    # names contracts/runner-container-passthrough.md as the document it
+    # implements, and that document says of its own table that it is "kept
+    # in agreement with reality by Gate 23" — a promise nothing kept, which
+    # is how the published table stayed at seven tools while the canonical
+    # list gained `timeout`. A 6th case element overrides the fixture
+    # contract's table; every other case derives it from that case's own
+    # canonical list, so they agree by construction.
+    ("the published contract's table is missing a tool the canonical list "
+     "declares - the adopter under-provisions and finds out at run time",
+     {"stage.yml": stage(HEALTHY_ENTRY)},
+     True, ("node", "under-provisions"),
+     None, ["git", "gh", "jq", "curl", "python3", "bash", "timeout"]),
+
+    ("the published contract's table names a tool the canonical list does "
+     "not - the contract demands what nothing checks",
+     {"stage.yml": stage(HEALTHY_ENTRY)},
+     True, ("yq", "demands something nothing checks"),
+     None, ["git", "gh", "jq", "curl", "python3", "bash", "node", "timeout",
+            "yq"]),
+
+    ("a contract document with no tool table at all fails, rather than "
+     "comparing against an empty set and agreeing with nothing",
+     {"stage.yml": stage(HEALTHY_ENTRY)},
+     True, ("could not find the canonical tool-list table",),
+     None, NO_TABLE),
+
+    ("the contract's table listing a tool twice fails even though the set "
+     "comparison agrees",
+     {"stage.yml": stage(HEALTHY_ENTRY)},
+     True, ("lists a tool twice",),
+     None, ["git", "gh", "jq", "curl", "python3", "bash", "node", "timeout",
+            "node"]),
 
     ("a stage that embeds no REQUIRED_TOOLS list at all",
      {"stage.yml": stage(HEALTHY_ENTRY, vip=vip_job(tools=None))},
@@ -818,14 +910,30 @@ def main():
 
     all_cases = list(WIRING_CASES) + list(DRIFT_CASES)
     try:
-        for name, files, expect_fail, must_mention in all_cases:
+        for case in all_cases:
+            # A 5th element overrides the canonical list for that case
+            # alone. Every other case copies the REAL file, so the fixtures
+            # stay honest by construction and only the ones that MEAN to
+            # disagree do.
+            name, files, expect_fail, must_mention = case[:4]
+            case_tools = (case[4] if len(case) > 4 and case[4] is not None
+                          else required_tools_text)
+            # A 6th element overrides the fixture CONTRACT's table alone.
+            # Everything else derives it from that case's canonical list, so
+            # only the cases that mean to disagree with it do.
+            case_contract = (case[5] if len(case) > 5
+                             else tool_names(case_tools))
             case_dir = tempfile.mkdtemp(prefix="case_", dir=root)
             wf_dir = os.path.join(case_dir, ".github", "workflows")
             scripts_dir = os.path.join(case_dir, ".github", "scripts")
             os.makedirs(wf_dir)
             os.makedirs(scripts_dir)
             io.open(os.path.join(scripts_dir, "required-tools.txt"), "w",
-                   encoding="utf-8").write(required_tools_text)
+                   encoding="utf-8").write(case_tools)
+            contract_parts = CONTRACT_PATH.split("/")
+            os.makedirs(os.path.join(case_dir, *contract_parts[:-1]))
+            io.open(os.path.join(case_dir, *contract_parts), "w",
+                   encoding="utf-8").write(contract_md(case_contract))
             for fname, body in files.items():
                 io.open(os.path.join(wf_dir, fname), "w", encoding="utf-8").write(body)
 

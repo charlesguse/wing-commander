@@ -27,6 +27,38 @@ on:
       # collector fixture got in.
       - ".github/scripts/**"
       - ".specify/scripts/**"
+      # Four gates check a published document rather than code. Without
+      # these, a PR editing only the document - the change most likely to
+      # break its gate - never triggers this workflow, and the desync is
+      # caught by the daily `schedule:` up to a day later.
+      #
+      # Listed file by file rather than as `specs/**/contracts/**`. That
+      # glob looks like the cheaper way to say the same thing and is not:
+      # the plan stage GENERATES specs/NNN-*/contracts/* and opens a PR
+      # with it (plan.yml, "Open the plan PR"), so the glob fires the full
+      # gate suite on every plan PR the pipeline opens, for files no gate
+      # can read - a new spec directory did not exist when any gate was
+      # written. The comment that used to sit here claimed the opposite.
+      #
+      # The cost of a literal list is that a fifth document can be added
+      # without one, so verify-gate-wiring.py derives the paths gates
+      # actually open and fails if this list does not cover them - the
+      # required-tools.txt/Gate 23 arrangement, applied to triggers
+      # instead of tools.
+      - "specs/010-reusable-pipeline/contracts/stage-interfaces.md"
+      - "specs/026-configurable-tool-lists/contracts/tool-composition-action.md"
+      - "specs/032-structured-clarification-gate/contracts/clarification-schema.md"
+      # Gate 23's subject: the published image-prerequisite contract, whose
+      # tool table Gate 23 compares against required-tools.txt in both
+      # directions. Editing the table alone is the one change that can make
+      # the two disagree.
+      - "specs/038-runner-container-passthrough/contracts/runner-container-passthrough.md"
+      # Gate 12's subject: it parses this file's "Repository permissions"
+      # list as the single source of truth for what the wing-commander-bot
+      # App may do, and sys.exits if the list moves. A PR downgrading a
+      # grant here - the one edit that can invalidate every App-token call
+      # site the gate approves - ran no gate at all until this entry.
+      - "docs/setup.md"
   # Gate 1 only — it reads how GitHub actually registered the workflows on
   # the default branch, which a PR's files cannot tell us.
   push:
@@ -1067,6 +1099,11 @@ jobs:
           app_perms = parse_app_permissions()
           failures = []
           notes = []
+          # #215: category C's two halves, filled during the pass below and
+          # cross-checked after it, because a call site in one file names an
+          # agent step in another and the files are visited in glob order.
+          agent_contexts = {}   # workflow path -> [(job, step, tok_kind, tok_detail, perms)]
+          callsite_grants = []  # (caller, caller-job, called-workflow, [(v1, v2, input)])
 
           for f in sorted(glob.glob(".github/workflows/*.yml") + glob.glob(".github/workflows/*.yaml")):
               try:
@@ -1080,6 +1117,30 @@ jobs:
                   job_env = job.get("env") or {}
                   job_perms = effective_job_permissions(wf, job)
                   pending_tools = []  # (verb1, verb2, source-step-name)
+
+                  # --- category C: tools granted where a stage is CALLED -----
+                  # A job with `uses:` has no steps, so the loop below never
+                  # sees it. The tools it passes reach the called stage's agent
+                  # steps all the same, arriving at the tool-args composite as
+                  # an unexpanded `inputs.extra-allowed-tools` expression - a
+                  # literal that category B
+                  # cannot read anything out of (#215).
+                  job_uses = str(job.get("uses") or "")
+                  if job_uses.startswith("./.github/workflows/"):
+                      called = job_uses.split("@")[0][2:]
+                      cs_with = job.get("with") or {}
+                      cs_grants = []
+                      for key in ("extra-allowed-tools", "allowed-tools-override"):
+                          val = cs_with.get(key)
+                          # EXPR_OPEN, not the literal: GitHub's parser scans
+                          # run: text for expressions and rejects the WHOLE file
+                          # on one, while yaml.safe_load and bash -n both pass it.
+                          if not isinstance(val, str) or EXPR_OPEN in val:
+                              continue
+                          for gm in TOOL_GH_RE.finditer(val):
+                              cs_grants.append((gm.group(1), gm.group(2), key))
+                      if cs_grants:
+                          callsite_grants.append((f, jname, called, cs_grants))
 
                   for step in job.get("steps") or []:
                       step = step or {}
@@ -1161,6 +1222,16 @@ jobs:
 
                       if uses.startswith("anthropics/claude-code-action"):
                           tok_kind, tok_detail = resolve_token(None, step_env, job_env)
+                          # #215: the same context category C needs, recorded here
+                          # rather than re-derived, so the two checks can never
+                          # disagree about which token a step runs under.
+                          # glob() yields OS separators; a `uses:` path is always
+                          # posix. Keying on the raw value matched on Linux and
+                          # never on Windows, where the cross-check then reported
+                          # "no agent step found" for a stage that has several.
+                          agent_contexts.setdefault(
+                              f.replace("\\", "/"), []).append(
+                              (jname, sname, tok_kind, tok_detail, job_perms))
                           where = f"{f} :: {jname} / {sname} (agent tool grant)"
                           for verb1, verb2, source in pending_tools:
                               key = (verb1, verb2)
@@ -1172,6 +1243,34 @@ jobs:
                                          perm_cat, level, tok_kind, tok_detail,
                                          app_perms, job_perms, failures, notes)
                           pending_tools = []
+
+          # --- category C cross-check (#215) ---------------------------------
+          # Every tool granted at a call site is checked against EVERY agent
+          # step in the stage it is passed to: a stage-level input reaches all
+          # of them, so a grant is only safe if it is safe for the least
+          # privileged one.
+          for src_file, src_job, called, cs_grants in callsite_grants:
+              ctxs = agent_contexts.get(called)
+              if not ctxs:
+                  failures.append(
+                      f"{src_file} :: {src_job} grants agent tools to "
+                      f"{called!r}, but Gate 12 found no agent step there to "
+                      f"check them against - the workflow may have moved or "
+                      f"the path may be wrong. Unresolvable is a failure here "
+                      f"for the same reason an unknown subcommand is.")
+                  continue
+              for verb1, verb2, key in cs_grants:
+                  ckey = (verb1, verb2)
+                  if ckey not in SUBCOMMAND_PERMS:
+                      continue   # same policy as category B: not this gate's job
+                  perm_cat, level = SUBCOMMAND_PERMS[ckey]
+                  for jname, sname, tok_kind, tok_detail, job_perms in ctxs:
+                      check_call(
+                          f"{src_file} :: {src_job} -> {called} :: {jname} / "
+                          f"{sname} (granted at the call site via {key!r})",
+                          f"Bash(gh {verb1} {verb2 or ''})".strip(),
+                          perm_cat, level, tok_kind, tok_detail,
+                          app_perms, job_perms, failures, notes)
 
           for n in notes:
               print(f"note: {n}")
@@ -1482,146 +1581,7 @@ jobs:
       # count.
       - name: Gate 18 — every paginated read is safe by construction
         run: |
-          python3 - <<'PYEOF'
-          import glob, os, re, sys, yaml
-
-          EXCLUDE_DIR = ".wing-commander-pipeline"
-          GH_INVOKE_RE = re.compile(r'\bgh\s+api\b.*?--paginate\b')
-          JQ_ARG_RE = re.compile(
-              r"--jq\s+'((?:[^'\\]|\\.)*)'|--jq\s+\"((?:[^\"\\]|\\.)*)\"")
-          EXEMPT_RE = re.compile(r'wc-pagination-exempt:\s*\S')
-          CORRECT_FORM = ('gh api "<path>" --paginate --jq '
-                          '\'.[] | <per-item filter>\' | jq -s \'.\'')
-
-
-          def check_line(line):
-              """None if not a --paginate call; else (ok, rule)."""
-              if not GH_INVOKE_RE.search(line):
-                  return None
-              m = JQ_ARG_RE.search(line)
-              if m is None:
-                  if "--jq" in line:
-                      return True, None       # unparseable form: do not guess
-                  return False, "no-filter"
-              expr = (m.group(1) if m.group(1) is not None else m.group(2)).strip()
-              if expr.startswith("["):
-                  return False, "array-collecting"
-              return True, None
-
-
-          def is_exempt(lines, idx):
-              for i in (idx, idx - 1):
-                  if 0 <= i < len(lines) and EXEMPT_RE.search(lines[i]):
-                      return True
-              return False
-
-
-          def logical_lines(lines):
-              """Join backslash-continued physical lines into one logical
-              line each, keyed by the FIRST physical line's index. A
-              `gh api ... --paginate \\` call whose `--jq` argument is on a
-              continuation line (intake.yml, Gate 1's own workflow-listing
-              read) must be judged as one command, or the continuation's
-              `--jq` is invisible to a per-line scanner and every such
-              legitimate call misreports as a false no-filter failure."""
-              i, n = 0, len(lines)
-              while i < n:
-                  first = i
-                  parts = [lines[i]]
-                  while parts[-1].rstrip().endswith("\\") and i + 1 < n:
-                      i += 1
-                      parts.append(lines[i])
-                  joined = " ".join(p.rstrip().rstrip("\\").rstrip() for p in parts)
-                  yield joined, first
-                  i += 1
-
-
-          def scan(path, lines, offset, failures):
-              for line, i in logical_lines(lines):
-                  verdict = check_line(line)
-                  if verdict is None:
-                      continue
-                  ok, rule = verdict
-                  if ok or is_exempt(lines, i):
-                      continue
-                  failures.append(
-                      f"::error file={path},line={offset + i + 1}::Gate 18: "
-                      f"this --paginate `gh api` call ({rule}) does not emit "
-                      f"one JSON value per line, so it resolves to "
-                      f"page-shaped garbage past the first page. Rewrite it "
-                      f"as `{CORRECT_FORM}`, or if this read must genuinely "
-                      f"produce one array per page, add a same-line or "
-                      f"immediately-preceding `# wc-pagination-exempt: "
-                      f"<reason>` comment.")
-
-
-          def find_run_blocks(path):
-              with open(path, encoding="utf-8") as fh:
-                  raw = fh.read()
-              raw_lines = raw.splitlines()
-              try:
-                  doc = yaml.safe_load(raw) or {}
-              except yaml.YAMLError:
-                  return
-              if not isinstance(doc, dict):
-                  return
-              steps = []
-              jobs = doc.get("jobs")
-              if isinstance(jobs, dict):
-                  for job in jobs.values():
-                      if isinstance(job, dict):
-                          steps.extend(job.get("steps") or [])
-              runs_block = doc.get("runs")
-              if isinstance(runs_block, dict):
-                  steps.extend(runs_block.get("steps") or [])
-              cursor = 0
-              for step in steps:
-                  if not isinstance(step, dict):
-                      continue
-                  run = step.get("run")
-                  if not run:
-                      continue
-                  run = str(run)
-                  inner = run.splitlines()
-                  anchor_idx = next((i for i, l in enumerate(inner) if l.strip()), None)
-                  if anchor_idx is None:
-                      continue
-                  anchor_text = inner[anchor_idx].strip()
-                  found = next((i for i in range(cursor, len(raw_lines))
-                               if raw_lines[i].strip() == anchor_text), None)
-                  if found is None:
-                      found = next((i for i in range(len(raw_lines))
-                                   if raw_lines[i].strip() == anchor_text), None)
-                  if found is None:
-                      continue
-                  first_line_no = found - anchor_idx + 1
-                  cursor = found + 1
-                  yield inner, first_line_no - 1
-
-
-          failures = []
-          for path in sorted(glob.glob(".github/workflows/*.yml")
-                             + glob.glob(".github/workflows/*.yaml")
-                             + glob.glob(".github/actions/**/action.yml", recursive=True)
-                             + glob.glob(".github/actions/**/action.yaml", recursive=True)):
-              for inner_lines, offset in find_run_blocks(path):
-                  scan(path, inner_lines, offset, failures)
-
-          for path in sorted(set(glob.glob("**/*.sh", recursive=True)
-                                 + glob.glob("**/*.py", recursive=True))):
-              norm = path.replace(os.sep, "/")
-              if norm == EXCLUDE_DIR or norm.startswith(EXCLUDE_DIR + "/"):
-                  continue
-              with open(path, encoding="utf-8") as fh:
-                  lines = fh.read().splitlines()
-              scan(norm, lines, 0, failures)
-
-          for f in failures:
-              print(f)
-          print(f"Gate 18: scanned every workflow, composite action, and "
-                f"checked-in script; {len(failures)} failure(s).")
-          sys.exit(1 if failures else 0)
-          PYEOF
+          python3 .github/scripts/verify-gate-18-scan.py
 
       # Gate 18 says nothing about whether Gate 18 works — same reasoning as
       # gates 15/16/17's self-tests.
@@ -2000,10 +1960,58 @@ jobs:
 
           STATUS_FN = re.compile(r"\b(always|success|failure|cancelled)\s*\(")
           TOOLS_PATH = ".github/scripts/required-tools.txt"
+          # The published document required-tools.txt's own header names as
+          # the contract the canonical list implements, and which claims in
+          # its own prose to be "kept in agreement with reality by Gate 23".
+          # It was not: nothing compared the two, and the table stood at
+          # seven tools while the canonical list gained `timeout` as an
+          # eighth. A promise a document makes about a gate is worth
+          # whatever the gate actually checks, so the gate checks it here.
+          CONTRACT_PATH = ("specs/038-runner-container-passthrough/contracts/"
+                           "runner-container-passthrough.md")
+          # First backticked token of a row's first cell: `node` (Node.js
+          # runtime) is one entry, not two. Matched only between the table's
+          # own header row and the blank line that ends it, so a backticked
+          # tool name in the surrounding prose is not a declaration.
+          CONTRACT_HEADER_RE = re.compile(
+              r"^\|\s*Tool\s*\|\s*Basis\s*\|\s*$")
+          CONTRACT_TOOL_RE = re.compile(r"`([^`]+)`")
           # The literal list each stage's tool-check step embeds. Quoted
           # either way, since the shell accepts both and a future edit
           # should not have to know which one this gate keys on.
           REQUIRED_TOOLS_RE = re.compile(r"""REQUIRED_TOOLS=(["'])(.*?)\1""")
+
+          def contract_tools(path):
+              """The tool names declared by the contract's canonical table.
+
+              Returns None when the table cannot be found at all, which is a
+              failure in its own right: a parser that silently returns an
+              empty set turns a moved heading into "the contract declares
+              nothing", and an empty set compares equal to nothing anybody
+              would notice.
+              """
+              try:
+                  lines = open(path, encoding="utf-8").read().splitlines()
+              except OSError:
+                  return None
+              tools, in_table = [], False
+              for raw in lines:
+                  line = raw.strip()
+                  if not in_table:
+                      in_table = bool(CONTRACT_HEADER_RE.match(line))
+                      continue
+                  if not line.startswith("|"):
+                      break          # the blank line after the table
+                  cell = line.strip("|").split("|")[0].strip()
+                  if not cell.strip("-: "):
+                      continue       # the header/body separator row
+                  m = CONTRACT_TOOL_RE.search(cell)
+                  # No backticks: keep the raw cell rather than dropping the
+                  # row. A row this parser cannot read must surface as a name
+                  # nothing recognises (a loud set difference), never as one
+                  # fewer tool declared, which is silence.
+                  tools.append(m.group(1) if m else cell)
+              return tools if in_table else None
 
           def needs_of(spec):
               n = (spec or {}).get("needs") or []
@@ -2171,6 +2179,46 @@ jobs:
               failures += 1
               canonical = set()
 
+          # FR-011a's third reader. required-tools.txt's header names
+          # contracts/runner-container-passthrough.md as the document it
+          # implements, and that document says of its own table that it is
+          # "kept in agreement with reality by Gate 23". Nothing checked it,
+          # so the two drifted in the quietest possible direction: the
+          # canonical list gained `timeout` and the published contract an
+          # adopter reads kept promising seven tools. Set difference, both
+          # directions, because either one is a lie to a different reader —
+          # an adopter under-provisions their image, or they provision for a
+          # tool nothing asks of them.
+          declared = contract_tools(CONTRACT_PATH)
+          if declared is None:
+              print(f"::error file={CONTRACT_PATH}::Gate 23 (FR-011a): could "
+                    f"not find the canonical tool-list table (a `| Tool | "
+                    f"Basis |` header) in the contract {TOOLS_PATH} names as "
+                    f"the document it implements. Either the table moved, the "
+                    f"document did, or this parser has broken — and until it "
+                    f"is fixed the published contract is unchecked again.")
+              failures += 1
+          elif canonical:
+              missing = sorted(canonical - set(declared))
+              extra = sorted(set(declared) - canonical)
+              if missing or extra:
+                  print(f"::error file={CONTRACT_PATH}::Gate 23 (FR-011a): the "
+                        f"published image-prerequisite contract and {TOOLS_PATH} "
+                        f"name different tools. In {TOOLS_PATH} but not in the "
+                        f"contract table: {missing or '(none)'} - an adopter "
+                        f"reading the contract under-provisions their image and "
+                        f"finds out at run time. In the contract table but not "
+                        f"in {TOOLS_PATH}: {extra or '(none)'} - the contract "
+                        f"demands something nothing checks or needs. Add the "
+                        f"row (with its basis) or drop it.")
+                  failures += 1
+              if len(declared) != len(set(declared)):
+                  print(f"::error file={CONTRACT_PATH}::Gate 23 (FR-011a): the "
+                        f"contract's tool table lists a tool twice, so the set "
+                        f"comparison above can agree while the table itself "
+                        f"contradicts what a reader counts.")
+                  failures += 1
+
           # FR-011a in the direction required-tools.txt's own header
           # promises: every stage's embedded list must BE the canonical
           # list. The drift scan further down catches a tool INVOKED but not
@@ -2219,6 +2267,16 @@ jobs:
           # canonical list stays deliberately narrow); this set exists only
           # so this check does not flag `echo`/`mkdir`/`sed` as "newly
           # invoked tools" on every single PR.
+          #
+          # `timeout` used to be in here and is now canonical instead
+          # (specs/039-lifecycle-gate-retry). A tool must not be in both:
+          # the canonical subtraction below already covers it, so the
+          # entry here would be dead, and a reader checking whether the
+          # adopter contract covers a tool would find it listed as one the
+          # contract deliberately does NOT cover. That contradiction is
+          # what let a hard `timeout` dependency reach eleven stages
+          # unregistered — the tool was invoked, the drift scan subtracted
+          # it as always-available, and nothing asked the image for it.
           ALWAYS_AVAILABLE = {
               "alias", "awk", "base64", "basename", "bg", "break", "case",
               "cat", "cd", "chmod", "chown", "cmp", "comm", "command",
@@ -2233,7 +2291,7 @@ jobs:
               "rev", "rm", "rmdir", "sed", "select", "seq", "set",
               "sha1sum", "sha256sum", "shift", "sleep", "sort", "source",
               "split", "tac", "tail", "tar", "tee", "test", "then", "time",
-              "timeout", "touch", "tr", "trap", "true", "type", "uname",
+              "touch", "tr", "trap", "true", "type", "uname",
               "unalias", "uniq", "unset", "until", "wait", "wc", "while",
               "xargs", "xxd", "yes", "gzip", "gunzip", "zip", "unzip",
               "mapfile", "readarray", "popd", "pushd", "dirs", "hash",
@@ -2569,6 +2627,29 @@ jobs:
           for path, script in run_texts():
               invoked |= command_tokens(script)
 
+          # The two exclusion sets and the contract must name disjoint
+          # tools. An entry in both is dead — the canonical subtraction
+          # below already covers it — and worse than dead to read: someone
+          # asking "does the adopter contract cover this tool?" finds it
+          # listed among the ones the contract deliberately does NOT cover.
+          # That contradiction is not hypothetical. `timeout` sat in
+          # ALWAYS_AVAILABLE while specs/039 made the lifecycle gate depend
+          # on it inside the adopter's container, and nothing here objected
+          # for as long as the overlap stood.
+          for label, excluded in (("MAINTENANCE_ONLY", MAINTENANCE_ONLY),
+                                  ("ALWAYS_AVAILABLE", ALWAYS_AVAILABLE)):
+              both = sorted(canonical & excluded)
+              if both:
+                  print(f"::error file={tools_path}::Gate 23 (FR-011a): "
+                        f"{', '.join(both)} is named by BOTH the canonical "
+                        f"required-tool list and this gate's {label} "
+                        f"exclusion. The two mean opposite things — one says "
+                        f"an adopter image must provide the tool, the other "
+                        f"says this contract does not cover it. Remove it "
+                        f"from {label} if the image must provide it, or from "
+                        f"{tools_path} if it must not.")
+                  failures += 1
+
           drift = sorted(invoked - canonical - MAINTENANCE_ONLY - ALWAYS_AVAILABLE)
           if drift:
               print(f"::error file={tools_path}::Gate 23 (FR-011a): a run: block "
@@ -2602,6 +2683,27 @@ jobs:
       # argument — --selftest runs this one.
       - name: Gate 23 self-test — the detector actually detects
         run: python3 .github/scripts/verify-gate-23.py --selftest
+
+      # Gate 27 — the per-stage default tool-list table matches the 16
+      # `wing-commander-tool-args` call sites. FR-013/SC-006 promise a
+      # consumer can read each stage's defaults out of documentation; that
+      # documentation was hand-maintained with nothing holding it to the
+      # literals, and had already drifted — the 026 draft was missing both
+      # pr-conversation rows while its own prose cited one of them (#147).
+      # The draft is now a pointer, so there is one table and one check.
+      - name: Gate 27 — the documented per-stage tool lists match the call sites
+        run: python3 .github/scripts/verify-stage-tool-lists.py
+
+      - name: Gate 27 self-test — the tool-list check detects what it claims to
+        run: python3 .github/scripts/verify-stage-tool-lists.py --self-test
+
+      # Gate 26 self-test — the refs check can tell its failures apart.
+      # The live half of Gate 26 runs in the `registered` job below, against
+      # the real remote; on a pull request there is nothing to check, because
+      # a tag desync is never something the PR introduced. What a PR CAN
+      # break is the checker, so that is what runs here.
+      - name: Gate 26 self-test — the versioning-refs check detects what it claims to
+        run: python3 .github/scripts/verify-versioning-refs.py --self-test
 
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
@@ -2769,3 +2871,28 @@ jobs:
             sleep 15
           done
           exit 1
+
+      # Gate 26 — the published tags obey the versioning contract. Runs here
+      # rather than on pull requests for the same reason Gate 1 does: it reads
+      # the repository's real refs, which a PR's files cannot tell us, and a
+      # desync is not something a PR introduces. The daily `schedule:` above
+      # is what bounds the exposure — #218 sat unnoticed for three days
+      # because nothing ever looked.
+      #
+      # `git ls-remote` and not `gh api`: one unauthenticated call answers
+      # both questions at once, because an annotated tag brings its `^{}` peel
+      # line and a lightweight tag does not. No token, so nothing for Gate 12
+      # to resolve and no new API_CATEGORY_PERM entry to keep honest.
+      #
+      # `!cancelled()` and not a bare `run:`: Gate 1 above ends its retry
+      # loop with `exit 1`, and an unguarded step after it is skipped
+      # whenever Gate 1 goes red — so a registration race, or a `gh api`
+      # blip, would silently take the versioning check with it. The two
+      # gates share a job for cheapness, not because either depends on the
+      # other. Since the daily `schedule:` is the only thing bounding
+      # #218's exposure, letting an unrelated failure suppress this one
+      # would widen exactly the window it exists to close. `!cancelled()`
+      # rather than `always()` so a deliberate cancellation still stops it.
+      - name: Gate 26 — every release tag is annotated and every vX is current
+        if: ${{ !cancelled() }}
+        run: python3 .github/scripts/verify-versioning-refs.py --remote origin
