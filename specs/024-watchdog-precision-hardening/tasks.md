@@ -202,10 +202,10 @@ Single-project CI/CD feature, no `src/`/`tests/` split (plan.md's Structure Deci
 
 ### Implementation for User Story 6
 
-- [ ] T045 [US6] In `.specify/memory/constitution.md`, add **Principle IX**, immediately following Principle VIII, stating that judgment which gates a durable action (a filed finding, a fingerprint, a dedup outcome, an autonomous write) belongs in deterministic code, not an agent's prompt; cite this feature's five worked examples (the deterministic 8b self-checker, the already-shipped deterministic rung gate, signal-derived fingerprints, suppression pushed into collectors, an enum the model cannot leave) as prior art, following Principle VIII's own citation shape.
-- [ ] T046 [US6] In `.specify/memory/constitution.md`, bump the constitution's version per its own amendment-versioning rule and record the Sync Impact Report entry for this change — depends on T045 (same file).
-- [ ] T047 [P] [US6] In `specs/015-pipeline-watchdog/spec.md`'s Assumptions section, add a cross-reference citing Principle IX near the amended FR-002/FR-004/FR-016 evidence/fingerprint requirements this feature hardened.
-- [ ] T048 [P] [US6] In `specs/015-pipeline-watchdog/quickstart.md`, add the principle-citability validation scenario (Principle IX is citable against a hypothetical future PR that asks `diagnose` to decide fingerprint uniqueness itself) — this feature's `quickstart.md` Scenario H.
+- [X] T045 [US6] In `.specify/memory/constitution.md`, add **Principle IX**, immediately following Principle VIII, stating that judgment which gates a durable action (a filed finding, a fingerprint, a dedup outcome, an autonomous write) belongs in deterministic code, not an agent's prompt; cite this feature's five worked examples (the deterministic 8b self-checker, the already-shipped deterministic rung gate, signal-derived fingerprints, suppression pushed into collectors, an enum the model cannot leave) as prior art, following Principle VIII's own citation shape.
+- [X] T046 [US6] In `.specify/memory/constitution.md`, bump the constitution's version per its own amendment-versioning rule and record the Sync Impact Report entry for this change — depends on T045 (same file). (1.5.1 → 1.6.0, MINOR; also updated README.md's numbered principle list, the one propagation target that applied.)
+- [X] T047 [P] [US6] In `specs/015-pipeline-watchdog/spec.md`'s Assumptions section, add a cross-reference citing Principle IX near the amended FR-002/FR-004/FR-016 evidence/fingerprint requirements this feature hardened.
+- [X] T048 [P] [US6] In `specs/015-pipeline-watchdog/quickstart.md`, add the principle-citability validation scenario (Principle IX is citable against a hypothetical future PR that asks `diagnose` to decide fingerprint uniqueness itself) — this feature's `quickstart.md` Scenario H.
 
 **Checkpoint**: Principle IX exists, is versioned, and is citable; quickstart Scenario H passes.
 

@@ -222,6 +222,16 @@ never silently repointed at an unrelated scenario.
    requirement text a reviewer reads next to this run no longer
    contradicts what actually happens.
 
+## Scenario 21 — Deterministic-judgment principle is citable (US6, Constitution Principle IX; spec 024)
+
+1. Read `.specify/memory/constitution.md`'s Principle IX.
+2. Confirm it names, by number, that gating judgment (a filed finding, a
+   fingerprint, a dedup outcome, a write) belongs in deterministic
+   code — and that a reviewer could cite "Principle IX" against a
+   hypothetical future PR that, say, asks the `diagnose` prompt to
+   decide fingerprint uniqueness itself instead of using the
+   deterministic fingerprint step.
+
 See `contracts/watchdog-workflow.md` for the exact trigger/job-gate
 contracts and `data-model.md` for the full Finding, fingerprint, and
 triage-decision shapes each scenario above exercises.
