@@ -232,6 +232,15 @@ never silently repointed at an unrelated scenario.
    decide fingerprint uniqueness itself instead of using the
    deterministic fingerprint step.
 
+## Scenario 22 — Stale spec directory is gone (FR-017 of spec 024)
+
+1. `ls specs/023-reliable-diagnose-verdict/` on the branch this feature
+   ships from.
+2. Expected: does not exist. `git log --all --oneline -- specs/
+   023-reliable-diagnose-verdict/` still shows its history — nothing was
+   force-deleted from git, only removed from the working tree going
+   forward.
+
 See `contracts/watchdog-workflow.md` for the exact trigger/job-gate
 contracts and `data-model.md` for the full Finding, fingerprint, and
 triage-decision shapes each scenario above exercises.

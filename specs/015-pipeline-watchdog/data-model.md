@@ -1,10 +1,11 @@
 # Phase 1 Data Model: Pipeline Watchdog — Run Validation & Triage
 
 This feature has no application database — it reads GitHub Actions run
-data and repository files, and writes GitHub issues/comments/labels/PRs.
-The "entities" below are `spec.md`'s Key Entities section, expressed as
-their concrete on-disk/on-GitHub representation, plus the two supporting
-shapes research.md introduces (`signals.json` and the guardrail config).
+data and repository files, and writes GitHub issues/comments/labels (no
+PRs, per FR-014 of spec 024). The "entities" below are `spec.md`'s Key
+Entities section, expressed as their concrete on-disk/on-GitHub
+representation, plus the supporting shape research.md introduces
+(`signals.json`).
 
 ## Run under inspection (`workflow_run` payload / `workflow_dispatch` input)
 

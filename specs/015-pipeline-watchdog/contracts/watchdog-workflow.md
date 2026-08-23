@@ -143,7 +143,7 @@ one comment covering all findings from this run, implementation's
 choice) to the run's lifecycle issue — this is the one write every path
 through this workflow performs unconditionally (FR-022).
 
-## Self-dispatch cap contract (FR-018, applies to `act` only, all rungs)
+## Self-dispatch cap contract (FR-018, applies to `act`'s one write path only)
 
 Before any write in `act`, if `workflow_run.name == "8 - Watchdog"` (this
 is a self-inspection), walk `gh run list --workflow "8 - Watchdog" --json

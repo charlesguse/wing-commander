@@ -35,8 +35,8 @@ myself.
 **Why this priority**: Detection-and-reporting is the irreducible core of a "first
 responder." On its own — with no autonomous writes at all — it already replaces
 the manual post-mortem that a human does today and delivers value immediately. It
-is also the foundation every higher rung of the ladder builds on: you cannot
-triage a finding you have not detected and described.
+is also the foundation US2 builds on: you cannot file or dedup a finding you
+have not detected and described.
 
 **Independent Test**: Point the watchdog at a completed run that exhibits a known
 problem pattern (e.g. repeated auto-denied tool calls, or a branch with no commits
@@ -109,10 +109,11 @@ self-inspection cannot run away.
 ### Edge Cases
 
 - **No evidence available**: A run's artifacts are missing, expired, or truncated. The watchdog records that it could not inspect the run and files nothing rather than guessing.
-- **Ambiguous severity**: A finding sits exactly on the rung-1/rung-2 boundary. The watchdog resolves ties toward the *higher* rung (more human involvement, less autonomous write).
+- **Invalid or malformed evidence**: A finding's cited facts are empty or don't conform to the shape expected for its class. The evidence-validity gate suppresses it before fingerprinting, dedup, or any write, and reports the suppression (FR-027 of spec 024).
 - **Concurrent watchdog runs**: Two watchdog runs inspect overlapping runs at once. Fingerprint-based dedup must prevent both from filing the same finding.
 - **Fingerprint collision / drift**: Two genuinely different problems hash to the same fingerprint, or the same problem's evidence shifts slightly between runs. The watchdog must avoid both merging distinct findings and re-filing the same one.
-- **A finding about the watchdog's own last fix**: The watchdog's autonomous fix itself introduced a problem. Loop-prevention and the self-dispatch cap must bound the corrective cascade.
+- **Dedup lookup cannot complete**: The underlying read fails (network, rate limit, permissions). The watchdog reports `unknown` and suppresses filing rather than falling through to "nothing found, file it" (FR-028 of spec 024).
+- **A watchdog run about a prior watchdog run**: Self-inspection can chain indefinitely without a bound. Loop-prevention and the self-dispatch cap bound the chain.
 - **Overlap with existing stalled/cleanup automation**: The `implement.yml` stalled job or cleanup automation already reported or handled the condition. The watchdog must complement, not double-report.
 - **Untrusted transcript content**: A transcript or artifact contains text shaped like instructions to an AI. The watchdog treats all inspected content as data, never as instructions.
 
@@ -173,8 +174,8 @@ self-inspection cannot run away.
 ### Key Entities *(include if feature involves data)*
 
 - **Run under inspection**: A completed pipeline run (any stage, including the watchdog's own), identified by its run reference and associated with a lifecycle issue and, where applicable, a spec directory/stage.
-- **Finding**: A detected problem — its class, a human-readable description, the cited evidence, an assessed severity/rung, and a fingerprint.
-- **Fingerprint**: A stable identity for a finding that maps recurrences of the same defect to one issue and keeps distinct defects distinct.
+- **Finding**: A detected problem — its class, a human-readable description, the cited evidence (validated before use, FR-027 of spec 024), a descriptive severity hint, and a fingerprint.
+- **Fingerprint**: A deterministic identity for a finding, derived from its class and cited signal ids, that maps recurrences of the same defect to one issue and keeps distinct defects distinct (FR-016).
 - **Triage decision**: The single dedup-selected branch (create a new pipeline-defect issue / comment on an open match / reopen and comment on a closed match / suppress and report a failed lookup) — selected purely by the dedup outcome, since no autonomous-fix rung remains (FR-014 of spec 024).
 
 ## Success Criteria *(mandatory)*

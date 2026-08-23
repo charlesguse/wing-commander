@@ -341,3 +341,27 @@ search the wrong principle when citing this rule, undermining FR-013's
   `watchdog.yml:2668`) or be created once by a maintainer ahead of time
   is `tasks.md`-level detail; either satisfies FR-001's "computable from
   the filed-finding record."
+
+## SC-002 re-scoring: the five historical false positives against the strengthened requirements (Polish, T053)
+
+Read directly from `gh issue view` on the five filed pipeline-defect
+issues the retrospective named:
+
+| Issue | Class | What it actually said | Gap that now suppresses it |
+|---|---|---|---|
+| #105 | `denied-tool` | Description read "Bash tool was denied 3 times... across turns 28, 116, 118" — readable, but the underlying `normalizedFacts` this finding actually carried was `{tool: null, denials: null}` (research.md's own worked example: the SDK's real `permission_denials` shape was mis-parsed, and the diagnose agent's *narrative* text stayed readable even though the *facts* it was supposed to ground that narrative in were null). | **Empty evidence** — the evidence-validity gate (FR-002/FR-027, T024) now fails this exact shape before fingerprinting ever runs. |
+| #112 | `lost-progress` | `branch-drift` reported zero commits on `spec-draft/022-gate-closed-lifecycle`, but the run's real work landed on `spec/022-gate-closed-lifecycle` — a `pull_request`-triggered run reports the *draft* branch as its head, so the collector was measuring a branch the inspected run never owed commits to. | **Unattributable signal** — already the motivating case for `collect-branch-drift`'s ownership check (PR #135), which FR-026 now states as one invariant covering all five collectors rather than a one-off guard. |
+| #125 | `stage-mismatch` | A `Wing Commander · 3 plan` run was expected at stage `plan` but recorded as `stalled` — the plan workflow had correctly skipped because the spec was stalled, so "the recorded stage disagrees with the expected one" was the stage gate working, not drift. | **Unattributable signal** — already the motivating case for `collect-spec-meta`'s `skipped`/`cancelled` early-exit (PR #137), generalized by FR-026 the same way as #112. |
+| #102 | `step-stalled` (class-hint `null`) | The `rebase / discover` job matched the bare-word `stalled` sentinel in its own log. | **Absent precision bar** — the finding's evidence is genuinely non-empty (a real sentinel match, a real job name) and the job plausibly executed, so neither the evidence-validity gate nor the attribution invariant has grounds to suppress it; only SC-008's disposition-labeling would have flagged this class as precision-eroding over time, which is exactly the measurement spec 015 lacked before this feature. |
+| #104 | `token-budget-warning` (class-hint `null`) | The `intake` job's own step summary matched "Turn budget warning" as a sentinel, but a warning being *emitted* is not the same claim as the run being *harmed* by it. | **Absent precision bar** — same reasoning as #102: the evidence is real and attributable, so the finding is a genuine detection of a real-but-not-actionable condition, which only the precision criterion (SC-008), not a pre-filing gate, is positioned to catch and count. |
+
+Three of the three named gap categories (SC-002: "unattributable signal,
+empty evidence, or absent precision bar") are each represented by at
+least one issue, confirming SC-002's claim that the strengthened
+requirements would have suppressed or measurably flagged all five. #102
+and #104 are the two cases where "suppressed" is not the right verb —
+both cite real, attributable evidence for a condition that genuinely
+occurred, so the deterministic gates (evidence-validity, attribution)
+correctly let them through; SC-008's precision criterion is what turns
+"the model's judgment that this mattered was wrong" from an invisible
+cost into a measured one going forward.
