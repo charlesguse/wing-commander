@@ -161,6 +161,42 @@ def stage_wf(agent_env=APP_ENV, with_agent=True):
                    "          " + agent_env + _N)
 
 
+# A stage with TWO agent steps that do NOT agree about a grant: one runs
+# under github.token in a job granting `actions: read` (which covers
+# `gh run list`), the other under the App token (which docs/setup.md gives
+# no Actions permission at all). A stage-level `extra-allowed-tools` input
+# reaches both, so the grant is only safe if it is safe for the least
+# privileged one — the whole reason the cross-check loops over EVERY agent
+# context rather than the first.
+#
+# Every other category C fixture builds a stage with exactly one agent
+# step, which made that loop untestable: `for ... in ctxs` and
+# `for ... in ctxs[:1]` are indistinguishable on a one-element list, so a
+# mutation narrowing it to the first agent step left the self-test green.
+# Both orderings ship, because truncating from either end must fail.
+def stage_wf_split_agents(approve_first=True):
+    approving = ("  permissive:" + _N +
+                 "    runs-on: ubuntu-latest" + _N +
+                 "    permissions:" + _N +
+                 "      actions: read" + _N +
+                 "    steps:" + _N +
+                 "      - name: agent on github.token" + _N +
+                 "        uses: anthropics/claude-code-action@v1" + _N +
+                 "        env:" + _N +
+                 "          " + DEFAULT_ENV + _N)
+    rejecting = ("  restricted:" + _N +
+                 "    runs-on: ubuntu-latest" + _N +
+                 "    steps:" + _N +
+                 "      - name: agent on the App token" + _N +
+                 "        uses: anthropics/claude-code-action@v1" + _N +
+                 "        env:" + _N +
+                 "          " + APP_ENV + _N)
+    order = (approving, rejecting) if approve_first else (rejecting, approving)
+    return ("name: stage" + _N +
+            "on:" + _N + "  workflow_call: {}" + _N +
+            "jobs:" + _N + "".join(order))
+
+
 def mkcase_c(grant, with_agent=True, called="./.github/workflows/stage.yml"):
     files = {
         ".github/workflows/caller.yml": caller_wf(grant, called=called),
@@ -345,6 +381,22 @@ CASES = [
      mkcase_c("Bash(gh run list:*)",
               called="./.github/workflows/gone.yml"),
      True, ("no agent step",)),
+
+    ("category C: a grant the stage's FIRST agent step can satisfy is still "
+     "rejected for a later one that cannot - the input reaches both",
+     {".github/workflows/caller.yml": caller_wf("Bash(gh run list:*)"),
+      ".github/workflows/stage.yml": stage_wf_split_agents(approve_first=True),
+      "docs/setup.md": DOCS_OK},
+     True, ("restricted / agent on the App token", "run list", "App token",
+            "actions")),
+
+    ("category C: and the same the other way round - the offending agent "
+     "step being the FIRST one must not be the only case that fails",
+     {".github/workflows/caller.yml": caller_wf("Bash(gh run list:*)"),
+      ".github/workflows/stage.yml": stage_wf_split_agents(approve_first=False),
+      "docs/setup.md": DOCS_OK},
+     True, ("restricted / agent on the App token", "run list", "App token",
+            "actions")),
 ]
 
 

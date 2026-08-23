@@ -48,6 +48,11 @@ on:
       - "specs/010-reusable-pipeline/contracts/stage-interfaces.md"
       - "specs/026-configurable-tool-lists/contracts/tool-composition-action.md"
       - "specs/032-structured-clarification-gate/contracts/clarification-schema.md"
+      # Gate 23's subject: the published image-prerequisite contract, whose
+      # tool table Gate 23 compares against required-tools.txt in both
+      # directions. Editing the table alone is the one change that can make
+      # the two disagree.
+      - "specs/038-runner-container-passthrough/contracts/runner-container-passthrough.md"
       # Gate 12's subject: it parses this file's "Repository permissions"
       # list as the single source of truth for what the wing-commander-bot
       # App may do, and sys.exits if the list moves. A PR downgrading a
@@ -1955,10 +1960,58 @@ jobs:
 
           STATUS_FN = re.compile(r"\b(always|success|failure|cancelled)\s*\(")
           TOOLS_PATH = ".github/scripts/required-tools.txt"
+          # The published document required-tools.txt's own header names as
+          # the contract the canonical list implements, and which claims in
+          # its own prose to be "kept in agreement with reality by Gate 23".
+          # It was not: nothing compared the two, and the table stood at
+          # seven tools while the canonical list gained `timeout` as an
+          # eighth. A promise a document makes about a gate is worth
+          # whatever the gate actually checks, so the gate checks it here.
+          CONTRACT_PATH = ("specs/038-runner-container-passthrough/contracts/"
+                           "runner-container-passthrough.md")
+          # First backticked token of a row's first cell: `node` (Node.js
+          # runtime) is one entry, not two. Matched only between the table's
+          # own header row and the blank line that ends it, so a backticked
+          # tool name in the surrounding prose is not a declaration.
+          CONTRACT_HEADER_RE = re.compile(
+              r"^\|\s*Tool\s*\|\s*Basis\s*\|\s*$")
+          CONTRACT_TOOL_RE = re.compile(r"`([^`]+)`")
           # The literal list each stage's tool-check step embeds. Quoted
           # either way, since the shell accepts both and a future edit
           # should not have to know which one this gate keys on.
           REQUIRED_TOOLS_RE = re.compile(r"""REQUIRED_TOOLS=(["'])(.*?)\1""")
+
+          def contract_tools(path):
+              """The tool names declared by the contract's canonical table.
+
+              Returns None when the table cannot be found at all, which is a
+              failure in its own right: a parser that silently returns an
+              empty set turns a moved heading into "the contract declares
+              nothing", and an empty set compares equal to nothing anybody
+              would notice.
+              """
+              try:
+                  lines = open(path, encoding="utf-8").read().splitlines()
+              except OSError:
+                  return None
+              tools, in_table = [], False
+              for raw in lines:
+                  line = raw.strip()
+                  if not in_table:
+                      in_table = bool(CONTRACT_HEADER_RE.match(line))
+                      continue
+                  if not line.startswith("|"):
+                      break          # the blank line after the table
+                  cell = line.strip("|").split("|")[0].strip()
+                  if not cell.strip("-: "):
+                      continue       # the header/body separator row
+                  m = CONTRACT_TOOL_RE.search(cell)
+                  # No backticks: keep the raw cell rather than dropping the
+                  # row. A row this parser cannot read must surface as a name
+                  # nothing recognises (a loud set difference), never as one
+                  # fewer tool declared, which is silence.
+                  tools.append(m.group(1) if m else cell)
+              return tools if in_table else None
 
           def needs_of(spec):
               n = (spec or {}).get("needs") or []
@@ -2125,6 +2178,46 @@ jobs:
                     f"required-tool list — FR-011a's drift check cannot run.")
               failures += 1
               canonical = set()
+
+          # FR-011a's third reader. required-tools.txt's header names
+          # contracts/runner-container-passthrough.md as the document it
+          # implements, and that document says of its own table that it is
+          # "kept in agreement with reality by Gate 23". Nothing checked it,
+          # so the two drifted in the quietest possible direction: the
+          # canonical list gained `timeout` and the published contract an
+          # adopter reads kept promising seven tools. Set difference, both
+          # directions, because either one is a lie to a different reader —
+          # an adopter under-provisions their image, or they provision for a
+          # tool nothing asks of them.
+          declared = contract_tools(CONTRACT_PATH)
+          if declared is None:
+              print(f"::error file={CONTRACT_PATH}::Gate 23 (FR-011a): could "
+                    f"not find the canonical tool-list table (a `| Tool | "
+                    f"Basis |` header) in the contract {TOOLS_PATH} names as "
+                    f"the document it implements. Either the table moved, the "
+                    f"document did, or this parser has broken — and until it "
+                    f"is fixed the published contract is unchecked again.")
+              failures += 1
+          elif canonical:
+              missing = sorted(canonical - set(declared))
+              extra = sorted(set(declared) - canonical)
+              if missing or extra:
+                  print(f"::error file={CONTRACT_PATH}::Gate 23 (FR-011a): the "
+                        f"published image-prerequisite contract and {TOOLS_PATH} "
+                        f"name different tools. In {TOOLS_PATH} but not in the "
+                        f"contract table: {missing or '(none)'} - an adopter "
+                        f"reading the contract under-provisions their image and "
+                        f"finds out at run time. In the contract table but not "
+                        f"in {TOOLS_PATH}: {extra or '(none)'} - the contract "
+                        f"demands something nothing checks or needs. Add the "
+                        f"row (with its basis) or drop it.")
+                  failures += 1
+              if len(declared) != len(set(declared)):
+                  print(f"::error file={CONTRACT_PATH}::Gate 23 (FR-011a): the "
+                        f"contract's tool table lists a tool twice, so the set "
+                        f"comparison above can agree while the table itself "
+                        f"contradicts what a reader counts.")
+                  failures += 1
 
           # FR-011a in the direction required-tools.txt's own header
           # promises: every stage's embedded list must BE the canonical

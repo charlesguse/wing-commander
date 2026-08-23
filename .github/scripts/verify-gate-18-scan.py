@@ -103,6 +103,20 @@ def scan(path, lines, offset, failures):
             f"<reason>` comment.")
 
 
+def posix(path):
+    """A repo-relative path with forward slashes, whatever glob returned.
+
+    On Windows `glob.glob` emits the platform separator for every component
+    it expands, so the workflow/composite sweep below reported
+    `.github/actions\\wing-commander-callout\\action.yml`. The `**/*.sh|py`
+    sweep already normalised, and the two disagreeing is worse than either:
+    a maintainer's local run and CI print different file= locations for the
+    same defect, and anything matching on a path (this gate's own self-test
+    included) sees one form and not the other. Both sweeps go through here.
+    """
+    return path.replace(os.sep, "/")
+
+
 def find_run_blocks(path):
     with open(path, encoding="utf-8") as fh:
         raw = fh.read()
@@ -174,11 +188,11 @@ for path in sorted(glob.glob(".github/workflows/*.yml")
                    + glob.glob(".github/actions/**/action.yml", recursive=True)
                    + glob.glob(".github/actions/**/action.yaml", recursive=True)):
     for inner_lines, offset in find_run_blocks(path):
-        scan(path, inner_lines, offset, failures)
+        scan(posix(path), inner_lines, offset, failures)
 
 for path in sorted(set(glob.glob("**/*.sh", recursive=True)
                        + glob.glob("**/*.py", recursive=True))):
-    norm = path.replace(os.sep, "/")
+    norm = posix(path)
     if norm == EXCLUDE_DIR or norm.startswith(EXCLUDE_DIR + "/"):
         continue
     with open(path, encoding="utf-8") as fh:

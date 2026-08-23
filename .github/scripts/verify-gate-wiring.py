@@ -82,12 +82,23 @@ SUBJECT_PATH_RE = re.compile(
     r"|docs/[^\s*?\[\]]+\.md)$")
 
 # `python3 - <<'PYEOF' ... PYEOF` inside a run: block, which is how the
-# larger gates in lint-workflows.yml are written. The opener may carry a
-# redirect after the delimiter (Gate 23's does), and the terminator is
-# matched at any indentation so the YAML block's own nesting is irrelevant.
+# larger gates in lint-workflows.yml are written. The opener may carry
+# script arguments before the delimiter (watchdog.yml's signal-id stamp
+# passes `"$f"`) and a redirect after it (Gate 23's does), and the
+# terminator is matched at any indentation so the YAML block's own nesting
+# is irrelevant.
 PY_HEREDOC_RE = re.compile(
-    r"^[ \t]*python3? +- +<<'(\w+)'[^\n]*\n(.*?)^[ \t]*\1[ \t]*$",
+    r"^[ \t]*python3? +- +[^\n<]*<<'(\w+)'[^\n]*\n(.*?)^[ \t]*\1[ \t]*$",
     re.S | re.M)
+
+# The dumber reader of the same thing, and the one that decides whether a
+# heredoc was MISSED: "a line invoking python that opens a heredoc". It
+# knows nothing about how the opener is spelled, so any spelling
+# PY_HEREDOC_RE cannot read (an interpreter flag before the `-`, an
+# unquoted delimiter, `python -` instead of `python3 -`) shows up here and
+# nowhere else, which is exactly the disagreement _check_heredoc_reader
+# reports. Same one-precise-one-loose technique as LOOSE_PATH_RE.
+LOOSE_PY_HEREDOC_RE = re.compile(r"^[ \t]*python3? +[^\n]*<<", re.M)
 
 # The SECOND, deliberately dumber reader of the same sources. SUBJECT_PATH_RE
 # defines the set the triggers rule is enforced over, and a check cannot fail
@@ -144,36 +155,60 @@ def _subject_paths_in_source(source):
 
 
 def _check_heredoc_reader(scanned):
-    """Fail loudly if the heredoc half of discovery stopped reading anything.
+    """Fail loudly, PER HEREDOC, when discovery cannot read one of them.
 
     docs/setup.md happens to be discoverable from .github/scripts too -- as
     a FIXTURE KEY in verify-gate-12.py, not as the path the gate opens -- so
     if this reader silently stopped matching, every subject document would
     still be found and this check would still print 0 failures. That is the
     same "green while proving nothing" shape the whole file exists to stop.
-    A style change to the heredocs (a different delimiter, `python -c`)
-    must therefore be a loud failure here, not a quiet loss of coverage.
+    A style change to the heredocs (an interpreter flag, a different
+    delimiter) must therefore be a loud failure here, not a quiet loss of
+    coverage.
+
+    Per heredoc, and not "did ANY of them parse", because the repository has
+    a dozen of them and the whole-tree question is satisfied by any one:
+    respell Gate 12's opener alone and eleven others still parse, so the
+    guard returned [] and docs/setup.md quietly went back to being
+    attributed to verify-gate-12.py's fixture key -- discovery by accident,
+    the exact thing this reader exists to make impossible. Each opener the
+    loose pattern sees and the precise one did not is named on its own line,
+    with the opener quoted, so the fix is mechanical.
     """
-    if any(parsed for _, _, parsed in scanned):
-        return []
+    failures = []
+    parsed_total = 0
+    for path, source, matches in scanned:
+        parsed_total += sum(1 for _, _, ok in matches if ok)
+        for m in LOOSE_PY_HEREDOC_RE.finditer(source):
+            at = m.start()
+            enclosing = next(((s, e, ok) for s, e, ok in matches
+                              if s <= at < e), None)
+            if enclosing is not None and (enclosing[0] != at or enclosing[2]):
+                # Either an opener-shaped line sitting INSIDE a heredoc body
+                # that was read whole (data for another interpreter, not a
+                # gate), or this very heredoc, read and parsed fine.
+                continue
+            eol = source.find("\n", at)
+            opener = (source[at:] if eol < 0 else source[at:eol]).strip()
+            failures.append(
+                f"{path}:{source[:at].count(chr(10)) + 1} opens a python "
+                f"heredoc that PY_HEREDOC_RE did not extract and parse, so "
+                f"that gate is not being read for the documents it opens, "
+                f"and a subject document only it names would go untriggered "
+                f"with nothing reported. Other heredocs parsing is not a "
+                f"defence: they are different gates reading different "
+                f"documents. Update the pattern to match how this one is "
+                f"now written ({opener}).")
 
-    missed = [(path, source) for path, source, _ in scanned
-              if re.search(r"\bpython3? +- +<<", source)]
-    if missed:
-        path, source = missed[0]
-        opener = re.search(r"<<[^\n]*", source)
-        return [f"{path} contains a python heredoc that PY_HEREDOC_RE did "
-                f"not extract and parse, so no gate written as a run: block "
-                f"is being read for the documents it opens, and a subject "
-                f"document only such a gate names would go untriggered with "
-                f"nothing reported. Update the pattern to match how the "
-                f"heredocs are now written "
-                f"({opener.group(0).strip() if opener else 'unknown opener'})."]
+    if failures:
+        return failures
 
-    return ["found no python heredoc in any workflow or composite action. "
-            "Either they were all extracted into .github/scripts -- in "
-            "which case delete this reader -- or its pattern has broken "
-            "and heredoc gates are no longer being read at all."]
+    if parsed_total == 0:
+        return ["found no python heredoc in any workflow or composite action. "
+                "Either they were all extracted into .github/scripts -- in "
+                "which case delete this reader -- or its pattern has broken "
+                "and heredoc gates are no longer being read at all."]
+    return []
 
 
 def gate_sources(scanned=None):
@@ -190,9 +225,11 @@ def gate_sources(scanned=None):
     so a disagreement between them can only mean the patterns disagree --
     never that one of them was looking at a different set of files.
 
-    `scanned`, when given a list, collects (path, source, parsed) per
-    workflow so _check_heredoc_reader can tell "no heredocs here" from
-    "heredocs this pattern can no longer read".
+    `scanned`, when given a list, collects (path, source, matches) per
+    workflow, where `matches` is one (start, end, parsed_ok) per heredoc
+    PY_HEREDOC_RE recognised. _check_heredoc_reader needs the SPANS, not a
+    count: it has to tell a heredoc this pattern could not read from an
+    opener-shaped line sitting inside one it read whole.
     """
     sources = []
     for path in sorted(glob.glob(os.path.join(SCRIPTS_DIR, "*.py"))):
@@ -201,7 +238,7 @@ def gate_sources(scanned=None):
 
     for path in workflow_files() + sorted(glob.glob(COMPOSITE_ACTIONS_GLOB)):
         source = open(path, encoding="utf-8").read()
-        parsed = 0
+        matches = []
         for match in PY_HEREDOC_RE.finditer(source):
             # The body is indented by its YAML block; dedent before parsing
             # or every heredoc is an IndentationError and vanishes silently.
@@ -209,12 +246,17 @@ def gate_sources(scanned=None):
             try:
                 ast.parse(body)
             except SyntaxError:
-                continue      # a shell heredoc, or one the bash gate reports
-            parsed += 1
+                # Recognised but unreadable. Recorded as a match so the
+                # reader check reports it by name rather than skipping it:
+                # the opener says `python`, so a body that is not python is
+                # a defect somewhere, not something to pass over quietly.
+                matches.append((match.start(), match.end(), False))
+                continue
+            matches.append((match.start(), match.end(), True))
             line = source[:match.start()].count("\n") + 1
             sources.append((f"{os.path.basename(path)}:{line}", body))
         if scanned is not None:
-            scanned.append((path, source, parsed))
+            scanned.append((path, source, matches))
 
     return sources
 

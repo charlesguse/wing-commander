@@ -157,13 +157,26 @@ CASES = [
      {".github/workflows/w.yml": wf([BARE_EXEMPT])},
      True, ("array-collecting",)),
 
-    ("the same FAIL shape inside a composite action's action.yml",
+    # The `file=` path is asserted literally, and deliberately: the
+    # workflow/composite sweep passes glob's own output through, which on
+    # Windows carries the platform separator (`.github/actions\foo\action
+    # .yml`) while the `**/*.sh|py` sweep right below it normalises to
+    # posix. Two sweeps of one gate printing two path shapes is how a local
+    # run and CI come to disagree about where a defect lives, and it breaks
+    # any consumer that matches on the path. Naming both forms' expected
+    # shape here is what makes the normalisation fail-able.
+    ("the same FAIL shape inside a composite action's action.yml, reported "
+     "at a posix path (glob hands back os.sep components on Windows)",
      {".github/actions/foo/action.yml": action_yml([ARRAY_COLLECTING])},
-     True, ("array-collecting",)),
+     True, ("array-collecting", "file=.github/actions/foo/action.yml,")),
+
+    ("the same FAIL shape inside a workflow, reported at a posix path",
+     {".github/workflows/w.yml": wf([ARRAY_COLLECTING])},
+     True, ("array-collecting", "file=.github/workflows/w.yml,")),
 
     ("the same FAIL shape inside a checked-in .sh file",
      {"scripts/foo.sh": ARRAY_COLLECTING + "\n"},
-     True, ("array-collecting",)),
+     True, ("array-collecting", "file=scripts/foo.sh,")),
 
     ("the shipped, fixed forms of all three distinct filter shapes this "
      "feature's call sites use: none flagged (the regression case)",
