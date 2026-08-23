@@ -121,7 +121,7 @@ including the loop-prevention cap so self-inspection cannot run away.
 #### Detection & inspection
 
 - **FR-001**: The watchdog MUST inspect pipeline runs after they finish, for both succeeded and failed outcomes.
-- **FR-002**: The watchdog MUST derive findings from the run's own evidence and MUST cite, in every finding, the specific evidence it relied on (the run identifier and the offending turns/tools/branch state), sufficient for a human to confirm the diagnosis without opening raw artifacts.
+- **FR-002**: The watchdog MUST derive findings from the run's own evidence and MUST cite, in every finding, the specific evidence it relied on (the run identifier and the offending turns/tools/branch state), sufficient for a human to confirm the diagnosis without opening raw artifacts. The cited facts MUST be non-empty and MUST conform to the expected shape for the finding's class (FR-008 of spec 024) — a finding that merely cites a run without grounding it in real facts does not satisfy this requirement.
 - **FR-003**: The watchdog MUST detect, at minimum for v1, the two problem classes from the motivating incident: (a) repeated invocation of a non-allowlisted read-only tool that is auto-denied, and (b) an interrupted run that left no progress (no commits) on its work branch.
 - **FR-004**: The watchdog MUST NOT produce a finding when a run exhibits no detectable problem; it MUST instead record that the run passed inspection. This false-positive-avoidance duty rests on the collectors that produce signals — the components able to observe the world — and MUST NOT rest solely on the `diagnose` step, which consumes pre-computed signals and cannot determine that one of them is wrong (FR-002 of spec 024).
 - **FR-005**: When a run's evidence is missing, expired, or unreadable, the watchdog MUST record that it could not inspect the run and MUST NOT fabricate a finding.
@@ -164,6 +164,7 @@ including the loop-prevention cap so self-inspection cannot run away.
 #### Precision & determinism hardening (spec 024)
 
 - **FR-026**: A collector MUST emit a signal about a run only when the inspected run both executed (its `conclusion` is not `skipped`/`cancelled`) and owned the artifact whose condition the signal describes. This attribution invariant applies to all five collectors named in FR-006, stated once here rather than per-collector.
+- **FR-027**: A finding whose cited facts are absent, empty, or malformed for its class (FR-002) MUST be suppressed before fingerprinting, deduplication, or any write — even if it otherwise references a valid run.
 
 ### Key Entities *(include if feature involves data)*
 

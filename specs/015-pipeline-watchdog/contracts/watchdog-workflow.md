@@ -82,18 +82,26 @@ array shape. Prompt frames `signals.json` and anything it reads via
 `Read`/`Grep`/`gh` explicitly as untrusted data, never instructions
 (FR-023) — same framing convention every comment-triggered stage already
 uses. Zero Findings in the output ⇒ `diagnose` sets
-`outcome: passed-inspection`.
+`outcome: passed-inspection`. Findings with empty/malformed
+`normalizedFacts` are still emitted by this step unchanged — validity is
+checked downstream (below), not here; `diagnose`'s own `--allowedTools`,
+model, prompt framing, and output schema are unaffected by that check.
 
 ### `triage` (`needs: diagnose`, one matrix entry per Finding, skipped if `outcome == passed-inspection`)
 
 Per Finding, deterministic (no agent):
 
 1. **Coexistence check** (research.md): if `finding.alreadyHandledBy` is
-   set, mark this finding `suppressed` — no fingerprint/dedup step runs
-   for it, but it's still listed in the final lifecycle-issue report as
-   "already reported by \<job\>."
-2. **Fingerprint**: `sha256(class + canonical(normalizedFacts))`.
-3. **Dedup search**: `gh search issues --state all
+   set, mark this finding `suppressed` — no evidence-validity/
+   fingerprint/dedup step runs for it, but it's still listed in the
+   final lifecycle-issue report as "already reported by \<job\>."
+2. **Evidence validity gate** (data-model.md): a Finding whose cited
+   evidence is empty/unresolvable, or whose `normalizedFacts` is missing
+   or empty for its class's identifying keys, is marked
+   `suppressed: invalid-evidence` here and MUST NOT proceed to
+   fingerprinting, dedup, or any write.
+3. **Fingerprint**: `sha256(class + canonical(normalizedFacts))`.
+4. **Dedup search**: `gh search issues --state all
    "wing-commander-watchdog: fingerprint=$FP in:body"`.
 
 No fix attempt is ever made — the watchdog is a pure reporter with no

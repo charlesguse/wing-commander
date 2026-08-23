@@ -102,6 +102,30 @@ FR-005: if collection itself fails (evidence missing/expired/unreadable
 for every source), the diagnose step is skipped entirely and the
 watchdog records "could not inspect this run" instead of guessing.
 
+### Evidence validity gate (FR-002/FR-027, spec 024 FR-008/FR-009)
+
+A deterministic check, run once per Finding immediately after `diagnose`
+and before fingerprinting:
+
+```
+valid  ⟺  evidence is non-empty
+           AND every evidence[].signalId resolves to a signal this run's
+               collectors actually emitted
+           AND normalizedFacts carries every key required for finding.class
+               (per-class key list, e.g. {tool} for denied-tool,
+               {branch} for lost-progress, {expected,actual} for
+               stage-mismatch)
+           AND none of those required values is null, empty string, or
+               empty array
+```
+
+`valid == false` ⇒ the Finding is **suppressed**, not filed, and is
+recorded in the lifecycle-issue report as "suppressed: invalid evidence"
+— distinct from both "passed inspection" (zero Findings) and "could not
+inspect" (collection itself failed). A Finding shaped `{tool: null,
+denials: null}` — the shape every historical `denied-tool` false
+positive actually carried — now fails this gate.
+
 ## Fingerprint (computed, not model-generated)
 
 ```
@@ -156,6 +180,7 @@ special case is needed for FR-021.
 |---|---|
 | "Run passed inspection." | Zero findings (FR-004) |
 | "Could not inspect this run: \<reason\>." | Evidence unreadable (FR-005) |
+| "Suppressed: invalid evidence — \<reason\>. Not filed." | The evidence-validity gate rejected the Finding (FR-027) |
 | One block per Finding: description + evidence + action taken + dedup outcome | One or more findings (FR-002, FR-022) |
 | "Self-dispatch cap reached — reporting only, no write performed." | Self-inspection past the configured cap (FR-018) |
 | "The watchdog's writes are paused (`WING_COMMANDER_WATCHDOG_PAUSED`) — reporting only." | FR-019 |
@@ -213,13 +238,16 @@ run and are still reported; only the write itself is suppressed.
                                                                           │
                                           no signals ──────────────────▶ "passed inspection" on lifecycle issue
                                           collection failed ────────────▶ "could not inspect" on lifecycle issue
-                                          ≥1 finding ──────────────────▶ fingerprint → dedup search
+                                          ≥1 finding ──────────────────▶ evidence-validity gate
                                                                                 │
-                                                    dedup miss             ──▶ create new pipeline-defect issue
-                                                    dedup hit, open        ──▶ comment on existing pipeline-defect issue
-                                                    dedup hit, closed      ──▶ reopen + comment on pipeline-defect issue
-                                                                                │
-                                                                        every path also appends to the lifecycle issue (FR-022)
+                                                        invalid ─────────────▶ "suppressed: invalid evidence" on lifecycle issue
+                                                        valid ────────────────▶ fingerprint → dedup search
+                                                                                        │
+                                                              dedup miss             ──▶ create new pipeline-defect issue
+                                                              dedup hit, open        ──▶ comment on existing pipeline-defect issue
+                                                              dedup hit, closed      ──▶ reopen + comment on pipeline-defect issue
+                                                                                        │
+                                                                        every non-suppressed path also appends to the lifecycle issue (FR-022)
 ```
 
 This stage never writes `spec-meta.json` itself (unlike `cleanup.yml`'s

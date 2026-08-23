@@ -1753,9 +1753,9 @@ jobs:
             echo "$body" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-  # One matrix entry per Finding: coexistence check, fingerprint, dedup
-  # lookup. No agent judgment gates a write (FR-011). Skipped entirely when
-  # diagnose found nothing —
+  # One matrix entry per Finding: coexistence check, evidence-validity
+  # gate, fingerprint, dedup lookup. No agent judgment gates a write
+  # (FR-011). Skipped entirely when diagnose found nothing —
   # a zero-length matrix.include array fails strategy evaluation outright, so
   # the job-level `if` must also exclude an empty findings array (rebase.yml
   # precedent, run 29180556763).
@@ -1877,6 +1877,75 @@ jobs:
             echo "::warning::could not register finding class '${FINDING_CLASS}' as a label — the next run will not be offered it and may propose a synonym."
           fi
 
+      # Evidence-validity gate (spec 024 FR-008/FR-009): a Finding whose
+      # cited evidence is empty/unresolvable, or whose normalizedFacts is
+      # missing or empty for its class's identifying keys, is suppressed
+      # HERE — before it ever reaches fingerprinting, dedup, or a write.
+      # This is the deterministic check the retrospective's own worked
+      # example needed: a denied-tool finding shaped {tool: null, denials:
+      # null} — the exact shape every historical denied-tool false
+      # positive carried — passed the OLD FR-002 requirement exactly
+      # because that requirement only asked that a finding "cite" the
+      # run, never that the cited facts exist.
+      - name: Evidence validity gate
+        id: evidence-gate
+        if: steps.suppress.outputs.suppressed != 'true'
+        env:
+          FINDING_CLASS: ${{ matrix.class }}
+          FACTS: ${{ toJson(matrix.normalizedFacts) }}
+          EVIDENCE: ${{ toJson(matrix.evidence) }}
+          SIGNALS: ${{ needs.collect.outputs.signals }}
+        run: |
+          set -uo pipefail
+          reason=""
+          cited_count="$(printf '%s' "$EVIDENCE" | jq '[ .[]?.signalId // empty ] | length' 2>/dev/null || echo 0)"
+          if [ "$cited_count" -eq 0 ]; then
+            reason="evidence is empty — no signal id cited"
+          else
+            known="$(printf '%s' "$SIGNALS" | jq -c '[ .[]?.id // empty ]' 2>/dev/null || echo '[]')"
+            unresolved="$(printf '%s' "$EVIDENCE" | jq -c --argjson k "$known" '[ .[]?.signalId // empty | select(. as $x | ($k | index($x)) == null) ]' 2>/dev/null || echo '[]')"
+            if [ "$(printf '%s' "$unresolved" | jq 'length')" -gt 0 ]; then
+              reason="evidence cites signal id(s) $unresolved that this run did not emit"
+            fi
+          fi
+
+          if [ -z "$reason" ]; then
+            # Same per-class required-key list the fingerprint step below
+            # projects to — kept in agreement deliberately, since both are
+            # asking "what identifies this class of problem."
+            case "$FINDING_CLASS" in
+              denied-tool)           keys='["tool"]' ;;
+              lost-progress)         keys='["branch"]' ;;
+              stage-mismatch)        keys='["expected","actual"]' ;;
+              missing-spec-artifact) keys='["branch"]' ;;
+              missing-spec-metadata) keys='["branch"]' ;;
+              token-budget-warning)  keys='["job"]' ;;
+              *)                     keys='null' ;;
+            esac
+            if [ "$keys" = 'null' ]; then
+              # No fixed key list for this class — require at least one
+              # non-empty fact so a totally empty normalizedFacts still
+              # fails (a finding must be grounded in SOMETHING).
+              nonempty="$(printf '%s' "$FACTS" | jq '[ to_entries[] | select(.value != null and .value != "" and .value != []) ] | length' 2>/dev/null || echo 0)"
+              [ "$nonempty" -gt 0 ] || reason="normalizedFacts carries no non-empty fact, and class '$FINDING_CLASS' has no fixed key list"
+            else
+              missing="$(jq -cn --argjson facts "$FACTS" --argjson keys "$keys" \
+                '[ $keys[] | select(($facts[.] // null) as $v | $v == null or $v == "" or $v == []) ]' 2>/dev/null || echo '[]')"
+              if [ "$(printf '%s' "$missing" | jq 'length')" -gt 0 ]; then
+                reason="normalizedFacts is missing or empty for required key(s) $missing (class '$FINDING_CLASS')"
+              fi
+            fi
+          fi
+
+          if [ -n "$reason" ]; then
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            echo "reason=$reason" >> "$GITHUB_OUTPUT"
+            echo "::warning::watchdog evidence-validity gate: suppressing finding of class '$FINDING_CLASS' — $reason"
+          else
+            echo "valid=true" >> "$GITHUB_OUTPUT"
+            echo "reason=" >> "$GITHUB_OUTPUT"
+          fi
+
       # Fingerprint: sha256 over the finding's class plus the ids of the
       # SIGNALS it cites — both selections from fixed lists, neither prose an
       # LLM wrote (issue #118).
@@ -1895,7 +1964,7 @@ jobs:
       # drift-prone, which is exactly why it is no longer the primary path.
       - name: Compute fingerprint
         id: fingerprint
-        if: steps.suppress.outputs.suppressed != 'true'
+        if: steps.suppress.outputs.suppressed != 'true' && steps.evidence-gate.outputs.valid != 'false'
         env:
           FINDING_CLASS: ${{ matrix.class }}
           FACTS: ${{ toJson(matrix.normalizedFacts) }}
@@ -2000,7 +2069,7 @@ jobs:
       # call.
       - name: Dedup search
         id: dedup
-        if: steps.suppress.outputs.suppressed != 'true'
+        if: steps.suppress.outputs.suppressed != 'true' && steps.evidence-gate.outputs.valid != 'false'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           FP: ${{ steps.fingerprint.outputs.fingerprint }}
@@ -2058,6 +2127,8 @@ jobs:
         if: always()
         env:
           SUPPRESSED: ${{ steps.suppress.outputs.suppressed }}
+          EVIDENCE_VALID: ${{ steps.evidence-gate.outputs.valid }}
+          EVIDENCE_REASON: ${{ steps.evidence-gate.outputs.reason }}
           FINGERPRINT: ${{ steps.fingerprint.outputs.fingerprint }}
           SHORT_FINGERPRINT: ${{ steps.fingerprint.outputs.short-fingerprint }}
           CANONICAL_FACTS: ${{ steps.fingerprint.outputs.canonical-facts }}
@@ -2067,12 +2138,14 @@ jobs:
           set -uo pipefail
           jq -n \
             --argjson suppressed "${SUPPRESSED:-false}" \
+            --argjson evidencevalid "$([ "${EVIDENCE_VALID:-}" = "false" ] && echo false || echo true)" \
+            --arg evidencereason "${EVIDENCE_REASON:-}" \
             --arg fingerprint "${FINGERPRINT:-}" \
             --arg shortfp "${SHORT_FINGERPRINT:-}" \
             --arg canonicalfacts "${CANONICAL_FACTS:-}" \
             --arg dedup "${DEDUP_OUTCOME:-}" \
             --arg dedupissue "${DEDUP_ISSUE:-}" \
-            '{suppressed: $suppressed, fingerprint: $fingerprint, "short-fingerprint": $shortfp, "canonical-facts": $canonicalfacts, dedup: $dedup, "dedup-issue": $dedupissue}' \
+            '{suppressed: $suppressed, "evidence-valid": $evidencevalid, "evidence-reason": $evidencereason, fingerprint: $fingerprint, "short-fingerprint": $shortfp, "canonical-facts": $canonicalfacts, dedup: $dedup, "dedup-issue": $dedupissue}' \
             > "${{ runner.temp }}/watchdog-triage-decision.json"
 
       - name: Upload triage decision artifact
@@ -2214,6 +2287,8 @@ jobs:
           if [ -f "$f" ]; then
             {
               echo "suppressed=$(jq -r '.suppressed' "$f")"
+              echo "evidence-valid=$(jq -r '."evidence-valid"' "$f")"
+              echo "evidence-reason=$(jq -r '."evidence-reason" // ""' "$f")"
               echo "fingerprint=$(jq -r '.fingerprint' "$f")"
               echo "short-fingerprint=$(jq -r '."short-fingerprint"' "$f")"
               echo "canonical-facts=$(jq -r '."canonical-facts" // ""' "$f")"
@@ -2224,6 +2299,8 @@ jobs:
             echo "::warning::no triage decision artifact for index ${{ matrix.index }} — treating this Finding as report-only."
             {
               echo "suppressed=false"
+              echo "evidence-valid=true"
+              echo "evidence-reason="
               echo "fingerprint="
               echo "short-fingerprint="
               echo "canonical-facts="
@@ -2339,6 +2416,7 @@ jobs:
         id: ensure-issue
         if: >-
           steps.decision.outputs.suppressed != 'true' &&
+          steps.decision.outputs.evidence-valid != 'false' &&
           steps.write-suppression.outputs.suppressed != 'true' &&
           steps.decision.outputs.dedup != 'data-integrity'
         env:
@@ -2414,6 +2492,8 @@ jobs:
           FINDING_EVIDENCE: ${{ toJson(matrix.evidence) }}
           SUPPRESSED: ${{ steps.decision.outputs.suppressed }}
           ALREADY_HANDLED_BY: ${{ matrix.alreadyHandledBy }}
+          EVIDENCE_VALID: ${{ steps.decision.outputs.evidence-valid }}
+          EVIDENCE_REASON: ${{ steps.decision.outputs.evidence-reason }}
           DEDUP_OUTCOME: ${{ steps.decision.outputs.dedup }}
           ISSUE_NUMBER: ${{ steps.ensure-issue.outputs.issue-number }}
           WRITE_SUPPRESSED: ${{ steps.write-suppression.outputs.suppressed }}
@@ -2430,6 +2510,8 @@ jobs:
             echo ""
             if [ "$SUPPRESSED" = "true" ]; then
               echo "_Already reported by existing automation: ${ALREADY_HANDLED_BY:-a prior stage}._"
+            elif [ "$EVIDENCE_VALID" = "false" ]; then
+              echo "_Suppressed: invalid evidence — ${EVIDENCE_REASON:-cited facts did not pass the evidence-validity gate}. Not filed._"
             elif [ "$WRITE_SUPPRESSED" = "true" ]; then
               case "$WRITE_SUPPRESS_REASON" in
                 self-dispatch-cap) echo "_Self-dispatch cap reached — reporting only, no write performed._" ;;

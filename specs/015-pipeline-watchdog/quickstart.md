@@ -167,6 +167,19 @@ never silently repointed at an unrelated scenario.
    `signals.json` (job logs) that the collector emitted no entry for the
    skipped/cancelled run.
 
+## Scenario 17 — Evidence-validity gate suppresses a finding with empty cited facts (US4, FR-027; spec 024)
+
+1. Reproduce (or synthesize, via `workflow_dispatch` against a crafted
+   `signals.json`-shaped fixture if the harness supports it) a
+   `denied-tool` finding whose `normalizedFacts.tool` is null or empty —
+   the exact shape every historical `denied-tool` false positive
+   carried.
+2. Let the watchdog process it through `triage`.
+3. Expected: the finding is suppressed before fingerprinting — the
+   lifecycle issue reports "suppressed: invalid evidence," and `gh issue
+   list --label pipeline-defect --state all` shows no new issue was
+   created for it.
+
 See `contracts/watchdog-workflow.md` for the exact trigger/job-gate
 contracts and `data-model.md` for the full Finding, fingerprint, and
 triage-decision shapes each scenario above exercises.
