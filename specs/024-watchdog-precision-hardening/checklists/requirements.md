@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,12 +31,18 @@
 
 ## Notes
 
-- Three `[NEEDS CLARIFICATION]` markers remain by design, on FR-014 (disposition
-  of dead rungs 1–2), FR-015 (precision target threshold), and FR-017
-  (correct vs. remove the stale 023 spec directory). Each is a maintainer
-  decision with multiple reasonable answers and no safe default, so it is left
-  for the clarification round rather than guessed. These are posted to the
-  lifecycle issue for a human to answer.
+- All three `[NEEDS CLARIFICATION]` markers are resolved by the maintainer's
+  answers on lifecycle issue #140: FR-014 takes option C (remove triage rungs
+  1–2 and make the watchdog a pure reporter), FR-015 takes option B (≥70%
+  precision over the most recent 20 distinct post-dedup findings, evaluated only
+  once at least 10 exist), and FR-017 takes option B (remove
+  `specs/023-reliable-diagnose-verdict/` entirely). No markers remain.
+- The same reply confirmed that "Gap 6" — a dedup lookup that cannot report its
+  own failure — stays in scope as a requirement cluster. It is now User Story 7
+  with FR-018–FR-020 (the fourth `unknown` outcome, suppress-on-unknown, and a
+  bounded direct read in place of the search index) and SC-010. The
+  failure-injection test tier that would exercise it is tracked separately as
+  issue #169 and is recorded as out of scope in FR-023.
 - All other checklist items pass. The specification deliberately references the
   existing FR/SC identifiers of `specs/015-pipeline-watchdog/spec.md` because
   those requirement artifacts are the subject being changed; this is domain

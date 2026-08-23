@@ -59,6 +59,7 @@ way to compute it.
 1. **Given** the watchdog's success criteria, **When** a maintainer reviews them, **Then** at least one criterion measures the fraction of filed findings that are genuine (precision), expressed with an explicit numerator and denominator that can be computed from filed findings and their confirmed/rejected dispositions.
 2. **Given** the false-positive-avoidance obligation (formerly FR-004), **When** a maintainer reads which component owns it, **Then** the obligation is placed on the collectors that produce signals — the components that can observe the world — and no longer solely on the `diagnose` step, which sees only pre-computed signals and cannot know a signal is wrong.
 3. **Given** a run that exhibited no real problem but for which a collector produced a spurious signal, **When** the watchdog processes it under the strengthened requirements, **Then** the spurious signal is suppressed at its source and no finding is filed.
+4. **Given** the precision criterion, **When** a maintainer checks whether the watchdog passes it, **Then** the target is ≥70% over the most recent 20 distinct (post-dedup) filed findings, the criterion is not evaluated until at least 10 distinct findings exist, and the window counts distinct findings rather than runs so a correctly-deduplicated recurrence neither inflates nor deflates the result.
 
 ---
 
@@ -187,8 +188,37 @@ gating judgment in an agent prompt.
 
 **Acceptance Scenarios**:
 
-1. **Given** the project's governing documents, **When** a maintainer looks for guidance on where gating judgment should live, **Then** a stated principle establishes that judgment gating a durable action (a filed finding, a fingerprint, a rung decision, an autonomous write) belongs in deterministic code rather than an agent prompt.
+1. **Given** the project's governing documents, **When** a maintainer looks for guidance on where gating judgment should live, **Then** a stated principle establishes that judgment gating a durable action (a filed finding, a fingerprint, a dedup outcome, an autonomous write) belongs in deterministic code rather than an agent prompt.
 2. **Given** a future change that places such gating judgment in an agent prompt, **When** a reviewer evaluates it, **Then** they can cite the recorded principle as grounds to move the judgment into deterministic code.
+
+---
+
+### User Story 7 - Never let a failed dedup lookup masquerade as "nothing found" (Priority: P1)
+
+As a maintainer, I want a dedup lookup that could not be completed to be reported
+as **unknown** and to suppress filing, rather than collapsing into the "found
+nothing, so file it as new" branch, so that a broken lookup degrades into silence
+instead of into a stream of duplicate issues.
+
+**Why this priority**: The dedup requirements name three outcomes (none,
+match-open, match-closed) and never name a fourth, so the code took the
+convenient branch and files on failure — the watchdog's own warning admits it
+"may file a duplicate issue". This is the same defect that reached production in
+another stage (#167, fixed in #168), and it is a live candidate explanation for
+the nine historical duplicates surviving a fix aimed only at fingerprint
+stability. Deterministic identity (US3) is necessary but not sufficient if the
+lookup that uses the identity cannot report its own failure.
+
+**Independent Test**: Confirm the requirements name an `unknown` dedup outcome
+distinct from `none`, that `unknown` suppresses filing, and that the lookup is
+specified as a bounded direct read within a finding's class rather than as a
+query against an eventually-consistent search index.
+
+**Acceptance Scenarios**:
+
+1. **Given** the dedup requirements, **When** a maintainer reads the enumerated outcomes, **Then** a fourth outcome `unknown` exists, defined as "the lookup could not be completed" and explicitly distinguished from `none` ("the lookup completed and found no prior finding").
+2. **Given** a dedup lookup that fails, **When** the watchdog decides what to do with the candidate finding, **Then** filing is suppressed and the failure is surfaced to a maintainer, rather than the finding being treated as new and filed.
+3. **Given** the dedup lookup specification, **When** a maintainer inspects what it queries, **Then** it is a bounded, strongly-consistent enumeration within the finding's class rather than a full-text search index query, which requires filed findings to carry their class as a durable queryable attribute.
 
 ---
 
@@ -196,7 +226,8 @@ gating judgment in an agent prompt.
 
 - **A real problem with weak evidence**: A run genuinely misbehaved but the artifact that would prove it is expired or truncated. The evidence-validity condition suppresses the finding; the run is recorded as un-inspectable rather than filed on thin evidence, consistent with the existing missing-evidence behavior.
 - **An attributable signal that is still benign**: A run owned the artifact and executed, but the measured condition is expected (not a defect). Attribution is necessary but not sufficient; the precision obligation still requires the collector not to raise a signal for a non-problem.
-- **A precision denominator of zero**: In a window where the watchdog filed no findings, the precision criterion has no denominator. The criterion must define its behavior for an empty window (e.g. reported as not-applicable) rather than as a divide-by-zero failure.
+- **A precision window that is not yet full**: Fewer than 10 distinct findings exist (including the zero-findings case, where there is no denominator at all). The criterion is reported as not-applicable rather than as a divide-by-zero failure or a pass; once 10 exist it is evaluated over the most recent 20 distinct findings, and over however many exist between 10 and 20.
+- **A dedup lookup that fails on a genuine, previously-unseen finding**: The `unknown` outcome suppresses a finding that would have been correct to file. This is the accepted trade: a suppressed real finding costs one missed report and is surfaced as a lookup failure, whereas filing on failure costs an unbounded stream of duplicates. The failure must be visible so the underlying lookup can be repaired.
 - **Fingerprint of a class with legitimately variable specifics**: A defect class whose only distinguishing evidence is itself variable must still yield a deterministic fingerprint by normalizing on the stable subset of its signals; if no stable subset exists, the class cannot be safely deduplicated and that must be surfaced, not hidden.
 - **Retroactive scoring of the historical record**: Applying the new precision criterion to the ~200 existing runs requires each past finding to be labeled real or false. The absence of a labeled corpus (noted for SC-001) is itself a gap the precision criterion depends on.
 
@@ -208,7 +239,7 @@ governing documents. Existing FR/SC identifiers refer to that spec.
 
 ### Precision as a first-class requirement
 
-- **FR-001**: The watchdog's success criteria MUST include a precision criterion expressed with an explicit numerator (findings a maintainer confirms as genuine) and denominator (findings filed), computable from the filed-finding record, and MUST define its behavior when the denominator is zero.
+- **FR-001**: The watchdog's success criteria MUST include a precision criterion expressed with an explicit numerator (findings a maintainer confirms as genuine) and denominator (findings filed), computable from the filed-finding record, and MUST define its behavior when the window is not yet full (including a denominator of zero).
 - **FR-002**: The false-positive-avoidance obligation currently expressed by FR-004 ("MUST NOT produce a finding when a run exhibits no detectable problem") MUST be restated as an obligation on the collectors that produce signals — the components able to observe the world — and MUST NOT rest solely on the `diagnose` step, which consumes pre-computed signals and cannot determine that a signal is wrong.
 - **FR-003**: A signal that a collector cannot substantiate as describing a real condition MUST be suppressed at the collector before it becomes a candidate finding, rather than faithfully carried through to a filed finding.
 
@@ -234,27 +265,35 @@ governing documents. Existing FR/SC identifiers refer to that spec.
 
 ### Governance of deterministic judgment
 
-- **FR-012**: The project's governing documents MUST record the principle that judgment which gates a durable action — filing a finding, computing a fingerprint, selecting a triage rung, or performing an autonomous write — belongs in deterministic code rather than in an agent's prompt.
+- **FR-012**: The project's governing documents MUST record the principle that judgment which gates a durable action — filing a finding, computing a fingerprint, resolving a dedup outcome, or performing an autonomous write — belongs in deterministic code rather than in an agent's prompt.
 - **FR-013**: The recorded principle MUST be citable by a reviewer as grounds to require that gating judgment introduced in a future change be moved out of an agent prompt and into deterministic code.
 
 ### Disposition of unexercised and unmeasured requirements
 
-- **FR-014**: The retrospective's finding that triage rungs 1 and 2 have never fired against a real finding MUST be resolved by an explicit decision recorded in the watchdog spec — [NEEDS CLARIFICATION: which disposition for rungs 1–2 — (a) keep as-is and accept the carrying cost, (b) narrow rung 1's change-class allowlist to a seed class that demonstrably occurs, or (c) remove rungs 1–2 and make the watchdog a reporter that files issues only?]
-- **FR-015**: The precision criterion (FR-001) MUST state its target threshold — [NEEDS CLARIFICATION: what precision target should the watchdog be held to over a defined window of filed findings — e.g. ≥50%, ≥70%, ≥90%?]
+- **FR-014**: Triage rungs 1 (autonomous auto-fix) and 2 (open-a-PR) MUST be removed, and the watchdog MUST be restated as a pure reporter whose remediation ladder is detection, dedup, and issue-filing only. The requirements that exist solely to describe rungs 1–2 — the guardrail configuration, the diff-size limit, and the change-class allowlist — MUST be removed from the watchdog spec along with them, and no requirement may be left on the books describing a rung the watchdog no longer has.
+- **FR-015**: The precision criterion (FR-001) MUST state its target as **≥70%**, measured over a window of the most recent 20 *distinct* (post-dedup) filed findings, and MUST NOT be evaluated until at least 10 distinct findings exist. The window MUST be counted by distinct finding rather than by run, so that a recurrence which deduplicates correctly neither inflates nor deflates the measurement.
 - **FR-016**: SC-001's untestable "100% detection" claim and SC-007's never-measured latency MUST be addressed: SC-001 MUST be restated so it is verifiable (which depends on a labeled corpus of runs known to exhibit each problem class), and SC-007 MUST either be measured or explicitly deferred with the reason recorded.
-- **FR-017**: The stale spec directory `specs/023-reliable-diagnose-verdict/`, which sits on `main` marked `"stage": "spec"` for abandoned work, MUST be either corrected or removed as part of tidying the watchdog spec surface. [NEEDS CLARIFICATION: correct 023's metadata to reflect its abandoned state, or remove the directory entirely?]
+- **FR-017**: The stale spec directory `specs/023-reliable-diagnose-verdict/`, which sits on `main` marked `"stage": "spec"` for abandoned work, MUST be removed entirely; git history is the record of the abandoned exploration, and `main` MUST NOT advertise an in-flight spec that is not in flight.
+
+### Dedup lookup failure
+
+- **FR-018**: The dedup requirements (FR-012–FR-016 of spec 015) MUST define a fourth lookup outcome, `unknown`, distinct from `none`: `unknown` means the lookup could not be completed, whereas `none` means the lookup completed and found no prior finding.
+- **FR-019**: An `unknown` dedup outcome MUST suppress filing rather than falling through to the "file it as new" branch. `unknown` and `none` MUST NOT share a code path or a recovery behavior, and a lookup failure MUST be surfaced (not swallowed) so the suppressed finding is visible to a maintainer.
+- **FR-020**: The dedup lookup MUST NOT depend on an eventually-consistent search index where a bounded, strongly-consistent direct read is available. Because findings are partitioned by a bounded finding class, the lookup MUST be expressible as a direct enumeration within that class, which requires filed findings to carry their class as a durable, queryable attribute.
 
 ### Scope boundaries
 
-- **FR-018**: This feature MUST NOT change the watchdog's detection recall, its dedup-and-reopen behavior for genuinely distinct findings, its loop-prevention caps, or its coexistence with existing stalled/cleanup automation, except where a named gap above requires it.
-- **FR-019**: The documentation corrections tracked separately as issue #139 (updates to `docs/architecture.md`, the collector fixture gate, and a triage runbook) are out of scope for this specification and MUST NOT be duplicated here.
+- **FR-021**: This feature MUST NOT change the watchdog's detection recall, its dedup-and-reopen behavior for genuinely distinct findings, its loop-prevention caps, or its coexistence with existing stalled/cleanup automation, except where a named gap above requires it.
+- **FR-022**: The documentation corrections tracked separately as issue #139 (updates to `docs/architecture.md`, the collector fixture gate, and a triage runbook) are out of scope for this specification and MUST NOT be duplicated here.
+- **FR-023**: The failure-injection test tier that would exercise a failing dedup lookup is tracked separately as issue #169 and is out of scope for this specification; this spec states the required `unknown` behavior, and #169 supplies the tier that can prove it.
 
 ### Key Entities *(include if feature involves data)*
 
 - **Collector**: A component that observes a run's artifacts and emits deterministic signals. Under this feature it becomes the owner of false-positive suppression, the attribution invariant, and the deterministic basis for fingerprints.
 - **Signal**: A deterministic, machine-produced observation about a run, attributable to that run, and the substance from which fingerprints and cited facts are derived.
 - **Finding**: A candidate report about a run. Under this feature it is filed only when it is real (precision), attributable, deterministically fingerprinted, and backed by non-empty valid cited facts.
-- **Precision criterion**: A measurable success criterion defined as confirmed-genuine findings over filed findings, with defined behavior for an empty window.
+- **Precision criterion**: A measurable success criterion defined as confirmed-genuine findings over filed findings, targeted at ≥70% over the most recent 20 distinct (post-dedup) findings, evaluated only once at least 10 distinct findings exist and reported as not-applicable before then.
+- **Dedup outcome**: The result of looking up a finding's fingerprint against previously filed findings — one of `none`, `match-open`, `match-closed`, or `unknown`. `unknown` means the lookup itself could not be completed and, unlike `none`, suppresses filing.
 - **Deterministic-judgment principle**: The recorded governance rule that gating judgment lives in deterministic code, not agent prompts.
 
 ## Success Criteria *(mandatory)*
@@ -268,7 +307,9 @@ governing documents. Existing FR/SC identifiers refer to that spec.
 - **SC-005**: A finding whose cited facts are empty or malformed is suppressed in 100% of cases, eliminating the empty-fact `denied-tool` findings the prior requirement admitted.
 - **SC-006**: The amended self-inspection requirement is satisfied by the shipped deterministic self-checker, resolving the standing contradiction between FR-021 and the code with no requirement left on the books that the code violates.
 - **SC-007**: The deterministic-judgment principle is recorded in a governing document and is specific enough that a reviewer, given a future change that puts gating judgment in an agent prompt, can point to it as grounds to move the judgment into deterministic code.
-- **SC-008**: Every named gap (1 through 5) and every "worth deciding" item (rungs 1–2, SC-001/SC-007 testability, the stale 023 directory) is resolved by either a concrete requirement change or an explicitly recorded decision — none is left drifting.
+- **SC-008**: Every named gap (1 through 6) and every "worth deciding" item (rungs 1–2, SC-001/SC-007 testability, the stale 023 directory) is resolved by either a concrete requirement change or an explicitly recorded decision — none is left drifting.
+- **SC-009**: After the rungs-1–2 removal, the watchdog spec describes exactly one remediation outcome — file an issue — and no requirement, guardrail configuration, diff-size limit, or change-class allowlist remains on the books describing machinery the watchdog no longer has.
+- **SC-010**: The dedup outcomes are enumerated as four, and a dedup lookup that cannot complete files nothing in 100% of cases while surfacing the failure, so a broken lookup produces zero duplicate issues rather than one per finding.
 
 ## Assumptions
 
@@ -276,5 +317,7 @@ governing documents. Existing FR/SC identifiers refer to that spec.
 - **"The code matches the spec" is the premise**: The five false positives were faithful reports of bad signals, so the fix is at the requirement and collector layer, not in the reasoning agent.
 - **Collectors can observe the world; `diagnose` cannot**: Assigning false-positive suppression and attribution to collectors reflects that only they see the artifacts, while `diagnose` sees only pre-computed signals.
 - **Deterministic gating is preferred to prompt gating**: Consistent with every fix in the cluster, gating judgment is assumed to belong in deterministic code; this is the principle being codified.
-- **Humans still own merges and dispositions**: The rungs-1–2 decision, the precision target, and the 023 cleanup are maintainer decisions; this spec surfaces them as clarifications rather than presuming an answer.
+- **Humans still own merges and dispositions**: The rungs-1–2 decision, the precision target, and the 023 cleanup were maintainer decisions, surfaced as clarifications rather than presumed. All three were answered on issue #140: remove rungs 1–2 and make the watchdog a pure reporter; hold it to ≥70% precision over the most recent 20 distinct findings once 10 exist; and delete the stale 023 directory outright.
+- **Removing rungs 1–2 loses nothing in practice**: Across ~200 runs every finding landed on rung 3, so the removed machinery has no demonstrated finding class behind it; an unexercised path is treated as a liability rather than as a reserve.
+- **A missed report is cheaper than a duplicate stream**: The `unknown` dedup outcome suppresses filing on lookup failure, trading a possible missed finding for the guarantee that a broken lookup cannot spam issues.
 - **Untrusted content rule is unchanged**: Inspected transcripts and artifacts remain data, never instructions, per the constitution's non-negotiable security principle.
