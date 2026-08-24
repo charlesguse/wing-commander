@@ -1546,21 +1546,6 @@ jobs:
       - name: Gate 16 self-test — the detector actually detects
         run: python3 .github/scripts/verify-gate-16.py
 
-      # Gate 17 — every job checks the pipeline repository out to
-      # `.wing-commander-pipeline` inside the consumer's working tree, and
-      # that directory carries its own .git, so a bare `git add -A` records
-      # it as a GITLINK instead of recursing into it. PR #201 shipped one
-      # from `prepare`. #202 fixed the two deterministic sites in
-      # auto-update-spec-kit.yml and fixtured them, but not watchdog.yml,
-      # whose `act` job composes commits the same way in the same tree —
-      # both rungs would have shipped the same stray submodule entry into
-      # the first fix PR the watchdog ever opened. Neither rung has fired in
-      # ~200 runs, which is exactly why nothing observed it: this is the
-      # same never-executed-so-never-wrong shape as #201 itself and as the
-      # orphaned collector verifier of PR #158.
-      - name: Gate 17 — the watchdog's own fix commits exclude the pipeline checkout
-        run: python3 .github/scripts/verify-watchdog-fix-commit.py
-
       # Gate 18 — every `gh api` call is checked for a pagination-safe
       # shape: under `--paginate`, gh applies `--jq` once per page and
       # concatenates the raw outputs rather than slurping first, so a
@@ -2700,8 +2685,9 @@ jobs:
       - name: Gate 23 self-test — the detector actually detects
         run: python3 .github/scripts/verify-gate-23.py --selftest
 
-      # Gate 27 — the per-stage default tool-list table matches the 16
-      # `wing-commander-tool-args` call sites. FR-013/SC-006 promise a
+      # Gate 27 — the per-stage default tool-list table matches every
+      # `wing-commander-tool-args` call site (15 since spec 024 removed
+      # watchdog.propose-fix). FR-013/SC-006 promise a
       # consumer can read each stage's defaults out of documentation; that
       # documentation was hand-maintained with nothing holding it to the
       # literals, and had already drifted — the 026 draft was missing both
@@ -2758,6 +2744,18 @@ jobs:
       # failed lookup as its own outcome rather than as "found none" (#188).
       - name: Gate 29 — cleanup's lifecycle guard names the fault it hit and recovers a null issue
         run: python3 .github/scripts/verify-cleanup-lifecycle-guard.py
+
+      # Gate 32 — watchdog.yml's act job never treats an unresolved triage
+      # decision as "file it as new" (PR #240 maintainer feedback on spec
+      # 024). The "Load triage decision" step's missing-artifact fallback
+      # used to set dedup="", which fell through the "Ensure pipeline-defect
+      # issue" step's `if:` guard (it only excludes data-integrity/unknown)
+      # into the comment-on-existing-issue branch and ran `gh issue comment
+      # ""`, failing the job. Nothing exercised the missing-artifact path
+      # before this gate — same "a verifier nothing runs is not a verifier"
+      # gap Gates 5/9/19 exist to close for their own subjects.
+      - name: Gate 32 — the act job's dedup guard stays report-only when the triage decision never arrived
+        run: python3 .github/scripts/verify-act-dedup-guard.py
 
       # Gate 31 — constitution VII's stage-layer rule, at PR time and over
       # every published stage. `release.yml`'s Gate 1b has enforced two

@@ -49,11 +49,14 @@ jobs:
     # variable, but only in its `act` job — that suppressed WRITES while
     # collect, diagnose, and triage still ran, so a "paused" watchdog billed for
     # the diagnose agent (claude-opus-5, principle II carve-out) and
-    # propose-fix (claude-sonnet-5) on every run and threw the verdict away.
-    # Gating here means no job starts at all. This is now the ONLY place the
-    # pause is enforced: watchdog.yml's stage-side write suppression has been
-    # removed, because suppressing at the last write gate is what made a
-    # "paused" watchdog keep spending in the first place.
+    # the since-removed propose-fix step (claude-sonnet-5) on every run, and
+    # threw the verdict away. Gating here means no job starts at all, and this
+    # is the ONLY place the pause is meaningfully enforced. watchdog.yml still
+    # carries the stage-side write-suppression read, but only as a DEPRECATED
+    # compatibility shim for an adopter whose own wrapper has no such gate
+    # (#152): it stops writes without stopping work, which is exactly what
+    # made a "paused" watchdog keep spending. It is scheduled for removal
+    # alongside the stage's other vars.* reads (#149).
     if: vars.WING_COMMANDER_WATCHDOG_PAUSED != 'true'
     runs-on: ubuntu-latest
     permissions:
