@@ -261,3 +261,10 @@ User Story 1 alone is unsafe to ship on its own — R1 in spec.md is explicit th
 - T002, T006, T007, T008, T010, and T011 are the only tasks that edit `.github/workflows/implement.yml` — every other task builds or extends `verify-truncated-cycle-carry-forward.py`, wires it into `lint-workflows.yml` (T015), or validates the result.
 - This feature does not touch `implement.yml`'s declared `workflow_call` inputs/outputs, `wing-commander-5-implement.yml`, any other calling wrapper, the `wing-commander-agent-verdict` composite, `max-turns`, `max-iterations`, or the runaway turn-budget ceiling (FR-021, FR-022, Out of Scope) — no task above should introduce such an edit.
 - Removing T002's forced-false logic, its no-progress guard, either arm of its progress test, or widening its `VERDICT == "exhausted"` check must each independently fail T013's mutation checks, not merely reduce a test count — this is the FR-019/US6 bar the whole story exists to enforce.
+
+## Maintainer Feedback
+
+- [ ] Persist the tier a truncated cycle actually ran on (ordinary or `inputs.escalation-model`) into a `spec-meta.json` field written alongside the existing truncated-cycle bookkeeping commit (`implement.yml`'s "Record truncated-cycle count" step, ~line 1515).
+- [ ] At cycle start, when that field marks the carried tier as the escalation tier, use `inputs.escalation-model` for the cycle instead of `inputs.model` — no new `workflow_dispatch` input on the self-workflow (FR-021, FR-007).
+- [ ] Rewrite Gate 26's `check_final_selects_retry_truncated` scenario in `verify-truncated-cycle-carry-forward.py` to assert the tier the *next* cycle will actually use (reading the persisted field / effective model), not just the printed lifecycle-issue text.
+- [ ] Add a mutation that removes the carry-over write/read and confirm it fails the new assertion (FR-019 shape).
