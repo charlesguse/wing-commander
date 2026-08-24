@@ -39,6 +39,9 @@
   - **FR-011** — a fix is rung-1 "minor" **only when** it is confined to an
     allowlisted change-class **and** touches only allowlisted paths **and** its
     diff is under a small, configurable line cap; otherwise it falls back to rung 2.
+    *(Removed by spec 024 FR-014: rungs 1–2, the propose-fix step, and the
+    guardrail config file no longer exist — the watchdog proposes no fixes.
+    Recorded here as the clarify-phase answer that was given at the time.)*
   - **FR-025** — v1 triggers are `workflow_run` on each stage's completion **plus**
     on-demand manual dispatch; a scheduled sweep is deferred.
 - All checklist items pass; the spec is ready for planning.

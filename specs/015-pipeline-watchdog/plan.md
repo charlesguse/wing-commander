@@ -6,6 +6,22 @@
 
 **Note**: This template is filled in by the `/speckit-plan` command. See `.specify/templates/plan-template.md` for the execution workflow.
 
+> **Amended by spec 024 (`specs/024-watchdog-precision-hardening/`, FR-014)
+> — removed by 024.** This plan is the as-planned record of the original
+> build and is deliberately left intact below. Everything it says about the
+> **triage ladder's rungs 1 and 2**, the **`claude-sonnet-5` propose-fix
+> step**, the **`.specify/memory/watchdog-guardrails.json`** change-class /
+> path / line-cap config, and any **pull request the watchdog opens** no
+> longer describes the shipped stage: spec 024 removed all of it and made the
+> watchdog a pure reporter that only files, comments on, or reopens a
+> `pipeline-defect` issue. What survives — the collectors, the read-only
+> diagnose step (now `claude-opus-5`), deterministic fingerprinting and
+> dedup, the unconditional lifecycle-issue report, the pause and
+> self-dispatch-cap switches — is current, though the fingerprint's
+> `normalizedFacts` fallback was also deleted (spec 024 FR-006/FR-007). See
+> [spec.md](./spec.md), [data-model.md](./data-model.md), and
+> `docs/architecture.md`'s Stage 9 section for the shipped behavior.
+
 ## Summary
 
 Add a tenth pipeline stage, `watchdog.yml` (+ wrapper

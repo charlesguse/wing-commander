@@ -146,6 +146,10 @@ The project [constitution](.specify/memory/constitution.md) governs every change
    subject: registry-reachable, run with the same arguments locally as in CI,
    triggered by what it checks, loud rather than vacuous when it cannot reach
    it, and every failure branch it ships covered by a checked-in fixture.
+9. **Judgment that gates a durable action belongs in deterministic code** — a
+   filed finding, a fingerprint, a dedup outcome, a write. A prompt
+   instruction can be silently unfollowed with no error; code that computes
+   the same input the same way every time cannot.
 
 Full stage-by-stage design: [docs/architecture.md](docs/architecture.md).
 

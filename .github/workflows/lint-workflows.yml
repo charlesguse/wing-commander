@@ -1580,21 +1580,6 @@ jobs:
       - name: Gate 16 self-test — the detector actually detects
         run: python3 .github/scripts/verify-gate-16.py
 
-      # Gate 17 — every job checks the pipeline repository out to
-      # `.wing-commander-pipeline` inside the consumer's working tree, and
-      # that directory carries its own .git, so a bare `git add -A` records
-      # it as a GITLINK instead of recursing into it. PR #201 shipped one
-      # from `prepare`. #202 fixed the two deterministic sites in
-      # auto-update-spec-kit.yml and fixtured them, but not watchdog.yml,
-      # whose `act` job composes commits the same way in the same tree —
-      # both rungs would have shipped the same stray submodule entry into
-      # the first fix PR the watchdog ever opened. Neither rung has fired in
-      # ~200 runs, which is exactly why nothing observed it: this is the
-      # same never-executed-so-never-wrong shape as #201 itself and as the
-      # orphaned collector verifier of PR #158.
-      - name: Gate 17 — the watchdog's own fix commits exclude the pipeline checkout
-        run: python3 .github/scripts/verify-watchdog-fix-commit.py
-
       # Gate 18 — every `gh api` call is checked for a pagination-safe
       # shape: under `--paginate`, gh applies `--jq` once per page and
       # concatenates the raw outputs rather than slurping first, so a
@@ -1722,6 +1707,22 @@ jobs:
       # step's own bash against stubs rather than detecting drift elsewhere.
       - name: Gate 25 — the lifecycle gate retries transient failures and fails fast on permanent ones
         run: python3 .github/scripts/verify-lifecycle-gate-retry.py
+
+      # Gate 30 — specs/040-truncated-cycle-carry-forward: a cycle that runs
+      # out of its turn budget must be carried forward (no escalated redo,
+      # no cold-start of the next cycle) ONLY when the lifecycle record
+      # advanced AND the branch shows real progress, and must NEVER be
+      # reported converged merely because it never reached the step that
+      # writes a converge: commit. Drives the shipped "Read back cycle
+      # outcome"/"Read back retry outcome"/"Consolidate final outcome"/
+      # "Record truncated-cycle count"/"Dispatch next step" run: blocks
+      # directly out of implement.yml against synthetic git history and a
+      # stubbed upstream verdict (research.md D8). Numbered 30, not 26 — 26
+      # was already in use by the release-tag versioning-refs gate below
+      # (see "Gate 26 — every release tag is annotated and every vX is
+      # current").
+      - name: Gate 30 — a turn-exhausted cycle is classified truncated only with positive evidence, and carried forward without ever reporting converged
+        run: python3 .github/scripts/verify-truncated-cycle-carry-forward.py
 
       # Gate 22 — specs/038-runner-container-passthrough FR-007: an adopter
       # binds a whole stage's jobs to their own runner/container image with
@@ -2718,8 +2719,9 @@ jobs:
       - name: Gate 23 self-test — the detector actually detects
         run: python3 .github/scripts/verify-gate-23.py --selftest
 
-      # Gate 27 — the per-stage default tool-list table matches the 16
-      # `wing-commander-tool-args` call sites. FR-013/SC-006 promise a
+      # Gate 27 — the per-stage default tool-list table matches every
+      # `wing-commander-tool-args` call site (15 since spec 024 removed
+      # watchdog.propose-fix). FR-013/SC-006 promise a
       # consumer can read each stage's defaults out of documentation; that
       # documentation was hand-maintained with nothing holding it to the
       # literals, and had already drifted — the 026 draft was missing both
@@ -2759,7 +2761,67 @@ jobs:
       - name: Gate 28 self-test — the detector actually detects
         run: python3 .github/scripts/verify-gh-api-explicit-method.py --self-test
 
-      # Gate 29 — a stage that dies at entry reaches the chain-stop notice,
+      # Gate 29 — cleanup's lifecycle guard. Behavioral, like gates 8/9/14:
+      # every cleanup arm opens by reading `issue` and `spec_dir` out of the
+      # spec branch's spec-meta.json, and nothing static can see that the two
+      # faults were tested in one condition and reported with one message that
+      # was false for the common one — spec_dir matched; only `issue` was
+      # empty. That refusal also made an outcome UNREACHABLE: a hand-submitted
+      # spec carries `"issue": null` on spec/<slug> until its plan PR merges,
+      # which is exactly the window mark-stalled fires in (#73, gap 1).
+      #
+      # The gate executes the shipped step against each state spec-meta.json
+      # and the label lookup can be in, requires each refusal to name the
+      # fault it actually hit and not another one, requires the spec:<slug>
+      # fallback to fire only when `issue` is empty, to accept exactly one
+      # labelled issue rather than pick the newest of several, and to treat a
+      # failed lookup as its own outcome rather than as "found none" (#188).
+      - name: Gate 29 — cleanup's lifecycle guard names the fault it hit and recovers a null issue
+        run: python3 .github/scripts/verify-cleanup-lifecycle-guard.py
+
+      # Gate 32 — watchdog.yml's act job never treats an unresolved triage
+      # decision as "file it as new" (PR #240 maintainer feedback on spec
+      # 024). The "Load triage decision" step's missing-artifact fallback
+      # used to set dedup="", which fell through the "Ensure pipeline-defect
+      # issue" step's `if:` guard (it only excludes data-integrity/unknown)
+      # into the comment-on-existing-issue branch and ran `gh issue comment
+      # ""`, failing the job. Nothing exercised the missing-artifact path
+      # before this gate — same "a verifier nothing runs is not a verifier"
+      # gap Gates 5/9/19 exist to close for their own subjects.
+      - name: Gate 32 — the act job's dedup guard stays report-only when the triage decision never arrived
+        run: python3 .github/scripts/verify-act-dedup-guard.py
+
+      # Gate 31 — constitution VII's stage-layer rule, at PR time and over
+      # every published stage. `release.yml`'s Gate 1b has enforced two
+      # thirds of this since spec 010 and got both halves wrong (#149):
+      # it runs only on a `workflow_dispatch` release, so it never sees the
+      # pull request that introduces a violation; and it greps a hardcoded
+      # brace expansion of eight file names when there are eleven
+      # `workflow_call`-only stages. watchdog.yml was in neither that list
+      # nor actionlint's, and its `vars.*` reads grew 2 → 9 → 15 across
+      # four tagged releases with Gate 1b passing every time. That is not a
+      # gap between checks — the gate ran and could not see the file, and a
+      # PR-time gate carrying the same list would have passed identically.
+      # So the stage list is derived (twice, from two readers), and the
+      # watchdog's exception is a stale-checked waiver in
+      # stage-invariant-waivers.json rather than a name missing from a list.
+      #
+      # Both subjects already trigger this workflow: `.github/workflows/**`
+      # covers the stages, `.github/scripts/**` covers the waiver file.
+      # release.yml's Gate 1b now calls this same script, so there is one
+      # implementation and the release-time check cannot drift from this one.
+      - name: Gate 31 — no published stage reads github.event, vars.*, or inherits secrets
+        run: python3 .github/scripts/verify-stage-invariants.py
+
+      # Same reasoning as Gates 22–27's self-tests, and load-bearing here:
+      # the fleet this runs against is uniform apart from one waived stage,
+      # so a green Gate 31 on the real repository says almost nothing about
+      # whether Gate 31's detection — or its waiver staleness checking —
+      # works. The fixtures are throwaway repository roots on disk, so
+      # discovery, comment stripping and waiver loading are all exercised.
+      - name: Gate 31 self-test — the invariant scan detects what it claims to
+        run: python3 .github/scripts/verify-stage-invariants.py --self-test
+      # Gate 33 — a stage that dies at entry reaches the chain-stop notice,
       # and nothing else does (specs/041-implement-stall-notice). Neither
       # Gate 15 (shape-only: does the `if:` carry a status-check function at
       # all) nor wc_shell_harness-based step-body gates (execute a step's
@@ -2768,9 +2830,10 @@ jobs:
       # each of the seven shipped conditions against modelled `needs.*`
       # values instead of inspecting their text (research.md D8). Written
       # against Gate 28 in the plan/tasks/data-model docs that predate this
-      # implementation session; Gate 28 was already taken by the
-      # gh-api-explicit-method check by the time this landed, so this is 29.
-      - name: Gate 29 — a stage that dies at entry reaches the chain-stop notice, and nothing else does
+      # implementation session; by the time this merged, 28 named the
+      # gh-api-explicit-method check, 29-31 landed via #243/#235/#244, and
+      # 32 via PR #240's act-dedup gate - so this is 33.
+      - name: Gate 33 — a stage that dies at entry reaches the chain-stop notice, and nothing else does
         run: python3 .github/scripts/verify-chain-stop-notice.py
 
       # specs/041-implement-stall-notice, User Story 3 — a refusal is still

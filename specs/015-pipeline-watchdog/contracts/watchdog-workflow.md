@@ -57,7 +57,12 @@ proceed in parallel:
 3. Five deterministic collector steps (one per FR-006 source, research.md
    table), each tolerating "this source produced nothing for this run"
    as success, never as a failure — a source being empty is data, not an
-   error.
+   error. All five MUST check, before emitting any signal, the
+   attribution invariant (FR-026): (a) the inspected run's relevant
+   scope (the whole run, or the specific job/artifact the collector
+   reads) did not conclude `skipped`/`cancelled`, and (b) the evidence
+   read belongs to something the inspected run itself produced. A
+   collector whose check fails emits no signal for that condition.
 4. Emit `signals.json` as a job output / uploaded artifact for `diagnose`
    to consume.
 
@@ -77,56 +82,60 @@ array shape. Prompt frames `signals.json` and anything it reads via
 `Read`/`Grep`/`gh` explicitly as untrusted data, never instructions
 (FR-023) — same framing convention every comment-triggered stage already
 uses. Zero Findings in the output ⇒ `diagnose` sets
-`outcome: passed-inspection`.
+`outcome: passed-inspection`. Findings with empty/malformed
+`normalizedFacts` are still emitted by this step unchanged — validity is
+checked downstream (below), not here; `diagnose`'s own `--allowedTools`,
+model, prompt framing, and output schema are unaffected by that check.
 
 ### `triage` (`needs: diagnose`, one matrix entry per Finding, skipped if `outcome == passed-inspection`)
 
 Per Finding, deterministic (no agent):
 
 1. **Coexistence check** (research.md): if `finding.alreadyHandledBy` is
-   set, mark this finding `suppressed` — no fingerprint/dedup/act step
-   runs for it, but it's still listed in the final lifecycle-issue
-   report as "already reported by \<job\>."
-2. **Fingerprint**: `sha256(class + canonical(normalizedFacts))`.
-3. **Dedup search**: `gh search issues --state all
-   "wing-commander-watchdog: fingerprint=$FP in:body"`.
-4. **Fix attempt** (only for findings whose `class` matches a
-   `changeClasses[].id` in `.specify/memory/watchdog-guardrails.json`):
-   `claude-sonnet-5`, `--max-turns` bounded,
-   `--allowedTools "Read,Grep,Glob,Edit,Write"` scoped by prompt to
-   `.github/workflows/**`, `.github/actions/**`, `docs/**` only, no
-   `git`/`gh` write access — writes a diff to the job's own worktree, or
-   makes no changes if it can't confidently fix it (checked via `git diff
-   --stat` after the step: empty ⇒ declined).
-5. **Rung gate** (data-model.md's Triage decision table): evaluated
-   purely from the diff's own `git diff --stat` output against the
-   matched class's `pathGlobs`/`maxDiffLines` and the global
-   `maxDiffLines`, plus `vars.WING_COMMANDER_WATCHDOG_PAUSED` and the
-   self-dispatch-depth check (below) — never from the sonnet step's own
-   narration of what it did.
+   set, mark this finding `suppressed` — no evidence-validity/
+   fingerprint/dedup step runs for it, but it's still listed in the
+   final lifecycle-issue report as "already reported by \<job\>."
+2. **Evidence validity gate** (data-model.md): a Finding whose cited
+   evidence is empty/unresolvable, or whose `normalizedFacts` is missing
+   or empty for its class's identifying keys, is marked
+   `suppressed: invalid-evidence` here and MUST NOT proceed to
+   fingerprinting, dedup, or any write.
+3. **Fingerprint**: `sha256(class + "|signals:" + sorted-joined(valid cited
+   signal ids))`. No fallback branch — step 2 guarantees every Finding
+   reaching this step already carries at least one valid signal id
+   (FR-006/FR-007 of spec 024).
+4. **Dedup lookup** (FR-020/FR-029 of spec 024): `gh issue list --repo
+   <repo> --label pipeline-defect --label "🐕 · <class>" --state all
+   --limit 200 --json number,state,body` — a bounded, strongly-consistent
+   direct read scoped to the finding's own class — followed by a local
+   `jq` filter over that bounded result set's bodies for the exact
+   `fingerprint=$FP` marker. Outcomes: `none` | `match-open` |
+   `match-closed` | `unknown` (the `gh issue list` call itself exited
+   non-zero) | `data-integrity` (>1 match). `unknown` MUST suppress
+   filing and MUST NOT share a code path with `none`.
+
+No fix attempt is ever made — the watchdog is a pure reporter with no
+diff-producing step (FR-014 of spec 024).
 
 ### `act` (`needs: triage`, one matrix entry per non-suppressed Finding)
 
-Executes exactly what `triage`'s rung gate selected:
+Executes exactly what the dedup outcome selected:
 
-- **Rung 1**: commit the diff to a fresh branch
-  `watchdog-fix/<short-fingerprint>`, open a PR to `main` (title/body
-  auto-generated from the Finding's description + evidence, no prior
-  issue reference required), comment the PR link on the lifecycle issue.
-- **Rung 2**: same diff-commit-and-PR flow, but first ensure a
-  pipeline-defect issue exists (create if the dedup search found none,
-  reuse if it found one — reopening if closed), and the PR body/commit
-  reference it (`Refs #N`, deliberately not an auto-closing keyword —
-  research.md/data-model.md); comment on both the pipeline-defect issue
-  and the lifecycle issue.
-- **Rung 3**: no diff — create (or reuse/reopen per the dedup outcome) a
-  pipeline-defect issue carrying the Finding's evidence; comment on the
+- **Dedup miss (`none`)**: create a new pipeline-defect issue carrying
+  the Finding's evidence; comment on the lifecycle issue linking it.
+- **Dedup hit, open (`match-open`)**: comment the fresh evidence on the
+  existing pipeline-defect issue; comment on the lifecycle issue linking
+  it.
+- **Dedup hit, closed (`match-closed`)**: reopen the existing
+  pipeline-defect issue and comment the fresh evidence; comment on the
   lifecycle issue linking it.
-- **Dedup hit, no new diff needed** (an existing open/closed
-  pipeline-defect issue already matches): comment the fresh evidence
-  there (open) or reopen-with-comment (closed); comment on the lifecycle
-  issue linking it. This is not a distinct "rung" — it's what rung 2/3
-  collapse to when dedup already found the target.
+- **Lookup failed (`unknown`)**: suppress every write for this Finding;
+  report "dedup lookup failed — finding suppressed, needs a maintainer's
+  manual check" on the lifecycle issue. Checked before, and sharing no
+  code path with, the `none` branch above.
+- **`data-integrity`**: report only, no auto action (unchanged).
+
+No PR is ever opened by `act` (FR-014 of spec 024).
 
 Every `act` outcome, plus the `passed-inspection`/`could-not-inspect`
 short-circuits from `collect`/`diagnose`, is appended as one comment (or
@@ -134,7 +143,7 @@ one comment covering all findings from this run, implementation's
 choice) to the run's lifecycle issue — this is the one write every path
 through this workflow performs unconditionally (FR-022).
 
-## Self-dispatch cap contract (FR-018, applies to `act` only, all rungs)
+## Self-dispatch cap contract (FR-018, applies to `act`'s one write path only)
 
 Before any write in `act`, if `workflow_run.name == "8 - Watchdog"` (this
 is a self-inspection), walk `gh run list --workflow "8 - Watchdog" --json
@@ -142,23 +151,23 @@ databaseId,event,createdAt --limit <cap + 5>` backward from the inspected
 run, counting a consecutive chain of `event == "workflow_run"` entries.
 Depth `>= vars.WING_COMMANDER_WATCHDOG_SELF_DISPATCH_CAP` (default `3`)
 ⇒ every Finding this run produced is forced to report-only (as if paused,
-research.md) regardless of what the rung gate computed — `collect` and
-`diagnose` still ran and still get reported, only `act`'s writes are
-suppressed.
+research.md) regardless of what the dedup outcome would otherwise
+select — `collect` and `diagnose` still ran and still get reported, only
+`act`'s writes are suppressed.
 
 ## Pause contract (FR-019)
 
 `vars.WING_COMMANDER_WATCHDOG_PAUSED == 'true'` ⇒ identical short-circuit
-to the self-dispatch cap: `act` performs no write for any Finding at any
-rung, and the lifecycle-issue report says so explicitly.
+to the self-dispatch cap: `act` performs no write for any Finding, and
+the lifecycle-issue report says so explicitly.
 
 ## Non-goals (explicitly out of contract, per spec.md Assumptions)
 
 - A scheduled catch-up sweep for missed runs (FR-025 explicitly defers
   this beyond v1).
-- Auto-merging or auto-approving any pull request this stage opens —
-  every PR from this stage awaits an ordinary human merge click
-  (constitution V, research.md).
+- Opening a pull request of any kind — the watchdog's entire remediation
+  surface is the pipeline-defect issue tracker (FR-014 of spec 024); a
+  human decides on and makes any code change a filed finding warrants.
 - Detecting problem classes beyond the FR-003 v1 pair with the same
   crisp, pattern-matched confidence — other sources (step summaries,
   annotations, general `spec-meta.json` drift) feed the diagnose step's

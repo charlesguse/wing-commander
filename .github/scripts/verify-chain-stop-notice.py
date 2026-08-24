@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Gate 29 — a stage that dies at entry reaches the chain-stop notice, and
+"""Gate 33 — a stage that dies at entry reaches the chain-stop notice, and
 nothing else does.
 
 Called "Gate 28" throughout specs/041-implement-stall-notice's plan/tasks/
 data-model docs, written against a base state where that number was free.
-By the time this landed, Gate 28 already named the gh-api-explicit-method
-check, so this is 29 — the next free number, same script, same contract.
+By the time this merged, Gate 28 already named the gh-api-explicit-method
+check and 29-32 were taken by #243/#235/#244 and PR #240's act-dedup gate,
+so this is 33 — the next free number, same script, same contract.
 
 WHY THIS EXISTS
 ----------------
@@ -141,7 +142,7 @@ def main():
             mutation_failures.append(label)
     failures += [f"mutation survived: {m}" for m in mutation_failures]
 
-    print(f"Gate 29: {len(CALL_SITES)} survivor-job condition(s), "
+    print(f"Gate 33: {len(CALL_SITES)} survivor-job condition(s), "
           f"{len(MUTATIONS)} mutation(s); {len(failures)} failure(s).")
     sys.exit(1 if failures else 0)
 

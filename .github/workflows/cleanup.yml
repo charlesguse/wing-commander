@@ -565,6 +565,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
+          SLUG: ${{ steps.spec.outputs.slug }}
           PR_NUMBER: ${{ inputs.pr-number }}
         run: |
           fail() {
@@ -579,8 +580,45 @@ jobs:
           fi
           issue=$(jq -r '.issue // empty' "$SPEC_DIR/spec-meta.json")
           meta_dir=$(jq -r '.spec_dir // empty' "$SPEC_DIR/spec-meta.json")
-          if [ -z "$issue" ] || [ -z "$meta_dir" ] || [ "$meta_dir" != "$SPEC_DIR" ]; then
-            fail "spec-meta.json (issue='$issue', spec_dir='$meta_dir') does not match the expected $SPEC_DIR — refusing."
+          # Split messages and label fallback: see the mark-stalled job's copy
+          # of this guard for the full note (#73). The three copies are kept
+          # identical on purpose — a spec-meta.json whose `issue` is null is a
+          # property of the spec branch, not of which arm reached it.
+          if [ -z "$meta_dir" ] || [ "$meta_dir" != "$SPEC_DIR" ]; then
+            fail "spec-meta.json is missing or invalid — it records spec_dir='$meta_dir', not the expected $SPEC_DIR. Refusing to act on a specification this pull request does not identify."
+          fi
+          if [ -z "$issue" ]; then
+            # A failed read is not an absent issue — #188's lesson, applied to
+            # a step whose next act is to relabel or close a lifecycle issue.
+            # "the API did not answer" and "nothing carries the label" must
+            # never collapse into one branch: the first is transient and worth
+            # re-running, the second is a real refusal. So stderr is captured
+            # and gh's exit status is its own failure, never `|| true`.
+            lookup_err="$RUNNER_TEMP/cleanup-lifecycle-lookup-err.txt"
+            if ! labelled=$(gh issue list --repo "$GITHUB_REPOSITORY" \
+              --label "spec:$SLUG" --state all --limit 50 --json number \
+              --jq '.[].number' 2>"$lookup_err"); then
+              detail=$(tr '\r\n\t' '   ' < "$lookup_err" | tr -s ' ' | head -c 300)
+              fail "spec-meta.json for $SPEC_DIR records no lifecycle issue (\"issue\": null), and the lookup of issues labelled spec:$SLUG FAILED, so whether one exists is unknown: ${detail:-gh gave no diagnostic}. Refusing — a failed read is not an absent issue."
+            fi
+            # Exactly one, or refuse. Taking the newest of several would let a
+            # stale or hand-applied label decide which issue this stage closes,
+            # and the wrong choice is silent: this lookup is the only evidence
+            # there is, so nothing downstream can catch it.
+            count=0
+            listed=""
+            for n in $labelled; do
+              issue="$n"
+              count=$((count + 1))
+              listed="${listed:+$listed, }#$n"
+            done
+            if [ "$count" -eq 0 ]; then
+              fail "spec-meta.json for $SPEC_DIR records no lifecycle issue (\"issue\": null) and no issue carries the spec:$SLUG label, so there is nothing to resolve this specification to — refusing to guess."
+            fi
+            if [ "$count" -ne 1 ]; then
+              fail "spec-meta.json for $SPEC_DIR records no lifecycle issue (\"issue\": null) and $count issues carry the spec:$SLUG label ($listed) — refusing to pick one. Remove the label from every issue that is not this specification's lifecycle issue, or write the number into $SPEC_DIR/spec-meta.json, then re-run."
+            fi
+            echo "spec-meta.json for $SPEC_DIR still records \"issue\": null; recovered lifecycle issue #$issue from the spec:$SLUG label, the only issue carrying it." >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "issue=$issue" >> "$GITHUB_OUTPUT"
 
@@ -950,6 +988,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
+          SLUG: ${{ steps.spec.outputs.slug }}
           PR_NUMBER: ${{ inputs.pr-number }}
         run: |
           fail() {
@@ -964,8 +1003,45 @@ jobs:
           fi
           issue=$(jq -r '.issue // empty' "$SPEC_DIR/spec-meta.json")
           meta_dir=$(jq -r '.spec_dir // empty' "$SPEC_DIR/spec-meta.json")
-          if [ -z "$issue" ] || [ -z "$meta_dir" ] || [ "$meta_dir" != "$SPEC_DIR" ]; then
-            fail "spec-meta.json (issue='$issue', spec_dir='$meta_dir') does not match the expected $SPEC_DIR — refusing."
+          # Split messages and label fallback: see the mark-stalled job's copy
+          # of this guard for the full note (#73). The three copies are kept
+          # identical on purpose — a spec-meta.json whose `issue` is null is a
+          # property of the spec branch, not of which arm reached it.
+          if [ -z "$meta_dir" ] || [ "$meta_dir" != "$SPEC_DIR" ]; then
+            fail "spec-meta.json is missing or invalid — it records spec_dir='$meta_dir', not the expected $SPEC_DIR. Refusing to act on a specification this pull request does not identify."
+          fi
+          if [ -z "$issue" ]; then
+            # A failed read is not an absent issue — #188's lesson, applied to
+            # a step whose next act is to relabel or close a lifecycle issue.
+            # "the API did not answer" and "nothing carries the label" must
+            # never collapse into one branch: the first is transient and worth
+            # re-running, the second is a real refusal. So stderr is captured
+            # and gh's exit status is its own failure, never `|| true`.
+            lookup_err="$RUNNER_TEMP/cleanup-lifecycle-lookup-err.txt"
+            if ! labelled=$(gh issue list --repo "$GITHUB_REPOSITORY" \
+              --label "spec:$SLUG" --state all --limit 50 --json number \
+              --jq '.[].number' 2>"$lookup_err"); then
+              detail=$(tr '\r\n\t' '   ' < "$lookup_err" | tr -s ' ' | head -c 300)
+              fail "spec-meta.json for $SPEC_DIR records no lifecycle issue (\"issue\": null), and the lookup of issues labelled spec:$SLUG FAILED, so whether one exists is unknown: ${detail:-gh gave no diagnostic}. Refusing — a failed read is not an absent issue."
+            fi
+            # Exactly one, or refuse. Taking the newest of several would let a
+            # stale or hand-applied label decide which issue this stage closes,
+            # and the wrong choice is silent: this lookup is the only evidence
+            # there is, so nothing downstream can catch it.
+            count=0
+            listed=""
+            for n in $labelled; do
+              issue="$n"
+              count=$((count + 1))
+              listed="${listed:+$listed, }#$n"
+            done
+            if [ "$count" -eq 0 ]; then
+              fail "spec-meta.json for $SPEC_DIR records no lifecycle issue (\"issue\": null) and no issue carries the spec:$SLUG label, so there is nothing to resolve this specification to — refusing to guess."
+            fi
+            if [ "$count" -ne 1 ]; then
+              fail "spec-meta.json for $SPEC_DIR records no lifecycle issue (\"issue\": null) and $count issues carry the spec:$SLUG label ($listed) — refusing to pick one. Remove the label from every issue that is not this specification's lifecycle issue, or write the number into $SPEC_DIR/spec-meta.json, then re-run."
+            fi
+            echo "spec-meta.json for $SPEC_DIR still records \"issue\": null; recovered lifecycle issue #$issue from the spec:$SLUG label, the only issue carrying it." >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "issue=$issue" >> "$GITHUB_OUTPUT"
 
@@ -1179,6 +1255,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
+          SLUG: ${{ steps.spec.outputs.slug }}
           PR_NUMBER: ${{ inputs.pr-number }}
         run: |
           fail() {
@@ -1193,8 +1270,62 @@ jobs:
           fi
           issue=$(jq -r '.issue // empty' "$SPEC_DIR/spec-meta.json")
           meta_dir=$(jq -r '.spec_dir // empty' "$SPEC_DIR/spec-meta.json")
-          if [ -z "$issue" ] || [ -z "$meta_dir" ] || [ "$meta_dir" != "$SPEC_DIR" ]; then
-            fail "spec-meta.json (issue='$issue', spec_dir='$meta_dir') does not match the expected $SPEC_DIR — refusing."
+          # Two causes, two messages (#73). One combined test reported both as
+          # "does not match the expected $SPEC_DIR", which was a lie whenever
+          # spec_dir matched perfectly and only `issue` was empty — the
+          # misattribution sent maintainers to inspect a spec_dir that was
+          # already correct.
+          if [ -z "$meta_dir" ] || [ "$meta_dir" != "$SPEC_DIR" ]; then
+            fail "spec-meta.json is missing or invalid — it records spec_dir='$meta_dir', not the expected $SPEC_DIR. Refusing to act on a specification this pull request does not identify."
+          fi
+          # "issue": null is not corruption, it is a documented window. A
+          # hand-submitted spec carries it until its plan PR merges: plan.yml
+          # creates the lifecycle issue and has the agent write the number into
+          # spec-meta.json, but that edit lands on plan/<slug> and only reaches
+          # spec/<slug> on merge. mark-stalled fires precisely when a stage PR
+          # is closed UNMERGED — i.e. exactly inside that window — so refusing
+          # here made the stalled outcome unreachable for every hand-submitted
+          # spec whose plan PR was rejected (#73; runs 29668954733 and
+          # 29669149568). The issue exists; only spec-meta.json does not know
+          # its number.
+          #
+          # plan.yml stamps that issue with `spec:<slug>` at creation time, so
+          # recover the number from the label rather than inventing a second
+          # identity: the same `gh issue list --json number` read
+          # auto-update-spec-kit uses to find its tracking issue — a direct,
+          # strongly-consistent list read, never the search index.
+          if [ -z "$issue" ]; then
+            # A failed read is not an absent issue — #188's lesson, applied to
+            # a step whose next act is to relabel or close a lifecycle issue.
+            # "the API did not answer" and "nothing carries the label" must
+            # never collapse into one branch: the first is transient and worth
+            # re-running, the second is a real refusal. So stderr is captured
+            # and gh's exit status is its own failure, never `|| true`.
+            lookup_err="$RUNNER_TEMP/cleanup-lifecycle-lookup-err.txt"
+            if ! labelled=$(gh issue list --repo "$GITHUB_REPOSITORY" \
+              --label "spec:$SLUG" --state all --limit 50 --json number \
+              --jq '.[].number' 2>"$lookup_err"); then
+              detail=$(tr '\r\n\t' '   ' < "$lookup_err" | tr -s ' ' | head -c 300)
+              fail "spec-meta.json for $SPEC_DIR records no lifecycle issue (\"issue\": null), and the lookup of issues labelled spec:$SLUG FAILED, so whether one exists is unknown: ${detail:-gh gave no diagnostic}. Refusing — a failed read is not an absent issue."
+            fi
+            # Exactly one, or refuse. Taking the newest of several would let a
+            # stale or hand-applied label decide which issue this stage closes,
+            # and the wrong choice is silent: this lookup is the only evidence
+            # there is, so nothing downstream can catch it.
+            count=0
+            listed=""
+            for n in $labelled; do
+              issue="$n"
+              count=$((count + 1))
+              listed="${listed:+$listed, }#$n"
+            done
+            if [ "$count" -eq 0 ]; then
+              fail "spec-meta.json for $SPEC_DIR records no lifecycle issue (\"issue\": null) and no issue carries the spec:$SLUG label, so there is nothing to resolve this specification to — refusing to guess."
+            fi
+            if [ "$count" -ne 1 ]; then
+              fail "spec-meta.json for $SPEC_DIR records no lifecycle issue (\"issue\": null) and $count issues carry the spec:$SLUG label ($listed) — refusing to pick one. Remove the label from every issue that is not this specification's lifecycle issue, or write the number into $SPEC_DIR/spec-meta.json, then re-run."
+            fi
+            echo "spec-meta.json for $SPEC_DIR still records \"issue\": null; recovered lifecycle issue #$issue from the spec:$SLUG label, the only issue carrying it." >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "issue=$issue" >> "$GITHUB_OUTPUT"
 

@@ -1,5 +1,23 @@
 <!--
 Sync Impact Report — 2026-08-23
+Version change: 1.5.1 → 1.6.0 (MINOR: new principle added — IX. Judgment That Gates a Durable Action Belongs in Deterministic Code, requiring that judgment gating a filed finding, a fingerprint, a dedup outcome, or a write live in deterministic code rather than an agent's prompt, because a prompt instruction can be silently unfollowed with no error while code that computes the same input the same way every time cannot)
+Modified principles: none
+Modified sections: none
+Added sections: Principle IX. Judgment That Gates a Durable Action Belongs in Deterministic Code
+Removed sections: none
+Templates requiring updates:
+  ✅ .specify/templates/plan-template.md — no change needed (Constitution Check is generic; gates are derived from this file at plan time)
+  ✅ .specify/templates/spec-template.md — no change needed (no principle references)
+  ✅ .specify/templates/tasks-template.md — no change needed (no principle references)
+  ✅ README.md — updated in same PR (the numbered principle list gains 9)
+  ✅ docs/architecture.md, docs/adoption.md, docs/setup.md — no change needed (verified: none enumerates the full principle list; each cites individual principles by numeral only, and IX is appended rather than renumbering)
+  ✅ .specify/extensions.yml — absent; no before/after_constitution hooks apply
+Motivation: spec 024 (Watchdog Precision & Determinism Hardening) closed five named gaps in the watchdog's own specification, and every one of them was the same shape wearing a different hat — a `denied-tool` finding shaped `{tool: null, denials: null}` passed FR-002 because a prompt asked for citation, not validity; a fingerprint drifted because its basis was model-authored prose a prompt could phrase two ways; a dedup lookup's failure was swallowed into "nothing found" because nothing deterministic distinguished "searched and found none" from "could not search." Each fix moved the gating judgment from a prompt instruction into code that computes the same answer from the same input every time. This is the same lesson Principle VIII already generalized for gates that cannot fail their own subject — a repeated pattern the repository kept re-deriving per-feature before writing it down centrally — applied one layer earlier, to the judgment a gate is built to check in the first place.
+Worked example: this PR applies the principle five times inside spec 024 itself — the deterministic `wing-commander-8b-watchdog-self.yml` self-checker, standing in place of a prompt instruction to "check yourself too"; the watchdog's rung gate, already deterministic code (not a prompt) before this same PR retired the rung ladder it gated, itself prior art that the pattern predates its own naming; fingerprints derived from deterministic collector signal ids rather than model-authored `normalizedFacts` text, once the prose-authored basis was shown to drift; false-positive suppression pushed into the collectors that observe the world, rather than left to `diagnose`'s judgment over signals it cannot re-verify; and the `__new__` finding-class escape hatch, where the model proposes a name but a deterministic step — never the model — resolves and registers it.
+Follow-up TODOs: none
+-->
+<!--
+Sync Impact Report — 2026-08-23
 Version change: 1.5.0 → 1.5.1 (PATCH: clarification — the Operational Constraints spec-kit pin no longer restates the version as a literal; it names the machine-readable source the auto-update stage maintains)
 Modified principles: none
 Modified sections: Operational Constraints — the spec-kit pin bullet
@@ -125,6 +143,9 @@ Stage workflows own no triggers and read no ambient repository state: not `githu
 ### VIII. A Green Check Means What It Says
 A check that cannot fail its own subject is a liability, not coverage: it reads as evidence while proving nothing, and it displaces the scrutiny a maintainer would otherwise have applied. Every instance this repository has found was found by accident — a maintainer noticing a stall, a drill performed by hand — never by another check. Therefore: every gate MUST be reachable through the gate registry, and MUST run the same subject with the same arguments locally as it does in CI. Every gate MUST be triggered by changes to the tree or document it checks. A gate that cannot reach its subject — the wrong working directory, an empty file list, an unresolvable reference — MUST fail loudly rather than report a pass it did not earn. A gate MUST NOT be suppressible by the failure of an unrelated gate that merely shares its job. Every failure branch a gate ships MUST be exercised by a checked-in fixture; a manual demonstration during development is evidence for that reviewer, not coverage for the next one. Prior art: #139 and #158 (a verifier that sat green while checking a filter that did not ship), #169, #213, #215, #229, #147.
 
+### IX. Judgment That Gates a Durable Action Belongs in Deterministic Code
+Judgment that gates a durable action — a filed finding, a fingerprint, a dedup outcome, a write — belongs in deterministic code, not an agent's prompt. A prompt instruction is a request the model can silently fail to follow; it produces no error, no test failure, and no signal that the gate was ever skipped. Code that computes the same input the same way every time is the only form of that judgment a reviewer, a test, or a future maintainer can verify without re-reading the model's reasoning. This does not forbid a model from proposing a class, a description, or a diagnosis — it forbids trusting the model's own judgment on whether that output is well-formed enough, novel enough, or safe enough to act on. Prior art (spec 024's own worked examples): the deterministic `wing-commander-8b-watchdog-self.yml` self-checker, standing in place of a prompt instruction to "check yourself too"; the watchdog's rung gate, already deterministic code (not a prompt) before spec 024 retired the rung ladder it gated; fingerprints derived from deterministic collector signal ids rather than model-authored `normalizedFacts` text, once a prompt-authored fingerprint basis was shown to drift; false-positive suppression pushed into the collectors that observe the world, rather than left to `diagnose`'s judgment over signals it cannot re-verify; and the `__new__` finding-class escape hatch, where the model proposes a name but a deterministic step — never the model — resolves and registers it.
+
 ## Operational Constraints
 
 - Spec artifacts live in `specs/<NNN-slug>/` (spec.md, plan.md, tasks.md, spec-meta.json, checklists/). `spec-meta.json` is the machine-readable source of truth for a spec's lifecycle state.
@@ -141,4 +162,4 @@ Stages and their gates: intake (`/speckit-specify`, human gate = maintainer labe
 
 This constitution supersedes ad-hoc practice in this repository. Every spec, plan, and implementation PR is checked against it during review; violations must be fixed or the constitution amended first. Amendments arrive as ordinary PRs that modify this file, state the motivation, and bump the version below (semver: breaking principle changes = MAJOR, new principles/sections = MINOR, clarifications = PATCH).
 
-**Version**: 1.5.1 | **Ratified**: 2026-07-04 | **Last Amended**: 2026-08-23
+**Version**: 1.6.0 | **Ratified**: 2026-07-04 | **Last Amended**: 2026-08-23

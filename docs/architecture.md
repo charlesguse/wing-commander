@@ -32,8 +32,9 @@ issue closed ◀──────────── [6 cleanup] ◀── branc
 This section describes the **published contract** layer (constitution VII).
 
 Every stage body lives in a published stage workflow (`<stage>.yml`) whose only trigger is
-`workflow_call` — ten of them today. Stage workflows are *required* not to
-read `github.event.*` or `vars.*`; every event fact (issue number, head/base
+`workflow_call` — eleven of them today. Stage workflows are *required* not to
+read `github.event.*` or `vars.*`, and never to take `secrets: inherit`;
+every event fact (issue number, head/base
 refs, merged flag, comment id) and
 every knob (model, max-turns, review mode, iteration cap, chaining targets)
 is a declared, typed input with a default matching the constitution's
@@ -43,14 +44,30 @@ the worked example, and adopters write the same shape against a version tag.
 
 **One stage does not meet the rule.** `watchdog.yml` reads `vars.*` in 15
 places — branch prefixes, two model overrides, the self-dispatch cap, and a
-deprecated pause shim. It went unnoticed because `release.yml`'s Gate 1b
-greps a hardcoded eight-file list rather than every published stage, so the
-ninth was never examined; the count grew 2 → 9 → 15 across four tagged
-releases with the gate passing each time. Constitution VII requires a
-deviation like this to carry a registered, machine-checked exception. Neither
-the register nor the complete gate exists yet — [issue
-#149](https://github.com/charlesguse/wing-commander/issues/149) tracks both,
-and until it lands this paragraph *is* the exception record.
+deprecated pause shim ([#152](https://github.com/charlesguse/wing-commander/issues/152),
+whose real kill switch now lives in the wrapper). It went unnoticed because
+`release.yml`'s Gate 1b greps a hardcoded eight-file list rather than every
+published stage, so the ninth was never examined; the count grew 2 → 9 → 15
+across four tagged releases with the gate passing each time. Meanwhile every
+stage that list *did* cover read `vars.*` exactly zero times — the rule is
+practical, and stages stay at zero precisely where something checks.
+
+Constitution VII requires a deviation like this to carry a registered,
+machine-checked exception, and it now does. The register is
+[`.github/scripts/stage-invariant-waivers.json`](../.github/scripts/stage-invariant-waivers.json):
+one entry, naming the file, the exact pattern, the reason, the tracking
+issue, and **the number of reads it covers — 15**. The gate is
+`.github/scripts/verify-stage-invariants.py` (lint-workflows Gate 31), which
+derives the stage set from the workflows themselves rather than restating it,
+runs on every pull request touching `.github/workflows/**` or the waiver
+file, and is invoked by `release.yml`'s Gate 1b as well so the release-time
+and PR-time answers come from one implementation. The waiver is stale-checked
+in both directions: a pattern that stops matching fails the gate, so it
+cannot outlive its reason, and a count that stops matching fails it too, so a
+sixteenth read is red on the pull request that adds it. All fifteen go
+together in the watchdog rework
+(`specs/024-watchdog-precision-hardening`), in one deliberate major —
+[issue #149](https://github.com/charlesguse/wing-commander/issues/149).
 
 **A second, deliberate deviation**: `specs/031-stage-environment-binding`
 binds every job in every published stage to a deployment environment
@@ -631,39 +648,88 @@ Two constraints the wrappers must hold, both enforced by
   label, so the vocabulary self-heals after one occurrence and a new problem
   type needs a label rather than a code change. Keeping the registry in
   labels also makes the classes usable as issue triage facets.
-- `triage` — one matrix entry per Finding: coexistence-suppression check
-  (a Finding already handled by `implement.yml`'s stalled job or
-  `cleanup.yml`'s `mark-stalled` is reported, not re-acted, FR-024), the
-  dedup fingerprint, `gh search issues` dedup over the marker
-  (`--state all`), an optional `claude-sonnet-5` propose-fix step scoped to
-  `.github/**`/`docs/**` for known-remediable classes, and the deterministic
-  **rung gate**.
+- `triage` — one matrix entry per Finding, and since spec 024 made the
+  watchdog a pure reporter, **no agent step runs in this job at all**. Five
+  deterministic steps in order: the coexistence-suppression check (a Finding
+  already handled by `implement.yml`'s stalled job or `cleanup.yml`'s
+  `mark-stalled` is reported, not re-acted, FR-024); new-class registration;
+  the evidence-validity gate; the fingerprint; the dedup read. Each instance
+  persists its decision as an artifact keyed by `matrix.index`, which `act`
+  downloads — a missing artifact degrades that Finding to report-only rather
+  than losing it.
+
+  **New-class registration** happens here rather than in `act` on purpose:
+  the label vocabulary the diagnose schema is compiled from must keep growing
+  even when `act`'s writes are suppressed, or a suppressed watchdog would
+  re-propose the same "new" class forever.
+
+  **The evidence-validity gate** (FR-008/FR-009 of spec 024) suppresses a
+  Finding *before* it can be fingerprinted, deduped, or written: its evidence
+  cites no signal id, or cites one this run did not emit, or its
+  `normalizedFacts` is missing/empty for its class's identifying keys (a
+  class with no fixed key list must still carry at least one non-empty fact).
+  This is the deterministic check the precision retrospective needed — a
+  `denied-tool` finding shaped `{tool: null, denials: null}`, the exact shape
+  every historical `denied-tool` false positive carried, satisfied the old
+  FR-002 exactly, because that requirement only asked a finding to *cite* the
+  run, never that the cited facts exist.
 
   The fingerprint is `sha256(class + "|signals:" + <the sorted ids of the
-  collector signals the Finding cites>)` whenever the Finding cites signals
-  this run actually emitted — which makes it derivable from deterministic
-  collector output rather than from model prose. It was originally hashed
-  over the model's own `normalizedFacts`, and FR-016 asks for a *stable*
-  fingerprint without requiring a *deterministic* one: every occurrence of a
-  recurring defect drew a fresh hash, and 9 of the watchdog's first 19 issues
-  were duplicates (#118). Four distinct drift axes were found and closed in
-  turn before the basis moved to signals outright — an unconstrained key set,
-  keys that did not discriminate, unnormalized values (`spec/012-x` vs
-  `012-x`), and one identity arriving under a different key (`spec` vs
-  `branch`). Two `claude-opus-5` runs over the *identical* finding emitted
+  collector signals the Finding cites>)`, and since spec 024 that is its
+  **only** basis. It was originally hashed over the model's own
+  `normalizedFacts`, and FR-016 asks for a *stable* fingerprint without
+  requiring a *deterministic* one: every occurrence of a recurring defect drew
+  a fresh hash, and 9 of the watchdog's first 19 issues were duplicates
+  (#118). Four distinct drift axes were found and closed in turn before the
+  basis moved to signals outright — an unconstrained key set, keys that did
+  not discriminate, unnormalized values (`spec/012-x` vs `012-x`), and one
+  identity arriving under a different key (`spec` vs `branch`). Two
+  `claude-opus-5` runs over the *identical* finding emitted
   `{"actual","expected"}` and `{"actual","expected","stage","workflow"}` —
-  both legal under the schema, both different hashes.
+  both legal under the schema, both different hashes. The `normalizedFacts`
+  fallback for Findings citing no usable signal is **deleted**, not hardened
+  further: every hardening fixed a real drift axis and was followed by a new
+  one, because the input was still free text. Deleting it is safe only
+  because the evidence-validity gate above now guarantees every Finding
+  reaching this step already carries a valid, run-emitted signal id.
 
-  The `normalizedFacts` fallback survives for Findings that cite no usable
-  signal, and still carries those lessons: it projects to the minimum
-  discriminating key set per class, lowercases, strips known branch prefixes,
-  reduces `file` to its basename, and folds `spec` into `branch`. Every extra
-  key is drift surface rather than precision. Both the fallback itself and an
-  unrecognized class within it emit `::warning::`, because degraded dedup
-  should be visible rather than quietly wrong.
-- `act` — one matrix entry per non-suppressed Finding: executes exactly what
-  the rung gate selected and always appends a per-Finding report to the
-  lifecycle issue (FR-022).
+  **Dedup** is a bounded, strongly-consistent `gh issue list --state all
+  --limit 200` scoped to the `pipeline-defect` label *and* the Finding's own
+  `🐕 · <class>` label, filtered locally with `jq` for the fingerprint
+  marker — not the eventually-consistent `gh search issues` index it used to
+  be (FR-018–FR-020 of spec 024). It records exactly one of five outcomes:
+
+  | Outcome | Meaning | What `act` does |
+  |---|---|---|
+  | `none` | no issue carries this fingerprint | file a new `pipeline-defect` issue with the marker |
+  | `match-open` | one open match | comment fresh evidence on it |
+  | `match-closed` | one closed match | reopen it and comment |
+  | `data-integrity` | more than one match — the marker should be unique per fingerprint | report it; act on nothing, leave it for a human |
+  | `unknown` | **the lookup itself failed** | file nothing; suppress the finding pending a maintainer's manual check |
+
+  (FR-018 counts `unknown` as the *fourth lookup* outcome, alongside `none`,
+  `match-open` and `match-closed`; `data-integrity` is a verdict on what a
+  lookup that **did** succeed returned, not on whether it succeeded.)
+
+  `unknown` is the point of the rewrite. The old lookup swallowed its own
+  failure behind `2>/dev/null || echo '[]'` and fell through to an empty
+  result set, so a broken dedup call collapsed into "nothing found — file
+  it" — the same shape as the bug found in `auto-update-spec-kit.yml`
+  (#167/#168). `unknown` is set explicitly, shares no code path with `none`,
+  and never falls through, so a failed lookup can no longer masquerade as a
+  newly discovered defect.
+- `act` — one matrix entry per Finding: it downloads its own index's triage
+  decision and performs the single remediation that decision implies —
+  create, comment on, or reopen one fingerprint-marked `pipeline-defect`
+  issue (labelled `pipeline-defect` + `🐕 · <class>`) — and then **always**
+  appends a per-Finding report to the lifecycle issue (FR-022), including for
+  the Findings it deliberately did not act on, naming why. It opens no pull
+  request; there is no fix diff for one to carry. Its `if:` is
+  `!cancelled() && needs.diagnose.result == 'success' && …` rather than a
+  bare `needs:`, because a job with no status-check function of its own is
+  skipped whenever anything in its needs-closure failed — so one failed
+  `triage` matrix leg used to suppress the report for *every* Finding,
+  including the ones whose own triage completed cleanly.
 - `report-unhandled-failure` — `needs: [collect, diagnose, triage, act]`,
   `if: always()` (specs/020-fix-watchdog). No-ops when every job above
   succeeded or was cleanly skipped; otherwise independently re-resolves a
@@ -675,39 +741,42 @@ Two constraints the wrappers must hold, both enforced by
   still end in a truthful verdict instead of silence, rather than the bare
   red X with no verdict anywhere that issue #96 reported.
 
-**The triage ladder** (no LLM judgment ever gates an autonomous write —
-FR-011's crisp, testable rule lives in deterministic bash/jq):
-- **rung 1** — a fix diff that clears all three FR-011 guardrail conditions
-  (allowlisted change-class, allowlisted paths, changed lines
-  `<= min(class.maxDiffLines, config.maxDiffLines)`) opens a PR to the
-  default branch with no prior pipeline-defect issue. A human still merges
-  (constitution V); "autonomous" is the diagnosis speed, not the merge.
-- **rung 2** — a fix diff that fails any guardrail condition: create/find/
-  reopen the pipeline-defect issue and open a PR referencing it with
-  `Refs #N` (never an auto-closing keyword).
-- **rung 3** — no fix attempted and no dedup match: file a new pipeline-defect
-  issue carrying the fingerprint marker.
-- **dedup-only** — no fix, but an existing issue matches the fingerprint:
-  comment fresh evidence (open) or reopen + comment (closed); file nothing
-  new. More than one match is a data-integrity finding, reported for a human.
+**What `act` can do** — the watchdog is a **pure reporter** (FR-014 of spec
+024). Per Finding it files, comments on, or reopens exactly one
+`pipeline-defect` issue, and it reports every Finding to the lifecycle issue.
+It proposes no fix diffs and opens no pull requests.
 
-**Guardrail/pause/self-dispatch knobs** — `.specify/memory/watchdog-guardrails.json`
-(consuming-repo-owned, read-only from the watchdog) defines the rung-1
-change-class allowlist and line caps; a missing file or class simply fails
-rung-1 eligibility, never invents a default. There are two operator switches.
+Until spec 024 it worked down a three-rung ladder: a `claude-sonnet-5`
+propose-fix step attempted a diff for known-remediable classes, and a
+deterministic gate checked that diff against a
+`.specify/memory/watchdog-guardrails.json` change-class/path/line-cap
+allowlist to choose between opening a PR outright (rung 1), opening one that
+referenced a filed issue (rung 2), or filing an issue only (rung 3). Rungs 1
+and 2, the propose-fix step, the guardrail config file, and the lint gate
+that checked fix commits are all removed. Precision, not remediation
+throughput, was where the watchdog was losing — half its distinct findings
+were false positives, and a false positive that opens a pull request costs
+more to undo than one that opens an issue. What remains still holds FR-011's
+underlying rule, now over suppression rather than over writes: no LLM
+judgment gates a durable action anywhere in this stage; every gate above is
+deterministic bash/jq (constitution IX).
+
+**Pause & self-dispatch knobs** — there are two operator switches.
 `vars.WING_COMMANDER_WATCHDOG_PAUSED` (`true` ⇒ no watchdog job starts at all)
 is read **wrapper-side**, by `wing-commander-8-watchdog.yml` and
 `wing-commander-8b-watchdog-self.yml`. It was originally read only
 stage-side, in `act`'s write-suppression gate, which suppressed writes while
 still running collect, diagnose, and triage — so a "paused" watchdog kept
-paying for the diagnose and propose-fix agents and threw the verdict away.
+paying for the diagnose agent and threw the verdict away.
 Gating the trigger is both cheaper and what "paused" plainly means; adopters
 gate their own wrappers the same way (constitution VII: the wrapper owns
 triggers, gates, and `vars.*`). The stage-side read is retained as a
 **deprecated compatibility shim** so that removing it does not silently
 re-enable autonomous writes for an adopter who set the variable and gates
 nothing; it is scheduled for removal in the watchdog rework's next major,
-alongside the stage's other `vars.*` reads (#149). Gating the 8b verifier is
+alongside the stage's other `vars.*` reads — all fifteen registered in
+[`.github/scripts/stage-invariant-waivers.json`](../.github/scripts/stage-invariant-waivers.json)
+and held to that count by lint-workflows Gate 31 (#149). Gating the 8b verifier is
 not optional — with stage 8's jobs
 skipped its run still completes with conclusion `skipped`, and
 `verify-watchdog-run.sh` fails any conclusion that is not `success`, so an
@@ -747,9 +816,10 @@ suspect finding is usually resolved. In rough order of cost:
    watchdog files its own duplicates, and a hand-written report alongside
    them splits one defect's history across two issues.
 
-Rungs 1 and 2 have never fired in production; every finding so far has landed
-on rung 3, the report-only one. That is the intended conservative default,
-not evidence that rungs 1 and 2 work — they have not been exercised.
+Every finding the watchdog ever filed landed on the report-only path; the two
+autonomous-fix rungs never fired once in production, which is part of why
+spec 024 removed them rather than hardening them — an unexercised write path
+is a liability, not a capability.
 
 ## Stage 10 — PR Conversation (`pr-conversation.yml`, wrapper `wing-commander-9-pr-conversation.yml` — see `specs/033-pr-conversation-commands/`)
 
