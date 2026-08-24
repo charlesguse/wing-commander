@@ -1435,6 +1435,22 @@ jobs:
       - name: Gate 15 self-test — the detector actually detects
         run: python3 .github/scripts/verify-gate-15.py
 
+      # specs/041-implement-stall-notice — the chain-stop notice composite's
+      # own shell, executed against a real git repo/bare remote and a
+      # stubbed gh, the same way Gate 14 exercises implement.yml's stalled
+      # job. Proves the "marked" vs "record could not be updated" wording
+      # actually depends on whether the mark landed, and that
+      # restart-command is reproduced byte-for-byte rather than rebuilt.
+      - name: The chain-stop-notice composite's shell body behaves as documented
+        run: python3 .github/scripts/verify-chain-stop-notice-body.py
+
+      # specs/041-implement-stall-notice, User Story 2 acceptance scenario 3 /
+      # Out of Scope: the exhausted-retry notice's wording is not part of
+      # this feature — this proves it stayed that way, not merely that it
+      # was not meant to change.
+      - name: implement.yml's exhausted-retry stall notice reads exactly as before
+        run: python3 .github/scripts/verify-implement-stall-notice-unchanged.py
+
       # Gate 16 — every agent step's execution log survives the agent's own
       # failure. `anthropics/claude-code-action` writes its transcript to
       # claude-execution-output.json in the runner temp dir, and that file is

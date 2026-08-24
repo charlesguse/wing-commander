@@ -134,7 +134,6 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.token }}
         ISSUE: ${{ inputs.issue-number }}
-        STAGE_NAME: ${{ inputs.stage-label }}
         REASON: ${{ inputs.reason }}
         RUN_URL_INPUT: ${{ inputs.run-url }}
         DEFAULT_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
