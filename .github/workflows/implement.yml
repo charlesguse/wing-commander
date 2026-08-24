@@ -593,6 +593,30 @@ jobs:
           fi
           echo "max=$max" >> "$GITHUB_OUTPUT"
 
+      # Effective model tier for this cycle (FR-007, FR-021): a cycle carried
+      # forward from a truncated run that itself ran on the escalation tier
+      # continues on that tier — there is nowhere higher to escalate to, so a
+      # cold restart on inputs.model would silently discard the escalation
+      # the prior cycle already earned. No new workflow_dispatch input: the
+      # carried tier is read back from the field "Record truncated-cycle
+      # count" persists in spec-meta.json (truncated_tier), which is already
+      # up to date in this checkout because the guard above only admits the
+      # next expected iteration.
+      - name: Resolve effective model tier (cycle)
+        id: effective-model
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
+        env:
+          SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
+          MODEL: ${{ inputs.model }}
+          ESCALATION_MODEL: ${{ inputs.escalation-model }}
+        run: |
+          carried=$(jq -r '.truncated_tier // empty' "$SPEC_DIR/spec-meta.json")
+          if [ "$carried" = "$ESCALATION_MODEL" ]; then
+            echo "model=$ESCALATION_MODEL" >> "$GITHUB_OUTPUT"
+          else
+            echo "model=$MODEL" >> "$GITHUB_OUTPUT"
+          fi
+
       # Tie every run — pipeline-dispatched or manual — back to the lifecycle
       # issue the moment it starts doing real work, with a link to the run.
       - name: Report run started on lifecycle issue
@@ -602,7 +626,7 @@ jobs:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ISSUE: ${{ inputs.issue-number }}
           ITERATION: ${{ inputs.iteration }}
-          TIER: ${{ inputs.model }}
+          TIER: ${{ steps.effective-model.outputs.model }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           ACTOR: ${{ github.triggering_actor }}
         run: |
@@ -782,7 +806,7 @@ jobs:
             - Tick the tasks.md checkboxes for a whole phase in ONE edit at the end
               of that phase, not one edit per task.
           claude_args: |
-            --model ${{ inputs.model }}
+            --model ${{ steps.effective-model.outputs.model }}
             --max-turns ${{ steps.cycle-ceiling.outputs.ceiling }}
             --allowedTools "${{ steps.tool-args-cycle.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-cycle.outputs.disallowed-tools }}"
@@ -817,8 +841,13 @@ jobs:
       # This step still names the reason and still exits 1 (visible as a
       # failed-but-continued step in the run); it just doesn't take the job
       # down with it, so the existing retry/stall decision is unchanged.
+      # Excludes verdict='exhausted': that verdict alone cannot tell a
+      # truncated-but-carried-forward cycle from a genuine no-progress
+      # failure — only "Read back cycle outcome" below knows which, so an
+      # exhausted run's annotation is deferred to "Report exhausted cycle
+      # classification (cycle)" after that step runs (FR-013, FR-015).
       - name: Fail loud on non-healthy agent verdict (cycle)
-        if: always() && steps.cycle.outcome != 'skipped' && steps.cycle-verdict.outputs.verdict != 'healthy'
+        if: always() && steps.cycle.outcome != 'skipped' && steps.cycle-verdict.outputs.verdict != 'healthy' && steps.cycle-verdict.outputs.verdict != 'exhausted'
         continue-on-error: true
         env:
           VERDICT: ${{ steps.cycle-verdict.outputs.verdict }}
@@ -846,7 +875,7 @@ jobs:
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
         with:
-          model: ${{ inputs.model }}
+          model: ${{ steps.effective-model.outputs.model }}
           max-turns: ${{ inputs.max-turns }}
           ceiling: ${{ steps.cycle-ceiling.outputs.ceiling }}
           run-label: cycle
@@ -971,6 +1000,32 @@ jobs:
             echo "WING_COMMANDER_REMAINING_EOF"
           } >> "$GITHUB_OUTPUT"
 
+      # Deferred verdict annotation for an exhausted run (FR-013, FR-015) —
+      # see "Fail loud on non-healthy agent verdict (cycle)" above, which
+      # skips this classification entirely. Now that "Read back cycle
+      # outcome" has run, truncated vs. genuinely-failed is known: a
+      # carried-forward cycle gets a green step and a ::notice:: naming the
+      # truncation; a genuinely failed exhausted run (no qualifying
+      # progress) still gets a red step and ::error::, matching what today's
+      # unconditional annotation already showed for every exhausted run.
+      - name: Report exhausted cycle classification (cycle)
+        if: >-
+          always() && steps.cycle.outcome != 'skipped' &&
+          steps.cycle-verdict.outputs.verdict == 'exhausted' &&
+          steps.lifecycle-gate.outputs.is-open == 'true' &&
+          steps.guard.outputs.skip != 'true'
+        continue-on-error: true
+        env:
+          TRUNCATED: ${{ steps.outcome.outputs.truncated }}
+          REASON: ${{ steps.outcome.outputs.reason }}
+        run: |
+          if [ "$TRUNCATED" = "true" ]; then
+            echo "::notice::wing-commander implement stage: cycle agent step ran out of its turn budget, but the branch shows real progress — carrying the cycle forward, not escalating."
+          else
+            echo "::error::wing-commander implement stage: cycle agent step ran out of its turn budget with no qualifying progress: $REASON"
+            exit 1
+          fi
+
       # One automatic retry of the SAME iteration, one tier up
       # (→ inputs.escalation-model). Skipped when the failing attempt already
       # ran on the escalation tier — that goes straight to stalled.
@@ -994,7 +1049,7 @@ jobs:
           steps.lifecycle-gate.outputs.is-open == 'true' &&
           steps.guard.outputs.skip != 'true' &&
           steps.outcome.outputs.ok == 'false' &&
-          inputs.model != inputs.escalation-model &&
+          steps.effective-model.outputs.model != inputs.escalation-model &&
           steps.tool-args-retry.outputs.allowed-tools != ''
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
         with:
@@ -1011,7 +1066,7 @@ jobs:
           steps.lifecycle-gate.outputs.is-open == 'true' &&
           steps.guard.outputs.skip != 'true' &&
           steps.outcome.outputs.ok == 'false' &&
-          inputs.model != inputs.escalation-model &&
+          steps.effective-model.outputs.model != inputs.escalation-model &&
           steps.tool-args-retry.outputs.allowed-tools != ''
         env:
           SLUG: ${{ steps.spec.outputs.slug }}
@@ -1026,7 +1081,7 @@ jobs:
           steps.lifecycle-gate.outputs.is-open == 'true' &&
           steps.guard.outputs.skip != 'true' &&
           steps.outcome.outputs.ok == 'false' &&
-          inputs.model != inputs.escalation-model &&
+          steps.effective-model.outputs.model != inputs.escalation-model &&
           steps.tool-args-retry.outputs.allowed-tools != ''
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
@@ -1158,9 +1213,11 @@ jobs:
       # (cycle)" above (research.md R13). "Read back retry outcome" and
       # "Consolidate final outcome" below must still run so the stalled job
       # gets its final-ok output regardless of why the retry produced no
-      # progress.
+      # progress. Excludes verdict='exhausted' for the same reason as the
+      # cycle copy — deferred to "Report exhausted cycle classification
+      # (retry)" after "Read back retry outcome" has classified the run.
       - name: Fail loud on non-healthy agent verdict (retry)
-        if: always() && steps.retry.outcome != 'skipped' && steps.retry-verdict.outputs.verdict != 'healthy'
+        if: always() && steps.retry.outcome != 'skipped' && steps.retry-verdict.outputs.verdict != 'healthy' && steps.retry-verdict.outputs.verdict != 'exhausted'
         continue-on-error: true
         env:
           VERDICT: ${{ steps.retry-verdict.outputs.verdict }}
@@ -1301,6 +1358,25 @@ jobs:
             echo "WING_COMMANDER_REMAINING_EOF"
           } >> "$GITHUB_OUTPUT"
 
+      # Deferred verdict annotation for an exhausted retry — mirrors "Report
+      # exhausted cycle classification (cycle)" above, one step further on.
+      - name: Report exhausted cycle classification (retry)
+        if: >-
+          always() && steps.retry.outcome != 'skipped' &&
+          steps.retry-verdict.outputs.verdict == 'exhausted' &&
+          steps.lifecycle-gate.outputs.is-open == 'true'
+        continue-on-error: true
+        env:
+          TRUNCATED: ${{ steps.retry-outcome.outputs.truncated }}
+          REASON: ${{ steps.retry-outcome.outputs.reason }}
+        run: |
+          if [ "$TRUNCATED" = "true" ]; then
+            echo "::notice::wing-commander implement stage: retry agent step ran out of its turn budget, but the branch shows real progress — carrying the cycle forward, not stalling."
+          else
+            echo "::error::wing-commander implement stage: retry agent step ran out of its turn budget with no qualifying progress: $REASON"
+            exit 1
+          fi
+
       # Consolidate: when the retry ran, its results are the cycle's results
       # (and the effective tier is opus); otherwise the primary attempt's
       # stand. Downstream steps read only these final-* values.
@@ -1313,7 +1389,7 @@ jobs:
           PRIMARY_TRUNCATED: ${{ steps.outcome.outputs.truncated }}
           PRIMARY_CONVERGED: ${{ steps.outcome.outputs.converged }}
           PRIMARY_REMAINING: ${{ steps.outcome.outputs.remaining }}
-          PRIMARY_TIER: ${{ inputs.model }}
+          PRIMARY_TIER: ${{ steps.effective-model.outputs.model }}
           RETRY_OK: ${{ steps.retry-outcome.outputs.ok }}
           RETRY_TRUNCATED: ${{ steps.retry-outcome.outputs.truncated }}
           RETRY_CONVERGED: ${{ steps.retry-outcome.outputs.converged }}
@@ -1520,30 +1596,56 @@ jobs:
           SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
           TRUNCATED: ${{ steps.final.outputs.truncated }}
+          TIER: ${{ steps.final.outputs.tier }}
           BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
         continue-on-error: true
         run: |
           git fetch origin "+refs/heads/${SPEC_PREFIX}$SLUG:refs/remotes/origin/${SPEC_PREFIX}$SLUG"
           git reset -q --hard "origin/${SPEC_PREFIX}$SLUG"
           current=$(jq -r '.truncated_count // 0' "$SPEC_DIR/spec-meta.json")
+          current_tier=$(jq -r '.truncated_tier // empty' "$SPEC_DIR/spec-meta.json")
           if [ "$TRUNCATED" = "true" ]; then
             new_count=$((current + 1))
+            # The tier a carried-forward cycle actually ran on (ordinary or
+            # inputs.escalation-model) — read back by "Resolve effective
+            # model tier" at the START of the next cycle so a truncated run
+            # already on the escalation tier is never cold-restarted on the
+            # ordinary tier (FR-007, FR-021).
+            new_tier="$TIER"
           else
             new_count=0
+            new_tier=""
           fi
-          echo "count=$new_count" >> "$GITHUB_OUTPUT"
-          if [ "$new_count" != "$current" ]; then
-            jq --argjson n "$new_count" '.truncated_count = $n' "$SPEC_DIR/spec-meta.json" > /tmp/meta.json
+          if [ "$new_count" = "$current" ] && [ "$new_tier" = "$current_tier" ]; then
+            # Nothing to persist — the value already on the branch is
+            # current, so the count reported here is trustworthy as-is.
+            echo "count=$new_count" >> "$GITHUB_OUTPUT"
+          else
+            jq --argjson n "$new_count" --arg tier "$new_tier" \
+              '.truncated_count = $n | .truncated_tier = (if $tier == "" then null else $tier end)' \
+              "$SPEC_DIR/spec-meta.json" > /tmp/meta.json
             mv /tmp/meta.json "$SPEC_DIR/spec-meta.json"
             git config user.name  "${BOT_SLUG}[bot]"
             git config user.email "${BOT_SLUG}[bot]@users.noreply.github.com"
             git add "$SPEC_DIR/spec-meta.json"
             if [ "$TRUNCATED" = "true" ]; then
-              git commit -q -m "implement: record truncated cycle (consecutive count=$new_count)"
+              git commit -q -m "implement: record truncated cycle (consecutive count=$new_count, tier=$new_tier)"
             else
               git commit -q -m "implement: reset truncated-cycle count"
             fi
-            git push origin "HEAD:refs/heads/${SPEC_PREFIX}$SLUG"
+            # The count is reported ONLY once the push actually lands — a
+            # race with e.g. a scheduled auto-rebase force-push can reject
+            # it, and reporting the computed value regardless would tell
+            # "Dispatch next step" a count that was never actually
+            # persisted. On rejection, emit an explicit "unknown" marker
+            # instead of a stale or fabricated number.
+            if git push origin "HEAD:refs/heads/${SPEC_PREFIX}$SLUG"; then
+              echo "count=$new_count" >> "$GITHUB_OUTPUT"
+            else
+              echo "::error::wing-commander implement stage: could not persist the truncated-cycle count — push rejected. The consecutive-truncation count is unknown for this cycle."
+              echo "count=unknown" >> "$GITHUB_OUTPUT"
+              exit 1
+            fi
           fi
 
       # The loop announces itself on the lifecycle issue from the first
@@ -1596,17 +1698,25 @@ jobs:
               echo "Converged after iteration $ITERATION — no next-workflow configured; reported to the issue and stopped (standalone mode)." >> "$GITHUB_STEP_SUMMARY"
             fi
           elif [ "$TRUNCATED" = "true" ] && [ "$ITERATION" -lt "$MAX" ]; then
+            # "Record truncated-cycle count" reports "unknown" when its own
+            # commit+push was rejected (e.g. raced by a scheduled
+            # auto-rebase) — say so plainly rather than printing a stale or
+            # fabricated number (FR-011, FR-012, SC-007).
+            count_text="consecutive truncations: $TRUNCATED_COUNT"
+            if [ "$TRUNCATED_COUNT" = "unknown" ]; then
+              count_text="consecutive-truncation count could not be recorded this cycle"
+            fi
             body=$(printf '%s\n' \
-              "⏱️ **Cycle $ITERATION ran out of its turn budget.** Work already landed on the branch; cycle $((ITERATION + 1)) continues on \`$TIER\` (consecutive truncations: $TRUNCATED_COUNT)." \
+              "⏱️ **Cycle $ITERATION ran out of its turn budget.** Work already landed on the branch; cycle $((ITERATION + 1)) continues on \`$TIER\` ($count_text)." \
               "" \
               "_[Cycle run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})_")
             GH_TOKEN="$APP_TOKEN" gh issue comment "$ISSUE" --body "$body"
             if [ -n "$SELF_WORKFLOW" ]; then
               GH_TOKEN="$DISPATCH_TOKEN" gh workflow run "$SELF_WORKFLOW" \
                 -f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f iteration="$((ITERATION + 1))"
-              echo "Cycle $ITERATION ran out of turns (consecutive truncations: $TRUNCATED_COUNT) — dispatched $SELF_WORKFLOW iteration $((ITERATION + 1)) of $MAX on $TIER." >> "$GITHUB_STEP_SUMMARY"
+              echo "Cycle $ITERATION ran out of turns ($count_text) — dispatched $SELF_WORKFLOW iteration $((ITERATION + 1)) of $MAX on $TIER." >> "$GITHUB_STEP_SUMMARY"
             else
-              echo "Cycle $ITERATION ran out of turns (consecutive truncations: $TRUNCATED_COUNT) — no self-workflow configured; reported to the issue and stopped (standalone mode)." >> "$GITHUB_STEP_SUMMARY"
+              echo "Cycle $ITERATION ran out of turns ($count_text) — no self-workflow configured; reported to the issue and stopped (standalone mode)." >> "$GITHUB_STEP_SUMMARY"
             fi
           elif [ "$TRUNCATED" = "true" ]; then
             body=$(printf '%s\n' \
