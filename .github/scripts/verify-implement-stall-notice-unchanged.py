@@ -30,7 +30,10 @@ import sys
 sys.path.insert(0, __file__.rsplit("/", 1)[0] if "/" in __file__ else ".")
 
 STAGE = ".github/workflows/implement.yml"
-BASE_REF = "e877ac5"  # last commit before implement.yml gained T004-T006
+BASE_REF = "6f04355"  # main at the 2026-08-24 merge (22fef78): spec 040 (#235)
+# reworded these notices on main, so the pre-041 pin e877ac5 can no longer be
+# the baseline — the invariant this gate proves is now "041 did not move the
+# wording relative to the main it merged", which is the claim that matters.
 
 STEP_NAMES = [
     "Mark lifecycle record stalled",
