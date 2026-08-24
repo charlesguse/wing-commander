@@ -279,3 +279,9 @@ User Story 1 alone is unsafe to ship on its own — R1 in spec.md is explicit th
 
 - [ ] Change `implement.yml`'s "Fail loud on non-healthy agent verdict (cycle)" (and its retry-path mirror) so that when the eventual classification is truncated, it emits `::notice::` or `::warning::` naming the truncation and the step stays green; keep `::error::` (and the red step) for the failed classification only. This likely requires deferring or re-deriving the annotation after "Read back cycle outcome" has classified the run, since verdict alone can't distinguish truncated from failed.
 - [ ] Add a Gate 26 scenario asserting the annotation kind/step outcome for a truncated cycle is not `::error::`, and that a genuinely failed exhausted-with-no-progress cycle still gets `::error::` (FR-015, FR-013).
+
+## Maintainer Feedback
+
+- [ ] In `implement.yml`'s "Record truncated-cycle count" step, only emit the `count` output after the commit+push has actually succeeded (or verify the push landed before reporting the new value); on a persist failure, emit an explicit unknown/failed marker instead of a stale or empty count.
+- [ ] In "Dispatch next step", when the persisted-count marker indicates failure, state in the lifecycle comment that the consecutive-truncation count could not be recorded, rather than printing an empty or wrong number.
+- [ ] Add a Gate 26 scenario simulating a persist failure (e.g. push rejection) and asserting the lifecycle comment never renders an empty or unpersisted count (FR-011, FR-012, SC-007).
