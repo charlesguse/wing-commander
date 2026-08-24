@@ -1613,6 +1613,45 @@ jobs:
             exit 1
           fi
 
+          # Post-condition (#191). Exit 0 is NOT evidence that an upgrade
+          # happened: `specify integration upgrade` has a documented no-op
+          # path that prints "Nothing to upgrade" and exits 0 when
+          # .specify/integrations/claude.manifest.json is missing, renamed or
+          # unreadable (upstream src/specify_cli/integrations/
+          # _migrate_commands.py). The two version-string edits below are
+          # deterministic and run regardless, so without this check the commit
+          # would carry a diff of exactly two strings — init-options.json's
+          # speckit_version and preflight's SPECKIT_SUPPORTED_VERSION — and
+          # `verify` would pass it: the lightweight tier smoke-tests the OLD
+          # .specify/scripts, which still work. The result is a repository
+          # pinned to a version whose artifacts it does not have.
+          #
+          # Read the tree BEFORE those two edits, so the pin files can never
+          # vouch for themselves, and require a change to something spec-kit
+          # actually owns. The `speckit-` prefix is what keeps a consumer's
+          # own unrelated `.claude/skills/whatever` from satisfying the
+          # post-condition; `:(glob)` is NOT load-bearing here, because git's
+          # default pathspec matching lets `*` cross `/` anyway, so the two
+          # forms select the same files. It is written out because a reader
+          # should not have to know that rule to see which paths are meant:
+          # under `:(glob)`, `*` stops at a path separator and `**` spans
+          # them, so `speckit-*/**` says "any speckit- skill, at any depth"
+          # in the notation that means only that.
+          #
+          # Failing here needs no new reporting channel — `act`'s
+          # `needs.prepare.result == 'failure'` arm labels the tracking issue
+          # auto-update:failed and comments the failure on it, pointing the
+          # maintainer at this step's own `::error::` line, exactly as it does
+          # for the two failures above.
+          speckit_changed="$(git status --porcelain -- \
+            '.specify' ':(glob).claude/skills/speckit-*/**' \
+            ':(exclude).specify/init-options.json')"
+          if [ -z "$speckit_changed" ]; then
+            echo "::error::wing-commander auto-update-spec-kit prepare: 'specify integration upgrade claude --script sh --force' exited 0 for v${CANDIDATE} but changed no Spec Kit artifact. Expected at least one added, modified or deleted path under .specify/ (other than .specify/init-options.json) or .claude/skills/speckit-*/. This is Spec Kit's documented no-op path — most often a missing or renamed .specify/integrations/claude.manifest.json — and committing now would ship a version-string-only diff that verify passes, pinning this repository to a version whose artifacts it does not have (#191). The candidate CLI's own output follows."
+            tail -c 2000 "$RUNNER_TEMP/prepare-install.log"
+            exit 1
+          fi
+
           jq --arg v "$CANDIDATE" '.speckit_version = $v' .specify/init-options.json > "$RUNNER_TEMP/init-options.json.tmp"
           mv "$RUNNER_TEMP/init-options.json.tmp" .specify/init-options.json
 

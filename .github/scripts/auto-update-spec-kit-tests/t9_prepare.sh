@@ -78,6 +78,14 @@ if [ "${UVX_RC:-0}" != 0 ]; then
   echo "Error: No such command 'upgrade'." >&2
   exit "$UVX_RC"
 fi
+if [ "${UVX_NOOP:-0}" != 0 ]; then
+  # Upstream's documented no-op path, verbatim in shape: it PRINTS and exits
+  # 0 without touching the working tree (src/specify_cli/integrations/
+  # _migrate_commands.py, reached when the integration manifest is absent).
+  echo "No manifest found for integration 'claude'. Nothing to upgrade."
+  echo "Run specify integration install claude to perform a fresh install."
+  exit 0
+fi
 printf '{\n  "version": "%s",\n  "installed_integrations": ["claude"]\n}\n' "$CANDIDATE" > .specify/integration.json
 printf '{"version": "%s", "files": {}}\n' "$CANDIDATE" > .specify/integrations/claude.manifest.json
 echo "echo common at $CANDIDATE" > .specify/scripts/bash/common.sh
@@ -222,6 +230,82 @@ check "S5c no commit was made" "$(git rev-list --count "refs/remotes/origin/main
 check "S5c the pin on the default branch is untouched" \
   "$(MSYS_NO_PATHCONV=1 git show main:.specify/init-options.json | jq -r .speckit_version)" "0.12.4"
 check "S5c no bundle for verify/act to consume" "$([ -e "$RUNNER_TEMP/prepare.bundle" ] && echo yes || echo no)" "no"
+cd - >/dev/null
+
+echo
+echo "=== Scenario 5d: the CLI no-ops, exits 0, and changes nothing (#191) ==="
+# The whole point of the post-condition: exit 0 is not evidence of an upgrade.
+# Without it the two deterministic version-string edits below the CLI call
+# still fire, `git add -A` still finds a diff, and a commit whose ENTIRE
+# content is two version strings goes on to pass verify's lightweight tier —
+# because that tier smoke-tests the .specify/scripts that are still the old
+# version's and still work.
+R4="$(build)"; new_step_env; cd "$R4"
+GHA_SUBST=("steps.ctx.outputs.bot-slug=wing-commander")
+BIN="$(mk_uvx)"; OLDPATH="$PATH"; PATH="$BIN:$PATH"
+export UVX_ARGV="$WORK/uvx-argv.log"; : > "$UVX_ARGV"
+export UVX_NOOP=1 DB=main CANDIDATE=0.16.4 BOT_SLUG=wing-commander
+run_step "$STEP" >"$WORK/prep4.log" 2>&1
+RC4=$?
+PATH="$OLDPATH"
+sed 's/^/      /' "$WORK/prep4.log" | head -4
+check "S5d step fails rather than committing a version-string-only diff" "$RC4" "1"
+check_contains "S5d error says the upgrade changed no Spec Kit artifact" \
+  "$(cat "$WORK/prep4.log")" "changed no Spec Kit artifact"
+check_contains "S5d error names the artifacts it expected to see move" \
+  "$(cat "$WORK/prep4.log")" ".claude/skills/speckit-*/"
+check_contains "S5d error excludes the pin file from what counts as evidence" \
+  "$(cat "$WORK/prep4.log")" "other than .specify/init-options.json"
+check_contains "S5d error names the candidate" "$(cat "$WORK/prep4.log")" "v0.16.4"
+# Same reason 5c surfaces the CLI's stderr: "Nothing to upgrade" is the one
+# line that tells a maintainer WHICH no-op path was taken.
+check_contains "S5d the CLI's own no-op message is surfaced, not swallowed" \
+  "$(cat "$WORK/prep4.log")" "Nothing to upgrade"
+check "S5d uvx was actually invoked (the guard is not short-circuiting it)" \
+  "$(wc -l < "$UVX_ARGV" | tr -d ' ')" "1"
+check "S5d no commit was made" "$(git rev-list --count "refs/remotes/origin/main..auto-update-spec-kit/v0.16.4")" "0"
+check "S5d the pin on the default branch is untouched" \
+  "$(MSYS_NO_PATHCONV=1 git show main:.specify/init-options.json | jq -r .speckit_version)" "0.12.4"
+check "S5d no bundle for verify/act to consume" "$([ -e "$RUNNER_TEMP/prepare.bundle" ] && echo yes || echo no)" "no"
+# A failed `prepare` is the reporting channel: act's
+# `needs.prepare.result == 'failure'` arm labels the tracking issue and
+# comments the failure on it. That arm reads the JOB result, so the only thing
+# this step owes it is a non-zero exit — asserted above — and no `gh` call of
+# its own, asserted here (a step that commented directly would double-report).
+check "S5d the step reports through the job result, not a channel of its own" \
+  "$(wc -l < "$GH_CALLS" | tr -d ' ')" "0"
+unset UVX_NOOP
+cd - >/dev/null
+
+echo
+echo "--- Mutation: without the post-condition, 5d ships the version-string-only commit (T033) ---"
+MUT_OLD="$(mktemp)"; MUT_NEW="$(mktemp)"
+cat > "$MUT_OLD" <<'EOF'
+if [ -z "$speckit_changed" ]; then
+EOF
+cat > "$MUT_NEW" <<'EOF'
+if false; then
+EOF
+R5="$(build)"; new_step_env; cd "$R5"
+GHA_SUBST=("steps.ctx.outputs.bot-slug=wing-commander")
+BIN="$(mk_uvx)"; OLDPATH="$PATH"; PATH="$BIN:$PATH"
+export UVX_ARGV="$WORK/uvx-argv.log"; : > "$UVX_ARGV"
+export UVX_NOOP=1 DB=main CANDIDATE=0.16.4 BOT_SLUG=wing-commander
+run_step_mutated "$STEP" "$MUT_OLD" "$MUT_NEW" >"$WORK/prep5.log" 2>&1
+RC5=$?
+PATH="$OLDPATH"; unset UVX_NOOP
+if [ "$RC5" = 0 ]; then
+  check "MUTATION: the pre-fix step commits the no-op upgrade" \
+    "$(git rev-list --count "refs/remotes/origin/main..auto-update-spec-kit/v0.16.4")" "1"
+  # And the commit is exactly the silent mis-application #191 describes: two
+  # version strings and nothing spec-kit owns. If this list ever grows, the
+  # mutation stopped reproducing the defect.
+  check "MUTATION: that commit's entire diff is the two pin files" \
+    "$(git diff --name-only "refs/remotes/origin/main" "auto-update-spec-kit/v0.16.4" | sort | tr '\n' ' ')" \
+    ".github/actions/wing-commander-preflight/action.yml .specify/init-options.json "
+else
+  check "MUTATION: the pre-fix step reaches its commit (mutation applied)" "$RC5" "0"
+fi
 cd - >/dev/null
 
 report t9_prepare
