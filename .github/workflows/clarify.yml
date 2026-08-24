@@ -932,7 +932,8 @@ jobs:
       !cancelled() &&
       ( needs.verify-image-prerequisites.result == 'failure' ||
         needs.clarify.result == 'failure' ||
-        needs.clarify.result == 'skipped' )
+        needs.clarify.result == 'skipped' ) &&
+      needs.clarify.outputs.refusal-reason == ''
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}

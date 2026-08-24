@@ -1546,7 +1546,8 @@ jobs:
       ( needs.verify-image-prerequisites.result == 'failure' ||
         needs.implement.result == 'failure' ||
         needs.implement.result == 'skipped' ||
-        needs.implement.outputs.final-ok == 'false' )
+        needs.implement.outputs.final-ok == 'false' ) &&
+      needs.implement.outputs.refusal-reason == ''
     # runner/container-image passthrough (specs/038). Empty
     # container-image is expected to be a no-op (research.md D3); live
     # verification requires a workflow_dispatch trigger this automated

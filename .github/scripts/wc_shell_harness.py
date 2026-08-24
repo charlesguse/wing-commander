@@ -218,3 +218,25 @@ def find_step(path, name):
     sys.exit(f"::error file={path}::no step named {name!r}. If it was renamed, "
              f"update the workflow and its harness together — do not drop the "
              f"check.")
+
+
+def find_job(path, job_id):
+    """The job dict keyed `job_id` in workflow `path` — `needs:`/`if:` and all.
+
+    `find_step` above answers "what does this STEP do"; this answers "when
+    does this JOB run at all". Gate 28 (specs/041-implement-stall-notice)
+    needs the latter: it evaluates a survivor job's own `if:` against
+    modelled `needs.*` values, which requires the job-level dict, not a step
+    within it. `job_id` is the YAML key (e.g. "stalled"), not the `name:`
+    field — jobs are addressed by key everywhere else in this file's own
+    `needs:` handling, and `wf.get("jobs")` is already a dict keyed the same
+    way.
+    """
+    import yaml
+    wf = yaml.safe_load(open(path, encoding="utf-8")) or {}
+    job = (wf.get("jobs") or {}).get(job_id)
+    if job is None:
+        sys.exit(f"::error file={path}::no job keyed {job_id!r}. If it was "
+                 f"renamed, update the workflow and its harness together — "
+                 f"do not drop the check.")
+    return job

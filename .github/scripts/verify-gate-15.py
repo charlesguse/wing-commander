@@ -181,6 +181,35 @@ CASES = [
      {"w.yml": wf([("a", [], None),
                    ("b", ["a"], "needs.a.result == 'success'")])},
      False, ()),
+
+    # --- specs/041-implement-stall-notice: the output-based cousin -------
+    #
+    # `stalled`'s pre-fix condition was `needs.implement.outputs.final-ok ==
+    # 'false'` — an OUTPUT comparison, not a `.result` comparison, so it was
+    # invisible to NON_SUCCESS_ARM's original pattern even though it carries
+    # the identical tell: it only means something when the entry job did NOT
+    # succeed, and has no status-check function of its own. These three
+    # cases are the regression proof (FR-015) — the defect this whole
+    # feature exists to fix must be mechanically detectable going forward,
+    # not merely observed once and fixed by hand.
+
+    ("the regression: stalled's actual pre-fix condition (output-based, no "
+     "status function)",
+     {"w.yml": wf([("a", [], None),
+                   ("b", ["a"], "needs.a.outputs.final-ok == 'false'")])},
+     True, ("'b'",)),
+
+    ("the fix: the same output-based condition with !cancelled() prefixed",
+     {"w.yml": wf([("a", [], None),
+                   ("b", ["a"],
+                    '"!cancelled() && needs.a.outputs.final-ok == \'false\'"')])},
+     False, ()),
+
+    ("regression guard: an existing-style .result comparison is still "
+     "flagged after the widening",
+     {"w.yml": wf([("a", [], None),
+                   ("b", ["a"], "needs.a.result == 'skipped'")])},
+     True, ("'b'",)),
 ]
 
 
