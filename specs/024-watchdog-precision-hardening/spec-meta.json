@@ -3,6 +3,6 @@
   "spec_dir": "specs/024-watchdog-precision-hardening",
   "feature_num": "024",
   "stage": "implement",
-  "iteration": 3,
+  "iteration": 4,
   "spec_branch": "spec/024-watchdog-precision-hardening"
 }
