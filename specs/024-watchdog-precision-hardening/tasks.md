@@ -282,3 +282,11 @@ Phases 8–9 (US5 self-inspection text, US6 constitution principle) are governan
 ### Parallel Team Strategy
 
 With multiple contributors: one completes Foundational alone (it touches the file every later phase depends on); once done, up to four contributors can take US1, US2, US5, and US6 in parallel, while a fifth works the US4 → US3 → US7 chain sequentially (it's one contributor's worth of tightly-coupled work in one file region).
+
+---
+
+## Maintainer Feedback
+
+- [ ] Re-add `propose-fix-model` and `propose-fix-max-turns` to `.github/workflows/watchdog.yml`'s `on.workflow_call.inputs`, with their pre-024 types/defaults restored, and mark each `description` as deprecated-and-ignored (e.g. "accepted for v2 compatibility; propose-fix was removed by specs/024 — has no effect; removal scheduled for the next major, see #149"). Confirm no step in `watchdog.yml` reads either input.
+- [ ] In `specs/010-reusable-pipeline/contracts/stage-interfaces.md`'s watchdog row, record the same deprecation note for both inputs (the row currently omits them entirely following T054's cleanup).
+- [ ] In `specs/024-watchdog-precision-hardening/plan.md`'s Constitution Check, correct the Principle VII line: it currently states "Pass" on the basis of no new `github.event.*`/`vars.*` reads, but does not address that this feature removes two published `workflow_call` inputs, which Constitution VII (`.specify/memory/constitution.md:139`) names a breaking change on its own terms; record the re-added deprecated-and-ignored inputs as the resolution.
