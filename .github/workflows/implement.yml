@@ -398,6 +398,10 @@ jobs:
       slug: ${{ steps.spec.outputs.slug }}
       spec-dir: ${{ steps.spec.outputs.spec-dir }}
       converged: ${{ steps.final.outputs.converged }}
+      # Internal job-to-job wiring only — never a workflow_call output
+      # (research.md D3). Non-empty only when a refusal-shaped step in THIS
+      # job actually ran and refused; empty on success, skip, or a crash.
+      refusal-reason: ${{ steps.preflight.outputs.reason || steps.spec.outputs.reason || steps.meta.outputs.reason }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v4
@@ -460,6 +464,7 @@ jobs:
 
       # Deterministic fail-fast before any billable work (FR-004, FR-009).
       - name: Preflight
+        id: preflight
         if: steps.lifecycle-gate.outputs.is-open == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-preflight
         with:
@@ -472,6 +477,19 @@ jobs:
           use-bedrock: ${{ inputs.use-bedrock }}
           aws-role-arn: ${{ inputs.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
+
+      # Refusal note (research.md D1): the preflight step ran and declined —
+      # always()-gated so it fires regardless of the step's own failure, and
+      # scoped to that step's own refusal via steps.preflight.outputs.refused
+      # so a healthy preflight never triggers this.
+      - name: Report preflight refusal on lifecycle issue
+        if: always() && steps.preflight.outputs.refused == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ github.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: action
+          summary: "This stage could not start — ${{ steps.preflight.outputs.reason }}"
 
       - name: Configure AWS credentials for Bedrock
         if: steps.lifecycle-gate.outputs.is-open == 'true'
@@ -502,18 +520,34 @@ jobs:
         run: |
           if ! printf '%s' "$SPEC_DIR_INPUT" | grep -Eq '^specs/[0-9]{3}-[a-z0-9][a-z0-9-]*$'; then
             echo "::error::spec-dir '$SPEC_DIR_INPUT' does not match specs/NNN-slug; refusing to guess."
+            echo "reason=spec-dir '$SPEC_DIR_INPUT' does not match specs/NNN-slug; refusing to guess." >> "$GITHUB_OUTPUT"
+            echo "refused=true" >> "$GITHUB_OUTPUT"
             exit 1
           fi
           if ! printf '%s' "$ISSUE" | grep -Eq '^[0-9]+$'; then
             echo "::error::issue-number '$ISSUE' is not a number; refusing to guess."
+            echo "reason=issue-number '$ISSUE' is not a number; refusing to guess." >> "$GITHUB_OUTPUT"
+            echo "refused=true" >> "$GITHUB_OUTPUT"
             exit 1
           fi
           if ! printf '%s' "$ITERATION" | grep -Eq '^[1-9][0-9]*$'; then
             echo "::error::iteration '$ITERATION' is not a positive integer; refusing to guess."
+            echo "reason=iteration '$ITERATION' is not a positive integer; refusing to guess." >> "$GITHUB_OUTPUT"
+            echo "refused=true" >> "$GITHUB_OUTPUT"
             exit 1
           fi
           echo "slug=${SPEC_DIR_INPUT#specs/}" >> "$GITHUB_OUTPUT"
           echo "spec-dir=$SPEC_DIR_INPUT"      >> "$GITHUB_OUTPUT"
+
+      # Refusal note (research.md D1) — see "Report preflight refusal" above.
+      - name: Report spec-identity refusal on lifecycle issue
+        if: always() && steps.spec.outputs.refused == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ github.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: action
+          summary: "This stage could not start — ${{ steps.spec.outputs.reason }}"
 
       # clean: false — a default `git clean` here would delete the untracked
       # .wing-commander-pipeline checkout the composite steps below still need.
@@ -541,6 +575,8 @@ jobs:
               msg="wing-commander implement stage: cannot match this dispatch to a specification — $SPEC_DIR/$f is missing on the spec branch. tasks.md is produced by the tasks stage (tasks.yml); run the predecessor stages for this spec first."
               echo "::error::$msg"
               echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+              echo "reason=$msg" >> "$GITHUB_OUTPUT"
+              echo "refused=true" >> "$GITHUB_OUTPUT"
               exit 1
             fi
           done
@@ -550,10 +586,22 @@ jobs:
             msg="wing-commander implement stage: spec-meta.json (issue=$meta_issue, spec_dir=$meta_dir) does not match the dispatch inputs (issue=$ISSUE, spec_dir=$SPEC_DIR) — refusing."
             echo "::error::$msg"
             echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+            echo "reason=$msg" >> "$GITHUB_OUTPUT"
+            echo "refused=true" >> "$GITHUB_OUTPUT"
             exit 1
           fi
           echo "stage=$(jq -r '.stage // empty' "$SPEC_DIR/spec-meta.json")" >> "$GITHUB_OUTPUT"
           echo "recorded-iteration=$(jq -r '.iteration // 0' "$SPEC_DIR/spec-meta.json")" >> "$GITHUB_OUTPUT"
+
+      # Refusal note (research.md D1) — see "Report preflight refusal" above.
+      - name: Report spec-artifacts refusal on lifecycle issue
+        if: always() && steps.meta.outputs.refused == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ github.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: action
+          summary: "This stage could not start — ${{ steps.meta.outputs.reason }}"
 
       # (stage, iteration) in spec-meta.json is the idempotency guard.
       # A cycle runs only as the next expected step; "stalled" admits the
@@ -1484,14 +1532,21 @@ jobs:
             fi
           fi
 
-  # Exhausted retry (or a failure already on the top tier) — mark the
-  # lifecycle record stalled and tell a human how to restart. No finalize
-  # dispatch. final-ok is empty (not "false") on guard-skipped runs, and this
-  # job is skipped entirely when the implement job failed its pre-flight
-  # refusal checks (needs semantics), matching the refusal contract.
+  # Survivor job (the #224 idiom, research.md D4/D7): reaches two mutually
+  # exclusive arms. The exhausted-retry arm (final-ok == 'false') is today's
+  # original case, its three steps' wording untouched. The abnormal-
+  # termination arm (verify-image-prerequisites failed, or implement itself
+  # failed/skipped) is this feature's addition — guarded also on
+  # refusal-reason being empty, since a refusal already posted its own
+  # in-job note and must not double-post here (FR-006).
   stalled:
-    needs: implement
-    if: needs.implement.outputs.final-ok == 'false'
+    needs: [verify-image-prerequisites, implement]
+    if: |
+      !cancelled() &&
+      ( needs.verify-image-prerequisites.result == 'failure' ||
+        needs.implement.result == 'failure' ||
+        needs.implement.result == 'skipped' ||
+        needs.implement.outputs.final-ok == 'false' )
     # runner/container-image passthrough (specs/038). Empty
     # container-image is expected to be a no-op (research.md D3); live
     # verification requires a workflow_dispatch trigger this automated
@@ -1570,6 +1625,7 @@ jobs:
 
       # clean: false — preserve .wing-commander-pipeline (see the implement job).
       - name: Checkout spec branch as wing-commander-bot
+        if: needs.implement.outputs.final-ok == 'false'
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.spec-prefix }}${{ needs.implement.outputs.slug }}
@@ -1578,6 +1634,7 @@ jobs:
           clean: false
 
       - name: Mark lifecycle record stalled
+        if: needs.implement.outputs.final-ok == 'false'
         env:
           SPEC_DIR: ${{ needs.implement.outputs.spec-dir }}
           SLUG: ${{ needs.implement.outputs.slug }}
@@ -1613,7 +1670,7 @@ jobs:
       # step mints, so running it after a failed mint would only add a
       # confusing second error on top of the real one.
       - name: Report stalled on lifecycle issue
-        if: always() && steps.ctx.outcome == 'success'
+        if: always() && steps.ctx.outcome == 'success' && needs.implement.outputs.final-ok == 'false'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ISSUE: ${{ inputs.issue-number }}
@@ -1692,7 +1749,7 @@ jobs:
       # summary-only comment rather than erroring — the maintainer still
       # learns the stage stalled.
       - name: Announce the stall on the lifecycle issue
-        if: always() && steps.ctx.outcome == 'success'
+        if: always() && steps.ctx.outcome == 'success' && needs.implement.outputs.final-ok == 'false'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ steps.ctx.outputs.token }}
@@ -1700,3 +1757,105 @@ jobs:
           kind: action
           summary: "Restart the implement stage"
           body-file: /tmp/stall-comment.md
+
+      # Abnormal-termination arm (research.md D4/D7): reached only when the
+      # exhausted-retry case did NOT occur (final-ok != 'false') and no
+      # refusal already posted its own in-job note (D3, FR-006's mutual
+      # exclusion). inputs.spec-dir/issue-number are used, never
+      # needs.implement.outputs.* for identity — those may never have been
+      # set if implement died before reaching the steps that set them (D6).
+      - name: Resolve spec identity from inputs
+        id: identity
+        if: needs.implement.outputs.final-ok != 'false' && needs.implement.outputs.refusal-reason == ''
+        env:
+          SPEC_DIR: ${{ inputs.spec-dir }}
+        run: |
+          echo "slug=${SPEC_DIR#specs/}" >> "$GITHUB_OUTPUT"
+
+      # continue-on-error: the spec branch may not exist yet or the checkout
+      # may lose a race — either degrades the notice's wording (composite's
+      # own "record could not be updated" branch) rather than failing this
+      # job (FR-011). Only used here to read the recorded iteration for the
+      # restart command below; the composite performs its own checkout for
+      # the actual mark.
+      - name: Checkout spec branch to read recorded iteration
+        id: identity-checkout
+        if: needs.implement.outputs.final-ok != 'false' && needs.implement.outputs.refusal-reason == ''
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug }}
+          token: ${{ steps.ctx.outputs.token }}
+          fetch-depth: 0
+          clean: false
+
+      # Same recorded_iteration + 1 formula as "Report stalled on lifecycle
+      # issue" above (D7 — implement's restart math is reused, not rebuilt,
+      # so both arms stay consistent with the idempotency guard, which
+      # admits a stalled stage only at recorded+1).
+      - name: Compute restart command
+        id: restart
+        if: needs.implement.outputs.final-ok != 'false' && needs.implement.outputs.refusal-reason == ''
+        env:
+          SPEC_DIR: ${{ inputs.spec-dir }}
+          ISSUE: ${{ inputs.issue-number }}
+          ITERATION: ${{ inputs.iteration }}
+          SELF_WORKFLOW: ${{ inputs.self-workflow }}
+          CHECKOUT_OK: ${{ steps.identity-checkout.outcome == 'success' }}
+        run: |
+          restart_workflow="$SELF_WORKFLOW"
+          [ -n "$restart_workflow" ] || restart_workflow="<your implement wrapper workflow>"
+          recorded=""
+          if [ "$CHECKOUT_OK" = "true" ]; then
+            recorded=$(jq -r '.iteration // 0' "$SPEC_DIR/spec-meta.json" 2>/dev/null) || recorded=""
+          fi
+          case "$recorded" in ''|*[!0-9]*) recorded="$ITERATION" ;; esac
+          restart_iteration=$((recorded + 1))
+          {
+            echo "Re-dispatch the implement wrapper workflow via **Run workflow** with these inputs (GitHub cannot prefill them from a link):"
+            echo ""
+            echo "| input | value |"
+            echo "|---|---|"
+            echo "| \`spec_dir\` | \`$SPEC_DIR\` |"
+            echo "| \`issue\` | \`$ISSUE\` |"
+            echo "| \`iteration\` | \`$restart_iteration\` |"
+            echo ""
+            echo "or from a terminal:"
+            echo ""
+            echo "\`\`\`"
+            echo "gh workflow run $restart_workflow -R $GITHUB_REPOSITORY -f spec_dir=$SPEC_DIR -f issue=$ISSUE -f iteration=$restart_iteration"
+            echo "\`\`\`"
+          } > /tmp/wcsn-restart.md
+          {
+            echo "restart-command<<WCSN_EOF"
+            cat /tmp/wcsn-restart.md
+            echo "WCSN_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Determine which dependency did not start
+        id: reason
+        if: needs.implement.outputs.final-ok != 'false' && needs.implement.outputs.refusal-reason == ''
+        env:
+          IMAGE_RESULT: ${{ needs.verify-image-prerequisites.result }}
+          IMPLEMENT_RESULT: ${{ needs.implement.result }}
+        run: |
+          if [ "$IMAGE_RESULT" = "failure" ]; then
+            reason="the verify-image-prerequisites job failed, so the implement stage never started"
+          elif [ "$IMPLEMENT_RESULT" = "skipped" ]; then
+            reason="the implement stage was skipped because a dependency it needs did not run"
+          else
+            reason="the implement stage failed before it could run its own steps"
+          fi
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+
+      - name: Report the stage did not start
+        if: needs.implement.outputs.final-ok != 'false' && needs.implement.outputs.refusal-reason == ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-chain-stop-notice
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ inputs.issue-number }}
+          spec-dir: ${{ inputs.spec-dir }}
+          spec-branch: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug }}
+          stage-label: "stage:implement"
+          reason: ${{ steps.reason.outputs.reason }}
+          restart-command: ${{ steps.restart.outputs.restart-command }}
