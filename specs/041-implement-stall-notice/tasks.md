@@ -134,8 +134,8 @@ This repository is a GitHub Actions pipeline component — no `src`/`tests` spli
 
 ## Phase 7: Polish & Cross-Cutting Concerns
 
-- [ ] T030 [P] Run quickstart.md's full validation sequence end-to-end (Gate 28 §1, Gate 15 self-test §2, composite shell harness §3, refusal-exclusion harness §4) and confirm every step passes together, not just individually.
-- [ ] T031 [P] Re-read every edited workflow file's `Preflight`/identity-check steps once more against contracts/refusal-signal-contract.md's "Explicitly NOT covered" list — confirm `wing-commander-lifecycle-gate`'s own failures and the `Note closed lifecycle and stop` step were left untouched at all seven call sites (research.md D10 — these are abnormal termination, not refusal, by design).
+- [X] T030 [P] Run quickstart.md's full validation sequence end-to-end (Gate 28 §1, Gate 15 self-test §2, composite shell harness §3, refusal-exclusion harness §4) and confirm every step passes together, not just individually.
+- [X] T031 [P] Re-read every edited workflow file's `Preflight`/identity-check steps once more against contracts/refusal-signal-contract.md's "Explicitly NOT covered" list — confirm `wing-commander-lifecycle-gate`'s own failures and the `Note closed lifecycle and stop` step were left untouched at all seven call sites (research.md D10 — these are abnormal termination, not refusal, by design).
 
 ---
 
