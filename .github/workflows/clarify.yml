@@ -1041,3 +1041,4 @@ jobs:
           spec-branch: spec/${{ steps.identity.outputs.slug }}
           stage-label: "stage:clarify"
           reason: ${{ steps.reason.outputs.reason }}
+          restart-command: "Re-dispatch the clarify stage for this specification once the cause above is resolved."

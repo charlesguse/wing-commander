@@ -2417,3 +2417,4 @@ jobs:
           spec-dir: ${{ steps.identity.outputs.spec-dir }}
           spec-branch: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug }}
           reason: ${{ steps.reason.outputs.reason }}
+          restart-command: "Re-dispatch the pr-conversation stage for this pull request once the cause above is resolved."

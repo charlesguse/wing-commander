@@ -1332,3 +1332,4 @@ jobs:
           issue-number: ${{ inputs.issue-number }}
           spec-dir: ""
           reason: ${{ steps.reason.outputs.reason }}
+          restart-command: "Re-dispatch the intake stage for this specification once the cause above is resolved."

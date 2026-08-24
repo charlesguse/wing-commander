@@ -1109,3 +1109,4 @@ jobs:
           spec-branch: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug }}
           stage-label: "stage:finalize"
           reason: ${{ steps.reason.outputs.reason }}
+          restart-command: "Re-dispatch the finalize stage for this specification once the cause above is resolved."
