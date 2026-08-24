@@ -2745,6 +2745,18 @@ jobs:
       - name: Gate 29 — cleanup's lifecycle guard names the fault it hit and recovers a null issue
         run: python3 .github/scripts/verify-cleanup-lifecycle-guard.py
 
+      # Gate 32 — watchdog.yml's act job never treats an unresolved triage
+      # decision as "file it as new" (PR #240 maintainer feedback on spec
+      # 024). The "Load triage decision" step's missing-artifact fallback
+      # used to set dedup="", which fell through the "Ensure pipeline-defect
+      # issue" step's `if:` guard (it only excludes data-integrity/unknown)
+      # into the comment-on-existing-issue branch and ran `gh issue comment
+      # ""`, failing the job. Nothing exercised the missing-artifact path
+      # before this gate — same "a verifier nothing runs is not a verifier"
+      # gap Gates 5/9/19 exist to close for their own subjects.
+      - name: Gate 32 — the act job's dedup guard stays report-only when the triage decision never arrived
+        run: python3 .github/scripts/verify-act-dedup-guard.py
+
       # Gate 31 — constitution VII's stage-layer rule, at PR time and over
       # every published stage. `release.yml`'s Gate 1b has enforced two
       # thirds of this since spec 010 and got both halves wrong (#149):

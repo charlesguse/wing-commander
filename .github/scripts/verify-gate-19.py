@@ -286,6 +286,29 @@ SCENARIOS = [
         expect=[],
         expect_outcome="failed",
     ),
+    # Attribution invariant (spec 024 FR-026): a job that itself never ran
+    # owes no annotation signal, even if sibling jobs in the same run did.
+    # A real annotations fixture is seeded for the skipped/cancelled job so
+    # that, if the per-job guard is ever removed, its content would surface
+    # in `entries` and this scenario's `expect` assertion would catch it —
+    # an absent fixture would only prove the guard by accident (an
+    # unrelated "no fixture" error), which is not the same claim.
+    dict(
+        name="a sibling job is skipped: its annotations are never fetched (FR-026)",
+        jobs=jobs_pages([job(1, "build"), job(2, "cleanup", conclusion="skipped")]),
+        anns={1: anns_pages([ann("warning", "job1 warning")]),
+              2: anns_pages([ann("failure", "should never be collected")])},
+        expect=[("warning", "job1 warning")],
+        expect_outcome="ok",
+    ),
+    dict(
+        name="a sibling job is cancelled: its annotations are never fetched (FR-026)",
+        jobs=jobs_pages([job(1, "build"), job(2, "cleanup", conclusion="cancelled")]),
+        anns={1: anns_pages([ann("warning", "job1 warning")]),
+              2: anns_pages([ann("failure", "should never be collected")])},
+        expect=[("warning", "job1 warning")],
+        expect_outcome="ok",
+    ),
 ]
 
 
@@ -402,6 +425,25 @@ def suite(script, env, tmproot):
 # --------------------------------------------------------------------------
 # Mutations
 # --------------------------------------------------------------------------
+def strip_conclusion_guard(script, var_name):
+    """Remove a `case "$var_name" in ... esac` attribution-invariant guard
+    (spec 024 FR-026), whatever body it wraps. Used as a mutation to prove
+    each suite below actually detects the guard's absence, rather than
+    passing regardless of whether it ships (Constitution VIII). A regex
+    rather than a literal string match: the guard's body text (the
+    ::warning:: message) differs per collector, only the case/esac shape
+    it shares does not.
+    """
+    pattern = re.compile(r'case "\$' + re.escape(var_name) + r'" in\b.*?\n[ \t]*esac\n',
+                          re.DOTALL)
+    new = pattern.sub("", script, count=1)
+    if new == script:
+        sys.exit(f"::error::verify-gate-19: could not locate the {var_name!r} "
+                  f"attribution guard to mutate — the step text may have "
+                  f"changed shape; update this harness alongside it.")
+    return new
+
+
 def mut_array_collecting_annotations(script):
     """Reintroduce the array-collecting --jq '[...]' shape (the T067 defect):
     wrapping the per-item filter in [...] makes gh emit one ARRAY per page
@@ -415,9 +457,15 @@ def mut_array_collecting_annotations(script):
     return script.replace(old, new)
 
 
+def mut_annotations_attribution_guard(script):
+    return strip_conclusion_guard(script, "job_conclusion")
+
+
 MUTATIONS = [
     ("the annotations filter collecting results into an array per page",
      mut_array_collecting_annotations),
+    ("the annotations collector's per-job attribution guard (FR-026)",
+     mut_annotations_attribution_guard),
 ]
 
 
@@ -506,6 +554,25 @@ EXEC_SCENARIOS = [
         msg="gh: HTTP 403: Resource not accessible by integration",
         expect_outcome="failed",
     ),
+    # Attribution invariant (spec 024 FR-026): a run that skipped or was
+    # cancelled executed nothing, so no denial artifact is attributable to
+    # it — the step must exit before ever attempting the download, which
+    # shows up here as NO collect-execution-output entry at all (the outcome
+    # append line sits after the download attempt), not as an "ok" entry.
+    dict(
+        name="run conclusion skipped: nothing executed, no download attempted (FR-026)",
+        fail=False,
+        msg="",
+        run_conclusion="skipped",
+        expect_outcome=None,
+    ),
+    dict(
+        name="run conclusion cancelled: nothing executed, no download attempted (FR-026)",
+        fail=False,
+        msg="",
+        run_conclusion="cancelled",
+        expect_outcome=None,
+    ),
 ]
 
 BD_SCENARIOS = [
@@ -552,6 +619,29 @@ BD_SCENARIOS = [
         revlist_fail=False,
         expect_outcome="ok",
     ),
+    # Attribution invariant (spec 024 FR-026): a run that skipped or was
+    # cancelled executed nothing, so "this stage should have pushed
+    # commits" was never in force — the step must exit before ever fetching
+    # the branch, which shows up here as NO collect-branch-drift entry at
+    # all (the outcome append lines all sit after the fetch), not "ok".
+    dict(
+        name="run conclusion skipped: nothing executed, no fetch attempted (FR-026)",
+        run_conclusion="skipped",
+        fetch_fail=False,
+        fetch_msg="",
+        revparse_fail=False,
+        revlist_fail=False,
+        expect_outcome=None,
+    ),
+    dict(
+        name="run conclusion cancelled: nothing executed, no fetch attempted (FR-026)",
+        run_conclusion="cancelled",
+        fetch_fail=False,
+        fetch_msg="",
+        revparse_fail=False,
+        revlist_fail=False,
+        expect_outcome=None,
+    ),
 ]
 
 
@@ -576,6 +666,7 @@ def run_exec_one(script, env, sc, tmproot):
 
     run_env = with_actions_defaults(env)
     run_env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
+    run_env["RUN_CONCLUSION"] = sc.get("run_conclusion", "success")
     if sc["fail"]:
         run_env["GH_STUB_DOWNLOAD_FAIL"] = "1"
 
@@ -620,7 +711,7 @@ def run_bd_one(script, env, sc, tmproot):
     run_env = with_actions_defaults(env)
     run_env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
     run_env["RUN_NAME"] = "Wing Commander · 5 implement"
-    run_env["RUN_CONCLUSION"] = "success"
+    run_env["RUN_CONCLUSION"] = sc.get("run_conclusion", "success")
     run_env["HEAD_BRANCH"] = "spec/999-torn-down"
     run_env["HEAD_SHA"] = "0000000000000000000000000000000000000000"
     run_env["SLUG"] = ""
@@ -656,6 +747,230 @@ def suite_bd(script, env, tmproot):
                 f"{tag} collector-outcomes.json for collect-branch-drift "
                 f"reads {got!r}, expected {sc['expect_outcome']!r} (FR-010). "
                 f"outcomes: {outcomes}")
+    return failures
+
+
+# --------------------------------------------------------------------------
+# Attribution invariant (spec 024 FR-026), the two collectors above and
+# `collect-annotations` shared code fixtures for; these two do not fit that
+# shape (no gh/git subprocess to stub) and previously had no coverage at
+# all — the gap the maintainer feedback on PR #240 named directly:
+# `collect-spec-meta` (RUN_CONCLUSION-gated, no external read) and
+# `collect-step-summary` (job_conclusion-gated, per job, like annotations
+# but reading job LOGS rather than the annotations endpoint).
+# --------------------------------------------------------------------------
+SPEC_META_STEP = "Collect: spec-meta state vs. expected stage"
+
+SPEC_META_SCENARIOS = [
+    dict(
+        name="run executed and the recorded stage disagrees with expected: "
+             "a stage-mismatch signal is emitted",
+        run_conclusion="success",
+        run_name="Wing Commander · 3 plan",
+        meta_stage="spec",
+        slug="024-watchdog-precision-hardening",
+        expect_signal=True,
+    ),
+    dict(
+        name="run executed and the recorded stage matches: no signal",
+        run_conclusion="success",
+        run_name="Wing Commander · 3 plan",
+        meta_stage="plan",
+        slug="024-watchdog-precision-hardening",
+        expect_signal=False,
+    ),
+    dict(
+        name="run conclusion skipped: the stage never ran, so a would-be "
+             "mismatch is not attributable to it (FR-026, issue #125)",
+        run_conclusion="skipped",
+        run_name="Wing Commander · 3 plan",
+        meta_stage="spec",
+        slug="024-watchdog-precision-hardening",
+        expect_signal=False,
+    ),
+    dict(
+        name="run conclusion cancelled: the stage never ran (FR-026)",
+        run_conclusion="cancelled",
+        run_name="Wing Commander · 3 plan",
+        meta_stage="spec",
+        slug="024-watchdog-precision-hardening",
+        expect_signal=False,
+    ),
+]
+
+
+def run_spec_meta_one(script, env, sc, tmproot):
+    workdir = tempfile.mkdtemp(dir=tmproot)
+    runner_temp = tempfile.mkdtemp(dir=tmproot)
+    with open(os.path.join(runner_temp, "collector-outcomes.json"), "w",
+              encoding="utf-8") as fh:
+        fh.write("[]")
+    with open(os.path.join(runner_temp, "signals.json"), "w", encoding="utf-8") as fh:
+        fh.write("[]")
+
+    run_env = dict(env)
+    run_env["RUN_NAME"] = sc["run_name"]
+    run_env["RUN_CONCLUSION"] = sc["run_conclusion"]
+    run_env["META_STAGE"] = sc["meta_stage"]
+    run_env["SLUG"] = sc["slug"]
+
+    rc, out, _, _ = run_step(BASH, script, workdir, run_env, runner_temp)
+    with open(os.path.join(runner_temp, "signals.json"), encoding="utf-8") as fh:
+        signals = json.load(fh)
+    for d in (workdir, runner_temp):
+        shutil.rmtree(d, ignore_errors=True)
+    return rc, out, signals
+
+
+def suite_spec_meta(script, env, tmproot):
+    failures = []
+    for sc in SPEC_META_SCENARIOS:
+        tag = f"[spec-meta: {sc['name']}]"
+        rc, out, signals = run_spec_meta_one(script, env, sc, tmproot)
+        if rc != 0:
+            failures.append(f"{tag} the collector exited {rc}:\n{out}")
+            continue
+        got_signal = any(isinstance(s, dict) and s.get("source") == "spec-meta"
+                          for s in signals)
+        if got_signal != sc["expect_signal"]:
+            failures.append(
+                f"{tag} spec-meta signal present={got_signal}, expected "
+                f"{sc['expect_signal']} (FR-026 attribution invariant). "
+                f"signals: {signals}")
+    return failures
+
+
+STEPSUM_STEP = "Collect: step summaries"
+
+# Single-page fixtures only — pagination itself is already proven for this
+# same jobs/logs shape by the annotations suite above; this stub's whole job
+# is exercising the per-job attribution guard, not re-proving pagination.
+STUB_GH_STEPSUM_TEMPLATE = r'''#!/usr/bin/env bash
+p="$2"
+d=__FIXTURE_DIR__
+case "$p" in
+  */jobs)
+    if [ -n "${GH_STUB_FAIL_JOBS:-}" ]; then
+      echo "gh: injected failure for jobs listing (GH_STUB_FAIL_JOBS)" >&2
+      exit 1
+    fi
+    jq -c '.[]' "$d/jobs.json"
+    ;;
+  */logs)
+    id="${p%/logs}"; id="${id##*/}"
+    f="$d/log-$id.txt"
+    if [ ! -f "$f" ]; then
+      echo "gh: no fixture for job $id log ($f)" >&2
+      exit 1
+    fi
+    cat "$f"
+    ;;
+  *)
+    echo "unexpected gh api path: $p" >&2
+    exit 1
+    ;;
+esac
+'''
+
+
+def stub_stepsum_gh(bindir, fixture_dir):
+    path = os.path.join(bindir, "gh")
+    content = STUB_GH_STEPSUM_TEMPLATE.replace("__FIXTURE_DIR__", shell_quote(fixture_dir))
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(content)
+    os.chmod(path, 0o755)
+
+
+def write_stepsum_fixtures(fixture_dir, jobs, logs):
+    with open(os.path.join(fixture_dir, "jobs.json"), "w", encoding="utf-8") as fh:
+        json.dump(jobs, fh)
+    for job_id, text in logs.items():
+        with open(os.path.join(fixture_dir, f"log-{job_id}.txt"), "w",
+                  encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+
+
+# Attribution invariant (spec 024 FR-026), applied per-job like annotations:
+# a job that itself never ran owes no step-summary sentinel, even if sibling
+# jobs in the same run did. The skipped/cancelled sibling's log fixture is
+# deliberately OMITTED (rather than seeded and asserted absent) so that, if
+# the per-job guard is ever removed, fetching it fails on "no fixture" and
+# flips this collector's own outcome to "failed" — a second, independent
+# tripwire alongside the missing sentinel itself.
+STEPSUM_SCENARIOS = [
+    dict(
+        name="a sibling job is skipped: its log is never fetched, only the "
+             "executed job's sentinel is collected (FR-026)",
+        jobs=[job(1, "build", conclusion="success"),
+              job(2, "cleanup", conclusion="skipped")],
+        logs={1: "2026-08-24T00:00:00.0000000Z WC-SENTINEL: stalled - job build stalled\n"},
+        expect=[("build", "stalled")],
+        expect_outcome="ok",
+    ),
+    dict(
+        name="a sibling job is cancelled: its log is never fetched (FR-026)",
+        jobs=[job(1, "build", conclusion="success"),
+              job(2, "cleanup", conclusion="cancelled")],
+        logs={1: "2026-08-24T00:00:00.0000000Z WC-SENTINEL: stalled - job build stalled\n"},
+        expect=[("build", "stalled")],
+        expect_outcome="ok",
+    ),
+]
+
+
+def run_stepsum_one(script, env, sc, tmproot):
+    workdir = tempfile.mkdtemp(dir=tmproot)
+    runner_temp = tempfile.mkdtemp(dir=tmproot)
+    fixtures = tempfile.mkdtemp(dir=tmproot)
+    bindir = tempfile.mkdtemp(dir=tmproot)
+
+    with open(os.path.join(runner_temp, "signals.json"), "w", encoding="utf-8") as fh:
+        fh.write("[]")
+    with open(os.path.join(runner_temp, "collector-outcomes.json"), "w",
+              encoding="utf-8") as fh:
+        fh.write("[]")
+    write_stepsum_fixtures(fixtures, sc["jobs"], sc["logs"])
+    stub_stepsum_gh(bindir, fixtures.replace("\\", "/"))
+    stub_jq(bindir)
+
+    run_env = with_actions_defaults(env)
+    run_env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
+
+    rc, out, _, _ = run_step(BASH, script, workdir, run_env, runner_temp)
+    with open(os.path.join(runner_temp, "signals.json"), encoding="utf-8") as fh:
+        signals = json.load(fh)
+    with open(os.path.join(runner_temp, "collector-outcomes.json"), encoding="utf-8") as fh:
+        outcomes = json.load(fh)
+    for d in (workdir, runner_temp, fixtures, bindir):
+        shutil.rmtree(d, ignore_errors=True)
+    return rc, out, signals, outcomes
+
+
+def suite_stepsum(script, env, tmproot):
+    failures = []
+    for sc in STEPSUM_SCENARIOS:
+        tag = f"[step-summary: {sc['name']}]"
+        rc, out, signals, outcomes = run_stepsum_one(script, env, sc, tmproot)
+        if rc != 0:
+            failures.append(f"{tag} the collector exited {rc}:\n{out}")
+            continue
+        got = sorted((s["facts"]["job"], s["facts"]["matched-sentinel"])
+                     for s in signals
+                     if isinstance(s, dict) and s.get("source") == "step-summary")
+        want = sorted(sc["expect"])
+        if got != want:
+            failures.append(
+                f"{tag} wrong step-summary signals collected.\n"
+                f"    expected: {want or '(none)'}\n"
+                f"    actual:   {got or '(none)'}")
+        expect_outcome = sc.get("expect_outcome")
+        if expect_outcome is not None:
+            got_outcome = last_outcome(outcomes, "collect-step-summary")
+            if got_outcome != expect_outcome:
+                failures.append(
+                    f"{tag} collector-outcomes.json for collect-step-summary "
+                    f"reads {got_outcome!r}, expected {expect_outcome!r}. "
+                    f"outcomes: {outcomes}")
     return failures
 
 
@@ -778,6 +1093,22 @@ def run_aggregate_suite():
     return failures
 
 
+def run_attribution_mutation(label, suite_fn, script, env, tmproot, var_name):
+    """Common tail for the collectors whose attribution guard (spec 024
+    FR-026) is a `case "$var_name" in skipped|cancelled) ... esac` block:
+    rerun `suite_fn` with that guard stripped and confirm at least one
+    scenario then breaks. A guard with no fixture that exercises its
+    removal is not proven to do anything (Constitution VIII)."""
+    mutated = strip_conclusion_guard(script, var_name)
+    broke = suite_fn(mutated, env, tmproot)
+    if broke:
+        print(f"Mutation OK - {label}: {len(broke)} assertion(s) fail.")
+        return []
+    print(f"::error::MUTATION SURVIVED - removing {label} broke nothing "
+          f"in this suite, so the suite is not testing that defect.")
+    return [f"mutation survived: {label}"]
+
+
 def main():
     global BASH
     use_utf8_stdout()
@@ -826,6 +1157,9 @@ def main():
     exec_tmproot = tempfile.mkdtemp()
     try:
         exec_failures = suite_exec(exec_script, exec_env, exec_tmproot)
+        exec_failures.extend(run_attribution_mutation(
+            "execution-output's RUN_CONCLUSION attribution guard (FR-026)",
+            suite_exec, exec_script, exec_env, exec_tmproot, "RUN_CONCLUSION"))
     finally:
         shutil.rmtree(exec_tmproot, ignore_errors=True)
     for f in exec_failures:
@@ -835,11 +1169,44 @@ def main():
     bd_tmproot = tempfile.mkdtemp()
     try:
         bd_failures = suite_bd(bd_script, bd_env, bd_tmproot)
+        bd_failures.extend(run_attribution_mutation(
+            "branch-drift's RUN_CONCLUSION attribution guard (FR-026)",
+            suite_bd, bd_script, bd_env, bd_tmproot, "RUN_CONCLUSION"))
     finally:
         shutil.rmtree(bd_tmproot, ignore_errors=True)
     for f in bd_failures:
         print(f"::error::{f}")
     failures.extend(bd_failures)
+
+    spec_meta_step = find_step(WATCHDOG, SPEC_META_STEP)
+    spec_meta_script, spec_meta_env = render_step(spec_meta_step)
+    spec_meta_tmproot = tempfile.mkdtemp()
+    try:
+        spec_meta_failures = suite_spec_meta(spec_meta_script, spec_meta_env, spec_meta_tmproot)
+        spec_meta_failures.extend(run_attribution_mutation(
+            "spec-meta's RUN_CONCLUSION attribution guard (FR-026)",
+            suite_spec_meta, spec_meta_script, spec_meta_env, spec_meta_tmproot,
+            "RUN_CONCLUSION"))
+    finally:
+        shutil.rmtree(spec_meta_tmproot, ignore_errors=True)
+    for f in spec_meta_failures:
+        print(f"::error::{f}")
+    failures.extend(spec_meta_failures)
+
+    stepsum_step = find_step(WATCHDOG, STEPSUM_STEP)
+    stepsum_script, stepsum_env = render_step(stepsum_step)
+    stepsum_tmproot = tempfile.mkdtemp()
+    try:
+        stepsum_failures = suite_stepsum(stepsum_script, stepsum_env, stepsum_tmproot)
+        stepsum_failures.extend(run_attribution_mutation(
+            "step-summary's per-job job_conclusion attribution guard (FR-026)",
+            suite_stepsum, stepsum_script, stepsum_env, stepsum_tmproot,
+            "job_conclusion"))
+    finally:
+        shutil.rmtree(stepsum_tmproot, ignore_errors=True)
+    for f in stepsum_failures:
+        print(f"::error::{f}")
+    failures.extend(stepsum_failures)
 
     aggregate_failures = run_aggregate_suite()
     for f in aggregate_failures:
@@ -849,6 +1216,8 @@ def main():
     print(f"annotation collector: {len(SCENARIOS)} scenario(s); "
           f"execution-output collector: {len(EXEC_SCENARIOS)} scenario(s); "
           f"branch-drift collector: {len(BD_SCENARIOS)} scenario(s); "
+          f"spec-meta collector: {len(SPEC_META_SCENARIOS)} scenario(s); "
+          f"step-summary collector: {len(STEPSUM_SCENARIOS)} scenario(s); "
           f"aggregate: {len(AGGREGATE_CASES)} case(s); "
           f"{len(failures)} failure(s).")
     sys.exit(1 if failures else 0)
