@@ -397,6 +397,10 @@ jobs:
       # for a stop-only run, which mutates nothing and must not queue behind
       # the very run it was asked to cancel.
       concurrency-group: ${{ steps.confirm.outputs.concurrency-group }}
+      # Internal job-to-job wiring only — never a workflow_call output
+      # (research.md D3). Non-empty only when a refusal-shaped step in THIS
+      # job actually ran and refused; empty on success, skip, or a crash.
+      refusal-reason: ${{ steps.identity.outputs.reason || steps.preflight.outputs.reason || steps.meta.outputs.reason }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v4
@@ -475,7 +479,10 @@ jobs:
           # never a legitimate "does not qualify", only a failed lookup.
           for pair in "default_branch:$default_branch" "base_ref:$base_ref" "head_ref:$head_ref"; do
             if [ -z "${pair#*:}" ]; then
-              echo "::error::wing-commander pr-conversation stage: could not resolve ${pair%%:*} for PR #$PR_NUMBER from the GitHub API. Refusing to treat an API failure as 'this PR is out of scope' — that would silently drop the request (FR-014/SC-005). Re-run once the API is reachable."
+              msg="wing-commander pr-conversation stage: could not resolve ${pair%%:*} for PR #$PR_NUMBER from the GitHub API. Refusing to treat an API failure as 'this PR is out of scope' — that would silently drop the request (FR-014/SC-005). Re-run once the API is reachable."
+              echo "::error::$msg"
+              echo "reason=$msg" >> "$GITHUB_OUTPUT"
+              echo "refused=true" >> "$GITHUB_OUTPUT"
               exit 1
             fi
           done
@@ -504,7 +511,23 @@ jobs:
             echo "wing-commander pr-conversation stage: PR #$PR_NUMBER (base=$base_ref head=$head_ref) is not an implementation PR this stage acts on — stopping with no reply (FR-018)." >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      # Refusal note (research.md D1). Posts to inputs.pr-number, not a
+      # resolved lifecycle issue — pr-number is the one identifier FR-003
+      # guarantees present regardless of how early this job died
+      # (research.md D6). The non-qualifying-PR early exit above is a
+      # deliberate silent stop (FR-018), not a refusal — it never writes
+      # refused/reason, so it cannot trigger this step.
+      - name: Report identity-resolution refusal on the PR
+        if: always() && steps.identity.outputs.refused == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ github.token }}
+          issue-number: ${{ inputs.pr-number }}
+          kind: action
+          summary: "This stage could not start — ${{ steps.identity.outputs.reason }}"
+
       - name: Preflight
+        id: preflight
         if: steps.identity.outputs.qualifies == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-preflight
         with:
@@ -514,6 +537,17 @@ jobs:
           use-bedrock: ${{ inputs.use-bedrock }}
           aws-role-arn: ${{ inputs.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
+
+      # Refusal note (research.md D1) — see "Report identity-resolution
+      # refusal" above.
+      - name: Report preflight refusal on the PR
+        if: always() && steps.preflight.outputs.refused == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ github.token }}
+          issue-number: ${{ inputs.pr-number }}
+          kind: action
+          summary: "This stage could not start — ${{ steps.preflight.outputs.reason }}"
 
       - name: Configure AWS credentials for Bedrock
         if: steps.identity.outputs.qualifies == 'true'
@@ -553,10 +587,24 @@ jobs:
           # 32671719013. Gate 28 now fails any such call in the tree.
           issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' | base64 -d | jq -r '.issue // empty')
           if [ -z "$issue" ]; then
-            echo "::error::wing-commander pr-conversation stage: cannot resolve the lifecycle issue number from $SPEC_DIR/spec-meta.json on $SPEC_BRANCH."
+            msg="wing-commander pr-conversation stage: cannot resolve the lifecycle issue number from $SPEC_DIR/spec-meta.json on $SPEC_BRANCH."
+            echo "::error::$msg"
+            echo "reason=$msg" >> "$GITHUB_OUTPUT"
+            echo "refused=true" >> "$GITHUB_OUTPUT"
             exit 1
           fi
           echo "issue-number=$issue" >> "$GITHUB_OUTPUT"
+
+      # Refusal note (research.md D1) — see "Report identity-resolution
+      # refusal" above.
+      - name: Report spec-meta refusal on the PR
+        if: always() && steps.meta.outputs.refused == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ github.token }}
+          issue-number: ${{ inputs.pr-number }}
+          kind: action
+          summary: "This stage could not start — ${{ steps.meta.outputs.reason }}"
 
       # specs/022-gate-closed-lifecycle: never trust the triggering event
       # payload — re-fetch live state before any write can occur.
@@ -1381,6 +1429,7 @@ jobs:
           persist-credentials: false
 
       - name: Preflight
+        id: preflight
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-preflight
         with:
           oauth-token: ${{ secrets.claude-code-oauth-token }}
@@ -1389,6 +1438,18 @@ jobs:
           use-bedrock: ${{ inputs.use-bedrock }}
           aws-role-arn: ${{ inputs.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
+
+      # Refusal note (research.md D1). Posts to inputs.pr-number — this job
+      # runs once per matrix leg with no lifecycle-issue output of its own;
+      # pr-number is the one identifier guaranteed present here.
+      - name: Report preflight refusal on the PR
+        if: always() && steps.preflight.outputs.refused == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ github.token }}
+          issue-number: ${{ inputs.pr-number }}
+          kind: action
+          summary: "This stage could not start — ${{ steps.preflight.outputs.reason }}"
 
       - name: Configure AWS credentials for Bedrock
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-bedrock-credentials
@@ -2220,3 +2281,139 @@ jobs:
             } > "$body_file"
             gh pr comment "$PR_NUMBER" --body-file "$body_file"
           fi
+
+  # Survivor job (the #224 idiom, research.md D4): watches
+  # classify-and-announce only (data-model.md's pr-conversation row) — `act`
+  # runs per matrix leg with its own in-job refusal callout and has no
+  # bearing on whether this stage "started". Split internally on
+  # refusal-reason == '' (D3's mutual-exclusion arm — a refusal already
+  # posted its own in-job note, FR-006).
+  stalled:
+    needs: [verify-image-prerequisites, classify-and-announce]
+    if: |
+      !cancelled() &&
+      ( needs.verify-image-prerequisites.result == 'failure' ||
+        needs.classify-and-announce.result == 'failure' ||
+        needs.classify-and-announce.result == 'skipped' )
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    concurrency:
+      group: wing-commander-pr-conversation-pr-${{ inputs.pr-number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      id-token: write
+    steps:
+      - name: Checkout consumer repository (bootstrap, default token)
+        if: needs.classify-and-announce.outputs.refusal-reason == ''
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        if: needs.classify-and-announce.outputs.refusal-reason == ''
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref" \
+              | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander pr-conversation stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        if: needs.classify-and-announce.outputs.refusal-reason == ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      - name: Wing Commander context
+        id: ctx
+        if: needs.classify-and-announce.outputs.refusal-reason == ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      # Independent identity re-derivation (research.md D6, pr-conversation
+      # row): never trust needs.classify-and-announce.outputs.* for
+      # identity, only for refusal-reason (D3). gh pr view recovers the
+      # spec/NNN-slug branch name from the head ref, then the same
+      # spec-meta.json read "Read lifecycle issue number..." above already
+      # performs, run again here. Any failure along the way leaves
+      # spec-dir/issue-number empty — the composite's own "record could not
+      # be updated" branch (research.md D5) handles that gracefully.
+      - name: Resolve PR identity independently
+        id: identity
+        if: needs.classify-and-announce.outputs.refusal-reason == ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr-number }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
+        run: |
+          set -uo pipefail
+          slug=""
+          spec_dir=""
+          issue=""
+          head_ref=$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json headRefName --jq '.headRefName' 2>/dev/null)
+          if [ -n "$head_ref" ] && [ "${head_ref#"$SPEC_PREFIX"}" != "$head_ref" ]; then
+            slug="${head_ref#"$SPEC_PREFIX"}"
+            spec_dir="specs/$slug"
+            issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$spec_dir/spec-meta.json" -f ref="$SPEC_PREFIX$slug" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.issue // empty' 2>/dev/null)
+          fi
+          {
+            echo "slug=$slug"
+            echo "spec-dir=$spec_dir"
+            echo "issue-number=$issue"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Determine which dependency did not start
+        id: reason
+        if: needs.classify-and-announce.outputs.refusal-reason == ''
+        env:
+          IMAGE_RESULT: ${{ needs.verify-image-prerequisites.result }}
+          JOB_RESULT: ${{ needs.classify-and-announce.result }}
+        run: |
+          if [ "$IMAGE_RESULT" = "failure" ]; then
+            reason="the verify-image-prerequisites job failed, so the pr-conversation stage never started"
+          elif [ "$JOB_RESULT" = "skipped" ]; then
+            reason="the pr-conversation stage was skipped because a dependency it needs did not run"
+          else
+            reason="the pr-conversation stage failed before it could run its own steps"
+          fi
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+
+      # pr-number is the one identifier FR-003 guarantees present regardless
+      # of how early this job died — used as the post target whenever the
+      # independent lifecycle-issue lookup above did not resolve one
+      # (research.md D6).
+      - name: Report the stage did not start
+        if: needs.classify-and-announce.outputs.refusal-reason == ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-chain-stop-notice
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ steps.identity.outputs.issue-number || inputs.pr-number }}
+          spec-dir: ${{ steps.identity.outputs.spec-dir }}
+          spec-branch: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug }}
+          reason: ${{ steps.reason.outputs.reason }}
