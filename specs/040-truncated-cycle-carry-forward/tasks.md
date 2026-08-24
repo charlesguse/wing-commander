@@ -274,3 +274,8 @@ User Story 1 alone is unsafe to ship on its own — R1 in spec.md is explicit th
 - [ ] Add a scenario to `verify-truncated-cycle-carry-forward.py` for the primary read-back ("Read back cycle outcome") with `CYCLE_RESULT=success` and `VERDICT=exhausted` set together (with qualifying progress); assert `truncated=true`, `converged=false`.
 - [ ] Add the equivalent scenario for the retry read-back ("Read back retry outcome").
 - [ ] Add a mutation that swaps the order of the `VERDICT == "exhausted"` / `CYCLE_RESULT == "success"` checks in both steps and confirm it fails the new assertions (FR-019 shape).
+
+## Maintainer Feedback
+
+- [ ] Change `implement.yml`'s "Fail loud on non-healthy agent verdict (cycle)" (and its retry-path mirror) so that when the eventual classification is truncated, it emits `::notice::` or `::warning::` naming the truncation and the step stays green; keep `::error::` (and the red step) for the failed classification only. This likely requires deferring or re-deriving the annotation after "Read back cycle outcome" has classified the run, since verdict alone can't distinguish truncated from failed.
+- [ ] Add a Gate 26 scenario asserting the annotation kind/step outcome for a truncated cycle is not `::error::`, and that a genuinely failed exhausted-with-no-progress cycle still gets `::error::` (FR-015, FR-013).
