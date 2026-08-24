@@ -133,7 +133,7 @@ def fixtures_for(site):
         entry: {"result": "failure"}}, True)
     row("entry job skipped", {entry: {"result": "skipped"}}, True)
     row("upstream dependency failure, entry job skipped", {
-        upstream: {"result": "failure"}, entry: {"result": "skipped"}}, True)
+        upstream: {"result": "failure"}, entry: {"result": "skipped"}}, False)
     row("run cancelled", {entry: {"result": "failure"}}, False, cancelled=True)
     if site["exhausted_retry"]:
         row("exhausted retry: entry success, final-ok false, no refusal", {

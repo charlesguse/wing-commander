@@ -100,11 +100,22 @@ def _mut_bespoke_condition(cond):
     return "always()"
 
 
+def _mut_remove_image_prereq_guard(cond):
+    """Strip the `needs.verify-image-prerequisites.result == 'success' &&`
+    leading conjunct — the notice would fire from inside the adopter's own
+    already-failed container again (Gate 23)."""
+    pat = re.compile(
+        r"needs\.verify-image-prerequisites\.result == 'success' &&\s*")
+    return pat.sub("", cond, count=1)
+
+
 MUTATIONS = [
     ("remove the !cancelled() status-check guard", _mut_remove_status_guard),
     ("narrow: drop the entry-job-itself-failed arm", _mut_narrow_drop_failure_arm),
     ("widen: also fire on the entry job's own success", _mut_widen_admit_success),
     ("bespoke: not the shared shape at all (always())", _mut_bespoke_condition),
+    ("remove the verify-image-prerequisites success guard",
+     _mut_remove_image_prereq_guard),
 ]
 
 

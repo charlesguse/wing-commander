@@ -400,3 +400,40 @@ documented in-line above and restated here for the issue comment:
   to an unresolvable lifecycle issue — the PR conversation is the surface
   the maintainer is already on, and is the only identifier FR-003 guarantees
   survives every failure shape on this stage.
+
+## D11 — An image-prerequisite failure is excluded from the chain-stop notice (Gate 23 fix, maintainer feedback)
+
+**Decision**: each of the seven survivor-job `if:` conditions (D4) gained a
+new leading conjunct, `needs.verify-image-prerequisites.result == 'success'
+&&`, so the chain-stop notice no longer fires when `verify-image-
+prerequisites` itself failed. It is still true that a stage whose image
+prerequisites failed died at entry — but the survivor job that would post the
+notice runs its own steps inside `${{ inputs.container-image }}`, the very
+image `verify-image-prerequisites` just failed to validate, where `gh`/`jq`/
+`git` cannot be trusted to run at all. `verify-image-prerequisites`'s own
+loud failure is the adopter-facing signal for this cause instead; asking the
+survivor job to also report from inside a container that may not work is the
+defect Gate 23 (`lint-workflows.yml`) flags.
+
+**Rationale**: Gate 23 already treats "a job whose steps assume a container
+that a same-run dependency failed to validate" as a defect pattern across
+this repository; the chain-stop notice's own survivor jobs were not exempt
+from that pattern merely because they exist to report failure. Excluding
+this one upstream cause keeps the survivor job itself confined to
+`verify-image-prerequisites == success`, where its `gh`/`jq`/`git` steps are
+trustworthy again.
+
+**Scope note**: this narrows spec.md's Acceptance Scenario 3 and the
+matching Edge Cases bullet ("the dependency one level above the implement
+job fails ... the notice is posted") to exclude specifically the
+`verify-image-prerequisites` upstream case. The rest of Acceptance
+Scenario 3 — a stage's own entry job failing or being skipped for a
+non-image reason — is unaffected and still fires the notice.
+
+**Verification**: `wc_chain_stop_conditions.py`'s `fixtures_for()` row
+"upstream dependency failure, entry job skipped" now expects `False` for
+every call site (was `True`); Gate 33 (`verify-chain-stop-notice.py`) gained
+a fifth mutation, stripping this new leading conjunct, which the existing
+fixture table now catches without further changes; the refusal-exclusion
+check (User Story 3) reuses the same shared fixture table and inherits both
+changes automatically.

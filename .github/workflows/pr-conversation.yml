@@ -2291,6 +2291,7 @@ jobs:
   stalled:
     needs: [verify-image-prerequisites, classify-and-announce]
     if: |
+      needs.verify-image-prerequisites.result == 'success' &&
       !cancelled() &&
       ( needs.verify-image-prerequisites.result == 'failure' ||
         needs.classify-and-announce.result == 'failure' ||

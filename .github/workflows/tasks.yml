@@ -1325,6 +1325,7 @@ jobs:
   stalled:
     needs: [verify-image-prerequisites, resolve-spec, tasks]
     if: |
+      needs.verify-image-prerequisites.result == 'success' &&
       inputs.mode == 'generate' &&
       !cancelled() &&
       ( needs.verify-image-prerequisites.result == 'failure' ||
@@ -1449,6 +1450,7 @@ jobs:
   stalled-approved:
     needs: [verify-image-prerequisites, resolve-spec, tasks-approved]
     if: |
+      needs.verify-image-prerequisites.result == 'success' &&
       inputs.mode == 'approved' &&
       !cancelled() &&
       ( needs.verify-image-prerequisites.result == 'failure' ||

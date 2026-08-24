@@ -1833,6 +1833,7 @@ jobs:
   stalled:
     needs: [verify-image-prerequisites, implement]
     if: |
+      needs.verify-image-prerequisites.result == 'success' &&
       !cancelled() &&
       ( needs.verify-image-prerequisites.result == 'failure' ||
         needs.implement.result == 'failure' ||

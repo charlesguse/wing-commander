@@ -1245,6 +1245,7 @@ jobs:
   stalled:
     needs: [verify-image-prerequisites, intake]
     if: |
+      needs.verify-image-prerequisites.result == 'success' &&
       !cancelled() &&
       ( needs.verify-image-prerequisites.result == 'failure' ||
         needs.intake.result == 'failure' ||
