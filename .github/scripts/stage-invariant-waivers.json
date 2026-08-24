@@ -1,0 +1,33 @@
+{
+  "$comment": [
+    "Registered exceptions to constitution VII's stage-layer rule, enforced by",
+    ".github/scripts/verify-stage-invariants.py (Gate 31) at pull-request time",
+    "and again at release-dispatch time from release.yml's Gate 1b.",
+    "",
+    "A workflow_call-only stage is the PUBLISHED CONTRACT: it owns no trigger",
+    "and reads no ambient repository state. Every deviation lives here, in the",
+    "open, with a reason and a tracking issue -- never as a name missing from a",
+    "list, and never as a code comment alone. watchdog.yml's exception used to",
+    "be expressed by NOT APPEARING in release.yml's brace expansion, while its",
+    "own comment called itself 'release.yml Gate 1b's documented vars.*-read",
+    "exception' and release.yml never mentioned the watchdog (#149).",
+    "",
+    "Every entry is STALE-CHECKED in both directions. A pattern that matches",
+    "nothing fails the gate, so a waiver cannot outlive its reason. A `count`",
+    "that no longer matches fails the gate, so a waived deviation can neither",
+    "grow nor quietly widen past the deviation it covers. Changing a count is",
+    "therefore a deliberate, reviewed act -- which is the point: at v2.2.0",
+    "every stage the old gate DID cover read vars.* exactly zero times, so a",
+    "waiver should feel uncomfortable to hold."
+  ],
+  "waivers": [
+    {
+      "file": ".github/workflows/watchdog.yml",
+      "check": "vars",
+      "pattern": "^vars\\.WING_COMMANDER_[A-Z_]+$",
+      "count": 15,
+      "issue": "#149",
+      "reason": "The watchdog's fifteen repository-variable reads: five branch prefixes twice over (specs/018), two model overrides (WING_COMMANDER_DIAGNOSE_MODEL, WING_COMMANDER_IMPLEMENT_MODEL), the self-dispatch cap, and WING_COMMANDER_WATCHDOG_PAUSED -- the last of these a deliberately DEPRECATED shim (#152). The real pause kill switch now lives in the two wrapper workflows, where it stops a run before any agent bills; the stage-side read is retained only because it ships in v2.1.0, so removing it alone would be a breaking change spent on one read out of fifteen. Scheduled removal: all fifteen go together in the watchdog rework (specs/024-watchdog-precision-hardening, which removes rungs 1-2), in one deliberate major. Until then the count is the guard rail: #149 measured these reads growing 2 -> 9 -> 15 across four tagged releases with the release-time gate passing every time, because watchdog.yml was not in the eight-file list it grepped. A sixteenth read fails this gate on the pull request that introduces it."
+    }
+  ]
+}

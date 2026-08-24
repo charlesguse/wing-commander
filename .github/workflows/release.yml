@@ -200,11 +200,34 @@ jobs:
           exit "$fail"
 
       # Gate 1b: published-stage invariants (research.md D2/D5, FR-005,
-      # constitution II, spec edge case 3). Interface rules that actionlint
-      # cannot express — one grep each:
-      #   - no github.event.* reads (event facts arrive only via inputs)
-      #   - no vars.* reads (configuration arrives only via declared inputs)
+      # constitution II/VII, spec edge case 3). Interface rules that
+      # actionlint cannot express.
+      #
+      # The layer-boundary half — no `github.event` read, no `vars.*` read,
+      # no `secrets: inherit` — is no longer implemented here. It lives in
+      # .github/scripts/verify-stage-invariants.py (Gate 31), which
+      # lint-workflows.yml runs on every pull request touching
+      # .github/workflows/**, and which this step invokes unchanged: one
+      # implementation, so the release-time answer and the PR-time answer
+      # cannot drift apart (#149). Registered deviations are stale-checked
+      # entries in .github/scripts/stage-invariant-waivers.json.
+      #
+      # Both defects that motivated the move are worth keeping written down.
+      # TIMING: this step runs only on a `workflow_dispatch` release, so a
+      # violation was never seen on the pull request that introduced it.
+      # COVERAGE, the load-bearing half: these greps named a hardcoded
+      # brace expansion of eight file names while eleven workflows declare
+      # `workflow_call` as their only trigger. watchdog.yml was on neither
+      # that list nor actionlint's, so its `vars.*` reads grew 2 → 9 → 15
+      # across FOUR tagged releases with this very step passing each time.
+      # It did not miss a window between checks; it ran, and could not see
+      # the file. A hardcoded list at PR time would have passed identically.
+      #
+      # The three release-contract checks below stay here, but they no
+      # longer carry that list either — the stage set is derived, the same
+      # way Gate 1a derives it:
       #   - no literal main as a branch ref (default-branch input/derivation)
+      #   - the publisher's owner/repo only as the pipeline-repo default
       #   - every agent step (a `uses: anthropics/claude-code-action` line —
       #     NOT a bare mention, which also matches `#1462`-style issue refs in
       #     comments) carries --model and --max-turns
@@ -213,26 +236,36 @@ jobs:
           set -uo pipefail
           fail=0
 
-          if grep -n 'github\.event\.' .github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase}.yml; then
-            echo "::error::reusable stages must not read github.event.* — event facts arrive via workflow_call inputs (research.md D2)."
-            fail=1
-          fi
+          # Constitution VII, same script the PR gate runs.
+          python3 .github/scripts/verify-stage-invariants.py || fail=1
 
-          if grep -n 'vars\.' .github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase}.yml; then
-            echo "::error::reusable stages must not read vars.* — configuration arrives via declared inputs (research.md D5)."
-            fail=1
+          # Captured FIRST, then split — `mapfile -t a < <(cmd)` reports
+          # mapfile's own status, so a dead derivation would fall through to
+          # the zero-stage guard and be reported as a moved trigger rather
+          # than as a broken script. Same reasoning as Gate 1a's.
+          if ! stage_list="$(python3 .github/scripts/wc_published_stages.py)"; then
+            echo "::error::could not derive the published stage set (.github/scripts/wc_published_stages.py failed); the checks below have nothing to read."
+            exit 1
+          fi
+          stages=()
+          while IFS= read -r stage_path; do
+            [ -n "$stage_path" ] && stages+=("$stage_path")
+          done <<< "$stage_list"
+          if [ "${#stages[@]}" -eq 0 ]; then
+            echo "::error::no workflow declares on.workflow_call — these checks examined nothing, which must never read as a pass."
+            exit 1
           fi
 
           # Literal default-branch assumptions: 'main' used as a ref/base.
           # The word may appear in prose comments; check the wired forms.
-          if grep -nE -- "(--base main|ref: main|origin/main[^_]|'main'|\"main\")" .github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase}.yml; then
+          if grep -nE -- "(--base main|ref: main|origin/main[^_]|'main'|\"main\")" "${stages[@]}"; then
             echo "::error::reusable stages must not hardcode the branch name main — use the default-branch input or its derived value (spec edge case 3)."
             fail=1
           fi
 
           # Hardcoded publisher strings are allowed ONLY as the pipeline-repo
           # input default (FR-005).
-          stray=$(grep -n 'charlesguse/wing-commander' .github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase}.yml | grep -v 'default: charlesguse/wing-commander' || true)
+          stray=$(grep -n 'charlesguse/wing-commander' "${stages[@]}" | grep -v 'default: charlesguse/wing-commander' || true)
           if [ -n "$stray" ]; then
             printf '%s\n' "$stray"
             echo "::error::the publisher's owner/repo may appear only as the pipeline-repo input default (FR-005)."
@@ -244,7 +277,7 @@ jobs:
           # `uses:` wiring form so comment references to the action's issue
           # tracker (e.g. anthropics/claude-code-action#1462) are not miscounted
           # as agent steps.
-          for f in .github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase}.yml; do
+          for f in "${stages[@]}"; do
             agents=$(grep -c 'uses: anthropics/claude-code-action' "$f" || true)
             models=$(grep -c -- '--model ' "$f" || true)
             turns=$(grep -c -- '--max-turns ' "$f" || true)
@@ -254,6 +287,7 @@ jobs:
             fi
           done
 
+          echo "Gate 1b: ${#stages[@]} published stage(s) checked."
           exit "$fail"
 
       # Gate 2: version syntax, tag collision, and the breaking-release rule
