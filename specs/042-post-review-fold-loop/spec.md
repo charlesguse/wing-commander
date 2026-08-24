@@ -67,7 +67,7 @@ A maintainer requested changes on a final PR. Some time later, the same PR's des
 6. **Given** a specification with no final PR yet, **When** finalize runs, **Then** it opens exactly one PR, as it does today.
 7. **Given** two finalize runs for the same specification in quick succession, **When** both complete, **Then** there is still exactly one final PR and the requester sees at most one re-review request per fold.
 8. **Given** a refresh run, **When** it completes, **Then** it has not opened a second PR, reopened a closed one, approved anything, or merged anything.
-9. **Given** a PR body carrying human prose outside the machine-owned delimiters and a human edit inside them, **When** the refresh runs, **Then** the prose outside is preserved, the region inside is regenerated from the branch, and a per-cycle entry for this fold is appended beneath it.
+9. **Given** a PR body carrying human prose outside the machine-owned delimiters and a human edit inside them, **When** the refresh runs, **Then** the prose outside is preserved, the state block inside is regenerated from the branch, and an entry for this fold is appended to the fold log without rewriting earlier entries.
 
 ---
 
