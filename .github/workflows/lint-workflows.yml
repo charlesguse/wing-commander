@@ -2725,6 +2725,24 @@ jobs:
       - name: Gate 28 self-test — the detector actually detects
         run: python3 .github/scripts/verify-gh-api-explicit-method.py --self-test
 
+      # Gate 29 — cleanup's lifecycle guard. Behavioral, like gates 8/9/14:
+      # every cleanup arm opens by reading `issue` and `spec_dir` out of the
+      # spec branch's spec-meta.json, and nothing static can see that the two
+      # faults were tested in one condition and reported with one message that
+      # was false for the common one — spec_dir matched; only `issue` was
+      # empty. That refusal also made an outcome UNREACHABLE: a hand-submitted
+      # spec carries `"issue": null` on spec/<slug> until its plan PR merges,
+      # which is exactly the window mark-stalled fires in (#73, gap 1).
+      #
+      # The gate executes the shipped step against each state spec-meta.json
+      # and the label lookup can be in, requires each refusal to name the
+      # fault it actually hit and not another one, requires the spec:<slug>
+      # fallback to fire only when `issue` is empty, to accept exactly one
+      # labelled issue rather than pick the newest of several, and to treat a
+      # failed lookup as its own outcome rather than as "found none" (#188).
+      - name: Gate 29 — cleanup's lifecycle guard names the fault it hit and recovers a null issue
+        run: python3 .github/scripts/verify-cleanup-lifecycle-guard.py
+
       # Gate 31 — constitution VII's stage-layer rule, at PR time and over
       # every published stage. `release.yml`'s Gate 1b has enforced two
       # thirds of this since spec 010 and got both halves wrong (#149):
