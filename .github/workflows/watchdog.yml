@@ -1388,8 +1388,11 @@ jobs:
           # rather than free-text authorship — that constraint is what makes
           # the fingerprint derivable from collector output (#118). With no
           # signals there is nothing to cite and the field goes unconstrained;
-          # a Finding without signals cannot be signal-fingerprinted anyway
-          # and falls back to the normalizedFacts path in triage.
+          # a Finding without signals cannot be signal-fingerprinted anyway,
+          # so the evidence-validity gate suppresses it before triage's
+          # fingerprint step ever runs (spec 024 FR-027) — the
+          # normalizedFacts fallback this comment used to describe was
+          # deleted by T030.
           sig_ids="$(jq -c '[.[].id] | unique' "${{ runner.temp }}/watchdog-signals.json" 2>/dev/null || echo '[]')"
           if [ "$sig_ids" = "[]" ] || [ -z "$sig_ids" ]; then
             sigid_schema='{"type":"string"}'
@@ -2250,7 +2253,16 @@ jobs:
               echo "fingerprint="
               echo "short-fingerprint="
               echo "canonical-facts="
-              echo "dedup="
+              # Reuses the dedup step's own "unknown" outcome rather than an
+              # empty string: every dedup consumer below (the "Ensure
+              # pipeline-defect issue" guard, and this job's report step)
+              # already treats "unknown" as suppress-and-report — one
+              # mechanism, not a second empty-string special case. Before
+              # this, an empty dedup fell through the guard's `!=
+              # 'data-integrity' && != 'unknown'` check into the
+              # comment-on-existing-issue branch and ran `gh issue comment
+              # ""`, which fails the job under this run: block's `-e`.
+              echo "dedup=unknown"
               echo "dedup-issue="
             } >> "$GITHUB_OUTPUT"
           fi
