@@ -49,7 +49,8 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from wc_shell_harness import ensure_jq, resolve_bash, run_step, use_utf8_stdout
+from wc_shell_harness import (ensure_jq, find_step as find_composite_step,
+                              resolve_bash, run_step, use_utf8_stdout)
 
 COMPOSITE = ".github/actions/wing-commander-chain-stop-notice/action.yml"
 
@@ -66,22 +67,6 @@ GH_STUB = """#!/bin/sh
 echo "gh $*" >> "$GH_CALLS"
 exit 0
 """
-
-
-def find_composite_step(path, name):
-    """The step dict named `name` in composite action `path`'s runs.steps.
-
-    action.yml has no `jobs:` — wc_shell_harness.find_step only looks at
-    workflow files with a jobs mapping, so a composite needs this sibling
-    reader instead of a modification to that shared helper.
-    """
-    import yaml
-    action = yaml.safe_load(open(path, encoding="utf-8")) or {}
-    for step in (action.get("runs") or {}).get("steps") or []:
-        if (step or {}).get("name") == name:
-            return step
-    sys.exit(f"::error file={path}::no step named {name!r}. If it was renamed, "
-             f"update the composite and this harness together.")
 
 
 def load_steps():

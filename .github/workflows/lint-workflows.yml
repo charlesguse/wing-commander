@@ -2773,6 +2773,15 @@ jobs:
       - name: Gate 29 — a stage that dies at entry reaches the chain-stop notice, and nothing else does
         run: python3 .github/scripts/verify-chain-stop-notice.py
 
+      # specs/041-implement-stall-notice, User Story 3 — a refusal is still
+      # a refusal (FR-006's mutual exclusion, driven against the real
+      # preflight shell rather than a modelled reason string), and the four
+      # currently-quiet paths (duplicate dispatch, closed lifecycle,
+      # successful cycle, cancelled run) stay byte-for-byte quiet across
+      # all seven survivor-job conditions.
+      - name: A refusal excludes the chain-stop notice, and quiet paths stay quiet
+        run: python3 .github/scripts/verify-chain-stop-refusal-exclusion.py
+
       # Gate 26 self-test — the refs check can tell its failures apart.
       # The live half of Gate 26 runs in the `registered` job below, against
       # the real remote; on a pull request there is nothing to check, because

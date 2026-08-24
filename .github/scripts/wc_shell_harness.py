@@ -208,13 +208,24 @@ def run_step(bash, script, workdir, env_extra, runner_temp):
 
 
 def find_step(path, name):
-    """The step dict named `name` in the single job of workflow `path`."""
+    """The step dict named `name` in workflow OR composite action `path`.
+
+    A workflow's steps live under `jobs.<id>.steps`; a composite action
+    (no `jobs:` at all) keeps its single step list under `runs.steps`
+    instead (specs/041-implement-stall-notice's wing-commander-chain-stop-
+    notice and its callers both need step lookups, one of each shape) — so
+    this checks both rather than making every composite-testing harness
+    carry its own duplicate of this function.
+    """
     import yaml
-    wf = yaml.safe_load(open(path, encoding="utf-8")) or {}
-    for job in (wf.get("jobs") or {}).values():
+    doc = yaml.safe_load(open(path, encoding="utf-8")) or {}
+    for job in (doc.get("jobs") or {}).values():
         for step in (job or {}).get("steps") or []:
             if (step or {}).get("name") == name:
                 return step
+    for step in (doc.get("runs") or {}).get("steps") or []:
+        if (step or {}).get("name") == name:
+            return step
     sys.exit(f"::error file={path}::no step named {name!r}. If it was renamed, "
              f"update the workflow and its harness together — do not drop the "
              f"check.")
