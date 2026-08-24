@@ -285,3 +285,10 @@ User Story 1 alone is unsafe to ship on its own — R1 in spec.md is explicit th
 - [ ] In `implement.yml`'s "Record truncated-cycle count" step, only emit the `count` output after the commit+push has actually succeeded (or verify the push landed before reporting the new value); on a persist failure, emit an explicit unknown/failed marker instead of a stale or empty count.
 - [ ] In "Dispatch next step", when the persisted-count marker indicates failure, state in the lifecycle comment that the consecutive-truncation count could not be recorded, rather than printing an empty or wrong number.
 - [ ] Add a Gate 26 scenario simulating a persist failure (e.g. push rejection) and asserting the lifecycle comment never renders an empty or unpersisted count (FR-011, FR-012, SC-007).
+
+## Maintainer Feedback
+
+- [ ] Rename this feature's gate from "Gate 26" to "Gate 30" in `lint-workflows.yml`'s step name and any nearby comment header.
+- [ ] Update `verify-truncated-cycle-carry-forward.py`'s `GATE_PREFIX` constant (and any other Gate-26-specific text/docstrings) to "Gate 30".
+- [ ] Update this spec's plan.md/tasks.md/contracts and any other docs referring to "Gate 26" for this feature to "Gate 30".
+- [ ] Confirm no remaining collision: grep `lint-workflows.yml` for `Gate 30` before landing, and confirm the FR-020 reflexive self-check still matches only this feature's own step.
