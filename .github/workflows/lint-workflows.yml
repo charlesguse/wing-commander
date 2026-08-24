@@ -2697,6 +2697,34 @@ jobs:
       - name: Gate 27 self-test — the tool-list check detects what it claims to
         run: python3 .github/scripts/verify-stage-tool-lists.py --self-test
 
+      # Gate 28 — every `gh api` call that carries a field says which method
+      # it is using. `gh api` defaults to GET only until it is handed a body:
+      # give it `-f`/`-F`/`--field`/`--raw-field`/`--input` without `-X` and
+      # it silently switches to POST. pr-conversation.yml's lifecycle-issue
+      # lookup read spec-meta.json that way, so its "read" was a create-file
+      # request; measured in run 32671719013 it answered `Not Found (HTTP
+      # 404)`, then `base64: invalid input`, then the step's own
+      # `::error::cannot resolve the lifecycle issue number` — meaning the
+      # stage had never once resolved a lifecycle issue in production, and
+      # every maintainer review or comment on an implementation PR died
+      # there. Nothing about the call site says "POST", which is why the
+      # rule is that the author must: a genuine write costs one `-X POST` to
+      # state, and then a reader of the diff can see it. Reaches every
+      # workflow, composite action and checked-in script under
+      # .github/scripts, so the class cannot land again elsewhere. Escape
+      # hatch is a same-line or immediately-preceding
+      # `# wc-gh-method-exempt: <reason>` comment; a bare one does not count.
+      - name: Gate 28 — every `gh api` call that passes a field states its method
+        run: python3 .github/scripts/verify-gh-api-explicit-method.py
+
+      # Gate 28 says nothing about whether Gate 28 works — same reasoning as
+      # gates 15/16/17/18's self-tests. Twenty-one fixtures (the measured
+      # defect, the fix, deliberate `-X POST`/`-X PATCH` writes, each field
+      # spelling, a `\`-continued call, and the pipe/quoting false-positive
+      # cases) plus eight mutations, each of which must be caught by one.
+      - name: Gate 28 self-test — the detector actually detects
+        run: python3 .github/scripts/verify-gh-api-explicit-method.py --self-test
+
       # Gate 26 self-test — the refs check can tell its failures apart.
       # The live half of Gate 26 runs in the `registered` job below, against
       # the real remote; on a pull request there is nothing to check, because

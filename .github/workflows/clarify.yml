@@ -462,7 +462,10 @@ jobs:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           COMMENT_ID: ${{ inputs.comment-id }}
         run: |
-          gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
+          # `-X POST` is what this call has always done — `gh api` switches
+          # method as soon as it is given a field — but saying it out loud is
+          # the only form in which "this is a write" is checkable (Gate 28).
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
             -f content=eyes --silent
 
       # The comment body is untrusted. The stage fetches it from the API and

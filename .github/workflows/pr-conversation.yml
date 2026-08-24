@@ -545,7 +545,13 @@ jobs:
           SPEC_DIR: ${{ steps.identity.outputs.spec-dir }}
           SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug }}
         run: |
-          issue=$(gh api "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' | base64 -d | jq -r '.issue // empty')
+          # `-X GET` is load-bearing: `gh api` switches to POST the moment it
+          # is handed a field (`-f`/`-F`/`--field`/`--raw-field`/`--input`)
+          # with no explicit method, so without it this read is a create-file
+          # request and answers `Not Found (HTTP 404)` — which is exactly what
+          # it did, on every run of this stage, until it was measured in run
+          # 32671719013. Gate 28 now fails any such call in the tree.
+          issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' | base64 -d | jq -r '.issue // empty')
           if [ -z "$issue" ]; then
             echo "::error::wing-commander pr-conversation stage: cannot resolve the lifecycle issue number from $SPEC_DIR/spec-meta.json on $SPEC_BRANCH."
             exit 1

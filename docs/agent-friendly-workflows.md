@@ -198,6 +198,16 @@ you have never seen fail is not monitoring.
   an array/object endpoint — both resolve to page-shaped garbage once a read
   passes its first page, silently, since neither raises a step failure.
   Gate 18 (`lint-workflows.yml`) flags any call not written this way.
+- **A field flag turns `gh api` into a POST.** `gh api` is a GET only until
+  it is handed a body: pass `-f`, `-F`, `--field`, `--raw-field` or
+  `--input` without `-X`/`--method` and it silently switches to POST, so a
+  "read" written that way is a create request and answers whatever the POST
+  endpoint says — `Not Found (HTTP 404)` for a contents read, which is how
+  pr-conversation's lifecycle-issue lookup failed on every run it ever made
+  (run 32671719013). Say the method out loud: `-X GET` on a read (or move
+  the parameter into the path as `?ref=…`), `-X POST` on a write, so the
+  diff shows which one it is. Gate 28 (`lint-workflows.yml`) fails any
+  `gh api` call in the tree that passes a field without a method.
 - **Job display names are not job ids**: reusable workflows prefix
   (`watchdog / collect`), matrix jobs suffix (`triage (step-stalled, ...)`),
   and a matrix parameter can itself contain `/ `. Normalize suffix first,
