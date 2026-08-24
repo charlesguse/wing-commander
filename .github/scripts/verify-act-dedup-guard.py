@@ -157,6 +157,10 @@ def run_ensure_issue(step, decision_outputs, tmproot):
     when it does not make the step itself non-zero."""
     resolved_env = {
         "GH_TOKEN": "dummy-token",
+        # The shipped step reads $GITHUB_REPOSITORY under set -u; resolve it
+        # here so the gate is reproducible outside a runner (review finding
+        # on PR #240 — CI only passed by inheriting the ambient variable).
+        "GITHUB_REPOSITORY": "charlesguse/wing-commander",
         "DEDUP_OUTCOME": decision_outputs.get("dedup", ""),
         "DEDUP_ISSUE": decision_outputs.get("dedup-issue", ""),
         "FINGERPRINT": decision_outputs.get("fingerprint", ""),
