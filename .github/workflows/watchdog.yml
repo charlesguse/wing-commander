@@ -53,6 +53,26 @@ on:
         # budget should never cause: a watchdog that reaches no verdict looks
         # exactly like a watchdog that found nothing wrong.
         default: 30
+      propose-fix-model:
+        description: >
+          Deprecated, accepted for v2 compatibility only — propose-fix was
+          removed by specs/024-watchdog-precision-hardening (FR-014); the
+          watchdog no longer proposes fixes, so this input has no effect.
+          No step in this workflow reads it. Removal scheduled for the next
+          major version — see issue #140.
+        type: string
+        required: false
+        default: claude-sonnet-5
+      propose-fix-max-turns:
+        description: >
+          Deprecated, accepted for v2 compatibility only — propose-fix was
+          removed by specs/024-watchdog-precision-hardening (FR-014); the
+          watchdog no longer proposes fixes, so this input has no effect.
+          No step in this workflow reads it. Removal scheduled for the next
+          major version — see issue #140.
+        type: number
+        required: false
+        default: 30
       pipeline-repo:
         description: >
           Repository to check out for the pipeline's shared composite actions

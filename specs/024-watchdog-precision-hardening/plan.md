@@ -158,7 +158,14 @@ issue-only path); `.specify/memory/watchdog-guardrails.json` (deleted);
 - **VII. Two Interfaces**: `watchdog.yml` remains `workflow_call`-only
   with no new `github.event.*`/`vars.*` reads; the changes here are
   entirely inside the reusable stage's own deterministic job logic.
-  **Pass.**
+  This feature does, however, remove two published `workflow_call`
+  inputs (`propose-fix-model`, `propose-fix-max-turns`), which this
+  principle names a breaking change on its own terms regardless of
+  whether any step still reads them. Resolution: both inputs are
+  re-added with their pre-024 types/defaults, described as
+  deprecated-and-ignored (accepted for v2 compatibility only, no
+  step reads either, removal scheduled for the next major — issue
+  #140), rather than dropped outright. **Pass**, on that basis.
 - **VIII. A Green Check Means What It Says**: This principle is the
   direct justification for deleting Gate 17 alongside rungs 1–2
   (research.md) rather than leaving it checking a subject that no longer
