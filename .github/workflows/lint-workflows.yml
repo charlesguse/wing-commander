@@ -2725,6 +2725,37 @@ jobs:
       - name: Gate 28 self-test — the detector actually detects
         run: python3 .github/scripts/verify-gh-api-explicit-method.py --self-test
 
+      # Gate 31 — constitution VII's stage-layer rule, at PR time and over
+      # every published stage. `release.yml`'s Gate 1b has enforced two
+      # thirds of this since spec 010 and got both halves wrong (#149):
+      # it runs only on a `workflow_dispatch` release, so it never sees the
+      # pull request that introduces a violation; and it greps a hardcoded
+      # brace expansion of eight file names when there are eleven
+      # `workflow_call`-only stages. watchdog.yml was in neither that list
+      # nor actionlint's, and its `vars.*` reads grew 2 → 9 → 15 across
+      # four tagged releases with Gate 1b passing every time. That is not a
+      # gap between checks — the gate ran and could not see the file, and a
+      # PR-time gate carrying the same list would have passed identically.
+      # So the stage list is derived (twice, from two readers), and the
+      # watchdog's exception is a stale-checked waiver in
+      # stage-invariant-waivers.json rather than a name missing from a list.
+      #
+      # Both subjects already trigger this workflow: `.github/workflows/**`
+      # covers the stages, `.github/scripts/**` covers the waiver file.
+      # release.yml's Gate 1b now calls this same script, so there is one
+      # implementation and the release-time check cannot drift from this one.
+      - name: Gate 31 — no published stage reads github.event, vars.*, or inherits secrets
+        run: python3 .github/scripts/verify-stage-invariants.py
+
+      # Same reasoning as Gates 22–27's self-tests, and load-bearing here:
+      # the fleet this runs against is uniform apart from one waived stage,
+      # so a green Gate 31 on the real repository says almost nothing about
+      # whether Gate 31's detection — or its waiver staleness checking —
+      # works. The fixtures are throwaway repository roots on disk, so
+      # discovery, comment stripping and waiver loading are all exercised.
+      - name: Gate 31 self-test — the invariant scan detects what it claims to
+        run: python3 .github/scripts/verify-stage-invariants.py --self-test
+
       # Gate 26 self-test — the refs check can tell its failures apart.
       # The live half of Gate 26 runs in the `registered` job below, against
       # the real remote; on a pull request there is nothing to check, because

@@ -32,8 +32,9 @@ issue closed ◀──────────── [6 cleanup] ◀── branc
 This section describes the **published contract** layer (constitution VII).
 
 Every stage body lives in a published stage workflow (`<stage>.yml`) whose only trigger is
-`workflow_call` — ten of them today. Stage workflows are *required* not to
-read `github.event.*` or `vars.*`; every event fact (issue number, head/base
+`workflow_call` — eleven of them today. Stage workflows are *required* not to
+read `github.event.*` or `vars.*`, and never to take `secrets: inherit`;
+every event fact (issue number, head/base
 refs, merged flag, comment id) and
 every knob (model, max-turns, review mode, iteration cap, chaining targets)
 is a declared, typed input with a default matching the constitution's
@@ -43,14 +44,30 @@ the worked example, and adopters write the same shape against a version tag.
 
 **One stage does not meet the rule.** `watchdog.yml` reads `vars.*` in 15
 places — branch prefixes, two model overrides, the self-dispatch cap, and a
-deprecated pause shim. It went unnoticed because `release.yml`'s Gate 1b
-greps a hardcoded eight-file list rather than every published stage, so the
-ninth was never examined; the count grew 2 → 9 → 15 across four tagged
-releases with the gate passing each time. Constitution VII requires a
-deviation like this to carry a registered, machine-checked exception. Neither
-the register nor the complete gate exists yet — [issue
-#149](https://github.com/charlesguse/wing-commander/issues/149) tracks both,
-and until it lands this paragraph *is* the exception record.
+deprecated pause shim ([#152](https://github.com/charlesguse/wing-commander/issues/152),
+whose real kill switch now lives in the wrapper). It went unnoticed because
+`release.yml`'s Gate 1b greps a hardcoded eight-file list rather than every
+published stage, so the ninth was never examined; the count grew 2 → 9 → 15
+across four tagged releases with the gate passing each time. Meanwhile every
+stage that list *did* cover read `vars.*` exactly zero times — the rule is
+practical, and stages stay at zero precisely where something checks.
+
+Constitution VII requires a deviation like this to carry a registered,
+machine-checked exception, and it now does. The register is
+[`.github/scripts/stage-invariant-waivers.json`](../.github/scripts/stage-invariant-waivers.json):
+one entry, naming the file, the exact pattern, the reason, the tracking
+issue, and **the number of reads it covers — 15**. The gate is
+`.github/scripts/verify-stage-invariants.py` (lint-workflows Gate 31), which
+derives the stage set from the workflows themselves rather than restating it,
+runs on every pull request touching `.github/workflows/**` or the waiver
+file, and is invoked by `release.yml`'s Gate 1b as well so the release-time
+and PR-time answers come from one implementation. The waiver is stale-checked
+in both directions: a pattern that stops matching fails the gate, so it
+cannot outlive its reason, and a count that stops matching fails it too, so a
+sixteenth read is red on the pull request that adds it. All fifteen go
+together in the watchdog rework
+(`specs/024-watchdog-precision-hardening`), in one deliberate major —
+[issue #149](https://github.com/charlesguse/wing-commander/issues/149).
 
 **A second, deliberate deviation**: `specs/031-stage-environment-binding`
 binds every job in every published stage to a deployment environment
@@ -707,7 +724,9 @@ triggers, gates, and `vars.*`). The stage-side read is retained as a
 **deprecated compatibility shim** so that removing it does not silently
 re-enable autonomous writes for an adopter who set the variable and gates
 nothing; it is scheduled for removal in the watchdog rework's next major,
-alongside the stage's other `vars.*` reads (#149). Gating the 8b verifier is
+alongside the stage's other `vars.*` reads — all fifteen registered in
+[`.github/scripts/stage-invariant-waivers.json`](../.github/scripts/stage-invariant-waivers.json)
+and held to that count by lint-workflows Gate 31 (#149). Gating the 8b verifier is
 not optional — with stage 8's jobs
 skipped its run still completes with conclusion `skipped`, and
 `verify-watchdog-run.sh` fails any conclusion that is not `success`, so an
