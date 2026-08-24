@@ -7,7 +7,7 @@ verifiable **locally**, without a live triggered workflow run — this
 feature's whole coverage strategy (research.md D8) is built on
 `wc_shell_harness.py` driving `implement.yml`'s own shipped `run:` blocks
 against synthetic git history, exactly what `python3 .github/scripts/
-verify-truncated-cycle-carry-forward.py` does in CI as Gate 26.
+verify-truncated-cycle-carry-forward.py` does in CI as Gate 30.
 
 ## Scenario 1 — A truncated cycle with progress carries forward, no cold Opus redo (US1; FR-001, FR-002, FR-006, FR-007, SC-001, SC-002)
 
@@ -109,10 +109,10 @@ git stash pop
 
 **Expected**: a non-zero exit for each of the six required mutations
 (contracts/truncated-cycle-coverage.md's "Required mutations" table), and
-exit 0 once the mutation is reverted. This is the same check Gate 26
+exit 0 once the mutation is reverted. This is the same check Gate 30
 performs automatically in `lint-workflows.yml` on every PR — this
 scenario just runs it by hand to build confidence before pushing. Confirm
-separately that `Gate 26` appears in `lint-workflows.yml`'s job output
+separately that `Gate 30` appears in `lint-workflows.yml`'s job output
 when the full `lint · workflows` job runs, satisfying SC-009's "disabling
 or removing the new coverage fails a check."
 

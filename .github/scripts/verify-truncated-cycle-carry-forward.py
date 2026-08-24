@@ -37,7 +37,7 @@ Six mutations at the end reintroduce the forced-false rule, the no-progress
 guard, either arm of the progress test, counting the lifecycle-record
 advance itself as progress, and widening truncation to ordinary failures —
 each independently must fail at least one scenario the unmutated suite
-passes (FR-019) — plus a reflexive check that Gate 26 itself is still wired
+passes (FR-019) — plus a reflexive check that Gate 30 itself is still wired
 into lint-workflows.yml (FR-020).
 
 Usage: python3 .github/scripts/verify-truncated-cycle-carry-forward.py
@@ -59,7 +59,7 @@ from wc_shell_harness import (ensure_jq, find_step, resolve_bash, run_step,
 
 STAGE = ".github/workflows/implement.yml"
 LINT_WORKFLOW = ".github/workflows/lint-workflows.yml"
-GATE_PREFIX = "Gate 26"
+GATE_PREFIX = "Gate 30"
 THIS_SCRIPT = ".github/scripts/verify-truncated-cycle-carry-forward.py"
 
 CYCLE_STEP = "Read back cycle outcome"
@@ -651,7 +651,7 @@ def check_gate_wired():
     """FR-020's reflexive check — mirrors Gate 25's own D7 pattern
     (verify-lifecycle-gate-retry.py's check_gate_wired): this script cannot
     see its own absence from a workflow it isn't in, so it reads
-    lint-workflows.yml directly and confirms Gate 26 is present, enabled,
+    lint-workflows.yml directly and confirms Gate 30 is present, enabled,
     and invokes this script by path."""
     wf = yaml.safe_load(open(LINT_WORKFLOW, encoding="utf-8")) or {}
     for job in (wf.get("jobs") or {}).values():

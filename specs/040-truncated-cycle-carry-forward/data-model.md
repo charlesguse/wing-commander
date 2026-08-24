@@ -97,7 +97,7 @@ No `workflow_call` input or output of `implement.yml` itself changes
 (FR-021) — every new output above is a step-level output internal to the
 `implement` job, consumed only by later steps in the same job.
 
-## Coverage fixtures (new, ephemeral — Gate 26 only, never touches the shipped composite or a real API)
+## Coverage fixtures (new, ephemeral — Gate 30 only, never touches the shipped composite or a real API)
 
 | Field | Type | Meaning |
 |---|---|---|

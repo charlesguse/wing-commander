@@ -352,10 +352,10 @@ escalation tier.
   of escalating further (there is nowhere further to escalate to at that
   tier, which is exactly S5/US4's scenario) or (correctly) stalling.
 
-## D8 — Coverage: Gate 26, following Gate 14's real-git-repo shape, not Gate 22's transcript-only shape
+## D8 — Coverage: Gate 30, following Gate 14's real-git-repo shape, not Gate 22's transcript-only shape
 
 **Decision**: New `.github/scripts/verify-truncated-cycle-carry-forward.py`,
-wired as **Gate 26** (next unused — confirmed against every `Gate N —`
+wired as **Gate 30** (next unused — confirmed against every `Gate N —`
 occurrence in `.github/workflows/lint-workflows.yml`; the highest in use
 is Gate 25, `lint-workflows.yml:1729`, from specs/039-lifecycle-gate-retry)
 in `.github/workflows/lint-workflows.yml`, following `verify-stall-restart-
@@ -390,7 +390,7 @@ truncated cycle); revert D2's no-progress guard (classify `exhausted` as
 `truncated` without checking either arm); drop Arm A; drop Arm B; widen
 the `VERDICT == "exhausted"` check to also match `VERDICT == "failed"`
 (an ordinary failure gets carried forward). A sixth "reflexive" check —
-Gate 26 itself present and wired in `lint-workflows.yml`, per Gate 25's
+Gate 30 itself present and wired in `lint-workflows.yml`, per Gate 25's
 own D7 pattern — satisfies FR-020.
 
 **Rationale**: This feature's shipped logic lives entirely in `run:`
@@ -410,7 +410,7 @@ verdict is already known and act on git state.
   coupling: the verdict composite's own correctness is Gate 22's job, already
   proven; re-testing it here would duplicate coverage without adding
   confidence in *this* feature's own logic (the progress test and the
-  forced-not-converged rule), and would make Gate 26 fail on the wrong
+  forced-not-converged rule), and would make Gate 30 fail on the wrong
   thing if the verdict composite itself ever regressed.
 - *A paired self-test step (the Gates 16/18/22/23 shape)* — rejected for
   the same reason as spec 039's D7: this gate directly executes shipped

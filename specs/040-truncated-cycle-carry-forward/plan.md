@@ -82,7 +82,7 @@ remote shape — the shape this feature's own commit/push side effect (the
 counter write) needs proven for real, not the transcript-only shape
 Gate 22 uses for the verdict composite itself (already proven, reused
 here only as a trusted stubbed input). Wired into
-`.github/workflows/lint-workflows.yml` as **Gate 26** (next unused —
+`.github/workflows/lint-workflows.yml` as **Gate 30** (next unused —
 confirmed against every `Gate N —` occurrence in the file, highest in use
 today is Gate 25 from specs/039-lifecycle-gate-retry), with six scenarios
 and five required mutations (FR-019) plus a reflexive presence check
@@ -113,7 +113,7 @@ every other new value (step outputs) lives only for the duration of the
 `implement` job.
 
 **Testing**: New `.github/scripts/verify-truncated-cycle-carry-forward.py`,
-wired into `.github/workflows/lint-workflows.yml` as Gate 26, executing
+wired into `.github/workflows/lint-workflows.yml` as Gate 30, executing
 `implement.yml`'s real `run:` step text against synthetic git history in a
 real repo with a local bare remote (research.md D8). Covers: truncated
 with progress via either arm (US1, US2, FR-004, FR-005), no-progress
@@ -161,7 +161,7 @@ steps (`.github/workflows/implement.yml`: "Read back cycle outcome",
 step" rewired in place; "Record retry base SHA", "Record truncated-cycle
 count" newly added), one new file added
 (`.github/scripts/verify-truncated-cycle-carry-forward.py`), one new gate
-step added to `.github/workflows/lint-workflows.yml` (Gate 26). Zero edits
+step added to `.github/workflows/lint-workflows.yml` (Gate 30). Zero edits
 to `wing-commander-5-implement.yml`, to any other calling wrapper, to the
 `wing-commander-agent-verdict` composite, or to any other composite
 action.
@@ -230,7 +230,7 @@ feature touches:
 │   │                                  #   "Record truncated-cycle count" (after
 │   │                                  #   consolidation). Retry/stalled gate
 │   │                                  #   CONDITIONS unchanged text throughout.
-│   └── lint-workflows.yml            # + Gate 26 — "a turn-exhausted cycle is
+│   └── lint-workflows.yml            # + Gate 30 — "a turn-exhausted cycle is
 │                                      #   classified truncated only with positive
 │                                      #   evidence, and carried forward without
 │                                      #   ever reporting converged"
@@ -240,7 +240,7 @@ feature touches:
     │                                  #   bare-remote shape (read only)
     ├── verify-agent-verdict.py       # prior art for exhausted/failed/healthy
     │                                  #   verdict fixtures (read only)
-    └── verify-truncated-cycle-carry-forward.py  # NEW — Gate 26's script
+    └── verify-truncated-cycle-carry-forward.py  # NEW — Gate 30's script
 
 .github/actions/
 └── wing-commander-agent-verdict/     # UNCHANGED — consumed as-is; its

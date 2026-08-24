@@ -31,7 +31,7 @@ Single-project CI/CD feature, no `src/`/`tests/` split. All file paths below are
 
 - [X] T001 Run `grep -n "name: Gate [0-9]" .github/workflows/lint-workflows.yml` and confirm no step is already named `Gate 26` (research.md D8 — the highest number in use today is Gate 25, `specs/039-lifecycle-gate-retry`). Record the current byte-for-byte text of "Read back cycle outcome" (`implement.yml:878-926`), "Read back retry outcome" (`implement.yml:1146-1196`), "Consolidate final outcome" (`implement.yml:1201-1230`), and "Dispatch next step" (`implement.yml:1422-1485`) — e.g. via `git show HEAD:.github/workflows/implement.yml` — as the FR-017/SC-006 baseline later Polish tasks diff a healthy/ordinary-failure scenario's outputs against.
 
-**Checkpoint**: Gate 26 numbering is free; the pre-feature baseline is captured.
+**Checkpoint**: Gate 30 numbering is free; the pre-feature baseline is captured.
 
 ---
 
@@ -173,7 +173,7 @@ Single-project CI/CD feature, no `src/`/`tests/` split. All file paths below are
 
 **Depends on**: T013 depends on T002, T003, T004, T005, T007-T009, T010-T012 (mutates and re-runs every scenario those tasks establish). T014 and T015 depend on each other only loosely (T014's assertion needs T015's step to exist to pass, but can be written first and fail until T015 lands).
 
-**Checkpoint**: `python3 .github/scripts/verify-truncated-cycle-carry-forward.py` fails on each of the six mutations and passes on the delivered feature; Gate 26 proves itself present in the registry, not only the composite logic. SC-009 holds.
+**Checkpoint**: `python3 .github/scripts/verify-truncated-cycle-carry-forward.py` fails on each of the six mutations and passes on the delivered feature; Gate 30 proves itself present in the registry, not only the composite logic. SC-009 holds.
 
 ---
 
@@ -183,7 +183,7 @@ Single-project CI/CD feature, no `src/`/`tests/` split. All file paths below are
 
 - [X] T016 [P] Run quickstart.md's seven scenarios end to end: `python3 .github/scripts/verify-truncated-cycle-carry-forward.py` (Scenarios 1-3, 5), its retry-scenario assertions (Scenario 4's underlying check plus `grep -n "final-ok" .github/workflows/implement.yml` confirming the `stalled` job's gate condition text is unchanged), the counter/reporting assertions (Scenario 5), the by-hand mutation drill confirming a non-zero exit per mutation and exit 0 once reverted (Scenario 6), and the byte-for-byte diff of an ordinary-failure and a normal-successful-cycle scenario's `ok`/`converged`/`remaining` outputs against T001's captured pre-feature baseline (Scenario 7, FR-017/SC-006).
 - [X] T017 [P] Confirm FR-021/FR-022/SC-010: diff `implement.yml`'s `workflow_call` `inputs:`/`outputs:` blocks against T001's pre-feature baseline (unchanged — no new input, output, or secret); confirm no edit to `wing-commander-5-implement.yml`, any other calling wrapper, or the `wing-commander-agent-verdict` composite; confirm no change to `max-turns`, `max-iterations`, or any turn-budget-ceiling default anywhere in this feature's diff.
-- [X] T018 Run `actionlint` (with shellcheck) against `.github/workflows/implement.yml` and `.github/workflows/lint-workflows.yml`, and run `python3 .github/scripts/run-local-gates.py` if available in the executing environment, confirming every gate — including the new Gate 26 — passes cleanly against the repository as it stands after all six user stories land.
+- [X] T018 Run `actionlint` (with shellcheck) against `.github/workflows/implement.yml` and `.github/workflows/lint-workflows.yml`, and run `python3 .github/scripts/run-local-gates.py` if available in the executing environment, confirming every gate — including the new Gate 30 — passes cleanly against the repository as it stands after all six user stories land.
 
 ---
 
@@ -243,7 +243,7 @@ User Story 1 alone is unsafe to ship on its own — R1 in spec.md is explicit th
 
 ### Incremental Delivery
 
-1. Complete Setup → Gate 26 numbering confirmed free, baseline captured.
+1. Complete Setup → Gate 30 numbering confirmed free, baseline captured.
 2. Add User Story 1 → validate via `verify-truncated-cycle-carry-forward.py`'s first three scenarios → the core defect (cold Opus redos) is fixed.
 3. Add User Story 2 → validate via the converge-commit-present scenario → the blocking risk (R1) is proven closed.
 4. Add User Story 3 → validate via the no-progress scenario → the escalation guard is proven to still fire.
@@ -266,7 +266,7 @@ User Story 1 alone is unsafe to ship on its own — R1 in spec.md is explicit th
 
 - [ ] Persist the tier a truncated cycle actually ran on (ordinary or `inputs.escalation-model`) into a `spec-meta.json` field written alongside the existing truncated-cycle bookkeeping commit (`implement.yml`'s "Record truncated-cycle count" step, ~line 1515).
 - [ ] At cycle start, when that field marks the carried tier as the escalation tier, use `inputs.escalation-model` for the cycle instead of `inputs.model` — no new `workflow_dispatch` input on the self-workflow (FR-021, FR-007).
-- [ ] Rewrite Gate 26's `check_final_selects_retry_truncated` scenario in `verify-truncated-cycle-carry-forward.py` to assert the tier the *next* cycle will actually use (reading the persisted field / effective model), not just the printed lifecycle-issue text.
+- [ ] Rewrite Gate 30's `check_final_selects_retry_truncated` scenario in `verify-truncated-cycle-carry-forward.py` to assert the tier the *next* cycle will actually use (reading the persisted field / effective model), not just the printed lifecycle-issue text.
 - [ ] Add a mutation that removes the carry-over write/read and confirm it fails the new assertion (FR-019 shape).
 
 ## Maintainer Feedback
@@ -278,17 +278,17 @@ User Story 1 alone is unsafe to ship on its own — R1 in spec.md is explicit th
 ## Maintainer Feedback
 
 - [ ] Change `implement.yml`'s "Fail loud on non-healthy agent verdict (cycle)" (and its retry-path mirror) so that when the eventual classification is truncated, it emits `::notice::` or `::warning::` naming the truncation and the step stays green; keep `::error::` (and the red step) for the failed classification only. This likely requires deferring or re-deriving the annotation after "Read back cycle outcome" has classified the run, since verdict alone can't distinguish truncated from failed.
-- [ ] Add a Gate 26 scenario asserting the annotation kind/step outcome for a truncated cycle is not `::error::`, and that a genuinely failed exhausted-with-no-progress cycle still gets `::error::` (FR-015, FR-013).
+- [ ] Add a Gate 30 scenario asserting the annotation kind/step outcome for a truncated cycle is not `::error::`, and that a genuinely failed exhausted-with-no-progress cycle still gets `::error::` (FR-015, FR-013).
 
 ## Maintainer Feedback
 
 - [ ] In `implement.yml`'s "Record truncated-cycle count" step, only emit the `count` output after the commit+push has actually succeeded (or verify the push landed before reporting the new value); on a persist failure, emit an explicit unknown/failed marker instead of a stale or empty count.
 - [ ] In "Dispatch next step", when the persisted-count marker indicates failure, state in the lifecycle comment that the consecutive-truncation count could not be recorded, rather than printing an empty or wrong number.
-- [ ] Add a Gate 26 scenario simulating a persist failure (e.g. push rejection) and asserting the lifecycle comment never renders an empty or unpersisted count (FR-011, FR-012, SC-007).
+- [ ] Add a Gate 30 scenario simulating a persist failure (e.g. push rejection) and asserting the lifecycle comment never renders an empty or unpersisted count (FR-011, FR-012, SC-007).
 
 ## Maintainer Feedback
 
-- [ ] Rename this feature's gate from "Gate 26" to "Gate 30" in `lint-workflows.yml`'s step name and any nearby comment header.
-- [ ] Update `verify-truncated-cycle-carry-forward.py`'s `GATE_PREFIX` constant (and any other Gate-26-specific text/docstrings) to "Gate 30".
-- [ ] Update this spec's plan.md/tasks.md/contracts and any other docs referring to "Gate 26" for this feature to "Gate 30".
-- [ ] Confirm no remaining collision: grep `lint-workflows.yml` for `Gate 30` before landing, and confirm the FR-020 reflexive self-check still matches only this feature's own step.
+- [X] Rename this feature's gate from "Gate 26" to "Gate 30" in `lint-workflows.yml`'s step name and any nearby comment header.
+- [X] Update `verify-truncated-cycle-carry-forward.py`'s `GATE_PREFIX` constant (and any other Gate-26-specific text/docstrings) to "Gate 30".
+- [X] Update this spec's plan.md/tasks.md/contracts and any other docs referring to "Gate 26" for this feature to "Gate 30".
+- [X] Confirm no remaining collision: grep `lint-workflows.yml` for `Gate 30` before landing, and confirm the FR-020 reflexive self-check still matches only this feature's own step.

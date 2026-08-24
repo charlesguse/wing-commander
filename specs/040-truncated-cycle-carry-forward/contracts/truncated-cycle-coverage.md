@@ -1,4 +1,4 @@
-# Contract: `.github/scripts/verify-truncated-cycle-carry-forward.py` (new, Gate 26)
+# Contract: `.github/scripts/verify-truncated-cycle-carry-forward.py` (new, Gate 30)
 
 Follows the calling convention every other `verify-*.py` gate script in
 `.github/scripts/` already establishes: standalone, invoked with no
@@ -82,7 +82,7 @@ Each mutation uses the `if mutated == steps: raise` self-check
 helper that silently fails to apply is itself caught.
 
 **Reflexive check (FR-020)**: a lightweight assertion, inside this same
-script, that "Gate 26" appears as an enabled step in
+script, that "Gate 30" appears as an enabled step in
 `.github/workflows/lint-workflows.yml` invoking this script by path —
 mirroring Gate 25's own D7 reflexive check, so disabling or removing Gate
 26 is itself a failure `verify-gate-wiring.py` (the general form) and this
