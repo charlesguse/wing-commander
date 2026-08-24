@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,9 +31,9 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain, at the cap of three. They are posted to the lifecycle issue for the requester to answer rather than blocking the draft:
-  - **FR-004a** — what an act pass does when an implementation cycle for the same specification is already in flight (wait, supersede, or queue behind). Scope: changes how fast a review takes effect and how much implementation work can be wasted.
-  - **FR-008a** — whether the refreshed pull request description is fully regenerated each loop or gains an appended per-cycle section. User experience: one always-current body versus a preserved history that grows.
-  - **FR-011a** — whether the removal capability covers untracked files as well as tracked ones. The lifecycle issue asks for both; the originating issue argues for tracked-only. Scope and blast radius of the published tool surface.
-- The first validation pass flagged nothing else. The three markers are exactly the cases where no reasonable default exists: each has two defensible readings that lead to different delivered behaviour, and two of the three are contradicted between the lifecycle issue and the issues it consolidates.
+- All three [NEEDS CLARIFICATION] markers were answered on the lifecycle issue and are resolved in the specification:
+  - **FR-004a** — a review arriving while an implementation cycle is in flight **waits** for that cycle to finish, then folds every leg and dispatches once. No in-flight work is discarded; the latency is accepted. Recorded in FR-004a/FR-004b, US1 scenario 7, the two contention edge cases, SC-013, and the coverage list in FR-018.
+  - **FR-008a** — the refreshed description carries a **delimited machine-owned region**: the branch's current state is regenerated on every refresh and a short per-fold entry is appended beneath it. Prose outside the delimiters survives; edits inside them are overwritten. Recorded in FR-008a/FR-008b, US3 scenario 9, Out of Scope, and FR-018.
+  - **FR-011a** — the removal capability covers **tracked files only**, staged like the stage's other writes; untracked removal stays a reported hard stop and is deferred until a task needs it. Recorded in FR-011a, US4 scenario 6, the untracked-file edge case, Out of Scope, and Key Entities.
+- The first validation pass flagged nothing else, and folding the answers in raised nothing new. The three markers were exactly the cases where no reasonable default existed: each had defensible readings that led to different delivered behaviour, and two of the three were contradicted between the lifecycle issue and the issues it consolidates.
 - Named artifacts (workflow files, run ids, line numbers) appear only in the **Input** verbatim record of the request, never in the requirements, scenarios, or success criteria.

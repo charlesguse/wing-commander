@@ -26,6 +26,7 @@ A maintainer leaves a single review on a pipeline PR carrying several requested 
 4. **Given** a review that also contains a question and a no-action note, **When** the pipeline acts on it, **Then** those legs behave exactly as they do today and neither delays nor triggers an implementation dispatch of its own.
 5. **Given** a review where one in-scope item is held waiting on a human confirmation, **When** the other items are ready, **Then** those items are still folded, and the single dispatch happens after the held item resolves rather than before it.
 6. **Given** a review whose items are all questions or notes, **When** the pipeline finishes acting on it, **Then** no implementation cycle is dispatched at all.
+7. **Given** a review that arrives while an implementation cycle for the same specification is already running, **When** the pipeline acts on it, **Then** the running cycle is allowed to finish undisturbed, the fold happens after it, and the single dispatch follows the fold.
 
 ---
 
@@ -66,6 +67,7 @@ A maintainer requested changes on a final PR. Some time later, the same PR's des
 6. **Given** a specification with no final PR yet, **When** finalize runs, **Then** it opens exactly one PR, as it does today.
 7. **Given** two finalize runs for the same specification in quick succession, **When** both complete, **Then** there is still exactly one final PR and the requester sees at most one re-review request per fold.
 8. **Given** a refresh run, **When** it completes, **Then** it has not opened a second PR, reopened a closed one, approved anything, or merged anything.
+9. **Given** a PR body carrying human prose outside the machine-owned delimiters and a human edit inside them, **When** the refresh runs, **Then** the prose outside is preserved, the region inside is regenerated from the branch, and a per-cycle entry for this fold is appended beneath it.
 
 ---
 
@@ -84,6 +86,7 @@ A maintainer's review asks for something to be removed — a retired script, a s
 3. **Given** a removal, **When** it happens, **Then** it is confined to the specification branch checkout under the same guardrails as every other write the stage performs.
 4. **Given** the published tool contract, **When** it is inspected after this change, **Then** the widened capability is recorded there, and a mismatch between the contract and the actual call sites fails a check.
 5. **Given** an adopting repository, **When** it takes this change, **Then** it receives the capability without editing a wrapper workflow, and its existing per-repository tool grants keep working.
+6. **Given** a task that requires removing a file that is not tracked, **When** the implementation cycle runs, **Then** it reports the removal as remaining manual work rather than performing it, and the stage's capabilities are unchanged for that case.
 
 ---
 
@@ -109,8 +112,8 @@ Before this ships, checks drive each of the three defect shapes and assert the n
 ### Edge Cases
 
 - **A leg is cancelled by contention with a run this same review dispatched.** This is the observed defect. The act pass must not compete for the same serialization slot as the implementation it starts; a review must not be able to cancel its own work.
-- **A second review arrives while the first is still folding.** The two reviews are separate units of work. Whichever ordering the pipeline chooses, no item from either review may be dropped, and a maintainer must not receive an announcement whose outcome never appears. See the open question in FR-004a.
-- **An implementation cycle for the same specification is already running when a review arrives.** Folding into the task list under a running cycle is the shape that produced the original contention. See the open question in FR-004a.
+- **A second review arrives while the first is still folding.** The two reviews are separate units of work. No item from either review may be dropped, and a maintainer must not receive an announcement whose outcome never appears. The second review's act pass waits, as it does for any cycle already in flight, and folds once the first review's work has settled.
+- **An implementation cycle for the same specification is already running when a review arrives.** Folding into the task list under a running cycle is the shape that produced the original contention. The act pass waits for the running cycle to finish, then folds every leg and dispatches once — the running cycle is never discarded, and it is never handed a task list mid-write. The maintainer waits the length of the cycle already in flight before their review takes effect.
 - **One leg of a review is held waiting on a human confirmation while the others are ready.** The ready items still fold — a held leg must not block the others, as it does not today — but the single dispatch waits for the held leg to resolve so the cycle sees the whole review.
 - **A held leg is never confirmed.** The dispatch cannot wait forever. The pipeline reports on the PR thread that the review was folded except for the held item, and dispatches what it has.
 - **A review with zero in-scope items.** Nothing is folded and nothing is dispatched, and the announcement's outcome says so rather than leaving a promise open.
@@ -120,7 +123,7 @@ Before this ships, checks drive each of the three defect shapes and assert the n
 - **The reviewer whose review triggered the fold cannot be asked for a re-review** — they are the PR author, they have left the repository, or the request is rejected. The refresh still completes and still reports on the lifecycle issue; the re-review request is best-effort and its failure is stated, not swallowed.
 - **The record cannot be committed during a refresh** because the specification branch moved underneath the run. The refresh still reports on the lifecycle issue and says the record could not be updated.
 - **The removal capability is asked to remove something outside the specification's checkout.** It is scoped the same way every other write verb of that stage is scoped; a removal outside that scope is not available to the stage.
-- **A task asks to remove a file that is not tracked.** See the open question in FR-011a — whether the stage gains a capability for this case at all, or reports it as manual work.
+- **A task asks to remove a file that is not tracked.** The stage gains no capability for this case. It reports the removal as remaining manual work, as it does today — a loud stop rather than a widened tool surface, until a real task shows the need.
 - **A removal that would empty the specification branch's diff against the default branch.** The existing empty-diff anomaly handling is unchanged; a specification that deletes everything is still an anomaly.
 - **The stop procedure runs while a fold is in flight.** Out of scope for this feature and unchanged by it; the fold's serialization must not alter how a stop request is handled.
 
@@ -134,7 +137,8 @@ Before this ships, checks drive each of the three defect shapes and assert the n
 - **FR-002**: A single review MUST result in at most one implementation dispatch, regardless of how many in-scope items it was classified into. A review with no in-scope items MUST result in none.
 - **FR-003**: The dispatched implementation cycle MUST begin with every folded item from that review already present.
 - **FR-004**: The act pass MUST NOT contend for the same serialization slot as the implementation cycle it dispatches. No part of a review's own processing may cancel, or be cancelled by, work that same review started.
-- **FR-004a**: The pipeline MUST have a declared, deterministic behaviour for a review that arrives while an implementation cycle for the same specification is already in flight. [NEEDS CLARIFICATION: should the act pass wait for the running cycle to finish before folding, fold immediately and let the running cycle be superseded, or fold immediately and let the running cycle finish first? Each changes how quickly a maintainer's review takes effect and how much implementation work can be wasted.]
+- **FR-004a**: When a review arrives while an implementation cycle for the same specification is already in flight, the act pass MUST wait for that cycle to finish before folding, then fold every in-scope item of that review and dispatch a single implementation cycle. In-flight implementation work MUST NOT be discarded to make room for a fold, and no implementation cycle may be started against a task list that a fold is still writing.
+- **FR-004b**: While an act pass is waiting under FR-004a, the announcement's obligation still stands: the wait MUST NOT be mistaken for a terminated leg, and if the wait itself ends without folding, FR-006 applies.
 - **FR-005**: An item that is held awaiting human confirmation MUST NOT block the folding of the other items of the same review, and MUST NOT produce a dispatch of its own.
 - **FR-006**: Every announced leg MUST produce an observable outcome on the PR thread. A leg that terminates without folding its item — cancelled, failed, or never started — MUST result in a comment naming the unfolded item and stating that it needs attention, and MUST NOT be reported as success.
 - **FR-006a**: The outcome report of FR-006 MUST NOT depend on any value the terminated leg failed to publish, and MUST NOT be suppressed by the failure of a step ahead of it.
@@ -143,7 +147,8 @@ Before this ships, checks drive each of the three defect shapes and assert the n
 #### Presenting the folded result for re-review
 
 - **FR-008**: When a finalize run finds an existing **open** final pull request for the specification, it MUST refresh that pull request rather than skip: the description MUST describe the current state of the specification branch, the lifecycle record MUST be committed with the review stage recorded, the review stage label MUST be present on the lifecycle issue with any implementation-stage label removed, and a re-review MUST be requested from the reviewer or reviewers whose review triggered the fold.
-- **FR-008a**: The refreshed description MUST convey the work folded since the previous finalize. [NEEDS CLARIFICATION: should the description be fully regenerated from the branch each time — one always-current description, at the cost of losing any human edits to the body — or should a per-cycle section be appended, preserving history and any human edits but growing the body on every loop?]
+- **FR-008a**: The refreshed description MUST contain a machine-owned region, delimited so that a human and the pipeline can both tell where it begins and ends. Within that region the description of the branch's current state MUST be regenerated on every refresh, and a short per-cycle entry recording what that fold changed MUST be appended beneath it — one entry per fold, not one per finalize run.
+- **FR-008b**: Prose outside the machine-owned delimiters MUST be preserved across refreshes. Content inside them is machine-owned: a human edit made inside the delimiters MUST be overwritten by the next refresh, and the delimiters MUST make that ownership evident to a reader.
 - **FR-009**: A finalize run that finds an existing final pull request that is **merged** MUST NOT refresh it, MUST NOT commit a record change, MUST NOT alter labels, and MUST NOT request a re-review. It MUST report what it found.
 - **FR-009a**: A finalize run that finds an existing final pull request that is **closed but not merged** MUST likewise change nothing and report what it found; a deliberately closed pull request is not reopened or refreshed by this feature.
 - **FR-010**: The guard's original purpose MUST be preserved: no finalize run may open a second final pull request for a specification that already has one, on any path this feature adds.
@@ -156,7 +161,7 @@ Before this ships, checks drive each of the three defect shapes and assert the n
 #### Removing files
 
 - **FR-011**: The implementation cycle MUST be able to remove a tracked file from the specification branch and have the cycle complete, without reporting the removal as remaining manual work.
-- **FR-011a**: The pipeline MUST have a declared behaviour for removing a file that is not tracked. [NEEDS CLARIFICATION: should the stage gain a removal capability for untracked files as well — the lifecycle issue asks for "the minimal equivalent for non-tracked files", while the originating issue argues for tracked-file removal only, on the grounds that it is the only removal the stage needs and it leaves the change staged the way the existing add verb does? Granting the broader capability widens the published tool surface with a verb that can remove anything in the checkout.]
+- **FR-011a**: The removal capability MUST cover tracked files only, and MUST leave the removal staged the same way the stage's existing write capabilities leave their changes staged. A task that requires removing a file that is not tracked MUST be reported as remaining manual work, exactly as it is today; no capability that can remove arbitrary untracked content from the checkout is added by this feature. That capability is deferred until a real task demonstrates the need.
 - **FR-012**: The removal capability MUST be available to the implementation cycle, its retry, and the convergence pass alike; these MUST NOT diverge in what they can remove.
 - **FR-013**: The removal MUST be confined to the specification branch checkout and governed by the same constraints as the stage's existing write capabilities. No new constraint may be weakened to accommodate it.
 - **FR-014**: The widening of the stage's capabilities MUST be recorded in the published contract, and a divergence between that record and the actual call sites MUST fail a check.
@@ -166,7 +171,7 @@ Before this ships, checks drive each of the three defect shapes and assert the n
 
 - **FR-016**: The declared inputs, outputs, and secrets of every affected stage MUST NOT change, and no adopter may need to edit a wrapper workflow to receive any part of this feature.
 - **FR-017**: Every path that is quiet today MUST remain quiet. A healthy review whose legs all fold, a first finalize, and an implementation cycle that removes nothing MUST each behave exactly as they do now.
-- **FR-018**: Executable coverage MUST exercise each of the following against checked-in fixtures: a review with at least three in-scope legs producing exactly one dispatch; a leg that terminates before folding producing the PR-thread failure comment; a finalize run against an existing open pull request producing the record commit, the label restore, and the re-review request; a finalize run against a merged pull request producing none of those; and an implementation cycle that removes a tracked file completing.
+- **FR-018**: Executable coverage MUST exercise each of the following against checked-in fixtures: a review with at least three in-scope legs producing exactly one dispatch; a review arriving while an implementation cycle is in flight producing no fold and no dispatch until that cycle has finished; a leg that terminates before folding producing the PR-thread failure comment; a finalize run against an existing open pull request producing the record commit, the label restore, the re-review request, and a body whose machine-owned region is regenerated while prose outside it survives; a finalize run against a merged pull request producing none of those; and an implementation cycle that removes a tracked file completing.
 - **FR-019**: Reintroducing any of the three defects MUST fail a check: a per-leg dispatch, a finalize refresh that reverts to skipping on an open pull request, or the removal capability disappearing from either the contract or a call site.
 - **FR-020**: The new coverage MUST be wired into the repository's existing gate registry, so coverage that stops being run is itself a failure.
 - **FR-021**: The conditions this feature introduces or changes MUST satisfy the repository's existing job-suppression gate. If that gate's rules must change to admit them, the change MUST NOT reduce the set of shapes it detects.
@@ -180,7 +185,8 @@ Before this ships, checks drive each of the three defect shapes and assert the n
 - **Final pull request**: the pull request finalize opens from the specification branch to the default branch. It is the artifact a maintainer reviews, and after this feature it is a long-lived artifact refreshed across loops rather than a one-shot output.
 - **Refresh**: the finalize path that updates an existing open final pull request and re-presents it — as distinct from the create path that opens one and from the skip path that leaves a merged or closed one alone.
 - **Lifecycle record**: the per-specification machine-readable source of truth for the stage a specification is at. A record left at the implementation stage after a fold has completed is read wrongly by every downstream consumer.
-- **Removal capability**: the stage capability that lets an implementation cycle delete a file it was asked to delete. Its absence is why removal-shaped work always leaks to a human.
+- **Removal capability**: the stage capability that lets an implementation cycle delete a *tracked* file it was asked to delete, leaving the deletion staged like every other write the stage makes. Its absence is why removal-shaped work always leaks to a human. Untracked content stays outside it.
+- **Machine-owned region**: the delimited part of a final pull request's description that the pipeline writes and rewrites — a regenerated account of the branch's current state plus an appended per-fold entry. Everything outside the delimiters belongs to whoever wrote it.
 
 ## Out of Scope
 
@@ -191,6 +197,8 @@ Before this ships, checks drive each of the three defect shapes and assert the n
 - **Changing how many implementation cycles a specification may run in total,** or the convergence cap. This feature changes how many cycles one review starts, not how many a specification may have.
 - **Reworking the per-specification serialization scheme in general.** Only the specific contention between a review's own act pass and the implementation it dispatches is in scope.
 - **A general removal capability for other stages.** Only the implementation cycle, its retry, and the convergence pass gain it.
+- **Removing files that are not tracked.** Deferred until a task demonstrates the need; until then such removals stay a reported hard stop rather than a widening of the published tool surface.
+- **Preserving human edits made inside the machine-owned region of a pull request body.** That region belongs to the pipeline and is overwritten on every refresh; human prose belongs outside the delimiters.
 - **The watchdog.** It observes runs through its own channel and is unchanged.
 
 ## Success Criteria *(mandatory)*
@@ -209,6 +217,7 @@ Before this ships, checks drive each of the three defect shapes and assert the n
 - **SC-010**: Reintroducing a per-leg dispatch, a skip-on-open-pull-request finalize, or the missing removal capability each fails a check; disabling the new coverage fails a check.
 - **SC-011**: The change reaches adopters without any wrapper edit, and every affected stage's declared inputs, outputs, and secrets are unchanged.
 - **SC-012**: No path that is quiet today becomes noisy: a healthy review, a first finalize, and a cycle that removes nothing are unchanged in what reaches the pull request thread and the lifecycle issue.
+- **SC-013**: Zero implementation cycles are discarded because a review arrived while they were running, and every dispatched cycle starts against a task list that no fold is still writing.
 
 ## Assumptions
 
@@ -216,6 +225,8 @@ Before this ships, checks drive each of the three defect shapes and assert the n
 - The announce-before-work ordering is correct and stays. The fix is that an announcement acquires a guaranteed outcome, not that announcements become conditional on the work succeeding.
 - Whether the act pass becomes a single unit over the classified set or stays as serialized legs with the dispatch deferred to the end is a design decision, not a specification one. Either satisfies FR-001 through FR-004; the specification requires the outcome, not the shape.
 - A held-for-confirmation leg resolving is a bounded wait in practice. If it is not, the pipeline reports and dispatches what it has rather than holding the whole review indefinitely.
+- Waiting for an in-flight implementation cycle costs a maintainer minutes at this repository's cycle lengths, and that latency is worth paying: no agent work is thrown away, and a cycle always runs against a task list it saw whole. Superseding a running cycle would buy the latency back by discarding work already done.
+- A re-reviewing maintainer reads two things about a refreshed pull request: what is on the branch now, and what changed in the round they asked for. The machine-owned region carries both, which is why neither full regeneration nor pure appending alone is enough.
 - The reviewer to ask for a re-review is the one whose review triggered the fold. If several reviewers requested changes and their items were folded together, all of them are asked.
 - The existing empty-diff anomaly handling, the duplicate-dispatch guard, and the closed-lifecycle guard are all correct and are reused as they are; this feature adds paths through finalize rather than reworking its entry conditions.
 - The existing one-shot guard reads the pull request's state today only to decide "exists or not". Distinguishing open from merged from closed is new information the refresh needs, and is available from the same place.
