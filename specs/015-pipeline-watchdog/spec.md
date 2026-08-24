@@ -20,10 +20,12 @@ by a person, even though both root causes were minor and mechanical.
 
 The watchdog automates that first-responder role. After a pipeline run finishes
 (succeeded or failed), the watchdog inspects the run's evidence, detects known
-classes of problems, and takes the **lightest sufficient action** along a triage
-ladder: fix a truly minor issue on sight, open a PR for a bigger-but-not-spec
-fix, or open/reopen an issue when the problem is large or has no home. It applies
-the same discipline to its own runs, and it never files a duplicate.
+classes of problems, and deduplicates each finding against existing issues:
+filing a new `pipeline-defect` issue when nothing matches, commenting on a
+match that is still open, or reopening and commenting on a match that was
+closed — a single remediation path, with no autonomous fix and no PR (FR-014
+of spec 024). It applies the same discipline to its own runs, and it never
+files a duplicate.
 
 ### User Story 1 - Detect a run's problems and report them (Priority: P1)
 
@@ -184,8 +186,8 @@ self-inspection cannot run away.
 
 - **SC-001**: For the two v1 problem classes, the watchdog detects and reports the problem on 100% of runs that exhibit it, verified against a labeled corpus of runs known to exhibit each problem class, with a finding a maintainer can confirm without opening raw artifacts.
 - **SC-002**: The watchdog never files a duplicate: given the same finding twice, exactly one open item exists afterward, and a recurrence against a closed item reopens rather than re-creates it, in 100% of dedup test scenarios.
-- **SC-003**: For the motivating incident class, the watchdog produces the same remediation a human produced manually (an allowlist grant and a commit-then-push ordering fix) as a proposed PR, without human diagnosis.
-- **SC-004**: No autonomous write occurs outside the configured allowlist and path restrictions in any test scenario, and every autonomous action the watchdog takes is recorded on a lifecycle issue.
+- **SC-003**: **Removed** — the proposed-PR remediation this criterion measured no longer exists; the watchdog's remediation surface is a single issue-only path (FR-014 of spec 024).
+- **SC-004**: Every write the watchdog takes, and every case where a write is suppressed, is recorded on a lifecycle issue, in 100% of test scenarios. (The configured allowlist and path restrictions this criterion previously measured governed the autonomous-fix rung; both the rung and its `watchdog-guardrails.json` config were removed — FR-014 of spec 024.)
 - **SC-005**: The watchdog cannot loop: across any test scenario, the number of watchdog runs it triggers on itself never exceeds the configured self-dispatch cap.
 - **SC-006**: When existing stalled/cleanup automation has already handled a condition, the watchdog adds zero duplicate reports for that condition.
 - **SC-007**: Median time from a run finishing to its findings appearing on the lifecycle issue is under 10 minutes, replacing the manual post-mortem for that run — measured as `gh run view --json updatedAt` (the inspected run's completion) against the `createdAt` of the watchdog's own report comment on the lifecycle issue.
