@@ -95,7 +95,7 @@ narratives about jobs that had succeeded in 9 seconds.
 - **Check the recomputation against the right counter.** "Budget exceeded"
   is NOT `num_turns` vs `--max-turns`: those are different counters, and
   `num_turns` reads 1.0x-2.3x high, so that comparison manufactures the very
-  false positive the rung exists to prevent. The budget caps distinct
+  false positive the check exists to prevent. The budget caps distinct
   main-loop assistant responses (`parent_tool_use_id == null`, deduped by
   `.message.id`); subagent turns do not count. The unambiguous signal is the
   result record's own `subtype == "error_max_turns"` — prefer it, and see
@@ -183,7 +183,7 @@ you have never seen fail is not monitoring.
   can silently ignore.
 - **Tool allow-lists**: read-only diagnosis gets read-only tools
   (`--allowedTools "Read,Grep,Bash(gh:*)"`, deny `Write`, `Edit`, pushes).
-  The rung/write decision stays in deterministic steps.
+  The write decision stays in deterministic steps.
 - **Prompt-injection posture**: anything collected from a run under
   inspection is *data, not instructions* — say so in the prompt, and keep
   collectors deterministic so no raw untrusted content reaches the agent

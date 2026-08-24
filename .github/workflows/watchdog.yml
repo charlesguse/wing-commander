@@ -5,13 +5,13 @@
 #   - collect:  deterministic evidence gathering (five FR-006 sources) into
 #               one normalized signals.json; no LLM sees raw untrusted
 #               content directly (FR-023).
-#   - diagnose: a single claude-haiku-4-5, read-only, structured-output step
+#   - diagnose: a single claude-opus-5, read-only, structured-output step
 #               turning signals into zero or more Findings.
 #   - triage:   one matrix entry per Finding — coexistence check, an
 #               evidence-validity gate (spec 024 FR-008/FR-009), fingerprint,
 #               and a bounded direct-read dedup lookup (data-model.md's
 #               Dedup outcome table).
-#   - act:      one matrix entry per non-suppressed Finding — creates,
+#   - act:      one matrix entry per Finding — creates,
 #               comments on, or reopens a pipeline-defect issue per the
 #               dedup outcome, and always reports to the lifecycle issue
 #               (FR-022).

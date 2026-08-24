@@ -206,10 +206,10 @@ and resolves `run-id`/`run-name` before calling this stage.
 
 | | |
 |---|---|
-| Inputs | `run-id` (string, required); `run-name` (string, required) — inspected run's display name; `diagnose-model` (string, default `claude-haiku-4-5`); `diagnose-max-turns` (number, default `30`); `propose-fix-model` (string, default `claude-sonnet-5`); `propose-fix-max-turns` (number, default `30`) |
-| Preconditions | none as a refusal gate — spec-slug/lifecycle-issue resolution is best-effort (a run not tied to a spec is still inspected and reported against its own run URL). The credential invariant still applies to the two agent steps |
-| Behavior | `collect → diagnose → triage → act`: five deterministic FR-006 collectors into one `signals.json`; a read-only haiku diagnose step emits zero+ Findings; per-Finding fingerprint + `gh search issues` dedup + optional sonnet propose-fix + deterministic rung gate; act executes the selected rung and always reports to the lifecycle issue. Guardrails (`.specify/memory/watchdog-guardrails.json`, read-only), `vars.WING_COMMANDER_WATCHDOG_PAUSED`, and `vars.WING_COMMANDER_WATCHDOG_SELF_DISPATCH_CAP` (default `3`) gate every autonomous write; identical rules apply to self-inspection (FR-018/FR-021) |
-| Outputs | none (side effects only): a lifecycle-issue comment on every run (FR-022); at rung 2/3 a pipeline-defect issue (created/reused/reopened, fingerprint-marked); at rung 1/2 a fix PR to the default branch (`Refs #N`, never auto-closing) |
+| Inputs | `run-id` (string, required); `run-name` (string, required) — inspected run's display name; `diagnose-model` (string, default `claude-opus-5`); `diagnose-max-turns` (number, default `30`) |
+| Preconditions | none as a refusal gate — spec-slug/lifecycle-issue resolution is best-effort (a run not tied to a spec is still inspected and reported against its own run URL). The credential invariant still applies to the stage's one agent step (`watchdog.diagnose`) |
+| Behavior | `collect → diagnose → triage → act`: five deterministic FR-006 collectors into one `signals.json`; one read-only `claude-opus-5` diagnose step emits zero+ Findings, each citing collector signal ids and a `class` drawn from a label-derived enum. Per Finding, `triage` runs a coexistence-suppression check, an evidence-validity gate, a signal-derived fingerprint, and a bounded, strongly-consistent `gh issue list` dedup read scoped to `pipeline-defect` + that finding's own `🐕 · <class>` label (not a search index — FR-018–FR-020 of spec 024). The dedup step records exactly one of five outcomes: `none` (file a new issue), `match-open` (comment on it), `match-closed` (reopen + comment), `data-integrity` (more than one issue carries the fingerprint — reported, never auto-acted on), and `unknown` (**the lookup itself failed** — filing is suppressed pending a maintainer's manual check, sharing no code path with `none`, so a broken lookup can never masquerade as "nothing found"). `act` performs that one remediation and always reports every Finding to the lifecycle issue. There is **no fix-proposal agent step, no rung ladder, and no guardrail config file** — the stage is a pure reporter (FR-014 of spec 024). `vars.WING_COMMANDER_WATCHDOG_PAUSED` is enforced wrapper-side, where no job starts at all; the stage-side write-suppression read of it survives only as a deprecated compatibility shim for a wrapper with no such gate (#152) — it stops writes but not work. `vars.WING_COMMANDER_WATCHDOG_SELF_DISPATCH_CAP` (default `3`) is genuinely stage-side: the run is still inspected and reported, only `act`'s write is suppressed. Identical rules apply to self-inspection (FR-018/FR-021) |
+| Outputs | none (side effects only): a lifecycle-issue comment for every Finding on every run (FR-022) — the one write every path performs unconditionally — and, unless suppressed, one fingerprint-marked `pipeline-defect` issue per Finding, created/reused/reopened and labelled `pipeline-defect` + `🐕 · <class>`. **No pull request**: this stage opens none |
 
 ## reusable-auto-update-spec-kit.yml
 
@@ -251,8 +251,10 @@ The `--allowedTools`/`--disallowedTools` values each agent-running stage ships
 today, and against which the `extra-*`/`*-override` common inputs above compose
 (specs/026-configurable-tool-lists, FR-013/SC-006). A consumer who sets none of
 those four inputs gets exactly these lists (SC-005). Multi-step stages
-(`plan`, `tasks`, `implement`, `watchdog`) list one row per internal agent
-step; the `step-label` is what a conflict/validation error names.
+(`plan`, `tasks`, `implement`) list one row per internal agent step; the
+`step-label` is what a conflict/validation error names. `watchdog` runs a
+single agent step (`watchdog.diagnose`) since spec 024 made it a pure
+reporter.
 
 Every list additionally carries `ScheduleWakeup`, `Monitor`, `SendMessage` in
 its disallowed set — interactive-resume tools a one-shot Action can never
@@ -276,7 +278,6 @@ already read-only via its allowed list; see footnote).
 | cleanup | `cleanup` | `Read,Glob,Grep,Bash(git log:*),Bash(git diff:*),Bash(git show:*),Write` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
 | rebase | `rebase` | `Read,Edit,Grep,Glob,Bash(git status:*),Bash(git diff:*),Bash(git add:*),Bash(git rebase --continue:*),Bash(git rebase --abort:*)` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
 | watchdog | `watchdog.diagnose` | `Read,Grep,Bash(gh:*),Bash(git log:*),Bash(git diff:*)` (deliberately read-only) | `WebSearch,WebFetch,Write,Edit,Bash(git commit:*),Bash(git push:*)` † |
-| watchdog | `watchdog.propose-fix` | `Read,Grep,Glob,Edit,Write` | `WebSearch,WebFetch,Bash,ScheduleWakeup,Monitor,SendMessage` |
 | pr-conversation | `pr-conversation.classify` | `Read,Grep,Glob,Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(cat:*),Bash(gh pr view:*),Bash(gh issue view:*),Bash(gh search issues:*)` (deliberately read-only) | `Write,Edit,WebSearch,WebFetch,Bash(git push:*),Bash(git commit:*),ScheduleWakeup,Monitor,SendMessage` |
 | pr-conversation | `pr-conversation.act` | `Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(git checkout:*),Bash(git switch:*),Bash(git branch:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue create:*),Bash(gh issue edit:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(gh pr create:*),Bash(gh pr edit:*),Bash(gh api:*),Bash(gh label create:*),Bash(gh search issues:*),Bash(gh search prs:*)` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
 

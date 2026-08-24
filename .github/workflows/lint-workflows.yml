@@ -2685,8 +2685,9 @@ jobs:
       - name: Gate 23 self-test — the detector actually detects
         run: python3 .github/scripts/verify-gate-23.py --selftest
 
-      # Gate 27 — the per-stage default tool-list table matches the 16
-      # `wing-commander-tool-args` call sites. FR-013/SC-006 promise a
+      # Gate 27 — the per-stage default tool-list table matches every
+      # `wing-commander-tool-args` call site (15 since spec 024 removed
+      # watchdog.propose-fix). FR-013/SC-006 promise a
       # consumer can read each stage's defaults out of documentation; that
       # documentation was hand-maintained with nothing holding it to the
       # literals, and had already drifted — the 026 draft was missing both

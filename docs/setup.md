@@ -106,15 +106,12 @@ create them now so the stubs' documentation stays true):
 | `WING_COMMANDER_RUNNER` | `ubuntu-latest` | Runner label every stage job runs on — a single label, or a JSON array (e.g. `["self-hosted","linux","x64"]`) applied as a conjunction — see [docs/adoption.md](adoption.md#runners-and-container-images) |
 | `WING_COMMANDER_CONTAINER_IMAGE` | unset (no container) | Container image every stage job runs inside; empty means every job runs directly on the runner, unchanged from today — see [docs/adoption.md](adoption.md#runners-and-container-images) |
 
-The watchdog also reads one consuming-repo-owned config file,
-`.specify/memory/watchdog-guardrails.json`, which defines the change-class
-allowlist and per-class line caps that gate its lightest-touch autonomous
-fixes (rung 1). It is read-only from the watchdog's perspective — edit it via
-an ordinary PR to your default branch like any other file; a change-class
-absent from it (or the file missing entirely) simply makes that class
-ineligible for a rung-1 fix, never inventing a default. See
+The watchdog reads no consuming-repo config file. It is a pure reporter: it
+files, comments on, or reopens one `pipeline-defect` issue per finding and
+reports every finding to the lifecycle issue — it proposes no fix diffs and
+opens no pull requests, so there is nothing left to allowlist. See
 [docs/architecture.md](architecture.md#stage-9--watchdog-watchdogyml-wrapper-wing-commander-8-watchdogyml)
-for the full triage ladder.
+for what it does with each dedup outcome.
 
 ## 4. Labels
 
@@ -131,9 +128,20 @@ Create these labels (Issues → Labels):
 | `stage:review` | Final PR awaiting human review |
 | `stage:done` | Lifecycle complete |
 | `model:opus` | Opt this spec's implementation into `claude-opus-5` |
+| `disposition:confirmed` | **Watchdog precision.** A maintainer applying this to a `pipeline-defect` issue records that the finding was genuine |
+| `disposition:false-positive` | The counterpart: the watchdog's finding was not a real defect |
 
 `spec:<NNN-slug>` and `stage:stalled` labels are created on the fly by the
-pipeline — no need to pre-create those.
+pipeline — no need to pre-create those, and the same goes for the watchdog's
+own `pipeline-defect` and `🐕 · <finding-class>` labels.
+
+The two `disposition:*` labels are the exception among watchdog labels: the
+watchdog **never** writes them, so nothing creates them lazily. They are
+maintainer-applied dispositions on the issues it files, and they are what its
+precision criterion counts — the fraction of the most recent 20 distinct
+`pipeline-defect` issues carrying `disposition:confirmed` rather than
+`disposition:false-positive` (SC-008 of `specs/015-pipeline-watchdog/`).
+Skip them if you do not intend to measure that; nothing else reads them.
 
 Quick script (requires `gh` authenticated with repo scope):
 
@@ -147,6 +155,8 @@ gh label create stage:implement --color 1D76DB --description "Implement/converge
 gh label create stage:review    --color FBCA04 --description "Final PR awaiting review"
 gh label create stage:done      --color 5319E7 --description "Lifecycle complete"
 gh label create model:opus      --color D93F0B --description "Use claude-opus-5 for implementation"
+gh label create disposition:confirmed      --color 0E8A16 --description "Watchdog finding confirmed genuine by a maintainer"
+gh label create disposition:false-positive --color B60205 --description "Watchdog finding judged a false positive by a maintainer"
 ```
 
 ## 5. Smoke test
