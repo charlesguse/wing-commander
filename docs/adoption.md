@@ -1111,8 +1111,16 @@ that). The reference wrapper also carries a daily scheduled **sweeper**: it
 re-derives the raw facts from the API for any pipeline PR closed in the
 last 48 hours whose close left no `pull_request`-event cleanup run behind,
 marks the PR with a comment, and re-delivers the facts to this same stage.
-An adopter's wrapper gets the sweeper by copying the reference wrapper's
-`schedule`/`workflow_dispatch` arms (`sweep` + `resweep` jobs).
+To adopt the sweeper, copy the reference wrapper's `schedule` and
+`workflow_dispatch` triggers plus its `sweep` and `resweep` jobs
+([`wing-commander-7-cleanup.yml`](../.github/workflows/wing-commander-7-cleanup.yml) —
+the minimal wrapper in §7 above deliberately omits them), then change
+`resweep`'s `uses:` from the local path to the same pinned
+`charlesguse/wing-commander/.github/workflows/cleanup.yml@v2` reference
+your event-arm job uses. Nothing else needs renaming: the sweep probe
+derives your wrapper's own filename from `github.workflow_ref`, and a
+failed run lookup skips that PR until the next sweep rather than
+re-delivering on a guess.
 
 ### rebase
 
