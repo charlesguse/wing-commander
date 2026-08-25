@@ -149,20 +149,94 @@ class Finding(object):
 # --------------------------------------------------------------------------
 # Reading a workflow file
 # --------------------------------------------------------------------------
+_BLOCK_SCALAR_HEADER_RE = re.compile(
+    # Chomping and explicit-indentation indicators are legal in either
+    # order (`|2-` and `|-2` both) - accepting only one order silently
+    # dropped the other form's heredocs from the scan (#245 follow-up).
+    r":\s*[|>](?:[+-]?[0-9]*|[0-9]*[+-]?)\s*(?:#.*)?$")
+_HEREDOC_RE = re.compile(r"(?<!<)<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+
+
+def _block_scalar_body_lines(text):
+    """{line index: block base indent} for YAML block-scalar bodies (run: |).
+
+    Body membership is what separates "YAML comment" from "shell text
+    GitHub interpolates": a `#`-led line inside a `run:` block scalar is
+    stripped by nobody before expression evaluation, so `${{ }}` on it is
+    live (#245 blind spot 1). Content is every subsequent line indented
+    deeper than the header line's first non-space column; blank lines do
+    not end the block.
+    """
+    lines = text.split("\n")
+    body = {}
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.lstrip(" ")
+        if (stripped and not stripped.startswith("#")
+                and _BLOCK_SCALAR_HEADER_RE.search(line)):
+            indent = len(line) - len(stripped)
+            base = None
+            j = i + 1
+            while j < len(lines):
+                nxt = lines[j]
+                if not nxt.strip():
+                    body[j] = base
+                    j += 1
+                    continue
+                nindent = len(nxt) - len(nxt.lstrip(" "))
+                if nindent <= indent:
+                    break
+                if base is None:
+                    # The first non-blank body line fixes the block's base
+                    # indent - the column the shell sees as column 0. A
+                    # heredoc terminator is only a terminator AT that column
+                    # (bash demands column 0; `<<-` additionally strips
+                    # leading tabs), so a deeper-indented look-alike must
+                    # not end tracking early (#245 follow-up: it did, and a
+                    # `#`-led vars read after it went back to being blanked).
+                    base = nindent
+                body[j] = base
+                j += 1
+            i = j
+            continue
+        i += 1
+    return body
+
+
 def strip_comments(text):
     """Blank out comment text, preserving every offset and line break.
 
-    Both YAML and the shell inside a `run:` block start a comment at a `#`
-    that begins a line or follows whitespace, and neither does inside a
-    quoted string. Quote state is tracked per line and reset at each newline,
-    which is what YAML block scalars and shell lines both want.
+    Three languages share these files and disagree about `#`. YAML starts a
+    comment at a `#` that begins a line or follows whitespace; so does the
+    shell inside a `run:` block scalar - EXCEPT inside a heredoc body, where
+    `#` is literal text that lands in the written file with every `${{ }}`
+    on the line already interpolated by GitHub (#245 blind spot 1: blanking
+    those lines hid a live `vars.*` read). Neither language comments inside
+    a quoted string; quote state is tracked per line and reset at each
+    newline, which is what block scalars and shell lines both want.
 
     Blanked rather than removed so `text[:offset].count("\\n")` still names
     the right line - a report that points at the wrong line is a report a
     maintainer stops trusting.
     """
+    body_lines = _block_scalar_body_lines(text)
     out = []
-    for line in text.split("\n"):
+    pending_heredocs = []
+    for idx, line in enumerate(text.split("\n")):
+        if idx not in body_lines:
+            pending_heredocs = []
+        elif pending_heredocs:
+            # Heredoc body: literal file content, nothing here is a comment.
+            terminator, strip_tabs = pending_heredocs[0]
+            base = body_lines[idx] or 0
+            dedented = line[base:] if line[:base].strip() == "" else line
+            if strip_tabs:
+                dedented = dedented.lstrip("\t")
+            if dedented == terminator:
+                pending_heredocs.pop(0)
+            out.append(line)
+            continue
         in_single = in_double = False
         cut = None
         i = 0
@@ -184,6 +258,13 @@ def strip_comments(text):
                 cut = i
                 break
             i += 1
+        if idx in body_lines:
+            # Redirection operators queue heredocs in order; their bodies
+            # start on the next line and are consumed first-in-first-out.
+            code_part = line if cut is None else line[:cut]
+            pending_heredocs.extend(
+                (m.group(2), "<<-" in m.group(0))
+                for m in _HEREDOC_RE.finditer(code_part))
         out.append(line if cut is None else line[:cut] + " " * (len(line) - cut))
     return "\n".join(out)
 
@@ -443,7 +524,21 @@ def evaluate(root="."):
     for path in sorted(published - set(stages)):
         parsed = next((p for rel, _, p in loaded if rel == path), None)
         names = sorted(trigger_names(parsed or {}))
-        if len(names) < 2:
+        if len(names) >= 2:
+            # #245 blind spot 2: this used to be an exemption, so adding
+            # `workflow_dispatch:` to a stage removed it from the scan with
+            # nothing red. A published stage owns no trigger but
+            # workflow_call (constitution VII) - a second trigger both
+            # dispatches the stage outside its wrapper's guards and takes
+            # it out of this gate's workflow_call-only scan.
+            failures.append(
+                "{0} declares workflow_call and also {1}. A published stage "
+                "owns no trigger but workflow_call: a second trigger "
+                "dispatches it outside its wrapper's guards and removes it "
+                "from this gate's scan. Move the extra trigger to a wrapper "
+                "workflow.".format(
+                    path, ", ".join(n for n in names if n != "workflow_call")))
+        else:
             failures.append(
                 "{0} is a published stage that this gate did not classify as "
                 "workflow_call-only, and it does not have a second trigger to "
@@ -648,6 +743,56 @@ jobs:
       - run: echo ok    # trailing: ${{ vars.NOT_A_READ_EITHER }}
 """
 
+HEREDOC_HIDDEN_READ = """\
+name: heredoc hider
+on:
+  workflow_call:
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          cat > config.env <<'EOF'
+          # written to the file: ${{ vars.HIDDEN_IN_HEREDOC }}
+          EOF
+"""
+
+# A deeper-indented terminator look-alike is heredoc CONTENT, not its end:
+# the shell dedents block-scalar lines to the block's base indent, and bash
+# only accepts the terminator at column 0. Ending tracking at the "  EOF"
+# below would blank the vars line right back out (#245 follow-up).
+HEREDOC_INDENTED_TERMINATOR = """\
+name: indented terminator
+on:
+  workflow_call:
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          cat > f <<'EOF'
+            EOF
+          # still heredoc content: ${{ vars.AFTER_FAKE_TERMINATOR }}
+          EOF
+"""
+
+# `|2-` puts the indentation indicator BEFORE the chomping indicator - as
+# legal as `|-2`. A header regex accepting only one order dropped the whole
+# block (and its heredoc) from the scan (#245 follow-up).
+HEREDOC_INDICATOR_ORDER = """\
+name: indicator order
+on:
+  workflow_call:
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |2-
+          cat > f <<'EOF'
+          # ${{ vars.INDICATOR_ORDER_FORM }}
+          EOF
+"""
+
 
 def _waiver(file, check, pattern, count):
     """A fixture waiver. `file` is a bare name; waivers name repo paths."""
@@ -674,22 +819,39 @@ FIXTURES = [
      "bad.yml:7: `secrets: inherit`"),
     ("a wrapper may read github.event and vars",
      {"clean.yml": CLEAN, "wing-commander-1.yml": WRAPPER}, None, None),
-    ("a workflow_call workflow with a second trigger is not a stage",
-     {"clean.yml": CLEAN, "both.yml": MULTI_TRIGGER}, None, None),
+    # #245 blind spot 2: this fixture used to be GREEN - a stage gaining a
+    # second trigger silently left the scan, vars.SOMETHING and all.
+    ("a workflow_call workflow with a second trigger is a named failure",
+     {"clean.yml": CLEAN, "both.yml": MULTI_TRIGGER}, None,
+     ("both.yml declares workflow_call and also schedule", 1)),
     # discovery: each `on:` form must reach the scan. Every one of these
     # would pass vacuously if the form stopped being recognised, which is
-    # why each fixture's stage carries a violation.
+    # why each fixture's stage carries a violation - and each expectation
+    # pins the failure COUNT to 1, because a substring alone once hid a
+    # spurious readers-disagree failure riding alongside the real finding
+    # (#245 blind spot 3).
     ("a quoted \"on\" key is still discovered",
      {"clean.yml": CLEAN, "quoted.yml": QUOTED_ON}, None,
-     "quoted.yml:8: `vars.QUOTED_FORM`"),
+     ("quoted.yml:8: `vars.QUOTED_FORM`", 1)),
     ("a sequence `on: [workflow_call]` is still discovered",
      {"clean.yml": CLEAN, "seq.yml": LIST_ON}, None,
-     "seq.yml:7: `vars.LIST_FORM`"),
+     ("seq.yml:7: `vars.LIST_FORM`", 1)),
     ("a scalar `on: workflow_call` is still discovered",
      {"clean.yml": CLEAN, "scalar.yml": SCALAR_ON}, None,
-     "scalar.yml:7: `vars.SCALAR_FORM`"),
+     ("scalar.yml:7: `vars.SCALAR_FORM`", 1)),
     ("comments and descriptions are not reads",
      {"prose.yml": PROSE_ONLY}, None, None),
+    # #245 blind spot 1: a `#`-led line inside a run: block's heredoc is
+    # file content GitHub interpolates, not a comment anybody strips.
+    ("a vars.* read on a heredoc's comment-shaped line is caught",
+     {"clean.yml": CLEAN, "hidden.yml": HEREDOC_HIDDEN_READ}, None,
+     ("hidden.yml:10: `vars.HIDDEN_IN_HEREDOC`", 1)),
+    ("a deeper-indented terminator look-alike does not end the heredoc",
+     {"clean.yml": CLEAN, "fake-end.yml": HEREDOC_INDENTED_TERMINATOR}, None,
+     ("fake-end.yml:11: `vars.AFTER_FAKE_TERMINATOR`", 1)),
+    ("the |2- indicator order is still a block scalar",
+     {"clean.yml": CLEAN, "order.yml": HEREDOC_INDICATOR_ORDER}, None,
+     ("order.yml:10: `vars.INDICATOR_ORDER_FORM`", 1)),
     # the empty-subject guard
     ("a checkout with no stage at all is a failure, not a clean pass",
      {"wing-commander-1.yml": WRAPPER}, None,
@@ -758,6 +920,12 @@ def self_test():
         finally:
             shutil.rmtree(root, ignore_errors=True)
         joined = " | ".join(failures)
+        # A (substring, count) expectation additionally pins how MANY
+        # failures the fixture produces - substring alone let a spurious
+        # extra failure hide behind the expected one (#245 blind spot 3).
+        expect_count = None
+        if isinstance(expect, tuple):
+            expect, expect_count = expect
         if expect is None:
             if failures:
                 bad += 1
@@ -773,6 +941,10 @@ def self_test():
             bad += 1
             print("[FAIL] {0}: failed for the WRONG reason. expected {1!r}, "
                   "got: {2}".format(name, expect, joined))
+        elif expect_count is not None and len(failures) != expect_count:
+            bad += 1
+            print("[FAIL] {0}: expected exactly {1} failure(s), got {2}: "
+                  "{3}".format(name, expect_count, len(failures), joined))
         else:
             print("[ok] {0}: caught".format(name))
     print("Gate 31 self-test: {0}/{1} fixtures behaved as specified.".format(
