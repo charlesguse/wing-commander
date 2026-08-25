@@ -929,7 +929,13 @@ jobs:
           foldlog_file="${{ runner.temp }}/finalize-existing-foldlog.md"
           : > "$before_file"; : > "$after_file"; : > "$foldlog_file"
           if grep -q '<!-- wing-commander-finalize:state:begin -->' "$prior_body_file" 2>/dev/null; then
-            sed -n '1,/<!-- wing-commander-finalize:state:begin -->/p' "$prior_body_file" | sed '$d' > "$before_file"
+            # `0,/pattern/` (GNU sed's documented extension), NOT `1,/pattern/`:
+            # the latter never checks the end pattern against line 1 itself,
+            # so when the region starts on the very first line (no prose
+            # above it) the range never closes and this prints the WHOLE
+            # file instead of nothing — Gate 35 caught this against a
+            # real prior body with no leading prose.
+            sed -n '0,/<!-- wing-commander-finalize:state:begin -->/p' "$prior_body_file" | sed '$d' > "$before_file"
             sed -n '/<!-- wing-commander-finalize:fold-log:end -->/,$p' "$prior_body_file" | sed '1d' > "$after_file"
             sed -n '/<!-- wing-commander-finalize:fold-log:begin -->/,/<!-- wing-commander-finalize:fold-log:end -->/p' "$prior_body_file" | sed '1d;$d' > "$foldlog_file"
           elif [ -s "$prior_body_file" ]; then
