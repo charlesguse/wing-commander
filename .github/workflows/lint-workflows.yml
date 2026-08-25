@@ -2913,7 +2913,12 @@ jobs:
   # The harness EXTRACTS the shipped run: blocks and executes them against a
   # gh stub and throwaway git repos, so it cannot drift from the workflow the
   # way a hand-copied fixture can. See .github/scripts/auto-update-spec-kit-tests/.
-  auto-update-spec-kit:
+  harness-tests:
+    # PR-facing check name. The old job id, auto-update-spec-kit, read on
+    # every PR as though the PR were updating Spec Kit; what actually runs
+    # here is that stage's behavioral TEST SUITE (Gate 4) - names audit,
+    # 2026-08-25.
+    name: harness tests
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -2931,7 +2936,10 @@ jobs:
   # the registered name detects that exactly, whatever the underlying cause.
   # Cannot run on pull_request: the API reports the default branch's state,
   # not the PR's files.
-  registered:
+  names-and-tags:
+    # PR-facing check name (shows as skipped there). "registered" said
+    # nothing about what it verifies - names audit, 2026-08-25.
+    name: names & release tags
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
