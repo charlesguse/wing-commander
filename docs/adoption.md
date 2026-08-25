@@ -738,7 +738,7 @@ things to know before you bind one:
   | `cleanup` | `select` → one outcome job | 2 |
   | `rebase` | `discover` → one matrix leg per branch | 1 + N |
   | `watchdog` | `collect`, `diagnose`, `report-unhandled-failure` + one `triage` and one `act` leg per finding | 3 + 2N |
-  | `pr-conversation` | `classify-and-announce` (bound by `environment`) + one `act` leg per classification (bound by `confirm-categories`, **not** by `environment` — see the exception above) | 1, plus one per confirm-gated `act` leg |
+  | `pr-conversation` | `classify-and-announce` (bound by `environment`) + one `act` leg per classification (bound by `confirm-categories`, **not** by `environment` — see the exception above) + `dispatch-once` and `report-fold-outcomes` (both bound by `environment`, each running once per call, after the whole `act` matrix) | 1, plus one per confirm-gated `act` leg, plus 2 |
   | `auto-update-spec-kit` (scheduled) | `health-check` → `detect` → `settle` → `evaluate-path` → `prepare` → `verify` → `act` | 7, sequentially |
 
   So the cheapest possible gate is a one-job stage (`intake`, `clarify`,
@@ -1125,7 +1125,7 @@ for the full routing design.
 
 | | |
 |---|---|
-| Inputs | `pr-number` (number, required); `event-kind` (string `review`\|`review-comment`\|`issue-comment`, required); `body` (string, required, untrusted); `actor-login`/`actor-association` (string, required); `comment-id`/`review-id` (number, `0`); `thread-path`/`thread-diff-hunk` (string, `""`); `confirm-categories` (string, `""` = act-then-report for every category); `confirm-environment` (string, `pr-conversation-confirm`); `model` (string, `claude-sonnet-5`); `max-turns` (number, `40`); `implement-workflow` (string, `""`) |
+| Inputs | `pr-number` (number, required); `event-kind` (string `review`\|`review-comment`\|`issue-comment`, required); `body` (string, required, untrusted); `actor-login`/`actor-association` (string, required); `comment-id`/`review-id` (number, `0`); `thread-path`/`thread-diff-hunk` (string, `""`); `confirm-categories` (string, `""` = act-then-report for every category); `confirm-environment` (string, `pr-conversation-confirm`); `confirm-timeout-minutes` (number, `1440` — how long a confirm-gated leg may wait on that environment's approval before GitHub cancels it outright); `model` (string, `claude-sonnet-5`); `max-turns` (number, `40`); `implement-workflow` (string, `""`) |
 | Preconditions | the PR's base is your default branch and its head starts with `spec-prefix` (not `spec-draft-prefix`/`plan-prefix`/`tasks-prefix`) — anything else short-circuits with no reply at all; the lifecycle issue is open |
 | Side effects | posts one `IntentAnnouncement` per classification before any mutation; routes per category — see the architecture doc for the full list |
 | Outputs | none — side effects only. (`classify-and-announce` has *job*-level outputs, which a caller cannot read; `needs.pr-conversation.outputs.qualifies` in your own wrapper resolves to an empty string.) |
