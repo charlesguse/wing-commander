@@ -97,7 +97,7 @@ jobs:
             # cleanup is retried by nobody - but it fails loudly in Actions,
             # which is the whole point; silent skipping is the defect.
             marked=$(gh api -X GET "repos/$REPO/issues/$num/comments" \
-              --paginate --jq '[.[] | select(.body | contains("'"$MARKER"'"))] | length')
+              --paginate --jq '.[] | select(.body | contains("'"$MARKER"'")) | .id' | wc -l | tr -d ' ')
             [ "$marked" = "0" ] || continue
 
             gh api "repos/$REPO/issues/$num/comments" -f body="$MARKER
