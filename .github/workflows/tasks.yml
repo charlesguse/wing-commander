@@ -993,6 +993,31 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
 
+      # Per-run cost line (specs/043-durable-metrics-record, data-model.md
+      # "Rollup — per-run cost line") — appended to whichever status comment
+      # below actually posts for this run, not a new comment (FR-031c).
+      - name: Compute cost line
+        id: cost-line
+        if: >-
+          always() &&
+          (steps.agent-auto.outcome != 'skipped' ||
+           steps.agent-pr.outcome != 'skipped')
+        env:
+          RECORD_JSON: ${{ steps.metrics-summary.outputs.record-json }}
+        run: |
+          set -uo pipefail
+          line="$(printf '%s' "$RECORD_JSON" | jq -r '
+            def costpart: if .cost_available then "$" + (.cost_usd|tostring) else "cost unavailable" end;
+            def turnspart:
+              if .turns.available then
+                (.turns.counted|tostring) + (if .turns.intended_budget != null then "/" + (.turns.intended_budget|tostring) else "" end) + " turns"
+              else "turns unavailable" end;
+            def modelpart: if .model_available then .model else "model unavailable" end;
+            "**Cost**: " + costpart + " · " + turnspart + " · " + modelpart
+          ' 2>/dev/null || true)"
+          [ -n "$line" ] || line="**Cost**: metrics unavailable"
+          echo "line=$line" >> "$GITHUB_OUTPUT"
+
       # Deterministic verification — no agent turns spent on checking facts.
       # Auto mode: tasks.md and the stage flip must be on the spec branch.
       # Gated on the verdict (not a raw steps.agent-auto.outcome check) —
@@ -1071,11 +1096,13 @@ jobs:
           ISSUE: ${{ steps.meta.outputs.issue }}
           NEXT_WORKFLOW: ${{ inputs.next-workflow }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          COST_LINE: ${{ steps.cost-line.outputs.line }}
         run: |
           if [ -z "$NEXT_WORKFLOW" ]; then
             echo "No next-workflow configured — task list is committed; stopping here (standalone mode). Dispatch your implement workflow manually if/when you want implementation to run." >> "$GITHUB_STEP_SUMMARY"
             if [ -n "$ISSUE" ]; then
-              GH_TOKEN="$APP_TOKEN" gh issue comment "$ISSUE" --body "📋 Task list committed to \`$SPEC_PREFIX$SLUG\`. No implement workflow is configured for automatic hand-off — dispatch one manually with \`spec_dir=specs/$SLUG\`, \`issue=$ISSUE\`, \`iteration=1\` when ready."
+              body="📋 Task list committed to \`$SPEC_PREFIX$SLUG\`. No implement workflow is configured for automatic hand-off — dispatch one manually with \`spec_dir=specs/$SLUG\`, \`issue=$ISSUE\`, \`iteration=1\` when ready."
+              GH_TOKEN="$APP_TOKEN" gh issue comment "$ISSUE" --body "$(printf '%s\n\n%s' "$body" "$COST_LINE")"
             fi
             exit 0
           fi

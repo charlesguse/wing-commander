@@ -822,6 +822,28 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
 
+      # Per-run cost line (specs/043-durable-metrics-record, data-model.md
+      # "Rollup — per-run cost line") — appended to whichever status comment
+      # below actually posts for this run, not a new comment (FR-031c).
+      - name: Compute cost line
+        id: cost-line
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.summarize.outcome != 'skipped'
+        env:
+          RECORD_JSON: ${{ steps.metrics-summary.outputs.record-json }}
+        run: |
+          set -uo pipefail
+          line="$(printf '%s' "$RECORD_JSON" | jq -r '
+            def costpart: if .cost_available then "$" + (.cost_usd|tostring) else "cost unavailable" end;
+            def turnspart:
+              if .turns.available then
+                (.turns.counted|tostring) + (if .turns.intended_budget != null then "/" + (.turns.intended_budget|tostring) else "" end) + " turns"
+              else "turns unavailable" end;
+            def modelpart: if .model_available then .model else "model unavailable" end;
+            "**Cost**: " + costpart + " · " + turnspart + " · " + modelpart
+          ' 2>/dev/null || true)"
+          [ -n "$line" ] || line="**Cost**: metrics unavailable"
+          echo "line=$line" >> "$GITHUB_OUTPUT"
+
       # Observability, not failure (FR-017) — the intended budget was fully
       # used but the run finished healthy; the runaway ceiling above is the
       # only hard stop.
@@ -864,6 +886,7 @@ jobs:
           issue-number: ${{ inputs.issue-number }}
           kind: action
           summary: "wing-commander finalize stage: the change-summary/remaining-work step did not complete successfully. No final pull request was opened; retrigger the finalize stage to retry."
+          body: ${{ steps.cost-line.outputs.line }}
 
       # Deterministic assembly — the ⚠️ banner's task count and the "no
       # manual work remains" fallback both read the same finalize-remaining.md
@@ -1093,6 +1116,7 @@ jobs:
           issue-number: ${{ inputs.issue-number }}
           kind: action
           summary: "wing-commander finalize stage: gh pr create did not result in a verifiable open pull request from ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }} to ${{ steps.defbranch.outputs.name }}. spec-meta.json was left untouched; retrigger the finalize stage to retry."
+          body: ${{ steps.cost-line.outputs.line }}
 
       # Both label writes happen here, ahead of the announce and metadata
       # steps rather than after them: everything below this can fail (the
@@ -1207,6 +1231,7 @@ jobs:
           summary: ${{ steps.announce-summary.outputs.summary }}
           pr-url: ${{ steps.verify-pr.outputs.pr-url }}
           pr-label: "the implementation PR"
+          body: ${{ steps.cost-line.outputs.line }}
 
       # Direct commit onto the spec branch, no work branch — same shape the
       # implement stage already uses for its own metadata writes. Also

@@ -315,3 +315,101 @@ runs:
         echo "persisted-count=$persisted" >> "$GITHUB_OUTPUT"
         echo "unpersisted-record-keys=" >> "$GITHUB_OUTPUT"
         echo "persisted-spec-dirs=$spec_dirs" >> "$GITHUB_OUTPUT"
+
+    # Tier 2's cumulative surface (research.md R9/R10, data-model.md "Rollup —
+    # cumulative summary"). Skipped entirely when this run persisted no
+    # record carrying spec identity (contracts/persist-workflow.md step 5).
+    # Deviates from tasks.md T035's literal description in one respect,
+    # documented in tasks.md itself: rather than parsing the previous
+    # comment's history list back out and appending only new lines, this
+    # regenerates the FULL history fresh from destination-path every time.
+    # That is equivalent and simpler: destination-path is already
+    # append-only and already de-duplicated by record_key (the append step
+    # above never writes a key twice), so a fresh read can never produce a
+    # duplicate line, without needing a markdown round-trip parse at all —
+    # the same "recompute fresh from the store" principle R9 already applies
+    # to the totals.
+    - name: Update cumulative rollup
+      id: rollup
+      if: steps.append.outputs.persisted-spec-dirs != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        DEST_PATH: ${{ inputs.destination-path }}
+        BRANCH: ${{ inputs.destination-branch }}
+        SPEC_DIRS: ${{ steps.append.outputs.persisted-spec-dirs }}
+      run: |
+        set -uo pipefail
+        dir="$RUNNER_TEMP/wc-metrics-persist"
+        BEGIN_MARKER="<!-- wing-commander-metrics-rollup:begin -->"
+        END_MARKER="<!-- wing-commander-metrics-rollup:end -->"
+
+        for spec_dir in $SPEC_DIRS; do
+          [ -n "$spec_dir" ] || continue
+
+          issue="$(jq -r --arg d "$spec_dir" 'select(.schema_version==1 and .spec.spec_dir==$d and .spec.identity_available==true) | .spec.issue' "$DEST_PATH" 2>/dev/null | head -1)"
+          if [ -z "$issue" ] || [ "$issue" = "null" ]; then
+            echo "::warning::wing-commander-metrics-persist: no lifecycle issue resolvable for $spec_dir — skipping its rollup update."
+            continue
+          fi
+
+          recs="$dir/rollup-recs.jsonl"
+          jq -c --arg d "$spec_dir" 'select(.schema_version==1 and .spec.spec_dir==$d)' "$DEST_PATH" 2>/dev/null > "$recs"
+
+          totals="$(jq -s '
+            {
+              total_records: length,
+              total_cost: (map(select(.cost_available==true) | .cost_usd) | add // 0),
+              incomplete: (map(select(.cost_available!=true or .tokens.available!=true)) | length),
+              by_stage: (group_by(.stage // "unknown") | map({
+                  stage: (.[0].stage // "unknown"),
+                  runs: length,
+                  cost: (map(select(.cost_available==true) | .cost_usd) | add // 0)
+                }) | sort_by(.stage))
+            }
+          ' "$recs" 2>/dev/null || echo '{}')"
+
+          history="$(jq -s -r '
+            map(
+              "- `" + .run.record_key + "` — " + (.stage // "unknown") + " · " +
+              (if .cost_available then "$" + (.cost_usd|tostring) else "cost unavailable" end) + " · " +
+              (if .turns.available then (.turns.counted|tostring) + " turns" else "turns unavailable" end) + " · " +
+              (.model // "model unavailable") + " · " + .emitted_at
+            ) | join("\n")
+          ' "$recs" 2>/dev/null || true)"
+
+          region="$dir/rollup-region.md"
+          {
+            echo "$BEGIN_MARKER"
+            echo "## Cumulative spend"
+            echo ""
+            total_cost="$(printf '%s' "$totals" | jq -r '.total_cost // 0')"
+            total_records="$(printf '%s' "$totals" | jq -r '.total_records // 0')"
+            incomplete="$(printf '%s' "$totals" | jq -r '.incomplete // 0')"
+            printf '**Total**: $%s across %s agent run(s) (as of %s)\n' "$total_cost" "$total_records" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            if [ "$incomplete" != "0" ]; then
+              printf '\n_Incomplete: %s of %s run(s) have unavailable metrics and are excluded from the total above._\n' "$incomplete" "$total_records"
+            fi
+            echo ""
+            echo "| Stage | Runs | Cost |"
+            echo "|---|---|---|"
+            printf '%s' "$totals" | jq -r '.by_stage[]? | "| \(.stage) | \(.runs) | $\(.cost) |"'
+            echo ""
+            printf '<details><summary>Per-run history (%s entries)</summary>\n\n' "$total_records"
+            printf '%s\n' "$history"
+            echo ""
+            echo "</details>"
+            echo "$END_MARKER"
+          } > "$region"
+
+          existing_id="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${issue}/comments" --paginate --jq \
+            '.[] | select(.body // "" | contains("wing-commander-metrics-rollup:begin")) | .id' 2>/dev/null | head -1)"
+
+          if [ -n "$existing_id" ]; then
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing_id}" -F body=@"$region" >/dev/null
+            echo "Updated cumulative rollup comment on issue #$issue for $spec_dir." >> "$GITHUB_STEP_SUMMARY"
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${issue}/comments" -F body=@"$region" >/dev/null
+            echo "Posted cumulative rollup comment on issue #$issue for $spec_dir." >> "$GITHUB_STEP_SUMMARY"
+          fi
+        done

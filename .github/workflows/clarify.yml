@@ -641,6 +641,73 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
+      # The action writes its full execution transcript — every tool call,
+      # including permission denials — to claude-execution-output.json in the
+      # runner temp dir. The streamed job log does NOT contain it, so upload it
+      # for post-mortems (which tools were denied, turn count, cost). Placed
+      # here (not at the job's end) because two later steps need this run's
+      # cost line to already be computed — the transcript itself is already
+      # final the moment the agent step above completes, so nothing is lost
+      # by reading/uploading it this early.
+      - name: Upload Claude execution log
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: claude-execution-output
+          path: ${{ runner.temp }}/claude-execution-output.json
+          if-no-files-found: ignore
+
+      # Surface this run's own metrics in the run summary (see intake stage).
+      - name: Agent run metrics summary
+        id: metrics-summary
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.agent.outcome != 'skipped'
+        # Belt-and-braces for the action's own "never fail the job" contract.
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
+        with:
+          model: ${{ inputs.model }}
+          max-turns: ${{ inputs.max-turns }}
+          ceiling: ${{ steps.agent-ceiling.outputs.ceiling }}
+          verdict: ${{ steps.agent-verdict.outputs.verdict }}
+          verdict-reason: ${{ steps.agent-verdict.outputs.reason }}
+          stage: clarify
+          spec-dir: ${{ steps.ctx.outputs.spec-dir }}
+          spec-issue: ${{ inputs.issue-number }}
+
+      # Durable record (specs/043-durable-metrics-record) — the artifact this
+      # feature persists past the transcript's own retention window.
+      - name: Upload metrics record
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.agent.outcome != 'skipped'
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record
+          path: ${{ runner.temp }}/wing-commander-metrics-record.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+      # Per-run cost line (specs/043-durable-metrics-record, data-model.md
+      # "Rollup — per-run cost line") — appended to whichever status comment
+      # below actually posts for this run, not a new comment (FR-031c). Must
+      # run before every outcome-announcing callout below.
+      - name: Compute cost line
+        id: cost-line
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.agent.outcome != 'skipped'
+        env:
+          RECORD_JSON: ${{ steps.metrics-summary.outputs.record-json }}
+        run: |
+          set -uo pipefail
+          line="$(printf '%s' "$RECORD_JSON" | jq -r '
+            def costpart: if .cost_available then "$" + (.cost_usd|tostring) else "cost unavailable" end;
+            def turnspart:
+              if .turns.available then
+                (.turns.counted|tostring) + (if .turns.intended_budget != null then "/" + (.turns.intended_budget|tostring) else "" end) + " turns"
+              else "turns unavailable" end;
+            def modelpart: if .model_available then .model else "model unavailable" end;
+            "**Cost**: " + costpart + " · " + turnspart + " · " + modelpart
+          ' 2>/dev/null || true)"
+          [ -n "$line" ] || line="**Cost**: metrics unavailable"
+          echo "line=$line" >> "$GITHUB_OUTPUT"
+
       # The action exits zero even when the agent run itself errored (e.g. a
       # 401 from an invalid credential), and clarify has no downstream
       # artifact whose absence would fail the run. An agent that ERRORED, or
@@ -831,6 +898,7 @@ jobs:
               )
             | join("\n")
           ' > "${{ runner.temp }}/clarify-followup.md"
+          printf '\n%s\n' "${{ steps.cost-line.outputs.line }}" >> "${{ runner.temp }}/clarify-followup.md"
 
       - name: Announce remaining clarification questions
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.outcome == 'needs-clarification'
@@ -865,46 +933,7 @@ jobs:
           summary: "Review the spec PR"
           pr-url: ${{ steps.spec-pr.outputs.url }}
           pr-label: "the spec PR"
-
-      # The action writes its full execution transcript — every tool call,
-      # including permission denials — to claude-execution-output.json in the
-      # runner temp dir. The streamed job log does NOT contain it, so upload it
-      # for post-mortems (which tools were denied, turn count, cost).
-      - name: Upload Claude execution log
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: claude-execution-output
-          path: ${{ runner.temp }}/claude-execution-output.json
-          if-no-files-found: ignore
-
-      # Surface this run's own metrics in the run summary (see intake stage).
-      - name: Agent run metrics summary
-        id: metrics-summary
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.agent.outcome != 'skipped'
-        # Belt-and-braces for the action's own "never fail the job" contract.
-        continue-on-error: true
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
-        with:
-          model: ${{ inputs.model }}
-          max-turns: ${{ inputs.max-turns }}
-          ceiling: ${{ steps.agent-ceiling.outputs.ceiling }}
-          verdict: ${{ steps.agent-verdict.outputs.verdict }}
-          verdict-reason: ${{ steps.agent-verdict.outputs.reason }}
-          stage: clarify
-          spec-dir: ${{ steps.ctx.outputs.spec-dir }}
-          spec-issue: ${{ inputs.issue-number }}
-
-      # Durable record (specs/043-durable-metrics-record) — the artifact this
-      # feature persists past the transcript's own retention window.
-      - name: Upload metrics record
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.agent.outcome != 'skipped'
-        uses: actions/upload-artifact@v6
-        with:
-          name: metrics-record
-          path: ${{ runner.temp }}/wing-commander-metrics-record.json
-          if-no-files-found: ignore
-          retention-days: 90
+          body: ${{ steps.cost-line.outputs.line }}
 
       # Observability, not failure (FR-017) — the intended budget was fully
       # used but the run finished healthy; the runaway ceiling above is the

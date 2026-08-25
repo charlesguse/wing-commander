@@ -946,6 +946,28 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
 
+      # Per-run cost line (specs/043-durable-metrics-record, data-model.md
+      # "Rollup — per-run cost line") — appended to whichever status comment
+      # below actually posts for this run, not a new comment (FR-031c).
+      - name: Compute cost line (cycle)
+        id: cost-line-cycle
+        if: always() && steps.cycle.outcome != 'skipped'
+        env:
+          RECORD_JSON: ${{ steps.metrics-summary-cycle.outputs.record-json }}
+        run: |
+          set -uo pipefail
+          line="$(printf '%s' "$RECORD_JSON" | jq -r '
+            def costpart: if .cost_available then "$" + (.cost_usd|tostring) else "cost unavailable" end;
+            def turnspart:
+              if .turns.available then
+                (.turns.counted|tostring) + (if .turns.intended_budget != null then "/" + (.turns.intended_budget|tostring) else "" end) + " turns"
+              else "turns unavailable" end;
+            def modelpart: if .model_available then .model else "model unavailable" end;
+            "**Cost**: " + costpart + " · " + turnspart + " · " + modelpart
+          ' 2>/dev/null || true)"
+          [ -n "$line" ] || line="**Cost**: metrics unavailable"
+          echo "line=$line" >> "$GITHUB_OUTPUT"
+
       # Observability, not failure (FR-017) — the intended budget was fully
       # used but the run finished healthy; the runaway ceiling above is the
       # only hard stop.
@@ -1358,6 +1380,28 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
 
+      # Per-run cost line (specs/043-durable-metrics-record, data-model.md
+      # "Rollup — per-run cost line") — appended to whichever status comment
+      # below actually posts for this run, not a new comment (FR-031c).
+      - name: Compute cost line (retry)
+        id: cost-line-retry
+        if: always() && steps.retry.outcome != 'skipped'
+        env:
+          RECORD_JSON: ${{ steps.metrics-summary-retry.outputs.record-json }}
+        run: |
+          set -uo pipefail
+          line="$(printf '%s' "$RECORD_JSON" | jq -r '
+            def costpart: if .cost_available then "$" + (.cost_usd|tostring) else "cost unavailable" end;
+            def turnspart:
+              if .turns.available then
+                (.turns.counted|tostring) + (if .turns.intended_budget != null then "/" + (.turns.intended_budget|tostring) else "" end) + " turns"
+              else "turns unavailable" end;
+            def modelpart: if .model_available then .model else "model unavailable" end;
+            "**Cost**: " + costpart + " · " + turnspart + " · " + modelpart
+          ' 2>/dev/null || true)"
+          [ -n "$line" ] || line="**Cost**: metrics unavailable"
+          echo "line=$line" >> "$GITHUB_OUTPUT"
+
       # Observability, not failure (FR-017) — see "Report over-budget agent
       # run (cycle)" above.
       - name: Report over-budget agent run (retry)
@@ -1634,8 +1678,9 @@ jobs:
             "## Wing Commander · implement stage — cycle ${{ inputs.iteration }}".
             Summarize what the cycle built (from the commits/diffstat), state
             converged or not converged, and what happens next. End the comment
-            with this line exactly:
+            with these two lines exactly, in this order:
             "_[Changes](${{ github.server_url }}/${{ github.repository }}/compare/${{ steps.base.outputs.base-sha }}...${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}) · [run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})_"
+            "${{ (steps.retry.outcome == 'success' || steps.retry.outcome == 'failure') && steps.cost-line-retry.outputs.line || steps.cost-line-cycle.outputs.line }}"
             Do not edit any files.
           claude_args: |
             --model ${{ inputs.summary-model }}
@@ -1717,6 +1762,28 @@ jobs:
           path: ${{ runner.temp }}/wing-commander-metrics-record.json
           if-no-files-found: ignore
           retention-days: 90
+
+      # Per-run cost line (specs/043-durable-metrics-record, data-model.md
+      # "Rollup — per-run cost line") — appended to whichever status comment
+      # below actually posts for this run, not a new comment (FR-031c).
+      - name: Compute cost line (progress)
+        id: cost-line-progress
+        if: always() && steps.progress.outcome != 'skipped'
+        env:
+          RECORD_JSON: ${{ steps.metrics-summary-progress.outputs.record-json }}
+        run: |
+          set -uo pipefail
+          line="$(printf '%s' "$RECORD_JSON" | jq -r '
+            def costpart: if .cost_available then "$" + (.cost_usd|tostring) else "cost unavailable" end;
+            def turnspart:
+              if .turns.available then
+                (.turns.counted|tostring) + (if .turns.intended_budget != null then "/" + (.turns.intended_budget|tostring) else "" end) + " turns"
+              else "turns unavailable" end;
+            def modelpart: if .model_available then .model else "model unavailable" end;
+            "**Cost**: " + costpart + " · " + turnspart + " · " + modelpart
+          ' 2>/dev/null || true)"
+          [ -n "$line" ] || line="**Cost**: metrics unavailable"
+          echo "line=$line" >> "$GITHUB_OUTPUT"
 
       # Observability, not failure (FR-017) — see "Report over-budget agent
       # run (cycle)" above.
@@ -1841,6 +1908,11 @@ jobs:
           REMAINING: ${{ steps.final.outputs.remaining }}
           SELF_WORKFLOW: ${{ inputs.self-workflow }}
           NEXT_WORKFLOW: ${{ inputs.next-workflow }}
+          # Per-run cost line (specs/043-durable-metrics-record) — the
+          # progress-comment agent's own cost, appended to whichever of this
+          # step's comments actually posts (FR-031c); it is the last
+          # comment-posting step in this job after that record is computed.
+          COST_LINE: ${{ steps.cost-line-progress.outputs.line }}
         run: |
           if [ "$CONVERGED" = "true" ]; then
             if [ -n "$NEXT_WORKFLOW" ]; then
@@ -1848,7 +1920,10 @@ jobs:
                 -f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f converged=true
               echo "Converged after iteration $ITERATION — dispatched $NEXT_WORKFLOW (converged=true)." >> "$GITHUB_STEP_SUMMARY"
             else
-              GH_TOKEN="$APP_TOKEN" gh issue comment "$ISSUE" --body "✅ **Implementation converged** after cycle $ITERATION. No finalize workflow is configured for automatic hand-off — dispatch one manually with \`spec_dir=$SPEC_DIR\`, \`issue=$ISSUE\`, \`converged=true\` when ready."
+              body=$(printf '%s\n\n%s' \
+                "✅ **Implementation converged** after cycle $ITERATION. No finalize workflow is configured for automatic hand-off — dispatch one manually with \`spec_dir=$SPEC_DIR\`, \`issue=$ISSUE\`, \`converged=true\` when ready." \
+                "$COST_LINE")
+              GH_TOKEN="$APP_TOKEN" gh issue comment "$ISSUE" --body "$body"
               echo "Converged after iteration $ITERATION — no next-workflow configured; reported to the issue and stopped (standalone mode)." >> "$GITHUB_STEP_SUMMARY"
             fi
           elif [ "$TRUNCATED" = "true" ] && [ "$ITERATION" -lt "$MAX" ]; then
@@ -1867,7 +1942,9 @@ jobs:
             body=$(printf '%s\n' \
               "⏱️ **Cycle $ITERATION ran out of its turn budget.** Work already landed on the branch; cycle $((ITERATION + 1)) continues on \`$TIER\` ($count_text)." \
               "" \
-              "_[Cycle run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})_")
+              "_[Cycle run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})_" \
+              "" \
+              "$COST_LINE")
             GH_TOKEN="$APP_TOKEN" gh issue comment "$ISSUE" --body "$body"
             if [ -n "$SELF_WORKFLOW" ]; then
               GH_TOKEN="$DISPATCH_TOKEN" gh workflow run "$SELF_WORKFLOW" \
@@ -1882,7 +1959,9 @@ jobs:
               "" \
               "Handing off to finalization flagged **converged=false**." \
               "" \
-              "_[Final cycle run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})_")
+              "_[Final cycle run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})_" \
+              "" \
+              "$COST_LINE")
             GH_TOKEN="$APP_TOKEN" gh issue comment "$ISSUE" --body "$body"
             if [ -n "$NEXT_WORKFLOW" ]; then
               GH_TOKEN="$DISPATCH_TOKEN" gh workflow run "$NEXT_WORKFLOW" \
@@ -1907,7 +1986,9 @@ jobs:
                 "" \
                 "No implement workflow is configured for automatic re-dispatch — retrigger it manually with \`spec_dir=$SPEC_DIR\`, \`issue=$ISSUE\`, \`iteration=$((ITERATION + 1))\` to continue." \
                 "" \
-                "_[Cycle run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})_")
+                "_[Cycle run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})_" \
+                "" \
+                "$COST_LINE")
               GH_TOKEN="$APP_TOKEN" gh issue comment "$ISSUE" --body "$body"
               echo "Not converged — no self-workflow configured; reported remaining work to the issue and stopped (standalone mode)." >> "$GITHUB_STEP_SUMMARY"
             fi
@@ -1922,7 +2003,9 @@ jobs:
               "" \
               "Handing off to finalization flagged **converged=false**; the final PR will carry this remaining work for human review." \
               "" \
-              "_[Final cycle run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})_")
+              "_[Final cycle run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})_" \
+              "" \
+              "$COST_LINE")
             GH_TOKEN="$APP_TOKEN" gh issue comment "$ISSUE" --body "$body"
             if [ -n "$NEXT_WORKFLOW" ]; then
               GH_TOKEN="$DISPATCH_TOKEN" gh workflow run "$NEXT_WORKFLOW" \
