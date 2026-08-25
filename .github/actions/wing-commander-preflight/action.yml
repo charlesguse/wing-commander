@@ -100,10 +100,22 @@ inputs:
     required: false
     default: ""
 
+outputs:
+  refused:
+    description: >
+      "true" when this step declined to proceed for a declared reason; unset
+      (never a false-y value) when the step succeeded or failed for a reason
+      it does not itself recognize (contracts/refusal-signal-contract.md).
+    value: ${{ steps.check.outputs.refused }}
+  reason:
+    description: One-sentence reason, set only when refused is "true".
+    value: ${{ steps.check.outputs.reason }}
+
 runs:
   using: composite
   steps:
     - name: Preflight (credentials, spec-kit, prerequisites)
+      id: check
       shell: bash
       env:
         # The pipeline's supported spec-kit version (constitution pin).
@@ -126,6 +138,8 @@ runs:
         fail() {
           echo "::error::wing-commander preflight: $1"
           echo "❌ **wing-commander preflight failed** — $1" >> "$GITHUB_STEP_SUMMARY"
+          echo "reason=wing-commander preflight: $1" >> "$GITHUB_OUTPUT"
+          echo "refused=true" >> "$GITHUB_OUTPUT"
           exit 1
         }
 

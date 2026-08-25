@@ -1344,9 +1344,27 @@ jobs:
           # An `if` arm that only means anything when a need did NOT
           # succeed. Reading one is the tell that the author expected the
           # `if` to be evaluated in a case where GitHub does not evaluate
-          # it at all.
+          # it at all. Two shapes: the literal `.result` comparison this
+          # rule has always caught, and a job OUTPUT compared against the
+          # literal 'false' with the same tell — specs/041-implement-
+          # stall-notice's own regression (`needs.implement.outputs.
+          # final-ok == 'false'`, no status function) was invisible to the
+          # first shape alone. Deliberately narrower than "any output
+          # comparison": `!= 'false'` (watchdog.yml's `evidence-available`)
+          # is the opposite shape — true in the ordinary case, false only
+          # on an explicit opt-out, which skips right along with its
+          # dependency and needs no survival guard — and `== '<other
+          # value>'` (cleanup.yml's `outcome == 'teardown-done'`,
+          # auto-update-spec-kit.yml's `outcome == 'clean-bump'`) is
+          # ordinary branch selection among a successful job's outcomes,
+          # not a "did my dependency fail" check. Matching those too would
+          # flag jobs with nothing wrong with them on every PR that touches
+          # them — a lint gate that cries wolf gets its warnings ignored,
+          # which is a worse outcome than the narrower rule missing a
+          # differently-spelled future instance of this exact shape.
           NON_SUCCESS_ARM = re.compile(
-              r"needs\.[A-Za-z0-9_-]+\.result\s*[=!]=\s*'(skipped|failure|cancelled)'")
+              r"needs\.[A-Za-z0-9_-]+\.result\s*[=!]=\s*'(skipped|failure|cancelled)'"
+              r"|needs\.[A-Za-z0-9_-]+\.outputs\.[A-Za-z0-9_-]+\s*==\s*'false'")
 
 
           def needs_of(spec):
@@ -1434,6 +1452,22 @@ jobs:
       # Gate 15 says nothing about whether Gate 15 works.
       - name: Gate 15 self-test — the detector actually detects
         run: python3 .github/scripts/verify-gate-15.py
+
+      # specs/041-implement-stall-notice — the chain-stop notice composite's
+      # own shell, executed against a real git repo/bare remote and a
+      # stubbed gh, the same way Gate 14 exercises implement.yml's stalled
+      # job. Proves the "marked" vs "record could not be updated" wording
+      # actually depends on whether the mark landed, and that
+      # restart-command is reproduced byte-for-byte rather than rebuilt.
+      - name: The chain-stop-notice composite's shell body behaves as documented
+        run: python3 .github/scripts/verify-chain-stop-notice-body.py
+
+      # specs/041-implement-stall-notice, User Story 2 acceptance scenario 3 /
+      # Out of Scope: the exhausted-retry notice's wording is not part of
+      # this feature — this proves it stayed that way, not merely that it
+      # was not meant to change.
+      - name: implement.yml's exhausted-retry stall notice reads exactly as before
+        run: python3 .github/scripts/verify-implement-stall-notice-unchanged.py
 
       # Gate 16 — every agent step's execution log survives the agent's own
       # failure. `anthropics/claude-code-action` writes its transcript to
@@ -2787,6 +2821,29 @@ jobs:
       # discovery, comment stripping and waiver loading are all exercised.
       - name: Gate 31 self-test — the invariant scan detects what it claims to
         run: python3 .github/scripts/verify-stage-invariants.py --self-test
+      # Gate 33 — a stage that dies at entry reaches the chain-stop notice,
+      # and nothing else does (specs/041-implement-stall-notice). Neither
+      # Gate 15 (shape-only: does the `if:` carry a status-check function at
+      # all) nor wc_shell_harness-based step-body gates (execute a step's
+      # shell, never a job-level `if:`) prove a survivor job's condition is
+      # REACHABLE for the failure shapes it claims to admit — this evaluates
+      # each of the seven shipped conditions against modelled `needs.*`
+      # values instead of inspecting their text (research.md D8). Written
+      # against Gate 28 in the plan/tasks/data-model docs that predate this
+      # implementation session; by the time this merged, 28 named the
+      # gh-api-explicit-method check, 29-31 landed via #243/#235/#244, and
+      # 32 via PR #240's act-dedup gate - so this is 33.
+      - name: Gate 33 — a stage that dies at entry reaches the chain-stop notice, and nothing else does
+        run: python3 .github/scripts/verify-chain-stop-notice.py
+
+      # specs/041-implement-stall-notice, User Story 3 — a refusal is still
+      # a refusal (FR-006's mutual exclusion, driven against the real
+      # preflight shell rather than a modelled reason string), and the four
+      # currently-quiet paths (duplicate dispatch, closed lifecycle,
+      # successful cycle, cancelled run) stay byte-for-byte quiet across
+      # all seven survivor-job conditions.
+      - name: A refusal excludes the chain-stop notice, and quiet paths stay quiet
+        run: python3 .github/scripts/verify-chain-stop-refusal-exclusion.py
 
       # Gate 26 self-test — the refs check can tell its failures apart.
       # The live half of Gate 26 runs in the `registered` job below, against

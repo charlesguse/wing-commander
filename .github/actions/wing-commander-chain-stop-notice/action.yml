@@ -1,0 +1,165 @@
+# Like every shared composite, this action is resolved from the pipeline
+# repository's own checkout at github.job_workflow_sha (see the header of
+# .github/actions/wing-commander-context/action.yml for the verified
+# snippet). Every caller checks itself out via that snippet, so this
+# composite needs no internal re-checkout of itself — only of the *spec*
+# branch it marks (when spec-dir is non-empty).
+#
+# Encapsulates the three-effect "stage did not start" stall sequence — mark
+# spec-meta.json stalled, flip the stage:* label, post the notice — as one
+# shared shape, called from the abnormal-termination arm of every gated
+# stage's survivor job (specs/041-implement-stall-notice/data-model.md).
+# Deliberately does not handle the refusal note (that stays
+# wing-commander-callout, called in-job) and deliberately does not touch
+# implement.yml's existing exhausted-retry notice (left as its current
+# inline steps — research.md D7).
+name: wing-commander-chain-stop-notice
+description: >
+  Best-effort: mark spec-meta.json stalled, flip the stage:stalled label,
+  and post a "stage did not start" notice on the lifecycle issue (or PR).
+  Never fails the calling job — a checkout/push failure degrades the
+  notice's wording to "record could not be updated" instead.
+
+inputs:
+  token:
+    description: >
+      Write token (issues: write, and contents: write when spec-dir is set)
+      — the same App-installation token every composite already receives.
+    required: true
+  issue-number:
+    description: >
+      Where to post. May be a PR number for pr-conversation's degraded case
+      — gh issue comment accepts either.
+    required: true
+  spec-dir:
+    description: >
+      specs/NNN-slug whose spec-meta.json to mark stalled. Empty means no
+      record to mark (intake, or any stage whose independent identity
+      re-derivation itself failed) — the record-mark step is skipped and
+      the notice always renders the "record could not be updated" wording.
+    required: false
+    default: ""
+  spec-branch:
+    description: Branch to check out for the mark. Required together with spec-dir; ignored when spec-dir is empty.
+    required: false
+    default: ""
+  stage-label:
+    description: >
+      stage:<name> label to remove when the mark succeeds. Empty is valid
+      (nothing to remove, e.g. intake).
+    required: false
+    default: ""
+  run-url:
+    description: >
+      Defaults to this run's own URL when not supplied — always available
+      regardless of any job's outcome, since it is workflow-run context,
+      not a job output.
+    required: false
+    default: ""
+  reason:
+    description: One sentence naming where the run stopped.
+    required: true
+  restart-command:
+    description: >
+      Fully caller-rendered restart instructions. Empty renders as a
+      generic "re-dispatch this stage" line.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout spec branch
+      id: checkout
+      if: inputs.spec-dir != ''
+      continue-on-error: true
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.spec-branch }}
+        token: ${{ inputs.token }}
+        fetch-depth: 0
+        clean: false
+
+    - name: Mark spec-meta.json stalled
+      id: mark
+      if: always() && inputs.spec-dir != '' && steps.checkout.outcome == 'success'
+      shell: bash
+      env:
+        SPEC_DIR: ${{ inputs.spec-dir }}
+      run: |
+        set -uo pipefail
+
+        status="marked"
+        if jq '.stage = "stalled"' "$SPEC_DIR/spec-meta.json" > /tmp/wcsn-meta.json 2>/tmp/wcsn-jq-err; then
+          mv /tmp/wcsn-meta.json "$SPEC_DIR/spec-meta.json"
+          git config user.name  "wing-commander-bot[bot]"
+          git config user.email "wing-commander-bot[bot]@users.noreply.github.com"
+          git add "$SPEC_DIR/spec-meta.json"
+          # A record already reading stage=stalled (an earlier failed
+          # iteration) produces no commit — treated as success, not failure
+          # (idempotent on the mark).
+          if ! git diff --cached --quiet; then
+            if ! git commit -m "implement: mark $SPEC_DIR stalled (stage did not start)"; then
+              status="unwritable"
+            elif ! git push; then
+              status="unwritable"
+            fi
+          fi
+        else
+          echo "::warning::wing-commander-chain-stop-notice: jq could not read $SPEC_DIR/spec-meta.json — $(cat /tmp/wcsn-jq-err 2>/dev/null)"
+          status="unwritable"
+        fi
+        echo "record-status=$status" >> "$GITHUB_OUTPUT"
+
+    - name: Flip labels
+      id: labels
+      if: always()
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        ISSUE: ${{ inputs.issue-number }}
+        STAGE_LABEL: ${{ inputs.stage-label }}
+        RECORD_STATUS: ${{ steps.mark.outputs.record-status }}
+      run: |
+        set -uo pipefail
+        gh label create "stage:stalled" --color E99695 --description "Stage did not complete; manual restart required" --force || true
+        gh issue edit "$ISSUE" --add-label "stage:stalled" || true
+        if [ -n "$STAGE_LABEL" ] && [ "$RECORD_STATUS" = "marked" ]; then
+          gh issue edit "$ISSUE" --remove-label "$STAGE_LABEL" || true
+        fi
+
+    - name: Post the notice
+      if: always()
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        ISSUE: ${{ inputs.issue-number }}
+        REASON: ${{ inputs.reason }}
+        RUN_URL_INPUT: ${{ inputs.run-url }}
+        DEFAULT_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        RESTART_COMMAND: ${{ inputs.restart-command }}
+        RECORD_STATUS: ${{ steps.mark.outputs.record-status }}
+      run: |
+        set -uo pipefail
+
+        run_url="$RUN_URL_INPUT"
+        [ -n "$run_url" ] || run_url="$DEFAULT_RUN_URL"
+
+        restart="$RESTART_COMMAND"
+        [ -n "$restart" ] || restart="Re-dispatch this stage once the cause above is resolved."
+
+        {
+          echo "⏸️ **Stage stalled — the stage did not start**"
+          echo ""
+          echo "$REASON ($run_url)."
+          echo ""
+          if [ "$RECORD_STATUS" = "marked" ]; then
+            echo "No implementation attempt was made — nothing was escalated, no model tier was used, and no work was lost. This specification's lifecycle record has been marked stalled."
+          else
+            echo "No implementation attempt was made. **The lifecycle record could not be updated** — a maintainer should confirm the spec branch and the record's \`stage\` field by hand before restarting."
+          fi
+          echo ""
+          echo "$restart"
+        } > /tmp/wcsn-notice.md
+
+        gh issue comment "$ISSUE" --body-file /tmp/wcsn-notice.md

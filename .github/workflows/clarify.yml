@@ -325,6 +325,11 @@ jobs:
     concurrency:
       group: wing-commander-${{ inputs.issue-number }}
       cancel-in-progress: false
+    # Internal job-to-job wiring only — never a workflow_call output
+    # (research.md D3). Non-empty only when a refusal-shaped step in THIS
+    # job actually ran and refused; empty on success, skip, or a crash.
+    outputs:
+      refusal-reason: ${{ steps.preflight.outputs.reason || steps.identity.outputs.reason }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v4
@@ -388,6 +393,7 @@ jobs:
 
       # Deterministic fail-fast before any billable work (FR-004, FR-009).
       - name: Preflight
+        id: preflight
         if: steps.lifecycle-gate.outputs.is-open == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-preflight
         with:
@@ -397,6 +403,17 @@ jobs:
           use-bedrock: ${{ inputs.use-bedrock }}
           aws-role-arn: ${{ inputs.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
+
+      # Refusal note (research.md D1): the preflight step ran and declined —
+      # always()-gated so it fires regardless of the step's own failure.
+      - name: Report preflight refusal on lifecycle issue
+        if: always() && steps.preflight.outputs.refused == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ github.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: action
+          summary: "This stage could not start — ${{ steps.preflight.outputs.reason }}"
 
       - name: Configure AWS credentials for Bedrock
         if: steps.lifecycle-gate.outputs.is-open == 'true'
@@ -430,6 +447,7 @@ jobs:
       # Precondition (contracts/stage-interfaces.md): the issue must carry the
       # pipeline's spec identity label — the intake stage assigns it.
       - name: Verify spec identity
+        id: identity
         if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
           SPEC_SLUG: ${{ steps.ctx.outputs.spec-slug }}
@@ -439,8 +457,20 @@ jobs:
             msg="wing-commander clarify stage: issue #$ISSUE carries no spec:NNN-slug label — it is assigned by the intake stage (intake.yml) when the draft spec is created. Run intake for this issue first."
             echo "::error::$msg"
             echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+            echo "reason=$msg" >> "$GITHUB_OUTPUT"
+            echo "refused=true" >> "$GITHUB_OUTPUT"
             exit 1
           fi
+
+      # Refusal note (research.md D1) — see "Report preflight refusal" above.
+      - name: Report spec-identity refusal on lifecycle issue
+        if: always() && steps.identity.outputs.refused == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ github.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: action
+          summary: "This stage could not start — ${{ steps.identity.outputs.reason }}"
 
       # clean: false — a default `git clean` here would delete the untracked
       # .wing-commander-pipeline checkout the composite steps below still need.
@@ -890,3 +920,127 @@ jobs:
         run: |
           echo "::error::wing-commander clarify stage: failing the run — the spec still carries colon-form [NEEDS CLARIFICATION: markers while the structured result reported none (see the error above). No readiness callout was posted."
           exit 1
+
+  # Survivor job (the #224 idiom, research.md D4): new for clarify — this
+  # stage has no exhausted-retry loop, so it admits only the abnormal-
+  # termination arm. Split internally on refusal-reason == '' (D3's
+  # mutual-exclusion arm — a refusal already posted its own in-job note,
+  # FR-006).
+  stalled:
+    needs: [verify-image-prerequisites, clarify]
+    if: |
+      needs.verify-image-prerequisites.result == 'success' &&
+      !cancelled() &&
+      ( needs.verify-image-prerequisites.result == 'failure' ||
+        needs.clarify.result == 'failure' ||
+        needs.clarify.result == 'skipped' ) &&
+      needs.clarify.outputs.refusal-reason == ''
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    concurrency:
+      group: wing-commander-${{ inputs.issue-number }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      issues: write
+      id-token: write
+    steps:
+      - name: Checkout consumer repository (bootstrap, default token)
+        if: needs.clarify.outputs.refusal-reason == ''
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        if: needs.clarify.outputs.refusal-reason == ''
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref"               | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        if: needs.clarify.outputs.refusal-reason == ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          # A private pipeline repository is not readable by the caller's
+          # GITHUB_TOKEN — pipeline-repo-token covers that case (docs/adoption.md).
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      - name: Wing Commander context
+        id: ctx
+        if: needs.clarify.outputs.refusal-reason == ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      # Independent identity re-derivation (research.md D6, clarify row):
+      # never trust needs.clarify.outputs.* for identity, only for
+      # refusal-reason (D3) — the job that would have resolved it may have
+      # failed before doing so. Same spec:* label lookup
+      # wing-commander-context's own resolve step performs, run again here.
+      # The persistent spec branch prefix ("spec/") is this pipeline's fixed
+      # convention (intake.yml's spec-prefix default) — clarify itself has
+      # no configurable input for it, since it never writes there today.
+      - name: Resolve spec identity independently
+        id: identity
+        if: needs.clarify.outputs.refusal-reason == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ inputs.issue-number }}
+        run: |
+          spec_slug="$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name | select(startswith("spec:"))][0] // "" | sub("^spec:"; "")')"
+          echo "slug=$spec_slug" >> "$GITHUB_OUTPUT"
+          if [ -n "$spec_slug" ]; then
+            echo "spec-dir=specs/$spec_slug" >> "$GITHUB_OUTPUT"
+          else
+            echo "spec-dir=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Determine which dependency did not start
+        id: reason
+        if: needs.clarify.outputs.refusal-reason == ''
+        env:
+          IMAGE_RESULT: ${{ needs.verify-image-prerequisites.result }}
+          CLARIFY_RESULT: ${{ needs.clarify.result }}
+        run: |
+          if [ "$IMAGE_RESULT" = "failure" ]; then
+            reason="the verify-image-prerequisites job failed, so the clarify stage never started"
+          elif [ "$CLARIFY_RESULT" = "skipped" ]; then
+            reason="the clarify stage was skipped because a dependency it needs did not run"
+          else
+            reason="the clarify stage failed before it could run its own steps"
+          fi
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+
+      - name: Report the stage did not start
+        if: needs.clarify.outputs.refusal-reason == ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-chain-stop-notice
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ inputs.issue-number }}
+          spec-dir: ${{ steps.identity.outputs.spec-dir }}
+          spec-branch: spec/${{ steps.identity.outputs.slug }}
+          stage-label: "stage:clarify"
+          reason: ${{ steps.reason.outputs.reason }}
+          restart-command: "Re-dispatch the clarify stage for this specification once the cause above is resolved."

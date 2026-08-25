@@ -397,6 +397,16 @@ jobs:
     outputs:
       slug: ${{ steps.spec.outputs.slug }}
       spec-dir: ${{ steps.spec.outputs.spec-dir }}
+      # Internal job-to-job wiring only — never a workflow_call output
+      # (research.md D3). Non-empty only when this refusal-shaped step
+      # actually ran and refused. No in-job refusal callout is possible at
+      # THIS job: a slug that fails to resolve means no spec-dir exists to
+      # read spec-meta.json's issue number from, and this job has no
+      # workflow_call input naming a lifecycle issue at all (unlike every
+      # other gated stage) — there is no addressable destination for the
+      # note. The `::error::`/step-summary above remains the signal for
+      # this specific, structurally-unaddressable case.
+      refusal-reason: ${{ steps.spec.outputs.reason }}
     steps:
       # Derive the spec identity from the merged head branch (plan/<NNN-slug>
       # for mode: generate, tasks/<NNN-slug> for mode: approved) or the slug
@@ -419,6 +429,8 @@ jobs:
           slug="${INPUT_SLUG:-${HEAD_REF#"$prefix"}}"
           if ! printf '%s' "$slug" | grep -Eq '^[0-9]{3}-[a-z0-9][a-z0-9-]*$'; then
             echo "::error::Cannot resolve a spec slug (got '$slug'); refusing to guess."
+            echo "reason=Cannot resolve a spec slug (got '$slug'); refusing to guess." >> "$GITHUB_OUTPUT"
+            echo "refused=true" >> "$GITHUB_OUTPUT"
             exit 1
           fi
           echo "slug=$slug"           >> "$GITHUB_OUTPUT"
@@ -464,6 +476,10 @@ jobs:
       cancel-in-progress: false
     outputs:
       spec-dir: ${{ needs.resolve-spec.outputs.spec-dir }}
+      # Internal job-to-job wiring only — never a workflow_call output
+      # (research.md D3). Folds in resolve-spec's own refusal too, since a
+      # resolve-spec refusal skips this job before any of its steps run.
+      refusal-reason: ${{ needs.resolve-spec.outputs.refusal-reason || steps.preflight.outputs.reason }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v4
@@ -505,8 +521,29 @@ jobs:
           path: .wing-commander-pipeline
           persist-credentials: false
 
+      # tasks.yml declares no issue-number workflow_call input (unlike every
+      # other gated stage) — the lifecycle issue only becomes known once
+      # spec-meta.json is read, normally by "Verify spec artifacts and
+      # resolve lifecycle issue" much later. A Preflight refusal needs it
+      # sooner, so this job's own contents:write-scoped github.token reads
+      # it here (needs.resolve-spec.outputs.spec-dir is already available —
+      # resolve-spec succeeded for this job to have started at all).
+      # Best-effort: an unreadable spec-meta.json leaves issue empty, and
+      # the refusal callout below simply does not post (no addressable
+      # destination), rather than failing this job.
+      - name: Resolve lifecycle issue for refusal reporting
+        id: issuelookup
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SPEC_DIR: ${{ needs.resolve-spec.outputs.spec-dir }}
+          SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ needs.resolve-spec.outputs.slug }}
+        run: |
+          issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.issue // empty' 2>/dev/null)
+          echo "issue=${issue:-}" >> "$GITHUB_OUTPUT"
+
       # Deterministic fail-fast before any billable work (FR-004, FR-009).
       - name: Preflight
+        id: preflight
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-preflight
         with:
           oauth-token: ${{ secrets.claude-code-oauth-token }}
@@ -522,6 +559,18 @@ jobs:
             plan=${{ inputs.plan-prefix }}
             tasks=${{ inputs.tasks-prefix }}
             impl=${{ inputs.impl-prefix }}
+
+      # Refusal note (research.md D1). Skipped entirely when the lookup
+      # above could not resolve an issue number — no addressable
+      # destination exists in that case.
+      - name: Report preflight refusal on lifecycle issue
+        if: always() && steps.preflight.outputs.refused == 'true' && steps.issuelookup.outputs.issue != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ github.token }}
+          issue-number: ${{ steps.issuelookup.outputs.issue }}
+          kind: action
+          summary: "This stage could not start — ${{ steps.preflight.outputs.reason }}"
 
       - name: Configure AWS credentials for Bedrock
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-bedrock-credentials
@@ -1108,6 +1157,10 @@ jobs:
       cancel-in-progress: false
     outputs:
       spec-dir: ${{ needs.resolve-spec.outputs.spec-dir }}
+      # Internal job-to-job wiring only — never a workflow_call output
+      # (research.md D3). Folds in resolve-spec's own refusal too, since a
+      # resolve-spec refusal skips this job before any of its steps run.
+      refusal-reason: ${{ needs.resolve-spec.outputs.refusal-reason || steps.preflight.outputs.reason }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v4
@@ -1149,9 +1202,22 @@ jobs:
           path: .wing-commander-pipeline
           persist-credentials: false
 
+      # See the tasks job's identical step — this job's own contents:read
+      # permission lets github.token read spec-meta.json before Preflight.
+      - name: Resolve lifecycle issue for refusal reporting
+        id: issuelookup
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SPEC_DIR: ${{ needs.resolve-spec.outputs.spec-dir }}
+          SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ needs.resolve-spec.outputs.slug }}
+        run: |
+          issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.issue // empty' 2>/dev/null)
+          echo "issue=${issue:-}" >> "$GITHUB_OUTPUT"
+
       # No agent step runs on this path, so no credential is required —
       # spec-kit presence is still checked so failures carry guidance.
       - name: Preflight
+        id: preflight
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-preflight
         with:
           require-credential: "false"
@@ -1159,6 +1225,16 @@ jobs:
           use-bedrock: ${{ inputs.use-bedrock }}
           aws-role-arn: ${{ inputs.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
+
+      # Refusal note (research.md D1) — see the tasks job's identical step.
+      - name: Report preflight refusal on lifecycle issue
+        if: always() && steps.preflight.outputs.refused == 'true' && steps.issuelookup.outputs.issue != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ github.token }}
+          issue-number: ${{ steps.issuelookup.outputs.issue }}
+          kind: action
+          summary: "This stage could not start — ${{ steps.preflight.outputs.reason }}"
 
       - name: Wing Commander context
         id: ctx
@@ -1237,3 +1313,255 @@ jobs:
             gh issue comment "$issue" --body "✅ Tasks PR merged — task list accepted. Implementation has been dispatched (iteration 1)."
           fi
           echo "Dispatched $NEXT_WORKFLOW (spec_dir=specs/$SLUG, issue=$issue, iteration=1)." >> "$GITHUB_STEP_SUMMARY"
+
+  # Survivor job (the #224 idiom, research.md D4) for mode: generate — fires
+  # when resolve-spec failed/was skipped-with-a-non-refusal, or tasks
+  # failed/was skipped, and no refusal-reason anywhere in the chain (D3's
+  # mutual-exclusion arm — a refusal already posted its own note where
+  # possible, FR-006). spec-dir needs no lookup — slug parses directly from
+  # inputs.head-ref/inputs.slug (string derivation only, research.md D6);
+  # issue-number via the same spec-meta.json API read the tasks job's own
+  # refusal-reporting step performs.
+  stalled:
+    needs: [verify-image-prerequisites, resolve-spec, tasks]
+    if: |
+      needs.verify-image-prerequisites.result == 'success' &&
+      inputs.mode == 'generate' &&
+      !cancelled() &&
+      ( needs.verify-image-prerequisites.result == 'failure' ||
+        needs.resolve-spec.result == 'failure' ||
+        needs.tasks.result == 'failure' ||
+        needs.tasks.result == 'skipped' ) &&
+      needs.resolve-spec.outputs.refusal-reason == '' &&
+      needs.tasks.outputs.refusal-reason == ''
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    permissions:
+      contents: read
+      issues: write
+      id-token: write
+    steps:
+      - name: Checkout consumer repository (bootstrap, default token)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref"               | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      - name: Wing Commander context
+        id: ctx
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      # Independent identity re-derivation (research.md D6): string
+      # derivation only, no lookup — never trust needs.resolve-spec.outputs.*
+      # (D3 — only refusal-reason is trusted from a job that may have failed
+      # before computing anything else).
+      - name: Resolve spec identity from inputs
+        id: identity
+        env:
+          MODE: ${{ inputs.mode }}
+          HEAD_REF: ${{ inputs.head-ref }}
+          INPUT_SLUG: ${{ inputs.slug }}
+          TASKS_PREFIX: ${{ inputs.tasks-prefix }}
+          PLAN_PREFIX: ${{ inputs.plan-prefix }}
+        run: |
+          if [ "$MODE" = "approved" ]; then
+            prefix="$TASKS_PREFIX"
+          else
+            prefix="$PLAN_PREFIX"
+          fi
+          slug="${INPUT_SLUG:-${HEAD_REF#"$prefix"}}"
+          echo "slug=$slug" >> "$GITHUB_OUTPUT"
+          echo "spec-dir=specs/$slug" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve lifecycle issue number
+        id: issuelookup
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SPEC_DIR: ${{ steps.identity.outputs.spec-dir }}
+          SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug }}
+        run: |
+          issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.issue // empty' 2>/dev/null)
+          echo "issue=${issue:-}" >> "$GITHUB_OUTPUT"
+
+      - name: Determine which dependency did not start
+        id: reason
+        env:
+          IMAGE_RESULT: ${{ needs.verify-image-prerequisites.result }}
+          RESOLVE_RESULT: ${{ needs.resolve-spec.result }}
+          TASKS_RESULT: ${{ needs.tasks.result }}
+        run: |
+          if [ "$IMAGE_RESULT" = "failure" ]; then
+            reason="the verify-image-prerequisites job failed, so the tasks stage never started"
+          elif [ "$RESOLVE_RESULT" = "failure" ]; then
+            reason="the tasks stage failed before it could run its own steps"
+          elif [ "$TASKS_RESULT" = "skipped" ]; then
+            reason="the tasks stage was skipped because a dependency it needs did not run"
+          else
+            reason="the tasks stage failed before it could run its own steps"
+          fi
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+
+      - name: Report the stage did not start
+        if: steps.issuelookup.outputs.issue != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-chain-stop-notice
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ steps.issuelookup.outputs.issue }}
+          spec-dir: ${{ steps.identity.outputs.spec-dir }}
+          spec-branch: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug }}
+          reason: ${{ steps.reason.outputs.reason }}
+          restart-command: "Re-dispatch the tasks stage for this specification once the cause above is resolved."
+
+  # Survivor job for mode: approved — same shape as the mode: generate job
+  # above, against tasks-approved.
+  stalled-approved:
+    needs: [verify-image-prerequisites, resolve-spec, tasks-approved]
+    if: |
+      needs.verify-image-prerequisites.result == 'success' &&
+      inputs.mode == 'approved' &&
+      !cancelled() &&
+      ( needs.verify-image-prerequisites.result == 'failure' ||
+        needs.resolve-spec.result == 'failure' ||
+        needs.tasks-approved.result == 'failure' ||
+        needs.tasks-approved.result == 'skipped' ) &&
+      needs.resolve-spec.outputs.refusal-reason == '' &&
+      needs.tasks-approved.outputs.refusal-reason == ''
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    permissions:
+      contents: read
+      issues: write
+      id-token: write
+    steps:
+      - name: Checkout consumer repository (bootstrap, default token)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref"               | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      - name: Wing Commander context
+        id: ctx
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      - name: Resolve spec identity from inputs
+        id: identity
+        env:
+          MODE: ${{ inputs.mode }}
+          HEAD_REF: ${{ inputs.head-ref }}
+          INPUT_SLUG: ${{ inputs.slug }}
+          TASKS_PREFIX: ${{ inputs.tasks-prefix }}
+          PLAN_PREFIX: ${{ inputs.plan-prefix }}
+        run: |
+          if [ "$MODE" = "approved" ]; then
+            prefix="$TASKS_PREFIX"
+          else
+            prefix="$PLAN_PREFIX"
+          fi
+          slug="${INPUT_SLUG:-${HEAD_REF#"$prefix"}}"
+          echo "slug=$slug" >> "$GITHUB_OUTPUT"
+          echo "spec-dir=specs/$slug" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve lifecycle issue number
+        id: issuelookup
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SPEC_DIR: ${{ steps.identity.outputs.spec-dir }}
+          SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug }}
+        run: |
+          issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.issue // empty' 2>/dev/null)
+          echo "issue=${issue:-}" >> "$GITHUB_OUTPUT"
+
+      - name: Determine which dependency did not start
+        id: reason
+        env:
+          IMAGE_RESULT: ${{ needs.verify-image-prerequisites.result }}
+          RESOLVE_RESULT: ${{ needs.resolve-spec.result }}
+          TASKS_RESULT: ${{ needs.tasks-approved.result }}
+        run: |
+          if [ "$IMAGE_RESULT" = "failure" ]; then
+            reason="the verify-image-prerequisites job failed, so the tasks stage never started"
+          elif [ "$RESOLVE_RESULT" = "failure" ]; then
+            reason="the tasks stage failed before it could run its own steps"
+          elif [ "$TASKS_RESULT" = "skipped" ]; then
+            reason="the tasks stage was skipped because a dependency it needs did not run"
+          else
+            reason="the tasks stage failed before it could run its own steps"
+          fi
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+
+      - name: Report the stage did not start
+        if: steps.issuelookup.outputs.issue != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-chain-stop-notice
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ steps.issuelookup.outputs.issue }}
+          spec-dir: ${{ steps.identity.outputs.spec-dir }}
+          spec-branch: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug }}
+          reason: ${{ steps.reason.outputs.reason }}
+          restart-command: "Re-dispatch the tasks stage for this specification once the cause above is resolved."

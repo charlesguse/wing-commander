@@ -1,0 +1,26 @@
+{
+  "_comment": "The exhausted-retry stall notice of implement.yml pinned from main 6f04355 (post spec 040, 2026-08-24 merge). Pinned as CONTENT because CI checkouts are shallow, so a git-ref baseline is unreadable there. If main rewords these steps again, regenerate this file deliberately, in its own reviewed change.",
+  "steps": {
+    "Mark lifecycle record stalled": {
+      "run": "jq '.stage = \"stalled\"' \"$SPEC_DIR/spec-meta.json\" > /tmp/meta.json\nmv /tmp/meta.json \"$SPEC_DIR/spec-meta.json\"\ngit config user.name  \"${BOT_SLUG}[bot]\"\ngit config user.email \"${BOT_SLUG}[bot]@users.noreply.github.com\"\ngit add \"$SPEC_DIR/spec-meta.json\"\n# A restarted iteration that fails again finds the record already\n# stalled; committing nothing must not kill the job before the\n# issue report below runs.\nif git diff --cached --quiet; then\n  echo \"spec-meta.json already reads stage=stalled — nothing to commit.\" >> \"$GITHUB_STEP_SUMMARY\"\nelse\n  git commit -m \"implement: mark $SLUG stalled (iteration $ITERATION failed)\"\n  git push\nfi\n",
+      "uses": null,
+      "with": null
+    },
+    "Report stalled on lifecycle issue": {
+      "run": "gh label create \"stage:stalled\" --color E99695 --description \"Stage did not complete; manual restart required\" --force\ngh issue edit \"$ISSUE\" --add-label \"stage:stalled\"\ngh issue edit \"$ISSUE\" --remove-label \"stage:implement\" 2>/dev/null || true\ngh issue edit \"$ISSUE\" --remove-label \"stage:tasks\"     2>/dev/null || true\n# 4-backtick fence so an agent message containing ``` blocks nests.\nfence='````'\n# NOTE: no apostrophes inside ${VAR:-default} — bash parses quotes\n# inside ${} even within double quotes (this exact line once broke\n# the whole report with \"unexpected EOF\").\nreason_text=\"$REASON\"\n[ -n \"$reason_text\" ] || reason_text=\"see the failing run's step summary\"\nrestart_workflow=\"$SELF_WORKFLOW\"\n[ -n \"$restart_workflow\" ] || restart_workflow=\"<your implement wrapper workflow>\"\n# A stall arrives in one of two states: the failed pass either recorded\n# its iteration before dying, or its push never landed and the record\n# still reads the previous one. Only the agent writes `iteration`; the\n# stall commit above touches `.stage` alone. Since the guard admits a\n# stalled stage only at recorded+1, the restart has to be derived from\n# the record — $ITERATION+1 is right in the first state and a dispatch\n# the guard drops as a duplicate in the second. An unreadable record\n# falls back to $ITERATION rather than killing the report.\nrecorded=$(jq -r '.iteration // 0' \"$SPEC_DIR/spec-meta.json\" 2>/dev/null) || recorded=\"\"\ncase \"$recorded\" in ''|*[!0-9]*) recorded=\"$ITERATION\" ;; esac\nrestart_iteration=$((recorded + 1))\n{\n  echo \"⏸️ **Implementation stalled** — iteration $ITERATION of the implement/converge loop failed (last attempt on \\`$TIER\\`), and no higher model tier remains to escalate to, so this specification is now **stalled** (nothing restarts automatically).\"\n  echo \"\"\n  echo \"**Failing run**: $RUN_URL\"\n  echo \"**Why the attempt was judged failed**: $reason_text\"\n  if [ -n \"$AGENT_MSG\" ]; then\n    echo \"\"\n    echo \"<details><summary><b>Agent's final message</b> (last attempt — usually states exactly what blocked it)</summary>\"\n    echo \"\"\n    echo \"$fence\"\n    printf '%s\\n' \"$AGENT_MSG\"\n    echo \"$fence\"\n    echo \"\"\n    echo \"</details>\"\n  fi\n  echo \"\"\n  echo \"### Runbook — restarting this specification\"\n  echo \"\"\n  echo \"1. **Diagnose** — open the [failing run]($RUN_URL): the step summary says which attempt failed and why, and its \\`claude-execution-output-cycle\\` / \\`-retry\\` artifacts hold the full agent transcripts.\"\n  echo \"2. **Fix the cause** — e.g. missing bot permissions, a broken task, an unreachable dependency.\"\n  echo \"3. **Restart** — re-dispatch the implement wrapper workflow via **Run workflow** with these inputs (GitHub cannot prefill them from a link):\"\n  echo \"\"\n  echo \"   | input | value |\"\n  echo \"   |---|---|\"\n  echo \"   | \\`spec_dir\\` | \\`$SPEC_DIR\\` |\"\n  echo \"   | \\`issue\\` | \\`$ISSUE\\` |\"\n  echo \"   | \\`iteration\\` | \\`$restart_iteration\\` |\"\n  echo \"\"\n  echo \"   or from a terminal:\"\n  echo \"\"\n  echo \"   \\`\\`\\`\"\n  echo \"   gh workflow run $restart_workflow -R $GITHUB_REPOSITORY -f spec_dir=$SPEC_DIR -f issue=$ISSUE -f iteration=$restart_iteration\"\n  echo \"   \\`\\`\\`\"\n} > /tmp/stall-comment.md\n",
+      "uses": null,
+      "with": null
+    },
+    "Announce the stall on the lifecycle issue": {
+      "run": null,
+      "uses": "./.wing-commander-pipeline/.github/actions/wing-commander-callout",
+      "with": {
+        "token": "${{ steps.ctx.outputs.token }}",
+        "issue-number": "${{ inputs.issue-number }}",
+        "kind": "action",
+        "summary": "Restart the implement stage",
+        "body-file": "/tmp/stall-comment.md"
+      }
+    }
+  }
+}
