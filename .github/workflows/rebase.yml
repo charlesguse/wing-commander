@@ -1052,6 +1052,7 @@ jobs:
           BEFORE: ${{ steps.attempt.outputs.before }}
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          COST_LINE: ${{ steps.cost-line.outputs.line }}
         run: |
           set -uo pipefail
           spec_dir="specs/$SLUG"
@@ -1101,7 +1102,7 @@ jobs:
             echo ""
             echo "$marker"
           } > "$RUNNER_TEMP/escalation.md"
-          printf '\n%s\n' "${{ steps.cost-line.outputs.line }}" >> "$RUNNER_TEMP/escalation.md"
+          printf '\n%s\n' "$COST_LINE" >> "$RUNNER_TEMP/escalation.md"
 
           gh label create "rebase:blocked" --color B60205 --description "Auto-rebase stuck; needs a manual rebase" --force
           gh issue edit "$issue" --add-label "rebase:blocked"

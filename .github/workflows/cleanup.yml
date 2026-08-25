@@ -841,13 +841,14 @@ jobs:
       - name: Resolve completion summary (with fallback)
         id: summary
         if: steps.idempotency.outputs.skip != 'true'
+        env:
+          COST_LINE: ${{ steps.cost-line.outputs.line }}
         run: |
           f="${{ runner.temp }}/cleanup-summary.md"
           if [ "${{ steps.summarize-verdict.outputs.verdict }}" != "healthy" ] || [ ! -s "$f" ]; then
             echo "Specification merged (automated summary unavailable)." > "$f"
           fi
-          cost_line="${{ steps.cost-line.outputs.line }}"
-          [ -n "$cost_line" ] && printf '\n%s\n' "$cost_line" >> "$f"
+          [ -n "$COST_LINE" ] && printf '\n%s\n' "$COST_LINE" >> "$f"
           echo "summary-file=$f" >> "$GITHUB_OUTPUT"
 
       # Atomic close-with-comment avoids a separate close call that could

@@ -62,12 +62,24 @@ runs:
         dir="$RUNNER_TEMP/wc-metrics-persist"
         mkdir -p "$dir"
 
-        gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/jobs" --paginate --jq '.jobs[]' \
-          > "$dir/jobs.ndjson" 2>/dev/null || true
+        # A total Actions-API failure (bad token, outage, deleted run-id)
+        # must be reported as not-collected, not as a clean zero-artifact
+        # run (FR-019/FR-021, MF-F5) — a legitimately empty `.jobs`/
+        # `.artifacts` array still exits 0 with no output, so checking the
+        # real exit status (rather than swallowing it with `|| true`)
+        # tells the two apart.
+        if ! gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/jobs" --paginate --jq '.jobs[]' \
+          > "$dir/jobs.ndjson" 2>"$dir/jobs-err.txt"; then
+          echo "::error::wing-commander-metrics-persist: could not list jobs for run $RUN_ID -- $(cat "$dir/jobs-err.txt" 2>/dev/null) -- reporting as not-collected rather than a zero-artifact run."
+          exit 1
+        fi
         jq -s '.' "$dir/jobs.ndjson" > "$dir/jobs.json" 2>/dev/null || echo '[]' > "$dir/jobs.json"
 
-        gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts" --paginate --jq '.artifacts[]' \
-          > "$dir/artifacts.ndjson" 2>/dev/null || true
+        if ! gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts" --paginate --jq '.artifacts[]' \
+          > "$dir/artifacts.ndjson" 2>"$dir/artifacts-err.txt"; then
+          echo "::error::wing-commander-metrics-persist: could not list artifacts for run $RUN_ID -- $(cat "$dir/artifacts-err.txt" 2>/dev/null) -- reporting as not-collected rather than a zero-artifact run."
+          exit 1
+        fi
         jq -s '[.[] | select(.name | startswith("metrics-record"))]' "$dir/artifacts.ndjson" \
           > "$dir/artifacts.json" 2>/dev/null || echo '[]' > "$dir/artifacts.json"
 

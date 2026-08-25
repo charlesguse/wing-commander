@@ -17,9 +17,27 @@ declaring retention fails this gate by construction (FR-033).
 WHAT IT CHECKS
 --------------
 Every .github/workflows/*.yml `actions/upload-artifact@*` step whose
-`with.name` starts with `claude-execution-output` or `metrics-record` must
+`with.path` ends with `claude-execution-output.json` or
+`wing-commander-metrics-record.json` — the two file names
+contracts/emission-contract.md fixes as `transcript-path` and
+`record-path`'s defaults, and every real call site uses unmodified — must
 declare `with.retention-days: 90`. Missing or any other value is a failure,
 named by file and step.
+
+WHY `path`, NOT `name` (MF-F6)
+-------------------------------
+This gate used to key discovery on `with.name`'s prefix
+(claude-execution-output*/metrics-record*). `name` is the artifact's
+DOWNLOAD label — every consumer of it (wing-commander-metrics-persist's
+`gh run download -p 'metrics-record*'`, this repository's own naming
+convention) picks it freely, so a call site that uploads the SAME file
+under an unconventional name (a typo, a rename that missed this gate's
+pattern list) silently evaded the retention check entirely, despite
+uploading the exact file this feature exists to retain. `path` is what the
+step actually reads off disk before uploading anything, and every real
+call site writes to the SAME fixed path (the composite actions' own
+`transcript-path`/`record-path` defaults) — a far narrower surface a
+future site is far less likely to accidentally dodge.
 """
 import argparse
 import glob
@@ -31,7 +49,7 @@ import tempfile
 import yaml
 
 WORKFLOWS_DIR = ".github/workflows"
-PATTERNS = ("claude-execution-output", "metrics-record")
+PATTERNS = ("claude-execution-output.json", "wing-commander-metrics-record.json")
 
 
 def _rel(root, path):
@@ -39,10 +57,10 @@ def _rel(root, path):
     return rel[2:] if rel.startswith("./") else rel
 
 
-def _matches(name):
-    if not isinstance(name, str):
+def _matches(path):
+    if not isinstance(path, str):
         return False
-    return any(name.startswith(p) for p in PATTERNS)
+    return any(path.endswith(p) for p in PATTERNS)
 
 
 def scan_file(path, source):
@@ -62,16 +80,18 @@ def scan_file(path, source):
             if not str(uses).startswith("actions/upload-artifact@"):
                 continue
             with_block = step.get("with") or {}
-            name = with_block.get("name")
-            if not _matches(name):
+            artifact_path = with_block.get("path")
+            if not _matches(artifact_path):
                 continue
             step_label = step.get("name", "(unnamed step)")
+            name = with_block.get("name")
             retention = with_block.get("retention-days")
             if retention != 90:
                 failures.append(
-                    "{0}: job '{1}' step '{2}' (artifact '{3}') does not "
-                    "declare retention-days: 90 (found: {4!r})".format(
-                        path, jname, step_label, name, retention))
+                    "{0}: job '{1}' step '{2}' (artifact '{3}', path '{4}') "
+                    "does not declare retention-days: 90 (found: "
+                    "{5!r})".format(
+                        path, jname, step_label, name, artifact_path, retention))
     return failures
 
 
@@ -102,7 +122,7 @@ def evaluate(root="."):
                 uses = step.get("uses") or ""
                 if not str(uses).startswith("actions/upload-artifact@"):
                     continue
-                if _matches((step.get("with") or {}).get("name")):
+                if _matches((step.get("with") or {}).get("path")):
                     sites += 1
     return failures, sites
 
@@ -122,7 +142,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: claude-execution-output
-          path: /tmp/x.json
+          path: /tmp/claude-execution-output.json
           if-no-files-found: ignore
           retention-days: 90
 """
@@ -139,7 +159,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: claude-execution-output
-          path: /tmp/x.json
+          path: /tmp/claude-execution-output.json
           if-no-files-found: ignore
 """
 
@@ -155,7 +175,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: metrics-record
-          path: /tmp/r.json
+          path: /tmp/wing-commander-metrics-record.json
           retention-days: 30
 """
 
@@ -174,20 +194,49 @@ jobs:
           path: /tmp/y.json
 """
 
+# MF-F6: the actual regression this gate exists to close. A site can name
+# its artifact anything (upload-artifact's `name:` is only a download
+# label) while still writing the SAME transcript file this feature must
+# retain — the old name-prefix discovery let exactly this evade the gate.
+UNCONVENTIONAL_NAME_MATCHING_PATH = """\
+name: unconventional name, real transcript path
+on:
+  workflow_call:
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Upload something
+        uses: actions/upload-artifact@v6
+        with:
+          name: build-log-42
+          path: ${{ runner.temp }}/claude-execution-output.json
+          if-no-files-found: ignore
+"""
+
 FIXTURES = [
     ("a declared 90-day retention passes",
      {"good.yml": GOOD}, None),
     ("a missing retention-days is caught, named by file/step/artifact",
      {"missing.yml": MISSING_RETENTION},
      "missing.yml: job 'go' step 'Upload Claude execution log' "
-     "(artifact 'claude-execution-output') does not declare "
+     "(artifact 'claude-execution-output', path "
+     "'/tmp/claude-execution-output.json') does not declare "
      "retention-days: 90"),
     ("a non-90 retention-days is caught",
      {"wrong.yml": WRONG_RETENTION},
      "wrong.yml: job 'go' step 'Upload metrics record' "
-     "(artifact 'metrics-record') does not declare retention-days: 90"),
+     "(artifact 'metrics-record', path "
+     "'/tmp/wing-commander-metrics-record.json') does not declare "
+     "retention-days: 90"),
     ("an unrelated artifact upload is not this gate's subject",
      {"unrelated.yml": UNRELATED_ARTIFACT}, None),
+    ("an unconventionally named artifact is still caught by its real path (MF-F6)",
+     {"unconventional.yml": UNCONVENTIONAL_NAME_MATCHING_PATH},
+     "unconventional.yml: job 'go' step 'Upload something' "
+     "(artifact 'build-log-42', path "
+     "'${{ runner.temp }}/claude-execution-output.json') does not declare "
+     "retention-days: 90"),
 ]
 
 
