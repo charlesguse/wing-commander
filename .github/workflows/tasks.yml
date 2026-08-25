@@ -961,6 +961,7 @@ jobs:
       # them runs per invocation, and this unconditional step reads whichever
       # transcript that branch produced.
       - name: Agent run metrics summary
+        id: metrics-summary
         if: >-
           always() &&
           (steps.agent-auto.outcome != 'skipped' ||
@@ -974,6 +975,23 @@ jobs:
           ceiling: ${{ steps.agent-auto-ceiling.outputs.ceiling || steps.agent-pr-ceiling.outputs.ceiling }}
           verdict: ${{ steps.agent-auto-verdict.outputs.verdict || steps.agent-pr-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.agent-auto-verdict.outputs.reason || steps.agent-pr-verdict.outputs.reason }}
+          stage: tasks
+          spec-dir: ${{ needs.resolve-spec.outputs.spec-dir }}
+          spec-issue: ${{ steps.meta.outputs.issue }}
+
+      # Durable record (specs/043-durable-metrics-record) — the artifact this
+      # feature persists past the transcript's own retention window.
+      - name: Upload metrics record
+        if: >-
+          always() &&
+          (steps.agent-auto.outcome != 'skipped' ||
+           steps.agent-pr.outcome != 'skipped')
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record
+          path: ${{ runner.temp }}/wing-commander-metrics-record.json
+          if-no-files-found: ignore
+          retention-days: 90
 
       # Deterministic verification — no agent turns spent on checking facts.
       # Auto mode: tasks.md and the stage flip must be on the spec branch.

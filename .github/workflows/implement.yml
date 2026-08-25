@@ -918,6 +918,7 @@ jobs:
       # shared transcript path. run-label distinguishes it from the retry and
       # progress-comment blocks in this same job's summary.
       - name: Agent run metrics summary (cycle)
+        id: metrics-summary-cycle
         if: always() && steps.cycle.outcome != 'skipped'
         # Belt-and-braces for the action's own "never fail the job" contract.
         continue-on-error: true
@@ -929,6 +930,21 @@ jobs:
           run-label: cycle
           verdict: ${{ steps.cycle-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.cycle-verdict.outputs.reason }}
+          stage: implement
+          spec-dir: ${{ inputs.spec-dir }}
+          spec-issue: ${{ inputs.issue-number }}
+          step-index: '0'
+
+      # Durable record (specs/043-durable-metrics-record) — the artifact this
+      # feature persists past the transcript's own retention window.
+      - name: Upload metrics record (cycle)
+        if: always() && steps.cycle.outcome != 'skipped'
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-cycle
+          path: ${{ runner.temp }}/wing-commander-metrics-record.json
+          if-no-files-found: ignore
+          retention-days: 90
 
       # Observability, not failure (FR-017) — the intended budget was fully
       # used but the run finished healthy; the runaway ceiling above is the
@@ -1314,6 +1330,7 @@ jobs:
       # Retry run's metrics — read after the retry's own upload and before the
       # haiku progress-comment step overwrites the shared transcript path.
       - name: Agent run metrics summary (retry)
+        id: metrics-summary-retry
         if: always() && steps.retry.outcome != 'skipped'
         # Belt-and-braces for the action's own "never fail the job" contract.
         continue-on-error: true
@@ -1325,6 +1342,21 @@ jobs:
           run-label: retry
           verdict: ${{ steps.retry-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.retry-verdict.outputs.reason }}
+          stage: implement
+          spec-dir: ${{ inputs.spec-dir }}
+          spec-issue: ${{ inputs.issue-number }}
+          step-index: '1'
+
+      # Durable record (specs/043-durable-metrics-record) — the artifact this
+      # feature persists past the transcript's own retention window.
+      - name: Upload metrics record (retry)
+        if: always() && steps.retry.outcome != 'skipped'
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-retry
+          path: ${{ runner.temp }}/wing-commander-metrics-record.json
+          if-no-files-found: ignore
+          retention-days: 90
 
       # Observability, not failure (FR-017) — see "Report over-budget agent
       # run (cycle)" above.
@@ -1658,6 +1690,7 @@ jobs:
       # step and its transcript upload — every agent invocation gets its own
       # summary block.
       - name: Agent run metrics summary (progress comment)
+        id: metrics-summary-progress
         if: always() && steps.progress.outcome != 'skipped'
         # Belt-and-braces for the action's own "never fail the job" contract.
         continue-on-error: true
@@ -1669,6 +1702,21 @@ jobs:
           run-label: progress comment
           verdict: ${{ steps.progress-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.progress-verdict.outputs.reason }}
+          stage: implement
+          spec-dir: ${{ inputs.spec-dir }}
+          spec-issue: ${{ inputs.issue-number }}
+          step-index: '2'
+
+      # Durable record (specs/043-durable-metrics-record) — the artifact this
+      # feature persists past the transcript's own retention window.
+      - name: Upload metrics record (progress)
+        if: always() && steps.progress.outcome != 'skipped'
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-progress
+          path: ${{ runner.temp }}/wing-commander-metrics-record.json
+          if-no-files-found: ignore
+          retention-days: 90
 
       # Observability, not failure (FR-017) — see "Report over-budget agent
       # run (cycle)" above.

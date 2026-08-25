@@ -1665,6 +1665,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Agent run metrics summary
+        id: metrics-summary
         if: always() && steps.diagnose.outcome != 'skipped'
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
@@ -1675,6 +1676,22 @@ jobs:
           run-label: diagnose
           verdict: ${{ steps.diagnose-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.diagnose-verdict.outputs.reason }}
+          stage: watchdog
+          spec-dir: ${{ needs.collect.outputs.spec-dir }}
+
+      # Durable record (specs/043-durable-metrics-record) — the artifact this
+      # feature persists past the transcript's own retention window. No spec
+      # lifecycle issue exists at this site (diagnose posts to a findings
+      # issue, not a spec lifecycle issue), so spec-issue is deliberately
+      # omitted above, leaving spec.identity_available: false in the record.
+      - name: Upload metrics record
+        if: always() && steps.diagnose.outcome != 'skipped'
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-diagnose
+          path: ${{ runner.temp }}/wing-commander-metrics-record.json
+          if-no-files-found: ignore
+          retention-days: 90
 
       # Deterministic parse of the agent's structured JSON result (the same
       # terminal "result" record wing-commander-metrics-summary reads) —

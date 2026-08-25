@@ -822,6 +822,7 @@ jobs:
       # Surface this per-matrix-entry run's own metrics in the run summary
       # (see intake stage). Reads this entry's transcript at the shared path.
       - name: Agent run metrics summary
+        id: metrics-summary
         if: always() && steps.agent.outcome != 'skipped'
         # Belt-and-braces for the action's own "never fail the job" contract.
         continue-on-error: true
@@ -832,6 +833,23 @@ jobs:
           ceiling: ${{ steps.agent-ceiling.outputs.ceiling }}
           verdict: ${{ steps.agent-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.agent-verdict.outputs.reason }}
+          stage: rebase
+          spec-dir: ${{ matrix.spec_dir }}
+          spec-issue: ${{ matrix.issue }}
+
+      # Durable record (specs/043-durable-metrics-record) — the artifact this
+      # feature persists past the transcript's own retention window. One
+      # artifact per matrix entry, mirroring this job's own
+      # claude-execution-output-${{ matrix.slug }} transcript naming — a
+      # matrix job's parallel legs would otherwise collide on a shared name.
+      - name: Upload metrics record
+        if: always() && steps.agent.outcome != 'skipped'
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-${{ matrix.slug }}
+          path: ${{ runner.temp }}/wing-commander-metrics-record.json
+          if-no-files-found: ignore
+          retention-days: 90
 
       # Observability, not failure (FR-017) — the intended budget was fully
       # used but the run finished healthy; the runaway ceiling above is the

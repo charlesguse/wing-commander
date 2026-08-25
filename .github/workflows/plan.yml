@@ -1102,6 +1102,23 @@ jobs:
           ceiling: ${{ steps.agent-auto-ceiling.outputs.ceiling || steps.agent-pr-ceiling.outputs.ceiling }}
           verdict: ${{ steps.agent-auto-verdict.outputs.verdict || steps.agent-pr-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.agent-auto-verdict.outputs.reason || steps.agent-pr-verdict.outputs.reason }}
+          stage: plan
+          spec-dir: ${{ needs.resolve-spec.outputs.spec-dir }}
+          spec-issue: ${{ steps.meta.outputs.issue || steps.newissue.outputs.issue }}
+
+      # Durable record (specs/043-durable-metrics-record) — the artifact this
+      # feature persists past the transcript's own retention window.
+      - name: Upload metrics record
+        if: >-
+          always() &&
+          (steps.agent-pr.outcome != 'skipped' ||
+           steps.agent-auto.outcome != 'skipped')
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record
+          path: ${{ runner.temp }}/wing-commander-metrics-record.json
+          if-no-files-found: ignore
+          retention-days: 90
 
       # Observability, not failure (FR-017) — the intended budget was fully
       # used but the run finished healthy; the runaway ceiling above is the
