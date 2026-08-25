@@ -28,7 +28,7 @@
 # No pause kill-switch (constitution VII's wrapper rule): this is dispatched
 # by hand, and `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_PAUSED=true` is exactly
 # when a maintainer is most likely to be debugging why the stage cannot run.
-name: "Wing Commander · auto-update-spec-kit scratch preflight"
+name: "Wing Commander · spec-kit updater scratch preflight"
 
 on:
   workflow_dispatch: {}
