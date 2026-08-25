@@ -958,7 +958,15 @@ jobs:
 
           # D9a: keyed by the branch tip SHA the entry describes — skip the
           # append when the most recent existing entry already names it.
-          last_recorded_sha=$(grep -oE '\b[0-9a-f]{7,40}\b' "$foldlog_file" | tail -n1 || true)
+          # Anchored to the entry's own structured field — the token
+          # between the "Fold (...)" prefix's closing paren and the
+          # following colon on the LAST entry only — rather than a free-text
+          # scan of the whole fold log. An agent-authored summary can embed
+          # an unrelated commit sha in its own prose; a free-text grep over
+          # the whole file would pick that up as "last" and silently record
+          # no fold-log entry for a fold that actually happened (PR #253
+          # review).
+          last_recorded_sha=$(tail -n1 "$foldlog_file" 2>/dev/null | sed -nE 's/^- Fold \([^)]*\) ([0-9a-f]{7,40}):.*/\1/p')
           new_entry=""
           if [ "$last_recorded_sha" != "$short_sha" ]; then
             range_start="$last_recorded_sha"

@@ -618,6 +618,59 @@ def scenario_metadata_commit_idempotent(steps, root):
     return failures
 
 
+def scenario_foldlog_sha_extraction_ignores_prose_hex(steps, root):
+    """PR #253 review: last_recorded_sha must be read from the last entry's
+    own structured field, not a free-text scan of the whole fold log — an
+    agent-authored summary can embed an unrelated hex-looking token, which a
+    naive `grep -oE '[0-9a-f]{7,40}'` picks up as "last" and derives the
+    wrong range_start, silently dropping the next cycle's fold-log entry.
+    """
+    failures = []
+    repo, base_sha = make_repo(root, 2, 3, 5, pending_re_review_from=[])
+    work = os.path.dirname(repo)
+    runner_temp = os.path.join(work, "runner_temp")
+    os.makedirs(runner_temp, exist_ok=True)
+    bindir, calls = new_stub_dir(work)
+
+    _, old_short = add_fold_commit(repo, work, "leg-0", "first fold")
+    # The summary embeds a spurious hex-looking token AFTER the real
+    # short-sha on the same line — exactly the shape a free-text grep over
+    # the whole file cannot tell apart from the real one.
+    prior_body = (
+        f"{STATE_BEGIN}\n**Branch**: `x`\n{STATE_END}\n\n"
+        f"{FOLDLOG_BEGIN}\n"
+        f"- Fold (2026-08-20, review by @alice, #250) {old_short}: 1 item(s) "
+        f"folded — merged into deadbeef1 for compatibility.\n"
+        f"{FOLDLOG_END}\n\n"
+        f"{NARRATIVE_BEGIN}\nprior narrative\n{NARRATIVE_END}\n"
+    )
+    prior_body_file = os.path.join(work, "prior-body.md")
+    with open(prior_body_file, "w", encoding="utf-8") as fh:
+        fh.write(prior_body)
+
+    _, new_short = add_fold_commit(repo, work, "leg-1", "second fold")
+    rc, out, body = _run_assemble_body(steps, repo, work, bindir, calls,
+                                       runner_temp, "open",
+                                       prior_body_file=prior_body_file)
+    if rc != 0:
+        failures.append(f"refresh body assembly exited {rc}: {out.strip()}")
+        return failures
+    fold_log_span = extract_between(body, FOLDLOG_BEGIN, FOLDLOG_END) or ""
+    count = fold_log_span.count("- Fold (")
+    if count != 2:
+        failures.append(f"a spurious hex token in the prior entry's own "
+                        f"summary caused the new fold to go unrecorded: "
+                        f"expected 2 fold-log entries (1 prior + 1 new), "
+                        f"found {count}: {fold_log_span!r}")
+    if f"{new_short}:" not in body:
+        failures.append(f"no fold-log entry for the new fold "
+                        f"({new_short}) — the spurious hex token "
+                        f"'deadbeef1' in the prior entry's summary was "
+                        f"picked as last_recorded_sha instead of the real "
+                        f"{old_short!r}: {body!r}")
+    return failures
+
+
 def test_structural():
     """Reachability of the merged/closed report steps, which delegate to a
     composite action this harness cannot execute directly (see module
@@ -654,6 +707,7 @@ SCENARIOS = [
     scenario_create_path_seeds_region,
     scenario_refresh_preserves_and_appends,
     scenario_idempotent_repeat_refresh,
+    scenario_foldlog_sha_extraction_ignores_prose_hex,
     scenario_pr_open_or_update,
     scenario_re_review_request,
     scenario_metadata_commit_idempotent,
