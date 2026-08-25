@@ -394,7 +394,7 @@ jobs:
       run-url: ${{ steps.run-meta.outputs.url }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
 
@@ -423,7 +423,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -944,6 +944,17 @@ jobs:
             esac
             log_rc=0
             log="$(GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$job_id/logs" 2>/dev/null)" || log_rc=$?
+            if [ "$log_rc" != "0" ]; then
+              # Logs for a just-completed job can lag the jobs API by a few
+              # seconds; one bounded retry before declaring this collector
+              # untrusted. Measured 2026-08-25: issue #256's diagnosis
+              # carried a "collect-step-summary failed outright" caveat
+              # because this fetch 404ed ~20s after the inspected run
+              # finished.
+              sleep 10
+              log_rc=0
+              log="$(GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$job_id/logs" 2>/dev/null)" || log_rc=$?
+            fi
             [ "$log_rc" = "0" ] || so_failed=1
             [ -n "$log" ] || continue
             # Match RUNTIME OUTPUT only. Actions echoes every step's own
@@ -1242,7 +1253,7 @@ jobs:
       findings: ${{ steps.diagnose-outcome.outputs.findings }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
 
@@ -1266,7 +1277,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -1820,7 +1831,7 @@ jobs:
       deployment: ${{ inputs.environment-deployment }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
 
@@ -1844,7 +1855,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -2175,7 +2186,7 @@ jobs:
       deployment: ${{ inputs.environment-deployment }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
 
@@ -2199,7 +2210,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -2536,7 +2547,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         continue-on-error: true
         with:
           persist-credentials: false
@@ -2565,7 +2576,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         continue-on-error: true
         with:
           repository: ${{ inputs.pipeline-repo }}

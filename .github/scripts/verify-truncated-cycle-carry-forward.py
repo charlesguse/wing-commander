@@ -75,6 +75,9 @@ LINT_WORKFLOW = ".github/workflows/lint-workflows.yml"
 GATE_PREFIX = "Gate 30"
 THIS_SCRIPT = ".github/scripts/verify-truncated-cycle-carry-forward.py"
 
+# The author pattern implement.yml resolves from its own bot context; the
+# harness pins the claude half, which is what its fixture commits use.
+AGENT_AUTHOR_RE = r"claude\[bot\]|wing-commander-bot\[bot\]"
 CYCLE_STEP = "Read back cycle outcome"
 RETRY_STEP = "Read back retry outcome"
 FINAL_STEP = "Consolidate final outcome"
@@ -131,10 +134,11 @@ def write_file(repo, relpath, content):
         fh.write(content)
 
 
-def git_commit(repo, message):
+def git_commit(repo, message, author=None):
+    author_arg = f" --author={json.dumps(author)}" if author else ""
     proc = sh(f"""cd '{repo}'
 git add -A
-git commit -q -m {json.dumps(message)}
+git commit -q -m {json.dumps(message)}{author_arg}
 """, repo)
     if proc.returncode != 0:
         sys.exit(f"::error::commit {message!r} failed: {proc.stdout}{proc.stderr}")
@@ -166,8 +170,8 @@ def make_workspace(root, base_checked=0, base_unchecked=3,
 git init --bare -q -b main '{remote}'
 git clone -q '{remote}' '{repo}'
 cd '{repo}'
-git config user.email harness@example.invalid
-git config user.name harness
+git config user.email 'claude[bot]@users.noreply.invalid'
+git config user.name 'claude[bot]'
 git checkout -q -b '{branch}'
 """
     proc = sh(setup, work)
@@ -186,7 +190,8 @@ git checkout -q -b '{branch}'
 
 def build_scenario(root, *, tick_task=False, outside_file=False, advance=True,
                     converge=False, iteration=ITERATION, base_checked=0,
-                    base_unchecked=3, prior_iteration=PRIOR_ITERATION):
+                    base_unchecked=3, prior_iteration=PRIOR_ITERATION,
+                    outside_author=None):
     """One synthetic cycle's history on top of a fresh base commit."""
     work, repo, base_sha, branch = make_workspace(
         root, base_checked, base_unchecked, prior_iteration)
@@ -198,7 +203,7 @@ def build_scenario(root, *, tick_task=False, outside_file=False, advance=True,
         git_commit(repo, "implement: tick a task")
     if outside_file:
         write_file(repo, "src/feature.py", "feature\n")
-        git_commit(repo, "implement: add feature file")
+        git_commit(repo, "implement: add feature file", author=outside_author)
     if advance:
         write_file(repo, f"{SPEC_DIR}/spec-meta.json",
                    json.dumps({"stage": "implement", "iteration": int(iteration)}) + "\n")
@@ -216,7 +221,8 @@ def run_cycle_step(steps, repo, base_sha, *, verdict, cycle_result,
     runner_temp = tempfile.mkdtemp(dir=os.path.dirname(repo))
     env = {"SLUG": SLUG, "SPEC_DIR": SPEC_DIR, "ITERATION": str(iteration),
            "BASE_SHA": base_sha, "CYCLE_RESULT": cycle_result,
-           "VERDICT": verdict, "SPEC_PREFIX": SPEC_PREFIX}
+           "VERDICT": verdict, "SPEC_PREFIX": SPEC_PREFIX,
+           "AGENT_AUTHOR_RE": AGENT_AUTHOR_RE}
     return run_step(BASH, steps[CYCLE_STEP], repo, env, runner_temp)
 
 
@@ -226,7 +232,8 @@ def run_retry_step(steps, repo, base_sha, *, verdict, retry_result,
     env = {"SLUG": SLUG, "SPEC_DIR": SPEC_DIR, "ITERATION": str(iteration),
            "BASE_SHA": base_sha, "RETRY_RESULT": retry_result,
            "VERDICT": verdict, "ESCALATION_MODEL": ESCALATION_MODEL,
-           "SPEC_PREFIX": SPEC_PREFIX}
+           "SPEC_PREFIX": SPEC_PREFIX,
+           "AGENT_AUTHOR_RE": AGENT_AUTHOR_RE}
     return run_step(BASH, steps[RETRY_STEP], repo, env, runner_temp)
 
 
@@ -369,6 +376,11 @@ CYCLE_SCENARIOS = [
          tick_task=False, outside_file=True, advance=True, converge=False,
          verdict="exhausted", cycle_result="failure",
          expect=dict(ok="true", truncated="true", converged="false")),
+    dict(name="4b: exhausted, outside-file commit authored by a third party",
+         tick_task=False, outside_file=True, advance=True, converge=False,
+         outside_author="Maintainer <m@example.invalid>",
+         verdict="exhausted", cycle_result="failure",
+         expect=dict(ok="false", truncated="false", converged="")),
     dict(name="5: ordinary failure, no progress at all",
          tick_task=False, outside_file=False, advance=False, converge=False,
          verdict="failed", cycle_result="failure",
@@ -405,6 +417,7 @@ def run_cycle_scenario(steps, scenario, root):
     """(rc, out, outputs, failures) for one CYCLE_SCENARIOS entry."""
     work, repo, base_sha, _ = build_scenario(
         root, tick_task=scenario["tick_task"], outside_file=scenario["outside_file"],
+        outside_author=scenario.get("outside_author"),
         advance=scenario["advance"], converge=scenario["converge"])
     rc, out, outputs, summary = run_cycle_step(
         steps, repo, base_sha, verdict=scenario["verdict"],
@@ -811,17 +824,28 @@ def check_reporting_persist_failure(root):
     were a number (FR-011, FR-012, SC-007)."""
     failures = []
     steps = {DISPATCH_STEP: STEPS_CACHE[DISPATCH_STEP]}
-    rc, out, outputs, body, calls, _ = run_dispatch_step(steps, {
-        "TRUNCATED": "true", "ITERATION": "2", "MAX": "5",
-        "TRUNCATED_COUNT": "unknown", "SELF_WORKFLOW": "wing-commander-5-implement.yml",
-    }, root)
-    where = "below-cap truncated report with an unrecorded count"
-    if rc != 0:
-        failures.append(f"{where}: exited {rc}: {out.strip()}")
-    else:
+    # Two arrivals of the same situation: the recorder step reported
+    # "unknown" (its push was rejected), or it died before its first
+    # echo count= and the output is EMPTY (#248) - the reader must not
+    # render either as if it were a number.
+    for count_value, arrival in (("unknown", "an 'unknown' marker"),
+                                 ("", "an empty output")):
+        rc, out, outputs, body, calls, _ = run_dispatch_step(steps, {
+            "TRUNCATED": "true", "ITERATION": "2", "MAX": "5",
+            "TRUNCATED_COUNT": count_value,
+            "SELF_WORKFLOW": "wing-commander-5-implement.yml",
+        }, root)
+        where = f"below-cap truncated report with {arrival}"
+        if rc != 0:
+            failures.append(f"{where}: exited {rc}: {out.strip()}")
+            continue
         if "consecutive truncations: unknown" in body:
             failures.append(f"{where}: must not print the raw 'unknown' "
                             f"marker as if it were a count: {body!r}")
+        if "consecutive truncations: )" in body:
+            failures.append(f"{where}: rendered an empty count as "
+                            f"'truncations: )' - FR-010 said it must "
+                            f"never: {body!r}")
         if "could not be recorded" not in body:
             failures.append(f"{where}: expected wording that the count "
                             f"could not be recorded this cycle: {body!r}")
@@ -860,13 +884,20 @@ def _mut_drop_arm_b(steps):
         'if [ "$arm_a" = "true" ]; then', 1)
 
 
+def _mut_drop_author_filter(steps):
+    """Widen Arm B back to any-diff-at-all, the pre-#248 shape that counted
+    an auto-rebase or maintainer push as the agent's own progress."""
+    steps[CYCLE_STEP] = steps[CYCLE_STEP].replace(
+        ' --author="$AGENT_AUTHOR_RE"', "", 1)
+
+
 def _mut_count_advance_as_progress(steps):
     """Widen Arm B to no longer exclude $SPEC_DIR, so the lifecycle-record
     advance commit itself (which lives inside $SPEC_DIR) satisfies Arm B —
     a different mechanism than removing the guard outright."""
     steps[CYCLE_STEP] = steps[CYCLE_STEP].replace(
-        'git diff --name-only "$BASE_SHA..origin/${SPEC_PREFIX}$SLUG" -- . ":(exclude)$SPEC_DIR/**"',
-        'git diff --name-only "$BASE_SHA..origin/${SPEC_PREFIX}$SLUG"', 1)
+        '"$BASE_SHA..origin/${SPEC_PREFIX}$SLUG" -- . ":(exclude)$SPEC_DIR/**"',
+        '"$BASE_SHA..origin/${SPEC_PREFIX}$SLUG"', 1)
 
 
 def _mut_widen_exhausted_to_failed(steps):
@@ -948,6 +979,9 @@ MUTATIONS = [
     ("drop Arm B (outside-spec-dir file change)",
      _mut_drop_arm_b, "4: exhausted, Arm-B-only progress",
      {"truncated": "false"}),
+    ("dropping Arm B's author filter counts third-party pushes as progress",
+     _mut_drop_author_filter, "4b: exhausted, outside-file commit authored by a third party",
+     {"ok": "true", "truncated": "true"}),
     ("count the lifecycle-record advance itself as progress",
      _mut_count_advance_as_progress, "2: exhausted, only the lifecycle-record advance landed",
      {"truncated": "true"}),

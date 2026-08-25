@@ -339,7 +339,7 @@ jobs:
       refusal-reason: ${{ steps.preflight.outputs.reason || steps.spec.outputs.reason || steps.meta.outputs.reason }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
 
@@ -368,7 +368,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -487,7 +487,7 @@ jobs:
       # .wing-commander-pipeline checkout the composite steps below still need.
       - name: Checkout spec branch as wing-commander-bot
         if: steps.lifecycle-gate.outputs.is-open == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
           token: ${{ steps.ctx.outputs.token }}
@@ -1288,7 +1288,7 @@ jobs:
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         if: needs.finalize.outputs.refusal-reason == ''
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
 
@@ -1313,7 +1313,7 @@ jobs:
 
       - name: Checkout pipeline repository (shared composite actions)
         if: needs.finalize.outputs.refusal-reason == ''
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}

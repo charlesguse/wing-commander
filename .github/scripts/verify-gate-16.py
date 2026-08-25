@@ -97,7 +97,7 @@ def wf(steps, published=True):
     doc = {"name": "fixture", "on": on,
            "jobs": {"stage": {"runs-on": "ubuntu-latest",
                               "steps": [{"name": "Checkout",
-                                         "uses": "actions/checkout@v4"}] + steps}}}
+                                         "uses": "actions/checkout@v5"}] + steps}}}
     return yaml.safe_dump(doc, sort_keys=False)
 
 
