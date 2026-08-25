@@ -2836,6 +2836,24 @@ jobs:
       - name: Gate 33 — a stage that dies at entry reaches the chain-stop notice, and nothing else does
         run: python3 .github/scripts/verify-chain-stop-notice.py
 
+      # Gate 34 — specs/042-post-review-fold-loop (research.md D1-D6): a
+      # review folds every leg exactly once before any implementation
+      # dispatch, dispatch itself happens exactly once per review (not per
+      # leg — the defect that cancelled leg 4 and iteration 3 against each
+      # other on PR #240), and a leg that dies without folding is reported
+      # by name, distinguishing "not folded" from "partly folded", derived
+      # only from signals a dead leg never had to publish itself.
+      - name: Gate 34 — a review folds every leg once and dispatches once, and a dead leg says so
+        run: python3 .github/scripts/verify-fold-dispatch-once.py
+
+      # Gate 35 — specs/042-post-review-fold-loop (research.md D7-D10): a
+      # finalize run against an existing OPEN final PR refreshes it instead
+      # of skipping — body, lifecycle record, label, re-review request —
+      # while a merged or closed PR is reported and left untouched, and the
+      # one-PR-per-spec guard's purpose is preserved on every path.
+      - name: Gate 35 — finalize refreshes an open final PR, and only an open one
+        run: python3 .github/scripts/verify-finalize-refresh.py
+
       # specs/041-implement-stall-notice, User Story 3 — a refusal is still
       # a refusal (FR-006's mutual exclusion, driven against the real
       # preflight shell rather than a modelled reason string), and the four

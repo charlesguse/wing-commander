@@ -68,6 +68,15 @@ on:
         type: string
         required: false
         default: pr-conversation-confirm
+      confirm-timeout-minutes:
+        description: >
+          Upper bound, in minutes, a held-for-confirmation leg may wait for
+          its environment: approval before GitHub Actions cancels the act
+          job outright (research.md D5, specs/042-post-review-fold-loop).
+          Applies uniformly to every leg in the matrix, not held legs alone.
+        type: number
+        required: false
+        default: 1440
       model:
         description: "Model for the classify and act agent steps (constitution II — sonnet default, opus opt-in, research.md D2)"
         type: string
@@ -397,6 +406,10 @@ jobs:
       # for a stop-only run, which mutates nothing and must not queue behind
       # the very run it was asked to cancel.
       concurrency-group: ${{ steps.confirm.outputs.concurrency-group }}
+      # research.md D3/data-model.md §2: the spec branch's tip immediately
+      # before `act` starts folding anything — `dispatch-once` compares its
+      # own read of the tip against this to decide whether any leg folded.
+      base-sha: ${{ steps.base-sha.outputs.sha }}
       # Internal job-to-job wiring only — never a workflow_call output
       # (research.md D3). Non-empty only when a refusal-shaped step in THIS
       # job actually ran and refused; empty on success, skip, or a crash.
@@ -1128,7 +1141,13 @@ jobs:
               | if ($needle | length) == 0 then ""
                 else ([$perms[] | select((.title | ascii_downcase) | contains($needle))] | .[0].url // "")
                 end;
-            map(
+            # research.md D6/data-model.md §1: a stable per-classification id,
+            # assigned from the ORIGINAL index before the sort_by below
+            # reorders confirm-gated legs after ready ones — dispatch-once
+            # and report-fold-outcomes both key on this id, so it must
+            # survive that reordering.
+            (to_entries | map(.value + {id: ("leg-" + (.key | tostring))}))
+            | map(
               . as $orig
               | (
                   if ($orig.category == "small-unrelated-change") then
@@ -1297,6 +1316,24 @@ jobs:
             i=$((i + 1))
           done
 
+      # research.md D3: read LAST in this job — immediately before `act`
+      # starts folding anything — so this is genuinely the pre-fold tip.
+      # persist-credentials was false on every checkout above, so `origin`
+      # carries no stored auth; ls-remote against an explicit authenticated
+      # URL (the same idiom auto-update-spec-kit.yml uses for the identical
+      # problem) rather than the bare `origin` remote.
+      - name: Read branch tip before folding
+        id: base-sha
+        if: steps.identity.outputs.qualifies == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          SLUG: ${{ steps.identity.outputs.slug }}
+        run: |
+          set -euo pipefail
+          tip=$(git ls-remote "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/heads/${SPEC_PREFIX}${SLUG}" | cut -f1)
+          echo "sha=$tip" >> "$GITHUB_OUTPUT"
+
   # Executes each classification's route: fold-in + implement re-dispatch
   # (in-scope-change), new-issue/new-PR spin-offs (new-functionality,
   # small-unrelated-change, manual-step-permission's permission-request
@@ -1311,6 +1348,16 @@ jobs:
       needs.classify-and-announce.outputs.qualifies == 'true' &&
       needs.classify-and-announce.outputs.classifications != '' &&
       needs.classify-and-announce.outputs.classifications != '[]'
+    # data-model.md §4 point 2: an explicit per-instance job name, keyed by
+    # the stable `id` T005 assigns, so report-fold-outcomes can identify
+    # each leg's own GitHub Actions job by id in the run's job list.
+    name: "act (${{ matrix.id }})"
+    # research.md D5: bounds a held-for-confirmation leg's wait on its
+    # environment: approval — GitHub cancels the job outright once this
+    # elapses, including a job still waiting on that approval. Uniform
+    # across every leg in the matrix; harmless for a non-held leg, which
+    # finishes far under this bound.
+    timeout-minutes: ${{ inputs.confirm-timeout-minutes }}
     # runner/container-image passthrough (specs/038). Empty
     # container-image is expected to be a no-op (research.md D3); live
     # verification requires a workflow_dispatch trigger this automated
@@ -1751,9 +1798,10 @@ jobs:
               ${{ needs.classify-and-announce.outputs.spec-dir }}/spec-meta.json
               back to "implement" (leave `iteration` unchanged). Commit
               BOTH files together in one commit whose message starts with
-              "pr-feedback: fold PR #${{ inputs.pr-number }} comment ${{ inputs.comment-id }}"
+              "fold(${{ matrix.id }}): ${{ matrix.summary }}"
               and push to the current branch. Do NOT run `gh workflow run`
-              yourself — a later deterministic step dispatches implement.
+              yourself — a later job (`dispatch-once`) dispatches implement
+              exactly once, after every item in this review has folded.
 
             - new-functionality with fold-target new-spec: run
               `gh issue create` using the drafted `issue-title`/`issue-body`,
@@ -1962,85 +2010,31 @@ jobs:
             (${{ steps.agent-ceiling.outputs.ceiling }}) is the only hard
             stop; this is an observability note, not a failure.
 
-      # T012/T013 (contracts/converge-fold-in.md steps 6-7): dispatch the
-      # consumer's EXISTING implement wrapper unchanged, with a best-effort,
-      # short bounded poll for the dispatched run's own link — never the
-      # long-running pattern research.md D10 rejects elsewhere.
-      #
-      # T078: the wrapper filename arrives as the declared `implement-workflow`
-      # input, never as a literal. It used to be hardcoded to THIS
-      # repository's own `wing-commander-5-implement.yml`, which is
-      # consuming-repository convention, not published contract (constitution
-      # VI/VII; every other chaining stage already takes it as an input —
-      # implement.yml's self-workflow/next-workflow, plan.yml's
-      # next-workflow). For an adopter whose wrapper is named anything else,
-      # `gh workflow run` exited non-zero under `set -euo pipefail` AFTER the
-      # fold-in commit had been pushed and BEFORE the reply below — the
-      # maintainer's change folded in, nothing run against it, no reply
-      # posted (FR-004/FR-014/SC-005). Invisible to this repository's own
-      # dogfooding, because here the file does exist.
-      - name: Dispatch implement and reply (fold-in routes)
+      # research.md D1: the dispatch half of what used to be one step now
+      # lives in the new `dispatch-once` job, which runs once for the whole
+      # review after every leg's matrix instance has finished — this leg
+      # only confirms its OWN fold landed and stops; it never calls
+      # `gh workflow run` (that call, and the "fold all before any dispatch"
+      # guarantee it protects, moved out of the per-leg matrix entirely).
+      - name: Reply confirming fold-in (no dispatch)
         if: >-
           steps.act-result.outputs.mutated == 'true' &&
           (steps.route.outputs.effective-category == 'in-scope-change' ||
            (steps.route.outputs.effective-category == 'new-functionality' && steps.route.outputs.effective-fold-target == 'current-spec'))
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
-          DISPATCH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ inputs.pr-number }}
-          SPEC_DIR: ${{ needs.classify-and-announce.outputs.spec-dir }}
-          ISSUE: ${{ needs.classify-and-announce.outputs.issue-number }}
           IMPLEMENT_WORKFLOW: ${{ inputs.implement-workflow }}
         run: |
           set -euo pipefail
-          recorded=$(jq -r '.iteration // 0' "$SPEC_DIR/spec-meta.json")
-          next=$((recorded + 1))
-          start_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-
-          # T078 standalone mode, mirroring implement.yml's empty
-          # self-workflow/next-workflow and plan.yml's empty next-workflow:
-          # the fold-in is already committed and pushed by the agent step
-          # above, so an unconfigured chain reports that on the PR and stops
-          # cleanly — never a failed step that swallows the reply.
-          if [ -z "$IMPLEMENT_WORKFLOW" ]; then
-            body_file="$RUNNER_TEMP/fold-in-reply.md"
-            {
-              cat "$RUNNER_TEMP/act-summary.txt"
-              echo ""
-              echo "No implement workflow is configured for automatic re-dispatch (\`implement-workflow\` is empty), so nothing was run against this fold-in — dispatch your implement wrapper manually with \`spec_dir=$SPEC_DIR\`, \`issue=$ISSUE\`, \`iteration=$next\` when ready."
-            } > "$body_file"
-            gh pr comment "$PR_NUMBER" --body-file "$body_file"
-            echo "Fold-in committed; no implement-workflow configured — reported on PR #$PR_NUMBER and stopped (standalone mode)." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          GH_TOKEN="$DISPATCH_TOKEN" gh workflow run "$IMPLEMENT_WORKFLOW" \
-            -R "$GITHUB_REPOSITORY" -f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f iteration="$next"
-
-          # T063: this lookup ran under the App token (no Actions
-          # permission — docs/setup.md) and, under `set -euo pipefail`,
-          # its 403 aborted the step AFTER the dispatch above had already
-          # fired and BEFORE the `gh pr comment` below — so the reply never
-          # posted. Use the dispatch token (like the `gh workflow run` call
-          # above) and make the lookup non-fatal so any future failure
-          # degrades to the "see the workflow's Actions tab" fallback reply
-          # instead of suppressing the reply entirely.
-          run_url=""
-          for _ in 1 2 3 4 5 6; do
-            sleep 5
-            run_url=$(GH_TOKEN="$DISPATCH_TOKEN" gh run list -R "$GITHUB_REPOSITORY" --workflow "$IMPLEMENT_WORKFLOW" \
-              --created ">=$start_ts" --limit 1 --json url --jq '.[0].url // empty' 2>/dev/null) || run_url=""
-            [ -n "$run_url" ] && break
-          done
-
           body_file="$RUNNER_TEMP/fold-in-reply.md"
           {
             cat "$RUNNER_TEMP/act-summary.txt"
             echo ""
-            if [ -n "$run_url" ]; then
-              echo "Dispatched implement/converge iteration $next: $run_url — note this re-dispatched iteration may hit implement.yml's own iteration cap; if so, that run's own reply on the lifecycle issue is the authoritative outcome."
+            if [ -z "$IMPLEMENT_WORKFLOW" ]; then
+              echo "No implement workflow is configured for automatic re-dispatch (\`implement-workflow\` is empty) — this fold-in is committed and pushed; dispatch your implement wrapper manually once every item in this review has folded."
             else
-              echo "Dispatched implement/converge iteration $next — note this re-dispatched iteration may hit implement.yml's own iteration cap; see the workflow's Actions tab for the new run."
+              echo "Folded. Once every item in this review has folded, the pipeline dispatches implement/converge for the whole review in a single cycle."
             fi
           } > "$body_file"
           gh pr comment "$PR_NUMBER" --body-file "$body_file"
@@ -2281,6 +2275,329 @@ jobs:
             } > "$body_file"
             gh pr comment "$PR_NUMBER" --body-file "$body_file"
           fi
+
+  # research.md D1/D2/D3/contracts/fold-dispatch-once.md: the ONLY job in
+  # this workflow that calls `gh workflow run` for implement.yml, and it
+  # does so at most once per review — after the WHOLE `act` matrix has
+  # finished (fail-fast: false, so every leg runs to completion or
+  # termination regardless of a sibling's outcome). `if: always()` so a
+  # died/cancelled leg cannot suppress this job (FR-005a/FR-006); joining
+  # `wing-commander-<spec-dir>` only via `needs: act` (never concurrently
+  # with it) removes the exact contention that cancelled a leg and an
+  # implementation cycle against each other on PR #240 (research.md D2),
+  # without touching FR-004a's own wait, which lives entirely in `act`'s
+  # unchanged group membership.
+  dispatch-once:
+    needs: [classify-and-announce, act]
+    if: >-
+      always() &&
+      needs.classify-and-announce.outputs.qualifies == 'true' &&
+      needs.classify-and-announce.outputs.classifications != '[]'
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    permissions:
+      contents: read
+      pull-requests: write
+      actions: write
+      id-token: write
+    concurrency:
+      group: wing-commander-${{ needs.classify-and-announce.outputs.spec-dir }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout consumer repository (bootstrap, default token)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref" \
+              | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander pr-conversation stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      - name: Wing Commander context
+        id: ctx
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      # research.md D3: compares this fresh read of the tip against the
+      # pre-fold tip classify-and-announce captured — unchanged means no
+      # leg folded anything (all held/failed/questions/notes), so there is
+      # nothing to dispatch (US1 AS-none, gate-coverage-042.md scenario 6).
+      - name: Read branch tip after folding
+        id: tip
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ needs.classify-and-announce.outputs.slug }}
+        run: |
+          set -euo pipefail
+          tip=$(git ls-remote "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/heads/${SPEC_BRANCH}" | cut -f1)
+          echo "sha=$tip" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout spec branch at its current tip
+        if: steps.tip.outputs.sha != needs.classify-and-announce.outputs.base-sha && steps.tip.outputs.sha != ''
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.spec-prefix }}${{ needs.classify-and-announce.outputs.slug }}
+          token: ${{ steps.ctx.outputs.token }}
+          fetch-depth: 0
+          clean: false
+
+      # research.md D1/D3 (contracts/fold-dispatch-once.md): the single
+      # dispatch point for the whole review. Folded-item evidence (D6's
+      # `fold(<id>): <summary>` commit messages) is read from the exact
+      # same range this decision is made from, so the PR comment's list and
+      # the dispatch decision can never disagree.
+      - name: Dispatch implement once for the whole review
+        if: steps.tip.outputs.sha != needs.classify-and-announce.outputs.base-sha && steps.tip.outputs.sha != ''
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          DISPATCH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr-number }}
+          SPEC_DIR: ${{ needs.classify-and-announce.outputs.spec-dir }}
+          ISSUE: ${{ needs.classify-and-announce.outputs.issue-number }}
+          IMPLEMENT_WORKFLOW: ${{ inputs.implement-workflow }}
+          SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ needs.classify-and-announce.outputs.slug }}
+          BASE_SHA: ${{ needs.classify-and-announce.outputs.base-sha }}
+          TIP_SHA: ${{ steps.tip.outputs.sha }}
+        run: |
+          set -euo pipefail
+          recorded=$(jq -r '.iteration // 0' "$SPEC_DIR/spec-meta.json")
+          next=$((recorded + 1))
+          start_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          folded=$(git log --grep '^fold(' --format='%s' "$BASE_SHA..$TIP_SHA" \
+            | sed -n 's/^fold(\([^)]*\)): \(.*\)$/- \1: \2/p')
+          [ -n "$folded" ] || folded="(no fold(<id>): commits were found in this range)"
+
+          # T078 standalone mode, mirroring implement.yml's/plan.yml's own
+          # empty-next-workflow shape: the fold(s) are already committed and
+          # pushed by the leg(s) above, so an unconfigured chain reports
+          # that and stops cleanly rather than a failed step swallowing the
+          # reply.
+          if [ -z "$IMPLEMENT_WORKFLOW" ]; then
+            body_file="$RUNNER_TEMP/dispatch-once-reply.md"
+            {
+              echo "This review's fold(s) are committed and pushed. No implement workflow is configured for automatic re-dispatch (\`implement-workflow\` is empty) — dispatch your implement wrapper manually with \`spec_dir=$SPEC_DIR\`, \`issue=$ISSUE\`, \`iteration=$next\` when ready."
+              echo ""
+              echo "Folded in this review:"
+              printf '%s\n' "$folded"
+            } > "$body_file"
+            gh pr comment "$PR_NUMBER" --body-file "$body_file"
+            echo "Fold(s) committed; no implement-workflow configured — reported on PR #$PR_NUMBER and stopped (standalone mode)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          GH_TOKEN="$DISPATCH_TOKEN" gh workflow run "$IMPLEMENT_WORKFLOW" \
+            -R "$GITHUB_REPOSITORY" -f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f iteration="$next"
+
+          run_url=""
+          for _ in 1 2 3 4 5 6; do
+            sleep 5
+            run_url=$(GH_TOKEN="$DISPATCH_TOKEN" gh run list -R "$GITHUB_REPOSITORY" --workflow "$IMPLEMENT_WORKFLOW" \
+              --created ">=$start_ts" --limit 1 --json url --jq '.[0].url // empty' 2>/dev/null) || run_url=""
+            [ -n "$run_url" ] && break
+          done
+
+          body_file="$RUNNER_TEMP/dispatch-once-reply.md"
+          {
+            if [ -n "$run_url" ]; then
+              echo "Implementation cycle $next dispatched: $run_url — note this re-dispatched iteration may hit implement.yml's own iteration cap; if so, that run's own reply on the lifecycle issue is the authoritative outcome."
+            else
+              echo "Implementation cycle $next dispatched — note this re-dispatched iteration may hit implement.yml's own iteration cap; see the workflow's Actions tab for the new run."
+            fi
+            echo ""
+            echo "Folded in this review:"
+            printf '%s\n' "$folded"
+          } > "$body_file"
+          gh pr comment "$PR_NUMBER" --body-file "$body_file"
+
+  # research.md D6/contracts/fold-dispatch-once.md: cross-references this
+  # run's own GitHub-set job `conclusion`s against git-history fold
+  # evidence — two signals neither of which a cancelled leg has to publish
+  # itself (FR-006a) — to report any fold-route item that died without
+  # folding, distinguishing "not folded" from "partly folded"
+  # (data-model.md §4). Scoped to fold-route items only (in-scope-change,
+  # new-functionality/current-spec): every other route already posts its
+  # own per-leg reply as its observable outcome (FR-006), so re-checking
+  # those here would misreport a successful reply-only leg — which never
+  # writes a `fold(<id>):` commit — as "not folded". `if: always()` so this
+  # job runs even when `act` itself failed/cancelled/timed out.
+  report-fold-outcomes:
+    needs: [classify-and-announce, act]
+    if: >-
+      always() &&
+      needs.classify-and-announce.outputs.qualifies == 'true' &&
+      needs.classify-and-announce.outputs.classifications != '[]'
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    permissions:
+      contents: read
+      pull-requests: write
+      actions: read
+      id-token: write
+    steps:
+      - name: Checkout consumer repository (bootstrap, default token)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref" \
+              | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander pr-conversation stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      - name: Wing Commander context
+        id: ctx
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      - name: Read branch tip for outcome check
+        id: tip
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ needs.classify-and-announce.outputs.slug }}
+        run: |
+          set -euo pipefail
+          tip=$(git ls-remote "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/heads/${SPEC_BRANCH}" | cut -f1)
+          echo "sha=$tip" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout spec branch at its current tip
+        if: steps.tip.outputs.sha != ''
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.spec-prefix }}${{ needs.classify-and-announce.outputs.slug }}
+          token: ${{ steps.ctx.outputs.token }}
+          fetch-depth: 0
+          clean: false
+
+      # data-model.md §4: fetches THIS run's own jobs (Gate 18's established
+      # paginated-read shape), filters to each `act (leg-N)` instance
+      # (T010's per-instance name), and reads its GitHub-set `conclusion` —
+      # never a value the leg's own steps had to publish (FR-006a).
+      - name: Report fold-route leg outcomes
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          PR_NUMBER: ${{ inputs.pr-number }}
+          RUN_ID: ${{ github.run_id }}
+          CLASSIFICATIONS: ${{ needs.classify-and-announce.outputs.classifications }}
+          BASE_SHA: ${{ needs.classify-and-announce.outputs.base-sha }}
+          TIP_SHA: ${{ steps.tip.outputs.sha }}
+        run: |
+          set -euo pipefail
+          jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" --paginate --jq '.jobs[] | {name, conclusion}' | jq -s -c '.')
+
+          range=""
+          if [ -n "$TIP_SHA" ] && [ -n "$BASE_SHA" ] && [ "$TIP_SHA" != "$BASE_SHA" ]; then
+            range="$BASE_SHA..$TIP_SHA"
+          fi
+
+          fold_routes=$(printf '%s' "$CLASSIFICATIONS" | jq -c '
+            [ .[] | select(.category == "in-scope-change"
+                           or (.category == "new-functionality" and (.["fold-target"] // "") == "current-spec")) ]
+          ')
+
+          count=$(printf '%s' "$fold_routes" | jq 'length')
+          : > "$RUNNER_TEMP/fold-outcome-lines.txt"
+          i=0
+          while [ "$i" -lt "$count" ]; do
+            item=$(printf '%s' "$fold_routes" | jq -c ".[$i]")
+            id=$(printf '%s' "$item" | jq -r '.id')
+            summary=$(printf '%s' "$item" | jq -r '.summary')
+
+            conclusion=$(printf '%s' "$jobs" | jq -r --arg id "$id" '[.[] | select(.name == "act (" + $id + ")")] | .[0].conclusion // "missing"')
+
+            folded=false
+            if [ -n "$range" ] && git log --grep "^fold($id):" --format='%H' "$range" 2>/dev/null | grep -q .; then
+              folded=true
+            fi
+
+            if [ "$conclusion" = "success" ] && [ "$folded" = "true" ]; then
+              i=$((i + 1))
+              continue
+            elif [ "$folded" = "true" ]; then
+              outcome="partly folded"
+            else
+              outcome="not folded"
+            fi
+            echo "- **$id** ($outcome): $summary" >> "$RUNNER_TEMP/fold-outcome-lines.txt"
+            i=$((i + 1))
+          done
+
+          if [ ! -s "$RUNNER_TEMP/fold-outcome-lines.txt" ]; then
+            echo "Every fold-route item in this review folded cleanly." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          body_file="$RUNNER_TEMP/fold-outcomes-reply.md"
+          {
+            echo "> [!WARNING]"
+            echo "> **This review's fold did not complete cleanly for every item:**"
+            echo ">"
+            sed 's/^/> /' "$RUNNER_TEMP/fold-outcome-lines.txt"
+            echo ">"
+            echo "> Check this run's job list for the failing leg — nothing else in this review was affected."
+          } > "$body_file"
+          gh pr comment "$PR_NUMBER" --body-file "$body_file"
 
   # Survivor job (the #224 idiom, research.md D4): watches
   # classify-and-announce only (data-model.md's pr-conversation row) — `act`
