@@ -62,9 +62,13 @@ if [ "${1:-}" = "api" ]; then
       # runs the passed --jq filter): the shipped step's GET call now asks
       # for the bot-authored comment object (id, body, user.login) rather
       # than a bare id (MF-F4), so this must emit the same shape the real
-      # API + --jq would have produced.
+      # API + --jq would have produced. -c (compact, single-line): the
+      # shipped step selects "the first match" with `| head -1` over the
+      # streamed --jq output (Gate 18 forbids an array-collecting filter
+      # under --paginate), which truncates anything jq pretty-prints
+      # across multiple lines to just its opening brace.
       if [ -f "$state/comment-id.txt" ]; then
-        jq -n --argjson id "$(cat "$state/comment-id.txt")" \
+        jq -nc --argjson id "$(cat "$state/comment-id.txt")" \
           --rawfile body "$state/comment-body.md" \
           '{id: $id, body: $body, user: {login: "github-actions[bot]"}}'
       else
