@@ -1,0 +1,11 @@
+# Negative fixture for verify-actions-layer-invariants.py: a composite
+# action invoking claude-code-action directly, which this feature's own
+# composites must never do (FR-040a — no agent invocation anywhere).
+name: fixture-claude-code-action
+description: invokes an agent (this is the defect under test)
+runs:
+  using: composite
+  steps:
+    - uses: anthropics/claude-code-action@v1
+      with:
+        prompt: hi

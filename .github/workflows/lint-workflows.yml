@@ -53,6 +53,10 @@ on:
       # directions. Editing the table alone is the one change that can make
       # the two disagree.
       - "specs/038-runner-container-passthrough/contracts/runner-container-passthrough.md"
+      # verify-metrics-record-schema.py's subject: an edit to the documented
+      # schema-version-1 shape alone (no code change) must still trigger the
+      # gate that checks fixtures against it (FR-040).
+      - "specs/043-durable-metrics-record/contracts/metrics-record-schema.md"
       # Gate 12's subject: it parses this file's "Repository permissions"
       # list as the single source of truth for what the wing-commander-bot
       # App may do, and sys.exits if the list moves. A PR downgrading a
@@ -2891,6 +2895,55 @@ jobs:
       # break is the checker, so that is what runs here.
       - name: Gate 26 self-test — the versioning-refs check detects what it claims to
         run: python3 .github/scripts/verify-versioning-refs.py --self-test
+
+      # specs/043-durable-metrics-record — five new gates. Each carries
+      # `if: '!cancelled()'` (not bare `always()`, matching this repository's
+      # step-gating convention) and is not conditional on any other gate's
+      # outcome, so an unrelated gate failing above it cannot suppress it.
+      #
+      # Gate — .github/actions/** reads no ambient state and invokes no
+      # agent (extends Gate 31's coverage, issue #149's own named gap).
+      - name: Gate — composite actions read no ambient state or invoke an agent
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-actions-layer-invariants.py
+      - name: Gate self-test — the actions-layer-invariants scan detects what it claims to
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-actions-layer-invariants.py --self-test
+
+      # Gate — agent run metrics records conform to
+      # contracts/metrics-record-schema.md's schema-version-1 shape,
+      # including the per_model sum invariant.
+      - name: Gate — metrics record schema conformance
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-metrics-record-schema.py
+      - name: Gate self-test — the metrics record schema check detects what it claims to
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-metrics-record-schema.py --self-test
+
+      # Gate — an unknown schema_version is retained and skipped, never
+      # dropped/rewritten/erroring (contracts/metrics-record-schema.md
+      # compatibility rule 4). No live subject in the repository.
+      - name: Gate self-test — unknown metrics schema versions are retained and skipped
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-metrics-schema-version-tolerance.py --self-test
+
+      # Gate — the metrics persistence append-with-retry algorithm survives
+      # a concurrent writer and fails loudly under sustained contention.
+      # No live subject in the repository.
+      - name: Gate self-test — metrics persist append-with-retry survives contention
+        if: "!cancelled()"
+        run: bash .github/scripts/verify-metrics-persist-retry.sh --self-test
+
+      # Gate — every discovered transcript/metrics-record upload-artifact
+      # site declares retention-days: 90 (FR-032/FR-033/SC-010); discovery-
+      # based so a new site added later without declaring retention fails
+      # this gate by construction.
+      - name: Gate — every transcript/metrics-record upload declares retention-days
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-transcript-retention-declared.py
+      - name: Gate self-test — the retention-declared check detects what it claims to
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-transcript-retention-declared.py --self-test
 
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and

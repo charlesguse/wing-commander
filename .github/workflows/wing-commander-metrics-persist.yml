@@ -76,4 +76,6 @@ jobs:
       run-id: ${{ needs.resolve.outputs.run-id }}
       destination-branch: ${{ vars.WING_COMMANDER_METRICS_BRANCH || 'metrics' }}
       destination-path: ${{ vars.WING_COMMANDER_METRICS_PATH || 'records.jsonl' }}
+      runner: ${{ vars.WING_COMMANDER_RUNNER || 'ubuntu-latest' }}
+      container-image: ${{ vars.WING_COMMANDER_CONTAINER_IMAGE || '' }}
     secrets: inherit

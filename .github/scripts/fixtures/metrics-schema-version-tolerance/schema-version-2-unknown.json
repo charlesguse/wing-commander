@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "record_available": true,
+  "run": {
+    "workflow_run_id": "2",
+    "job_key": "cycle",
+    "job_id": null,
+    "step_index": 0,
+    "record_key": "2:cycle:0"
+  },
+  "stage": "implement",
+  "cost_usd": 9999.0,
+  "cost_available": true,
+  "a_field_this_reader_has_never_heard_of": {
+    "nested": true
+  }
+}

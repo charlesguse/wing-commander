@@ -41,9 +41,55 @@ on:
         type: string
         required: false
         default: ""
+      environment:
+        description: >
+          Name of a GitHub deployment environment (in the consuming
+          repository) to bind every job in this stage to, applying its
+          protection rules before any step in the job runs. Empty (default)
+          is a verified true no-op — no environment applied, no gate, no
+          deployment record (specs/038-runner-container-passthrough
+          FR-001/FR-003, applied uniformly to every published stage).
+        type: string
+        required: false
+        default: ""
+      environment-deployment:
+        description: >
+          Whether binding to `environment` creates a GitHub deployment
+          record. true (default) mirrors GitHub's own default; false keeps
+          the gate but suppresses the deployment record.
+        type: boolean
+        required: false
+        default: true
+      runner:
+        description: >
+          Runner label(s) for every job in this stage. A single label
+          (e.g. ubuntu-latest) or a JSON array of labels applied as a
+          conjunction — a value starting with "[" is parsed as JSON,
+          anything else is used verbatim
+          (specs/038-runner-container-passthrough).
+        type: string
+        required: false
+        default: ubuntu-latest
+      container-image:
+        description: >
+          Container image every job in this stage runs inside. Empty
+          (default) means no container — every job runs directly on the
+          runner, unchanged from today
+          (specs/038-runner-container-passthrough). This stage runs no
+          agent step, but carries the same passthrough every published
+          stage carries for adopter-side uniformity.
+        type: string
+        required: false
+        default: ""
     secrets:
       pipeline-repo-token:
         description: "Token with read access to the pipeline repository — only needed when that repository is private."
+        required: false
+      container-registry-username:
+        description: "Username for container-image's registry, if private. Inert when container-image is empty."
+        required: false
+      container-registry-password:
+        description: "Password or token for container-image's registry, if private. Inert when container-image is empty."
         required: false
     outputs:
       persisted-count:
@@ -56,8 +102,75 @@ on:
 permissions: {}
 
 jobs:
+  # specs/038-runner-container-passthrough: every published stage carries
+  # this exact job, deliberately, even though this stage runs no agent step
+  # and so pulls no image of its own for that purpose — an adopter's
+  # stage-binding tooling iterates over every published stage uniformly
+  # (Gate 7/22/23), and a container-image input with nothing to check it
+  # against would silently accept a broken image reference.
+  verify-image-prerequisites:
+    permissions: {}
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    steps:
+      - name: Pull image and verify prerequisites
+        if: inputs.container-image != ''
+        env:
+          IMAGE: ${{ inputs.container-image }}
+          REGISTRY_USERNAME: ${{ secrets.container-registry-username }}
+          REGISTRY_PASSWORD: ${{ secrets.container-registry-password }}
+        run: |
+          REQUIRED_TOOLS="git gh jq curl python3 bash node timeout"
+
+          if [ -n "$REGISTRY_USERNAME" ] && [ -n "$REGISTRY_PASSWORD" ]; then
+            echo "::warning::wing-commander verify-image-prerequisites: registry credentials were supplied. They authenticate this check only -- the stage's other jobs pull with whatever authentication their runner already has. For a private image, use a runner that is logged in to the registry."
+            candidate=""
+            case "$IMAGE" in
+              */*) candidate="${IMAGE%%/*}" ;;
+            esac
+            case "$candidate" in
+              *.*|*:*|localhost) login_args=("$candidate") ;;
+              *) login_args=() ;;
+            esac
+            if ! echo "$REGISTRY_PASSWORD" | docker login "${login_args[@]}" --username "$REGISTRY_USERNAME" --password-stdin 2>docker-login-error.log; then
+              echo "::error::wing-commander verify-image-prerequisites: the registry rejected the supplied credentials for $IMAGE -- $(cat docker-login-error.log)"
+              exit 1
+            fi
+          fi
+
+          if ! docker pull "$IMAGE" 2>docker-pull-error.log; then
+            if [ -z "$REGISTRY_USERNAME" ] && [ -z "$REGISTRY_PASSWORD" ]; then
+              echo "::error::wing-commander verify-image-prerequisites: failed to pull $IMAGE -- no credentials were supplied for this image. $(cat docker-pull-error.log)"
+            elif [ -z "$REGISTRY_USERNAME" ]; then
+              echo "::error::wing-commander verify-image-prerequisites: failed to pull $IMAGE -- container-registry-username was not supplied (container-registry-password was), so no login was attempted. $(cat docker-pull-error.log)"
+            elif [ -z "$REGISTRY_PASSWORD" ]; then
+              echo "::error::wing-commander verify-image-prerequisites: failed to pull $IMAGE -- container-registry-password was not supplied (container-registry-username was), so no login was attempted. $(cat docker-pull-error.log)"
+            else
+              echo "::error::wing-commander verify-image-prerequisites: failed to pull $IMAGE -- the registry rejected the supplied credentials or image reference. $(cat docker-pull-error.log)"
+            fi
+            exit 1
+          fi
+
+          if ! missing=$(docker run --rm -e REQUIRED_TOOLS="$REQUIRED_TOOLS" \
+            --entrypoint sh "$IMAGE" -c \
+            'for t in $REQUIRED_TOOLS; do command -v "$t" >/dev/null 2>&1 || printf " %s" "$t"; done' \
+            2>docker-inspect-error.log); then
+            echo "::error::wing-commander verify-image-prerequisites: could not run a POSIX shell inside $IMAGE to check its prerequisites -- $(cat docker-inspect-error.log)"
+            exit 1
+          fi
+
+          if [ -n "$missing" ]; then
+            echo "::error::wing-commander verify-image-prerequisites: $IMAGE is missing required tool(s):$missing"
+            exit 1
+          fi
+
   persist:
-    runs-on: ubuntu-latest
+    needs: verify-image-prerequisites
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
     # Isolation guarantees (FR-015/FR-019/FR-019a, contracts/persist-workflow.md):
     # this job never checks out, modifies, or pushes to any branch other
     # than destination-branch, never commits to the repository's default

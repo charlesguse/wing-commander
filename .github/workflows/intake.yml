@@ -1132,7 +1132,16 @@ jobs:
               )
             | join("\n")
           ' > "${{ runner.temp }}/intake-clarification.md"
-          printf '\n%s\n' "${{ steps.cost-line.outputs.line }}" >> "${{ runner.temp }}/intake-clarification.md"
+
+      # A separate step, deliberately not folded into "Render clarification
+      # questionnaire" above: verify-clarification-gating.py extracts and
+      # re-executes that exact step's script byte-for-byte across both
+      # intake.yml and clarify.yml, and hard-fails on any `${{ }}` it
+      # doesn't already resolve (runner.temp only) — appending here keeps
+      # that contract intact.
+      - name: Append cost line to clarification questionnaire
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'true'
+        run: printf '\n%s\n' "${{ steps.cost-line.outputs.line }}" >> "${{ runner.temp }}/intake-clarification.md"
 
       - name: Announce clarification needed
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'true'
