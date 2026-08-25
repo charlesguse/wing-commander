@@ -324,3 +324,22 @@ set of new files.
   validate a story independently.
 - Avoid: vague tasks, same-file conflicts, cross-story dependencies that
   break independence beyond what is explicitly noted above.
+
+---
+
+## Phase 9: Convergence
+
+Appended by `/speckit-converge` after cycle 1's implementation. The five
+gates T047-T056 substantively cover schema conformance, unknown-version
+tolerance, and contention-retry/exhaustion (FR-039's list, in part); the
+tasks below close the remaining FR-039/SC-012 scenarios that shipped as
+design-level guarantees but have no checked-in fixture exercising them —
+"every failure branch this feature ships is exercised by a fixture,"
+not by having been reasoned through once during development.
+
+- [ ] T061 Add executable coverage that runs `wing-commander-metrics-summary`'s actual "Render agent run metrics summary" script (not a reimplementation) against a healthy fixture transcript, a missing/empty/unparseable one, and a job invoking it more than once (distinct `step_index`, distinct `record_key`, neither record overwriting the other) — asserting the produced record in each case, mirroring the `auto-update-spec-kit-tests/` harness's convention of extracting and executing the shipped `run:` block rather than modelling it. per FR-039, FR-009, FR-010 (missing)
+- [ ] T062 Add a fixture/assertion to `verify-metrics-persist-retry.sh` (or a sibling script) for the zero-artifact discovery path: the persistence composite's discovery step finds no `metrics-record*` artifacts for a run and the result is zero entries appended, zero failure — not merely assumed from FR-021's prose. per FR-021, FR-039 (missing)
+- [ ] T063 Add an explicit assertion in `verify-metrics-persist-retry.sh` for first-write destination creation: starting from a destination branch that does not exist, the first append creates it (research.md R8's orphan-commit shape) and the write succeeds — today this only exists as unasserted setup plumbing (`seed_branch()`) shared by the other scenarios. per FR-020, FR-039 (missing)
+- [ ] T064 Add an idempotent-repeat-persistence fixture: run the append-with-retry algorithm twice for the same already-persisted `record_key` and assert the destination store is byte-for-byte unchanged after the second run (zero duplicates), not just that a fresh key round-trips once. per FR-018, SC-005, FR-039 (missing)
+- [ ] T065 Add a fixture driving the rollup region-builder logic (or an equivalent harness over its region-regeneration rule) twice for the same persisted record set and assert the resulting comment region is unchanged the second time — one cost line per run, one rolling summary, no duplication — rather than relying on "regenerated fresh from a de-duplicated store" as an argued-not-tested guarantee. per FR-031b, FR-039 (missing)
+- [ ] T066 Add a check confirming the persistence workflow/composite has no write path back to the origin pipeline run's status, checks, or comments — e.g. static assertion that `metrics-persist.yml`/`wing-commander-metrics-persist/action.yml` never reference the origin run's job/step outcome or post to anything but the destination branch and the spec's own lifecycle issue — so "a persistence failure never disturbs the run it reports on" is enforced, not merely designed that way (FR-019/FR-019a already achieve this by construction — out-of-band `workflow_run` trigger, separate workflow — but nothing fails if a future change reintroduces a back-reference). per FR-019, FR-039 (missing)
