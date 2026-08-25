@@ -961,7 +961,7 @@ jobs:
       # denied-tool detection is blind to this stage.
       - name: Upload Claude execution log
         if: always() && steps.agent.outcome != 'skipped'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: claude-execution-output-classify
           path: ${{ runner.temp }}/claude-execution-output.json
@@ -1874,7 +1874,7 @@ jobs:
       # and artifact names must be unique within a run.
       - name: Upload Claude execution log (act)
         if: always() && steps.agent.outcome != 'skipped'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: claude-execution-output-act-${{ strategy.job-index }}
           path: ${{ runner.temp }}/claude-execution-output.json

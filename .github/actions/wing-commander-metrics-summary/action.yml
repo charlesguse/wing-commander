@@ -46,7 +46,7 @@ inputs:
   ceiling:
     description: >
       The literal --max-turns value the runtime actually enforced — i.e.
-      ${{ steps.<site>-ceiling.outputs.ceiling }} from this site's
+      `steps.<site>-ceiling.outputs.ceiling` from this site's
       wing-commander-turn-ceiling step, which is max-turns multiplied by the
       runaway margin (2.5x by default). Only the exhaustion banner uses it,
       and it has to: `error_max_turns` means the run hit THIS number, not
@@ -70,7 +70,7 @@ inputs:
     default: ''
   verdict:
     description: >
-      ${{ steps.<verdict-id>.outputs.verdict }} from a wing-commander-agent-verdict
+      `steps.<verdict-id>.outputs.verdict` from a wing-commander-agent-verdict
       step at this same call site (healthy/exhausted/failed/unclassifiable).
       Optional and display-only: when this AND verdict-reason are both
       non-empty, one additional line renders beneath the existing table
@@ -80,7 +80,7 @@ inputs:
     default: ''
   verdict-reason:
     description: >
-      ${{ steps.<verdict-id>.outputs.reason }} from the same
+      `steps.<verdict-id>.outputs.reason` from the same
       wing-commander-agent-verdict step. See verdict above.
     required: false
     default: ''

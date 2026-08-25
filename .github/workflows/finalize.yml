@@ -788,7 +788,7 @@ jobs:
 
       - name: Upload Claude execution log
         if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.summarize.outcome != 'skipped'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: claude-execution-output
           path: ${{ runner.temp }}/claude-execution-output.json

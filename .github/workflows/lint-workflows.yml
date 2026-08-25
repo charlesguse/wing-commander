@@ -2864,6 +2864,17 @@ jobs:
       - name: Gate 36 — the watchdog verifier's failure branches actually execute
         run: bash .github/scripts/verify-watchdog-run-failure-paths.sh
 
+      # Gate 37 — watchdog issue #261: a `${{ }}` inside an action
+      # manifest's input/output DESCRIPTION is template-validated by the
+      # runner, and an unrecognized named-value there makes the whole
+      # composite fail to load - silently, at every non-fatal call site.
+      # actionlint covers workflows, not composite manifests, so this is
+      # the only thing that says so before a run does.
+      - name: Gate 37 — action-manifest descriptions carry no template expressions
+        run: |
+          python3 .github/scripts/verify-action-manifest-descriptions.py --self-test
+          python3 .github/scripts/verify-action-manifest-descriptions.py
+
       # specs/041-implement-stall-notice, User Story 3 — a refusal is still
       # a refusal (FR-006's mutual exclusion, driven against the real
       # preflight shell rather than a modelled reason string), and the four

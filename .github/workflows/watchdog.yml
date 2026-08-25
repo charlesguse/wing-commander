@@ -1658,7 +1658,7 @@ jobs:
 
       - name: Upload Claude execution log
         if: always() && steps.diagnose.outcome != 'skipped'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: claude-execution-output-diagnose
           path: ${{ runner.temp }}/claude-execution-output.json
@@ -2113,7 +2113,7 @@ jobs:
 
       - name: Upload triage decision artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: watchdog-triage-decision-${{ matrix.index }}
           path: ${{ runner.temp }}/watchdog-triage-decision.json
