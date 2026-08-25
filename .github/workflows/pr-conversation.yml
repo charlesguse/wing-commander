@@ -1796,9 +1796,14 @@ jobs:
               as a new, top-level section — append-only, never edit or
               reorder existing sections. Then set `stage` in
               ${{ needs.classify-and-announce.outputs.spec-dir }}/spec-meta.json
-              back to "implement" (leave `iteration` unchanged). Commit
-              BOTH files together in one commit whose message starts with
-              "fold(${{ matrix.id }}): ${{ matrix.summary }}"
+              back to "implement" (leave `iteration` unchanged), and set
+              its `pending_re_review_from` field to the union of its
+              existing entries (if any) and
+              "${{ inputs.actor-login }}" (research.md D10 — this records
+              who to ask for re-review once this fold's implementation
+              cycle finalizes again; do not remove any existing entry).
+              Commit BOTH files together in one commit whose message starts
+              with "fold(${{ matrix.id }}): ${{ matrix.summary }}"
               and push to the current branch. Do NOT run `gh workflow run`
               yourself — a later job (`dispatch-once`) dispatches implement
               exactly once, after every item in this review has folded.
