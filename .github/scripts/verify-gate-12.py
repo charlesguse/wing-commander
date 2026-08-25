@@ -12,6 +12,16 @@ by accident — a maintainer noticing a stall, not a check — and T062/T063
 survived five pipeline cycles, a full quickstart desk-check, and three
 rounds of executing the shipped shell against synthetic inputs first.
 
+Also covers the downstream consumer caylent/msp-mcp's #201/#203/#204: three
+production hotfixes in ~18 hours for the same class of bug, which this
+gate's SUBCOMMAND_PERMS table could not previously express or would not
+have flagged precisely — a single (category, level) pair per verb cannot
+say "`gh pr create` needs BOTH pull-requests:write AND contents:read"
+(#201), and `("pr", "ready")` had no entry at all, so a call needing
+contents:WRITE (the markPullRequestReadyForReview GraphQL mutation, gated
+like a merge — cli/cli discussion #6924) could not be told apart from one
+still wrongly granted only contents:read (#203) or fixed (#204).
+
 A gate that never fires is indistinguishable from one whose detection logic
 is broken (gate 5 exists because that already happened once — a verifier sat
 green for weeks checking a filter that did not ship). So this script feeds
@@ -352,6 +362,51 @@ CASES = [
     ("T073: an App-token read call against that same Read-only grant is fine",
      mkcase("", "", [APP_ENV], ['gh issue view "$N"'],
             docs=DOCS_ISSUES_READONLY),
+     False, ()),
+
+    # msp-mcp#201/#203/#204: SUBCOMMAND_PERMS values are a frozenset of
+    # (category, level) pairs, not a single pair, because some verbs need
+    # more than one. Before this fix a single pair meant `gh pr create`
+    # could only ever be checked against pull-requests:write - it PASSED a
+    # job granting exactly that and nothing else, even though `gh pr
+    # create` also resolves `repository.defaultBranchRef` over GraphQL
+    # (even with an explicit `--base`) and 403s at runtime without
+    # contents:read too. This is msp-mcp#201's exact shape, confirmed
+    # against the real PR: Gate 12 as shipped passed it.
+    ("msp-mcp#201: `gh pr create` under github.token with only "
+     "pull-requests:write (missing contents:read) fails",
+     mkcase("      pull-requests: write\n", "", [DEFAULT_ENV],
+            ['gh pr create --repo "$REPO" --base main --head "$HEAD" '
+             '--draft --title t --body b']),
+     True, ("pr create", "contents")),
+
+    ("the msp-mcp#201 fix: `gh pr create` with both pull-requests:write "
+     "and contents:read passes",
+     mkcase("      pull-requests: write\n      contents: read\n", "", [DEFAULT_ENV],
+            ['gh pr create --repo "$REPO" --base main --head "$HEAD" '
+             '--draft --title t --body b']),
+     False, ()),
+
+    # `gh pr ready` maps to the `markPullRequestReadyForReview` GraphQL
+    # mutation, which GitHub gates on contents:WRITE, not contents:read -
+    # the same tier as merging a PR (cli/cli discussion #6924). Before this
+    # fix there was no `("pr", "ready")` entry in SUBCOMMAND_PERMS at all,
+    # so a call like this either passed silently (via category B/C's
+    # "not this gate's job" skip) or failed with a generic "not in table"
+    # message that could not distinguish msp-mcp#203's still-broken grant
+    # from msp-mcp#204's actual fix. This fixture is #203's exact shape:
+    # the #201 fix was copied by analogy (contents:read) and it 403'd
+    # identically. It must fail here now that the verb IS mapped, because
+    # contents:read is the wrong level - contents:WRITE is required.
+    ("msp-mcp#203: `gh pr ready` under github.token with contents:read "
+     "(needs contents:WRITE) fails",
+     mkcase("      pull-requests: write\n      contents: read\n", "", [DEFAULT_ENV],
+            ['gh pr ready "$N" --repo "$REPO"']),
+     True, ("pr ready", "contents")),
+
+    ("the msp-mcp#204 fix: `gh pr ready` with contents:write passes",
+     mkcase("      pull-requests: write\n      contents: write\n", "", [DEFAULT_ENV],
+            ['gh pr ready "$N" --repo "$REPO"']),
      False, ()),
 
     # --- category C (#215) ------------------------------------------------
