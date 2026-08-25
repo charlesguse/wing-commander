@@ -102,7 +102,13 @@ def run_append(tmp, origin, branch, batch_records, run_id, label):
 
 def fetch_dest(tmp, origin, branch, name):
     work = new_clone(tmp, origin, name)
-    _git("checkout", "-q", branch, cwd=work)
+    try:
+        _git("checkout", "-q", branch, cwd=work)
+    except subprocess.CalledProcessError:
+        # A missing destination branch is a scenario OUTCOME to assert on,
+        # not a harness crash - a traceback here aborted the remaining
+        # cases and made the red verdict illegible (PR #267 re-review).
+        return None, work
     path = os.path.join(work, DEST_PATH)
     text = open(path, encoding="utf-8").read() if os.path.exists(path) else None
     return text, work

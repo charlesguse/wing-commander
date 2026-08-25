@@ -1828,7 +1828,7 @@ jobs:
         continue-on-error: true
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.speckit-app-id }}
+          client-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
           owner: ${{ steps.scratch-parts.outputs.owner }}
           repositories: ${{ steps.scratch-parts.outputs.name }}

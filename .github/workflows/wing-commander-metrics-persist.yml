@@ -78,4 +78,10 @@ jobs:
       destination-path: ${{ vars.WING_COMMANDER_METRICS_PATH || 'records.jsonl' }}
       runner: ${{ vars.WING_COMMANDER_RUNNER || 'ubuntu-latest' }}
       container-image: ${{ vars.WING_COMMANDER_CONTAINER_IMAGE || '' }}
-    secrets: inherit
+    # Explicit, like every other stage wrapper: `inherit` handed the Claude
+    # credentials into the one chain that deliberately runs no agent
+    # (PR #267 re-review, follow-up 3).
+    secrets:
+      pipeline-repo-token: ${{ secrets.PIPELINE_REPO_TOKEN }}
+      container-registry-username: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME }}
+      container-registry-password: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD }}

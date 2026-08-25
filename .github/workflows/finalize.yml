@@ -1009,8 +1009,22 @@ jobs:
           new_entry=""
           if [ "$last_recorded_sha" != "$short_sha" ]; then
             range_start="$last_recorded_sha"
-            [ -n "$range_start" ] || range_start="$DB"
-            fold_commits=$(git log --grep '^fold(' --format='%s' "${range_start}..${tip}" 2>/dev/null || true)
+            if [ -z "$range_start" ]; then
+              # First entry: the range floor is the default branch — but as
+              # a REMOTE ref, fetched here. The bare "$DB" never resolves in
+              # this job's checkout (no local branch of that name exists),
+              # so the git log below failed on every first refresh and the
+              # `|| true` swallowed it: spec 043's first live refresh
+              # shipped an EMPTY fold log while the fold(leg-0) commit sat
+              # in range (2026-08-25). Gate 35 now builds this exact
+              # workspace shape.
+              git fetch -q origin "+refs/heads/$DB:refs/remotes/origin/$DB" 2>/dev/null || true
+              range_start="origin/$DB"
+            fi
+            if ! fold_commits=$(git log --grep '^fold(' --format='%s' "${range_start}..${tip}" 2>&1); then
+              echo "::warning::finalize: could not list fold commits (${range_start}..${tip}): $fold_commits — the fold log will not gain an entry this refresh"
+              fold_commits=""
+            fi
             count=$(printf '%s\n' "$fold_commits" | grep -c . || true)
             if [ "$count" -gt 0 ]; then
               summary_line=$(printf '%s\n' "$fold_commits" | tail -n1 | sed -E 's/^fold\([^)]*\): //')

@@ -196,6 +196,14 @@ TASKS_EOF
 git add -A
 git commit -q -m seed
 git push -q -u origin '{SPEC_BRANCH}'
+# Production shape: the finalize job checks out the SPEC branch only - no
+# local default-branch ref and no remote-tracking ref for it exist in the
+# workspace. `git clone` leaves both behind, and that difference hid a
+# live defect: `git log "$DB..tip"` resolved here and failed in
+# production, where the || true swallowed it and spec 043's first refresh
+# shipped an empty fold log (2026-08-25).
+git branch -q -D {DB}
+git update-ref -d refs/remotes/origin/{DB}
 git rev-parse HEAD
 """
     proc = sh(setup, work)

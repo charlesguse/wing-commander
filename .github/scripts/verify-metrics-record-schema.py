@@ -55,10 +55,15 @@ FIXTURES_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "fixtures", "metrics-record-schema")
 
+# One literal repo-relative path, deliberately: verify-gate-wiring.py's
+# subject-document scan reads literal paths out of gate sources, and a
+# path assembled from os.path.join segments is invisible to it - the
+# lint paths: trigger for this document would then have no guard
+# (PR #267 re-review, follow-up 2).
+CONTRACT_DOC = "specs/043-durable-metrics-record/contracts/metrics-record-schema.md"
 CONTRACT_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "..",
-    "specs", "043-durable-metrics-record", "contracts",
-    "metrics-record-schema.md")
+    *CONTRACT_DOC.split("/"))
 
 REQUIRED_TOP = {
     "schema_version": int,
@@ -270,7 +275,15 @@ def check_fields_match_contract():
 def _fixture_files():
     if not os.path.isdir(FIXTURES_DIR):
         return []
-    return sorted(glob.glob(os.path.join(FIXTURES_DIR, "*.json")))
+    found = sorted(glob.glob(os.path.join(FIXTURES_DIR, "*.json")))
+    # Pinned count: a bare glob makes a deleted fixture read as a smaller
+    # clean pass (PR #267 re-review). Update deliberately with the set.
+    if len(found) != 6:
+        sys.exit("::error::metrics-record-schema: expected exactly 6 "
+                 "fixtures under {0}, found {1} - a fixture was added or "
+                 "removed without updating this pin.".format(
+                     FIXTURES_DIR, len(found)))
+    return found
 
 
 def self_test():
