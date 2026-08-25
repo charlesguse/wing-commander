@@ -178,6 +178,26 @@ itself once the bound expires, without any new polling logic. Because
 matrix, including non-held ones — which is harmless, since a non-held leg
 completes in the run's ordinary timeframe, far under any reasonable bound.
 
+> **UNVERIFIED (PR #253 review)**: this decision's central claim — that
+> `timeout-minutes` cancels a job still *waiting* on an `environment:`
+> approval, not merely a job that is already *running* — has not been
+> confirmed against GitHub's documented behavior. GitHub's docs describe
+> `timeout-minutes` as bounding a job once it starts running, and describe
+> a job held on a required-reviewer approval separately, as carrying its
+> own fixed 30-day wait-for-approval expiry independent of any job-level
+> `timeout-minutes` setting. If that reading is correct rather than this
+> decision's, `confirm-timeout-minutes` does not bound a held leg's wait
+> at all: an unapproved confirm-gated leg would sit in `waiting` for up to
+> 30 days, occupying the matrix's single `max-parallel: 1` slot for that
+> whole span, during which no later leg in the same review can start and
+> `dispatch-once` cannot run (since it `needs: act`) — silently defeating
+> FR-005a's bound and, for that review, US1's "fold every leg before any
+> implementation starts" guarantee. This has not been confirmed against a
+> real held `environment:` approval in this repository (T001 already notes
+> live `workflow_dispatch` verification of this job was out of reach for
+> an automated implementation run) and remains an open item for a
+> maintainer with access to trigger and observe one.
+
 **Rationale**: FR-005a requires the wait be bounded, but nothing in the
 spec's Assumptions section prescribes a mechanism. `timeout-minutes` is the
 one primitive GitHub Actions offers that terminates a job stuck on an
