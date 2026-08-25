@@ -1,0 +1,317 @@
+name: wing-commander-metrics-persist
+description: >
+  Discover a concluded pipeline run's metrics-record artifacts, retrieve
+  and validate them against contracts/metrics-record-schema.md, and
+  append the valid ones (idempotently, with bounded retry-on-contention)
+  to a destination branch's records.jsonl file
+  (specs/043-durable-metrics-record). No agent invocation (FR-040a);
+  reads only its own declared inputs and github.token — never
+  github.event.*/vars.* (constitution VII). A run with zero matching
+  artifacts (no agent steps, or all skipped) is a successful zero-record
+  contribution (FR-021), not a failure. Never touches any branch other
+  than destination-branch and never writes anything back to the origin
+  pipeline run (FR-015/FR-019).
+
+inputs:
+  run-id:
+    description: The concluded pipeline workflow run to collect metrics-record artifacts for.
+    required: true
+  destination-branch:
+    description: >
+      Branch records.jsonl lives on. No literal default (FR-013) — the
+      caller (ultimately the wrapper) must choose one explicitly.
+    required: true
+  destination-path:
+    description: Path to the append-only JSONL file on destination-branch.
+    required: true
+  token:
+    description: >
+      Token used for every gh/git operation, all against THIS
+      repository only (list jobs/artifacts, download, fetch, push).
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  persisted-count:
+    description: Number of records newly appended to destination-path by this run.
+    value: ${{ steps.append.outputs.persisted-count }}
+  unpersisted-record-keys:
+    description: >
+      Space-separated record_keys that could not be retrieved, failed
+      validation, or could not be written after retry exhaustion. Empty
+      when everything discovered was persisted.
+    value: ${{ steps.append.outputs.unpersisted-record-keys }}
+  persisted-spec-dirs:
+    description: >
+      Space-separated distinct spec_dir values (identity_available
+      records only) newly persisted by this run — the rollup step's own
+      input (contracts/persist-workflow.md step 5).
+    value: ${{ steps.append.outputs.persisted-spec-dirs }}
+
+runs:
+  using: composite
+  steps:
+    - name: Discover jobs and metrics-record artifacts
+      id: discover
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        RUN_ID: ${{ inputs.run-id }}
+      run: |
+        set -uo pipefail
+        dir="$RUNNER_TEMP/wc-metrics-persist"
+        mkdir -p "$dir"
+
+        gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/jobs" --paginate --jq '.jobs[]' \
+          > "$dir/jobs.ndjson" 2>/dev/null || true
+        jq -s '.' "$dir/jobs.ndjson" > "$dir/jobs.json" 2>/dev/null || echo '[]' > "$dir/jobs.json"
+
+        gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts" --paginate --jq '.artifacts[]' \
+          > "$dir/artifacts.ndjson" 2>/dev/null || true
+        jq -s '[.[] | select(.name | startswith("metrics-record"))]' "$dir/artifacts.ndjson" \
+          > "$dir/artifacts.json" 2>/dev/null || echo '[]' > "$dir/artifacts.json"
+
+        count="$(jq 'length' "$dir/artifacts.json" 2>/dev/null || echo 0)"
+        echo "Discovered $count metrics-record* artifact(s) for run $RUN_ID." >> "$GITHUB_STEP_SUMMARY"
+        echo "count=$count" >> "$GITHUB_OUTPUT"
+
+    - name: Retrieve metrics-record artifacts
+      id: retrieve
+      if: steps.discover.outputs.count != '0'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        RUN_ID: ${{ inputs.run-id }}
+      run: |
+        set -uo pipefail
+        dir="$RUNNER_TEMP/wc-metrics-persist"
+        dl_dir="$dir/downloaded"
+        mkdir -p "$dl_dir"
+
+        gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -p 'metrics-record*' -D "$dl_dir" \
+          > "$dir/download.log" 2>&1 || true
+
+        # FR-022: an artifact discovered above but not landed here (expired,
+        # or the download call itself failed outright) is reported by name,
+        # never silently skipped or treated as complete.
+        not_retrieved="$(jq -r '.[].name' "$dir/artifacts.json" | while IFS= read -r name; do
+          [ -d "$dl_dir/$name" ] || printf '%s\n' "$name"
+        done)"
+        if [ -n "$not_retrieved" ]; then
+          echo "::warning::wing-commander-metrics-persist: artifact(s) discovered but not retrieved (expired or download failed): $(printf '%s' "$not_retrieved" | tr '\n' ' ')"
+        fi
+        printf '%s' "$not_retrieved" > "$dir/not-retrieved.txt"
+
+    - name: Validate records and build the new-records batch
+      id: validate
+      shell: bash
+      env:
+        RUN_ID: ${{ inputs.run-id }}
+      run: |
+        set -uo pipefail
+        dir="$RUNNER_TEMP/wc-metrics-persist"
+        dl_dir="$dir/downloaded"
+        batch="$dir/new-records.jsonl"
+        : > "$batch"
+        rejected=""
+
+        # job_key -> numeric job_id (R6). Exact-name match only — a
+        # matrix-strategy job (rebase.yml, pr-conversation's act job)
+        # shares one job_key across every matrix instance in a single
+        # run, so this map is unambiguous only for the single-instance
+        # jobs (11 of the 13 call sites). An ambiguous or absent match
+        # keeps job_id: null and record_key in its emission-time
+        # run_id:job_key:step_index form rather than guess wrong — a
+        # known limitation, not a silent one.
+        jobs_json="$(cat "$dir/jobs.json" 2>/dev/null || echo '[]')"
+
+        if [ -d "$dl_dir" ]; then
+          for adir in "$dl_dir"/metrics-record*/; do
+            [ -d "$adir" ] || continue
+            f="${adir}wing-commander-metrics-record.json"
+            [ -f "$f" ] || continue
+            rec="$(cat "$f" 2>/dev/null || true)"
+            if ! printf '%s' "$rec" | jq -e . >/dev/null 2>&1; then
+              rejected="$rejected [unparseable:$(basename "$adir")]"
+              continue
+            fi
+
+            version="$(printf '%s' "$rec" | jq -r '.schema_version // empty')"
+            if [ "$version" != "1" ]; then
+              # FR-025d: retain and skip, unvalidated, unrewritten.
+              printf '%s\n' "$(printf '%s' "$rec" | jq -c '.')" >> "$batch"
+              continue
+            fi
+
+            # Minimal schema-version-1 shape check (field presence +
+            # types) mirroring contracts/metrics-record-schema.md's field
+            # table, plus the per_model sum invariant. Rejects and names
+            # the record_key (FR-041: deterministic code, never judgment).
+            key="$(printf '%s' "$rec" | jq -r '.run.record_key // "unknown"')"
+            ok="$(printf '%s' "$rec" | jq -r '
+              def hasfields($o; $f): ($f - ($o | keys)) == [];
+              ( . as $r
+                | (hasfields($r; ["schema_version","record_available","run","stage","stage_available","spec","model","model_available","turns","tokens","cost_usd","cost_available","duration_ms","duration_available","outcome","per_model","per_model_available","emitted_at"]))
+                and ($r.record_available | type == "boolean")
+                and (hasfields($r.run; ["workflow_run_id","job_key","job_id","step_index","record_key"]))
+                and (hasfields($r.spec; ["spec_dir","issue","identity_available"]))
+                and (hasfields($r.turns; ["counted","reported","intended_budget","enforced_ceiling","available"]))
+                and (hasfields($r.tokens; ["input","output","cache_read","cache_creation","available"]))
+                and ($r.per_model | type == "array")
+                and (
+                  ($r.tokens.available != true) or ($r.per_model_available != true) or (
+                    ([$r.per_model[].input_tokens] | add) == $r.tokens.input and
+                    ([$r.per_model[].output_tokens] | add) == $r.tokens.output and
+                    ([$r.per_model[].cache_read_tokens] | add) == $r.tokens.cache_read and
+                    ([$r.per_model[].cache_creation_tokens] | add) == $r.tokens.cache_creation
+                  )
+                )
+              ) as $valid
+              | if $valid then "true" else "false" end
+            ' 2>/dev/null || echo false)"
+
+            if [ "$ok" != "true" ]; then
+              rejected="$rejected $key"
+              continue
+            fi
+
+            job_key="$(printf '%s' "$rec" | jq -r '.run.job_key // empty')"
+            job_id="$(printf '%s' "$jobs_json" | jq -r --arg n "$job_key" '[.[] | select(.name == $n)] | if length == 1 then .[0].id else empty end')"
+            if [ -n "$job_id" ]; then
+              rec="$(printf '%s' "$rec" | jq -c --argjson jid "$job_id" \
+                '.run.job_id = $jid | .run.record_key = "\(.run.workflow_run_id):\($jid):\(.run.step_index)"')"
+            fi
+            printf '%s\n' "$rec" >> "$batch"
+          done
+        fi
+
+        if [ -n "$rejected" ]; then
+          echo "::warning::wing-commander-metrics-persist: rejected record(s) failing schema-version-1 validation:$rejected"
+        fi
+        echo "rejected=$rejected" >> "$GITHUB_OUTPUT"
+
+    - name: Ensure destination branch exists
+      id: ensure-branch
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        BRANCH: ${{ inputs.destination-branch }}
+      run: |
+        set -uo pipefail
+        if git ls-remote --exit-code origin "refs/heads/$BRANCH" >/dev/null 2>&1; then
+          echo "exists=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "exists=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Create destination branch (first write, R8)
+      if: steps.ensure-branch.outputs.exists != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        BRANCH: ${{ inputs.destination-branch }}
+        DEST_PATH: ${{ inputs.destination-path }}
+      run: |
+        set -uo pipefail
+        git config user.name  "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        dir="$RUNNER_TEMP/wc-metrics-persist"
+        batch="$dir/new-records.jsonl"
+
+        git checkout --orphan "$BRANCH"
+        git rm -rf . >/dev/null 2>&1 || true
+        mkdir -p "$(dirname "$DEST_PATH")" 2>/dev/null || true
+        cp "$batch" "$DEST_PATH"
+        git add "$DEST_PATH"
+        git commit -m "metrics: initialize $DEST_PATH" --allow-empty >/dev/null
+        # A concurrent first-writer race is possible — the append-with-
+        # retry step below re-fetches and treats a rejected push here
+        # exactly the same as any other contended attempt (it IS attempt 1
+        # of that same loop).
+        git push origin "HEAD:refs/heads/$BRANCH" || true
+
+    - name: Append records with retry
+      id: append
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        BRANCH: ${{ inputs.destination-branch }}
+        DEST_PATH: ${{ inputs.destination-path }}
+        RUN_ID: ${{ inputs.run-id }}
+      run: |
+        set -uo pipefail
+        git config user.name  "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        dir="$RUNNER_TEMP/wc-metrics-persist"
+        batch="$dir/new-records.jsonl"
+        [ -f "$batch" ] || : > "$batch"
+
+        persisted=0
+        max_attempts=8
+        attempt=1
+        success=false
+
+        while [ "$attempt" -le "$max_attempts" ]; do
+          git fetch --no-tags origin "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}" 2>/dev/null || true
+          git checkout -B "$BRANCH" "origin/$BRANCH" >/dev/null 2>&1 || git checkout "$BRANCH" >/dev/null 2>&1 || true
+
+          existing_keys="$dir/existing-keys.txt"
+          if [ -f "$DEST_PATH" ]; then
+            jq -r '.run.record_key // empty' "$DEST_PATH" 2>/dev/null > "$existing_keys" || : > "$existing_keys"
+          else
+            : > "$existing_keys"
+          fi
+
+          to_append="$dir/to-append.jsonl"
+          : > "$to_append"
+          while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            key="$(printf '%s' "$line" | jq -r '.run.record_key // empty')"
+            if [ -n "$key" ] && grep -qxF "$key" "$existing_keys" 2>/dev/null; then
+              continue
+            fi
+            printf '%s\n' "$line" >> "$to_append"
+          done < "$batch"
+
+          if [ ! -s "$to_append" ]; then
+            # Nothing new — either everything was already persisted
+            # (idempotent repeat, FR-018) or there was nothing to persist
+            # in the first place (FR-021).
+            success=true
+            break
+          fi
+
+          cat "$to_append" >> "$DEST_PATH"
+          git add "$DEST_PATH"
+          n="$(wc -l < "$to_append" | tr -d ' ')"
+          git commit -m "metrics: append $n record(s) from run ${RUN_ID}" >/dev/null
+
+          if git push origin "HEAD:refs/heads/$BRANCH" 2>"$dir/push-err.txt"; then
+            persisted=$(( persisted + n ))
+            success=true
+            break
+          fi
+
+          # Rejected — most likely non-fast-forward from a concurrent
+          # writer (R7). Undo the local commit so the next attempt's
+          # fetch/diff starts from a clean base, then retry with backoff.
+          git reset --hard HEAD~1 >/dev/null 2>&1 || true
+          sleep_for=$(( attempt < 5 ? attempt : 5 ))
+          sleep "$sleep_for"
+          attempt=$(( attempt + 1 ))
+        done
+
+        if [ "$success" != "true" ]; then
+          unwritten="$(jq -r '.run.record_key // empty' "$batch" 2>/dev/null | tr '\n' ' ')"
+          echo "::error::wing-commander-metrics-persist: gave up after $max_attempts attempts — the following record_key(s) were not persisted: $unwritten"
+          echo "unpersisted-record-keys=$unwritten" >> "$GITHUB_OUTPUT"
+          echo "persisted-count=$persisted" >> "$GITHUB_OUTPUT"
+          echo "persisted-spec-dirs=" >> "$GITHUB_OUTPUT"
+          exit 1
+        fi
+
+        spec_dirs="$(jq -r 'select(.spec.identity_available == true) | .spec.spec_dir' "$batch" 2>/dev/null | sort -u | tr '\n' ' ')"
+        echo "Persisted $persisted new record(s) to $BRANCH:$DEST_PATH." >> "$GITHUB_STEP_SUMMARY"
+        echo "persisted-count=$persisted" >> "$GITHUB_OUTPUT"
+        echo "unpersisted-record-keys=" >> "$GITHUB_OUTPUT"
+        echo "persisted-spec-dirs=$spec_dirs" >> "$GITHUB_OUTPUT"

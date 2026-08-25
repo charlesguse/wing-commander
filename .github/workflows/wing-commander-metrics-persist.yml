@@ -1,0 +1,79 @@
+# Metrics persist (thin wrapper) — contracts/wrapper-contract.md.
+# Reacts to the completion of any of this pipeline's other stage wrappers
+# (workflow_run) and to manual workflow_dispatch re-invocation for an
+# arbitrary already-concluded run (research.md R11/R19a — workflow_run
+# only fires for workflows already on the default branch, so this is the
+# only way to exercise/re-drive persistence before or independent of that).
+#
+# This file owns the trigger, the destination (WING_COMMANDER_METRICS_BRANCH/
+# _PATH), and the pause switch (constitution VII) — everything else
+# (discovery, retrieval, validation, retry, rollup) lives in the published
+# metrics-persist.yml, identical for every adopter.
+#
+# Every name below must match another workflow's `name:` EXACTLY —
+# workflow_run resolves by display name (lint-workflows.yml gate 2).
+name: "Wing Commander · metrics-persist"
+
+on:
+  workflow_run:
+    workflows:
+      - "reusable · intake"
+      - "reusable · clarify"
+      - "reusable · plan"
+      - "reusable · tasks"
+      - "reusable · implement"
+      - "reusable · finalize"
+      - "reusable · cleanup"
+      - "reusable · rebase"
+      - "reusable · watchdog"
+      - "reusable · pr-conversation"
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run-id:
+        description: "An already-concluded workflow run to collect metrics for"
+        required: true
+
+permissions: {}
+
+jobs:
+  # Resolve run-id from whichever trigger fired. No checkout (the run-id is
+  # all this job needs), actions:read only.
+  resolve:
+    # Kill switch (constitution VII: the wrapper owns every vars.* read).
+    if: vars.WING_COMMANDER_METRICS_PAUSED != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      run-id: ${{ steps.resolve.outputs.run-id }}
+    steps:
+      - name: Resolve run-id
+        id: resolve
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_RUN_ID: ${{ github.event.workflow_run.id }}
+          DISPATCH_RUN_ID: ${{ inputs.run-id }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            run_id="$DISPATCH_RUN_ID"
+          else
+            run_id="$EVENT_RUN_ID"
+          fi
+          echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
+
+  persist:
+    needs: resolve
+    if: vars.WING_COMMANDER_METRICS_PAUSED != 'true'
+    permissions:
+      contents: write
+      issues: write
+      actions: read
+      id-token: write
+    uses: ./.github/workflows/metrics-persist.yml
+    with:
+      run-id: ${{ needs.resolve.outputs.run-id }}
+      destination-branch: ${{ vars.WING_COMMANDER_METRICS_BRANCH || 'metrics' }}
+      destination-path: ${{ vars.WING_COMMANDER_METRICS_PATH || 'records.jsonl' }}
+    secrets: inherit
