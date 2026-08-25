@@ -100,7 +100,7 @@ jobs:
               --paginate --jq '.[] | select(.body | contains("'"$MARKER"'")) | .id' | wc -l | tr -d ' ')
             [ "$marked" = "0" ] || continue
 
-            gh api "repos/$REPO/issues/$num/comments" -f body="$MARKER
+            gh api -X POST "repos/$REPO/issues/$num/comments" -f body="$MARKER
           The close of this pull request produced no cleanup run (closing a PR together with deleting its branch can race the \`pull_request: closed\` dispatch - #73). The scheduled sweeper is re-delivering it to the cleanup stage now; the outcome lands in this repository's Actions under \"Wing Commander · 7 cleanup\"." >/dev/null
 
             entry=$(jq -c '{number, head: .headRefName, base: .baseRefName,
