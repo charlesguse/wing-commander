@@ -1101,6 +1101,19 @@ or one-cycle-at-a-time manual.
 Wire it to a repo-wide `pull_request: closed` trigger and forward the raw
 facts (wrapper 7 above) — the selection logic is inside the stage.
 
+**The close-race caveat (#73):** closing a PR *together with* deleting its
+head branch (the UI's close-and-delete flow, `gh pr close --delete-branch`)
+can race GitHub's creation of the `pull_request: closed` run — the close
+then produces **no cleanup run at all**, and every outcome is silently
+skipped. Prefer closing first and deleting the branch after the cleanup run
+appears (for pipeline branches, prefer not deleting at all — teardown owns
+that). The reference wrapper also carries a daily scheduled **sweeper**: it
+re-derives the raw facts from the API for any pipeline PR closed in the
+last 48 hours whose close left no `pull_request`-event cleanup run behind,
+marks the PR with a comment, and re-delivers the facts to this same stage.
+An adopter's wrapper gets the sweeper by copying the reference wrapper's
+`schedule`/`workflow_dispatch` arms (`sweep` + `resweep` jobs).
+
 ### rebase
 
 The stage the spec calls "auto-rebase" — `rebase` is its canonical published

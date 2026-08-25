@@ -4,20 +4,162 @@
 # (teardown-done / teardown-rejected / mark-stalled, every other shape a
 # no-op) lives in cleanup.yml (docs/adoption.md), called by local
 # path.
+#
+# The schedule arm is the close-race sweeper (#73 gap 2): closing a PR
+# together with "Delete branch" can race GitHub's creation of the
+# pull_request:closed run, so the close produces NO cleanup run at all and
+# every outcome is silently skipped. The sweeper re-derives the raw event
+# facts from the API for any recently closed pipeline PR whose close left
+# no cleanup run behind, and re-delivers them to the same stage.
 name: "Wing Commander · 7 cleanup"
 
 on:
   pull_request:
     types: [closed]
+  schedule:
+    - cron: "53 6 * * *"
+  workflow_dispatch: {}
 
 permissions: {}
 
 jobs:
+  sweep:
+    # The detector half of the sweeper: deterministic, agent-free, and
+    # running with the workflow's own token only.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      pull-requests: write
+      issues: write
+    outputs:
+      matrix: ${{ steps.detect.outputs.matrix }}
+      count: ${{ steps.detect.outputs.count }}
+    steps:
+      - name: Find closed pipeline PRs whose close produced no cleanup run
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PREFIXES: >-
+            ${{ vars.WING_COMMANDER_SPEC_DRAFT_PREFIX || 'spec-draft/' }}
+            ${{ vars.WING_COMMANDER_SPEC_PREFIX || 'spec/' }}
+            ${{ vars.WING_COMMANDER_PLAN_PREFIX || 'plan/' }}
+            ${{ vars.WING_COMMANDER_TASKS_PREFIX || 'tasks/' }}
+            ${{ vars.WING_COMMANDER_IMPL_PREFIX || 'impl/' }}
+          # The sweeper's own workflow file, to ask "did this close get a run".
+          WORKFLOW_FILE: wing-commander-7-cleanup.yml
+          MARKER: "<!-- wing-commander-cleanup-sweep -->"
+        run: |
+          set -euo pipefail
+          # Window: old enough that a run GitHub *did* create has appeared
+          # (30 minutes), young enough to bound the scan (48 hours - the
+          # daily cadence plus a full day of slack for outages).
+          now=$(date -u +%s)
+          floor=$(date -u -d "@$((now - 48*3600))" +%Y-%m-%dT%H:%M:%SZ)
+          ceiling=$(date -u -d "@$((now - 30*60))" +%Y-%m-%dT%H:%M:%SZ)
+
+          owner="${REPO%%/*}"
+          gh pr list --repo "$REPO" --state closed --limit 100 \
+            --json number,headRefName,baseRefName,closedAt,mergedAt,mergeCommit,headRepositoryOwner \
+            > closed.json
+
+          entries="[]"
+          count=0
+          while IFS= read -r row; do
+            num=$(jq -r '.number' <<<"$row")
+            head=$(jq -r '.headRefName' <<<"$row")
+            closed_at=$(jq -r '.closedAt' <<<"$row")
+
+            # A pipeline PR is one whose head carries a pipeline prefix and
+            # lives in this repository (the same-repo gate the event arm has).
+            head_owner=$(jq -r '.headRepositoryOwner.login // ""' <<<"$row")
+            [ "$head_owner" = "$owner" ] || continue
+            matched=""
+            for p in $PREFIXES; do
+              case "$head" in "$p"*) matched=1;; esac
+            done
+            [ -n "$matched" ] || continue
+            [ "$closed_at" \> "$floor" ] || continue
+            [ "$closed_at" \< "$ceiling" ] || continue
+
+            # Covered: a pull_request-event run of this workflow on that head
+            # branch. The race being detected is precisely "no such run".
+            runs=$(gh api -X GET \
+              "repos/$REPO/actions/workflows/$WORKFLOW_FILE/runs" \
+              -f event=pull_request -f branch="$head" -f per_page=10 \
+              --jq '[.workflow_runs[] | select(.created_at >= "'"$closed_at"'")] | length' \
+              2>/dev/null || echo "0")
+            [ "$runs" = "0" ] || continue
+
+            # Already swept: the marker comment posted below. It goes up
+            # BEFORE the re-delivery job runs, so a failing re-delivered
+            # cleanup is retried by nobody - but it fails loudly in Actions,
+            # which is the whole point; silent skipping is the defect.
+            marked=$(gh api -X GET "repos/$REPO/issues/$num/comments" \
+              --paginate --jq '[.[] | select(.body | contains("'"$MARKER"'"))] | length')
+            [ "$marked" = "0" ] || continue
+
+            gh api "repos/$REPO/issues/$num/comments" -f body="$MARKER
+          The close of this pull request produced no cleanup run (closing a PR together with deleting its branch can race the \`pull_request: closed\` dispatch - #73). The scheduled sweeper is re-delivering it to the cleanup stage now; the outcome lands in this repository's Actions under \"Wing Commander · 7 cleanup\"." >/dev/null
+
+            entry=$(jq -c '{number, head: .headRefName, base: .baseRefName,
+                            merged: (.mergedAt != null),
+                            sha: (.mergeCommit.oid // "")}' <<<"$row")
+            entries=$(jq -c --argjson e "$entry" '. + [$e]' <<<"$entries")
+            count=$((count + 1))
+          done < <(jq -c '.[]' closed.json)
+
+          echo "matrix=$entries" >> "$GITHUB_OUTPUT"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "sweep: $count missed close(s) re-delivered out of $(jq 'length' closed.json) closed PR(s) inspected"
+
+  resweep:
+    needs: sweep
+    if: needs.sweep.outputs.count != '0'
+    strategy:
+      fail-fast: false
+      # One at a time: re-delivered cleanups share the stage's own
+      # per-spec concurrency assumptions, which a simultaneous burst of
+      # backfills was never part of.
+      max-parallel: 1
+      matrix:
+        include: ${{ fromJSON(needs.sweep.outputs.matrix) }}
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    uses: ./.github/workflows/cleanup.yml
+    with:
+      head-ref: ${{ matrix.head }}
+      base-ref: ${{ matrix.base }}
+      merged: ${{ matrix.merged }}
+      pr-number: ${{ matrix.number }}
+      merge-commit-sha: ${{ matrix.sha }}
+      summary-model: ${{ vars.WING_COMMANDER_SUMMARY_MODEL || 'claude-haiku-4-5' }}
+      spec-draft-prefix: ${{ vars.WING_COMMANDER_SPEC_DRAFT_PREFIX || 'spec-draft/' }}
+      spec-prefix: ${{ vars.WING_COMMANDER_SPEC_PREFIX || 'spec/' }}
+      plan-prefix: ${{ vars.WING_COMMANDER_PLAN_PREFIX || 'plan/' }}
+      tasks-prefix: ${{ vars.WING_COMMANDER_TASKS_PREFIX || 'tasks/' }}
+      impl-prefix: ${{ vars.WING_COMMANDER_IMPL_PREFIX || 'impl/' }}
+      runner: ${{ vars.WING_COMMANDER_RUNNER || 'ubuntu-latest' }}
+      container-image: ${{ vars.WING_COMMANDER_CONTAINER_IMAGE || '' }}
+    secrets:
+      claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
+      container-registry-username: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME }}
+      container-registry-password: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD }}
+
   cleanup:
     # Security gate: same-repo PRs only. Spec branches can only exist in this
     # repository, so a fork-PR close is always a no-op — skipping it here
     # avoids secret-less failed runs on fork PRs once the repository is public.
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     permissions:
       contents: write
       pull-requests: write
