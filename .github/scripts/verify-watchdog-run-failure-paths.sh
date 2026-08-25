@@ -60,11 +60,17 @@ case "$1" in
   run)
     # gh run download <id> -R <repo> -n <name> -D <dir>
     dir=""
+    name=""
     prev=""
     for a in "$@"; do
       [ "$prev" = "-D" ] && dir="$a"
+      [ "$prev" = "-n" ] && name="$a"
       prev="$a"
     done
+    if [ "$name" != "claude-execution-output-diagnose" ]; then
+      echo "gh-stub: unmodelled artifact name '$name'" >&2
+      exit 1
+    fi
     if [ -f "$WD_FIXTURES/artifact.json" ] && [ -n "$dir" ]; then
       cp "$WD_FIXTURES/artifact.json" "$dir/claude-execution-output.json"
       exit 0
@@ -131,7 +137,7 @@ printf 'clean diagnose log with no crash signatures\n' > "$work/fixtures/diagnos
 printf '' > "$work/fixtures/issue-search.txt"
 
 # ── Scenario driver ─────────────────────────────────────────────────────────
-# run_scenario <script> <name> <fail-regexes> <CREATE_ISSUE> -> populates
+# run_scenario <script> <stub-fail-regexes> <CREATE_ISSUE> -> populates
 # $rc and $out; the per-scenario assertions read both.
 run_scenario() {
   local script="$1" stub_fail="$2" create="$3"
@@ -222,39 +228,50 @@ scenarios() {
 scenarios "$SCRIPT" "real"
 
 # ── Mutations: each fix must be load-bearing (constitution VIII) ───────────
-# m1: the run-fetch guard degrades to a pass -> s1 must catch it.
+# run_mutation <mutant-path> <tag> <covering-scenario> <description>
+# A kill is strict: the mutant must still be VALID bash (an unparseable
+# mutant fails every scenario for reasons that prove nothing - an
+# independent review caught exactly that: a half-applied sed produced a
+# syntax-error mutant whose crash was scored as a kill), and the covering
+# scenario must be the ONLY one that goes red - a broader blast radius
+# means the mutation, or the harness, is not testing what it claims.
+run_mutation() {
+  local mutant="$1" tag="$2" covering="$3" description="$4"
+  if cmp -s "$SCRIPT" "$mutant"; then
+    fail "$tag did not apply - the guard's shape changed; update this harness"
+    return
+  fi
+  if ! bash -n "$mutant" 2>/dev/null; then
+    fail "$tag produced an unparseable mutant - its sed no longer matches the script; update this harness"
+    return
+  fi
+  local before=$bad
+  scenarios "$mutant" "$tag" > "$work/$tag.log" 2>&1
+  bad=$before
+  local failed_scenarios
+  failed_scenarios="$(grep -oE "\[FAIL\] $tag s[0-9]" "$work/$tag.log" | grep -oE 's[0-9]$' | sort -u | tr '\n' ' ')"
+  if [ "$failed_scenarios" = "$covering " ]; then
+    ok "$tag: $description - exactly $covering went red"
+  else
+    fail "$tag: expected exactly $covering to fail, got: '${failed_scenarios:-none}' - $(grep "\[FAIL\]" "$work/$tag.log" | head -2 | tr '\n' ' ')"
+  fi
+}
+
 mut="$work/mutated.sh"
+
+# m1: the run-fetch guard degrades to a pass -> s1 must catch it.
 sed 's/{ echo "::error::cannot fetch run $RUN_ID"; exit 2; }/{ echo "::error::cannot fetch run $RUN_ID"; exit 0; }/' \
   "$SCRIPT" > "$mut"
-if cmp -s "$SCRIPT" "$mut"; then
-  fail "m1 did not apply - the run-fetch guard's shape changed; update this harness"
-else
-  before=$bad
-  scenarios "$mut" "m1(quiet)" >/dev/null 2>&1
-  if [ "$bad" -gt "$before" ]; then
-    ok "m1: degrading the run-fetch guard to exit 0 turns s1 red - the guard is load-bearing"
-    bad=$before
-  else
-    fail "m1 SURVIVED: the run-fetch guard was neutralised and every scenario still passed"
-  fi
-fi
+run_mutation "$mut" "m1" "s1" "degrading the run-fetch guard to exit 0 is caught"
 
-# m2: the search-failure guard reverts to read-failure-as-empty -> s5 must
-# catch the duplicate filing.
-sed 's/if existing="$(gh issue list/existing="$(gh issue list/; s/--jq '"'"'.[0].number \/\/ empty'"'"')"; then/--jq '"'"'.[0].number \/\/ empty'"'"')" || true; if true; then/' \
+# m2: the search-failure guard reverts to read-failure-as-empty (the #167
+# shape) -> s5 must catch the duplicate filing. The brackets in the jq
+# fragment are escaped: unescaped, sed reads `[0]` as a bracket expression,
+# the second expression never matches, and the mutant is the half-applied
+# syntax error the strictness above exists to reject.
+sed 's/if existing="$(gh issue list/existing="$(gh issue list/; s/--jq '"'"'.\[0\].number \/\/ empty'"'"')"; then/--jq '"'"'.[0].number \/\/ empty'"'"')" || true; if true; then/' \
   "$SCRIPT" > "$mut"
-if cmp -s "$SCRIPT" "$mut"; then
-  fail "m2 did not apply - the filing arm's shape changed; update this harness"
-else
-  before=$bad
-  scenarios "$mut" "m2(quiet)" >/dev/null 2>&1
-  if [ "$bad" -gt "$before" ]; then
-    ok "m2: reverting the search-failure guard turns s5 red - a failed search no longer reads as empty"
-    bad=$before
-  else
-    fail "m2 SURVIVED: the #167-shaped filing defect was reintroduced and every scenario still passed"
-  fi
-fi
+run_mutation "$mut" "m2" "s5" "reverting the search-failure guard files a duplicate again"
 
-echo "Gate 36: 6 scenario(s) x 2 runs + 2 mutation(s); $bad failure(s)."
+echo "Gate 36: 6 scenario(s) x 3 runs + 2 mutation(s); $bad failure(s)."
 exit $([ "$bad" -eq 0 ] && echo 0 || echo 1)
