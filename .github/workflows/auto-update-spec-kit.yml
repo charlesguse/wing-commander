@@ -1183,7 +1183,7 @@ jobs:
 
       - name: Upload Claude execution log
         if: always() && steps.decide.outcome != 'skipped'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: claude-execution-output-evaluate-path
           path: ${{ runner.temp }}/claude-execution-output.json
@@ -1678,7 +1678,7 @@ jobs:
           echo "prepare: bumped Spec Kit to v$CANDIDATE on $branch (bundled for verify/act)." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload prepared branch bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: auto-update-spec-kit-prepare-bundle
           path: ${{ runner.temp }}/prepare.bundle
@@ -1779,7 +1779,7 @@ jobs:
       #
       # The scratch repository needs a SECOND App token, minted here rather
       # than reused from `steps.ctx`. `wing-commander-context` calls
-      # actions/create-github-app-token@v2 with neither `owner` nor
+      # actions/create-github-app-token@v3 with neither `owner` nor
       # `repositories` set, which that action documents as "access will be
       # scoped to only the current repository" — so the shared context token
       # cannot see, clone, or push to the scratch repository no matter how the
@@ -1825,7 +1825,7 @@ jobs:
       - name: Mint a scratch-repository App token
         id: scratch-token
         continue-on-error: true
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
@@ -2106,7 +2106,7 @@ jobs:
       # only route to the cause.
       - name: Upload Claude execution log
         if: always() && steps.decide.outcome != 'skipped'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: claude-execution-output-e2e-stage
           path: ${{ runner.temp }}/claude-execution-output.json
@@ -3309,7 +3309,7 @@ jobs:
 
       - name: Upload Claude execution log
         if: always() && steps.interpret.outcome != 'skipped'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: claude-execution-output-comment-reply
           path: ${{ runner.temp }}/claude-execution-output.json

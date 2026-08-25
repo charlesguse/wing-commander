@@ -1081,7 +1081,7 @@ jobs:
       # for post-mortems (which tools were denied, turn count, cost).
       - name: Upload Claude execution log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: claude-execution-output
           path: ${{ runner.temp }}/claude-execution-output.json

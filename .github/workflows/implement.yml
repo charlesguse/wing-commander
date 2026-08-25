@@ -908,7 +908,7 @@ jobs:
       # path) doesn't clobber the primary attempt's.
       - name: Upload Claude execution log (cycle)
         if: always() && steps.cycle.outcome != 'skipped'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: claude-execution-output-cycle
           path: ${{ runner.temp }}/claude-execution-output.json
@@ -1305,7 +1305,7 @@ jobs:
 
       - name: Upload Claude execution log (retry)
         if: always() && steps.retry.outcome != 'skipped'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: claude-execution-output-retry
           path: ${{ runner.temp }}/claude-execution-output.json
@@ -1648,7 +1648,7 @@ jobs:
       # uploaded from this same job.
       - name: Upload Claude execution log (progress)
         if: always() && steps.progress.outcome != 'skipped'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: claude-execution-output-progress
           path: ${{ runner.temp }}/claude-execution-output.json
