@@ -535,10 +535,11 @@ jobs:
           kind: action
           summary: "This stage could not start — ${{ steps.meta.outputs.reason }}"
 
-      # Any existing final PR (open, merged, or closed-unmerged) means this
-      # specification is already finalized or a final PR attempt is already in
-      # flight — no new PR, no metadata commit, no issue comment, no label
-      # change.
+      # research.md D7/contracts/finalize-refresh.md: a tri-state read of any
+      # existing final PR — `none` (create, today's path), `open` (refresh
+      # instead of skip — US3), or `merged`/`closed` (already done; report
+      # and change nothing, FR-009/FR-009a). Replaces the old boolean `skip`,
+      # which could not tell "open" apart from "already done".
       - name: Check for an existing final pull request
         id: guard
         if: steps.lifecycle-gate.outputs.is-open == 'true'
@@ -548,43 +549,70 @@ jobs:
           DB: ${{ steps.defbranch.outputs.name }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
         run: |
-          existing=$(gh pr list --head "${SPEC_PREFIX}$SLUG" --base "$DB" --state all --json number --jq '.[0].number // empty')
-          if [ -n "$existing" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "A final pull request (#$existing) from ${SPEC_PREFIX}$SLUG to $DB already exists — this specification is already finalized or a final PR attempt is already in flight. Nothing to do." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+          existing=$(gh pr list --head "${SPEC_PREFIX}$SLUG" --base "$DB" --state all --json number,state,url --jq '.[0] // empty')
+          if [ -z "$existing" ]; then
+            echo "pr-state=none" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          number=$(printf '%s' "$existing" | jq -r '.number')
+          state=$(printf '%s' "$existing" | jq -r '.state')
+          url=$(printf '%s' "$existing" | jq -r '.url')
+          case "$state" in
+            OPEN) pr_state=open ;;
+            MERGED) pr_state=merged ;;
+            *) pr_state=closed ;;
+          esac
+          {
+            echo "pr-state=$pr_state"
+            echo "pr-number=$number"
+            echo "pr-url=$url"
+          } >> "$GITHUB_OUTPUT"
+          case "$pr_state" in
+            open) echo "A final pull request (#$number) from ${SPEC_PREFIX}$SLUG to $DB is already open — refreshing it instead of opening a new one." >> "$GITHUB_STEP_SUMMARY" ;;
+            merged) echo "A final pull request (#$number) from ${SPEC_PREFIX}$SLUG to $DB is already merged. Nothing to do." >> "$GITHUB_STEP_SUMMARY" ;;
+            closed) echo "A final pull request (#$number) from ${SPEC_PREFIX}$SLUG to $DB is closed (not merged). Nothing to do." >> "$GITHUB_STEP_SUMMARY" ;;
+          esac
 
       # An empty diff against the default branch is an anomaly, not a thing
       # to open an empty PR for. This step also computes the "how to see it"
       # facts deterministically, since it already has the default branch
-      # fetched. Its `skip` output folds in the guard step's skip so every
-      # later step only needs to check this one flag.
+      # fetched. Its `skip` output folds in the guard step's pr-state (now
+      # tri-state, research.md D7) so every later step only needs to check
+      # this one flag; `pr-state` is passed through unchanged for steps that
+      # need to distinguish create (`none`) from refresh (`open`) behavior.
       - name: Check for a diff and compute "how to see it"
         id: diff
         if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
-          GUARD_SKIP: ${{ steps.guard.outputs.skip }}
+          GUARD_PR_STATE: ${{ steps.guard.outputs.pr-state }}
           SLUG: ${{ steps.spec.outputs.slug }}
           ISSUE: ${{ inputs.issue-number }}
           DB: ${{ steps.defbranch.outputs.name }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
         run: |
-          if [ "$GUARD_SKIP" = "true" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
+          if [ "$GUARD_PR_STATE" = "merged" ] || [ "$GUARD_PR_STATE" = "closed" ]; then
+            {
+              echo "skip=true"
+              echo "pr-state=$GUARD_PR_STATE"
+            } >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git fetch origin "$DB"
           if [ -z "$(git diff --stat "origin/$DB...HEAD")" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "anomaly=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "skip=true"
+              echo "anomaly=true"
+              echo "pr-state=$GUARD_PR_STATE"
+            } >> "$GITHUB_OUTPUT"
             echo "${SPEC_PREFIX}$SLUG has no diff against $DB — reported anomaly, stopping." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          echo "skip=false" >> "$GITHUB_OUTPUT"
-          echo "compare-link=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/$DB...${SPEC_PREFIX}$SLUG" >> "$GITHUB_OUTPUT"
+          {
+            echo "skip=false"
+            echo "pr-state=$GUARD_PR_STATE"
+            echo "compare-link=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/$DB...${SPEC_PREFIX}$SLUG"
+          } >> "$GITHUB_OUTPUT"
           {
             echo "changed-files<<WING_COMMANDER_FILES_EOF"
             files=$(git diff --name-only "origin/$DB...HEAD")
@@ -606,6 +634,28 @@ jobs:
           issue-number: ${{ inputs.issue-number }}
           kind: action
           summary: "the persistent branch `${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}` carries no changes against `${{ steps.defbranch.outputs.name }}`; nothing to finalize"
+
+      # research.md D7/FR-009/FR-009a: the guard found the PR already done —
+      # report which state (distinct wording for each) on the lifecycle
+      # issue and change nothing else. Today's guard only wrote a step-
+      # summary line here, which a maintainer watching the issue never sees.
+      - name: Report the final pull request is already merged
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.pr-state == 'merged'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: info
+          summary: "The final pull request (#${{ steps.guard.outputs.pr-number }}) is already merged — nothing was changed."
+
+      - name: Report the final pull request is closed
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.pr-state == 'closed'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: info
+          summary: "The final pull request (#${{ steps.guard.outputs.pr-number }}) is closed (not merged) — nothing was changed."
 
       # The one agent step, read-only. Only the validated slug and integer
       # issue number are interpolated; spec/tasks content is framed as data,
@@ -803,6 +853,23 @@ jobs:
       # Deterministic assembly — the ⚠️ banner's task count and the "no
       # manual work remains" fallback both read the same finalize-remaining.md
       # the issue comment below will also use verbatim.
+      # research.md D9/D9a, data-model.md §6: the narrative half (summary,
+      # how-to-see-it, remaining work) is regenerated fresh every run, same
+      # as the state block, and is wrapped in its own
+      # narrative:begin/narrative:end markers immediately after the fold log
+      # so it is genuinely INSIDE the machine-owned region rather than
+      # merely following it — PR #253 review: an earlier shape left it
+      # outside the region, so a refresh's "preserve everything outside the
+      # region" rule (FR-008b) preserved the PRIOR run's own narrative and
+      # then appended a freshly generated one below it, stacking duplicate
+      # narratives on every refresh. The `none` (create) path writes the
+      # whole region fresh with zero fold-log entries, seeding it for a
+      # future refresh to extend; the `open` (refresh) path preserves the
+      # existing PR body's prose OUTSIDE state:begin…narrative:end
+      # byte-for-byte (FR-008b), regenerates the state block and the
+      # narrative wholesale, and appends at most one new fold-log entry
+      # (D9a: skipped when the current tip is already the most recently
+      # recorded one).
       - name: Assemble PR body
         id: body
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
@@ -811,18 +878,26 @@ jobs:
           ISSUE: ${{ inputs.issue-number }}
           COMPARE_LINK: ${{ steps.diff.outputs.compare-link }}
           CHANGED_FILES: ${{ steps.diff.outputs.changed-files }}
+          PR_STATE: ${{ steps.diff.outputs.pr-state }}
+          EXISTING_PR: ${{ steps.guard.outputs.pr-number }}
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
+          SLUG: ${{ steps.spec.outputs.slug }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          DB: ${{ steps.defbranch.outputs.name }}
         run: |
-          body_file="${{ runner.temp }}/finalize-pr-body.md"
+          set -uo pipefail
           remaining_file="${{ runner.temp }}/finalize-remaining.md"
-          : > "$body_file"
+          narrative_file="${{ runner.temp }}/finalize-narrative.md"
+          : > "$narrative_file"
           if [ "$CONVERGED" = "false" ]; then
             n=$(grep -cv '^[[:space:]]*$' "$remaining_file" || true)
             {
               echo "⚠️ **Not fully converged — $n tasks remain**"
               echo ""
-            } >> "$body_file"
+            } >> "$narrative_file"
           fi
-          cat "${{ runner.temp }}/finalize-summary.md" >> "$body_file"
+          cat "${{ runner.temp }}/finalize-summary.md" >> "$narrative_file"
           {
             echo ""
             echo "## How to see it"
@@ -833,16 +908,108 @@ jobs:
             echo ""
             echo "## Remaining manual work"
             echo ""
-          } >> "$body_file"
+          } >> "$narrative_file"
           if [ -s "$remaining_file" ] && [ -n "$(tr -d '[:space:]' < "$remaining_file")" ]; then
-            cat "$remaining_file" >> "$body_file"
+            cat "$remaining_file" >> "$narrative_file"
           else
-            echo "No manual work remains." >> "$body_file"
+            echo "No manual work remains." >> "$narrative_file"
           fi
           {
             echo ""
             echo "Lifecycle issue: #$ISSUE"
-          } >> "$body_file"
+          } >> "$narrative_file"
+
+          iteration=$(jq -r '.iteration // 0' "$SPEC_DIR/spec-meta.json")
+          total=$(grep -c '^- \[[ xX]\]' "$SPEC_DIR/tasks.md" 2>/dev/null || true)
+          checked=$(grep -c '^- \[[xX]\]' "$SPEC_DIR/tasks.md" 2>/dev/null || true)
+          tip=$(git rev-parse HEAD)
+          short_sha=$(git rev-parse --short HEAD)
+
+          prior_body_file="${{ runner.temp }}/finalize-prior-body.md"
+          : > "$prior_body_file"
+          if [ "$PR_STATE" = "open" ]; then
+            gh pr view "$EXISTING_PR" --json body --jq '.body // ""' > "$prior_body_file" 2>/dev/null || true
+          fi
+
+          before_file="${{ runner.temp }}/finalize-before-region.md"
+          after_file="${{ runner.temp }}/finalize-after-region.md"
+          foldlog_file="${{ runner.temp }}/finalize-existing-foldlog.md"
+          : > "$before_file"; : > "$after_file"; : > "$foldlog_file"
+          if grep -q '<!-- wing-commander-finalize:state:begin -->' "$prior_body_file" 2>/dev/null; then
+            # `0,/pattern/` (GNU sed's documented extension), NOT `1,/pattern/`:
+            # the latter never checks the end pattern against line 1 itself,
+            # so when the region starts on the very first line (no prose
+            # above it) the range never closes and this prints the WHOLE
+            # file instead of nothing — Gate 35 caught this against a
+            # real prior body with no leading prose.
+            sed -n '0,/<!-- wing-commander-finalize:state:begin -->/p' "$prior_body_file" | sed '$d' > "$before_file"
+            # Bounded on narrative:end, not fold-log:end: the narrative is
+            # itself inside the machine-owned region (see the step's leading
+            # comment) and must be discarded here, not preserved, or it
+            # stacks a duplicate copy on every refresh (PR #253 review).
+            sed -n '/<!-- wing-commander-finalize:narrative:end -->/,$p' "$prior_body_file" | sed '1d' > "$after_file"
+            sed -n '/<!-- wing-commander-finalize:fold-log:begin -->/,/<!-- wing-commander-finalize:fold-log:end -->/p' "$prior_body_file" | sed '1d;$d' > "$foldlog_file"
+          elif [ -s "$prior_body_file" ]; then
+            # An existing PR predating this feature's machine-owned region:
+            # preserve its whole prior body above the new region rather than
+            # discarding it.
+            cp "$prior_body_file" "$before_file"
+          fi
+
+          # D9a: keyed by the branch tip SHA the entry describes — skip the
+          # append when the most recent existing entry already names it.
+          # Anchored to the entry's own structured field — the token
+          # between the "Fold (...)" prefix's closing paren and the
+          # following colon on the LAST entry only — rather than a free-text
+          # scan of the whole fold log. An agent-authored summary can embed
+          # an unrelated commit sha in its own prose; a free-text grep over
+          # the whole file would pick that up as "last" and silently record
+          # no fold-log entry for a fold that actually happened (PR #253
+          # review).
+          last_recorded_sha=$(tail -n1 "$foldlog_file" 2>/dev/null | sed -nE 's/^- Fold \([^)]*\) ([0-9a-f]{7,40}):.*/\1/p')
+          new_entry=""
+          if [ "$last_recorded_sha" != "$short_sha" ]; then
+            range_start="$last_recorded_sha"
+            [ -n "$range_start" ] || range_start="$DB"
+            fold_commits=$(git log --grep '^fold(' --format='%s' "${range_start}..${tip}" 2>/dev/null || true)
+            count=$(printf '%s\n' "$fold_commits" | grep -c . || true)
+            if [ "$count" -gt 0 ]; then
+              summary_line=$(printf '%s\n' "$fold_commits" | tail -n1 | sed -E 's/^fold\([^)]*\): //')
+              reviewers=$(jq -r '(.pending_re_review_from // []) | map("@" + .) | join(", ")' "$SPEC_DIR/spec-meta.json" 2>/dev/null || true)
+              if [ -z "$reviewers" ]; then
+                reviewers=$(gh pr view "$EXISTING_PR" --json reviews --jq '[.reviews[] | select(.state=="CHANGES_REQUESTED") | "@" + .author.login] | unique | join(", ")' 2>/dev/null || true)
+              fi
+              [ -n "$reviewers" ] || reviewers="a reviewer"
+              fold_date=$(date -u +%Y-%m-%d)
+              new_entry="- Fold (${fold_date}, review by ${reviewers}, #${ISSUE}) ${short_sha}: ${count} item(s) folded — ${summary_line}."
+            fi
+          fi
+
+          body_file="${{ runner.temp }}/finalize-pr-body.md"
+          {
+            if [ -s "$before_file" ]; then
+              cat "$before_file"
+              echo ""
+            fi
+            echo "<!-- wing-commander-finalize:state:begin -->"
+            echo "**Branch**: \`${SPEC_PREFIX}${SLUG}\` → \`${DB}\`"
+            echo "**Iteration**: ${iteration} | **Stage**: review"
+            echo "**Tasks**: ${checked}/${total} checked in tasks.md"
+            echo "<!-- wing-commander-finalize:state:end -->"
+            echo ""
+            echo "<!-- wing-commander-finalize:fold-log:begin -->"
+            [ -s "$foldlog_file" ] && cat "$foldlog_file"
+            [ -n "$new_entry" ] && echo "$new_entry"
+            echo "<!-- wing-commander-finalize:fold-log:end -->"
+            echo ""
+            echo "<!-- wing-commander-finalize:narrative:begin -->"
+            cat "$narrative_file"
+            echo "<!-- wing-commander-finalize:narrative:end -->"
+            if [ -s "$after_file" ]; then
+              echo ""
+              cat "$after_file"
+            fi
+          } > "$body_file"
           echo "body-file=$body_file" >> "$GITHUB_OUTPUT"
 
       # The feature name for the PR title, from spec.md's title heading.
@@ -855,7 +1022,11 @@ jobs:
           title=$(grep -m1 '^# ' "$SPEC_DIR/spec.md" | sed -E 's/^#\s*(Feature Specification:\s*)?//')
           echo "feature-title=$title" >> "$GITHUB_OUTPUT"
 
-      - name: Open the final pull request
+      # research.md D8/contracts/finalize-refresh.md: `none` creates exactly
+      # as today; `open` edits the PR the guard already found instead of
+      # creating a second one — the one-PR-per-spec guard's purpose (FR-010)
+      # holds because only `none` ever reaches `gh pr create`.
+      - name: Open or update the final pull request
         id: pr
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
         continue-on-error: true
@@ -866,10 +1037,16 @@ jobs:
           TITLE: ${{ steps.title.outputs.feature-title }}
           DB: ${{ steps.defbranch.outputs.name }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          PR_STATE: ${{ steps.diff.outputs.pr-state }}
+          EXISTING_PR: ${{ steps.guard.outputs.pr-number }}
         run: |
-          gh pr create --base "$DB" --head "${SPEC_PREFIX}$SLUG" \
-            --title "Finalize: $TITLE (#$ISSUE)" \
-            --body-file "${{ steps.body.outputs.body-file }}"
+          if [ "$PR_STATE" = "open" ]; then
+            gh pr edit "$EXISTING_PR" --body-file "${{ steps.body.outputs.body-file }}"
+          else
+            gh pr create --base "$DB" --head "${SPEC_PREFIX}$SLUG" \
+              --title "Finalize: $TITLE (#$ISSUE)" \
+              --body-file "${{ steps.body.outputs.body-file }}"
+          fi
 
       # Verify before writing anything else — spec-meta.json stays untouched
       # on failure so a later dispatch still retries the whole thing.
@@ -938,6 +1115,70 @@ jobs:
             gh pr edit "$PR" --add-label "$labels" || true
           fi
 
+      # research.md D10/contracts/finalize-refresh.md: best-effort re-review
+      # request from the login(s) `pr-conversation.yml`'s `dispatch-once` job
+      # recorded into `spec-meta.json` at fold time (falls back to the PR's
+      # own CHANGES_REQUESTED review records when that field is absent — a
+      # spec branch predating this feature, or a fold that never wrote it).
+      # Never fails the job (FR-010b) — the remaining refresh effects below
+      # still occur, and a failure is stated on the lifecycle issue below,
+      # not swallowed.
+      - name: Request re-review from the answered reviewer(s)
+        id: re-review
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.pr-state == 'open'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
+          EXISTING_PR: ${{ steps.guard.outputs.pr-number }}
+        run: |
+          set -uo pipefail
+          logins=$(jq -r '(.pending_re_review_from // []) | join(",")' "$SPEC_DIR/spec-meta.json" 2>/dev/null || true)
+          if [ -z "$logins" ]; then
+            logins=$(gh pr view "$EXISTING_PR" --json reviews --jq '[.reviews[] | select(.state=="CHANGES_REQUESTED") | .author.login] | unique | join(",")' 2>/dev/null || true)
+          fi
+          if [ -z "$logins" ]; then
+            echo "requested=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "logins=$logins" >> "$GITHUB_OUTPUT"
+          if gh pr edit "$EXISTING_PR" --add-reviewer "$logins" >/dev/null 2>&1; then
+            echo "requested=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "requested=false" >> "$GITHUB_OUTPUT"
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report re-review request failure
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.pr-state == 'open' && steps.re-review.outputs.failed == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: info
+          summary: "Requesting re-review from ${{ steps.re-review.outputs.logins }} on the final PR did not succeed — request it manually."
+
+      # FR-010d: on the refresh path, the announcement states the review
+      # feedback was acted on and names the review(s) it answers — the same
+      # logins the re-review request above used. Computed deterministically
+      # rather than as a nested workflow-expression ternary.
+      - name: Compose review-announcement summary
+        id: announce-summary
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
+        env:
+          PR_STATE: ${{ steps.diff.outputs.pr-state }}
+          LOGINS: ${{ steps.re-review.outputs.logins }}
+        run: |
+          if [ "$PR_STATE" = "open" ]; then
+            if [ -n "$LOGINS" ]; then
+              echo "summary=Review the implementation PR again — refreshed and re-review requested from ${LOGINS}" >> "$GITHUB_OUTPUT"
+            else
+              echo "summary=Review the implementation PR again — it was refreshed after review feedback" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "summary=Review the implementation PR" >> "$GITHUB_OUTPUT"
+          fi
+
       # User Story 1's core fix (contracts/callout-points.md row 5): today
       # this moment posts no comment at all — a customer-visible silent
       # stall until a human happens to notice the PR.
@@ -948,12 +1189,17 @@ jobs:
           token: ${{ steps.ctx.outputs.token }}
           issue-number: ${{ inputs.issue-number }}
           kind: action
-          summary: "Review the implementation PR"
+          summary: ${{ steps.announce-summary.outputs.summary }}
           pr-url: ${{ steps.verify-pr.outputs.pr-url }}
           pr-label: "the implementation PR"
 
       # Direct commit onto the spec branch, no work branch — same shape the
-      # implement stage already uses for its own metadata writes.
+      # implement stage already uses for its own metadata writes. Also
+      # clears `pending_re_review_from` (research.md D10) in this SAME
+      # commit — the re-review request above already read it (issued or
+      # attempted), so a second finalize run with no intervening fold does
+      # not re-request (FR-010a). Harmless no-op on the create path, where
+      # the field is already absent/empty.
       - name: Commit metadata (stage -> review)
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
         env:
@@ -962,13 +1208,21 @@ jobs:
           ISSUE: ${{ inputs.issue-number }}
           BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
         run: |
-          jq '.stage = "review"' "$SPEC_DIR/spec-meta.json" > /tmp/meta.json
+          jq '.stage = "review" | .pending_re_review_from = []' "$SPEC_DIR/spec-meta.json" > /tmp/meta.json
           mv /tmp/meta.json "$SPEC_DIR/spec-meta.json"
-          git config user.name  "${BOT_SLUG}[bot]"
-          git config user.email "${BOT_SLUG}[bot]@users.noreply.github.com"
           git add "$SPEC_DIR/spec-meta.json"
-          git commit -m "finalize: $SLUG -> review (#$ISSUE)"
-          git push
+          # FR-010a: a repeat refresh with no intervening fold already has
+          # stage=review and an empty pending_re_review_from, so there is
+          # nothing to commit — `git commit` would exit non-zero and fail
+          # this otherwise-idempotent step.
+          if git diff --cached --quiet; then
+            echo "spec-meta.json already reflects stage=review with no pending re-review — nothing to commit." >> "$GITHUB_STEP_SUMMARY"
+          else
+            git config user.name  "${BOT_SLUG}[bot]"
+            git config user.email "${BOT_SLUG}[bot]@users.noreply.github.com"
+            git commit -m "finalize: $SLUG -> review (#$ISSUE)"
+            git push
+          fi
 
       # The same remaining-manual-work content the PR body used, verbatim —
       # guarantees the PR and the issue never disagree.

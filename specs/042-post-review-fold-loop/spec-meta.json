@@ -2,7 +2,10 @@
   "issue": 250,
   "spec_dir": "specs/042-post-review-fold-loop",
   "feature_num": "042",
-  "stage": "spec",
-  "iteration": 0,
-  "spec_branch": null
+  "stage": "implement",
+  "iteration": 2,
+  "spec_branch": "spec/042-post-review-fold-loop",
+  "pending_re_review_from": [
+    "charlesguse"
+  ]
 }
