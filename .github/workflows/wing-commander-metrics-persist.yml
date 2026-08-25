@@ -17,16 +17,16 @@ name: "Wing Commander · metrics-persist"
 on:
   workflow_run:
     workflows:
-      - "reusable · intake"
-      - "reusable · clarify"
-      - "reusable · plan"
-      - "reusable · tasks"
-      - "reusable · implement"
-      - "reusable · finalize"
-      - "reusable · cleanup"
-      - "reusable · rebase"
-      - "reusable · watchdog"
-      - "reusable · pr-conversation"
+      - "Wing Commander · 1 intake"
+      - "Wing Commander · 2 clarify"
+      - "Wing Commander · 3 plan"
+      - "Wing Commander · 4 tasks"
+      - "Wing Commander · 5 implement"
+      - "Wing Commander · 6 finalize"
+      - "Wing Commander · 7 cleanup"
+      - "Wing Commander · rebase"
+      - "Wing Commander · 8 watchdog"
+      - "Wing Commander · 9 pr conversation"
     types: [completed]
   workflow_dispatch:
     inputs:

@@ -2041,6 +2041,12 @@ jobs:
           stage: pr-conversation
           spec-dir: ${{ needs.classify-and-announce.outputs.spec-dir }}
           spec-issue: ${{ needs.classify-and-announce.outputs.issue-number }}
+          # github.job (JOB_KEY) is identical across every leg of this act
+          # matrix, so step-index must carry the per-leg distinction — the
+          # same strategy.job-index already used to name this leg's
+          # artifact below — or every leg's record_key collides on the
+          # same run_id:job_key:0 (incident PR #267 MF-B4).
+          step-index: ${{ strategy.job-index }}
 
       # Durable record (specs/043-durable-metrics-record) — the artifact this
       # feature persists past the transcript's own retention window.

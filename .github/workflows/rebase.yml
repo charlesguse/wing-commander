@@ -837,6 +837,13 @@ jobs:
           stage: rebase
           spec-dir: ${{ matrix.spec_dir }}
           spec-issue: ${{ matrix.issue }}
+          # github.job (JOB_KEY) is identical across every leg of this
+          # matrix, so step-index must carry the per-leg distinction or
+          # every leg's record_key collides on the same
+          # run_id:job_key:0 — a later-collected leg then gets deduped
+          # away by the persist retry loop and reports persisted-count=0
+          # for a run that DID produce a record (incident PR #267 MF-B4).
+          step-index: ${{ strategy.job-index }}
 
       # Durable record (specs/043-durable-metrics-record) — the artifact this
       # feature persists past the transcript's own retention window. One

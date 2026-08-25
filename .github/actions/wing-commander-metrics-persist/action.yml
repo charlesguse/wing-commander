@@ -190,46 +190,6 @@ runs:
         fi
         echo "rejected=$rejected" >> "$GITHUB_OUTPUT"
 
-    - name: Ensure destination branch exists
-      id: ensure-branch
-      shell: bash
-      env:
-        GH_TOKEN: ${{ inputs.token }}
-        BRANCH: ${{ inputs.destination-branch }}
-      run: |
-        set -uo pipefail
-        if git ls-remote --exit-code origin "refs/heads/$BRANCH" >/dev/null 2>&1; then
-          echo "exists=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "exists=false" >> "$GITHUB_OUTPUT"
-        fi
-
-    - name: Create destination branch (first write, R8)
-      if: steps.ensure-branch.outputs.exists != 'true'
-      shell: bash
-      env:
-        GH_TOKEN: ${{ inputs.token }}
-        BRANCH: ${{ inputs.destination-branch }}
-        DEST_PATH: ${{ inputs.destination-path }}
-      run: |
-        set -uo pipefail
-        git config user.name  "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
-        dir="$RUNNER_TEMP/wc-metrics-persist"
-        batch="$dir/new-records.jsonl"
-
-        git checkout --orphan "$BRANCH"
-        git rm -rf . >/dev/null 2>&1 || true
-        mkdir -p "$(dirname "$DEST_PATH")" 2>/dev/null || true
-        cp "$batch" "$DEST_PATH"
-        git add "$DEST_PATH"
-        git commit -m "metrics: initialize $DEST_PATH" --allow-empty >/dev/null
-        # A concurrent first-writer race is possible — the append-with-
-        # retry step below re-fetches and treats a rejected push here
-        # exactly the same as any other contended attempt (it IS attempt 1
-        # of that same loop).
-        git push origin "HEAD:refs/heads/$BRANCH" || true
-
     - name: Append records with retry
       id: append
       shell: bash
@@ -253,7 +213,29 @@ runs:
 
         while [ "$attempt" -le "$max_attempts" ]; do
           git fetch --no-tags origin "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}" 2>/dev/null || true
-          git checkout -B "$BRANCH" "origin/$BRANCH" >/dev/null 2>&1 || git checkout "$BRANCH" >/dev/null 2>&1 || true
+
+          # Branch creation (research.md R8) folds into this same loop
+          # rather than a separate up-front step: re-deriving branch-new-
+          # ness from origin on EVERY attempt, instead of deciding once
+          # before the loop, is what makes a failed first push safe to
+          # retry. A prior attempt here may have committed the batch to a
+          # local orphan branch and then failed to push it — if that local
+          # state survived, this attempt's existing_keys diff would read
+          # its own unpushed file and see the whole batch as "already
+          # persisted" (empty to_append, reported success, zero pushed —
+          # incident PR #267 MF-B3). Detach and drop any such stale local
+          # branch before recreating it, so every attempt's view of
+          # "already persisted" always comes from a real fetch.
+          if git rev-parse --verify -q "refs/remotes/origin/${BRANCH}" >/dev/null; then
+            git checkout -B "$BRANCH" "origin/$BRANCH" >/dev/null 2>&1
+            branch_is_new=false
+          else
+            git checkout -q --detach >/dev/null 2>&1 || true
+            git branch -D "$BRANCH" >/dev/null 2>&1 || true
+            git checkout --orphan "$BRANCH" >/dev/null 2>&1
+            git rm -rf . >/dev/null 2>&1 || true
+            branch_is_new=true
+          fi
 
           existing_keys="$dir/existing-keys.txt"
           if [ -f "$DEST_PATH" ]; then
@@ -273,18 +255,25 @@ runs:
             printf '%s\n' "$line" >> "$to_append"
           done < "$batch"
 
-          if [ ! -s "$to_append" ]; then
+          if [ ! -s "$to_append" ] && [ "$branch_is_new" != "true" ]; then
             # Nothing new — either everything was already persisted
             # (idempotent repeat, FR-018) or there was nothing to persist
-            # in the first place (FR-021).
+            # in the first place (FR-021). A brand-new branch still falls
+            # through below to be created, even with an empty batch.
             success=true
             break
           fi
 
+          mkdir -p "$(dirname "$DEST_PATH")" 2>/dev/null || true
+          [ -f "$DEST_PATH" ] || : > "$DEST_PATH"
           cat "$to_append" >> "$DEST_PATH"
           git add "$DEST_PATH"
           n="$(wc -l < "$to_append" | tr -d ' ')"
-          git commit -m "metrics: append $n record(s) from run ${RUN_ID}" >/dev/null
+          if [ "$branch_is_new" = "true" ]; then
+            git commit -m "metrics: initialize $DEST_PATH with $n record(s) from run ${RUN_ID}" --allow-empty >/dev/null
+          else
+            git commit -m "metrics: append $n record(s) from run ${RUN_ID}" >/dev/null
+          fi
 
           if git push origin "HEAD:refs/heads/$BRANCH" 2>"$dir/push-err.txt"; then
             persisted=$(( persisted + n ))
@@ -293,9 +282,14 @@ runs:
           fi
 
           # Rejected — most likely non-fast-forward from a concurrent
-          # writer (R7). Undo the local commit so the next attempt's
-          # fetch/diff starts from a clean base, then retry with backoff.
-          git reset --hard HEAD~1 >/dev/null 2>&1 || true
+          # writer (R7), including a concurrent first-writer race when
+          # branch_is_new. Undo the local commit when there is a parent to
+          # return to; an orphan branch's first commit has none, and the
+          # top of the loop re-derives branch_is_new from origin fresh on
+          # the next attempt either way.
+          if [ "$branch_is_new" != "true" ]; then
+            git reset --hard HEAD~1 >/dev/null 2>&1 || true
+          fi
           sleep_for=$(( attempt < 5 ? attempt : 5 ))
           sleep "$sleep_for"
           attempt=$(( attempt + 1 ))
