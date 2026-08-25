@@ -839,6 +839,75 @@ jobs:
             echo "No $SPEC_DRAFT_PREFIX$NUM-* branch found — intake produced no spec." >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      # The action writes its full execution transcript — every tool call,
+      # including permission denials — to claude-execution-output.json in the
+      # runner temp dir. The streamed job log does NOT contain it, so upload it
+      # for post-mortems (which tools were denied, turn count, cost). Placed
+      # here (not at the job's end) because later steps need this run's cost
+      # line already computed — the transcript is already final the moment
+      # the agent step completes, so nothing is lost reading it this early.
+      - name: Upload Claude execution log
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: claude-execution-output
+          path: ${{ runner.temp }}/claude-execution-output.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+      # Surface this run's own metrics (model, turns/budget, duration, tokens,
+      # cost) in the run summary so tuning signals are legible without
+      # downloading the artifact above. Pure read of that same transcript.
+      - name: Agent run metrics summary
+        id: metrics-summary
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.agent.outcome != 'skipped'
+        # Belt-and-braces for the action's own "never fail the job" contract.
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
+        with:
+          model: ${{ inputs.model }}
+          max-turns: ${{ inputs.max-turns }}
+          ceiling: ${{ steps.agent-ceiling.outputs.ceiling }}
+          verdict: ${{ steps.agent-verdict.outputs.verdict }}
+          verdict-reason: ${{ steps.agent-verdict.outputs.reason }}
+          stage: intake
+          spec-dir: ${{ steps.created.outputs.spec-dir }}
+          spec-issue: ${{ inputs.issue-number }}
+
+      # Durable record (specs/043-durable-metrics-record) — the artifact this
+      # feature persists past the transcript's own retention window.
+      - name: Upload metrics record
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.agent.outcome != 'skipped'
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record
+          path: ${{ runner.temp }}/wing-commander-metrics-record.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+      # Per-run cost line (specs/043-durable-metrics-record, data-model.md
+      # "Rollup — per-run cost line") — appended to whichever status comment
+      # below actually posts for this run, not a new comment (FR-031c). Must
+      # run before every outcome-announcing callout below.
+      - name: Compute cost line
+        id: cost-line
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.agent.outcome != 'skipped'
+        env:
+          RECORD_JSON: ${{ steps.metrics-summary.outputs.record-json }}
+        run: |
+          set -uo pipefail
+          line="$(printf '%s' "$RECORD_JSON" | jq -r '
+            def costpart: if .cost_available then "$" + (.cost_usd|tostring) else "cost unavailable" end;
+            def turnspart:
+              if .turns.available then
+                (.turns.counted|tostring) + (if .turns.intended_budget != null then "/" + (.turns.intended_budget|tostring) else "" end) + " turns"
+              else "turns unavailable" end;
+            def modelpart: if .model_available then .model else "model unavailable" end;
+            "**Cost**: " + costpart + " · " + turnspart + " · " + modelpart
+          ' 2>/dev/null || true)"
+          [ -n "$line" ] || line="**Cost**: metrics unavailable"
+          echo "line=$line" >> "$GITHUB_OUTPUT"
+
       # Deterministic kind decision (contracts/callout-points.md rows 1/2):
       # the agent never decides whether to post an action-required callout,
       # it only authors the clarification-question content when needed.
@@ -1064,6 +1133,16 @@ jobs:
             | join("\n")
           ' > "${{ runner.temp }}/intake-clarification.md"
 
+      # A separate step, deliberately not folded into "Render clarification
+      # questionnaire" above: verify-clarification-gating.py extracts and
+      # re-executes that exact step's script byte-for-byte across both
+      # intake.yml and clarify.yml, and hard-fails on any `${{ }}` it
+      # doesn't already resolve (runner.temp only) — appending here keeps
+      # that contract intact.
+      - name: Append cost line to clarification questionnaire
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'true'
+        run: printf '\n%s\n' "${{ steps.cost-line.outputs.line }}" >> "${{ runner.temp }}/intake-clarification.md"
+
       - name: Announce clarification needed
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
@@ -1114,6 +1193,7 @@ jobs:
           summary: "Review the spec PR"
           pr-url: ${{ steps.spec-pr.outputs.url }}
           pr-label: "the spec PR"
+          body: ${{ steps.cost-line.outputs.line }}
 
       # Pipeline PRs carry the same labels as their lifecycle issue so PR
       # lists are filterable by spec. Deterministic.
@@ -1136,33 +1216,6 @@ jobs:
           if [ -n "$labels" ]; then
             gh pr edit "$pr" --add-label "$labels"
           fi
-
-      # The action writes its full execution transcript — every tool call,
-      # including permission denials — to claude-execution-output.json in the
-      # runner temp dir. The streamed job log does NOT contain it, so upload it
-      # for post-mortems (which tools were denied, turn count, cost).
-      - name: Upload Claude execution log
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: claude-execution-output
-          path: ${{ runner.temp }}/claude-execution-output.json
-          if-no-files-found: ignore
-
-      # Surface this run's own metrics (model, turns/budget, duration, tokens,
-      # cost) in the run summary so tuning signals are legible without
-      # downloading the artifact above. Pure read of that same transcript.
-      - name: Agent run metrics summary
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.agent.outcome != 'skipped'
-        # Belt-and-braces for the action's own "never fail the job" contract.
-        continue-on-error: true
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
-        with:
-          model: ${{ inputs.model }}
-          max-turns: ${{ inputs.max-turns }}
-          ceiling: ${{ steps.agent-ceiling.outputs.ceiling }}
-          verdict: ${{ steps.agent-verdict.outputs.verdict }}
-          verdict-reason: ${{ steps.agent-verdict.outputs.reason }}
 
       # Observability, not failure (FR-017) — the intended budget was fully
       # used but the run finished healthy; the runaway ceiling above is the

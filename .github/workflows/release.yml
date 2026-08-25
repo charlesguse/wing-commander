@@ -126,7 +126,7 @@ jobs:
           while IFS= read -r stage_path; do
             [ -n "$stage_path" ] && all_stages+=("$stage_path")
           done <<< "$stage_list"
-          shell_linted=(.github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase}.yml .github/workflows/release.yml)
+          shell_linted=(.github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase,metrics-persist}.yml .github/workflows/release.yml)
           # Stages knowingly outside pass 2 (issue #149). Anything published
           # and NOT in shell_linted must be listed here, so the exemption is
           # a decision someone wrote down rather than a file nobody added.

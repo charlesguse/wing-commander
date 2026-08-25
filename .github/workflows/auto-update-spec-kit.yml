@@ -1188,6 +1188,7 @@ jobs:
           name: claude-execution-output-evaluate-path
           path: ${{ runner.temp }}/claude-execution-output.json
           if-no-files-found: ignore
+          retention-days: 90
 
       # Deterministic parse of the agent's structured JSON result — never
       # trust agent narration for the outcome, only the schema-validated
@@ -2111,6 +2112,7 @@ jobs:
           name: claude-execution-output-e2e-stage
           path: ${{ runner.temp }}/claude-execution-output.json
           if-no-files-found: ignore
+          retention-days: 90
 
       # T011: deterministic read-back — never trusts agent narration,
       # exactly like evaluate-path's decide-outcome (FR-021's
@@ -3314,6 +3316,7 @@ jobs:
           name: claude-execution-output-comment-reply
           path: ${{ runner.temp }}/claude-execution-output.json
           if-no-files-found: ignore
+          retention-days: 90
 
       # Deterministic read-back of the schema-validated result — never trust
       # agent narration. An unparseable/failed step degrades to "unrecognized"

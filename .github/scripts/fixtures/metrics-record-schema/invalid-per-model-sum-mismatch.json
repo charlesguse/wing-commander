@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "record_available": true,
+  "run": {
+    "workflow_run_id": "1234567895",
+    "job_key": "act",
+    "job_id": 987654322,
+    "step_index": 0,
+    "record_key": "1234567895:987654322:0"
+  },
+  "stage": "pr-conversation",
+  "stage_available": true,
+  "run_label": "act",
+  "spec": {
+    "spec_dir": "specs/043-durable-metrics-record",
+    "issue": 148,
+    "identity_available": true
+  },
+  "model": "claude-sonnet-5",
+  "model_available": true,
+  "turns": {
+    "counted": 10,
+    "reported": 12,
+    "intended_budget": 40,
+    "enforced_ceiling": 100,
+    "available": true
+  },
+  "tokens": {
+    "input": 3000,
+    "output": 900,
+    "cache_read": 500,
+    "cache_creation": 100,
+    "available": true
+  },
+  "cost_usd": 0.75,
+  "cost_available": true,
+  "duration_ms": 90000,
+  "duration_available": true,
+  "outcome": "healthy",
+  "per_model": [
+    {
+      "model": "claude-sonnet-5",
+      "input_tokens": 2000,
+      "output_tokens": 600,
+      "cache_read_tokens": 300,
+      "cache_creation_tokens": 60,
+      "cost_usd": 0.5
+    }
+  ],
+  "per_model_available": true,
+  "emitted_at": "2026-08-25T14:15:00Z"
+}

@@ -966,6 +966,7 @@ jobs:
           name: claude-execution-output-classify
           path: ${{ runner.temp }}/claude-execution-output.json
           if-no-files-found: ignore
+          retention-days: 90
 
       # Mirrors clarify.yml's own gate: the action exits zero even when the
       # agent run itself errored, so a missing/malformed terminal result
@@ -1008,6 +1009,7 @@ jobs:
 
       # Surface this run's own metrics in the run summary (see clarify.yml).
       - name: Classify agent run metrics summary
+        id: metrics-summary-classify
         if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && always() && steps.agent.outcome != 'skipped'
         # Belt-and-braces for the action's own "never fail the job" contract.
         continue-on-error: true
@@ -1018,6 +1020,43 @@ jobs:
           ceiling: ${{ steps.agent-ceiling.outputs.ceiling }}
           verdict: ${{ steps.agent-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.agent-verdict.outputs.reason }}
+          stage: pr-conversation
+          spec-dir: ${{ steps.identity.outputs.spec-dir }}
+          spec-issue: ${{ steps.meta.outputs.issue-number }}
+
+      # Durable record (specs/043-durable-metrics-record) — the artifact this
+      # feature persists past the transcript's own retention window.
+      - name: Upload metrics record (classify)
+        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && always() && steps.agent.outcome != 'skipped'
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-classify
+          path: ${{ runner.temp }}/wing-commander-metrics-record.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+      # Per-run cost line (specs/043-durable-metrics-record, data-model.md
+      # "Rollup — per-run cost line") — appended to whichever status
+      # comment(s) below actually post for this run, not a new comment
+      # (FR-031c).
+      - name: Compute cost line (classify)
+        id: cost-line-classify
+        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && always() && steps.agent.outcome != 'skipped'
+        env:
+          RECORD_JSON: ${{ steps.metrics-summary-classify.outputs.record-json }}
+        run: |
+          set -uo pipefail
+          line="$(printf '%s' "$RECORD_JSON" | jq -r '
+            def costpart: if .cost_available then "$" + (.cost_usd|tostring) else "cost unavailable" end;
+            def turnspart:
+              if .turns.available then
+                (.turns.counted|tostring) + (if .turns.intended_budget != null then "/" + (.turns.intended_budget|tostring) else "" end) + " turns"
+              else "turns unavailable" end;
+            def modelpart: if .model_available then .model else "model unavailable" end;
+            "**Cost**: " + costpart + " · " + turnspart + " · " + modelpart
+          ' 2>/dev/null || true)"
+          [ -n "$line" ] || line="**Cost**: metrics unavailable"
+          echo "line=$line" >> "$GITHUB_OUTPUT"
 
       # Observability, not failure (FR-017) — the intended budget was fully
       # used but the run finished healthy; the runaway ceiling above is the
@@ -1282,6 +1321,7 @@ jobs:
           ISSUE_NUMBER: ${{ steps.meta.outputs.issue-number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           CLASSIFICATIONS: ${{ steps.confirm.outputs.classifications }}
+          COST_LINE: ${{ steps.cost-line-classify.outputs.line }}
         run: |
           set -euo pipefail
           count=$(printf '%s' "$CLASSIFICATIONS" | jq 'length')
@@ -1308,6 +1348,7 @@ jobs:
               echo ">"
               echo "> **Run:** $RUN_URL"
             } > "$body_file"
+            printf '\n%s\n' "$COST_LINE" >> "$body_file"
 
             gh pr comment "$PR_NUMBER" --body-file "$body_file"
             if [ "$out_of_pr" = "true" ]; then
@@ -1879,6 +1920,7 @@ jobs:
           name: claude-execution-output-act-${{ strategy.job-index }}
           path: ${{ runner.temp }}/claude-execution-output.json
           if-no-files-found: ignore
+          retention-days: 90
 
       - name: Fail on agent API error
         id: act-result
@@ -1985,6 +2027,7 @@ jobs:
 
       # Surface this run's own metrics in the run summary (see clarify.yml).
       - name: Act agent run metrics summary
+        id: metrics-summary-act
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && always() && steps.agent.outcome != 'skipped'
         # Belt-and-braces for the action's own "never fail the job" contract.
         continue-on-error: true
@@ -1995,6 +2038,49 @@ jobs:
           ceiling: ${{ steps.agent-ceiling.outputs.ceiling }}
           verdict: ${{ steps.agent-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.agent-verdict.outputs.reason }}
+          stage: pr-conversation
+          spec-dir: ${{ needs.classify-and-announce.outputs.spec-dir }}
+          spec-issue: ${{ needs.classify-and-announce.outputs.issue-number }}
+          # github.job (JOB_KEY) is identical across every leg of this act
+          # matrix, so step-index must carry the per-leg distinction — the
+          # same strategy.job-index already used to name this leg's
+          # artifact below — or every leg's record_key collides on the
+          # same run_id:job_key:0 (incident PR #267 MF-B4).
+          step-index: ${{ strategy.job-index }}
+
+      # Durable record (specs/043-durable-metrics-record) — the artifact this
+      # feature persists past the transcript's own retention window.
+      - name: Upload metrics record (act)
+        if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && always() && steps.agent.outcome != 'skipped'
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-act-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/wing-commander-metrics-record.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+      # Per-run cost line (specs/043-durable-metrics-record, data-model.md
+      # "Rollup — per-run cost line") — appended to whichever status
+      # comment(s) below actually post for this run, not a new comment
+      # (FR-031c).
+      - name: Compute cost line (act)
+        id: cost-line-act
+        if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && always() && steps.agent.outcome != 'skipped'
+        env:
+          RECORD_JSON: ${{ steps.metrics-summary-act.outputs.record-json }}
+        run: |
+          set -uo pipefail
+          line="$(printf '%s' "$RECORD_JSON" | jq -r '
+            def costpart: if .cost_available then "$" + (.cost_usd|tostring) else "cost unavailable" end;
+            def turnspart:
+              if .turns.available then
+                (.turns.counted|tostring) + (if .turns.intended_budget != null then "/" + (.turns.intended_budget|tostring) else "" end) + " turns"
+              else "turns unavailable" end;
+            def modelpart: if .model_available then .model else "model unavailable" end;
+            "**Cost**: " + costpart + " · " + turnspart + " · " + modelpart
+          ' 2>/dev/null || true)"
+          [ -n "$line" ] || line="**Cost**: metrics unavailable"
+          echo "line=$line" >> "$GITHUB_OUTPUT"
 
       # Observability, not failure (FR-017) — the intended budget was fully
       # used but the run finished healthy; the runaway ceiling above is the
@@ -2030,6 +2116,7 @@ jobs:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           PR_NUMBER: ${{ inputs.pr-number }}
           IMPLEMENT_WORKFLOW: ${{ inputs.implement-workflow }}
+          COST_LINE: ${{ steps.cost-line-act.outputs.line }}
         run: |
           set -euo pipefail
           body_file="$RUNNER_TEMP/fold-in-reply.md"
@@ -2042,6 +2129,7 @@ jobs:
               echo "Folded. Once every item in this review has folded, the pipeline dispatches implement/converge for the whole review in a single cycle."
             fi
           } > "$body_file"
+          printf '\n%s\n' "$COST_LINE" >> "$body_file"
           gh pr comment "$PR_NUMBER" --body-file "$body_file"
 
       # T016/T018/T025-27's reply, for every agent-driven route that is NOT
@@ -2061,6 +2149,7 @@ jobs:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           PR_NUMBER: ${{ inputs.pr-number }}
           ARTIFACT_URL: ${{ steps.act-result.outputs.artifact-url }}
+          COST_LINE: ${{ steps.cost-line-act.outputs.line }}
         run: |
           set -euo pipefail
           body_file="$RUNNER_TEMP/mutation-reply.md"
@@ -2068,6 +2157,7 @@ jobs:
           if [ -n "$ARTIFACT_URL" ]; then
             { echo ""; echo "Reference: $ARTIFACT_URL"; } >> "$body_file"
           fi
+          printf '\n%s\n' "$COST_LINE" >> "$body_file"
           gh pr comment "$PR_NUMBER" --body-file "$body_file"
 
       # T027 confident-match sub-outcome (research.md D11): link the

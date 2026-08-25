@@ -2,7 +2,8 @@
   "issue": 148,
   "spec_dir": "specs/043-durable-metrics-record",
   "feature_num": "043",
-  "stage": "spec",
-  "iteration": 0,
-  "spec_branch": null
+  "stage": "review",
+  "iteration": 3,
+  "spec_branch": "spec/043-durable-metrics-record",
+  "pending_re_review_from": []
 }

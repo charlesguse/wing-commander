@@ -818,10 +818,12 @@ jobs:
           name: claude-execution-output-${{ matrix.slug }}
           path: ${{ runner.temp }}/claude-execution-output.json
           if-no-files-found: ignore
+          retention-days: 90
 
       # Surface this per-matrix-entry run's own metrics in the run summary
       # (see intake stage). Reads this entry's transcript at the shared path.
       - name: Agent run metrics summary
+        id: metrics-summary
         if: always() && steps.agent.outcome != 'skipped'
         # Belt-and-braces for the action's own "never fail the job" contract.
         continue-on-error: true
@@ -832,6 +834,52 @@ jobs:
           ceiling: ${{ steps.agent-ceiling.outputs.ceiling }}
           verdict: ${{ steps.agent-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.agent-verdict.outputs.reason }}
+          stage: rebase
+          spec-dir: ${{ matrix.spec_dir }}
+          spec-issue: ${{ matrix.issue }}
+          # github.job (JOB_KEY) is identical across every leg of this
+          # matrix, so step-index must carry the per-leg distinction or
+          # every leg's record_key collides on the same
+          # run_id:job_key:0 — a later-collected leg then gets deduped
+          # away by the persist retry loop and reports persisted-count=0
+          # for a run that DID produce a record (incident PR #267 MF-B4).
+          step-index: ${{ strategy.job-index }}
+
+      # Durable record (specs/043-durable-metrics-record) — the artifact this
+      # feature persists past the transcript's own retention window. One
+      # artifact per matrix entry, mirroring this job's own
+      # claude-execution-output-${{ matrix.slug }} transcript naming — a
+      # matrix job's parallel legs would otherwise collide on a shared name.
+      - name: Upload metrics record
+        if: always() && steps.agent.outcome != 'skipped'
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-${{ matrix.slug }}
+          path: ${{ runner.temp }}/wing-commander-metrics-record.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+      # Per-run cost line (specs/043-durable-metrics-record, data-model.md
+      # "Rollup — per-run cost line") — appended to whichever status comment
+      # below actually posts for this run, not a new comment (FR-031c).
+      - name: Compute cost line
+        id: cost-line
+        if: always() && steps.agent.outcome != 'skipped'
+        env:
+          RECORD_JSON: ${{ steps.metrics-summary.outputs.record-json }}
+        run: |
+          set -uo pipefail
+          line="$(printf '%s' "$RECORD_JSON" | jq -r '
+            def costpart: if .cost_available then "$" + (.cost_usd|tostring) else "cost unavailable" end;
+            def turnspart:
+              if .turns.available then
+                (.turns.counted|tostring) + (if .turns.intended_budget != null then "/" + (.turns.intended_budget|tostring) else "" end) + " turns"
+              else "turns unavailable" end;
+            def modelpart: if .model_available then .model else "model unavailable" end;
+            "**Cost**: " + costpart + " · " + turnspart + " · " + modelpart
+          ' 2>/dev/null || true)"
+          [ -n "$line" ] || line="**Cost**: metrics unavailable"
+          echo "line=$line" >> "$GITHUB_OUTPUT"
 
       # Observability, not failure (FR-017) — the intended budget was fully
       # used but the run finished healthy; the runaway ceiling above is the
@@ -1004,6 +1052,7 @@ jobs:
           BEFORE: ${{ steps.attempt.outputs.before }}
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          COST_LINE: ${{ steps.cost-line.outputs.line }}
         run: |
           set -uo pipefail
           spec_dir="specs/$SLUG"
@@ -1053,6 +1102,7 @@ jobs:
             echo ""
             echo "$marker"
           } > "$RUNNER_TEMP/escalation.md"
+          printf '\n%s\n' "$COST_LINE" >> "$RUNNER_TEMP/escalation.md"
 
           gh label create "rebase:blocked" --color B60205 --description "Auto-rebase stuck; needs a manual rebase" --force
           gh issue edit "$issue" --add-label "rebase:blocked"

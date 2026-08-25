@@ -1,0 +1,235 @@
+# Published stage — metrics-persist (contracts/persist-workflow.md).
+# on: workflow_call only, no trigger of its own (research.md R11) — the
+# wrapper (wing-commander-metrics-persist.yml) owns the workflow_run/
+# workflow_dispatch trigger and the destination-branch/destination-path
+# choice (constitution VII). Unnumbered, like rebase.yml and
+# auto-update-spec-kit.yml — event-driven, outside the intake->cleanup
+# numbered chain.
+# Consumers: uses: <owner>/wing-commander/.github/workflows/metrics-persist.yml@<ref>
+name: "reusable · metrics-persist"
+
+on:
+  workflow_call:
+    inputs:
+      run-id:
+        description: "The already-concluded pipeline workflow run to collect metrics-record artifacts for."
+        type: string
+        required: true
+      destination-branch:
+        description: "Branch records.jsonl lives on. No default (FR-013) — the caller must choose one explicitly."
+        type: string
+        required: true
+      destination-path:
+        description: "Path to the append-only JSONL file on destination-branch."
+        type: string
+        required: true
+      pipeline-repo:
+        description: >
+          Repository to check out for the pipeline's shared composite
+          actions (research.md D3). Only forks that republish need to
+          set it.
+        type: string
+        required: false
+        default: charlesguse/wing-commander
+      pipeline-repo-ref:
+        description: >
+          Ref of the pipeline repository to check out for the shared
+          composite actions. Empty = the exact commit of the running
+          reusable workflow (github.job_workflow_sha, with an OIDC-claim
+          fallback) — set it only if your calling job cannot grant
+          id-token: write; then it MUST match your uses: pin.
+        type: string
+        required: false
+        default: ""
+      environment:
+        description: >
+          Name of a GitHub deployment environment (in the consuming
+          repository) to bind every job in this stage to, applying its
+          protection rules before any step in the job runs. Empty (default)
+          is a verified true no-op — no environment applied, no gate, no
+          deployment record (specs/038-runner-container-passthrough
+          FR-001/FR-003, applied uniformly to every published stage).
+        type: string
+        required: false
+        default: ""
+      environment-deployment:
+        description: >
+          Whether binding to `environment` creates a GitHub deployment
+          record. true (default) mirrors GitHub's own default; false keeps
+          the gate but suppresses the deployment record.
+        type: boolean
+        required: false
+        default: true
+      runner:
+        description: >
+          Runner label(s) for every job in this stage. A single label
+          (e.g. ubuntu-latest) or a JSON array of labels applied as a
+          conjunction — a value starting with "[" is parsed as JSON,
+          anything else is used verbatim
+          (specs/038-runner-container-passthrough).
+        type: string
+        required: false
+        default: ubuntu-latest
+      container-image:
+        description: >
+          Container image every job in this stage runs inside. Empty
+          (default) means no container — every job runs directly on the
+          runner, unchanged from today
+          (specs/038-runner-container-passthrough). This stage runs no
+          agent step, but carries the same passthrough every published
+          stage carries for adopter-side uniformity.
+        type: string
+        required: false
+        default: ""
+    secrets:
+      pipeline-repo-token:
+        description: "Token with read access to the pipeline repository — only needed when that repository is private."
+        required: false
+      container-registry-username:
+        description: "Username for container-image's registry, if private. Inert when container-image is empty."
+        required: false
+      container-registry-password:
+        description: "Password or token for container-image's registry, if private. Inert when container-image is empty."
+        required: false
+    outputs:
+      persisted-count:
+        description: Number of records newly appended by this run.
+        value: ${{ jobs.persist.outputs.persisted-count }}
+      unpersisted-record-keys:
+        description: Space-separated record_keys that could not be persisted, if any.
+        value: ${{ jobs.persist.outputs.unpersisted-record-keys }}
+
+permissions: {}
+
+jobs:
+  # specs/038-runner-container-passthrough: every published stage carries
+  # this exact job, deliberately, even though this stage runs no agent step
+  # and so pulls no image of its own for that purpose — an adopter's
+  # stage-binding tooling iterates over every published stage uniformly
+  # (Gate 7/22/23), and a container-image input with nothing to check it
+  # against would silently accept a broken image reference.
+  verify-image-prerequisites:
+    permissions: {}
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    steps:
+      - name: Pull image and verify prerequisites
+        if: inputs.container-image != ''
+        env:
+          IMAGE: ${{ inputs.container-image }}
+          REGISTRY_USERNAME: ${{ secrets.container-registry-username }}
+          REGISTRY_PASSWORD: ${{ secrets.container-registry-password }}
+        run: |
+          REQUIRED_TOOLS="git gh jq curl python3 bash node timeout"
+
+          if [ -n "$REGISTRY_USERNAME" ] && [ -n "$REGISTRY_PASSWORD" ]; then
+            echo "::warning::wing-commander verify-image-prerequisites: registry credentials were supplied. They authenticate this check only -- the stage's other jobs pull with whatever authentication their runner already has. For a private image, use a runner that is logged in to the registry."
+            candidate=""
+            case "$IMAGE" in
+              */*) candidate="${IMAGE%%/*}" ;;
+            esac
+            case "$candidate" in
+              *.*|*:*|localhost) login_args=("$candidate") ;;
+              *) login_args=() ;;
+            esac
+            if ! echo "$REGISTRY_PASSWORD" | docker login "${login_args[@]}" --username "$REGISTRY_USERNAME" --password-stdin 2>docker-login-error.log; then
+              echo "::error::wing-commander verify-image-prerequisites: the registry rejected the supplied credentials for $IMAGE -- $(cat docker-login-error.log)"
+              exit 1
+            fi
+          fi
+
+          if ! docker pull "$IMAGE" 2>docker-pull-error.log; then
+            if [ -z "$REGISTRY_USERNAME" ] && [ -z "$REGISTRY_PASSWORD" ]; then
+              echo "::error::wing-commander verify-image-prerequisites: failed to pull $IMAGE -- no credentials were supplied for this image. $(cat docker-pull-error.log)"
+            elif [ -z "$REGISTRY_USERNAME" ]; then
+              echo "::error::wing-commander verify-image-prerequisites: failed to pull $IMAGE -- container-registry-username was not supplied (container-registry-password was), so no login was attempted. $(cat docker-pull-error.log)"
+            elif [ -z "$REGISTRY_PASSWORD" ]; then
+              echo "::error::wing-commander verify-image-prerequisites: failed to pull $IMAGE -- container-registry-password was not supplied (container-registry-username was), so no login was attempted. $(cat docker-pull-error.log)"
+            else
+              echo "::error::wing-commander verify-image-prerequisites: failed to pull $IMAGE -- the registry rejected the supplied credentials or image reference. $(cat docker-pull-error.log)"
+            fi
+            exit 1
+          fi
+
+          if ! missing=$(docker run --rm -e REQUIRED_TOOLS="$REQUIRED_TOOLS" \
+            --entrypoint sh "$IMAGE" -c \
+            'for t in $REQUIRED_TOOLS; do command -v "$t" >/dev/null 2>&1 || printf " %s" "$t"; done' \
+            2>docker-inspect-error.log); then
+            echo "::error::wing-commander verify-image-prerequisites: could not run a POSIX shell inside $IMAGE to check its prerequisites -- $(cat docker-inspect-error.log)"
+            exit 1
+          fi
+
+          if [ -n "$missing" ]; then
+            echo "::error::wing-commander verify-image-prerequisites: $IMAGE is missing required tool(s):$missing"
+            exit 1
+          fi
+
+  persist:
+    needs: verify-image-prerequisites
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    # Isolation guarantees (FR-015/FR-019/FR-019a, contracts/persist-workflow.md):
+    # this job never checks out, modifies, or pushes to any branch other
+    # than destination-branch, never commits to the repository's default
+    # branch, and never approves or merges anything. A failure here fails
+    # only this workflow's own run — it has no effect on the origin
+    # pipeline run's status, checks, or comments.
+    permissions:
+      contents: write
+      issues: write
+      actions: read
+      id-token: write
+    outputs:
+      persisted-count: ${{ steps.persist.outputs.persisted-count }}
+      unpersisted-record-keys: ${{ steps.persist.outputs.unpersisted-record-keys }}
+    steps:
+      - name: Checkout consumer repository (bootstrap, default token)
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: true
+
+      # research.md D3: the composite checkout must pin the EXACT commit of
+      # the running reusable workflow. github.job_workflow_sha is empty for
+      # some remote call shapes (observed live: cross-repo branch refs), so
+      # fall back to the OIDC token's job_workflow_sha claim (requires
+      # id-token: write). Never fall back to a branch name — a silent
+      # default-branch checkout would break version pinning.
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-repo-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref"               | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander metrics-persist stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-repo-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          # A private pipeline repository is not readable by the caller's
+          # GITHUB_TOKEN — pipeline-repo-token covers that case.
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      - name: Persist this run's metrics records
+        id: persist
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-persist
+        with:
+          run-id: ${{ inputs.run-id }}
+          destination-branch: ${{ inputs.destination-branch }}
+          destination-path: ${{ inputs.destination-path }}

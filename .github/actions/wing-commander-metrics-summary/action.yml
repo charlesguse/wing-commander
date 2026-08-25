@@ -84,11 +84,60 @@ inputs:
       wing-commander-agent-verdict step. See verdict above.
     required: false
     default: ''
+  record-path:
+    description: >
+      Where the normalized JSON record (contracts/metrics-record-schema.md)
+      is written. Always written, regardless of transcript health — a
+      missing/unparseable transcript produces the degraded-record shape,
+      never a missing file (specs/043-durable-metrics-record).
+    required: false
+    default: ${{ runner.temp }}/wing-commander-metrics-record.json
+  stage:
+    description: >
+      Literal stage name for the record's `stage` field. Never inferred
+      from the transcript or ambient state (constitution VII). Empty ->
+      `stage_available: false`.
+    required: false
+    default: ''
+  spec-dir:
+    description: >
+      Literal spec identity (specs/NNN-slug), when the caller already has
+      it. Absent -> `spec.identity_available: false`.
+    required: false
+    default: ''
+  spec-issue:
+    description: >
+      Literal lifecycle issue number, read alongside spec-dir. Absent ->
+      `spec.identity_available: false`.
+    required: false
+    default: ''
+  step-index:
+    description: >
+      Distinguishing component of the record key for this invocation
+      within its job: an ordinal (0, 1, 2) for jobs with several agent
+      steps (implement.yml's cycle/retry/progress sequence), or the
+      matrix leg's own index (`strategy.job-index`) at matrix call
+      sites, where every leg shares one `github.job` (PR #267 review,
+      B4). A literal or expression per call site; 0 is correct for a
+      single-agent-step, non-matrix job.
+    required: false
+    default: '0'
+
+outputs:
+  record-json:
+    description: The same JSON as record-path's contents, as a string.
+    value: ${{ steps.render.outputs.record-json }}
+  record-key:
+    description: >
+      The record's run.record_key value, for callers wiring the per-run
+      rollup line (contracts/persist-workflow.md).
+    value: ${{ steps.render.outputs.record-key }}
 
 runs:
   using: composite
   steps:
     - name: Render agent run metrics summary
+      id: render
       shell: bash
       env:
         TRANSCRIPT_PATH: ${{ inputs.transcript-path }}
@@ -99,6 +148,13 @@ runs:
         RUN_LABEL: ${{ inputs.run-label }}
         VERDICT: ${{ inputs.verdict }}
         VERDICT_REASON: ${{ inputs.verdict-reason }}
+        RECORD_PATH: ${{ inputs.record-path }}
+        STAGE: ${{ inputs.stage }}
+        SPEC_DIR: ${{ inputs.spec-dir }}
+        SPEC_ISSUE: ${{ inputs.spec-issue }}
+        STEP_INDEX: ${{ inputs.step-index }}
+        RUN_ID: ${{ github.run_id }}
+        JOB_KEY: ${{ github.job }}
       run: |
         set -uo pipefail
 
@@ -111,6 +167,121 @@ runs:
         VERDICT="${VERDICT:-}"
         VERDICT_REASON="${VERDICT_REASON:-}"
         SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
+
+        # --- record emission (specs/043-durable-metrics-record) ----------------
+        RECORD_PATH="${RECORD_PATH:-${RUNNER_TEMP:-/tmp}/wing-commander-metrics-record.json}"
+        STAGE="${STAGE:-}"
+        SPEC_DIR="${SPEC_DIR:-}"
+        SPEC_ISSUE="${SPEC_ISSUE:-}"
+        STEP_INDEX="${STEP_INDEX:-0}"
+        RUN_ID="${RUN_ID:-}"
+        JOB_KEY="${JOB_KEY:-}"
+        RECORD_KEY="${RUN_ID}:${JOB_KEY}:${STEP_INDEX}"
+        EMITTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+        stage_available=false
+        [ -n "$STAGE" ] && stage_available=true
+        spec_identity_available=false
+        [ -n "$SPEC_DIR" ] && [ -n "$SPEC_ISSUE" ] && spec_identity_available=true
+        model_available=false
+        [ -n "$MODEL_IN" ] && model_available=true
+
+        is_number() {
+          printf '%s' "$1" | grep -Eq '^-?[0-9]+([.][0-9]+)?$'
+        }
+
+        # Writes the schema-version-1 record to $RECORD_PATH and sets the
+        # record-json/record-key outputs, from whatever extraction variables
+        # are in scope when it is called (T002-T005: populated for the
+        # normal case, left at their unavailable defaults for the degraded
+        # case below). Never fails the step — mirrors the composite's own
+        # never-fail contract.
+        emit_record() {
+          local record_available="$1" outcome_val="$2"
+          jq -n \
+            --argjson record_available "$record_available" \
+            --arg run_id "$RUN_ID" \
+            --arg job_key "$JOB_KEY" \
+            --argjson step_index "${STEP_INDEX:-0}" \
+            --arg record_key "$RECORD_KEY" \
+            --arg stage "$STAGE" \
+            --argjson stage_available "$stage_available" \
+            --arg run_label "$RUN_LABEL" \
+            --arg spec_dir "$SPEC_DIR" \
+            --arg spec_issue "$SPEC_ISSUE" \
+            --argjson spec_identity_available "$spec_identity_available" \
+            --arg model "$MODEL_IN" \
+            --argjson model_available "$model_available" \
+            --arg turns_counted "${main_turns:-}" \
+            --arg turns_reported "${reported_turns:-}" \
+            --arg turns_intended_budget "$MAX_TURNS" \
+            --arg turns_enforced_ceiling "$CEILING" \
+            --argjson turns_available "${turns_counted:-false}" \
+            --arg tok_input "${tok_input:-}" \
+            --arg tok_output "${tok_output:-}" \
+            --arg tok_cache_read "${tok_cache_read:-}" \
+            --arg tok_cache_creation "${tok_cache_creation:-}" \
+            --argjson tokens_available "${tokens_available:-false}" \
+            --arg cost_usd "${cost_usd:-}" \
+            --argjson cost_available "${cost_available:-false}" \
+            --arg duration_ms "${duration_ms:-}" \
+            --argjson duration_available "${duration_available:-false}" \
+            --arg outcome "$outcome_val" \
+            --argjson per_model "${per_model_json:-[]}" \
+            --argjson per_model_available "${per_model_available:-false}" \
+            --arg emitted_at "$EMITTED_AT" \
+            '
+            def numOrNull($s): if $s == "" then null else ($s | tonumber) end;
+            def strOrNull($s): if $s == "" then null else $s end;
+            {
+              schema_version: 1,
+              record_available: $record_available,
+              run: {
+                workflow_run_id: $run_id,
+                job_key: $job_key,
+                job_id: null,
+                step_index: $step_index,
+                record_key: $record_key
+              },
+              stage: strOrNull($stage),
+              stage_available: $stage_available,
+              run_label: strOrNull($run_label),
+              spec: {
+                spec_dir: strOrNull($spec_dir),
+                issue: numOrNull($spec_issue),
+                identity_available: $spec_identity_available
+              },
+              model: strOrNull($model),
+              model_available: $model_available,
+              turns: {
+                counted: numOrNull($turns_counted),
+                reported: numOrNull($turns_reported),
+                intended_budget: numOrNull($turns_intended_budget),
+                enforced_ceiling: numOrNull($turns_enforced_ceiling),
+                available: $turns_available
+              },
+              tokens: {
+                input: numOrNull($tok_input),
+                output: numOrNull($tok_output),
+                cache_read: numOrNull($tok_cache_read),
+                cache_creation: numOrNull($tok_cache_creation),
+                available: $tokens_available
+              },
+              cost_usd: numOrNull($cost_usd),
+              cost_available: $cost_available,
+              duration_ms: numOrNull($duration_ms),
+              duration_available: $duration_available,
+              outcome: $outcome,
+              per_model: $per_model,
+              per_model_available: $per_model_available,
+              emitted_at: $emitted_at
+            }' > "$RECORD_PATH" 2>/dev/null || printf '{}' > "$RECORD_PATH"
+
+          {
+            echo "record-key=$RECORD_KEY"
+            echo "record-json=$(jq -c . "$RECORD_PATH" 2>/dev/null || printf '{}')"
+          } >> "$GITHUB_OUTPUT"
+        }
 
         # Heading shared by both the normal and unavailable cases (T006/T007).
         heading="### 🤖 Agent run metrics"
@@ -139,7 +310,23 @@ runs:
         fi
 
         # --- T007: unavailable case — heading + one italic line, exit 0 --------
+        # T003: the record is still written in this branch — every field the
+        # job environment supplies (run.*, stage, spec.*, model, the turn
+        # budget/ceiling) stays populated; only transcript-derived fields
+        # degrade, per contracts/metrics-record-schema.md's degraded shape.
         if [ "$availability" != "ok" ]; then
+          main_turns=""
+          reported_turns=""
+          turns_counted=false
+          tok_input=""; tok_output=""; tok_cache_read=""; tok_cache_creation=""
+          tokens_available=false
+          cost_usd=""
+          cost_available=false
+          duration_ms=""
+          duration_available=false
+          per_model_json="[]"
+          per_model_available=false
+          emit_record false unavailable
           {
             printf '%s\n\n' "$heading"
             printf '%s\n\n' "_Metrics unavailable for this run (execution transcript missing or unparseable)._"
@@ -151,10 +338,15 @@ runs:
         jqget() { printf '%s' "$result_json" | jq -r "$1 // empty" 2>/dev/null || true; }
         reported_turns="$(jqget '.num_turns')"
         subtype="$(jqget '.subtype')"
+        is_error="$(jqget '.is_error')"
         duration_ms="$(jqget '.duration_ms')"
         cost_usd="$(jqget '.total_cost_usd')"
         usage_json="$(printf '%s' "$result_json" | jq -c '.usage // empty' 2>/dev/null || true)"
         model_usage_json="$(printf '%s' "$result_json" | jq -c '.modelUsage // empty' 2>/dev/null || true)"
+        cost_available=false
+        is_number "$cost_usd" && cost_available=true
+        duration_available=false
+        is_number "$duration_ms" && duration_available=true
 
         # Which number is comparable to the budget. A counted main-loop total
         # is; .num_turns is not, so when counting fails (a transcript shape
@@ -169,6 +361,63 @@ runs:
         else
           turns_used="$reported_turns"
         fi
+
+        # --- T004: per-record token/per-model extraction, from the same
+        # usage_json/model_usage_json extracted above (single source with the
+        # rendered summary's own fmt_tokens/fmt_per_model, FR-004).
+        tokens_available=false
+        tok_input=""; tok_output=""; tok_cache_read=""; tok_cache_creation=""
+        if [ -n "$usage_json" ] && [ "$usage_json" != "null" ]; then
+          tok_input="$(printf '%s' "$usage_json" | jq -r '.input_tokens // empty' 2>/dev/null || true)"
+          tok_output="$(printf '%s' "$usage_json" | jq -r '.output_tokens // empty' 2>/dev/null || true)"
+          tok_cache_read="$(printf '%s' "$usage_json" | jq -r '.cache_read_input_tokens // empty' 2>/dev/null || true)"
+          tok_cache_creation="$(printf '%s' "$usage_json" | jq -r '.cache_creation_input_tokens // empty' 2>/dev/null || true)"
+          if [ -n "$tok_input" ] || [ -n "$tok_output" ] || [ -n "$tok_cache_read" ] || [ -n "$tok_cache_creation" ]; then
+            tokens_available=true
+          fi
+        fi
+
+        per_model_available=false
+        per_model_json="[]"
+        if [ -n "$model_usage_json" ] && [ "$model_usage_json" != "null" ]; then
+          built="$(printf '%s' "$model_usage_json" | jq -c '
+            to_entries | map(
+              .key as $m | .value as $v
+              | {
+                  model: $m,
+                  input_tokens: ($v.inputTokens // $v.input_tokens // 0),
+                  output_tokens: ($v.outputTokens // $v.output_tokens // 0),
+                  cache_read_tokens: ($v.cacheReadInputTokens // $v.cache_read_input_tokens // 0),
+                  cache_creation_tokens: ($v.cacheCreationInputTokens // $v.cache_creation_input_tokens // 0),
+                  cost_usd: ($v.costUSD // $v.cost_usd // $v.costUsd // 0)
+                }
+            )' 2>/dev/null || true)"
+          if [ -n "$built" ] && [ "$built" != "[]" ]; then
+            per_model_json="$built"
+            per_model_available=true
+          fi
+        fi
+
+        # --- record outcome: reuse the caller's own wing-commander-agent-verdict
+        # output when wired (already healthy/exhausted/failed/unclassifiable);
+        # otherwise fall back to the same classification that action performs
+        # (order matters: error_max_turns before is_error, same as there).
+        outcome_val="unclassifiable"
+        case "$VERDICT" in
+          healthy|exhausted|failed|unclassifiable) outcome_val="$VERDICT" ;;
+        esac
+        if [ -z "$VERDICT" ]; then
+          if [ "$subtype" = "error_max_turns" ]; then
+            outcome_val="exhausted"
+          elif [ "$is_error" = "true" ]; then
+            outcome_val="failed"
+          elif [ "$subtype" != "success" ]; then
+            outcome_val="failed"
+          else
+            outcome_val="healthy"
+          fi
+        fi
+        emit_record true "$outcome_val"
 
         # --- T004: turn-budget fields (only when max-turns AND turns_used known)
         turn_warning=false

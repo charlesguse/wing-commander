@@ -1,0 +1,450 @@
+name: wing-commander-metrics-persist
+description: >
+  Discover a concluded pipeline run's metrics-record artifacts, retrieve
+  and validate them against contracts/metrics-record-schema.md, and
+  append the valid ones (idempotently, with bounded retry-on-contention)
+  to a destination branch's records.jsonl file
+  (specs/043-durable-metrics-record). No agent invocation (FR-040a);
+  reads only its own declared inputs and github.token — never
+  github.event.*/vars.* (constitution VII). A run with zero matching
+  artifacts (no agent steps, or all skipped) is a successful zero-record
+  contribution (FR-021), not a failure. Never touches any branch other
+  than destination-branch and never writes anything back to the origin
+  pipeline run (FR-015/FR-019).
+
+inputs:
+  run-id:
+    description: The concluded pipeline workflow run to collect metrics-record artifacts for.
+    required: true
+  destination-branch:
+    description: >
+      Branch records.jsonl lives on. No literal default (FR-013) — the
+      caller (ultimately the wrapper) must choose one explicitly.
+    required: true
+  destination-path:
+    description: Path to the append-only JSONL file on destination-branch.
+    required: true
+  token:
+    description: >
+      Token used for every gh/git operation, all against THIS
+      repository only (list jobs/artifacts, download, fetch, push).
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  persisted-count:
+    description: Number of records newly appended to destination-path by this run.
+    value: ${{ steps.append.outputs.persisted-count }}
+  unpersisted-record-keys:
+    description: >
+      Space-separated record_keys that could not be retrieved, failed
+      validation, or could not be written after retry exhaustion. Empty
+      when everything discovered was persisted.
+    value: ${{ steps.append.outputs.unpersisted-record-keys }}
+  persisted-spec-dirs:
+    description: >
+      Space-separated distinct spec_dir values (identity_available
+      records only) newly persisted by this run — the rollup step's own
+      input (contracts/persist-workflow.md step 5).
+    value: ${{ steps.append.outputs.persisted-spec-dirs }}
+
+runs:
+  using: composite
+  steps:
+    - name: Discover jobs and metrics-record artifacts
+      id: discover
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        RUN_ID: ${{ inputs.run-id }}
+      run: |
+        set -uo pipefail
+        dir="$RUNNER_TEMP/wc-metrics-persist"
+        mkdir -p "$dir"
+
+        # A total Actions-API failure (bad token, outage, deleted run-id)
+        # must be reported as not-collected, not as a clean zero-artifact
+        # run (FR-019/FR-021, MF-F5) — a legitimately empty `.jobs`/
+        # `.artifacts` array still exits 0 with no output, so checking the
+        # real exit status (rather than swallowing it with `|| true`)
+        # tells the two apart.
+        if ! gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/jobs" --paginate --jq '.jobs[]' \
+          > "$dir/jobs.ndjson" 2>"$dir/jobs-err.txt"; then
+          echo "::error::wing-commander-metrics-persist: could not list jobs for run $RUN_ID -- $(cat "$dir/jobs-err.txt" 2>/dev/null) -- reporting as not-collected rather than a zero-artifact run."
+          exit 1
+        fi
+        jq -s '.' "$dir/jobs.ndjson" > "$dir/jobs.json" 2>/dev/null || echo '[]' > "$dir/jobs.json"
+
+        if ! gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts" --paginate --jq '.artifacts[]' \
+          > "$dir/artifacts.ndjson" 2>"$dir/artifacts-err.txt"; then
+          echo "::error::wing-commander-metrics-persist: could not list artifacts for run $RUN_ID -- $(cat "$dir/artifacts-err.txt" 2>/dev/null) -- reporting as not-collected rather than a zero-artifact run."
+          exit 1
+        fi
+        jq -s '[.[] | select(.name | startswith("metrics-record"))]' "$dir/artifacts.ndjson" \
+          > "$dir/artifacts.json" 2>/dev/null || echo '[]' > "$dir/artifacts.json"
+
+        count="$(jq 'length' "$dir/artifacts.json" 2>/dev/null || echo 0)"
+        echo "Discovered $count metrics-record* artifact(s) for run $RUN_ID." >> "$GITHUB_STEP_SUMMARY"
+        echo "count=$count" >> "$GITHUB_OUTPUT"
+
+    - name: Retrieve metrics-record artifacts
+      id: retrieve
+      if: steps.discover.outputs.count != '0'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        RUN_ID: ${{ inputs.run-id }}
+      run: |
+        set -uo pipefail
+        dir="$RUNNER_TEMP/wc-metrics-persist"
+        dl_dir="$dir/downloaded"
+        mkdir -p "$dl_dir"
+
+        gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -p 'metrics-record*' -D "$dl_dir" \
+          > "$dir/download.log" 2>&1 || true
+
+        # FR-022: an artifact discovered above but not landed here (expired,
+        # or the download call itself failed outright) is reported by name,
+        # never silently skipped or treated as complete.
+        not_retrieved="$(jq -r '.[].name' "$dir/artifacts.json" | while IFS= read -r name; do
+          [ -d "$dl_dir/$name" ] || printf '%s\n' "$name"
+        done)"
+        if [ -n "$not_retrieved" ]; then
+          echo "::warning::wing-commander-metrics-persist: artifact(s) discovered but not retrieved (expired or download failed): $(printf '%s' "$not_retrieved" | tr '\n' ' ')"
+        fi
+        printf '%s' "$not_retrieved" > "$dir/not-retrieved.txt"
+
+    - name: Validate records and build the new-records batch
+      id: validate
+      shell: bash
+      env:
+        RUN_ID: ${{ inputs.run-id }}
+      run: |
+        set -uo pipefail
+        dir="$RUNNER_TEMP/wc-metrics-persist"
+        dl_dir="$dir/downloaded"
+        batch="$dir/new-records.jsonl"
+        : > "$batch"
+        rejected=""
+
+        # job_key -> numeric job_id (R6). Exact-name match only — a
+        # matrix-strategy job (rebase.yml, pr-conversation's act job)
+        # shares one job_key across every matrix instance in a single
+        # run, so this map is unambiguous only for the single-instance
+        # jobs (11 of the 13 call sites). An ambiguous or absent match
+        # keeps job_id: null and record_key in its emission-time
+        # run_id:job_key:step_index form rather than guess wrong — a
+        # known limitation, not a silent one.
+        jobs_json="$(cat "$dir/jobs.json" 2>/dev/null || echo '[]')"
+
+        if [ -d "$dl_dir" ]; then
+          for adir in "$dl_dir"/metrics-record*/; do
+            [ -d "$adir" ] || continue
+            f="${adir}wing-commander-metrics-record.json"
+            [ -f "$f" ] || continue
+            rec="$(cat "$f" 2>/dev/null || true)"
+            if ! printf '%s' "$rec" | jq -e . >/dev/null 2>&1; then
+              rejected="$rejected [unparseable:$(basename "$adir")]"
+              continue
+            fi
+
+            version="$(printf '%s' "$rec" | jq -r '.schema_version // empty')"
+            if [ "$version" != "1" ]; then
+              # FR-025d: retain and skip, unvalidated, unrewritten.
+              printf '%s\n' "$(printf '%s' "$rec" | jq -c '.')" >> "$batch"
+              continue
+            fi
+
+            # Minimal schema-version-1 shape check (field presence +
+            # types) mirroring contracts/metrics-record-schema.md's field
+            # table, plus the per_model sum invariant. Rejects and names
+            # the record_key (FR-041: deterministic code, never judgment).
+            key="$(printf '%s' "$rec" | jq -r '.run.record_key // "unknown"')"
+            ok="$(printf '%s' "$rec" | jq -r '
+              def hasfields($o; $f): ($f - ($o | keys)) == [];
+              ( . as $r
+                | (hasfields($r; ["schema_version","record_available","run","stage","stage_available","spec","model","model_available","turns","tokens","cost_usd","cost_available","duration_ms","duration_available","outcome","per_model","per_model_available","emitted_at"]))
+                and ($r.record_available | type == "boolean")
+                and (hasfields($r.run; ["workflow_run_id","job_key","job_id","step_index","record_key"]))
+                and (hasfields($r.spec; ["spec_dir","issue","identity_available"]))
+                and (hasfields($r.turns; ["counted","reported","intended_budget","enforced_ceiling","available"]))
+                and (hasfields($r.tokens; ["input","output","cache_read","cache_creation","available"]))
+                and ($r.per_model | type == "array")
+                and (
+                  ($r.tokens.available != true) or ($r.per_model_available != true) or (
+                    ([$r.per_model[].input_tokens] | add) == $r.tokens.input and
+                    ([$r.per_model[].output_tokens] | add) == $r.tokens.output and
+                    ([$r.per_model[].cache_read_tokens] | add) == $r.tokens.cache_read and
+                    ([$r.per_model[].cache_creation_tokens] | add) == $r.tokens.cache_creation
+                  )
+                )
+              ) as $valid
+              | if $valid then "true" else "false" end
+            ' 2>/dev/null || echo false)"
+
+            if [ "$ok" != "true" ]; then
+              rejected="$rejected $key"
+              continue
+            fi
+
+            job_key="$(printf '%s' "$rec" | jq -r '.run.job_key // empty')"
+            job_id="$(printf '%s' "$jobs_json" | jq -r --arg n "$job_key" '[.[] | select(.name == $n)] | if length == 1 then .[0].id else empty end')"
+            if [ -n "$job_id" ]; then
+              rec="$(printf '%s' "$rec" | jq -c --argjson jid "$job_id" \
+                '.run.job_id = $jid | .run.record_key = "\(.run.workflow_run_id):\($jid):\(.run.step_index)"')"
+            fi
+            printf '%s\n' "$rec" >> "$batch"
+          done
+        fi
+
+        if [ -n "$rejected" ]; then
+          echo "::warning::wing-commander-metrics-persist: rejected record(s) failing schema-version-1 validation:$rejected"
+        fi
+        echo "rejected=$rejected" >> "$GITHUB_OUTPUT"
+
+    - name: Append records with retry
+      id: append
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        BRANCH: ${{ inputs.destination-branch }}
+        DEST_PATH: ${{ inputs.destination-path }}
+        RUN_ID: ${{ inputs.run-id }}
+      run: |
+        set -uo pipefail
+        git config user.name  "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        dir="$RUNNER_TEMP/wc-metrics-persist"
+        batch="$dir/new-records.jsonl"
+        [ -f "$batch" ] || : > "$batch"
+
+        persisted=0
+        max_attempts=8
+        attempt=1
+        success=false
+
+        while [ "$attempt" -le "$max_attempts" ]; do
+          git fetch --no-tags origin "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}" 2>/dev/null || true
+
+          # Branch creation (research.md R8) folds into this same loop
+          # rather than a separate up-front step: re-deriving branch-new-
+          # ness from origin on EVERY attempt, instead of deciding once
+          # before the loop, is what makes a failed first push safe to
+          # retry. A prior attempt here may have committed the batch to a
+          # local orphan branch and then failed to push it — if that local
+          # state survived, this attempt's existing_keys diff would read
+          # its own unpushed file and see the whole batch as "already
+          # persisted" (empty to_append, reported success, zero pushed —
+          # incident PR #267 MF-B3). Detach and drop any such stale local
+          # branch before recreating it, so every attempt's view of
+          # "already persisted" always comes from a real fetch.
+          if git rev-parse --verify -q "refs/remotes/origin/${BRANCH}" >/dev/null; then
+            git checkout -B "$BRANCH" "origin/$BRANCH" >/dev/null 2>&1
+            branch_is_new=false
+          else
+            git checkout -q --detach >/dev/null 2>&1 || true
+            git branch -D "$BRANCH" >/dev/null 2>&1 || true
+            git checkout --orphan "$BRANCH" >/dev/null 2>&1
+            git rm -rf . >/dev/null 2>&1 || true
+            branch_is_new=true
+          fi
+
+          existing_keys="$dir/existing-keys.txt"
+          if [ -f "$DEST_PATH" ]; then
+            jq -r '.run.record_key // empty' "$DEST_PATH" 2>/dev/null > "$existing_keys" || : > "$existing_keys"
+          else
+            : > "$existing_keys"
+          fi
+
+          to_append="$dir/to-append.jsonl"
+          : > "$to_append"
+          while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            key="$(printf '%s' "$line" | jq -r '.run.record_key // empty')"
+            if [ -n "$key" ] && grep -qxF "$key" "$existing_keys" 2>/dev/null; then
+              continue
+            fi
+            printf '%s\n' "$line" >> "$to_append"
+          done < "$batch"
+
+          if [ ! -s "$to_append" ] && [ "$branch_is_new" != "true" ]; then
+            # Nothing new — either everything was already persisted
+            # (idempotent repeat, FR-018) or there was nothing to persist
+            # in the first place (FR-021). A brand-new branch still falls
+            # through below to be created, even with an empty batch.
+            success=true
+            break
+          fi
+
+          mkdir -p "$(dirname "$DEST_PATH")" 2>/dev/null || true
+          [ -f "$DEST_PATH" ] || : > "$DEST_PATH"
+          cat "$to_append" >> "$DEST_PATH"
+          git add "$DEST_PATH"
+          n="$(wc -l < "$to_append" | tr -d ' ')"
+          if [ "$branch_is_new" = "true" ]; then
+            git commit -m "metrics: initialize $DEST_PATH with $n record(s) from run ${RUN_ID}" --allow-empty >/dev/null
+          else
+            git commit -m "metrics: append $n record(s) from run ${RUN_ID}" >/dev/null
+          fi
+
+          if git push origin "HEAD:refs/heads/$BRANCH" 2>"$dir/push-err.txt"; then
+            persisted=$(( persisted + n ))
+            success=true
+            break
+          fi
+
+          # Rejected — most likely non-fast-forward from a concurrent
+          # writer (R7), including a concurrent first-writer race when
+          # branch_is_new. Undo the local commit when there is a parent to
+          # return to; an orphan branch's first commit has none, and the
+          # top of the loop re-derives branch_is_new from origin fresh on
+          # the next attempt either way.
+          if [ "$branch_is_new" != "true" ]; then
+            git reset --hard HEAD~1 >/dev/null 2>&1 || true
+          fi
+          sleep_for=$(( attempt < 5 ? attempt : 5 ))
+          sleep "$sleep_for"
+          attempt=$(( attempt + 1 ))
+        done
+
+        if [ "$success" != "true" ]; then
+          unwritten="$(jq -r '.run.record_key // empty' "$batch" 2>/dev/null | tr '\n' ' ')"
+          echo "::error::wing-commander-metrics-persist: gave up after $max_attempts attempts — the following record_key(s) were not persisted: $unwritten"
+          echo "unpersisted-record-keys=$unwritten" >> "$GITHUB_OUTPUT"
+          echo "persisted-count=$persisted" >> "$GITHUB_OUTPUT"
+          echo "persisted-spec-dirs=" >> "$GITHUB_OUTPUT"
+          exit 1
+        fi
+
+        spec_dirs="$(jq -r 'select(.spec.identity_available == true) | .spec.spec_dir' "$batch" 2>/dev/null | sort -u | tr '\n' ' ')"
+        echo "Persisted $persisted new record(s) to $BRANCH:$DEST_PATH." >> "$GITHUB_STEP_SUMMARY"
+        echo "persisted-count=$persisted" >> "$GITHUB_OUTPUT"
+        echo "unpersisted-record-keys=" >> "$GITHUB_OUTPUT"
+        echo "persisted-spec-dirs=$spec_dirs" >> "$GITHUB_OUTPUT"
+
+    # Tier 2's cumulative surface (research.md R9/R10, data-model.md "Rollup —
+    # cumulative summary"). Skipped entirely when this run persisted no
+    # record carrying spec identity (contracts/persist-workflow.md step 5).
+    # Deviates from tasks.md T035's literal description in one respect,
+    # documented in tasks.md itself: rather than parsing the previous
+    # comment's history list back out and appending only new lines, this
+    # regenerates the FULL history fresh from destination-path every time.
+    # That is equivalent and simpler: destination-path is already
+    # append-only and already de-duplicated by record_key (the append step
+    # above never writes a key twice), so a fresh read can never produce a
+    # duplicate line, without needing a markdown round-trip parse at all —
+    # the same "recompute fresh from the store" principle R9 already applies
+    # to the totals.
+    - name: Update cumulative rollup
+      id: rollup
+      if: steps.append.outputs.persisted-spec-dirs != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        DEST_PATH: ${{ inputs.destination-path }}
+        BRANCH: ${{ inputs.destination-branch }}
+        SPEC_DIRS: ${{ steps.append.outputs.persisted-spec-dirs }}
+      run: |
+        set -uo pipefail
+        dir="$RUNNER_TEMP/wc-metrics-persist"
+        BEGIN_MARKER="<!-- wing-commander-metrics-rollup:begin -->"
+        END_MARKER="<!-- wing-commander-metrics-rollup:end -->"
+
+        for spec_dir in $SPEC_DIRS; do
+          [ -n "$spec_dir" ] || continue
+
+          issue="$(jq -r --arg d "$spec_dir" 'select(.schema_version==1 and .spec.spec_dir==$d and .spec.identity_available==true) | .spec.issue' "$DEST_PATH" 2>/dev/null | head -1)"
+          if [ -z "$issue" ] || [ "$issue" = "null" ]; then
+            echo "::warning::wing-commander-metrics-persist: no lifecycle issue resolvable for $spec_dir — skipping its rollup update."
+            continue
+          fi
+
+          recs="$dir/rollup-recs.jsonl"
+          jq -c --arg d "$spec_dir" 'select(.schema_version==1 and .spec.spec_dir==$d)' "$DEST_PATH" 2>/dev/null > "$recs"
+
+          totals="$(jq -s '
+            {
+              total_records: length,
+              total_cost: (map(select(.cost_available==true) | .cost_usd) | add // 0),
+              incomplete: (map(select(.cost_available!=true or .tokens.available!=true)) | length),
+              by_stage: (group_by(.stage // "unknown") | map({
+                  stage: (.[0].stage // "unknown"),
+                  runs: length,
+                  cost: (map(select(.cost_available==true) | .cost_usd) | add // 0)
+                }) | sort_by(.stage))
+            }
+          ' "$recs" 2>/dev/null || echo '{}')"
+
+          history="$(jq -s -r '
+            map(
+              "- `" + .run.record_key + "` — " + (.stage // "unknown") + " · " +
+              (if .cost_available then "$" + (.cost_usd|tostring) else "cost unavailable" end) + " · " +
+              (if .turns.available then (.turns.counted|tostring) + " turns" else "turns unavailable" end) + " · " +
+              (.model // "model unavailable") + " · " + .emitted_at
+            ) | join("\n")
+          ' "$recs" 2>/dev/null || true)"
+
+          region="$dir/rollup-region.md"
+          {
+            echo "$BEGIN_MARKER"
+            echo "## Cumulative spend"
+            echo ""
+            total_cost="$(printf '%s' "$totals" | jq -r '.total_cost // 0')"
+            total_records="$(printf '%s' "$totals" | jq -r '.total_records // 0')"
+            incomplete="$(printf '%s' "$totals" | jq -r '.incomplete // 0')"
+            printf '**Total**: $%s across %s agent run(s) (as of %s)\n' "$total_cost" "$total_records" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            if [ "$incomplete" != "0" ]; then
+              printf '\n_Incomplete: %s of %s run(s) have unavailable metrics and are excluded from the total above._\n' "$incomplete" "$total_records"
+            fi
+            echo ""
+            echo "| Stage | Runs | Cost |"
+            echo "|---|---|---|"
+            printf '%s' "$totals" | jq -r '.by_stage[]? | "| \(.stage) | \(.runs) | $\(.cost) |"'
+            echo ""
+            printf '<details><summary>Per-run history (%s entries)</summary>\n\n' "$total_records"
+            printf '%s\n' "$history"
+            echo ""
+            echo "</details>"
+            echo "$END_MARKER"
+          } > "$region"
+
+          # Anchored to the bot's own login, not just the marker string
+          # (MF-F4): the default token's triggering actor is always
+          # github-actions[bot], so a human comment that happens to quote
+          # the marker (discussing this feature, say) cannot be mistaken
+          # for the machine-owned comment and overwritten.
+          #
+          # A per-item `.[] | select(...) | {...}` filter, not an array-
+          # collecting one — Gate 18: `--paginate --jq` resolves an
+          # array-wrapping filter PER PAGE, not across the whole paginated
+          # result, so `[.[] | ...] | .[0]` would silently pick only the
+          # first match of each page rather than the first match overall.
+          # `head -1` (bash-side, over the whole streamed result) is what
+          # actually selects "the first match across every page" safely.
+          existing="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${issue}/comments" --paginate --jq \
+            '.[] | select(.user.login == "github-actions[bot]") | select(.body // "" | contains("wing-commander-metrics-rollup:begin")) | {id, body}' 2>/dev/null | head -1)"
+          existing_id="$(printf '%s' "$existing" | jq -r '.id // empty' 2>/dev/null)"
+
+          if [ -n "$existing_id" ]; then
+            # Splice only the machine-owned region (FR-031a's established
+            # pattern, finalize.yml's PR-body splice) rather than PATCHing
+            # the whole comment body — anything outside the markers, e.g. a
+            # maintainer's own note on this comment, survives a refresh.
+            prior_body_file="$dir/rollup-prior-body.md"
+            # -j, not -r: -r always appends its own trailing newline after
+            # the string it prints, which would add a spurious blank line
+            # every PATCH cycle on top of the body's own final newline.
+            printf '%s' "$existing" | jq -j '.body // ""' > "$prior_body_file"
+
+            spliced="$dir/rollup-spliced.md"
+            sed -n '0,/<!-- wing-commander-metrics-rollup:begin -->/p' "$prior_body_file" | sed '$d' > "$spliced"
+            cat "$region" >> "$spliced"
+            sed -n '/<!-- wing-commander-metrics-rollup:end -->/,$p' "$prior_body_file" | sed '1d' >> "$spliced"
+
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing_id}" -F body=@"$spliced" >/dev/null
+            echo "Updated cumulative rollup comment on issue #$issue for $spec_dir." >> "$GITHUB_STEP_SUMMARY"
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${issue}/comments" -F body=@"$region" >/dev/null
+            echo "Posted cumulative rollup comment on issue #$issue for $spec_dir." >> "$GITHUB_STEP_SUMMARY"
+          fi
+        done

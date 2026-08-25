@@ -53,6 +53,10 @@ on:
       # directions. Editing the table alone is the one change that can make
       # the two disagree.
       - "specs/038-runner-container-passthrough/contracts/runner-container-passthrough.md"
+      # verify-metrics-record-schema.py's subject: an edit to the documented
+      # schema-version-1 shape alone (no code change) must still trigger the
+      # gate that checks fixtures against it (FR-040).
+      - "specs/043-durable-metrics-record/contracts/metrics-record-schema.md"
       # Gate 12's subject: it parses this file's "Repository permissions"
       # list as the single source of truth for what the wing-commander-bot
       # App may do, and sys.exits if the list moves. A PR downgrading a
@@ -144,8 +148,16 @@ jobs:
       # Gate 2 — workflow_run triggers resolve by DISPLAY NAME, and a name
       # matching nothing is not an error to GitHub, just a trigger that
       # silently never fires. Self-reference is worse: it makes the whole
-      # file unparseable, so the workflow is never registered at all.
-      - name: Gate 2 — workflow_run names resolve and are not self-references
+      # file unparseable, so the workflow is never registered at all. A
+      # third silent-never-fires shape: a `workflow_call`-only (reusable)
+      # workflow never produces a `workflow_run` event of its own — it only
+      # ever runs as part of a caller's run — so a reference resolving to
+      # one is exactly as dead as a reference resolving to nothing, just
+      # harder to notice because the name IS real (incident: PR #267,
+      # wing-commander-metrics-persist.yml listed the reusable stages'
+      # `reusable · *` names instead of their wrapper's `Wing Commander ·
+      # N *` display name).
+      - name: Gate 2 — workflow_run names resolve and are not self-references or workflow_call-only
         run: |
           python3 - <<'PYEOF'
           import glob, sys, yaml
@@ -157,6 +169,7 @@ jobs:
               # 1.1); quoted "on" stays a string. Accept either.
               workflows[f] = (wf.get("name"), wf.get(True, wf.get("on")))
           names = {n for n, _ in workflows.values() if n}
+          on_by_name = {n: on for n, on in workflows.values() if n}
 
           failures = 0
           for f, (own_name, on) in workflows.items():
@@ -177,6 +190,15 @@ jobs:
                             f"trigger will never fire. Known names: "
                             f"{', '.join(sorted(names))}")
                       failures += 1
+                  else:
+                      target_on = on_by_name.get(ref)
+                      if isinstance(target_on, dict) and set(target_on.keys()) == {"workflow_call"}:
+                          print(f"::error file={f}::workflow_run references {ref!r}, "
+                                f"which is a workflow_call-only (reusable) workflow — it "
+                                f"never produces its own workflow_run event, so this "
+                                f"trigger will never fire. Reference the wrapper that "
+                                f"calls it instead.")
+                          failures += 1
           print(f"Gate 2: checked every workflow_run reference; {failures} failure(s).")
           sys.exit(1 if failures else 0)
           PYEOF
@@ -2891,6 +2913,91 @@ jobs:
       # break is the checker, so that is what runs here.
       - name: Gate 26 self-test — the versioning-refs check detects what it claims to
         run: python3 .github/scripts/verify-versioning-refs.py --self-test
+
+      # specs/043-durable-metrics-record — eight new gates, numbered 38-45
+      # (37 was already taken; per the maintainer review on PR #267, MF-F7).
+      # Each carries `if: '!cancelled()'` (not bare `always()`, matching
+      # this repository's step-gating convention) and is not conditional on
+      # any other gate's outcome, so an unrelated gate failing above it
+      # cannot suppress it.
+      #
+      # Gate 38 — .github/actions/** reads no ambient state and invokes no
+      # agent (extends Gate 31's coverage, issue #149's own named gap).
+      - name: Gate 38 — composite actions read no ambient state or invoke an agent
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-actions-layer-invariants.py
+      - name: Gate 38 self-test — the actions-layer-invariants scan detects what it claims to
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-actions-layer-invariants.py --self-test
+
+      # Gate 39 — agent run metrics records conform to
+      # contracts/metrics-record-schema.md's schema-version-1 shape,
+      # including the per_model sum invariant.
+      - name: Gate 39 — metrics record schema conformance
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-metrics-record-schema.py
+      - name: Gate 39 self-test — the metrics record schema check detects what it claims to
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-metrics-record-schema.py --self-test
+
+      # Gate 40 — an unknown schema_version is retained and skipped, never
+      # dropped/rewritten/erroring (contracts/metrics-record-schema.md
+      # compatibility rule 4). No live subject in the repository.
+      - name: Gate 40 self-test — unknown metrics schema versions are retained and skipped
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-metrics-schema-version-tolerance.py --self-test
+
+      # Gate 41 — the metrics persistence append-with-retry algorithm
+      # survives a concurrent writer and fails loudly under sustained
+      # contention, run against the shipped "Append records with retry"
+      # `run:` block itself (MF-F1: previously a standalone
+      # reimplementation of the algorithm's shape, which is how MF-B3
+      # shipped past 16 green checks). No live subject in the repository.
+      - name: Gate 41 self-test — metrics persist append-with-retry survives contention
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-metrics-persist-retry.py --self-test
+
+      # Gate 42 — every discovered transcript/metrics-record upload-artifact
+      # site declares retention-days: 90 (FR-032/FR-033/SC-010); discovery-
+      # based so a new site added later without declaring retention fails
+      # this gate by construction.
+      - name: Gate 42 — every transcript/metrics-record upload declares retention-days
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-transcript-retention-declared.py
+      - name: Gate 42 self-test — the retention-declared check detects what it claims to
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-transcript-retention-declared.py --self-test
+
+      # Gate 43 — the shipped "Render agent run metrics summary" step
+      # actually produces a conforming, non-colliding record: a healthy
+      # transcript, a missing/empty/unparseable one, and one job invoking it
+      # three times (implement.yml's cycle/retry/progress shape) all shipped
+      # as reasoned-through code with no fixture exercising the record
+      # itself (tasks.md Phase 9 T061, FR-009/FR-010).
+      - name: Gate 43 — metrics-summary record emission, executed against the shipped script
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-metrics-summary-record-emission.py
+
+      # Gate 44 — the cumulative rollup region-builder regenerates a
+      # byte-for-byte identical region across two runs over the same
+      # persisted record set (POST then PATCH) — "regenerated fresh from a
+      # de-duplicated store" was an argued-not-tested guarantee until this
+      # (tasks.md Phase 9 T065, FR-031b).
+      - name: Gate 44 — metrics rollup region-builder is idempotent
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-metrics-rollup-idempotent.py
+
+      # Gate 45 — the metrics persistence layer has no write path back to
+      # the origin pipeline run's status, checks, or comments (tasks.md
+      # Phase 9 T066, FR-019/FR-019a). Designed that way by construction (a
+      # separate out-of-band workflow_run trigger); this is what fails if a
+      # future change reintroduces a back-reference.
+      - name: Gate 45 — metrics persistence has no write-back to the origin run
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-metrics-persist-no-writeback.py
+      - name: Gate 45 self-test — the no-write-back scan detects what it claims to
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-metrics-persist-no-writeback.py --self-test
 
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and

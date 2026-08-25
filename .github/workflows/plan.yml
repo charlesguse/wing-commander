@@ -971,6 +971,82 @@ jobs:
           intended-turns: ${{ inputs.max-turns }}
           run-label: "plan (pr)"
 
+      # The action writes its full execution transcript — every tool call,
+      # including permission denials — to claude-execution-output.json in the
+      # runner temp dir. The streamed job log does NOT contain it, so upload it
+      # for post-mortems (which tools were denied, turn count, cost). Placed
+      # here (not at the job's end) because a later step needs this run's
+      # cost line already computed — the transcript is already final the
+      # moment the agent step completes, so nothing is lost reading it early.
+      - name: Upload Claude execution log
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: claude-execution-output
+          path: ${{ runner.temp }}/claude-execution-output.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+      # Surface this run's own metrics in the run summary (see intake stage).
+      - name: Agent run metrics summary
+        id: metrics-summary
+        if: >-
+          always() &&
+          (steps.agent-pr.outcome != 'skipped' ||
+           steps.agent-auto.outcome != 'skipped')
+        # Belt-and-braces for the action's own "never fail the job" contract.
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
+        with:
+          model: ${{ inputs.model }}
+          max-turns: ${{ inputs.max-turns }}
+          ceiling: ${{ steps.agent-auto-ceiling.outputs.ceiling || steps.agent-pr-ceiling.outputs.ceiling }}
+          verdict: ${{ steps.agent-auto-verdict.outputs.verdict || steps.agent-pr-verdict.outputs.verdict }}
+          verdict-reason: ${{ steps.agent-auto-verdict.outputs.reason || steps.agent-pr-verdict.outputs.reason }}
+          stage: plan
+          spec-dir: ${{ needs.resolve-spec.outputs.spec-dir }}
+          spec-issue: ${{ steps.meta.outputs.issue || steps.newissue.outputs.issue }}
+
+      # Durable record (specs/043-durable-metrics-record) — the artifact this
+      # feature persists past the transcript's own retention window.
+      - name: Upload metrics record
+        if: >-
+          always() &&
+          (steps.agent-pr.outcome != 'skipped' ||
+           steps.agent-auto.outcome != 'skipped')
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record
+          path: ${{ runner.temp }}/wing-commander-metrics-record.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+      # Per-run cost line (specs/043-durable-metrics-record, data-model.md
+      # "Rollup — per-run cost line") — appended to whichever status comment
+      # below actually posts for this run, not a new comment (FR-031c). Must
+      # run before every outcome-announcing callout/comment below.
+      - name: Compute cost line
+        id: cost-line
+        if: >-
+          always() &&
+          (steps.agent-pr.outcome != 'skipped' ||
+           steps.agent-auto.outcome != 'skipped')
+        env:
+          RECORD_JSON: ${{ steps.metrics-summary.outputs.record-json }}
+        run: |
+          set -uo pipefail
+          line="$(printf '%s' "$RECORD_JSON" | jq -r '
+            def costpart: if .cost_available then "$" + (.cost_usd|tostring) else "cost unavailable" end;
+            def turnspart:
+              if .turns.available then
+                (.turns.counted|tostring) + (if .turns.intended_budget != null then "/" + (.turns.intended_budget|tostring) else "" end) + " turns"
+              else "turns unavailable" end;
+            def modelpart: if .model_available then .model else "model unavailable" end;
+            "**Cost**: " + costpart + " · " + turnspart + " · " + modelpart
+          ' 2>/dev/null || true)"
+          [ -n "$line" ] || line="**Cost**: metrics unavailable"
+          echo "line=$line" >> "$GITHUB_OUTPUT"
+
       # Uniform across every rewired call site (research.md R7 step 5): the
       # single point where a non-healthy verdict actually fails the job.
       - name: Fail loud on non-healthy agent verdict (pr)
@@ -1064,44 +1140,20 @@ jobs:
           ISSUE: ${{ steps.meta.outputs.issue || steps.newissue.outputs.issue }}
           NEXT_WORKFLOW: ${{ inputs.next-workflow }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          COST_LINE: ${{ steps.cost-line.outputs.line }}
         run: |
           if [ -z "$NEXT_WORKFLOW" ]; then
             echo "No next-workflow configured — plan is committed; stopping here (standalone mode). Dispatch your tasks workflow manually if/when you want task generation to run." >> "$GITHUB_STEP_SUMMARY"
             if [ -n "$ISSUE" ]; then
-              GH_TOKEN="$APP_TOKEN" gh issue comment "$ISSUE" --body "📐 Plan committed to \`$SPEC_PREFIX$SLUG\`. No tasks workflow is configured for automatic hand-off — dispatch one manually with \`slug=$SLUG\` when ready."
+              body=$(printf '%s\n\n%s' \
+                "📐 Plan committed to \`$SPEC_PREFIX$SLUG\`. No tasks workflow is configured for automatic hand-off — dispatch one manually with \`slug=$SLUG\` when ready." \
+                "$COST_LINE")
+              GH_TOKEN="$APP_TOKEN" gh issue comment "$ISSUE" --body "$body"
             fi
             exit 0
           fi
           gh workflow run "$NEXT_WORKFLOW" -f slug="$SLUG"
           echo "Dispatched $NEXT_WORKFLOW (slug=$SLUG)." >> "$GITHUB_STEP_SUMMARY"
-
-      # The action writes its full execution transcript — every tool call,
-      # including permission denials — to claude-execution-output.json in the
-      # runner temp dir. The streamed job log does NOT contain it, so upload it
-      # for post-mortems (which tools were denied, turn count, cost).
-      - name: Upload Claude execution log
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: claude-execution-output
-          path: ${{ runner.temp }}/claude-execution-output.json
-          if-no-files-found: ignore
-
-      # Surface this run's own metrics in the run summary (see intake stage).
-      - name: Agent run metrics summary
-        if: >-
-          always() &&
-          (steps.agent-pr.outcome != 'skipped' ||
-           steps.agent-auto.outcome != 'skipped')
-        # Belt-and-braces for the action's own "never fail the job" contract.
-        continue-on-error: true
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
-        with:
-          model: ${{ inputs.model }}
-          max-turns: ${{ inputs.max-turns }}
-          ceiling: ${{ steps.agent-auto-ceiling.outputs.ceiling || steps.agent-pr-ceiling.outputs.ceiling }}
-          verdict: ${{ steps.agent-auto-verdict.outputs.verdict || steps.agent-pr-verdict.outputs.verdict }}
-          verdict-reason: ${{ steps.agent-auto-verdict.outputs.reason || steps.agent-pr-verdict.outputs.reason }}
 
       # Observability, not failure (FR-017) — the intended budget was fully
       # used but the run finished healthy; the runaway ceiling above is the
