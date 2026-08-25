@@ -2854,6 +2854,16 @@ jobs:
       - name: Gate 35 — finalize refreshes an open final PR, and only an open one
         run: python3 .github/scripts/verify-finalize-refresh.py
 
+      # Gate 36 — #169: the stage-8b watchdog verifier's own failure
+      # branches (the two exit-2 fetch guards, the startup_failure shape,
+      # the history fallback, and the CREATE_ISSUE dedup arm that carried
+      # the #167 read-a-failed-search-as-empty defect) each have a fixture
+      # that reaches them, driven through a gh stub that can fail any call
+      # (the GH_STUB_FAIL shape from PR #168), with two mutations proving
+      # the guards load-bearing.
+      - name: Gate 36 — the watchdog verifier's failure branches actually execute
+        run: bash .github/scripts/verify-watchdog-run-failure-paths.sh
+
       # specs/041-implement-stall-notice, User Story 3 — a refusal is still
       # a refusal (FR-006's mutual exclusion, driven against the real
       # preflight shell rather than a modelled reason string), and the four

@@ -80,6 +80,31 @@ Suites:
 | `t8_scaffold.sh` | e2e-stage's scaffold step run repeatedly against one scratch repository — the branch is reset to a single orphan commit each time, whatever the scratch repository's default branch happens to be; plus the agent stage's project-root resolution, run against the real pinned scripts in a nested consumer/scratch layout |
 | `t9_prepare.sh` | Scenario 5's other half — the version-bump commit itself: the regenerated pin in all three files that carry it, `-A` semantics across additions/deletions/files outside `.specify`, the pipeline checkout kept out of the commit, the bundle handed to verify/act round-tripping, the candidate's `uvx` CLI shape asserted verbatim, and both ways the regeneration can fail (`uvx` absent, upgrade-CLI moved) |
 
+## The failure-branch rule (#169)
+
+**Any `if <dependency> failed` branch ships with a fixture that reaches
+it.** A branch that only runs when a dependency fails needs a stub that can
+fail — coverage of the happy path proves nothing about the code that decides
+what happens when something breaks. Three instances shipped green without
+ever executing (#139/PR #158, #164, #167) before this rule existed; the
+third reached production and filed a duplicate issue every day.
+
+Concretely, for any harness in this repository:
+
+- Every stub stands in for a dependency that can fail, so the stub must be
+  able to fail on demand: `gh_stub.py` takes `GH_STUB_FAIL` (token-subset
+  selectors, PR #168), `t9_prepare.sh`'s `uvx` stub takes `UVX_RC`, and
+  `verify-watchdog-run-failure-paths.sh`'s `gh` stub takes `WD_STUB_FAIL`
+  (regex per line). A new stub without an injection knob is the defect
+  pattern, not a simplification.
+- A stub returns its real dependency's **shapes** — a stub wrong in the same
+  direction as the code under test is worse than no stub (PR #168's
+  labels-as-strings finding).
+- Mutation-check the **assertion**, not just its coverage: apply the
+  mutation to the production code and require the test to go red for the
+  right reason. t7 once covered its branch, was mutation-tested, and still
+  pinned a bug in place because the expectation itself was wrong (#164).
+
 ## Mutation results
 
 A suite that cannot fail is not a gate, so each assertion set was checked

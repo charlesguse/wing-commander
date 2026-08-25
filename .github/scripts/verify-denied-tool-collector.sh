@@ -78,6 +78,40 @@ FILTER='
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
+# ── Fixture 0 (dependency-failure path, #169): a truncated artifact must
+#    mark the collector UNTRUSTED, never read as "zero denials". Two halves,
+#    because each alone proves too little (an independent review showed a
+#    first draft asserting only that jq fails on truncated input — a
+#    property of jq's input reader that no FILTER change can alter, i.e. an
+#    unfailable assertion inside the fix for unfailable assertions):
+#    (a) watchdog.yml's shipped invocation still carries the
+#        eo_outcome="failed" rescue arm — deleting that arm in production
+#        turns this red;
+#    (b) the rescue semantics, driven with the same FILTER Gate 5 proves
+#        identical to the shipped one, actually produce outcome=failed and
+#        a harmless empty contribution on a truncated artifact (the real
+#        failure mode: a runner killed mid-write).
+WATCHDOG_YML=".github/workflows/watchdog.yml"
+if [ -f "$WATCHDOG_YML" ]; then
+  if ! grep -qF 'entries=$(jq -c "$filter" "$f" 2>/dev/null) || { eo_outcome="failed"; entries='\''[]'\''; }' "$WATCHDOG_YML"; then
+    reason "watchdog.yml no longer carries the collector's eo_outcome=failed rescue arm (or its shape changed) — a malformed artifact would abort or silently read as zero denials instead of marking the collector untrusted (T032). If the arm was deliberately reshaped, update this check with it."
+  else
+    note "watchdog.yml still carries the eo_outcome=failed rescue arm on the collector invocation"
+  fi
+else
+  reason "cannot find $WATCHDOG_YML to verify the collector's rescue arm — run this from the repository root"
+fi
+
+printf '[{"type":"result","permission_denials":[{"tool_name":"Bash"' \
+  > "$work/fixture-truncated.json"
+eo_outcome="ok"
+entries=$(jq -c "$FILTER" "$work/fixture-truncated.json" 2>/dev/null) || { eo_outcome="failed"; entries='[]'; }
+if [ "$eo_outcome" = "failed" ] && [ "$entries" = "[]" ]; then
+  note "a truncated artifact drives the rescue arm: eo_outcome=failed with an empty (not fabricated) contribution"
+else
+  reason "a truncated artifact did NOT drive the rescue arm (eo_outcome=$eo_outcome, entries=$entries) — parse failure is indistinguishable from zero findings"
+fi
+
 # ── Fixture 1 (fallback path): a result record is present but carries no
 #    permission_denials, so the log scan runs. Injected denials: Bash x1
 #    (the singleton the pre-022 filter silently dropped), WebFetch x2.

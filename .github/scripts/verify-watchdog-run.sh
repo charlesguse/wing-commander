@@ -223,14 +223,23 @@ if [ "${CREATE_ISSUE:-false}" = "true" ]; then
   body="🐕‍🦺 **Watchdog verifier** — run [$RUN_ID]($run_url) failed verification:"$'\n'
   for r in "${fail_reasons[@]}"; do body+="- $r"$'\n'; done
   body+=$'\n'"_Filed automatically by the deterministic stage-8b verifier._"
-  existing="$(gh issue list -R "$REPO" --state open --label pipeline-defect \
-    --search "\"$title\" in:title" --json number --jq '.[0].number // empty')"
-  if [ -n "$existing" ]; then
-    gh issue comment "$existing" -R "$REPO" --body "$body" \
-      && note "appended to existing issue #$existing"
+  # The dedup search's failure is its own outcome, never "no issue exists":
+  # reading a failed search as an empty result is exactly what made settle
+  # file a duplicate issue every day (#167), and this arm shipped with the
+  # same shape (#169). On search failure, skip filing - the verification
+  # failure above still turns the caller red, and a skipped filing is
+  # recoverable while a duplicate issue is noise someone must triage.
+  if existing="$(gh issue list -R "$REPO" --state open --label pipeline-defect \
+    --search "\"$title\" in:title" --json number --jq '.[0].number // empty')"; then
+    if [ -n "$existing" ]; then
+      gh issue comment "$existing" -R "$REPO" --body "$body" \
+        && note "appended to existing issue #$existing"
+    else
+      gh issue create -R "$REPO" --title "$title" --label pipeline-defect --body "$body" \
+        && note "created pipeline-defect issue"
+    fi
   else
-    gh issue create -R "$REPO" --title "$title" --label pipeline-defect --body "$body" \
-      && note "created pipeline-defect issue"
+    echo "::error::verify-watchdog: the pipeline-defect issue search FAILED - not filing, to avoid creating a duplicate of an issue the search could not see (#167). The verification failure above still stands."
   fi
 fi
 
