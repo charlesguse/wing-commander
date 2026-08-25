@@ -54,9 +54,13 @@ def published_stages(root="."):
         # a quoted "on" stays a string. Accept either — same as gate 7.
         on = wf.get(True, wf.get("on"))
         # Membership, not truthiness: a bare `workflow_call:` parses to None,
-        # and a stage with no inputs yet is still a stage.
+        # and a stage with no inputs yet is still a stage. The scalar form
+        # (`on: workflow_call`) is equally valid YAML for the same
+        # declaration - missing it made this reader disagree with Gate 31's
+        # about any stage written that way (#245 blind spot 3).
         if (isinstance(on, dict) and "workflow_call" in on) or \
-           (isinstance(on, list) and "workflow_call" in on):
+           (isinstance(on, list) and "workflow_call" in on) or \
+           (isinstance(on, str) and on == "workflow_call"):
             # Forward slashes and no "./" prefix: callers compare these paths
             # as strings against hand-written lists (release.yml's shellcheck
             # opt-in), and "./x" != "x" would make every such comparison miss
