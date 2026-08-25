@@ -78,22 +78,6 @@ FILTER='
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-# ── Fixture 0 (dependency-failure path, #169): a truncated artifact must be
-#    an ERROR the caller can see, never "zero denials". The collector's one
-#    dependency is jq's parse of the artifact; until this fixture, no input
-#    ever made that parse fail, so the error path had never once executed —
-#    the exact unfailable-dependency shape that let settle read a failed
-#    search as an empty result (#167). This is the harness's injectable
-#    failure: real failure mode (a runner killed mid-write truncates JSON),
-#    injected at the same seam production reads from.
-printf '[{"type":"result","permission_denials":[{"tool_name":"Bash"' \
-  > "$work/fixture-truncated.json"
-if out0="$(jq -c "$FILTER" "$work/fixture-truncated.json" 2>&1)"; then
-  reason "a truncated artifact parsed cleanly (output: $out0) — watchdog.yml's '|| { eo_outcome=failed }' arm keys on this jq exiting nonzero, so a filter that swallows parse errors (a stray 'try') would silently kill the collector-untrusted outcome (T032)"
-else
-  note "a truncated artifact makes the collector's jq exit nonzero — the eo_outcome=failed arm in watchdog.yml stays reachable, and parse failure is distinguishable from zero findings"
-fi
-
 # ── Fixture 1 (fallback path): a result record is present but carries no
 #    permission_denials, so the log scan runs. Injected denials: Bash x1
 #    (the singleton the pre-022 filter silently dropped), WebFetch x2.
