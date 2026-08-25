@@ -27,16 +27,38 @@ Field presence and type against contracts/metrics-record-schema.md's field
 table (schema_version 1 only — an unknown version is out of scope for this
 gate; see verify-metrics-schema-version-tolerance.py), and the per_model sum
 invariant when both tokens.available and per_model_available are true.
+
+WHY THE FIELD SETS ARE CROSS-CHECKED AGAINST THE DOC (MF-F3)
+--------------------------------------------------------------
+The REQUIRED_* maps below are hand-maintained, not parsed from the contract
+directly — a single JSON example cannot express a field's full type union
+(neither of the doc's two examples ever shows `stage` as null, though
+`stage_available: false` makes that a legal record). Left at that, the doc's
+lint-workflows.yml path trigger (PR #267 review) buys a trigger and no
+check: editing the "## Shape" block — adding, removing, or renaming a
+field — reruns this gate, but nothing in it ever reads the doc, so nothing
+would fail. check_fields_match_contract() closes that gap the other way: it
+parses the doc's "## Shape" JSON block and asserts its key set, at every
+level, is EXACTLY the REQUIRED_* maps' key set. A field added/removed/
+renamed in the doc without updating the map fails loudly here, naming the
+mismatch, instead of the map silently drifting from the contract it claims
+to enforce.
 """
 import argparse
 import glob
 import json
 import os
+import re
 import sys
 
 FIXTURES_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "fixtures", "metrics-record-schema")
+
+CONTRACT_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..",
+    "specs", "043-durable-metrics-record", "contracts",
+    "metrics-record-schema.md")
 
 REQUIRED_TOP = {
     "schema_version": int,
@@ -177,6 +199,72 @@ def validate_record(record):
 
 
 # ----------------------------------------------------------------------------
+# Contract cross-check (MF-F3)
+# ----------------------------------------------------------------------------
+SHAPE_HEADING_RE = re.compile(r"^## Shape\s*$", re.M)
+JSON_FENCE_RE = re.compile(r"```json\s*\n(.*?)\n```", re.S)
+
+
+def _load_contract_shape():
+    """The doc's "## Shape" example, parsed — the first ```json fence
+    after that heading (not the "Degraded record" example further down,
+    which shares the same field names but nulls several values)."""
+    with open(CONTRACT_PATH, encoding="utf-8") as handle:
+        text = handle.read()
+    heading = SHAPE_HEADING_RE.search(text)
+    if not heading:
+        sys.exit("::error file={0}::verify-metrics-record-schema: no "
+                  "'## Shape' heading found — this gate's contract "
+                  "cross-check has nothing to read.".format(CONTRACT_PATH))
+    fence = JSON_FENCE_RE.search(text, heading.end())
+    if not fence:
+        sys.exit("::error file={0}::verify-metrics-record-schema: no "
+                  "```json fence found after '## Shape' — this gate's "
+                  "contract cross-check has nothing to parse.".format(CONTRACT_PATH))
+    try:
+        return json.loads(fence.group(1))
+    except ValueError as exc:
+        sys.exit("::error file={0}::verify-metrics-record-schema: the "
+                  "'## Shape' example is not valid JSON: {1}".format(CONTRACT_PATH, exc))
+
+
+def check_fields_match_contract():
+    """Every REQUIRED_* map's key set must exactly match the doc's "##
+    Shape" example at the same level — the check that makes editing the
+    doc without updating the map fail loudly, per this file's module
+    docstring."""
+    shape = _load_contract_shape()
+    levels = [
+        ("record", REQUIRED_TOP, shape),
+        ("record.run", REQUIRED_RUN, shape.get("run", {})),
+        ("record.spec", REQUIRED_SPEC, shape.get("spec", {})),
+        ("record.turns", REQUIRED_TURNS, shape.get("turns", {})),
+        ("record.tokens", REQUIRED_TOKENS, shape.get("tokens", {})),
+    ]
+    per_model_shape = shape.get("per_model") or [{}]
+    levels.append(("record.per_model[]", PER_MODEL_FIELD_TYPES, per_model_shape[0]))
+
+    failures = []
+    for where, required, doc_obj in levels:
+        doc_fields = set(doc_obj.keys())
+        gate_fields = set(required.keys())
+        missing_from_gate = doc_fields - gate_fields
+        missing_from_doc = gate_fields - doc_fields
+        if missing_from_gate:
+            failures.append(
+                "{0}: {1}'s '## Shape' example has field(s) this gate "
+                "does not check: {2} — add them to verify-metrics-record-"
+                "schema.py's REQUIRED_* map or the doc and the gate have "
+                "drifted apart".format(where, CONTRACT_PATH, sorted(missing_from_gate)))
+        if missing_from_doc:
+            failures.append(
+                "{0}: this gate requires field(s) {1} that {2}'s '## "
+                "Shape' example no longer has — the doc and the gate "
+                "have drifted apart".format(where, sorted(missing_from_doc), CONTRACT_PATH))
+    return failures
+
+
+# ----------------------------------------------------------------------------
 # Self-test
 # ----------------------------------------------------------------------------
 def _fixture_files():
@@ -188,6 +276,10 @@ def _fixture_files():
 def self_test():
     bad = 0
     total = 0
+    contract_failures = check_fields_match_contract()
+    for f in contract_failures:
+        print("[FAIL] contract cross-check: {0}".format(f))
+        bad += 1
     for path in _fixture_files():
         total += 1
         name = os.path.basename(path)
@@ -214,8 +306,11 @@ def self_test():
     if total == 0:
         print("[FAIL] no fixtures found under {0}".format(FIXTURES_DIR))
         return 1
+    fixture_bad = bad - len(contract_failures)
     print("verify-metrics-record-schema self-test: {0}/{1} fixtures behaved "
-          "as specified.".format(total - bad, total))
+          "as specified; contract cross-check {2}.".format(
+              total - fixture_bad, total,
+              "passed" if not contract_failures else "FAILED"))
     return 1 if bad else 0
 
 
@@ -234,6 +329,10 @@ def main():
     if args.self_test:
         return self_test()
 
+    contract_failures = check_fields_match_contract()
+    for f in contract_failures:
+        print("::error::verify-metrics-record-schema: contract cross-check: {0}".format(f))
+
     files = args.files
     if not files:
         files = [p for p in _fixture_files()
@@ -244,7 +343,7 @@ def main():
                   "fixture found under {0}".format(FIXTURES_DIR))
             return 1
 
-    failures_total = 0
+    failures_total = len(contract_failures)
     for path in files:
         try:
             with open(path, encoding="utf-8") as handle:

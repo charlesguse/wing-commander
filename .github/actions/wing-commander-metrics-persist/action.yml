@@ -396,11 +396,32 @@ runs:
             echo "$END_MARKER"
           } > "$region"
 
-          existing_id="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${issue}/comments" --paginate --jq \
-            '.[] | select(.body // "" | contains("wing-commander-metrics-rollup:begin")) | .id' 2>/dev/null | head -1)"
+          # Anchored to the bot's own login, not just the marker string
+          # (MF-F4): the default token's triggering actor is always
+          # github-actions[bot], so a human comment that happens to quote
+          # the marker (discussing this feature, say) cannot be mistaken
+          # for the machine-owned comment and overwritten.
+          existing="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${issue}/comments" --paginate --jq \
+            '[.[] | select(.user.login == "github-actions[bot]") | select(.body // "" | contains("wing-commander-metrics-rollup:begin"))] | .[0] // {}' 2>/dev/null || echo '{}')"
+          existing_id="$(printf '%s' "$existing" | jq -r '.id // empty' 2>/dev/null)"
 
           if [ -n "$existing_id" ]; then
-            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing_id}" -F body=@"$region" >/dev/null
+            # Splice only the machine-owned region (FR-031a's established
+            # pattern, finalize.yml's PR-body splice) rather than PATCHing
+            # the whole comment body — anything outside the markers, e.g. a
+            # maintainer's own note on this comment, survives a refresh.
+            prior_body_file="$dir/rollup-prior-body.md"
+            # -j, not -r: -r always appends its own trailing newline after
+            # the string it prints, which would add a spurious blank line
+            # every PATCH cycle on top of the body's own final newline.
+            printf '%s' "$existing" | jq -j '.body // ""' > "$prior_body_file"
+
+            spliced="$dir/rollup-spliced.md"
+            sed -n '0,/<!-- wing-commander-metrics-rollup:begin -->/p' "$prior_body_file" | sed '$d' > "$spliced"
+            cat "$region" >> "$spliced"
+            sed -n '/<!-- wing-commander-metrics-rollup:end -->/,$p' "$prior_body_file" | sed '1d' >> "$spliced"
+
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing_id}" -F body=@"$spliced" >/dev/null
             echo "Updated cumulative rollup comment on issue #$issue for $spec_dir." >> "$GITHUB_STEP_SUMMARY"
           else
             gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${issue}/comments" -F body=@"$region" >/dev/null

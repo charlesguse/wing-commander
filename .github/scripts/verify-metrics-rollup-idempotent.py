@@ -58,7 +58,18 @@ if [ "${1:-}" = "api" ]; then
   done
   case "$method" in
     GET)
-      [ -f "$state/comment-id.txt" ] && cat "$state/comment-id.txt"
+      # Simulates the REAL gh's own --jq post-processing (this stub never
+      # runs the passed --jq filter): the shipped step's GET call now asks
+      # for the bot-authored comment object (id, body, user.login) rather
+      # than a bare id (MF-F4), so this must emit the same shape the real
+      # API + --jq would have produced.
+      if [ -f "$state/comment-id.txt" ]; then
+        jq -n --argjson id "$(cat "$state/comment-id.txt")" \
+          --rawfile body "$state/comment-body.md" \
+          '{id: $id, body: $body, user: {login: "github-actions[bot]"}}'
+      else
+        echo '{}'
+      fi
       ;;
     POST)
       echo 999 > "$state/comment-id.txt"
@@ -202,7 +213,64 @@ def case_repeat_rollup_over_the_same_records_is_byte_for_byte_stable():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-CASES = [case_repeat_rollup_over_the_same_records_is_byte_for_byte_stable]
+def case_patch_preserves_prose_outside_the_machine_owned_region():
+    # MF-F4: a PATCH must splice only the machine-owned region, not replace
+    # the whole comment body — a maintainer's own note on this comment
+    # (added above or below the region) must survive a refresh.
+    case = "PATCH preserves prose outside the machine-owned region"
+    tmp = tempfile.mkdtemp(prefix="wc-metrics-rollup-")
+    stub_dir = os.path.join(tmp, "stubbin")
+    os.makedirs(stub_dir, exist_ok=True)
+    _write_exec(os.path.join(stub_dir, "gh"), GH_STUB)
+    _write_exec(os.path.join(stub_dir, "date"), DATE_STUB)
+    gh_state = os.path.join(tmp, "gh-state")
+    os.makedirs(gh_state, exist_ok=True)
+
+    try:
+        with open(os.path.join(gh_state, "comment-id.txt"), "w", encoding="utf-8") as f:
+            f.write("500\n")
+        prior_body = (
+            "A maintainer's note above the region.\n"
+            "<!-- wing-commander-metrics-rollup:begin -->\n"
+            "stale region content from a prior run\n"
+            "<!-- wing-commander-metrics-rollup:end -->\n"
+            "A maintainer's note below the region.\n"
+        )
+        with open(os.path.join(gh_state, "comment-body.md"), "w", encoding="utf-8") as f:
+            f.write(prior_body)
+
+        rc, out, region, comment = run_rollup(
+            os.path.join(tmp, "run1"), RECORDS,
+            "specs/043-durable-metrics-record", 148, gh_state, stub_dir)
+        if rc != 0:
+            fail(case, f"exited {rc}: {out.strip()[:300]}")
+            return
+        if region is None or comment is None:
+            fail(case, "run wrote no rollup-region.md or the comment was never PATCHed")
+            return
+        if not os.path.exists(os.path.join(gh_state, "patch-calls.txt")):
+            fail(case, "an existing bot-authored comment should have been PATCHed, "
+                       "not POSTed as a new one")
+
+        if "A maintainer's note above the region." not in comment:
+            fail(case, f"prose above the region was dropped:\n{comment}")
+        if "A maintainer's note below the region." not in comment:
+            fail(case, f"prose below the region was dropped:\n{comment}")
+        if "stale region content from a prior run" in comment:
+            fail(case, f"the stale region content was not replaced:\n{comment}")
+        if region not in comment:
+            fail(case, f"the freshly computed region is not present verbatim in the "
+                       f"spliced comment:\n--- region ---\n{region}\n--- comment ---\n{comment}")
+        note("a PATCH over an existing bot comment preserved the prose outside the "
+             "machine-owned region and replaced only the region itself")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+CASES = [
+    case_repeat_rollup_over_the_same_records_is_byte_for_byte_stable,
+    case_patch_preserves_prose_outside_the_machine_owned_region,
+]
 
 
 def main():
