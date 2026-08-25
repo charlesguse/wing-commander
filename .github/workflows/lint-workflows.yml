@@ -2945,6 +2945,37 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-transcript-retention-declared.py --self-test
 
+      # Gate — the shipped "Render agent run metrics summary" step actually
+      # produces a conforming, non-colliding record: a healthy transcript, a
+      # missing/empty/unparseable one, and one job invoking it three times
+      # (implement.yml's cycle/retry/progress shape) all shipped as
+      # reasoned-through code with no fixture exercising the record itself
+      # (tasks.md Phase 9 T061, FR-009/FR-010).
+      - name: Gate — metrics-summary record emission, executed against the shipped script
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-metrics-summary-record-emission.py
+
+      # Gate — the cumulative rollup region-builder regenerates a
+      # byte-for-byte identical region across two runs over the same
+      # persisted record set (POST then PATCH) — "regenerated fresh from a
+      # de-duplicated store" was an argued-not-tested guarantee until this
+      # (tasks.md Phase 9 T065, FR-031b).
+      - name: Gate — metrics rollup region-builder is idempotent
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-metrics-rollup-idempotent.py
+
+      # Gate — the metrics persistence layer has no write path back to the
+      # origin pipeline run's status, checks, or comments (tasks.md Phase 9
+      # T066, FR-019/FR-019a). Designed that way by construction (a separate
+      # out-of-band workflow_run trigger); this is what fails if a future
+      # change reintroduces a back-reference.
+      - name: Gate — metrics persistence has no write-back to the origin run
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-metrics-persist-no-writeback.py
+      - name: Gate self-test — the no-write-back scan detects what it claims to
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-metrics-persist-no-writeback.py --self-test
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

@@ -1,0 +1,3 @@
+    - name: Reintroduced write-back (fixture)
+      run: |
+        gh pr merge "${PR_NUMBER}" --squash
