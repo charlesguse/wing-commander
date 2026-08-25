@@ -149,12 +149,16 @@ class Finding(object):
 # --------------------------------------------------------------------------
 # Reading a workflow file
 # --------------------------------------------------------------------------
-_BLOCK_SCALAR_HEADER_RE = re.compile(r":\s*[|>][+-]?[0-9]*\s*(?:#.*)?$")
+_BLOCK_SCALAR_HEADER_RE = re.compile(
+    # Chomping and explicit-indentation indicators are legal in either
+    # order (`|2-` and `|-2` both) - accepting only one order silently
+    # dropped the other form's heredocs from the scan (#245 follow-up).
+    r":\s*[|>](?:[+-]?[0-9]*|[0-9]*[+-]?)\s*(?:#.*)?$")
 _HEREDOC_RE = re.compile(r"(?<!<)<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 
 
 def _block_scalar_body_lines(text):
-    """Indices of lines that are the BODY of a YAML block scalar (run: |).
+    """{line index: block base indent} for YAML block-scalar bodies (run: |).
 
     Body membership is what separates "YAML comment" from "shell text
     GitHub interpolates": a `#`-led line inside a `run:` block scalar is
@@ -164,7 +168,7 @@ def _block_scalar_body_lines(text):
     not end the block.
     """
     lines = text.split("\n")
-    body = set()
+    body = {}
     i = 0
     while i < len(lines):
         line = lines[i]
@@ -172,16 +176,27 @@ def _block_scalar_body_lines(text):
         if (stripped and not stripped.startswith("#")
                 and _BLOCK_SCALAR_HEADER_RE.search(line)):
             indent = len(line) - len(stripped)
+            base = None
             j = i + 1
             while j < len(lines):
                 nxt = lines[j]
                 if not nxt.strip():
-                    body.add(j)
+                    body[j] = base
                     j += 1
                     continue
-                if len(nxt) - len(nxt.lstrip(" ")) <= indent:
+                nindent = len(nxt) - len(nxt.lstrip(" "))
+                if nindent <= indent:
                     break
-                body.add(j)
+                if base is None:
+                    # The first non-blank body line fixes the block's base
+                    # indent - the column the shell sees as column 0. A
+                    # heredoc terminator is only a terminator AT that column
+                    # (bash demands column 0; `<<-` additionally strips
+                    # leading tabs), so a deeper-indented look-alike must
+                    # not end tracking early (#245 follow-up: it did, and a
+                    # `#`-led vars read after it went back to being blanked).
+                    base = nindent
+                body[j] = base
                 j += 1
             i = j
             continue
@@ -213,8 +228,12 @@ def strip_comments(text):
             pending_heredocs = []
         elif pending_heredocs:
             # Heredoc body: literal file content, nothing here is a comment.
-            terminator = pending_heredocs[0]
-            if line.lstrip("\t ") == terminator:
+            terminator, strip_tabs = pending_heredocs[0]
+            base = body_lines[idx] or 0
+            dedented = line[base:] if line[:base].strip() == "" else line
+            if strip_tabs:
+                dedented = dedented.lstrip("\t")
+            if dedented == terminator:
                 pending_heredocs.pop(0)
             out.append(line)
             continue
@@ -244,7 +263,8 @@ def strip_comments(text):
             # start on the next line and are consumed first-in-first-out.
             code_part = line if cut is None else line[:cut]
             pending_heredocs.extend(
-                m.group(2) for m in _HEREDOC_RE.finditer(code_part))
+                (m.group(2), "<<-" in m.group(0))
+                for m in _HEREDOC_RE.finditer(code_part))
         out.append(line if cut is None else line[:cut] + " " * (len(line) - cut))
     return "\n".join(out)
 
@@ -737,6 +757,42 @@ jobs:
           EOF
 """
 
+# A deeper-indented terminator look-alike is heredoc CONTENT, not its end:
+# the shell dedents block-scalar lines to the block's base indent, and bash
+# only accepts the terminator at column 0. Ending tracking at the "  EOF"
+# below would blank the vars line right back out (#245 follow-up).
+HEREDOC_INDENTED_TERMINATOR = """\
+name: indented terminator
+on:
+  workflow_call:
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          cat > f <<'EOF'
+            EOF
+          # still heredoc content: ${{ vars.AFTER_FAKE_TERMINATOR }}
+          EOF
+"""
+
+# `|2-` puts the indentation indicator BEFORE the chomping indicator - as
+# legal as `|-2`. A header regex accepting only one order dropped the whole
+# block (and its heredoc) from the scan (#245 follow-up).
+HEREDOC_INDICATOR_ORDER = """\
+name: indicator order
+on:
+  workflow_call:
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |2-
+          cat > f <<'EOF'
+          # ${{ vars.INDICATOR_ORDER_FORM }}
+          EOF
+"""
+
 
 def _waiver(file, check, pattern, count):
     """A fixture waiver. `file` is a bare name; waivers name repo paths."""
@@ -790,6 +846,12 @@ FIXTURES = [
     ("a vars.* read on a heredoc's comment-shaped line is caught",
      {"clean.yml": CLEAN, "hidden.yml": HEREDOC_HIDDEN_READ}, None,
      ("hidden.yml:10: `vars.HIDDEN_IN_HEREDOC`", 1)),
+    ("a deeper-indented terminator look-alike does not end the heredoc",
+     {"clean.yml": CLEAN, "fake-end.yml": HEREDOC_INDENTED_TERMINATOR}, None,
+     ("fake-end.yml:11: `vars.AFTER_FAKE_TERMINATOR`", 1)),
+    ("the |2- indicator order is still a block scalar",
+     {"clean.yml": CLEAN, "order.yml": HEREDOC_INDICATOR_ORDER}, None,
+     ("order.yml:10: `vars.INDICATOR_ORDER_FORM`", 1)),
     # the empty-subject guard
     ("a checkout with no stage at all is a failure, not a clean pass",
      {"wing-commander-1.yml": WRAPPER}, None,
