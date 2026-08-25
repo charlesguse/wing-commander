@@ -970,12 +970,33 @@ jobs:
           SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
           ITERATION: ${{ inputs.iteration }}
           BASE_SHA: ${{ steps.base.outputs.base-sha }}
+          DEFAULT_BRANCH: ${{ inputs.default-branch }}
           CYCLE_RESULT: ${{ steps.cycle.outcome }}
           VERDICT: ${{ steps.cycle-verdict.outputs.verdict }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
-          AGENT_AUTHOR_RE: claude\[bot\]|${{ steps.ctx.outputs.bot-slug }}\[bot\]
+          # The second alternative rides only on a RESOLVED slug: with an
+          # empty slug the pattern would degrade to `claude\[bot\]|\[bot\]`,
+          # which matches ANY bot - github-actions[bot] included (PR #258
+          # review, F4).
+          AGENT_AUTHOR_RE: claude\[bot\]${{ steps.ctx.outputs.bot-slug && format('|{0}\[bot\]', steps.ctx.outputs.bot-slug) || '' }}
         run: |
           git fetch origin "+refs/heads/${SPEC_PREFIX}$SLUG:refs/remotes/origin/${SPEC_PREFIX}$SLUG"
+          # Arm B below must not count commits the branch merely IMPORTED
+          # from the default branch: an auto-rebase makes main's commits -
+          # many of them bot-authored squash merges - reachable from the
+          # spec branch tip, so an author filter alone still reads them as
+          # agent progress (PR #258 review, F2). Resolve the default branch
+          # (the input, or the remote's HEAD when unset) and subtract it
+          # from the range; if neither resolves, degrade to the unbounded
+          # range rather than aborting the read-back.
+          not_default=()
+          db="$DEFAULT_BRANCH"
+          if [ -z "$db" ]; then
+            db="$(git ls-remote --symref origin HEAD 2>/dev/null | sed -n 's|^ref: refs/heads/\(.*\)\tHEAD$|\1|p')"
+          fi
+          if [ -n "$db" ] && git fetch origin "+refs/heads/$db:refs/remotes/origin/$db" 2>/dev/null; then
+            not_default=(--not "origin/$db")
+          fi
           ok=false
           truncated=false
           reason=""
@@ -998,12 +1019,14 @@ jobs:
                 arm_a=true
               fi
               arm_b=false
-              # #248: only commits the pipeline's own bots authored count as
-              # progress outside the spec dir - an auto-rebase or a
-              # maintainer push landing mid-cycle satisfied the old any-diff
-              # form, carrying a genuinely stuck exhausted cycle forward as
-              # "truncated".
-              if git log -E --format='%H' --author="$AGENT_AUTHOR_RE" "$BASE_SHA..origin/${SPEC_PREFIX}$SLUG" -- . ":(exclude)$SPEC_DIR/**" | grep -q .; then
+              # #248: progress outside the spec dir means a commit the
+              # pipeline's own bots AUTHORED on this branch beyond the
+              # default branch - the old any-diff form let a maintainer
+              # push landing mid-cycle count, and the author filter alone
+              # would still count default-branch commits a mid-cycle
+              # auto-rebase imported (squash merges of pipeline PRs are
+              # bot-authored too), hence the `--not` bound resolved above.
+              if git log -E --format='%H' --author="$AGENT_AUTHOR_RE" "$BASE_SHA..origin/${SPEC_PREFIX}$SLUG" "${not_default[@]}" -- . ":(exclude)$SPEC_DIR/**" | grep -q .; then
                 arm_b=true
               fi
               if [ "$arm_a" = "true" ] || [ "$arm_b" = "true" ]; then
@@ -1334,13 +1357,34 @@ jobs:
           SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
           ITERATION: ${{ inputs.iteration }}
           BASE_SHA: ${{ steps.retry-base.outputs.base-sha }}
+          DEFAULT_BRANCH: ${{ inputs.default-branch }}
           RETRY_RESULT: ${{ steps.retry.outcome }}
-          AGENT_AUTHOR_RE: claude\[bot\]|${{ steps.ctx.outputs.bot-slug }}\[bot\]
+          # The second alternative rides only on a RESOLVED slug: with an
+          # empty slug the pattern would degrade to `claude\[bot\]|\[bot\]`,
+          # which matches ANY bot - github-actions[bot] included (PR #258
+          # review, F4).
+          AGENT_AUTHOR_RE: claude\[bot\]${{ steps.ctx.outputs.bot-slug && format('|{0}\[bot\]', steps.ctx.outputs.bot-slug) || '' }}
           VERDICT: ${{ steps.retry-verdict.outputs.verdict }}
           ESCALATION_MODEL: ${{ inputs.escalation-model }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
         run: |
           git fetch origin "+refs/heads/${SPEC_PREFIX}$SLUG:refs/remotes/origin/${SPEC_PREFIX}$SLUG"
+          # Arm B below must not count commits the branch merely IMPORTED
+          # from the default branch: an auto-rebase makes main's commits -
+          # many of them bot-authored squash merges - reachable from the
+          # spec branch tip, so an author filter alone still reads them as
+          # agent progress (PR #258 review, F2). Resolve the default branch
+          # (the input, or the remote's HEAD when unset) and subtract it
+          # from the range; if neither resolves, degrade to the unbounded
+          # range rather than aborting the read-back.
+          not_default=()
+          db="$DEFAULT_BRANCH"
+          if [ -z "$db" ]; then
+            db="$(git ls-remote --symref origin HEAD 2>/dev/null | sed -n 's|^ref: refs/heads/\(.*\)\tHEAD$|\1|p')"
+          fi
+          if [ -n "$db" ] && git fetch origin "+refs/heads/$db:refs/remotes/origin/$db" 2>/dev/null; then
+            not_default=(--not "origin/$db")
+          fi
           ok=false
           truncated=false
           reason=""
@@ -1363,12 +1407,14 @@ jobs:
                 arm_a=true
               fi
               arm_b=false
-              # #248: only commits the pipeline's own bots authored count as
-              # progress outside the spec dir - an auto-rebase or a
-              # maintainer push landing mid-cycle satisfied the old any-diff
-              # form, carrying a genuinely stuck exhausted cycle forward as
-              # "truncated".
-              if git log -E --format='%H' --author="$AGENT_AUTHOR_RE" "$BASE_SHA..origin/${SPEC_PREFIX}$SLUG" -- . ":(exclude)$SPEC_DIR/**" | grep -q .; then
+              # #248: progress outside the spec dir means a commit the
+              # pipeline's own bots AUTHORED on this branch beyond the
+              # default branch - the old any-diff form let a maintainer
+              # push landing mid-cycle count, and the author filter alone
+              # would still count default-branch commits a mid-cycle
+              # auto-rebase imported (squash merges of pipeline PRs are
+              # bot-authored too), hence the `--not` bound resolved above.
+              if git log -E --format='%H' --author="$AGENT_AUTHOR_RE" "$BASE_SHA..origin/${SPEC_PREFIX}$SLUG" "${not_default[@]}" -- . ":(exclude)$SPEC_DIR/**" | grep -q .; then
                 arm_b=true
               fi
               if [ "$arm_a" = "true" ] || [ "$arm_b" = "true" ]; then

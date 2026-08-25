@@ -944,10 +944,13 @@ jobs:
             esac
             log_rc=0
             log="$(GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$job_id/logs" 2>/dev/null)" || log_rc=$?
-            if [ "$log_rc" != "0" ]; then
+            if [ "$log_rc" != "0" ] && [ "${log_retried:-0}" = "0" ]; then
+              log_retried=1
               # Logs for a just-completed job can lag the jobs API by a few
-              # seconds; one bounded retry before declaring this collector
-              # untrusted. Measured 2026-08-25: issue #256's diagnosis
+              # seconds; ONE bounded retry per step - not per job, or a
+              # systematic failure (an App token without Actions:read 403s
+              # every job) would burn N x 10s inside this job's timeout -
+              # before declaring this collector untrusted. Measured 2026-08-25: issue #256's diagnosis
               # carried a "collect-step-summary failed outright" caveat
               # because this fetch 404ed ~20s after the inspected run
               # finished.
