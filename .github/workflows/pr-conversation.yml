@@ -2310,8 +2310,16 @@ jobs:
       pull-requests: write
       actions: write
       id-token: write
+    # T072/FR-024/SC-009: the SAME group `act` joined, not a hardcoded
+    # reconstruction of the canonical one — a stop-only run's `act` joins
+    # the review's own per-PR stop group instead (classify-and-announce's
+    # output, above), and dispatch-once must follow it there. Hardcoding
+    # the canonical group here would put a stop-only dispatch-once back
+    # into wing-commander-<spec-dir> — the group its own review is trying
+    # to cancel — where it could cancel another pending job in that group
+    # while waiting, defeating the FR-024/SC-009 carve-out (PR #253 review).
     concurrency:
-      group: wing-commander-${{ needs.classify-and-announce.outputs.spec-dir }}
+      group: ${{ needs.classify-and-announce.outputs.concurrency-group }}
       cancel-in-progress: false
     steps:
       - name: Checkout consumer repository (bootstrap, default token)

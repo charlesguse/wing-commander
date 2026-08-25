@@ -230,7 +230,7 @@ def scenario_three_clean_legs(steps, root):
             fh.write('{"name": "act (%s)", "conclusion": "success"}\n' % leg_id)
     rc, out, _, summary = run_step(
         BASH, steps[REPORT_STEP], repo,
-        {"GH_TOKEN": "x", "PR_NUMBER": PR_NUMBER, "RUN_ID": "1",
+        {"GH_TOKEN": "x", "ACTIONS_TOKEN": "x", "PR_NUMBER": PR_NUMBER, "RUN_ID": "1",
          "GITHUB_REPOSITORY": REPO,
          "CLASSIFICATIONS": _json(classifications),
          "BASE_SHA": base_sha, "TIP_SHA": tip_sha,
@@ -296,7 +296,7 @@ def _report_single_leg_scenario(steps, root, where, conclusion, fold_commits,
 
     rc, out, _, _ = run_step(
         BASH, steps[REPORT_STEP], repo,
-        {"GH_TOKEN": "x", "PR_NUMBER": PR_NUMBER, "RUN_ID": "1",
+        {"GH_TOKEN": "x", "ACTIONS_TOKEN": "x", "PR_NUMBER": PR_NUMBER, "RUN_ID": "1",
          "GITHUB_REPOSITORY": REPO,
          "CLASSIFICATIONS": _json(classifications),
          "BASE_SHA": base_sha, "TIP_SHA": tip_sha,
@@ -339,7 +339,7 @@ def scenario_zero_in_scope(steps, root):
 
     rc, out, _, _ = run_step(
         BASH, steps[REPORT_STEP], repo,
-        {"GH_TOKEN": "x", "PR_NUMBER": PR_NUMBER, "RUN_ID": "1",
+        {"GH_TOKEN": "x", "ACTIONS_TOKEN": "x", "PR_NUMBER": PR_NUMBER, "RUN_ID": "1",
          "GITHUB_REPOSITORY": REPO,
          "CLASSIFICATIONS": _json(classifications),
          "BASE_SHA": base_sha, "TIP_SHA": tip_sha,
@@ -413,7 +413,7 @@ def scenario_held_leg_timeout(steps, root):
     open(last_comment, "w").close()
     rc, out, _, _ = run_step(
         BASH, steps[REPORT_STEP], repo,
-        {"GH_TOKEN": "x", "PR_NUMBER": PR_NUMBER, "RUN_ID": "1",
+        {"GH_TOKEN": "x", "ACTIONS_TOKEN": "x", "PR_NUMBER": PR_NUMBER, "RUN_ID": "1",
          "GITHUB_REPOSITORY": REPO,
          "CLASSIFICATIONS": _json(classifications),
          "BASE_SHA": base_sha, "TIP_SHA": tip_sha,
@@ -491,15 +491,37 @@ def test_structural():
                             f"review, not once per leg (research.md D1).")
         needs = job.get("needs")
         needs_set = set(needs) if isinstance(needs, list) else {needs}
-        if needs_set != {"classify-and-announce", "act"}:
+        expected_needs = {"verify-image-prerequisites", "classify-and-announce", "act"}
+        if needs_set != expected_needs:
             failures.append(f"structural: {job_id!r}.needs is {needs!r}, "
-                            f"expected exactly [classify-and-announce, act].")
+                            f"expected exactly [verify-image-prerequisites, "
+                            f"classify-and-announce, act] (Gate 23 requires "
+                            f"every always()-guarded job to depend on "
+                            f"verify-image-prerequisites directly — PR #253 "
+                            f"review).")
         job_if = job.get("if", "")
         if "always()" not in job_if:
             failures.append(f"structural: {job_id!r}'s `if:` does not "
                             f"contain always() — a died/cancelled `act` "
                             f"could suppress this job (FR-005a/FR-006). "
                             f"if: {job_if!r}")
+        if "needs.verify-image-prerequisites.result == 'success'" not in " ".join(job_if.split()):
+            failures.append(f"structural: {job_id!r}'s `if:` does not check "
+                            f"needs.verify-image-prerequisites.result == "
+                            f"'success' — always() defeats ordinary "
+                            f"skip-propagation, so a real image-prerequisite "
+                            f"failure would run this job unchecked (Gate 23).")
+
+    dispatch_group = str((jobs.get("dispatch-once") or {})
+                         .get("concurrency", {}).get("group", ""))
+    expected_group = "${{ needs.classify-and-announce.outputs.concurrency-group }}"
+    if dispatch_group != expected_group:
+        failures.append(f"structural: dispatch-once's concurrency.group is "
+                        f"{dispatch_group!r}, expected {expected_group!r} — "
+                        f"a hardcoded wing-commander-<spec-dir> group would "
+                        f"put a stop-only run's dispatch-once back into the "
+                        f"canonical group its own review is cancelling "
+                        f"(FR-024/SC-009, PR #253 review).")
 
     reply_step = find_step(STAGE, REPLY_STEP)
     if "gh workflow run" in (reply_step.get("run") or ""):
@@ -639,7 +661,7 @@ def _mutation_now_says_healthy(steps, root, conclusion, fold_commits):
         fh.write('{"name": "act (leg-0)", "conclusion": "%s"}\n' % conclusion)
     rc, out, _, _ = run_step(
         BASH, steps[REPORT_STEP], repo,
-        {"GH_TOKEN": "x", "PR_NUMBER": PR_NUMBER, "RUN_ID": "1",
+        {"GH_TOKEN": "x", "ACTIONS_TOKEN": "x", "PR_NUMBER": PR_NUMBER, "RUN_ID": "1",
          "GITHUB_REPOSITORY": REPO,
          "CLASSIFICATIONS": _json(classifications),
          "BASE_SHA": base_sha, "TIP_SHA": tip_sha,
