@@ -25,6 +25,19 @@ avoid reacting to their own actions.
    - Issues: **Read and write**
    - Pull requests: **Read and write**
    - Everything else: No access
+
+   Grant **exactly** these three and nothing more. The list is a contract,
+   not a starting point: the pipeline's token-permission gate (Gate 12 in
+   `lint-workflows.yml`) checks every `gh`/API call site against *this
+   documented surface*, so a call that needs more than the App is documented
+   to have is flagged in CI before it ships. An over-granted installation
+   (say, Actions: read) makes such a call *succeed at runtime* while every
+   correctly-configured adopter 403s — the defect is masked exactly where it
+   is tested most. The pipeline never needs the App to read Actions run
+   state; jobs that need it use their own `github.token` with an
+   `actions: read` job permission. If your installation already carries
+   extra grants, trim it to the three above (App settings → Install App →
+   this repository → Configure).
 3. Create the App, then on its settings page:
    - Note the **App ID**
    - Generate a **private key** (downloads a `.pem`)
@@ -180,6 +193,8 @@ gh label create disposition:false-positive --color B60205 --description "Watchdo
   auto-update-spec-kit stage proposes upgrades as PRs; to do one by hand, re-run
   `specify init --here --force --integration claude --script sh` with the newer
   version, move both pins, and re-verify `.specify/scripts` behavior before merging.
-- Model usage draws on your Claude subscription limits. Intake/clarify run on
-  `claude-sonnet-5` with bounded `--max-turns`; the heavy stages are where
-  Opus opt-in matters.
+- Model usage draws on your Claude subscription limits. Model tiers are set
+  by the `WING_COMMANDER_*_MODEL` variables above (spec/clarify default to
+  `claude-opus-5`, plan/tasks and implement to `claude-sonnet-5`, summaries
+  to `claude-haiku-4-5`), all with bounded `--max-turns`; the implement
+  tier's `model:opus` opt-in is where the cost swing is largest.
