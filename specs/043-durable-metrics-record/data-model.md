@@ -152,8 +152,11 @@ history entries, never carried forward incrementally.
 ## Gate fixtures (not runtime entities, but checked-in test data)
 
 Each new gate from research.md R12 needs at least one fixture record or
-fixture git state under a `fixtures/` directory local to its own test
-harness (mirroring existing gate fixture conventions elsewhere in
+fixture git state — either inline in the gate's own source (the form the
+implementation settled on for the gates whose fixtures are short
+strings, after a review found on-disk copies that nothing read) or under
+a `fixtures/` directory local to its own test harness (the form the
+schema and no-writeback gates use, mirroring conventions elsewhere in
 `.github/scripts/`):
 
 | Fixture | Used by |
