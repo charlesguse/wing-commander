@@ -176,17 +176,17 @@ declares a retention period; confirm a new undeclared site fails a check
 
 ### Implementation for User Story 4
 
-- [ ] T036 [P] [US4] In `.github/workflows/auto-update-spec-kit.yml`, add `retention-days: 90` to all three `claude-execution-output-*` (`-evaluate-path`, `-e2e-stage`, `-comment-reply`) `upload-artifact` steps.
-- [ ] T037 [P] [US4] In `.github/workflows/clarify.yml`, add `retention-days: 90` to its `claude-execution-output` `upload-artifact` step. Depends on T006 (same file).
-- [ ] T038 [P] [US4] Same change as T037 in `.github/workflows/cleanup.yml`. Depends on T007.
-- [ ] T039 [P] [US4] Same change as T037 in `.github/workflows/finalize.yml`. Depends on T008.
-- [ ] T040 [P] [US4] In `.github/workflows/implement.yml`, add `retention-days: 90` to all three `claude-execution-output-cycle`/`-retry`/`-progress` steps. Depends on T009.
-- [ ] T041 [P] [US4] Same change as T037 in `.github/workflows/intake.yml`. Depends on T010.
-- [ ] T042 [P] [US4] Same change as T037 in `.github/workflows/plan.yml`. Depends on T011.
-- [ ] T043 [P] [US4] In `.github/workflows/pr-conversation.yml`, add `retention-days: 90` to both `claude-execution-output-classify` and `claude-execution-output-act-${{ strategy.job-index }}` steps. Depends on T012.
-- [ ] T044 [P] [US4] Same change as T037 in `.github/workflows/rebase.yml` (`claude-execution-output-${{ matrix.slug }}`). Depends on T013.
-- [ ] T045 [P] [US4] Same change as T037 in `.github/workflows/tasks.yml`. Depends on T014.
-- [ ] T046 [P] [US4] Same change as T037 in `.github/workflows/watchdog.yml`'s `claude-execution-output-diagnose` step. Depends on T015.
+- [X] T036 [P] [US4] In `.github/workflows/auto-update-spec-kit.yml`, add `retention-days: 90` to all three `claude-execution-output-*` (`-evaluate-path`, `-e2e-stage`, `-comment-reply`) `upload-artifact` steps.
+- [X] T037 [P] [US4] In `.github/workflows/clarify.yml`, add `retention-days: 90` to its `claude-execution-output` `upload-artifact` step. Depends on T006 (same file).
+- [X] T038 [P] [US4] Same change as T037 in `.github/workflows/cleanup.yml`. Depends on T007.
+- [X] T039 [P] [US4] Same change as T037 in `.github/workflows/finalize.yml`. Depends on T008.
+- [X] T040 [P] [US4] In `.github/workflows/implement.yml`, add `retention-days: 90` to all three `claude-execution-output-cycle`/`-retry`/`-progress` steps. Depends on T009.
+- [X] T041 [P] [US4] Same change as T037 in `.github/workflows/intake.yml`. Depends on T010.
+- [X] T042 [P] [US4] Same change as T037 in `.github/workflows/plan.yml`. Depends on T011.
+- [X] T043 [P] [US4] In `.github/workflows/pr-conversation.yml`, add `retention-days: 90` to both `claude-execution-output-classify` and `claude-execution-output-act-${{ strategy.job-index }}` steps. Depends on T012.
+- [X] T044 [P] [US4] Same change as T037 in `.github/workflows/rebase.yml` (`claude-execution-output-${{ matrix.slug }}`). Depends on T013.
+- [X] T045 [P] [US4] Same change as T037 in `.github/workflows/tasks.yml`. Depends on T014.
+- [X] T046 [P] [US4] Same change as T037 in `.github/workflows/watchdog.yml`'s `claude-execution-output-diagnose` step. Depends on T015.
 
 **Checkpoint**: All 16 discovered transcript upload sites (T036-T046) declare `retention-days: 90`; none of the 453 pre-existing artifacts are claimed to be rescued (FR-035).
 

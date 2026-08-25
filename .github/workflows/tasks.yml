@@ -1123,6 +1123,7 @@ jobs:
           name: claude-execution-output
           path: ${{ runner.temp }}/claude-execution-output.json
           if-no-files-found: ignore
+          retention-days: 90
 
       # Observability, not failure (FR-017) — the intended budget was fully
       # used but the run finished healthy; the runaway ceiling above is the

@@ -1663,6 +1663,7 @@ jobs:
           name: claude-execution-output-diagnose
           path: ${{ runner.temp }}/claude-execution-output.json
           if-no-files-found: ignore
+          retention-days: 90
 
       - name: Agent run metrics summary
         id: metrics-summary

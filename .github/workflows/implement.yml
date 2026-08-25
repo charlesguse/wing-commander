@@ -913,6 +913,7 @@ jobs:
           name: claude-execution-output-cycle
           path: ${{ runner.temp }}/claude-execution-output.json
           if-no-files-found: ignore
+          retention-days: 90
 
       # Cycle run's metrics — read here, before any retry step overwrites the
       # shared transcript path. run-label distinguishes it from the retry and
@@ -1348,6 +1349,7 @@ jobs:
           name: claude-execution-output-retry
           path: ${{ runner.temp }}/claude-execution-output.json
           if-no-files-found: ignore
+          retention-days: 90
 
       # Retry run's metrics — read after the retry's own upload and before the
       # haiku progress-comment step overwrites the shared transcript path.
@@ -1730,6 +1732,7 @@ jobs:
           name: claude-execution-output-progress
           path: ${{ runner.temp }}/claude-execution-output.json
           if-no-files-found: ignore
+          retention-days: 90
 
       # Progress-comment run's metrics, anchored directly after the agent
       # step and its transcript upload — every agent invocation gets its own

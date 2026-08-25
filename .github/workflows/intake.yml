@@ -853,6 +853,7 @@ jobs:
           name: claude-execution-output
           path: ${{ runner.temp }}/claude-execution-output.json
           if-no-files-found: ignore
+          retention-days: 90
 
       # Surface this run's own metrics (model, turns/budget, duration, tokens,
       # cost) in the run summary so tuning signals are legible without

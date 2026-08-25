@@ -966,6 +966,7 @@ jobs:
           name: claude-execution-output-classify
           path: ${{ runner.temp }}/claude-execution-output.json
           if-no-files-found: ignore
+          retention-days: 90
 
       # Mirrors clarify.yml's own gate: the action exits zero even when the
       # agent run itself errored, so a missing/malformed terminal result
@@ -1919,6 +1920,7 @@ jobs:
           name: claude-execution-output-act-${{ strategy.job-index }}
           path: ${{ runner.temp }}/claude-execution-output.json
           if-no-files-found: ignore
+          retention-days: 90
 
       - name: Fail on agent API error
         id: act-result

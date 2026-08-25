@@ -818,6 +818,7 @@ jobs:
           name: claude-execution-output-${{ matrix.slug }}
           path: ${{ runner.temp }}/claude-execution-output.json
           if-no-files-found: ignore
+          retention-days: 90
 
       # Surface this per-matrix-entry run's own metrics in the run summary
       # (see intake stage). Reads this entry's transcript at the shared path.
