@@ -3,7 +3,7 @@
   "spec_dir": "specs/043-durable-metrics-record",
   "feature_num": "043",
   "stage": "implement",
-  "iteration": 2,
+  "iteration": 3,
   "spec_branch": "spec/043-durable-metrics-record",
   "pending_re_review_from": ["charlesguse"]
 }
