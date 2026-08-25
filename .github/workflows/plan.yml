@@ -453,7 +453,7 @@ jobs:
       spec-dir: ${{ needs.resolve-spec.outputs.spec-dir }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
 
@@ -482,7 +482,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -537,7 +537,7 @@ jobs:
       # clean: false — a default `git clean` here would delete the untracked
       # .wing-commander-pipeline checkout the composite steps below still need.
       - name: Re-checkout default branch as wing-commander-bot
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ steps.defbranch.outputs.name }}
           token: ${{ steps.ctx.outputs.token }}
@@ -669,7 +669,7 @@ jobs:
       # clean: false — preserve .wing-commander-pipeline (see above).
       - name: Checkout spec branch as wing-commander-bot
         if: steps.dupe.outputs.skip != 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ inputs.spec-prefix }}${{ needs.resolve-spec.outputs.slug }}
           token: ${{ steps.ctx.outputs.token }}

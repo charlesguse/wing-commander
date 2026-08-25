@@ -7,7 +7,7 @@
 # subdirectory. Verified self-checkout snippet:
 #
 #   - name: Checkout pipeline repository (shared composite actions)
-#     uses: actions/checkout@v4
+#     uses: actions/checkout@v5
 #     with:
 #       repository: ${{ inputs.pipeline-repo }}   # default: the publishing repo
 #       ref: ${{ github.job_workflow_sha }}
@@ -61,7 +61,7 @@ runs:
   steps:
     - name: Mint wing-commander-bot App token
       id: app-token
-      uses: actions/create-github-app-token@v1
+      uses: actions/create-github-app-token@v2
       with:
         app-id: ${{ inputs.app-id }}
         private-key: ${{ inputs.private-key }}

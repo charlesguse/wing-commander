@@ -9,3 +9,4 @@
 # on every local gate run; only ever debris in a commit.
 __pycache__/
 *.pyc
+.claude/worktrees/

@@ -75,6 +75,9 @@ LINT_WORKFLOW = ".github/workflows/lint-workflows.yml"
 GATE_PREFIX = "Gate 30"
 THIS_SCRIPT = ".github/scripts/verify-truncated-cycle-carry-forward.py"
 
+# The author pattern implement.yml resolves from its own bot context; the
+# harness pins the claude half, which is what its fixture commits use.
+AGENT_AUTHOR_RE = r"claude\[bot\]|wing-commander-bot\[bot\]"
 CYCLE_STEP = "Read back cycle outcome"
 RETRY_STEP = "Read back retry outcome"
 FINAL_STEP = "Consolidate final outcome"
@@ -131,10 +134,11 @@ def write_file(repo, relpath, content):
         fh.write(content)
 
 
-def git_commit(repo, message):
+def git_commit(repo, message, author=None):
+    author_arg = f" --author={json.dumps(author)}" if author else ""
     proc = sh(f"""cd '{repo}'
 git add -A
-git commit -q -m {json.dumps(message)}
+git commit -q -m {json.dumps(message)}{author_arg}
 """, repo)
     if proc.returncode != 0:
         sys.exit(f"::error::commit {message!r} failed: {proc.stdout}{proc.stderr}")
@@ -166,9 +170,8 @@ def make_workspace(root, base_checked=0, base_unchecked=3,
 git init --bare -q -b main '{remote}'
 git clone -q '{remote}' '{repo}'
 cd '{repo}'
-git config user.email harness@example.invalid
-git config user.name harness
-git checkout -q -b '{branch}'
+git config user.email 'claude[bot]@users.noreply.invalid'
+git config user.name 'claude[bot]'
 """
     proc = sh(setup, work)
     if proc.returncode != 0:
@@ -179,6 +182,10 @@ git checkout -q -b '{branch}'
                json.dumps({"stage": "implement", "iteration": int(prior_iteration)}) + "\n")
     write_file(repo, "README.md", "unrelated\n")
     git_commit(repo, "seed")
+    git_push(repo, "main")
+    proc = sh(f"cd '{repo}' && git checkout -q -b '{branch}'", repo)
+    if proc.returncode != 0:
+        sys.exit(f"::error::branching failed: {proc.stdout}{proc.stderr}")
     git_push(repo, branch)
     base_sha = rev_parse(repo)
     return work, repo, base_sha, branch
@@ -186,7 +193,9 @@ git checkout -q -b '{branch}'
 
 def build_scenario(root, *, tick_task=False, outside_file=False, advance=True,
                     converge=False, iteration=ITERATION, base_checked=0,
-                    base_unchecked=3, prior_iteration=PRIOR_ITERATION):
+                    base_unchecked=3, prior_iteration=PRIOR_ITERATION,
+                    outside_author=None, outside_revert=False,
+                    import_main_commit=False):
     """One synthetic cycle's history on top of a fresh base commit."""
     work, repo, base_sha, branch = make_workspace(
         root, base_checked, base_unchecked, prior_iteration)
@@ -198,7 +207,13 @@ def build_scenario(root, *, tick_task=False, outside_file=False, advance=True,
         git_commit(repo, "implement: tick a task")
     if outside_file:
         write_file(repo, "src/feature.py", "feature\n")
-        git_commit(repo, "implement: add feature file")
+        git_commit(repo, "implement: add feature file", author=outside_author)
+    if outside_revert:
+        # The add-then-revert shape: the endpoint diff is empty, but the
+        # agent demonstrably did work - per-commit Arm B counts it (PR #258
+        # review F3, judged acceptable and pinned here as intended).
+        sh(f"cd '{repo}' && git rm -q src/feature.py", repo)
+        git_commit(repo, "implement: revert feature file")
     if advance:
         write_file(repo, f"{SPEC_DIR}/spec-meta.json",
                    json.dumps({"stage": "implement", "iteration": int(iteration)}) + "\n")
@@ -208,6 +223,26 @@ def build_scenario(root, *, tick_task=False, outside_file=False, advance=True,
         write_file(repo, f"{SPEC_DIR}/tasks.md", content)
         git_commit(repo, "converge: add convergence phase")
     git_push(repo, branch)
+    if import_main_commit:
+        # A mid-cycle auto-rebase: the default branch gains a bot-authored
+        # commit (a squash merge of some pipeline PR), and the spec branch
+        # is rebased onto it - main's commit becomes reachable from the
+        # branch tip without the agent having done anything (PR #258
+        # review F2).
+        proc = sh(f"""cd '{repo}'
+git checkout -q main
+mkdir -p tools
+printf 'tooling\n' > tools/setup.sh
+git add -A
+git commit -q -m "chore: pipeline PR squash" --author='wing-commander-bot[bot] <wc@bots.invalid>'
+git push -q origin main
+git checkout -q '{branch}'
+git rebase -q main
+git push -q -f origin '{branch}'
+""", repo)
+        if proc.returncode != 0:
+            sys.exit(f"::error::rebase-import fixture failed: "
+                     f"{proc.stdout}{proc.stderr}")
     return work, repo, base_sha, branch
 
 
@@ -216,7 +251,9 @@ def run_cycle_step(steps, repo, base_sha, *, verdict, cycle_result,
     runner_temp = tempfile.mkdtemp(dir=os.path.dirname(repo))
     env = {"SLUG": SLUG, "SPEC_DIR": SPEC_DIR, "ITERATION": str(iteration),
            "BASE_SHA": base_sha, "CYCLE_RESULT": cycle_result,
-           "VERDICT": verdict, "SPEC_PREFIX": SPEC_PREFIX}
+           "VERDICT": verdict, "SPEC_PREFIX": SPEC_PREFIX,
+           "AGENT_AUTHOR_RE": AGENT_AUTHOR_RE,
+           "DEFAULT_BRANCH": "main"}
     return run_step(BASH, steps[CYCLE_STEP], repo, env, runner_temp)
 
 
@@ -226,7 +263,9 @@ def run_retry_step(steps, repo, base_sha, *, verdict, retry_result,
     env = {"SLUG": SLUG, "SPEC_DIR": SPEC_DIR, "ITERATION": str(iteration),
            "BASE_SHA": base_sha, "RETRY_RESULT": retry_result,
            "VERDICT": verdict, "ESCALATION_MODEL": ESCALATION_MODEL,
-           "SPEC_PREFIX": SPEC_PREFIX}
+           "SPEC_PREFIX": SPEC_PREFIX,
+           "AGENT_AUTHOR_RE": AGENT_AUTHOR_RE,
+           "DEFAULT_BRANCH": "main"}
     return run_step(BASH, steps[RETRY_STEP], repo, env, runner_temp)
 
 
@@ -369,6 +408,21 @@ CYCLE_SCENARIOS = [
          tick_task=False, outside_file=True, advance=True, converge=False,
          verdict="exhausted", cycle_result="failure",
          expect=dict(ok="true", truncated="true", converged="false")),
+    dict(name="4b: exhausted, outside-file commit authored by a third party",
+         tick_task=False, outside_file=True, advance=True, converge=False,
+         outside_author="Maintainer <m@example.invalid>",
+         verdict="exhausted", cycle_result="failure",
+         expect=dict(ok="false", truncated="false", converged="")),
+    dict(name="4c: exhausted, a mid-cycle rebase imports a bot-authored default-branch commit",
+         tick_task=False, outside_file=False, advance=True, converge=False,
+         import_main_commit=True,
+         verdict="exhausted", cycle_result="failure",
+         expect=dict(ok="false", truncated="false", converged="")),
+    dict(name="4d: exhausted, the agent added then reverted an outside file",
+         tick_task=False, outside_file=True, outside_revert=True,
+         advance=True, converge=False,
+         verdict="exhausted", cycle_result="failure",
+         expect=dict(ok="true", truncated="true", converged="false")),
     dict(name="5: ordinary failure, no progress at all",
          tick_task=False, outside_file=False, advance=False, converge=False,
          verdict="failed", cycle_result="failure",
@@ -405,6 +459,9 @@ def run_cycle_scenario(steps, scenario, root):
     """(rc, out, outputs, failures) for one CYCLE_SCENARIOS entry."""
     work, repo, base_sha, _ = build_scenario(
         root, tick_task=scenario["tick_task"], outside_file=scenario["outside_file"],
+        outside_author=scenario.get("outside_author"),
+        outside_revert=scenario.get("outside_revert", False),
+        import_main_commit=scenario.get("import_main_commit", False),
         advance=scenario["advance"], converge=scenario["converge"])
     rc, out, outputs, summary = run_cycle_step(
         steps, repo, base_sha, verdict=scenario["verdict"],
@@ -437,7 +494,7 @@ def suite_cycle(steps, root):
 # ---------------------------------------------------------------------------
 
 def build_retry_scenario(root, *, retry_tick_task, retry_outside_file,
-                          retry_advance=True):
+                          retry_advance=True, retry_outside_author=None):
     """Primary attempt ticks ONE task and fails to advance (hence a retry
     fires); the retry's own base is the tip AFTER that partial push. The
     retry's own commits are layered on top of that.
@@ -452,7 +509,8 @@ def build_retry_scenario(root, *, retry_tick_task, retry_outside_file,
         git_commit(repo, "implement: retry ticks another task")
     if retry_outside_file:
         write_file(repo, "src/feature.py", "feature\n")
-        git_commit(repo, "implement: retry adds feature file")
+        git_commit(repo, "implement: retry adds feature file",
+                   author=retry_outside_author)
     if retry_advance:
         write_file(repo, f"{SPEC_DIR}/spec-meta.json",
                    json.dumps({"stage": "implement", "iteration": int(ITERATION)}) + "\n")
@@ -519,6 +577,65 @@ def check_retry_with_own_progress(root):
         if got != want:
             failures.append(f"{where}: expected {key}={want!r}, got {got!r}")
     return failures
+
+
+def check_retry_arm_b_author_filter(root):
+    """PR #258 review B1: Arm B on the RETRY path, both directions - a
+    bot-authored outside commit is the retry's own progress; a third-party
+    one is not."""
+    failures = []
+    steps = {RETRY_STEP: STEPS_CACHE[RETRY_STEP]}
+    _, repo, _, retry_base_sha, _ = build_retry_scenario(
+        root, retry_tick_task=False, retry_outside_file=True)
+    rc, out, outputs, _ = run_retry_step(
+        steps, repo, retry_base_sha, verdict="exhausted", retry_result="failure")
+    where = "retry with Arm-B-only progress (bot-authored outside commit)"
+    if rc != 0:
+        failures.append(f"{where}: exited {rc}: {out.strip()}")
+    elif outputs.get("ok") != "true" or outputs.get("truncated") != "true":
+        failures.append(f"{where}: expected ok=true/truncated=true, got "
+                        f"ok={outputs.get('ok')!r}, "
+                        f"truncated={outputs.get('truncated')!r}")
+
+    _, repo, _, retry_base_sha, _ = build_retry_scenario(
+        root, retry_tick_task=False, retry_outside_file=True,
+        retry_outside_author="Maintainer <m@example.invalid>")
+    rc, out, outputs, _ = run_retry_step(
+        steps, repo, retry_base_sha, verdict="exhausted", retry_result="failure")
+    where = "retry: outside commit authored by a third party"
+    if rc != 0:
+        failures.append(f"{where}: exited {rc}: {out.strip()}")
+    elif outputs.get("ok") != "false" or outputs.get("truncated") != "false":
+        failures.append(f"{where}: expected ok=false/truncated=false (a "
+                        f"third-party push is not the retry's own progress), "
+                        f"got ok={outputs.get('ok')!r}, "
+                        f"truncated={outputs.get('truncated')!r}")
+    return failures
+
+
+def check_retry_author_filter_mutation(root):
+    """PR #258 review B1: FR-019 shape for the retry mirror of
+    _mut_drop_author_filter - stripping the author filter from the RETRY
+    step must flip the third-party scenario to spurious progress."""
+    mutated = {RETRY_STEP: STEPS_CACHE[RETRY_STEP]}
+    mutated[RETRY_STEP] = mutated[RETRY_STEP].replace(
+        ' --author="$AGENT_AUTHOR_RE"', "", 1)
+    if mutated[RETRY_STEP] == STEPS_CACHE[RETRY_STEP]:
+        return ["mutation 'drop author filter (retry)' changed nothing - "
+                "the code it edits was rewritten."]
+    _, repo, _, retry_base_sha, _ = build_retry_scenario(
+        root, retry_tick_task=False, retry_outside_file=True,
+        retry_outside_author="Maintainer <m@example.invalid>")
+    rc, out, outputs, _ = run_retry_step(
+        mutated, repo, retry_base_sha, verdict="exhausted", retry_result="failure")
+    if rc == 0 and outputs.get("ok") == "true" and outputs.get("truncated") == "true":
+        print("Mutation OK — drop author filter (retry): caught (a "
+              "third-party push now wrongly reads as the retry's own "
+              "progress).")
+        return []
+    return [f"mutation survived: dropping the retry step's author filter "
+            f"did not flip the third-party scenario (rc={rc}, "
+            f"outputs={outputs})"]
 
 
 def check_retry_success_and_exhausted_together(root):
@@ -811,17 +928,28 @@ def check_reporting_persist_failure(root):
     were a number (FR-011, FR-012, SC-007)."""
     failures = []
     steps = {DISPATCH_STEP: STEPS_CACHE[DISPATCH_STEP]}
-    rc, out, outputs, body, calls, _ = run_dispatch_step(steps, {
-        "TRUNCATED": "true", "ITERATION": "2", "MAX": "5",
-        "TRUNCATED_COUNT": "unknown", "SELF_WORKFLOW": "wing-commander-5-implement.yml",
-    }, root)
-    where = "below-cap truncated report with an unrecorded count"
-    if rc != 0:
-        failures.append(f"{where}: exited {rc}: {out.strip()}")
-    else:
+    # Two arrivals of the same situation: the recorder step reported
+    # "unknown" (its push was rejected), or it died before its first
+    # echo count= and the output is EMPTY (#248) - the reader must not
+    # render either as if it were a number.
+    for count_value, arrival in (("unknown", "an 'unknown' marker"),
+                                 ("", "an empty output")):
+        rc, out, outputs, body, calls, _ = run_dispatch_step(steps, {
+            "TRUNCATED": "true", "ITERATION": "2", "MAX": "5",
+            "TRUNCATED_COUNT": count_value,
+            "SELF_WORKFLOW": "wing-commander-5-implement.yml",
+        }, root)
+        where = f"below-cap truncated report with {arrival}"
+        if rc != 0:
+            failures.append(f"{where}: exited {rc}: {out.strip()}")
+            continue
         if "consecutive truncations: unknown" in body:
             failures.append(f"{where}: must not print the raw 'unknown' "
                             f"marker as if it were a count: {body!r}")
+        if "consecutive truncations: )" in body:
+            failures.append(f"{where}: rendered an empty count as "
+                            f"'truncations: )' - FR-010 said it must "
+                            f"never: {body!r}")
         if "could not be recorded" not in body:
             failures.append(f"{where}: expected wording that the count "
                             f"could not be recorded this cycle: {body!r}")
@@ -860,13 +988,27 @@ def _mut_drop_arm_b(steps):
         'if [ "$arm_a" = "true" ]; then', 1)
 
 
+def _mut_drop_author_filter(steps):
+    """Widen Arm B back to any-diff-at-all, the pre-#248 shape that counted
+    an auto-rebase or maintainer push as the agent's own progress."""
+    steps[CYCLE_STEP] = steps[CYCLE_STEP].replace(
+        ' --author="$AGENT_AUTHOR_RE"', "", 1)
+
+
+def _mut_drop_not_default_branch(steps):
+    """Drop the default-branch bound so rebase-imported commits count again
+    (PR #258 review F2)."""
+    steps[CYCLE_STEP] = steps[CYCLE_STEP].replace(
+        ' "${not_default[@]}"', "", 1)
+
+
 def _mut_count_advance_as_progress(steps):
     """Widen Arm B to no longer exclude $SPEC_DIR, so the lifecycle-record
     advance commit itself (which lives inside $SPEC_DIR) satisfies Arm B —
     a different mechanism than removing the guard outright."""
     steps[CYCLE_STEP] = steps[CYCLE_STEP].replace(
-        'git diff --name-only "$BASE_SHA..origin/${SPEC_PREFIX}$SLUG" -- . ":(exclude)$SPEC_DIR/**"',
-        'git diff --name-only "$BASE_SHA..origin/${SPEC_PREFIX}$SLUG"', 1)
+        ' -- . ":(exclude)$SPEC_DIR/**" | grep -q .',
+        ' | grep -q .', 1)
 
 
 def _mut_widen_exhausted_to_failed(steps):
@@ -948,6 +1090,12 @@ MUTATIONS = [
     ("drop Arm B (outside-spec-dir file change)",
      _mut_drop_arm_b, "4: exhausted, Arm-B-only progress",
      {"truncated": "false"}),
+    ("dropping Arm B's author filter counts third-party pushes as progress",
+     _mut_drop_author_filter, "4b: exhausted, outside-file commit authored by a third party",
+     {"ok": "true", "truncated": "true"}),
+    ("dropping the default-branch bound counts rebase-imported commits as progress",
+     _mut_drop_not_default_branch, "4c: exhausted, a mid-cycle rebase imports a bot-authored default-branch commit",
+     {"ok": "true", "truncated": "true"}),
     ("count the lifecycle-record advance itself as progress",
      _mut_count_advance_as_progress, "2: exhausted, only the lifecycle-record advance landed",
      {"truncated": "true"}),
@@ -1012,6 +1160,7 @@ def main():
         failures.extend(suite_cycle(steps, root))
         failures.extend(check_retry_no_own_progress(root))
         failures.extend(check_retry_with_own_progress(root))
+        failures.extend(check_retry_arm_b_author_filter(root))
         failures.extend(check_retry_success_and_exhausted_together(root))
         failures.extend(check_final_selects_retry_truncated(root))
         failures.extend(check_effective_model_tier(root))
@@ -1045,6 +1194,7 @@ def main():
                 failures.append(f"mutation survived: {label}")
 
         failures.extend(check_retry_swap_order_mutation(root))
+        failures.extend(check_retry_author_filter_mutation(root))
         failures.extend(check_tier_carry_over_mutation(root))
         failures.extend(check_gate_wired())
     finally:

@@ -73,7 +73,7 @@ runs:
       id: checkout
       if: inputs.spec-dir != ''
       continue-on-error: true
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
       with:
         ref: ${{ inputs.spec-branch }}
         token: ${{ inputs.token }}

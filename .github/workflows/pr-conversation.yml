@@ -416,7 +416,7 @@ jobs:
       refusal-reason: ${{ steps.identity.outputs.reason || steps.preflight.outputs.reason || steps.meta.outputs.reason }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
 
@@ -444,7 +444,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -787,7 +787,7 @@ jobs:
       # plausible?) — read-only, the default token is sufficient.
       - name: Checkout implementation branch (read-only)
         if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug }}
           persist-credentials: false
@@ -1442,7 +1442,7 @@ jobs:
       deployment: false
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
 
@@ -1467,7 +1467,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -1700,7 +1700,7 @@ jobs:
 
       - name: Checkout working tree for this leg
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.needs-checkout == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ steps.route.outputs.checkout-ref }}
           token: ${{ steps.ctx.outputs.token }}
@@ -2323,7 +2323,7 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
 
@@ -2348,7 +2348,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -2379,7 +2379,7 @@ jobs:
 
       - name: Checkout spec branch at its current tip
         if: steps.tip.outputs.sha != needs.classify-and-announce.outputs.base-sha && steps.tip.outputs.sha != ''
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ inputs.spec-prefix }}${{ needs.classify-and-announce.outputs.slug }}
           token: ${{ steps.ctx.outputs.token }}
@@ -2486,7 +2486,7 @@ jobs:
       id-token: write
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
 
@@ -2511,7 +2511,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -2538,7 +2538,7 @@ jobs:
 
       - name: Checkout spec branch at its current tip
         if: steps.tip.outputs.sha != ''
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ inputs.spec-prefix }}${{ needs.classify-and-announce.outputs.slug }}
           token: ${{ steps.ctx.outputs.token }}
@@ -2651,7 +2651,7 @@ jobs:
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         if: needs.classify-and-announce.outputs.refusal-reason == ''
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
 
@@ -2678,7 +2678,7 @@ jobs:
 
       - name: Checkout pipeline repository (shared composite actions)
         if: needs.classify-and-announce.outputs.refusal-reason == ''
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
