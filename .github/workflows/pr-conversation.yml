@@ -2293,9 +2293,10 @@ jobs:
   # without touching FR-004a's own wait, which lives entirely in `act`'s
   # unchanged group membership.
   dispatch-once:
-    needs: [classify-and-announce, act]
+    needs: [verify-image-prerequisites, classify-and-announce, act]
     if: >-
       always() &&
+      needs.verify-image-prerequisites.result == 'success' &&
       needs.classify-and-announce.outputs.qualifies == 'true' &&
       needs.classify-and-announce.outputs.classifications != '[]'
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
@@ -2458,9 +2459,10 @@ jobs:
   # writes a `fold(<id>):` commit — as "not folded". `if: always()` so this
   # job runs even when `act` itself failed/cancelled/timed out.
   report-fold-outcomes:
-    needs: [classify-and-announce, act]
+    needs: [verify-image-prerequisites, classify-and-announce, act]
     if: >-
       always() &&
+      needs.verify-image-prerequisites.result == 'success' &&
       needs.classify-and-announce.outputs.qualifies == 'true' &&
       needs.classify-and-announce.outputs.classifications != '[]'
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
@@ -2542,6 +2544,7 @@ jobs:
       - name: Report fold-route leg outcomes
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ACTIONS_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ inputs.pr-number }}
           RUN_ID: ${{ github.run_id }}
           CLASSIFICATIONS: ${{ needs.classify-and-announce.outputs.classifications }}
@@ -2549,7 +2552,11 @@ jobs:
           TIP_SHA: ${{ steps.tip.outputs.sha }}
         run: |
           set -euo pipefail
-          jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" --paginate --jq '.jobs[] | {name, conclusion}' | jq -s -c '.')
+          # Gate 12: `.../actions/runs/.../jobs` needs Actions:read, which the
+          # App token does not have (docs/setup.md, "Everything else: No
+          # access") — use the job's default token for this call only,
+          # keeping the App token (GH_TOKEN) for the PR comment write below.
+          jobs=$(GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" --paginate --jq '.jobs[] | {name, conclusion}' | jq -s -c '.')
 
           range=""
           if [ -n "$TIP_SHA" ] && [ -n "$BASE_SHA" ] && [ "$TIP_SHA" != "$BASE_SHA" ]; then

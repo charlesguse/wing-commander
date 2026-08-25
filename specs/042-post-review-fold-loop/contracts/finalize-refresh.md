@@ -52,8 +52,12 @@ The PR number used for `open` is the one the guard step already read
 
 See `data-model.md` §6 for the exact delimited-region shape. Summary of
 the guarantee: content outside `<!-- wing-commander-finalize:state:begin -->`
-… `<!-- wing-commander-finalize:fold-log:end -->` is preserved byte-for-byte
-(FR-008b); the state block is fully regenerated; the fold log is
+… `<!-- wing-commander-finalize:narrative:end -->` is preserved byte-for-byte
+(FR-008b); the state block and the narrative (summary/how-to-see-it/
+remaining-work/lifecycle-link) are both fully regenerated every run — the
+narrative lives inside the delimited region precisely so it is regenerated
+rather than preserved (PR #253 review fixed a shape where it sat outside
+the region and stacked a duplicate copy on every refresh); the fold log is
 append-only, one entry per fold, keyed for idempotency by the branch tip
 SHA it describes (FR-008a, FR-010a).
 

@@ -854,15 +854,22 @@ jobs:
       # manual work remains" fallback both read the same finalize-remaining.md
       # the issue comment below will also use verbatim.
       # research.md D9/D9a, data-model.md §6: the narrative half (summary,
-      # how-to-see-it, remaining work) is unchanged from today; it is now
-      # wrapped by a delimited machine-owned region — a fully regenerated
-      # state block, and an append-only, branch-tip-SHA-keyed fold log. The
-      # `none` (create) path writes the region fresh with zero fold-log
-      # entries, seeding it for a future refresh to extend; the `open`
-      # (refresh) path preserves the existing PR body's prose OUTSIDE the
-      # region byte-for-byte (FR-008b), regenerates the state block, and
-      # appends at most one new fold-log entry (D9a: skipped when the
-      # current tip is already the most recently recorded one).
+      # how-to-see-it, remaining work) is regenerated fresh every run, same
+      # as the state block, and is wrapped in its own
+      # narrative:begin/narrative:end markers immediately after the fold log
+      # so it is genuinely INSIDE the machine-owned region rather than
+      # merely following it — PR #253 review: an earlier shape left it
+      # outside the region, so a refresh's "preserve everything outside the
+      # region" rule (FR-008b) preserved the PRIOR run's own narrative and
+      # then appended a freshly generated one below it, stacking duplicate
+      # narratives on every refresh. The `none` (create) path writes the
+      # whole region fresh with zero fold-log entries, seeding it for a
+      # future refresh to extend; the `open` (refresh) path preserves the
+      # existing PR body's prose OUTSIDE state:begin…narrative:end
+      # byte-for-byte (FR-008b), regenerates the state block and the
+      # narrative wholesale, and appends at most one new fold-log entry
+      # (D9a: skipped when the current tip is already the most recently
+      # recorded one).
       - name: Assemble PR body
         id: body
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
@@ -936,7 +943,11 @@ jobs:
             # file instead of nothing — Gate 35 caught this against a
             # real prior body with no leading prose.
             sed -n '0,/<!-- wing-commander-finalize:state:begin -->/p' "$prior_body_file" | sed '$d' > "$before_file"
-            sed -n '/<!-- wing-commander-finalize:fold-log:end -->/,$p' "$prior_body_file" | sed '1d' > "$after_file"
+            # Bounded on narrative:end, not fold-log:end: the narrative is
+            # itself inside the machine-owned region (see the step's leading
+            # comment) and must be discarded here, not preserved, or it
+            # stacks a duplicate copy on every refresh (PR #253 review).
+            sed -n '/<!-- wing-commander-finalize:narrative:end -->/,$p' "$prior_body_file" | sed '1d' > "$after_file"
             sed -n '/<!-- wing-commander-finalize:fold-log:begin -->/,/<!-- wing-commander-finalize:fold-log:end -->/p' "$prior_body_file" | sed '1d;$d' > "$foldlog_file"
           elif [ -s "$prior_body_file" ]; then
             # An existing PR predating this feature's machine-owned region:
@@ -982,12 +993,14 @@ jobs:
             [ -s "$foldlog_file" ] && cat "$foldlog_file"
             [ -n "$new_entry" ] && echo "$new_entry"
             echo "<!-- wing-commander-finalize:fold-log:end -->"
+            echo ""
+            echo "<!-- wing-commander-finalize:narrative:begin -->"
+            cat "$narrative_file"
+            echo "<!-- wing-commander-finalize:narrative:end -->"
             if [ -s "$after_file" ]; then
               echo ""
               cat "$after_file"
             fi
-            echo ""
-            cat "$narrative_file"
           } > "$body_file"
           echo "body-file=$body_file" >> "$GITHUB_OUTPUT"
 

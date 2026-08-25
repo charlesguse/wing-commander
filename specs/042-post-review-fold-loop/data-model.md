@@ -123,6 +123,10 @@ unchanged. This feature adds:
 - Fold (<date>, review by <@login>, #<issue>) <short-sha>: <n> items folded — <one-line summary>.
 <!-- wing-commander-finalize:fold-log:end -->
 
+<!-- wing-commander-finalize:narrative:begin -->
+<summary, "## How to see it", "## Remaining manual work", lifecycle issue link — regenerated wholesale every run>
+<!-- wing-commander-finalize:narrative:end -->
+
 <human prose, if any — preserved verbatim across refreshes>
 ```
 
@@ -130,7 +134,14 @@ unchanged. This feature adds:
 `state:begin` and `state:end` is fully overwritten from the current branch
 state. Everything between `fold-log:begin` and `fold-log:end` is the
 existing entries, re-emitted unchanged, plus at most one new entry (D9a).
-Everything outside `state:begin`…`fold-log:end` is copied byte-for-byte
+Everything between `narrative:begin` and `narrative:end` is fully
+overwritten from the current run, same as the state block — it is
+machine-generated on every run (what changed, what remains), not prose a
+human added, so it must never be preserved from a prior body (PR #253
+review: an earlier shape left the narrative outside the delimited region,
+so "preserve everything outside the region" preserved the PRIOR run's own
+narrative and a fresh one was appended below it on every refresh).
+Everything outside `state:begin`…`narrative:end` is copied byte-for-byte
 from the PR's current body.
 
 **Idempotency key** (D9a): the short-sha embedded in each fold-log entry

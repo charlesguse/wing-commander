@@ -71,6 +71,8 @@ STATE_BEGIN = "<!-- wing-commander-finalize:state:begin -->"
 STATE_END = "<!-- wing-commander-finalize:state:end -->"
 FOLDLOG_BEGIN = "<!-- wing-commander-finalize:fold-log:begin -->"
 FOLDLOG_END = "<!-- wing-commander-finalize:fold-log:end -->"
+NARRATIVE_BEGIN = "<!-- wing-commander-finalize:narrative:begin -->"
+NARRATIVE_END = "<!-- wing-commander-finalize:narrative:end -->"
 
 
 def extract_between(text, start_marker, end_marker):
@@ -410,6 +412,7 @@ def scenario_refresh_preserves_and_appends(steps, root):
         f"{FOLDLOG_BEGIN}\n"
         f"- Fold (2026-08-20, review by @alice, #250) {old_short}: 1 item(s) folded — first fold.\n"
         f"{FOLDLOG_END}\n\n"
+        f"{NARRATIVE_BEGIN}\nA stale narrative from the prior run.\n{NARRATIVE_END}\n\n"
         "Some human wrote this note after the region.\n"
     )
     prior_body_file = os.path.join(work, "prior-body.md")
@@ -428,6 +431,16 @@ def scenario_refresh_preserves_and_appends(steps, root):
         if needle not in body:
             failures.append(f"refresh dropped preserved prose: {needle!r} "
                             f"not found in {body!r}")
+    # PR #253 review: the narrative lives INSIDE the region (narrative:begin
+    # ... narrative:end), so a refresh must discard the prior run's own
+    # narrative, not preserve it alongside a freshly generated one.
+    if "A stale narrative from the prior run." in body:
+        failures.append("refresh preserved the PRIOR run's narrative instead "
+                        f"of discarding it — this is the duplicate-narrative "
+                        f"defect PR #253's review caught: {body!r}")
+    narrative_span = extract_between(body, NARRATIVE_BEGIN, NARRATIVE_END) or ""
+    if not narrative_span.strip():
+        failures.append(f"refresh produced an empty narrative region: {body!r}")
     if "3/5 checked" not in body:
         failures.append(f"refresh did not regenerate the state block's task "
                         f"count: {body!r}")
@@ -476,6 +489,30 @@ def scenario_idempotent_repeat_refresh(steps, root):
     if rc != 0:
         failures.append(f"repeat assembly exited {rc}: {out.strip()}")
         return failures
+
+    # PR #253 review: assert the narrative appears exactly once, not once
+    # per refresh — the exact shape of the duplicate-narrative defect
+    # (narrative sat outside the region, so "preserve everything outside"
+    # kept the prior run's copy and a fresh one was appended below it).
+    body2_file = os.path.join(work, "body2.md")
+    with open(body2_file, "w", encoding="utf-8") as fh:
+        fh.write(body2)
+    rc, out, body3 = _run_assemble_body(steps, repo, work, bindir, calls,
+                                        runner_temp, "open",
+                                        prior_body_file=body2_file)
+    if rc != 0:
+        failures.append(f"second repeat assembly exited {rc}: {out.strip()}")
+        return failures
+    for label, body in (("first refresh", body2), ("second refresh", body3)):
+        how_count = body.count("## How to see it")
+        if how_count != 1:
+            failures.append(f"{label}: narrative appears {how_count} time(s) "
+                            f"(expected exactly 1) — {body!r}")
+        narrative_count = body.count(NARRATIVE_BEGIN)
+        if narrative_count != 1:
+            failures.append(f"{label}: {narrative_count} narrative:begin "
+                            f"marker(s) found (expected exactly 1) — {body!r}")
+
     fold_log_span = extract_between(body2, FOLDLOG_BEGIN, FOLDLOG_END) or ""
     count = fold_log_span.count("- Fold (")
     if count != 1:
