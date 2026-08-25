@@ -11,16 +11,21 @@ for their own destination.
 on:
   workflow_run:
     workflows:
-      - intake
-      - clarify
-      - plan
-      - tasks
-      - implement
-      - finalize
-      - cleanup
-      - rebase
-      - watchdog
-      - pr-conversation
+      # These MUST be the WRAPPER workflows' display names in YOUR
+      # repository - the values of their `name:` keys - because a
+      # workflow_run payload carries the wrapper's identity; a
+      # workflow_call-only (reusable) workflow never owns a run, so
+      # naming one here silently never fires (PR #267 review, B1).
+      - "Wing Commander · 1 intake"
+      - "Wing Commander · 2 clarify"
+      - "Wing Commander · 3 plan"
+      - "Wing Commander · 4 tasks"
+      - "Wing Commander · 5 implement"
+      - "Wing Commander · 6 finalize"
+      - "Wing Commander · 7 cleanup"
+      - "Wing Commander · rebase"
+      - "Wing Commander · 8 watchdog"
+      - "Wing Commander · 9 pr conversation"
     types: [completed]
   workflow_dispatch:
     inputs:

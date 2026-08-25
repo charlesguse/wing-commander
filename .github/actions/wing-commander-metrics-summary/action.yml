@@ -113,10 +113,13 @@ inputs:
     default: ''
   step-index:
     description: >
-      Ordinal position of this wing-commander-metrics-summary invocation
-      within its job (0, 1, 2 — jobs with more than one agent step, e.g.
-      implement.yml's cycle/retry/progress sequence). A literal per call
-      site; 0 is correct for every job with exactly one agent step.
+      Distinguishing component of the record key for this invocation
+      within its job: an ordinal (0, 1, 2) for jobs with several agent
+      steps (implement.yml's cycle/retry/progress sequence), or the
+      matrix leg's own index (`strategy.job-index`) at matrix call
+      sites, where every leg shares one `github.job` (PR #267 review,
+      B4). A literal or expression per call site; 0 is correct for a
+      single-agent-step, non-matrix job.
     required: false
     default: '0'
 
