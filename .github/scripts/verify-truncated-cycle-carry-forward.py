@@ -42,7 +42,12 @@ an explicit "unknown" marker — never a stale or fabricated number — when its
 own persist fails (US5, FR-011, Maintainer Feedback: persist-failure
 handling); and the lifecycle issue report names truncation without ever
 saying "failed" or showing an empty remaining-work block (US5,
-FR-013/FR-014/FR-015).
+FR-013/FR-014/FR-015); and a failed retry whose transcript shows the
+escalation model never answered (modelUsage empty, zero cost — issue #231's
+spend-limit stall) is reattributed to the primary tier in the consolidated
+tier/reason, while a retry that really ran, a missing or result-less
+transcript, and every ok=true carried-forward retry keep the escalation
+tier untouched.
 
 A battery of mutations at the end reintroduces the forced-false rule, the
 no-progress guard, either arm of the progress test, counting the
@@ -269,10 +274,16 @@ def run_retry_step(steps, repo, base_sha, *, verdict, retry_result,
     return run_step(BASH, steps[RETRY_STEP], repo, env, runner_temp)
 
 
-def run_final_step(steps, env_overrides, root):
+def run_final_step(steps, env_overrides, root, transcript=None):
     workdir = tempfile.mkdtemp(dir=root)
     runner_temp = os.path.join(workdir, "runner_temp")
     os.makedirs(runner_temp, exist_ok=True)
+    if transcript is not None:
+        # The last attempt's transcript, exactly where the shipped step's
+        # refusal probe reads it ($RUNNER_TEMP/claude-execution-output.json).
+        with open(os.path.join(runner_temp, "claude-execution-output.json"),
+                  "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(transcript)
     env = {
         "RETRY_RAN": "false",
         "PRIMARY_OK": "true", "PRIMARY_TRUNCATED": "false",
@@ -728,6 +739,129 @@ def check_final_selects_retry_truncated(root):
     return failures
 
 
+# The transcript shape a spend/rate-limit-killed retry actually leaves
+# (pinned from issue #231's failing run, 32675877971): an init record still
+# claiming the escalation model, one synthetic assistant message, and a
+# result whose modelUsage is empty and cost zero — the escalation model
+# never answered.
+REFUSED_RETRY_TRANSCRIPT = json.dumps([
+    {"type": "system", "subtype": "init", "model": ESCALATION_MODEL},
+    {"type": "rate_limit_event"},
+    {"type": "assistant", "message": {"model": "<synthetic>", "content": [
+        {"type": "text", "text": "You've hit your org's monthly spend limit"}]}},
+    {"type": "result", "subtype": "success", "is_error": True, "num_turns": 1,
+     "total_cost_usd": 0, "modelUsage": {}},
+])
+
+# A retry that genuinely ran (and failed) on the escalation model.
+SERVED_RETRY_TRANSCRIPT = json.dumps([
+    {"type": "system", "subtype": "init", "model": ESCALATION_MODEL},
+    {"type": "result", "subtype": "success", "is_error": True, "num_turns": 12,
+     "total_cost_usd": 3.21,
+     "modelUsage": {ESCALATION_MODEL: {"outputTokens": 999}}},
+])
+
+RETRY_FAILED_ENV = {
+    "RETRY_RAN": "true", "RETRY_OK": "false", "RETRY_TRUNCATED": "false",
+    "RETRY_CONVERGED": "",
+    "RETRY_REASON": "the retry's agent step itself finished 'failure' "
+                    "before completing its work",
+}
+
+REFUSAL_MARKER = "refused before its first model response"
+
+
+def check_final_refused_retry_attribution(root):
+    """Issue #231's stall notice read "last attempt on `claude-opus-5`" for a
+    spend-limit stall whose escalation retry never received a single model
+    response (modelUsage == {}, total_cost_usd == 0) — every real model turn
+    was the primary tier's. "Consolidate final outcome" must reattribute
+    exactly that stall's tier/reason to the primary attempt, and ONLY that
+    stall's: a retry that really ran on the escalation model keeps its tier,
+    a missing or result-less transcript degrades to today's behavior, and an
+    ok=true (carried-forward) retry is never rewritten no matter what the
+    transcript says, because its tier feeds "Record truncated-cycle count"."""
+    failures = []
+    steps = {FINAL_STEP: STEPS_CACHE[FINAL_STEP]}
+
+    for label, transcript, want_tier, want_reattributed in (
+        ("refused retry: no model usage, zero cost",
+         REFUSED_RETRY_TRANSCRIPT, PRIMARY_MODEL, True),
+        ("retry that really ran on the escalation model",
+         SERVED_RETRY_TRANSCRIPT, ESCALATION_MODEL, False),
+        ("no transcript at all", None, ESCALATION_MODEL, False),
+        ("transcript with no result record",
+         json.dumps([{"type": "system", "subtype": "init"}]),
+         ESCALATION_MODEL, False),
+    ):
+        rc, out, outputs, _ = run_final_step(
+            steps, dict(RETRY_FAILED_ENV), root, transcript=transcript)
+        where = f"final(refused-retry: {label})"
+        if rc != 0:
+            failures.append(f"{where}: exited {rc}: {out.strip()}")
+            continue
+        if outputs.get("tier") != want_tier:
+            failures.append(f"{where}: expected tier={want_tier!r}, got "
+                            f"{outputs.get('tier')!r}")
+        reason = outputs.get("reason", "")
+        if (REFUSAL_MARKER in reason) != want_reattributed:
+            failures.append(
+                f"{where}: expected the refusal note "
+                f"{'present' if want_reattributed else 'absent'} in the "
+                f"reason, got reason={reason!r}")
+        if want_reattributed and RETRY_FAILED_ENV["RETRY_REASON"] not in reason:
+            failures.append(
+                f"{where}: the retry's own reason must survive the "
+                f"reattribution (the maintainer still needs to know HOW the "
+                f"retry died), got reason={reason!r}")
+
+    # The carry-forward guard: an ok=true truncated retry keeps the
+    # escalation tier even against a refusal-shaped transcript — this tier
+    # is what "Record truncated-cycle count" persists for the next cycle.
+    rc, out, outputs, _ = run_final_step(steps, {
+        "RETRY_RAN": "true", "RETRY_OK": "true", "RETRY_TRUNCATED": "true",
+        "RETRY_CONVERGED": "false",
+    }, root, transcript=REFUSED_RETRY_TRANSCRIPT)
+    where = "final(refused-retry: ok=true carried retry)"
+    if rc != 0:
+        failures.append(f"{where}: exited {rc}: {out.strip()}")
+    elif outputs.get("tier") != ESCALATION_MODEL:
+        failures.append(
+            f"{where}: expected tier={ESCALATION_MODEL!r} untouched (it "
+            f"feeds the truncated_tier carry-forward), got "
+            f"{outputs.get('tier')!r}")
+    return failures
+
+
+def check_refused_retry_guard_mutation(root):
+    """FR-019 pattern: drop the `ok != true` gate on the refusal probe and an
+    ok=true carried-forward retry with a refusal-shaped transcript gets its
+    tier rewritten to the primary model — the corrupted value "Record
+    truncated-cycle count" would then persist as truncated_tier. The
+    unmutated step passes this scenario in
+    check_final_refused_retry_attribution; the mutant must flip it, proving
+    the guard is load-bearing and not decorative."""
+    original = STEPS_CACHE[FINAL_STEP]
+    mutated = original.replace(' && [ "$ok" != "true" ]', '')
+    if mutated == original:
+        return ["mutation 'drop the refusal probe's ok guard' changed "
+                "nothing — the code it edits was rewritten. Update the "
+                "mutation so this harness keeps proving it can fail."]
+    steps = {FINAL_STEP: mutated}
+    rc, _, outputs, _ = run_final_step(steps, {
+        "RETRY_RAN": "true", "RETRY_OK": "true", "RETRY_TRUNCATED": "true",
+        "RETRY_CONVERGED": "false",
+    }, root, transcript=REFUSED_RETRY_TRANSCRIPT)
+    if rc == 0 and outputs.get("tier") == PRIMARY_MODEL:
+        print("Mutation OK — drop the refusal probe's ok guard: caught "
+              "(an ok=true carried retry now gets tier rewritten).")
+        return []
+    return [f"mutation survived: dropping the refusal probe's ok guard did "
+            f"not rewrite an ok=true carried retry's tier (got rc={rc}, "
+            f"tier={outputs.get('tier')!r}). Fix the scenario, not the "
+            f"mutation."]
+
+
 def check_effective_model_tier(root):
     """Maintainer Feedback (tier persistence, FR-007/FR-021): "Resolve
     effective model tier" must fall back to inputs.model whenever no tier
@@ -1163,6 +1297,8 @@ def main():
         failures.extend(check_retry_arm_b_author_filter(root))
         failures.extend(check_retry_success_and_exhausted_together(root))
         failures.extend(check_final_selects_retry_truncated(root))
+        failures.extend(check_final_refused_retry_attribution(root))
+        failures.extend(check_refused_retry_guard_mutation(root))
         failures.extend(check_effective_model_tier(root))
         failures.extend(check_counter(root))
         failures.extend(check_reporting(root))
