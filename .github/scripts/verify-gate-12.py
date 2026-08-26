@@ -12,6 +12,12 @@ by accident — a maintainer noticing a stall, not a check — and T062/T063
 survived five pipeline cycles, a full quickstart desk-check, and three
 rounds of executing the shipped shell against synthetic inputs first.
 
+Also covers multi-permission verbs: `gh pr create` needs contents:read on
+top of pull-requests:write (it resolves repository.defaultBranchRef over
+GraphQL even with an explicit --base), and `gh pr ready` needs
+contents:WRITE — the markPullRequestReadyForReview mutation is gated like
+a merge (cli/cli discussion #6924).
+
 A gate that never fires is indistinguishable from one whose detection logic
 is broken (gate 5 exists because that already happened once — a verifier sat
 green for weeks checking a filter that did not ship). So this script feeds
