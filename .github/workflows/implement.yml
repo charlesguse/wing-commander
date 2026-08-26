@@ -1563,7 +1563,10 @@ jobs:
 
       # Consolidate: when the retry ran, its results are the cycle's results
       # (and the effective tier is opus); otherwise the primary attempt's
-      # stand. Downstream steps read only these final-* values.
+      # stand. Downstream steps read only these final-* values. One
+      # exception: a failed retry whose transcript shows the escalation
+      # model never answered at all is reattributed to the primary tier —
+      # see the refusal probe below.
       - name: Consolidate final outcome
         id: final
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
@@ -1586,6 +1589,35 @@ jobs:
             ok="$RETRY_OK"; truncated="$RETRY_TRUNCATED"; converged="$RETRY_CONVERGED"; remaining="$RETRY_REMAINING"; tier="$ESCALATION_MODEL"; reason="$RETRY_REASON"
           else
             ok="$PRIMARY_OK"; truncated="$PRIMARY_TRUNCATED"; converged="$PRIMARY_CONVERGED"; remaining="$PRIMARY_REMAINING"; tier="$PRIMARY_TIER"; reason="$PRIMARY_REASON"
+          fi
+          # A retry the API refused before its first model response — e.g. a
+          # spend/rate-limit kill, observed live on issue #231's stall notice —
+          # never actually ran on the escalation tier: its transcript's result
+          # record shows modelUsage == {} and total_cost_usd == 0 (the CLI's
+          # only assistant message is model "<synthetic>"). Reporting
+          # tier=$ESCALATION_MODEL for that stall tells the maintainer the
+          # last attempt ran "on opus" when every real model turn was the
+          # primary tier's, so reattribute it to the attempt that ran. Gated
+          # on ok=false so the carry-forward bookkeeping ("Record
+          # truncated-cycle count" persists tier only from ok=true truncated
+          # cycles) never sees a rewritten tier; a missing/unreadable
+          # transcript or absent result record degrades to today's behavior.
+          # $RUNNER_TEMP/claude-execution-output.json is the LAST attempt's
+          # transcript (a retry overwrites the primary's — see "Extract agent
+          # final message" below), so with RETRY_RAN=true it is the retry's.
+          if [ "$RETRY_RAN" = "true" ] && [ "$ok" != "true" ]; then
+            refused=$(jq -r '
+              if type=="array" then . else [.] end
+              | map(select(.type=="result")) | last
+              | if . == null then false
+                else ((.modelUsage // {} | length) == 0)
+                     and ((.total_cost_usd // 0) == 0)
+                end' "$RUNNER_TEMP/claude-execution-output.json" 2>/dev/null || true)
+            if [ "$refused" = "true" ]; then
+              tier="$PRIMARY_TIER"
+              refusal_note="the $ESCALATION_MODEL retry was refused before its first model response (its transcript records no model usage), so the last attempt that actually ran a model was the $PRIMARY_TIER cycle"
+              if [ -n "$reason" ]; then reason="$reason — $refusal_note"; else reason="$refusal_note"; fi
+            fi
           fi
           {
             echo "ok=$ok"
