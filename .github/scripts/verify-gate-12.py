@@ -12,6 +12,12 @@ by accident — a maintainer noticing a stall, not a check — and T062/T063
 survived five pipeline cycles, a full quickstart desk-check, and three
 rounds of executing the shipped shell against synthetic inputs first.
 
+Also covers multi-permission verbs: `gh pr create` needs contents:read on
+top of pull-requests:write (it resolves repository.defaultBranchRef over
+GraphQL even with an explicit --base), and `gh pr ready` needs
+contents:WRITE — the markPullRequestReadyForReview mutation is gated like
+a merge (cli/cli discussion #6924).
+
 A gate that never fires is indistinguishable from one whose detection logic
 is broken (gate 5 exists because that already happened once — a verifier sat
 green for weeks checking a filter that did not ship). So this script feeds
@@ -352,6 +358,31 @@ CASES = [
     ("T073: an App-token read call against that same Read-only grant is fine",
      mkcase("", "", [APP_ENV], ['gh issue view "$N"'],
             docs=DOCS_ISSUES_READONLY),
+     False, ()),
+
+    ("under-permissioned `gh pr create` under github.token with only "
+     "pull-requests:write (missing contents:read) fails",
+     mkcase("      pull-requests: write\n", "", [DEFAULT_ENV],
+            ['gh pr create --repo "$REPO" --base main --head "$HEAD" '
+             '--draft --title t --body b']),
+     True, ("pr create", "contents")),
+
+    ("the fix: `gh pr create` with both pull-requests:write "
+     "and contents:read passes",
+     mkcase("      pull-requests: write\n      contents: read\n", "", [DEFAULT_ENV],
+            ['gh pr create --repo "$REPO" --base main --head "$HEAD" '
+             '--draft --title t --body b']),
+     False, ()),
+
+    ("under-permissioned `gh pr ready` under github.token with contents:read "
+     "(needs contents:WRITE) fails",
+     mkcase("      pull-requests: write\n      contents: read\n", "", [DEFAULT_ENV],
+            ['gh pr ready "$N" --repo "$REPO"']),
+     True, ("pr ready", "contents")),
+
+    ("the fix: `gh pr ready` with contents:write passes",
+     mkcase("      pull-requests: write\n      contents: write\n", "", [DEFAULT_ENV],
+            ['gh pr ready "$N" --repo "$REPO"']),
      False, ()),
 
     # --- category C (#215) ------------------------------------------------
