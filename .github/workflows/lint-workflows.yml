@@ -783,15 +783,12 @@ jobs:
           python3 - <<'PYEOF'
           import glob, os, re, sys, yaml
 
-          # subcommand (verb1, verb2) -> frozenset of every (permission-category,
-          # level) pair it needs. A set, not a single pair — some calls need more
-          # than one (see the `pr create`/`pr ready` entries below).
-          # Extended only with evidence (research.md R6 / Gate 6's SUPPORTED_EVENTS
-          # rule): every entry is a real invocation this repository's own
-          # workflows make, or a cited GitHub/cli behaviour. An empty frozenset
-          # means no repository permission is needed at all (repo metadata is
-          # always readable, regardless of token) — check_call() below still
-          # requires a resolvable token for it, just no specific scope.
+          # subcommand (verb1, verb2) -> frozenset of (permission-category, level)
+          # pairs it needs. Extended only with evidence (research.md R6 / Gate 6's
+          # SUPPORTED_EVENTS rule): every entry is a real invocation this
+          # repository's own workflows make. An empty frozenset means no repository
+          # permission is needed at all (repo metadata is always readable,
+          # regardless of token).
           # Both are installation tokens for the SAME App, so both carry the
           # permission grant docs/setup.md documents. They differ only in
           # repository scope: `ctx` is the shared wing-commander-context token
@@ -823,23 +820,10 @@ jobs:
               ("label", "list"):     frozenset({("issues", "read")}),
               ("pr", "view"):        frozenset({("pull-requests", "read")}),
               ("pr", "comment"):     frozenset({("pull-requests", "write")}),
-              # `gh pr create` resolves `repository.defaultBranchRef` over GraphQL
-              # even with an explicit `--base`, and that resolution needs
-              # contents:read on top of the obvious pull-requests:write. Formerly
-              # a single (category, level) pair here could only express one of
-              # the two, so this table silently passed a `gh pr create` granted
-              # only pull-requests:write — a call that 403s at runtime.
               ("pr", "create"):      frozenset({("pull-requests", "write"),
                                                  ("contents", "read")}),
               ("pr", "edit"):        frozenset({("pull-requests", "write")}),
               ("pr", "list"):        frozenset({("pull-requests", "read")}),
-              # `gh pr ready` maps to the `markPullRequestReadyForReview` GraphQL
-              # mutation, which GitHub gates on contents:WRITE — the same tier as
-              # merging a PR, not contents:read. See cli/cli discussion #6924.
-              # This entry did not exist at all before. Do not soften this back
-              # to contents:read by analogy with the `pr create` entry above —
-              # that exact analogy has produced a runtime 403 before; cli/cli
-              # discussion #6924 documents the write requirement.
               ("pr", "ready"):       frozenset({("pull-requests", "write"),
                                                  ("contents", "write")}),
               ("search", "issues"):  frozenset({("issues", "read")}),
@@ -1061,12 +1045,6 @@ jobs:
               return granted in ("read", "write")
 
 
-          # `required` is a frozenset of (category, level) pairs — SUBCOMMAND_PERMS'
-          # values, now that a call can need more than one (`gh pr
-          # create`/`gh pr ready` each need two). Returns every pair `granted` (a
-          # category -> level dict) does not cover, sorted for a stable message; an
-          # empty `required` always returns [] with no other checks, matching the
-          # old cat-is-None "no permission needed" case exactly.
           def missing_perms(required, granted):
               return [(cat, level) for cat, level in sorted(required)
                       if not permission_satisfied(level, granted.get(cat))]
@@ -1111,7 +1089,7 @@ jobs:
                   return
               if tok_kind == "default":
                   if not required:
-                      return  # no permission needed at all — nothing to resolve
+                      return
                   if job_perms is None:
                       notes.append(f"{where}: {label} runs under github.token needing "
                                    f"{sorted(required)}; this job declares no "
