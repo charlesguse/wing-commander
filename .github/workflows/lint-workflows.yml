@@ -783,11 +783,15 @@ jobs:
           python3 - <<'PYEOF'
           import glob, os, re, sys, yaml
 
-          # subcommand (verb1, verb2) -> (permission-category, level). Extended only
-          # with evidence (research.md R6 / Gate 6's SUPPORTED_EVENTS rule): every
-          # entry is a real invocation this repository's own workflows make. A
-          # category of None means no repository permission is needed at all (repo
-          # metadata is always readable, regardless of token).
+          # subcommand (verb1, verb2) -> frozenset of every (permission-category,
+          # level) pair it needs. A set, not a single pair — some calls need more
+          # than one (see the `pr create`/`pr ready` entries below).
+          # Extended only with evidence (research.md R6 / Gate 6's SUPPORTED_EVENTS
+          # rule): every entry is a real invocation this repository's own
+          # workflows make, or a cited GitHub/cli behaviour. An empty frozenset
+          # means no repository permission is needed at all (repo metadata is
+          # always readable, regardless of token) — check_call() below still
+          # requires a resolvable token for it, just no specific scope.
           # Both are installation tokens for the SAME App, so both carry the
           # permission grant docs/setup.md documents. They differ only in
           # repository scope: `ctx` is the shared wing-commander-context token
@@ -801,31 +805,47 @@ jobs:
           DEFAULT_TOKEN_EXPRS = {"github.token", "secrets.GITHUB_TOKEN"}
 
           SUBCOMMAND_PERMS = {
-              ("run", "cancel"):     ("actions", "write"),
-              ("run", "download"):   ("actions", "read"),
-              ("run", "list"):       ("actions", "read"),
-              ("run", "view"):       ("actions", "read"),
-              ("workflow", "run"):   ("actions", "write"),
-              ("workflow", "view"):  ("actions", "read"),
-              ("workflow", "list"):  ("actions", "read"),
-              ("issue", "view"):     ("issues", "read"),
-              ("issue", "comment"):  ("issues", "write"),
-              ("issue", "create"):   ("issues", "write"),
-              ("issue", "edit"):     ("issues", "write"),
-              ("issue", "close"):    ("issues", "write"),
-              ("issue", "reopen"):   ("issues", "write"),
-              ("issue", "list"):     ("issues", "read"),
-              ("label", "create"):   ("issues", "write"),
-              ("label", "list"):     ("issues", "read"),
-              ("pr", "view"):        ("pull-requests", "read"),
-              ("pr", "comment"):     ("pull-requests", "write"),
-              ("pr", "create"):      ("pull-requests", "write"),
-              ("pr", "edit"):        ("pull-requests", "write"),
-              ("pr", "list"):        ("pull-requests", "read"),
-              ("search", "issues"):  ("issues", "read"),
-              ("search", "prs"):     ("pull-requests", "read"),
-              ("release", "create"): ("contents", "write"),
-              ("repo", "view"):      (None, None),
+              ("run", "cancel"):     frozenset({("actions", "write")}),
+              ("run", "download"):   frozenset({("actions", "read")}),
+              ("run", "list"):       frozenset({("actions", "read")}),
+              ("run", "view"):       frozenset({("actions", "read")}),
+              ("workflow", "run"):   frozenset({("actions", "write")}),
+              ("workflow", "view"):  frozenset({("actions", "read")}),
+              ("workflow", "list"):  frozenset({("actions", "read")}),
+              ("issue", "view"):     frozenset({("issues", "read")}),
+              ("issue", "comment"):  frozenset({("issues", "write")}),
+              ("issue", "create"):   frozenset({("issues", "write")}),
+              ("issue", "edit"):     frozenset({("issues", "write")}),
+              ("issue", "close"):    frozenset({("issues", "write")}),
+              ("issue", "reopen"):   frozenset({("issues", "write")}),
+              ("issue", "list"):     frozenset({("issues", "read")}),
+              ("label", "create"):   frozenset({("issues", "write")}),
+              ("label", "list"):     frozenset({("issues", "read")}),
+              ("pr", "view"):        frozenset({("pull-requests", "read")}),
+              ("pr", "comment"):     frozenset({("pull-requests", "write")}),
+              # `gh pr create` resolves `repository.defaultBranchRef` over GraphQL
+              # even with an explicit `--base`, and that resolution needs
+              # contents:read on top of the obvious pull-requests:write. Formerly
+              # a single (category, level) pair here could only express one of
+              # the two, so this table silently passed a `gh pr create` granted
+              # only pull-requests:write — a call that 403s at runtime.
+              ("pr", "create"):      frozenset({("pull-requests", "write"),
+                                                 ("contents", "read")}),
+              ("pr", "edit"):        frozenset({("pull-requests", "write")}),
+              ("pr", "list"):        frozenset({("pull-requests", "read")}),
+              # `gh pr ready` maps to the `markPullRequestReadyForReview` GraphQL
+              # mutation, which GitHub gates on contents:WRITE — the same tier as
+              # merging a PR, not contents:read. See cli/cli discussion #6924.
+              # This entry did not exist at all before. Do not soften this back
+              # to contents:read by analogy with the `pr create` entry above —
+              # that exact analogy has produced a runtime 403 before; cli/cli
+              # discussion #6924 documents the write requirement.
+              ("pr", "ready"):       frozenset({("pull-requests", "write"),
+                                                 ("contents", "write")}),
+              ("search", "issues"):  frozenset({("issues", "read")}),
+              ("search", "prs"):     frozenset({("pull-requests", "read")}),
+              ("release", "create"): frozenset({("contents", "write")}),
+              ("repo", "view"):      frozenset(),
           }
 
           # `gh api PATH` — PATH's first segment under repos/{owner}/{repo}/ decides
@@ -1033,10 +1053,7 @@ jobs:
           # App-token `gh issue create` pass against a Read-only `issues`
           # grant and 403 at runtime — the very class of defect this gate
           # exists to catch.
-          def app_permission_ok(cat, level, app_perms):
-              if cat is None:
-                  return True
-              granted = app_perms.get(cat)
+          def permission_satisfied(level, granted):
               if granted is None:
                   return False
               if level == "write":
@@ -1044,17 +1061,15 @@ jobs:
               return granted in ("read", "write")
 
 
-          def default_permission_ok(cat, level, job_perms):
-              if cat is None:
-                  return True
-              if job_perms is None:
-                  return None
-              granted = job_perms.get(cat)
-              if granted is None:
-                  return False
-              if level == "write":
-                  return granted == "write"
-              return granted in ("read", "write")
+          # `required` is a frozenset of (category, level) pairs — SUBCOMMAND_PERMS'
+          # values, now that a call can need more than one (`gh pr
+          # create`/`gh pr ready` each need two). Returns every pair `granted` (a
+          # category -> level dict) does not cover, sorted for a stable message; an
+          # empty `required` always returns [] with no other checks, matching the
+          # old cat-is-None "no permission needed" case exactly.
+          def missing_perms(required, granted):
+              return [(cat, level) for cat, level in sorted(required)
+                      if not permission_satisfied(level, granted.get(cat))]
 
 
           def parse_app_permissions(path="docs/setup.md"):
@@ -1082,29 +1097,33 @@ jobs:
               return perms
 
 
-          def check_call(where, label, perm_cat, level, tok_kind, tok_detail,
+          def check_call(where, label, required, tok_kind, tok_detail,
                          app_perms, job_perms, failures, notes):
               if tok_kind == "app":
-                  if not app_permission_ok(perm_cat, level, app_perms):
+                  missing = missing_perms(required, app_perms)
+                  if missing:
                       failures.append(
                           f"{where}: {label} runs under the App token, which needs "
-                          f"{perm_cat!r} ({level}) but docs/setup.md grants it "
-                          f"{app_perms.get(perm_cat) or 'nothing'} "
+                          f"{missing} but docs/setup.md only grants it "
+                          f"{ {cat: app_perms.get(cat) or 'nothing' for cat, _ in missing} } "
                           f"(full grant: {sorted(app_perms.items())}). "
                           f"This 403s at runtime.")
                   return
               if tok_kind == "default":
-                  ok = default_permission_ok(perm_cat, level, job_perms)
-                  if ok is False:
-                      failures.append(
-                          f"{where}: {label} runs under github.token, which needs "
-                          f"{perm_cat!r} ({level}) but the job's effective permissions "
-                          f"are {job_perms}. This 403s at runtime.")
-                  elif ok is None:
+                  if not required:
+                      return  # no permission needed at all — nothing to resolve
+                  if job_perms is None:
                       notes.append(f"{where}: {label} runs under github.token needing "
-                                   f"{perm_cat!r} ({level}); this job declares no "
+                                   f"{sorted(required)}; this job declares no "
                                    f"permissions: block (inherits the repo default), "
                                    f"which Gate 12 cannot resolve - unverified.")
+                      return
+                  missing = missing_perms(required, job_perms)
+                  if missing:
+                      failures.append(
+                          f"{where}: {label} runs under github.token, which needs "
+                          f"{missing} but the job's effective permissions "
+                          f"are {job_perms}. This 403s at runtime.")
                   return
               if tok_kind == "unresolved":
                   failures.append(
@@ -1211,7 +1230,8 @@ jobs:
                                           continue
                                       level = ("write" if re.search(r"-X\s+(POST|PATCH|PUT|DELETE)", m.group(0))
                                                else "read")
-                                      check_call(where, f"gh api (.../{cat}/...)", perm_cat, level,
+                                      check_call(where, f"gh api (.../{cat}/...)",
+                                                 frozenset({(perm_cat, level)}),
                                                  tok_kind, tok_detail, app_perms, job_perms,
                                                  failures, notes)
                               else:
@@ -1227,9 +1247,8 @@ jobs:
                                           f"evidence of the permission it needs) if this "
                                           f"is legitimate.")
                                       continue
-                                  perm_cat, level = SUBCOMMAND_PERMS[key]
                                   check_call(where, f"gh {verb1} {verb2 or ''}".strip(),
-                                             perm_cat, level, tok_kind, tok_detail,
+                                             SUBCOMMAND_PERMS[key], tok_kind, tok_detail,
                                              app_perms, job_perms, failures, notes)
 
                       # --- category B: Bash(gh ...) grants to an agent step ----------
@@ -1259,10 +1278,9 @@ jobs:
                               key = (verb1, verb2)
                               if key not in SUBCOMMAND_PERMS:
                                   continue   # not a subcommand this table tracks (e.g. bare `gh api`) — not this gate's job to police free-form agent calls
-                              perm_cat, level = SUBCOMMAND_PERMS[key]
                               check_call(f"{where} [granted by {source!r}]",
                                          f"Bash(gh {verb1} {verb2 or ''})".strip(),
-                                         perm_cat, level, tok_kind, tok_detail,
+                                         SUBCOMMAND_PERMS[key], tok_kind, tok_detail,
                                          app_perms, job_perms, failures, notes)
                           pending_tools = []
 
@@ -1285,13 +1303,12 @@ jobs:
                   ckey = (verb1, verb2)
                   if ckey not in SUBCOMMAND_PERMS:
                       continue   # same policy as category B: not this gate's job
-                  perm_cat, level = SUBCOMMAND_PERMS[ckey]
                   for jname, sname, tok_kind, tok_detail, job_perms in ctxs:
                       check_call(
                           f"{src_file} :: {src_job} -> {called} :: {jname} / "
                           f"{sname} (granted at the call site via {key!r})",
                           f"Bash(gh {verb1} {verb2 or ''})".strip(),
-                          perm_cat, level, tok_kind, tok_detail,
+                          SUBCOMMAND_PERMS[ckey], tok_kind, tok_detail,
                           app_perms, job_perms, failures, notes)
 
           for n in notes:
