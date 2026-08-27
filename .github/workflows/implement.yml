@@ -1658,14 +1658,17 @@ jobs:
             echo "WING_COMMANDER_AGENT_MSG_EOF"
           } >> "$GITHUB_OUTPUT"
 
-      # A short per-cycle progress comment, authored by Haiku (the
-      # constitution's tier for diff summaries) in a separate step so the
-      # main agent's turn budget isn't spent on reporting.
+      # A short per-cycle progress comment: Haiku (the constitution's tier
+      # for diff summaries) COMPOSES the summary in a separate step so the
+      # main agent's turn budget isn't spent on reporting, and "Post
+      # progress comment" below POSTS it deterministically. The agent is
+      # read-only — its reply is the deliverable, so it needs no
+      # gh issue comment grant.
       - name: Compose tool args (implement.post-progress-comment)
         id: tool-args-post-progress-comment
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
         with:
-          default-allowed-tools: "Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(gh issue comment:*)"
+          default-allowed-tools: "Bash(git log:*),Bash(git diff:*),Bash(git show:*)"
           default-disallowed-tools: "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
           extra-allowed-tools: ${{ inputs.extra-allowed-tools }}
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
@@ -1680,7 +1683,7 @@ jobs:
         with:
           intended-turns: 15
 
-      - name: Post progress comment (haiku)
+      - name: Compose progress summary (haiku)
         id: progress
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.final.outputs.ok == 'true' && steps.tool-args-post-progress-comment.outputs.allowed-tools != ''
         continue-on-error: true
@@ -1691,12 +1694,6 @@ jobs:
           # so a backgrounded subagent silently yields an unbuilt deliverable
           # (anthropics/claude-code-action#1462 / #1499).
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
-          # The cost line starts `$<digit>` (e.g. `$1.74`). Inlined into the
-          # prompt, it ends up inside the agent's own double-quoted
-          # `gh issue comment --body "..."`, where bash expands `$1` as an
-          # unset positional parameter and posts `.74` (#272). Passed as env
-          # instead, the agent's shell substitutes $COST_LINE intact.
-          COST_LINE: ${{ (steps.retry.outcome == 'success' || steps.retry.outcome == 'failure') && steps.cost-line-retry.outputs.line || steps.cost-line-cycle.outputs.line }}
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
@@ -1721,22 +1718,73 @@ jobs:
               git log --oneline ${{ steps.base.outputs.base-sha }}..origin/${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
               git diff --stat ${{ steps.base.outputs.base-sha }} origin/${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
 
-            Then post ONE short markdown comment (under 15 lines) on issue
-            #${{ inputs.issue-number }} with gh issue comment. Start it with
-            "## Wing Commander · implement stage — cycle ${{ inputs.iteration }}".
-            Summarize what the cycle built (from the commits/diffstat), state
-            converged or not converged, and what happens next. End the comment
-            with these two lines exactly, in this order: first
-            "_[Changes](${{ github.server_url }}/${{ github.repository }}/compare/${{ steps.base.outputs.base-sha }}...${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}) · [run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})_"
-            and then the contents of the COST_LINE environment variable,
-            verbatim. Do not retype the cost line — write $COST_LINE inside
-            the double-quoted --body argument so the shell substitutes it.
-            Do not edit any files.
+            Then reply with ONLY the body of a short markdown progress
+            summary (under 12 lines): what the cycle built (from the
+            commits/diffstat), converged or not converged, and what happens
+            next. Your reply is read from the transcript and posted on the
+            lifecycle issue by a later deterministic step, which adds the
+            heading, links, and cost line itself — do not include any of
+            those, do not post any comment yourself, and do not edit any
+            files.
           claude_args: |
             --model ${{ inputs.summary-model }}
             --max-turns ${{ steps.progress-ceiling.outputs.ceiling }}
             --allowedTools "${{ steps.tool-args-post-progress-comment.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-post-progress-comment.outputs.disallowed-tools }}"
+
+      # Deterministic posting: the agent above only composes the summary —
+      # its final transcript message. The comment's fixed parts (heading,
+      # links, cost line) are assembled and posted here in shell, so their
+      # correctness never depends on the agent choosing an
+      # expansion-friendly quoting style — a single-quoted heredoc or an
+      # API-tool post would have shipped the literal text `$COST_LINE`, the
+      # same class of loss as #272. Same extraction idiom as "Extract agent
+      # final message" above; an absent or empty result (the agent failed,
+      # was refused, or hit its ceiling) degrades to a placeholder so the
+      # links and cost line still post. No always(): a composing agent
+      # tolerated by continue-on-error leaves the job green, so this runs
+      # on that path too, and a genuinely failed job has nothing to post.
+      #
+      # continue-on-error — "Record truncated-cycle count", "Flip stage
+      # label (first cycle)" and "Dispatch next step" below carry no
+      # always(); a hard failure here (e.g. a gh network error) would
+      # silently drop the next-cycle/finalize dispatch over nothing worse
+      # than a missing progress comment.
+      - name: Post progress comment
+        id: progress-post
+        if: steps.progress.outcome != 'skipped'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ISSUE: ${{ inputs.issue-number }}
+          ITERATION: ${{ inputs.iteration }}
+          CHANGES_URL: ${{ github.server_url }}/${{ github.repository }}/compare/${{ steps.base.outputs.base-sha }}...${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # The cycle's (or, when the retry ran, the retry's) cost line —
+          # via env, never inlined, because it starts `$<digit>` (#272).
+          COST_LINE: ${{ (steps.retry.outcome == 'success' || steps.retry.outcome == 'failure') && steps.cost-line-retry.outputs.line || steps.cost-line-cycle.outputs.line }}
+        run: |
+          set -uo pipefail
+          f="$RUNNER_TEMP/claude-execution-output.json"
+          summary=""
+          if [ -f "$f" ]; then
+            # is_error results hold the CLI's error text ("max turns
+            # exceeded", a refusal), not a summary — let those fall through
+            # to the placeholder rather than posting them as one.
+            summary=$(jq -r '[.[] | select(.type == "result")] | last
+              | if .is_error == true then empty else .result // empty end' \
+              "$f" 2>/dev/null | head -c 4000 || true)
+          fi
+          [ -n "$summary" ] || summary="_(No cycle summary — the reporter run produced no usable output; see the run log.)_"
+          body=$(printf '%s\n' \
+            "## Wing Commander · implement stage — cycle $ITERATION" \
+            "" \
+            "$summary" \
+            "" \
+            "_[Changes]($CHANGES_URL) · [run]($RUN_URL)_" \
+            "" \
+            "$COST_LINE")
+          gh issue comment "$ISSUE" --body "$body"
 
       # See "Compute agent run verdict (cycle)" above — same shared
       # composite, same steps.progress.outcome != 'skipped' guard so this
