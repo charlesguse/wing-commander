@@ -962,7 +962,7 @@ jobs:
               (. * $m | round | tostring) as $c | ($c | length) as $n
               | if $n > $d then "$" + $c[0:$n-$d] + "." + $c[$n-$d:]
                 else "$0." + (("0" * ($d - $n)) // "") + $c end;
-            def costpart: if .cost_available then (.cost_usd | if . >= 1 then usd(100; 2) else usd(10000; 4) end) else "cost unavailable" end;
+            def costpart: if .cost_available then (.cost_usd | if (. * 100 | round) >= 100 then usd(100; 2) else usd(10000; 4) end) else "cost unavailable" end;
             def turnspart:
               if .turns.available then
                 (.turns.counted|tostring) + (if .turns.intended_budget != null then "/" + (.turns.intended_budget|tostring) else "" end) + " turns"
@@ -1401,7 +1401,7 @@ jobs:
               (. * $m | round | tostring) as $c | ($c | length) as $n
               | if $n > $d then "$" + $c[0:$n-$d] + "." + $c[$n-$d:]
                 else "$0." + (("0" * ($d - $n)) // "") + $c end;
-            def costpart: if .cost_available then (.cost_usd | if . >= 1 then usd(100; 2) else usd(10000; 4) end) else "cost unavailable" end;
+            def costpart: if .cost_available then (.cost_usd | if (. * 100 | round) >= 100 then usd(100; 2) else usd(10000; 4) end) else "cost unavailable" end;
             def turnspart:
               if .turns.available then
                 (.turns.counted|tostring) + (if .turns.intended_budget != null then "/" + (.turns.intended_budget|tostring) else "" end) + " turns"
@@ -1691,6 +1691,12 @@ jobs:
           # so a backgrounded subagent silently yields an unbuilt deliverable
           # (anthropics/claude-code-action#1462 / #1499).
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
+          # The cost line starts `$<digit>` (e.g. `$1.74`). Inlined into the
+          # prompt, it ends up inside the agent's own double-quoted
+          # `gh issue comment --body "..."`, where bash expands `$1` as an
+          # unset positional parameter and posts `.74` (#272). Passed as env
+          # instead, the agent's shell substitutes $COST_LINE intact.
+          COST_LINE: ${{ (steps.retry.outcome == 'success' || steps.retry.outcome == 'failure') && steps.cost-line-retry.outputs.line || steps.cost-line-cycle.outputs.line }}
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
@@ -1720,9 +1726,11 @@ jobs:
             "## Wing Commander · implement stage — cycle ${{ inputs.iteration }}".
             Summarize what the cycle built (from the commits/diffstat), state
             converged or not converged, and what happens next. End the comment
-            with these two lines exactly, in this order:
+            with these two lines exactly, in this order: first
             "_[Changes](${{ github.server_url }}/${{ github.repository }}/compare/${{ steps.base.outputs.base-sha }}...${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}) · [run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})_"
-            "${{ (steps.retry.outcome == 'success' || steps.retry.outcome == 'failure') && steps.cost-line-retry.outputs.line || steps.cost-line-cycle.outputs.line }}"
+            and then the contents of the COST_LINE environment variable,
+            verbatim. Do not retype the cost line — write $COST_LINE inside
+            the double-quoted --body argument so the shell substitutes it.
             Do not edit any files.
           claude_args: |
             --model ${{ inputs.summary-model }}
@@ -1821,7 +1829,7 @@ jobs:
               (. * $m | round | tostring) as $c | ($c | length) as $n
               | if $n > $d then "$" + $c[0:$n-$d] + "." + $c[$n-$d:]
                 else "$0." + (("0" * ($d - $n)) // "") + $c end;
-            def costpart: if .cost_available then (.cost_usd | if . >= 1 then usd(100; 2) else usd(10000; 4) end) else "cost unavailable" end;
+            def costpart: if .cost_available then (.cost_usd | if (. * 100 | round) >= 100 then usd(100; 2) else usd(10000; 4) end) else "cost unavailable" end;
             def turnspart:
               if .turns.available then
                 (.turns.counted|tostring) + (if .turns.intended_budget != null then "/" + (.turns.intended_budget|tostring) else "" end) + " turns"
