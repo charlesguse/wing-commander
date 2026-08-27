@@ -698,7 +698,11 @@ jobs:
         run: |
           set -uo pipefail
           line="$(printf '%s' "$RECORD_JSON" | jq -r '
-            def costpart: if .cost_available then "$" + (.cost_usd|tostring) else "cost unavailable" end;
+            def usd($m; $d):
+              (. * $m | round | tostring) as $c | ($c | length) as $n
+              | if $n > $d then "$" + $c[0:$n-$d] + "." + $c[$n-$d:]
+                else "$0." + (("0" * ($d - $n)) // "") + $c end;
+            def costpart: if .cost_available then (.cost_usd | if . >= 1 then usd(100; 2) else usd(10000; 4) end) else "cost unavailable" end;
             def turnspart:
               if .turns.available then
                 (.turns.counted|tostring) + (if .turns.intended_budget != null then "/" + (.turns.intended_budget|tostring) else "" end) + " turns"
@@ -906,9 +910,15 @@ jobs:
       # clarify.yml and intake.yml, and hard-fails on any `${{ }}` it
       # doesn't already resolve (runner.temp only) — appending here keeps
       # that contract intact.
+      #
+      # The line must reach printf via env, never inlined into the script:
+      # it starts `$<digit>` (e.g. `$1.74`), which bash expands as an unset
+      # positional parameter — a `$1.74` run posted as `.74` (#272).
       - name: Append cost line to clarification questionnaire
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.outcome == 'needs-clarification'
-        run: printf '\n%s\n' "${{ steps.cost-line.outputs.line }}" >> "${{ runner.temp }}/clarify-followup.md"
+        env:
+          COST_LINE: ${{ steps.cost-line.outputs.line }}
+        run: printf '\n%s\n' "$COST_LINE" >> "${{ runner.temp }}/clarify-followup.md"
 
       - name: Announce remaining clarification questions
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.outcome == 'needs-clarification'
