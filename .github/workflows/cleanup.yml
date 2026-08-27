@@ -808,7 +808,11 @@ jobs:
         run: |
           set -uo pipefail
           line="$(printf '%s' "$RECORD_JSON" | jq -r '
-            def costpart: if .cost_available then "$" + (.cost_usd|tostring) else "cost unavailable" end;
+            def usd($m; $d):
+              (. * $m | round | tostring) as $c | ($c | length) as $n
+              | if $n > $d then "$" + $c[0:$n-$d] + "." + $c[$n-$d:]
+                else "$0." + (("0" * ($d - $n)) // "") + $c end;
+            def costpart: if .cost_available then (.cost_usd | if (. * 100 | round) >= 100 then usd(100; 2) else usd(10000; 4) end) else "cost unavailable" end;
             def turnspart:
               if .turns.available then
                 (.turns.counted|tostring) + (if .turns.intended_budget != null then "/" + (.turns.intended_budget|tostring) else "" end) + " turns"
