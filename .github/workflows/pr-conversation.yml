@@ -1364,9 +1364,7 @@ jobs:
     # across every leg in the matrix; harmless for a non-held leg, which
     # finishes far under this bound.
     timeout-minutes: ${{ inputs.confirm-timeout-minutes }}
-    # runner/container-image passthrough (specs/038): container-image no-op and the runs-on
-    # JSON-array branch remain unverified beyond scratch-adopter-repo checks -- see
-    # specs/038-runner-container-passthrough/research.md (D2, D3).
+    # runner/container-image passthrough (specs/038) -- see above in this file.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -1751,9 +1749,7 @@ jobs:
       - name: Act on this classification
         id: agent
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && steps.tool-args-act.outputs.allowed-tools != ''
-        # post-hoc turn-budget rejection of a healthy, finished run
-        # (specs/037-agent-turn-budget-guard/, issue #204) -- see
-        # specs/037-agent-turn-budget-guard/plan.md.
+        # post-hoc turn-budget rejection of a healthy, finished run (specs/037-agent-turn-budget-guard/) -- see above in this file.
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
@@ -1853,9 +1849,7 @@ jobs:
             --allowedTools "${{ steps.tool-args-act.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-act.outputs.disallowed-tools }}"
 
-      # deterministic, transcript-only verdict (healthy/exhausted/failed/unclassifiable) replacing
-      # the raw outcome check that continue-on-error above means can no longer be trusted alone --
-      # see specs/037-agent-turn-budget-guard/data-model.md.
+      # deterministic, transcript-only verdict (specs/037) -- see above in this file.
       - name: Compute agent run verdict
         id: agent-verdict
         if: always() && steps.agent.outcome != 'skipped'
@@ -1968,9 +1962,7 @@ jobs:
             echo "artifact-url=$artifact_url"
           } >> "$GITHUB_OUTPUT"
 
-      # uniform across every rewired call site (research.md R7 step 5): the single point where a
-      # non-healthy verdict actually fails the job -- see
-      # specs/037-agent-turn-budget-guard/research.md R7 (step 5).
+      # uniform across every rewired call site (research.md R7 step 5) -- see above in this file.
       - name: Fail loud on non-healthy agent verdict
         if: always() && steps.agent.outcome != 'skipped' && steps.agent-verdict.outputs.verdict != 'healthy'
         env:
@@ -2014,8 +2006,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
 
-      # per-run cost line (FR-031c): appended to whichever status comment(s) actually post, not a
-      # new comment -- see specs/043-durable-metrics-record/data-model.md.
+      # per-run cost line (FR-031c) -- see above in this file.
       - name: Compute cost line (act)
         id: cost-line-act
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && always() && steps.agent.outcome != 'skipped'
@@ -2039,8 +2030,7 @@ jobs:
           [ -n "$line" ] || line="**Cost**: metrics unavailable"
           echo "line=$line" >> "$GITHUB_OUTPUT"
 
-      # over-budget is observability, not failure (FR-017) -- the runaway ceiling above is the only
-      # hard stop -- see clarify.yml.
+      # over-budget is observability, not failure (FR-017) -- see above in this file.
       - name: Report over-budget agent run
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && steps.agent-verdict.outputs.verdict == 'healthy' && steps.agent-verdict.outputs.over-budget == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout

@@ -278,6 +278,7 @@ jobs:
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
+    # (canonical copy -- pointed at from other stage workflows; do not condense)
     # No `if:` of its own -- ordinary needs: skip-propagation is the
     # gate here: a failed image check skips this job and everything
     # behind it. verify-image-prerequisites never skips, so there is no
@@ -506,6 +507,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           SPECIFY_FEATURE_DIRECTORY: ${{ steps.ctx.outputs.spec-dir }}
+          # (canonical copy -- pointed at from other stage workflows; do not condense)
           # Force subagents synchronous — headless has no turn-boundary resume,
           # so a backgrounded subagent silently yields an unbuilt deliverable
           # (anthropics/claude-code-action#1462 / #1499).
@@ -515,6 +517,7 @@ jobs:
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
           use_bedrock: ${{ inputs.use-bedrock }}
           github_token: ${{ steps.ctx.outputs.token }}
+          # (canonical copy -- pointed at from other stage workflows; do not condense)
           # Wrappers may dispatch this stage via GITHUB_TOKEN (custom
           # triggers); the action rejects bot actors unless allow-listed.
           # The pipeline's own App bot is the actor whenever one stage
@@ -913,6 +916,7 @@ jobs:
           pr-label: "the spec PR"
           body: ${{ steps.cost-line.outputs.line }}
 
+      # (canonical copy -- pointed at from other stage workflows; do not condense)
       # Observability, not failure (FR-017) — the intended budget was fully
       # used but the run finished healthy; the runaway ceiling above is the
       # only hard stop.

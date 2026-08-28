@@ -26,7 +26,7 @@ file's text, a different shape this module has no reason to cover.
 
 Usage:
   from wc_lint_gate_source import extract_gate_step
-  extract_gate_step(LINT_WORKFLOW, "Gate 15", "verify-gate-15")
+  extract_gate_step(LINT_WORKFLOW, "Gate 15")
 """
 import io
 import sys
@@ -37,8 +37,7 @@ HEREDOC_OPEN = "python3 - <<'PYEOF'"
 HEREDOC_CLOSE = "PYEOF"
 
 
-def extract_gate_step(path, step_prefix, caller,
-                       heredoc_open=HEREDOC_OPEN, heredoc_close=HEREDOC_CLOSE):
+def extract_gate_step(path, step_prefix, caller=None):
     """Return a gate's python source, read out of its shipped workflow step.
 
     Walks every job's steps in `path` and keeps the LAST `run:` block whose
@@ -47,9 +46,14 @@ def extract_gate_step(path, step_prefix, caller,
     list by a "Gate N self-test" step, and taking the last match (rather than
     stopping at the first) is what makes that convention safe if a gate is
     ever preceded by an earlier same-prefixed step. `caller` names the
-    invoking script in error text, matching what each verifier printed
-    before this extraction was shared.
+    invoking script in error text; by default it is derived from
+    `step_prefix` ("Gate 12" -> "verify-gate-12"), which matches every
+    verifier's filename — pass it only for a caller that breaks that
+    convention.
     """
+    if caller is None:
+        caller = "verify-" + step_prefix.lower().replace(" ", "-")
+    heredoc_open, heredoc_close = HEREDOC_OPEN, HEREDOC_CLOSE
     wf = yaml.safe_load(io.open(path, encoding="utf-8")) or {}
     run = None
     for job in (wf.get("jobs") or {}).values():

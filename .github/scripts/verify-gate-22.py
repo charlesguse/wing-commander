@@ -26,8 +26,6 @@ import subprocess
 import sys
 import tempfile
 
-import yaml
-
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_lint_gate_source import extract_gate_step  # noqa: E402
 
@@ -37,7 +35,7 @@ STEP_PREFIX = "Gate 22"
 
 def extract_gate(path=LINT_WORKFLOW):
     """Return Gate 22's python source, read out of the shipped workflow."""
-    return extract_gate_step(path, STEP_PREFIX, "verify-gate-22")
+    return extract_gate_step(path, STEP_PREFIX)
 
 
 # ---------------------------------------------------------------- fixtures

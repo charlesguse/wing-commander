@@ -408,6 +408,7 @@ jobs:
           db="${DEFAULT_BRANCH:-$(gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef --jq .defaultBranchRef.name)}"
           echo "name=$db" >> "$GITHUB_OUTPUT"
 
+      # (canonical copy -- pointed at from other stage workflows; do not condense)
       # Refuse anything that doesn't look like a spec hand-off rather than
       # guessing. Only these validated values are ever interpolated into
       # agent prompts.

@@ -518,14 +518,11 @@ jobs:
   detect:
     needs: health-check
     if: needs.health-check.result == 'success' && needs.health-check.outputs.pinned-ok != 'false'
-    # runner/container-image passthrough (specs/038): container-image no-op and the runs-on
-    # JSON-array branch remain unverified beyond scratch-adopter-repo checks -- see
-    # specs/038-runner-container-passthrough/research.md (D2, D3).
+    # runner/container-image passthrough (specs/038) -- see above in this file.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # environment-binding empirical basis (FR-013) -- see
-    # specs/031-stage-environment-binding/contracts/environment-binding.md.
+    # environment-binding empirical basis (FR-013) -- see above in this file.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -601,14 +598,11 @@ jobs:
   settle:
     needs: detect
     if: needs.detect.result == 'success' && needs.detect.outputs.newer == 'true'
-    # runner/container-image passthrough (specs/038): container-image no-op and the runs-on
-    # JSON-array branch remain unverified beyond scratch-adopter-repo checks -- see
-    # specs/038-runner-container-passthrough/research.md (D2, D3).
+    # runner/container-image passthrough (specs/038) -- see above in this file.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # environment-binding empirical basis (FR-013) -- see
-    # specs/031-stage-environment-binding/contracts/environment-binding.md.
+    # environment-binding empirical basis (FR-013) -- see above in this file.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -829,14 +823,11 @@ jobs:
       needs.verify-image-prerequisites.result == 'success' &&
       ((needs.settle.result == 'success' && needs.settle.outputs.settled == 'true') ||
        (needs.comment-reply.result == 'success' && needs.comment-reply.outputs.resumed == 'true'))
-    # runner/container-image passthrough (specs/038): container-image no-op and the runs-on
-    # JSON-array branch remain unverified beyond scratch-adopter-repo checks -- see
-    # specs/038-runner-container-passthrough/research.md (D2, D3).
+    # runner/container-image passthrough (specs/038) -- see above in this file.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # environment-binding empirical basis (FR-013) -- see
-    # specs/031-stage-environment-binding/contracts/environment-binding.md.
+    # environment-binding empirical basis (FR-013) -- see above in this file.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -1411,14 +1402,11 @@ jobs:
       needs.verify-image-prerequisites.result == 'success' &&
       needs.evaluate-path.result == 'success' &&
       needs.evaluate-path.outputs.outcome == 'clean-bump'
-    # runner/container-image passthrough (specs/038): container-image no-op and the runs-on
-    # JSON-array branch remain unverified beyond scratch-adopter-repo checks -- see
-    # specs/038-runner-container-passthrough/research.md (D2, D3).
+    # runner/container-image passthrough (specs/038) -- see above in this file.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # environment-binding empirical basis (FR-013) -- see
-    # specs/031-stage-environment-binding/contracts/environment-binding.md.
+    # environment-binding empirical basis (FR-013) -- see above in this file.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -1633,14 +1621,11 @@ jobs:
       needs.verify-image-prerequisites.result == 'success' &&
       needs.prepare.result == 'success' &&
       needs.prepare.outputs.release-type != 'patch'
-    # runner/container-image passthrough (specs/038): container-image no-op and the runs-on
-    # JSON-array branch remain unverified beyond scratch-adopter-repo checks -- see
-    # specs/038-runner-container-passthrough/research.md (D2, D3).
+    # runner/container-image passthrough (specs/038) -- see above in this file.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # environment-binding empirical basis (FR-013) -- see
-    # specs/031-stage-environment-binding/contracts/environment-binding.md.
+    # environment-binding empirical basis (FR-013) -- see above in this file.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -1990,8 +1975,7 @@ jobs:
             --allowedTools "Bash(e2e-scratch/.specify/scripts/bash/create-new-feature.sh:*),Bash(bash e2e-scratch/.specify/scripts/bash/create-new-feature.sh:*),Write(e2e-scratch/**),Edit(e2e-scratch/**),Write(${{ github.workspace }}/e2e-scratch/**),Edit(${{ github.workspace }}/e2e-scratch/**)"
             --disallowedTools "WebSearch,WebFetch,Bash(git push:*)"
 
-      # Deterministic, transcript-only verdict — replaces the raw
-      # steps.decide.outcome checks below (specs/037-agent-turn-budget-guard/).
+      # deterministic, transcript-only verdict (specs/037) -- see above in this file.
       - name: Compute agent run verdict
         id: decide-verdict
         if: always() && steps.decide.outcome != 'skipped'
@@ -2109,14 +2093,11 @@ jobs:
       always() &&
       needs.verify-image-prerequisites.result == 'success' &&
       needs.prepare.result == 'success'
-    # runner/container-image passthrough (specs/038): container-image no-op and the runs-on
-    # JSON-array branch remain unverified beyond scratch-adopter-repo checks -- see
-    # specs/038-runner-container-passthrough/research.md (D2, D3).
+    # runner/container-image passthrough (specs/038) -- see above in this file.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # environment-binding empirical basis (FR-013) -- see
-    # specs/031-stage-environment-binding/contracts/environment-binding.md.
+    # environment-binding empirical basis (FR-013) -- see above in this file.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -2451,14 +2432,11 @@ jobs:
        needs.prepare.result == 'failure' ||
        needs.verify.result == 'success' ||
        needs.verify.result == 'failure')
-    # runner/container-image passthrough (specs/038): container-image no-op and the runs-on
-    # JSON-array branch remain unverified beyond scratch-adopter-repo checks -- see
-    # specs/038-runner-container-passthrough/research.md (D2, D3).
+    # runner/container-image passthrough (specs/038) -- see above in this file.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # environment-binding empirical basis (FR-013) -- see
-    # specs/031-stage-environment-binding/contracts/environment-binding.md.
+    # environment-binding empirical basis (FR-013) -- see above in this file.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -2830,20 +2808,18 @@ jobs:
   # feature's own marker is a no-op — never assume any other PR belongs to
   # this feature.
   pr-merged:
-    # ordinary `needs:` skip-propagation from verify-image-prerequisites is the gate here, not this
-    # job's own `if:` (#224) -- see above in this file.
+    # ordinary `needs:` skip-propagation from verify-image-prerequisites is the image-check gate
+    # here, not this job's own `if:` (#224), which guards a different question -- see above in this
+    # file.
     needs: verify-image-prerequisites
     if: >-
       inputs.trigger == 'pr-merged' &&
       inputs.pr-merged
-    # runner/container-image passthrough (specs/038): container-image no-op and the runs-on
-    # JSON-array branch remain unverified beyond scratch-adopter-repo checks -- see
-    # specs/038-runner-container-passthrough/research.md (D2, D3).
+    # runner/container-image passthrough (specs/038) -- see above in this file.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # environment-binding empirical basis (FR-013) -- see
-    # specs/031-stage-environment-binding/contracts/environment-binding.md.
+    # environment-binding empirical basis (FR-013) -- see above in this file.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -2971,20 +2947,18 @@ jobs:
   # to an untrusted commenter). evaluate-path's `needs.comment-reply` gate
   # then sees a skipped (non-success) result and does not re-enter.
   comment-reply:
-    # ordinary `needs:` skip-propagation from verify-image-prerequisites is the gate here, not this
-    # job's own `if:` (#224) -- see above in this file.
+    # ordinary `needs:` skip-propagation from verify-image-prerequisites is the image-check gate
+    # here, not this job's own `if:` (#224), which guards a different question -- see above in this
+    # file.
     needs: verify-image-prerequisites
     if: >-
       inputs.trigger == 'comment-reply' &&
       (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), inputs.commenter-association) || inputs.commenter-id == inputs.issue-author-id)
-    # runner/container-image passthrough (specs/038): container-image no-op and the runs-on
-    # JSON-array branch remain unverified beyond scratch-adopter-repo checks -- see
-    # specs/038-runner-container-passthrough/research.md (D2, D3).
+    # runner/container-image passthrough (specs/038) -- see above in this file.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # environment-binding empirical basis (FR-013) -- see
-    # specs/031-stage-environment-binding/contracts/environment-binding.md.
+    # environment-binding empirical basis (FR-013) -- see above in this file.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -3149,8 +3123,7 @@ jobs:
             --disallowedTools "WebSearch,WebFetch,Write,Edit,Bash"
             --json-schema '{"type":"object","properties":{"recognized":{"type":"boolean"},"chosen_option":{"type":["string","null"]}},"required":["recognized"]}'
 
-      # Deterministic, transcript-only verdict — replaces the raw
-      # steps.interpret.outcome checks below (specs/037-agent-turn-budget-guard/).
+      # deterministic, transcript-only verdict (specs/037) -- see above in this file.
       - name: Compute agent run verdict
         id: interpret-verdict
         if: always() && steps.interpret.outcome != 'skipped'

@@ -393,8 +393,6 @@ import subprocess
 import sys
 import tempfile
 
-import yaml
-
 # __file__ here is the dispatcher's own path, injected into this body's
 # namespace by _run() at the bottom of this file (this body is exec()'d, not
 # imported) — the same trick check_derivations_agree below already relies on
@@ -408,7 +406,7 @@ STEP_PREFIX = "Gate 23"
 
 def extract_gate(path=LINT_WORKFLOW):
     """Return Gate 23's python source, read out of the shipped workflow."""
-    return extract_gate_step(path, STEP_PREFIX, "verify-gate-23")
+    return extract_gate_step(path, STEP_PREFIX)
 
 
 # ---------------------------------------------------------------- fixtures

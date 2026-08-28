@@ -44,7 +44,7 @@ STEP_PREFIX = "Gate 16"
 
 def extract_gate(path=LINT_WORKFLOW):
     """Return Gate 16's python source, read out of the shipped workflow."""
-    return extract_gate_step(path, STEP_PREFIX, "verify-gate-16")
+    return extract_gate_step(path, STEP_PREFIX)
 
 
 # ---------------------------------------------------------------- fixtures

@@ -378,14 +378,11 @@ jobs:
     needs: resolve-spec
     # An unmerged close is not a planning trigger — no-op by design.
     if: inputs.merged
-    # runner/container-image passthrough (specs/038): container-image no-op and the runs-on
-    # JSON-array branch remain unverified beyond scratch-adopter-repo checks -- see
-    # specs/038-runner-container-passthrough/research.md (D2, D3).
+    # runner/container-image passthrough (specs/038) -- see above in this file.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # environment-binding empirical basis (FR-013) -- see
-    # specs/031-stage-environment-binding/contracts/environment-binding.md.
+    # environment-binding empirical basis (FR-013) -- see above in this file.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -797,9 +794,7 @@ jobs:
       - name: Generate implementation plan
         id: agent-pr
         if: steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'pr' && steps.tool-args-plan-pr.outputs.allowed-tools != ''
-        # post-hoc turn-budget rejection of a healthy, finished run
-        # (specs/037-agent-turn-budget-guard/, issue #204) -- see
-        # specs/037-agent-turn-budget-guard/plan.md.
+        # post-hoc turn-budget rejection of a healthy, finished run (specs/037-agent-turn-budget-guard/) -- see above in this file.
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
@@ -814,9 +809,7 @@ jobs:
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
           use_bedrock: ${{ inputs.use-bedrock }}
           github_token: ${{ steps.ctx.outputs.token }}
-          # wrappers may dispatch this stage via GITHUB_TOKEN; the pipeline's own App bot is
-          # allow-listed (bare slug) so stage-to-stage dispatch doesn't die as a non-human actor --
-          # see clarify.yml.
+          # wrappers may dispatch this stage via GITHUB_TOKEN; App bot allow-listed (bare slug) -- see clarify.yml.
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           # only the validated slug and integer issue number are interpolated -- spec content is
           # human-reviewed but still framed as data, not instructions -- see above in this file.
@@ -891,17 +884,7 @@ jobs:
             --allowedTools "${{ steps.tool-args-plan-pr.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-plan-pr.outputs.disallowed-tools }}"
 
-      # Deterministic, transcript-only verdict (healthy/exhausted/failed/
-      # unclassifiable) — replaces the raw steps.agent-pr.outcome checks,
-      # which the action's own post-hoc turn-budget rejection could no longer
-      # be trusted to reflect (specs/037-agent-turn-budget-guard/). Gated on
-      # steps.agent-pr.outcome alone — the one condition that cannot drift
-      # from the agent step's own `if:`, however many guards that grows. It
-      # keeps agent-auto's run (which shares this job's default transcript
-      # path) from being misread as this step's result, and it keeps a
-      # legitimately skipped agent step from producing an `unclassifiable`
-      # verdict that the fail-loud step below reads as a defect (PR #221
-      # review).
+      # deterministic, transcript-only verdict (specs/037) -- see above in this file.
       - name: Compute agent run verdict (pr)
         id: agent-pr-verdict
         if: always() && steps.agent-pr.outcome != 'skipped'
@@ -990,8 +973,7 @@ jobs:
           [ -n "$line" ] || line="**Cost**: metrics unavailable"
           echo "line=$line" >> "$GITHUB_OUTPUT"
 
-      # Uniform across every rewired call site (research.md R7 step 5): the
-      # single point where a non-healthy verdict actually fails the job.
+      # uniform across every rewired call site (research.md R7 step 5) -- see above in this file.
       - name: Fail loud on non-healthy agent verdict (pr)
         if: always() && steps.agent-pr.outcome != 'skipped' && steps.agent-pr-verdict.outputs.verdict != 'healthy'
         env:
@@ -1115,8 +1097,7 @@ jobs:
             (${{ steps.agent-auto-ceiling.outputs.ceiling }}) is the only hard
             stop; this is an observability note, not a failure.
 
-      # over-budget is observability, not failure (FR-017) -- the runaway ceiling above is the only
-      # hard stop -- see clarify.yml.
+      # over-budget is observability, not failure (FR-017) -- see above in this file.
       - name: Report over-budget agent run (pr)
         if: steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'pr' && steps.agent-pr-verdict.outputs.verdict == 'healthy' && steps.agent-pr-verdict.outputs.over-budget == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout

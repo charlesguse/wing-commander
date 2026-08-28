@@ -404,14 +404,11 @@ jobs:
   tasks:
     needs: resolve-spec
     if: inputs.mode == 'generate'
-    # runner/container-image passthrough (specs/038): container-image no-op and the runs-on
-    # JSON-array branch remain unverified beyond scratch-adopter-repo checks -- see
-    # specs/038-runner-container-passthrough/research.md (D2, D3).
+    # runner/container-image passthrough (specs/038) -- see above in this file.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # environment-binding empirical basis (FR-013) -- see
-    # specs/031-stage-environment-binding/contracts/environment-binding.md.
+    # environment-binding empirical basis (FR-013) -- see above in this file.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -792,16 +789,13 @@ jobs:
           steps.mode.outputs.mode == 'pr' &&
           steps.dupe.outputs.skip != 'true' &&
           steps.tool-args-tasks-pr.outputs.allowed-tools != ''
-        # post-hoc turn-budget rejection of a healthy, finished run
-        # (specs/037-agent-turn-budget-guard/, issue #204) -- see
-        # specs/037-agent-turn-budget-guard/plan.md.
+        # post-hoc turn-budget rejection of a healthy, finished run (specs/037-agent-turn-budget-guard/) -- see above in this file.
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           SPECIFY_FEATURE_DIRECTORY: ${{ needs.resolve-spec.outputs.spec-dir }}
-          # subagents forced synchronous (anthropics/claude-code-action#1462 / #1499): headless has
-          # no turn-boundary resume -- see clarify.yml.
+          # subagents forced synchronous (anthropics/claude-code-action#1462 / #1499) -- see above in this file.
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
@@ -873,16 +867,7 @@ jobs:
             --allowedTools "${{ steps.tool-args-tasks-pr.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-tasks-pr.outputs.disallowed-tools }}"
 
-      # Deterministic, transcript-only verdict (healthy/exhausted/failed/
-      # unclassifiable) — replaces raw steps.agent-pr.outcome checks, which
-      # the action's own post-hoc turn-budget rejection could no longer be
-      # trusted to reflect (specs/037-agent-turn-budget-guard/). Gated on
-      # steps.agent-pr.outcome alone — the one condition that cannot drift
-      # from the agent step's own `if:`, however many guards that grows. It
-      # keeps this off the agent-auto branch's transcript when the other mode
-      # ran, and it keeps a legitimately skipped agent step from producing an
-      # `unclassifiable` verdict that the fail-loud step below reads as a
-      # defect (PR #221 review).
+      # deterministic, transcript-only verdict (specs/037) -- see above in this file.
       - name: Compute agent run verdict (pr)
         id: agent-pr-verdict
         if: always() && steps.agent-pr.outcome != 'skipped'
@@ -1115,14 +1100,11 @@ jobs:
   tasks-approved:
     needs: resolve-spec
     if: inputs.mode == 'approved'
-    # runner/container-image passthrough (specs/038): container-image no-op and the runs-on
-    # JSON-array branch remain unverified beyond scratch-adopter-repo checks -- see
-    # specs/038-runner-container-passthrough/research.md (D2, D3).
+    # runner/container-image passthrough (specs/038) -- see above in this file.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # environment-binding empirical basis (FR-013) -- see
-    # specs/031-stage-environment-binding/contracts/environment-binding.md.
+    # environment-binding empirical basis (FR-013) -- see above in this file.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -1139,8 +1121,7 @@ jobs:
       cancel-in-progress: false
     outputs:
       spec-dir: ${{ needs.resolve-spec.outputs.spec-dir }}
-      # internal job-to-job wiring only, never a workflow_call output (research.md D3); folds in
-      # resolve-spec's own refusal too -- see specs/041-implement-stall-notice/research.md D3.
+      # internal job-to-job wiring only, never a workflow_call output (research.md D3) -- see above in this file.
       refusal-reason: ${{ needs.resolve-spec.outputs.refusal-reason || steps.preflight.outputs.reason }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
@@ -1148,8 +1129,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # composite checkout must pin the exact workflow commit, falling back to the OIDC
-      # job_workflow_sha claim, never a branch -- see specs/010-reusable-pipeline/research.md D3.
+      # composite checkout must pin the exact workflow commit -- see above in this file.
       - name: Resolve pipeline ref
         id: pipeline-ref
         env:
