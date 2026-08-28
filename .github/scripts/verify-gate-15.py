@@ -26,15 +26,9 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from wc_lint_gate_source import extract_gate_step  # noqa: E402
+from wc_lint_gate_source import LINT_WORKFLOW, extract_gate_step  # noqa: E402
 
-LINT_WORKFLOW = ".github/workflows/lint-workflows.yml"
 STEP_PREFIX = "Gate 15"
-
-
-def extract_gate(path=LINT_WORKFLOW):
-    """Return Gate 15's python source, read out of the shipped workflow."""
-    return extract_gate_step(path, STEP_PREFIX)
 
 
 # ---------------------------------------------------------------- fixtures
@@ -201,7 +195,7 @@ def main():
     if not os.path.isfile(LINT_WORKFLOW):
         sys.exit(f"::error::run this from the repository root; {LINT_WORKFLOW} not found.")
 
-    gate_src = extract_gate()
+    gate_src = extract_gate_step(STEP_PREFIX)
     root = tempfile.mkdtemp(prefix="verify_gate15_")
     gate_path = os.path.join(root, "gate15.py")
     io.open(gate_path, "w", encoding="utf-8").write(gate_src)

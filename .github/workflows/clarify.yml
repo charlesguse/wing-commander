@@ -621,7 +621,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
 
-      # Surface this run's own metrics in the run summary (see intake stage).
+      # Surface this run's own metrics in the run summary (see intake.yml).
       - name: Agent run metrics summary
         id: metrics-summary
         if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.agent.outcome != 'skipped'

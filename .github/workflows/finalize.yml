@@ -662,10 +662,7 @@ jobs:
           # The implement stage auto-dispatches finalize wrappers via
           # GITHUB_TOKEN, making the triggering actor github-actions[bot];
           # the action rejects bot actors unless allow-listed.
-          # The pipeline's own App bot is the actor whenever one stage
-          # advances another, so it is allow-listed too — without it those
-          # runs die with "Workflow initiated by non-human actor". The
-          # filter form is the bare slug, no [bot] suffix.
+          # The pipeline's own App bot is allow-listed too (bare slug, no [bot] suffix) -- see clarify.yml.
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           prompt: |
             You are the finalize stage of this repository's spec-driven
@@ -706,10 +703,8 @@ jobs:
             --allowedTools "${{ steps.tool-args-finalize.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-finalize.outputs.disallowed-tools }}"
 
-      # Deterministic, transcript-only verdict (healthy/exhausted/failed/
-      # unclassifiable) — replaces the raw steps.summarize.outcome checks
-      # below, which the action's own post-hoc turn-budget rejection could
-      # no longer be trusted to reflect (specs/037-agent-turn-budget-guard/).
+      # deterministic, transcript-only verdict replacing the raw steps.summarize.outcome checks
+      # below -- see specs/037-agent-turn-budget-guard/data-model.md.
       # Gated on steps.summarize.outcome alone: it tracks that step's own
       # `if:` without drifting from it, so the idempotent no-diff re-run —
       # where steps.diff sets skip=true and summarize never runs — still

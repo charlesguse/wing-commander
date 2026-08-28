@@ -720,10 +720,7 @@ jobs:
           # This stage is dispatched by other pipeline stages via
           # GITHUB_TOKEN, so the triggering actor is github-actions[bot];
           # the action rejects bot actors unless allow-listed.
-          # The pipeline's own App bot is the actor whenever one stage
-          # advances another, so it is allow-listed too — without it those
-          # runs die with "Workflow initiated by non-human actor". The
-          # filter form is the bare slug, no [bot] suffix.
+          # The pipeline's own App bot is allow-listed too (bare slug, no [bot] suffix) -- see clarify.yml.
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           # Only the validated slug, integer issue number, and integer
           # iteration are interpolated. The spec/plan/tasks content was merged
@@ -817,9 +814,8 @@ jobs:
             --allowedTools "${{ steps.tool-args-cycle.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-cycle.outputs.disallowed-tools }}"
 
-      # Deterministic, transcript-only verdict (healthy/exhausted/failed/
-      # unclassifiable) — same shared composite as every other rewired site
-      # (specs/037-agent-turn-budget-guard/). Guarded like the upload/metrics
+      # deterministic, transcript-only verdict -- see specs/037-agent-turn-budget-guard/
+      # data-model.md. Guarded like the upload/metrics
       # steps below (steps.cycle.outcome != 'skipped'), not like "Read back
       # cycle outcome"'s own broader guard — the runner.temp transcript path
       # is shared across this job's three agent steps, so this must not run
@@ -1172,10 +1168,7 @@ jobs:
           use_bedrock: ${{ inputs.use-bedrock }}
           github_token: ${{ steps.ctx.outputs.token }}
           # See the cycle step above.
-          # The pipeline's own App bot is the actor whenever one stage
-          # advances another, so it is allow-listed too — without it those
-          # runs die with "Workflow initiated by non-human actor". The
-          # filter form is the bare slug, no [bot] suffix.
+          # The pipeline's own App bot is allow-listed too (bare slug, no [bot] suffix) -- see clarify.yml.
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           prompt: |
             You are the implement/converge stage of this repository's
@@ -1647,8 +1640,7 @@ jobs:
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
           use_bedrock: ${{ inputs.use-bedrock }}
           github_token: ${{ steps.ctx.outputs.token }}
-          # the pipeline's own App bot is allow-listed (bare slug) so stage-to-stage dispatch
-          # doesn't die as a non-human actor -- see above in this file.
+          # The pipeline's own App bot is allow-listed too (bare slug, no [bot] suffix) -- see clarify.yml.
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           prompt: |
             You are the progress reporter for the implement/converge stage of

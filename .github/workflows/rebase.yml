@@ -693,10 +693,7 @@ jobs:
           github_token: ${{ steps.ctx.outputs.token }}
           # Wrapper triggers may be schedule/dispatch chains via GITHUB_TOKEN;
           # the action rejects bot actors unless allow-listed.
-          # The pipeline's own App bot is the actor whenever one stage
-          # advances another, so it is allow-listed too — without it those
-          # runs die with "Workflow initiated by non-human actor". The
-          # filter form is the bare slug, no [bot] suffix.
+          # The pipeline's own App bot is allow-listed too (bare slug, no [bot] suffix) -- see clarify.yml.
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           prompt: |
             You are the conflict-resolution assistant for this repository's
@@ -737,10 +734,8 @@ jobs:
             --allowedTools "${{ steps.tool-args-rebase.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-rebase.outputs.disallowed-tools }}"
 
-      # Deterministic, transcript-only verdict (healthy/exhausted/failed/
-      # unclassifiable) — replaces the raw steps.agent.outcome reads below,
-      # which the action's own post-hoc turn-budget rejection could no longer
-      # be trusted to reflect (specs/037-agent-turn-budget-guard/). Gated the
+      # deterministic, transcript-only verdict replacing the raw steps.agent.outcome reads below
+      # -- see specs/037-agent-turn-budget-guard/data-model.md. Gated the
       # same way the other post-agent steps in this job already are: only
       # when the agent step actually ran (a clean, non-conflict rebase never
       # reaches the agent, and there is nothing to classify).
@@ -824,9 +819,8 @@ jobs:
           [ -n "$line" ] || line="**Cost**: metrics unavailable"
           echo "line=$line" >> "$GITHUB_OUTPUT"
 
-      # Observability, not failure (FR-017) — the intended budget was fully
-      # used but the run finished healthy; the runaway ceiling above is the
-      # only hard stop. Reuses this file's own escalation path: the same
+      # over-budget is observability, not failure (FR-017) -- see clarify.yml.
+      # Reuses this file's own escalation path: the same
       # wing-commander-callout + lifecycle-issue addressing "Publish rebased
       # branch" and "Announce the rebase escalation" already use, addressed
       # via matrix.issue (this branch's own lifecycle issue, discovered

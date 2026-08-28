@@ -611,10 +611,7 @@ jobs:
           # Wrappers may dispatch this stage via GITHUB_TOKEN (custom
           # triggers), making the triggering actor github-actions[bot]; the
           # action rejects bot actors unless allow-listed.
-          # The pipeline's own App bot is the actor whenever one stage
-          # advances another, so it is allow-listed too — without it those
-          # runs die with "Workflow initiated by non-human actor". The
-          # filter form is the bare slug, no [bot] suffix.
+          # The pipeline's own App bot is allow-listed too (bare slug, no [bot] suffix) -- see clarify.yml.
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           # NOTE: only the issue NUMBER is interpolated (an integer input,
           # not attacker-controlled text). The issue title/body are fetched by
@@ -811,6 +808,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
 
+      # (canonical copy -- pointed at from other stage workflows; do not condense)
       # Surface this run's own metrics (model, turns/budget, duration, tokens,
       # cost) in the run summary so tuning signals are legible without
       # downloading the artifact above. Pure read of that same transcript.

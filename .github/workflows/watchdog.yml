@@ -1423,10 +1423,7 @@ jobs:
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
           use_bedrock: ${{ inputs.use-bedrock }}
           github_token: ${{ steps.ctx.outputs.token }}
-          # The pipeline's own App bot is the actor whenever one stage
-          # advances another, so it is allow-listed too — without it those
-          # runs die with "Workflow initiated by non-human actor". The
-          # filter form is the bare slug, no [bot] suffix.
+          # The pipeline's own App bot is allow-listed too (bare slug, no [bot] suffix) -- see clarify.yml.
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           prompt: |
             You are the diagnose step of this repository's pipeline
@@ -1574,9 +1571,8 @@ jobs:
             --allowedTools "${{ steps.tool-args-diagnose.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-diagnose.outputs.disallowed-tools }}"
 
-      # Deterministic, transcript-only verdict (healthy/exhausted/failed/
-      # unclassifiable) — see clarify.yml's identical step
-      # (specs/037-agent-turn-budget-guard/).
+      # deterministic, transcript-only verdict (healthy/exhausted/failed/unclassifiable)
+      # -- see specs/037-agent-turn-budget-guard/data-model.md.
       - name: Compute agent run verdict
         id: diagnose-verdict
         if: always() && steps.diagnose.outcome != 'skipped'
