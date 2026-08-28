@@ -798,7 +798,6 @@ def check_derivations_agree(gate_path):
     Same reasoning as verify-gate-7.py / verify-gate-22.py: a stage visible
     to one derivation and invisible to the other is issue #149 again.
     """
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     try:
         from wc_published_stages import published_stages
     except ImportError as exc:

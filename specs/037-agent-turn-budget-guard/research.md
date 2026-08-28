@@ -284,7 +284,9 @@ sites has not) and surfaces two *additional* `claude-code-action` steps
 this feature does **not** bring into scope: `claude.yml:37` and
 `claude-code-review.yml:37`, GitHub-App-triggered interactive
 mention-response/PR-review bots, neither of which declares `--max-turns`
-at all today.
+at all today. (Both were removed by PR #277 — this boundary's excluded
+set is empty as of that PR, though the boundary itself still governs any
+future capless site.)
 
 **Rationale**: A site with no turn cap cannot experience this issue's
 defect — the upstream throw this whole feature exists to work around

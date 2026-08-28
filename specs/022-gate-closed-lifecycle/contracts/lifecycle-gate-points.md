@@ -45,9 +45,10 @@ invoked, in what job, and which existing steps must gain the
   `wing-commander-7-cleanup.yml` (the pipeline's own teardown mechanism —
   must keep running on a closing PR merge to actually close/torn-down the
   lifecycle in the first place); `claude.yml` (disabled, `if: false`, dead
-  code). Grep-auditable after implementation:
-  `grep -rLn "wing-commander-lifecycle-gate" .github/workflows/{plan,cleanup,claude}.yml`
-  should list all three, confirming no unintended expansion crept in, and
+  code — removed entirely by PR #277, so the grep below now covers two
+  files, not three). Grep-auditable after implementation:
+  `grep -rLn "wing-commander-lifecycle-gate" .github/workflows/{plan,cleanup}.yml`
+  should list both, confirming no unintended expansion crept in, and
   `grep -rln "wing-commander-lifecycle-gate" .github/workflows/{clarify,intake,tasks,finalize,implement}.yml`
   should list exactly those five, confirming SC-003 (zero ungated named
   entry points).
