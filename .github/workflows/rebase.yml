@@ -495,9 +495,7 @@ jobs:
     concurrency:
       group: wing-commander-${{ matrix.spec_dir }}
       cancel-in-progress: false
-    # runner/container-image passthrough (specs/038): container-image no-op and the runs-on
-    # JSON-array branch remain unverified beyond scratch-adopter-repo checks -- see
-    # specs/038-runner-container-passthrough/research.md (D2, D3).
+    # runner/container-image passthrough (specs/038) -- see above in this file.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -523,8 +521,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # composite checkout must pin the exact workflow commit, falling back to the OIDC
-      # job_workflow_sha claim, never a branch -- see specs/010-reusable-pipeline/research.md D3.
+      # composite checkout must pin the exact workflow commit -- see above in this file.
       - name: Resolve pipeline ref
         id: pipeline-ref
         env:

@@ -1177,14 +1177,11 @@ jobs:
   diagnose:
     needs: collect
     if: needs.collect.outputs.evidence-available != 'false'
-    # runner/container-image passthrough (specs/038): container-image no-op and the runs-on
-    # JSON-array branch remain unverified beyond scratch-adopter-repo checks -- see
-    # specs/038-runner-container-passthrough/research.md (D2, D3).
+    # runner/container-image passthrough (specs/038) -- see above in this file.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # environment-binding empirical basis (FR-013) -- see
-    # specs/031-stage-environment-binding/contracts/environment-binding.md.
+    # environment-binding empirical basis (FR-013) -- see above in this file.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -1776,9 +1773,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJson(needs.diagnose.outputs.findings) }}
-    # runner/container-image passthrough (specs/038): container-image no-op and the runs-on
-    # JSON-array branch remain unverified beyond scratch-adopter-repo checks -- see
-    # specs/038-runner-container-passthrough/research.md (D2, D3).
+    # runner/container-image passthrough (specs/038) -- see above in this file.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -2118,15 +2113,11 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJson(needs.diagnose.outputs.findings) }}
-    # runner/container-image passthrough (specs/038): container-image no-op and the runs-on
-    # JSON-array branch remain unverified beyond scratch-adopter-repo checks -- see
-    # specs/038-runner-container-passthrough/research.md (D2, D3).
+    # runner/container-image passthrough (specs/038) -- see above in this file.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # environment-binding empirical basis (FR-013); matrix is an available context for this key and
-    # every leg gates independently -- N legs mean N approvals/deployment records -- see
-    # specs/031-stage-environment-binding/contracts/environment-binding.md.
+    # environment-binding empirical basis (FR-013; matrix-note variant) -- see above in this file.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -2469,14 +2460,11 @@ jobs:
     if: >-
       always() &&
       needs.verify-image-prerequisites.result == 'success'
-    # runner/container-image passthrough (specs/038): container-image no-op and the runs-on
-    # JSON-array branch remain unverified beyond scratch-adopter-repo checks -- see
-    # specs/038-runner-container-passthrough/research.md (D2, D3).
+    # runner/container-image passthrough (specs/038) -- see above in this file.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # environment-binding empirical basis (FR-013) -- see
-    # specs/031-stage-environment-binding/contracts/environment-binding.md.
+    # environment-binding empirical basis (FR-013) -- see above in this file.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}

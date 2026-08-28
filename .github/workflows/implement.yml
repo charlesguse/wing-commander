@@ -1164,8 +1164,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           SPECIFY_FEATURE_DIRECTORY: ${{ steps.spec.outputs.spec-dir }}
-          # subagents forced synchronous (anthropics/claude-code-action#1462 / #1499): headless has
-          # no turn-boundary resume -- see clarify.yml.
+          # subagents forced synchronous (anthropics/claude-code-action#1462 / #1499) -- see above in this file.
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
@@ -1341,8 +1340,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
 
-      # per-run cost line (FR-031c): appended to whichever status comment posts, not a new comment
-      # -- see specs/043-durable-metrics-record/data-model.md.
+      # per-run cost line (FR-031c) -- see above in this file.
       - name: Compute cost line (retry)
         id: cost-line-retry
         if: always() && steps.retry.outcome != 'skipped'
@@ -1642,8 +1640,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
-          # subagents forced synchronous (anthropics/claude-code-action#1462 / #1499): headless has
-          # no turn-boundary resume -- see clarify.yml.
+          # subagents forced synchronous (anthropics/claude-code-action#1462 / #1499) -- see above in this file.
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
@@ -1810,8 +1807,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
 
-      # per-run cost line (FR-031c): appended to whichever status comment posts, not a new comment
-      # -- see specs/043-durable-metrics-record/data-model.md.
+      # per-run cost line (FR-031c) -- see above in this file.
       - name: Compute cost line (progress)
         id: cost-line-progress
         if: always() && steps.progress.outcome != 'skipped'
@@ -2083,14 +2079,11 @@ jobs:
         needs.implement.result == 'skipped' ||
         needs.implement.outputs.final-ok == 'false' ) &&
       needs.implement.outputs.refusal-reason == ''
-    # runner/container-image passthrough (specs/038): container-image no-op and the runs-on
-    # JSON-array branch remain unverified beyond scratch-adopter-repo checks -- see
-    # specs/038-runner-container-passthrough/research.md (D2, D3).
+    # runner/container-image passthrough (specs/038) -- see above in this file.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # environment-binding empirical basis (FR-013) -- see
-    # specs/031-stage-environment-binding/contracts/environment-binding.md.
+    # environment-binding empirical basis (FR-013) -- see above in this file.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -2107,8 +2100,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # composite checkout must pin the exact workflow commit, falling back to the OIDC
-      # job_workflow_sha claim, never a branch -- see specs/010-reusable-pipeline/research.md D3.
+      # composite checkout must pin the exact workflow commit -- see above in this file.
       - name: Resolve pipeline ref
         id: pipeline-ref
         env:
