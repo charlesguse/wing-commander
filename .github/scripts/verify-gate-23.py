@@ -42,10 +42,10 @@ WHAT COUNTS AS IN SCOPE
 ------------------------
 Every step, in every job, in every .github/workflows/*.yml file, whose `uses`
 starts with `anthropics/claude-code-action` AND whose `claude_args` contains
-`--max-turns`. Steps without `--max-turns` (claude.yml, claude-code-review.yml
-as of this writing) are out of scope by design (research.md R8) — a step
-with no turn cap cannot experience the upstream defect this feature works
-around.
+`--max-turns`. Steps without `--max-turns` (none as of this writing; the
+stock claude.yml/claude-code-review.yml were the examples until their
+removal) are out of scope by design (research.md R8) — a step with no turn
+cap cannot experience the upstream defect this feature works around.
 
 WHAT EACH IN-SCOPE SITE MUST HAVE, ALL FOUR
 --------------------------------------------

@@ -115,8 +115,8 @@ Mechanics worth knowing:
   edit, and posts exactly one `kind: info` decline note ("This lifecycle issue
   is closed — no action was taken."). The composite only reads state; it does
   no write and posts the decline note via a sibling `wing-commander-callout`
-  step. `plan.yml`/`cleanup.yml`/`claude.yml` are deliberately out of scope
-  (PR-merge trigger, teardown mechanism, and `if: false` respectively).
+  step. `plan.yml`/`cleanup.yml` are deliberately out of scope
+  (PR-merge trigger and teardown mechanism respectively).
 - **Preflight** (`wing-commander-preflight` composite): a deterministic, pre-agent
   fail-fast — at least one Claude credential (`claude-code-oauth-token` or
   `anthropic-api-key`; both passed through, Claude Code's documented
