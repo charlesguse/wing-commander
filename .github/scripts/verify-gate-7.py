@@ -15,9 +15,10 @@ error text names.
 
 Drift-proofing: the gate's source is EXTRACTED from lint-workflows.yml at
 run time rather than copied here, so there is no second copy to fall out of
-sync. (verify-gate-6.py does the same thing; the extractor is duplicated
-rather than shared because a module whose filename contains hyphens cannot
-be imported.)
+sync. (verify-gate-6.py does the same thing; the shared extractor lives in
+wc_lint_gate_source.py, a `wc_`-prefixed module rather than a second
+verify-gate-N.py import, since a module whose filename contains hyphens
+cannot be imported.)
 
 Usage: python3 .github/scripts/verify-gate-7.py
 """
@@ -31,36 +32,16 @@ import tempfile
 
 import yaml
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_lint_gate_source import extract_gate_step  # noqa: E402
+
 LINT_WORKFLOW = ".github/workflows/lint-workflows.yml"
 STEP_PREFIX = "Gate 7"
-HEREDOC_OPEN = "python3 - <<'PYEOF'"
-HEREDOC_CLOSE = "PYEOF"
 
 
 def extract_gate(path=LINT_WORKFLOW):
     """Return Gate 7's python source, read out of the shipped workflow."""
-    wf = yaml.safe_load(io.open(path, encoding="utf-8")) or {}
-    run = None
-    for job in (wf.get("jobs") or {}).values():
-        for step in (job or {}).get("steps") or []:
-            name = (step or {}).get("name", "")
-            if name.startswith(STEP_PREFIX) and "self-test" not in name:
-                run = step.get("run")
-    if run is None:
-        sys.exit(f"::error file={path}::verify-gate-7 could not find a step named "
-                 f"{STEP_PREFIX!r}. If it was renamed, update this script and the "
-                 f"workflow together.")
-
-    lines = run.splitlines()
-    try:
-        start = next(i for i, l in enumerate(lines) if l.strip() == HEREDOC_OPEN)
-        end = next(i for i, l in enumerate(lines)
-                   if i > start and l.strip() == HEREDOC_CLOSE)
-    except StopIteration:
-        sys.exit(f"::error file={path}::verify-gate-7 found the {STEP_PREFIX} step but "
-                 f"not the {HEREDOC_OPEN} ... {HEREDOC_CLOSE} block it keys on — the "
-                 f"step's shape has changed.")
-    return "\n".join(lines[start + 1:end]) + "\n"
+    return extract_gate_step(path, STEP_PREFIX, "verify-gate-7")
 
 
 # ---------------------------------------------------------------- fixtures
