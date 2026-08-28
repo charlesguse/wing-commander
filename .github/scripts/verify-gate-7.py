@@ -273,7 +273,6 @@ def check_derivations_agree(gate_path):
     yaml.YAMLError and continues) while picking up a different one — the
     disagreement this exists to catch, passing.
     """
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     try:
         from wc_published_stages import published_stages
     except ImportError as exc:

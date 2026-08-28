@@ -37,42 +37,50 @@ HEREDOC_OPEN = "python3 - <<'PYEOF'"
 HEREDOC_CLOSE = "PYEOF"
 
 
-def extract_gate_step(path, step_prefix, caller=None):
+def extract_gate_step(path, step_prefix):
     """Return a gate's python source, read out of its shipped workflow step.
 
-    Walks every job's steps in `path` and keeps the LAST `run:` block whose
-    step name starts with `step_prefix` and does not contain "self-test" —
-    the fleet's convention is a "Gate N" step followed later in the same job
-    list by a "Gate N self-test" step, and taking the last match (rather than
-    stopping at the first) is what makes that convention safe if a gate is
-    ever preceded by an earlier same-prefixed step. `caller` names the
-    invoking script in error text; by default it is derived from
-    `step_prefix` ("Gate 12" -> "verify-gate-12"), which matches every
-    verifier's filename — pass it only for a caller that breaks that
-    convention.
+    Walks every job's steps in `path`, collects every step whose name starts
+    with `step_prefix` and does not contain "self-test", and returns the
+    source between the heredoc markers of the ONE such step that carries a
+    heredoc. A prefix can legitimately match more than one step — two
+    unrelated features each landed a "Gate 22" and a "Gate 23" — but only
+    one of the twins holds the inline heredoc; if a second ever gains one,
+    this refuses loudly instead of silently self-testing the wrong gate's
+    source. Error text names the caller as "verify-" + the prefix slug
+    ("Gate 12" -> "verify-gate-12"), which is every verifier's filename.
     """
-    if caller is None:
-        caller = "verify-" + step_prefix.lower().replace(" ", "-")
-    heredoc_open, heredoc_close = HEREDOC_OPEN, HEREDOC_CLOSE
+    caller = "verify-" + step_prefix.lower().replace(" ", "-")
     wf = yaml.safe_load(io.open(path, encoding="utf-8")) or {}
-    run = None
+    matched = extracted = 0
+    source = None
     for job in (wf.get("jobs") or {}).values():
         for step in (job or {}).get("steps") or []:
             name = (step or {}).get("name", "")
-            if name.startswith(step_prefix) and "self-test" not in name:
-                run = step.get("run")
-    if run is None:
+            if not (name.startswith(step_prefix) and "self-test" not in name):
+                continue
+            matched += 1
+            lines = str(step.get("run") or "").splitlines()
+            try:
+                start = next(i for i, l in enumerate(lines)
+                             if l.strip() == HEREDOC_OPEN)
+                end = next(i for i, l in enumerate(lines)
+                           if i > start and l.strip() == HEREDOC_CLOSE)
+            except StopIteration:
+                continue
+            extracted += 1
+            source = "\n".join(lines[start + 1:end]) + "\n"
+    if matched == 0:
         sys.exit(f"::error file={path}::{caller} could not find a step named "
                  f"{step_prefix!r}. If it was renamed, update this script and "
                  f"the workflow together.")
-
-    lines = run.splitlines()
-    try:
-        start = next(i for i, l in enumerate(lines) if l.strip() == heredoc_open)
-        end = next(i for i, l in enumerate(lines)
-                   if i > start and l.strip() == heredoc_close)
-    except StopIteration:
-        sys.exit(f"::error file={path}::{caller} found the {step_prefix} step but "
-                 f"not the {heredoc_open} ... {heredoc_close} block it keys on — "
-                 f"the step's shape has changed.")
-    return "\n".join(lines[start + 1:end]) + "\n"
+    if extracted == 0:
+        sys.exit(f"::error file={path}::{caller} found {matched} {step_prefix} "
+                 f"step(s) but none holds the {HEREDOC_OPEN} ... {HEREDOC_CLOSE} "
+                 f"block it keys on — the step's shape has changed.")
+    if extracted > 1:
+        sys.exit(f"::error file={path}::{caller} found {extracted} {step_prefix} "
+                 f"steps each holding a {HEREDOC_OPEN} heredoc — ambiguous; this "
+                 f"extractor cannot know which gate's source to self-test. "
+                 f"Rename one step or teach the callers full step names.")
+    return source

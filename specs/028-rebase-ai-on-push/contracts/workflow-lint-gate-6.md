@@ -124,4 +124,6 @@ conservative "every wrapper-declared event is reachable" default rather
 than being resolved precisely. It also does not evaluate `claude.yml` or
 `claude-code-review.yml` (research.md R8) — those embed the agent step
 directly rather than through a wrapper/resolved-stage split, which is
-outside what FR-008 through FR-011 describe.
+outside what FR-008 through FR-011 describe. (Both files were removed by
+PR #277; the exclusion remains the contract for any future direct-embed
+workflow.)

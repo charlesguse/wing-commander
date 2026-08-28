@@ -104,6 +104,8 @@ Explicitly **not** call sites for this feature (research.md R8):
 today, structurally different (interactive GitHub-App triggers, not
 pipeline stages), out of scope with a documented follow-up
 recommendation rather than silent inclusion or silent exclusion.
+(Both files, permanently disabled since early pipeline work, were
+removed by PR #277 — the out-of-scope set is empty as of that PR.)
 
 ## Upstream report
 

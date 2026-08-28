@@ -66,7 +66,7 @@ Single-project GitHub Actions pipeline repository, no `src`/`tests` split (plan.
 
 **Goal**: The identical gate, at the identical layer (before any agent runs or any write can occur), is applied to the three remaining FR-004-named entry points that are not raw comment/label events — `tasks-approved`, `finalize`, and `implement`/converge — and the full FR-004 list is confirmed gated with no unnamed workflow swept in by mistake.
 
-**Independent Test**: Trigger `tasks-approved` (merge a `tasks/**` PR against a closed lifecycle issue), `finalize`, and `implement`/converge (manual `workflow_dispatch` against a closed lifecycle issue's `issue-number`) and confirm each declines at its gate step before any write. Then grep-audit that exactly the five named workflows carry the gate and `plan.yml`/`cleanup.yml`/`claude.yml` do not (quickstart.md Scenario 5).
+**Independent Test**: Trigger `tasks-approved` (merge a `tasks/**` PR against a closed lifecycle issue), `finalize`, and `implement`/converge (manual `workflow_dispatch` against a closed lifecycle issue's `issue-number`) and confirm each declines at its gate step before any write. Then grep-audit that exactly the five named workflows carry the gate and `plan.yml`/`cleanup.yml`/`claude.yml` do not (quickstart.md Scenario 5). (`claude.yml` was removed by PR #277 — re-running this audit now checks `plan.yml`/`cleanup.yml` only.)
 
 ### Implementation for User Story 2
 

@@ -322,7 +322,6 @@ def check_derivations_agree(gate_path):
     Comparing on the real fleet rather than on a fixture is deliberate: a
     fixture only ever exercises shapes someone thought to write down.
     """
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     try:
         from wc_published_stages import published_stages
     except ImportError as exc:
