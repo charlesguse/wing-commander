@@ -740,10 +740,8 @@ jobs:
             --allowedTools "${{ steps.tool-args-plan-direct-commit.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-plan-direct-commit.outputs.disallowed-tools }}"
 
-      # Deterministic, transcript-only verdict (healthy/exhausted/failed/
-      # unclassifiable) — replaces the raw steps.agent-auto.outcome checks,
-      # which the action's own post-hoc turn-budget rejection could no longer
-      # be trusted to reflect (specs/037-agent-turn-budget-guard/). Gated on
+      # deterministic, transcript-only verdict replacing the raw steps.agent-auto.outcome checks
+      # -- see specs/037-agent-turn-budget-guard/data-model.md. Gated on
       # steps.agent-auto.outcome alone — the one condition that cannot drift
       # from the agent step's own `if:`, however many guards that grows. It
       # keeps agent-pr's run (which shares this job's default transcript path)

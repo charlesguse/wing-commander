@@ -340,13 +340,8 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-      # research.md D3: the composite checkout must pin the EXACT commit of
-      # the running reusable workflow. github.job_workflow_sha is empty for
-      # some remote call shapes, so fall back to the OIDC token's
-      # job_workflow_sha claim (requires id-token: write). Never fall back
-      # to a branch name — a silent default-branch checkout would break
-      # version pinning. (Identical to every other stage's own copy of this
-      # step — watchdog.yml, rebase.yml.)
+      # composite checkout must pin the exact workflow commit, falling back to the OIDC
+      # job_workflow_sha claim, never a branch -- see specs/010-reusable-pipeline/research.md D3.
       - name: Resolve pipeline ref
         id: pipeline-ref
         env:
@@ -1077,8 +1072,8 @@ jobs:
             --disallowedTools "WebSearch,WebFetch,Write,Edit,Bash(git commit:*),Bash(git push:*)"
             --json-schema '{"type":"object","properties":{"outcome":{"type":"string","enum":["clean-bump","needs-migration","ambiguous-options"]},"reasoning":{"type":"string"},"sources":{"type":"array","items":{"type":"object","properties":{"title":{"type":"string"},"url":{"type":"string"}},"required":["title","url"]}},"options":{"type":["array","null"],"items":{"type":"object","properties":{"label":{"type":"string"},"description":{"type":"string"}},"required":["label","description"]}}},"required":["outcome","reasoning","sources"]}'
 
-      # Deterministic, transcript-only verdict — replaces the raw
-      # steps.decide.outcome checks below (specs/037-agent-turn-budget-guard/).
+      # deterministic, transcript-only verdict replacing the raw steps.decide.outcome checks
+      # below -- see specs/037-agent-turn-budget-guard/data-model.md.
       # Gated on steps.decide.outcome alone: it tracks that step's own `if:`
       # without drifting from it, so a dedup decline (steps.guard skip=true —
       # already-open/queued-behind/multiple-matches, PR #211) still reaches

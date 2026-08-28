@@ -26,31 +26,45 @@ file's text, a different shape this module has no reason to cover.
 
 Usage:
   from wc_lint_gate_source import extract_gate_step
-  extract_gate_step(LINT_WORKFLOW, "Gate 15")
+  extract_gate_step("Gate 15")
 """
 import io
+import re
 import sys
 
 import yaml
 
+LINT_WORKFLOW = ".github/workflows/lint-workflows.yml"
+# A third heredoc grammar exists beside these two markers:
+# verify-gate-wiring.py's PY_HEREDOC_RE recognizes the same inline-python
+# step shape for its own registry. The grammars are checked independently
+# and both fail loudly on a shape they no longer recognize, so drift
+# between them cannot pass silently — but a change to either belongs in
+# both places.
 HEREDOC_OPEN = "python3 - <<'PYEOF'"
 HEREDOC_CLOSE = "PYEOF"
 
 
-def extract_gate_step(path, step_prefix):
+def extract_gate_step(step_prefix, path=LINT_WORKFLOW):
     """Return a gate's python source, read out of its shipped workflow step.
 
     Walks every job's steps in `path`, collects every step whose name starts
     with `step_prefix` and does not contain "self-test", and returns the
     source between the heredoc markers of the ONE such step that carries a
-    heredoc. A prefix can legitimately match more than one step — two
-    unrelated features each landed a "Gate 22" and a "Gate 23" — but only
-    one of the twins holds the inline heredoc; if a second ever gains one,
-    this refuses loudly instead of silently self-testing the wrong gate's
-    source. Error text names the caller as "verify-" + the prefix slug
-    ("Gate 12" -> "verify-gate-12"), which is every verifier's filename.
+    heredoc. `step_prefix` must be unique among non-self-test steps: two
+    unrelated features each landed a "Gate 22" and a "Gate 23", so those
+    callers pass a longer prefix ("Gate 22 — every job", "Gate 23 — every
+    published stage") that names their twin unambiguously. The heredoc
+    check is a second line of defense, not an identity check — a prefix
+    matching several steps only ONE of which holds a heredoc still resolves
+    to that one, so a caller that wants a specific twin must say so in its
+    prefix; two heredoc-bearing matches refuse loudly. Error text names the
+    caller as "verify-" + the prefix's "Gate N" head ("Gate 12 …" ->
+    "verify-gate-12"), which is every verifier's filename.
     """
-    caller = "verify-" + step_prefix.lower().replace(" ", "-")
+    head = re.match(r"Gate \d+", step_prefix)
+    caller = ("verify-" + head.group(0).lower().replace(" ", "-")
+              if head else "verify-" + step_prefix.lower().replace(" ", "-"))
     wf = yaml.safe_load(io.open(path, encoding="utf-8")) or {}
     matched = extracted = 0
     source = None

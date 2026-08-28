@@ -971,7 +971,7 @@ jobs:
           echo "::error::wing-commander pr-conversation stage: classify agent step rejected — verdict=$VERDICT: $REASON"
           exit 1
 
-      # Surface this run's own metrics in the run summary (see clarify.yml).
+      # Surface this run's own metrics in the run summary (see intake.yml).
       - name: Classify agent run metrics summary
         id: metrics-summary-classify
         if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && always() && steps.agent.outcome != 'skipped'
@@ -1972,7 +1972,7 @@ jobs:
           echo "::error::wing-commander pr-conversation stage: act agent step rejected — verdict=$VERDICT: $REASON"
           exit 1
 
-      # Surface this run's own metrics in the run summary (see clarify.yml).
+      # Surface this run's own metrics in the run summary (see intake.yml).
       - name: Act agent run metrics summary
         id: metrics-summary-act
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && always() && steps.agent.outcome != 'skipped'
