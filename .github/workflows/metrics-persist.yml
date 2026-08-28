@@ -191,12 +191,8 @@ jobs:
         with:
           persist-credentials: true
 
-      # research.md D3: the composite checkout must pin the EXACT commit of
-      # the running reusable workflow. github.job_workflow_sha is empty for
-      # some remote call shapes (observed live: cross-repo branch refs), so
-      # fall back to the OIDC token's job_workflow_sha claim (requires
-      # id-token: write). Never fall back to a branch name — a silent
-      # default-branch checkout would break version pinning.
+      # composite checkout must pin the exact workflow commit, falling back to the OIDC
+      # job_workflow_sha claim, never a branch -- see specs/010-reusable-pipeline/research.md D3.
       - name: Resolve pipeline ref
         id: pipeline-ref
         env:
