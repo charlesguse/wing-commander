@@ -30,6 +30,18 @@ looks like a defect in the workflow and is not:
      carry a warning sign and em dashes; Python's text mode defaults to the
      locale codec, and cp1252 cannot decode them, which kills the subprocess
      reader thread mid-run.
+  4. A stub executable prepended to PATH does not necessarily win. Git for
+     Windows' bin\\bash.exe wrapper prepends /mingw64/bin:/usr/bin ahead of
+     whatever PATH the harness supplied, so a fixture `git` or `date` loses
+     to the real one bundled there — while a `gh` or `jq` stub wins, because
+     nothing by that name lives in the prepended dirs. The failure shape is
+     nasty: the scenario runs green against the REAL tool and the gate
+     either passes while proving nothing or fails on the assertion that the
+     fixture ever fired. run_step handles this by re-applying the caller's
+     own PATH additions inside the step (see the preamble there); switching
+     to usr\\bin\\bash.exe instead is not an option — invoked directly it
+     prepends nothing, leaving no coreutils (grep/sed/mv/head) on PATH at
+     all.
 
 On ubuntu-latest all three resolve on the first try and cost one extra
 subprocess for the bash probe. None of this changes what CI does; it only
@@ -190,12 +202,40 @@ def run_step(bash, script, workdir, env_extra, runner_temp):
                 "GITHUB_STEP_SUMMARY": sum_file})
     env.update(env_extra)
 
+    # Docstring point 4: on Windows the bash wrapper prepends its own dirs
+    # ahead of env["PATH"], demoting the caller's stub dirs below the real
+    # git/date. Isolate what the caller ADDED in front of the process PATH
+    # and re-prepend exactly that inside the step, leaving every other
+    # entry's order untouched (blanket re-prepending the full PATH would
+    # instead promote Windows' own find.exe/sort.exe above coreutils). On
+    # a POSIX bash the preamble re-prepends dirs that are already first —
+    # a no-op — so CI behavior is unchanged.
+    preamble = ""
+    caller_path, base_path = env_extra.get("PATH"), os.environ.get("PATH", "")
+    if caller_path and base_path and caller_path.endswith(base_path):
+        added = caller_path[:len(caller_path) - len(base_path)].rstrip(os.pathsep)
+        if added:
+            env["WC_HARNESS_PATH_PREPEND"] = added
+            preamble = (
+                '# wc_shell_harness preamble (not part of the step under test):\n'
+                '# re-apply the harness-supplied PATH additions ahead of the dirs\n'
+                '# the Git-for-Windows bash wrapper prepends. See run_step.\n'
+                'if [ -n "${WC_HARNESS_PATH_PREPEND:-}" ]; then\n'
+                '  if command -v cygpath >/dev/null 2>&1; then\n'
+                '    PATH="$(cygpath -up "$WC_HARNESS_PATH_PREPEND"):$PATH"\n'
+                '  else\n'
+                '    PATH="$WC_HARNESS_PATH_PREPEND:$PATH"\n'
+                '  fi\n'
+                '  export PATH\n'
+                'fi\n')
+
     # GitHub's default shell for a `run:` step with no `shell:` key on Linux
     # is `bash -e {0}` — errexit, and NOT pipefail. Adding -o pipefail would
     # make these harnesses stricter than production. {0} is a file; see this
     # module's docstring for why passing the script any other way breaks.
     script_file = os.path.join(workdir, "step.sh")
     with open(script_file, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(preamble)
         fh.write(script)
     proc = subprocess.run([bash, "-e", script_file.replace("\\", "/")],
                           cwd=workdir, env=env, capture_output=True,
