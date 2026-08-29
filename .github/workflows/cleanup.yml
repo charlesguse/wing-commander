@@ -745,22 +745,10 @@ jobs:
         id: cost-line
         if: always() && steps.summarize.outcome != 'skipped'
         env:
-          RECORD_JSON: ${{ steps.metrics-summary.outputs.record-json }}
+          COST_LINE: ${{ steps.metrics-summary.outputs.cost-line }}
         run: |
           set -uo pipefail
-          line="$(printf '%s' "$RECORD_JSON" | jq -r '
-            def usd($m; $d):
-              (. * $m | round | tostring) as $c | ($c | length) as $n
-              | if $n > $d then "$" + $c[0:$n-$d] + "." + $c[$n-$d:]
-                else "$0." + (("0" * ($d - $n)) // "") + $c end;
-            def costpart: if .cost_available then (.cost_usd | if (. * 100 | round) >= 100 then usd(100; 2) else usd(10000; 4) end) else "cost unavailable" end;
-            def turnspart:
-              if .turns.available then
-                (.turns.counted|tostring) + (if .turns.intended_budget != null then "/" + (.turns.intended_budget|tostring) else "" end) + " turns"
-              else "turns unavailable" end;
-            def modelpart: if .model_available then .model else "model unavailable" end;
-            "**Cost**: " + costpart + " · " + turnspart + " · " + modelpart
-          ' 2>/dev/null || true)"
+          line="$COST_LINE"
           [ -n "$line" ] || line="**Cost**: metrics unavailable"
           echo "line=$line" >> "$GITHUB_OUTPUT"
 
