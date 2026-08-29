@@ -19,6 +19,14 @@ YAML exactly the way Gate 11 (verify-metrics-turn-accounting.py) does — no
 copied logic to drift out of sync — and validates the record it writes with
 the real verify-metrics-record-schema.py gate rather than re-deriving the
 schema here.
+
+It also pins the composite's `cost-line` output (FR-031c) on both the
+healthy and the degraded branch, and asserts the formatter behind it has
+NO other home: it was once pasted into 12 "Compute cost line" run-blocks
+across 9 stage workflows, where a rounding fix would have had to land 12
+times with nothing failing on a drifted copy (PR #277 review). The stage
+workflows now consume the output; a pasted copy reappearing in any
+workflow fails here.
 """
 import json
 import os
@@ -181,9 +189,14 @@ def case_healthy_transcript_emits_a_valid_record():
         if "$1.50" not in summary:
             fail(case, "the rendered summary's cost cell disagreed with "
                        "the record's cost_usd (expected $1.50)")
+        want_line = "**Cost**: $1.50 · 5/60 turns · claude-sonnet-5"
+        if outputs.get("cost-line") != want_line:
+            fail(case, f"cost-line output: expected {want_line!r}, got "
+                       f"{outputs.get('cost-line')!r} — the stage "
+                       f"workflows' status comments post this verbatim")
         note("a healthy transcript produces a schema-valid record whose "
              "cost/outcome/per_model agree with the rendered "
-             "$GITHUB_STEP_SUMMARY table")
+             "$GITHUB_STEP_SUMMARY table, and a matching cost-line output")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -191,7 +204,7 @@ def case_healthy_transcript_emits_a_valid_record():
 def _degraded_case(case, **run_kwargs):
     tmp = tempfile.mkdtemp(prefix="wc-metrics-record-")
     try:
-        rc, _outputs, _summary, record, output = run_case(tmp, **run_kwargs)
+        rc, outputs, _summary, record, output = run_case(tmp, **run_kwargs)
         if rc != 0:
             fail(case, f"exited {rc}: {output.strip()[:300]}")
             return
@@ -199,6 +212,13 @@ def _degraded_case(case, **run_kwargs):
             fail(case, "record-path was not written")
             return
         validate_schema(case, record)
+        # The cost-line output degrades per-part, never to empty/absent:
+        # cost and turns come from the (missing) transcript, the model is
+        # caller-supplied and survives.
+        want_line = "**Cost**: cost unavailable · turns unavailable · claude-sonnet-5"
+        if outputs.get("cost-line") != want_line:
+            fail(case, f"degraded cost-line output: expected {want_line!r}, "
+                       f"got {outputs.get('cost-line')!r}")
         if record.get("record_available") is not False:
             fail(case, f"expected record_available false, got "
                        f"{record.get('record_available')!r}")
@@ -267,12 +287,39 @@ def case_repeated_invocation_in_one_job_gets_distinct_record_keys():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def case_cost_line_formatter_has_exactly_one_home():
+    """The 12-site paste this gate's docstring describes must not creep
+    back: a workflow needing the cost line consumes the composite's
+    cost-line output (plus its own one-line fallback for the
+    action-never-ran case), never a copy of the jq formatter."""
+    case = "cost-line formatter single home"
+    wf_dir = ".github/workflows"
+    hits = []
+    for name in sorted(os.listdir(wf_dir)):
+        if not name.endswith((".yml", ".yaml")):
+            continue
+        path = os.path.join(wf_dir, name)
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        if "def usd(" in text or "costpart" in text:
+            hits.append(path)
+    if hits:
+        fail(case, "the per-run cost-line formatter's only home is "
+                   f"{ACTION} (its cost-line output); a copy pasted into a "
+                   "workflow drifts silently the next time the formatter "
+                   "changes. Found in: " + ", ".join(hits))
+    else:
+        note("no workflow carries a copy of the cost-line formatter; "
+             "all consume the composite's cost-line output")
+
+
 CASES = [
     case_healthy_transcript_emits_a_valid_record,
     case_missing_transcript_degrades,
     case_empty_transcript_degrades,
     case_unparseable_transcript_degrades,
     case_repeated_invocation_in_one_job_gets_distinct_record_keys,
+    case_cost_line_formatter_has_exactly_one_home,
 ]
 
 

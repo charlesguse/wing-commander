@@ -907,22 +907,10 @@ jobs:
         id: cost-line-cycle
         if: always() && steps.cycle.outcome != 'skipped'
         env:
-          RECORD_JSON: ${{ steps.metrics-summary-cycle.outputs.record-json }}
+          COST_LINE: ${{ steps.metrics-summary-cycle.outputs.cost-line }}
         run: |
           set -uo pipefail
-          line="$(printf '%s' "$RECORD_JSON" | jq -r '
-            def usd($m; $d):
-              (. * $m | round | tostring) as $c | ($c | length) as $n
-              | if $n > $d then "$" + $c[0:$n-$d] + "." + $c[$n-$d:]
-                else "$0." + (("0" * ($d - $n)) // "") + $c end;
-            def costpart: if .cost_available then (.cost_usd | if (. * 100 | round) >= 100 then usd(100; 2) else usd(10000; 4) end) else "cost unavailable" end;
-            def turnspart:
-              if .turns.available then
-                (.turns.counted|tostring) + (if .turns.intended_budget != null then "/" + (.turns.intended_budget|tostring) else "" end) + " turns"
-              else "turns unavailable" end;
-            def modelpart: if .model_available then .model else "model unavailable" end;
-            "**Cost**: " + costpart + " · " + turnspart + " · " + modelpart
-          ' 2>/dev/null || true)"
+          line="$COST_LINE"
           [ -n "$line" ] || line="**Cost**: metrics unavailable"
           echo "line=$line" >> "$GITHUB_OUTPUT"
 
@@ -1338,22 +1326,10 @@ jobs:
         id: cost-line-retry
         if: always() && steps.retry.outcome != 'skipped'
         env:
-          RECORD_JSON: ${{ steps.metrics-summary-retry.outputs.record-json }}
+          COST_LINE: ${{ steps.metrics-summary-retry.outputs.cost-line }}
         run: |
           set -uo pipefail
-          line="$(printf '%s' "$RECORD_JSON" | jq -r '
-            def usd($m; $d):
-              (. * $m | round | tostring) as $c | ($c | length) as $n
-              | if $n > $d then "$" + $c[0:$n-$d] + "." + $c[$n-$d:]
-                else "$0." + (("0" * ($d - $n)) // "") + $c end;
-            def costpart: if .cost_available then (.cost_usd | if (. * 100 | round) >= 100 then usd(100; 2) else usd(10000; 4) end) else "cost unavailable" end;
-            def turnspart:
-              if .turns.available then
-                (.turns.counted|tostring) + (if .turns.intended_budget != null then "/" + (.turns.intended_budget|tostring) else "" end) + " turns"
-              else "turns unavailable" end;
-            def modelpart: if .model_available then .model else "model unavailable" end;
-            "**Cost**: " + costpart + " · " + turnspart + " · " + modelpart
-          ' 2>/dev/null || true)"
+          line="$COST_LINE"
           [ -n "$line" ] || line="**Cost**: metrics unavailable"
           echo "line=$line" >> "$GITHUB_OUTPUT"
 
@@ -1601,6 +1577,27 @@ jobs:
             echo "WING_COMMANDER_AGENT_MSG_EOF"
           } >> "$GITHUB_OUTPUT"
 
+      # The action writes its transcript to a path SHARED by every agent
+      # step in this job, and at this point the file still holds the
+      # cycle's (or retry's) transcript. If the composer below starts and
+      # then dies before its first transcript write (a network/API failure
+      # at action startup — the class the watchdog has seen as 403
+      # installer transience), its outcome is 'failure', not 'skipped', so
+      # every `steps.progress.outcome != 'skipped'` consumer below — the
+      # verdict, the metrics summary, the transcript upload, and "Post
+      # progress comment", whose is_error filter passes a *successful*
+      # stale transcript straight through — would read the previous
+      # agent's transcript as the composer's: up to 4000 bytes of the
+      # cycle agent's final message posted on the lifecycle issue as the
+      # "cycle N" progress summary (PR #277 review). Deleting the file
+      # first makes "file exists" mean "the composer wrote it"; every
+      # consumer already degrades cleanly when it is absent (placeholder
+      # comment, degraded metrics record, no artifact). Same guard as the
+      # composer itself so the two run on exactly the same paths.
+      - name: Clear previous attempt's transcript (progress)
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.final.outputs.ok == 'true' && steps.tool-args-post-progress-comment.outputs.allowed-tools != ''
+        run: rm -f "$RUNNER_TEMP/claude-execution-output.json"
+
       # A short per-cycle progress comment: Haiku (the constitution's tier
       # for diff summaries) COMPOSES the summary in a separate step so the
       # main agent's turn budget isn't spent on reporting, and "Post
@@ -1804,22 +1801,10 @@ jobs:
         id: cost-line-progress
         if: always() && steps.progress.outcome != 'skipped'
         env:
-          RECORD_JSON: ${{ steps.metrics-summary-progress.outputs.record-json }}
+          COST_LINE: ${{ steps.metrics-summary-progress.outputs.cost-line }}
         run: |
           set -uo pipefail
-          line="$(printf '%s' "$RECORD_JSON" | jq -r '
-            def usd($m; $d):
-              (. * $m | round | tostring) as $c | ($c | length) as $n
-              | if $n > $d then "$" + $c[0:$n-$d] + "." + $c[$n-$d:]
-                else "$0." + (("0" * ($d - $n)) // "") + $c end;
-            def costpart: if .cost_available then (.cost_usd | if (. * 100 | round) >= 100 then usd(100; 2) else usd(10000; 4) end) else "cost unavailable" end;
-            def turnspart:
-              if .turns.available then
-                (.turns.counted|tostring) + (if .turns.intended_budget != null then "/" + (.turns.intended_budget|tostring) else "" end) + " turns"
-              else "turns unavailable" end;
-            def modelpart: if .model_available then .model else "model unavailable" end;
-            "**Cost**: " + costpart + " · " + turnspart + " · " + modelpart
-          ' 2>/dev/null || true)"
+          line="$COST_LINE"
           [ -n "$line" ] || line="**Cost**: metrics unavailable"
           echo "line=$line" >> "$GITHUB_OUTPUT"
 
