@@ -3018,6 +3018,24 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-actionlint.py --self-test
 
+      # Gate 47 — CLAUDE.md's "Shared logic has exactly one home" section
+      # claims pointer comments (`-- see clarify.yml`) are gate-enforced.
+      # PR #277's review found that claim unbacked, and found the rule's
+      # own worked example freshly violated in the same PR: the "#272
+      # printf-via-env" explanation had been pasted verbatim into
+      # intake.yml and clarify.yml with no pointer and no canonical marker
+      # at all. This is what makes the CLAUDE.md sentence true: every
+      # `-- see FILE` pointer must name a file that exists, its topic
+      # prose must share vocabulary with that file's own text (not just
+      # resolve to any file), and every `(canonical copy` marker must have
+      # at least one such pointer aimed at it from elsewhere.
+      - name: Gate 47 — comment pointers and canonical-copy markers are real
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-comment-canonical-pointers.py
+      - name: Gate 47 self-test — the pointer/canonical scan detects what it claims to
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-comment-canonical-pointers.py --self-test
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

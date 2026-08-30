@@ -1084,9 +1084,8 @@ jobs:
       # doesn't already resolve (runner.temp only) — appending here keeps
       # that contract intact.
       #
-      # The line must reach printf via env, never inlined into the script:
-      # it starts `$<digit>` (e.g. `$1.74`), which bash expands as an unset
-      # positional parameter — a `$1.74` run posted as `.74` (#272).
+      # printf via env avoids bash treating a leading `$<digit>` (e.g.
+      # `$1.74`) as an unset positional parameter (#272) -- see clarify.yml.
       - name: Append cost line to clarification questionnaire
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'true'
         env:

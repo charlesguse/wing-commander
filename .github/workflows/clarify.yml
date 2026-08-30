@@ -860,6 +860,7 @@ jobs:
       # doesn't already resolve (runner.temp only) — appending here keeps
       # that contract intact.
       #
+      # (canonical copy -- pointed at from other stage workflows; do not condense)
       # The line must reach printf via env, never inlined into the script:
       # it starts `$<digit>` (e.g. `$1.74`), which bash expands as an unset
       # positional parameter — a `$1.74` run posted as `.74` (#272).
