@@ -2994,6 +2994,30 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-metrics-persist-no-writeback.py --self-test
 
+      # Gate 46 — actionlint over every workflow file, the check GitHub
+      # itself never performs: a ${{ }} expression naming a step id that
+      # is defined LATER in the job (or not at all) evaluates to empty,
+      # silently. That is how implement.yml shipped a transcript-clear
+      # step whose `if:` read steps.tool-args-post-progress-comment ten
+      # lines before that id existed — constant-false, never ran, and the
+      # stale-transcript defect it existed to fix survived four review
+      # rounds (PR #277). release.yml Gate 1a has run actionlint since
+      # specs/031, but only on a release dispatch, weeks after the pull
+      # request that introduces such a defect; its pass 1 now invokes
+      # this same script, so the PR-time and release-time answers cannot
+      # drift (the Gate 31 arrangement). The two known actionlint-1.7.7
+      # schema allowances are accounted, not blanket-ignored — the
+      # environment.deployment one is counted per binding, so it goes
+      # loudly stale the day actionlint learns the key. Shellcheck and
+      # pyflakes stay off here (release pass 2's job) so the gate is
+      # byte-identical between CI and a maintainer's machine.
+      - name: Gate 46 — actionlint — every workflow expression references only what exists
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-actionlint.py
+      - name: Gate 46 self-test — the linter and allowance accounting detect what they claim to
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-actionlint.py --self-test
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

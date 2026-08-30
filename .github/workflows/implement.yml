@@ -1577,27 +1577,6 @@ jobs:
             echo "WING_COMMANDER_AGENT_MSG_EOF"
           } >> "$GITHUB_OUTPUT"
 
-      # The action writes its transcript to a path SHARED by every agent
-      # step in this job, and at this point the file still holds the
-      # cycle's (or retry's) transcript. If the composer below starts and
-      # then dies before its first transcript write (a network/API failure
-      # at action startup — the class the watchdog has seen as 403
-      # installer transience), its outcome is 'failure', not 'skipped', so
-      # every `steps.progress.outcome != 'skipped'` consumer below — the
-      # verdict, the metrics summary, the transcript upload, and "Post
-      # progress comment", whose is_error filter passes a *successful*
-      # stale transcript straight through — would read the previous
-      # agent's transcript as the composer's: up to 4000 bytes of the
-      # cycle agent's final message posted on the lifecycle issue as the
-      # "cycle N" progress summary (PR #277 review). Deleting the file
-      # first makes "file exists" mean "the composer wrote it"; every
-      # consumer already degrades cleanly when it is absent (placeholder
-      # comment, degraded metrics record, no artifact). Same guard as the
-      # composer itself so the two run on exactly the same paths.
-      - name: Clear previous attempt's transcript (progress)
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.final.outputs.ok == 'true' && steps.tool-args-post-progress-comment.outputs.allowed-tools != ''
-        run: rm -f "$RUNNER_TEMP/claude-execution-output.json"
-
       # A short per-cycle progress comment: Haiku (the constitution's tier
       # for diff summaries) COMPOSES the summary in a separate step so the
       # main agent's turn budget isn't spent on reporting, and "Post
@@ -1615,6 +1594,32 @@ jobs:
           allowed-tools-override: ${{ inputs.allowed-tools-override }}
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
           step-label: "implement.post-progress-comment"
+
+      # The action writes its transcript to a path SHARED by every agent
+      # step in this job, and at this point the file still holds the
+      # cycle's (or retry's) transcript. If the composer below starts and
+      # then dies before its first transcript write (a network/API failure
+      # at action startup — the class the watchdog has seen as 403
+      # installer transience), its outcome is 'failure', not 'skipped', so
+      # every `steps.progress.outcome != 'skipped'` consumer below — the
+      # verdict, the metrics summary, the transcript upload, and "Post
+      # progress comment", whose is_error filter passes a *successful*
+      # stale transcript straight through — would read the previous
+      # agent's transcript as the composer's: up to 4000 bytes of the
+      # cycle agent's final message posted on the lifecycle issue as the
+      # "cycle N" progress summary (PR #277 review). Deleting the file
+      # first makes "file exists" mean "the composer wrote it"; every
+      # consumer already degrades cleanly when it is absent (placeholder
+      # comment, degraded metrics record, no artifact). Same guard as the
+      # composer itself so the two run on exactly the same paths — which
+      # is also why this step sits BELOW the tool-args composite: its
+      # guard reads that step's output, and a steps.<id> reference above
+      # the line that defines the id evaluates to empty, silently, making
+      # the guard constant-false (PR #277 round-5 review; Gate 46 now
+      # fails the suite on that shape).
+      - name: Clear previous attempt's transcript (progress)
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.final.outputs.ok == 'true' && steps.tool-args-post-progress-comment.outputs.allowed-tools != ''
+        run: rm -f "$RUNNER_TEMP/claude-execution-output.json"
 
       - name: Compute agent turn ceiling (progress)
         id: progress-ceiling
