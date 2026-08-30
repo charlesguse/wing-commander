@@ -21,7 +21,8 @@ workflow, move it instead:
   Each call site keeps at most a one-line fallback for the case where the
   composite never ran.
 - Repeated comment prose gets ONE canonical comment; every other site
-  points at it (`-- see clarify.yml`). Gates enforce the pointers.
+  points at it (`-- see clarify.yml`). Gate 47
+  (verify-comment-canonical-pointers.py) enforces the pointers.
 
 Why this is worth the detour: a pasted copy is invisible until the first
 divergent fix. The per-run cost line was once pasted into 12 run-blocks

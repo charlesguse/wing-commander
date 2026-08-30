@@ -312,7 +312,15 @@ runs:
           {
             echo "record-key=$RECORD_KEY"
             echo "record-json=$(jq -c . "$RECORD_PATH" 2>/dev/null || printf '{}')"
-            echo "cost-line=$cost_line"
+            # cost-line is heredoc-delimited (not a plain echo) because it is
+            # the one line here whose value isn't inherently single-line:
+            # record-key is a controlled key and record-json is jq -c
+            # (always one line), but cost-line's modelpart can carry a
+            # newline from a multiline model input -- see implement.yml's
+            # WING_COMMANDER_AGENT_MSG_EOF step for the same idiom.
+            echo "cost-line<<WING_COMMANDER_COST_LINE_EOF"
+            printf '%s\n' "$cost_line"
+            echo "WING_COMMANDER_COST_LINE_EOF"
           } >> "$GITHUB_OUTPUT"
         }
 

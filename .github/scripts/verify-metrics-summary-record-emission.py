@@ -26,7 +26,9 @@ NO other home: it was once pasted into 12 "Compute cost line" run-blocks
 across 9 stage workflows, where a rounding fix would have had to land 12
 times with nothing failing on a drifted copy (PR #277 review). The stage
 workflows now consume the output; a pasted copy reappearing in any
-workflow fails here.
+workflow OR composite action under .github/actions/ fails here (PR #277
+round-4 review: the original scan missed .github/actions/, the likeliest
+paste target for shared logic per CLAUDE.md).
 """
 import json
 import os
@@ -289,28 +291,52 @@ def case_repeated_invocation_in_one_job_gets_distinct_record_keys():
 
 def case_cost_line_formatter_has_exactly_one_home():
     """The 12-site paste this gate's docstring describes must not creep
-    back: a workflow needing the cost line consumes the composite's
-    cost-line output (plus its own one-line fallback for the
-    action-never-ran case), never a copy of the jq formatter."""
+    back: a workflow or composite action needing the cost line consumes
+    the composite's cost-line output (plus its own one-line fallback for
+    the action-never-ran case), never a copy of the jq formatter.
+
+    PR #277's round-4 review found this scan covered only
+    .github/workflows/*.yml — leaving .github/actions/ (CLAUDE.md's own
+    prescribed home for cross-workflow shell/jq) as an unchecked blind
+    spot, so a copy pasted into the likeliest paste target, a composite
+    action, would evade the gate entirely. Widened to also walk every
+    composite action.yml/action.yaml (any depth) plus any *.sh/*.py under
+    .github/actions/, excluding only the canonical home (ACTION) itself."""
     case = "cost-line formatter single home"
-    wf_dir = ".github/workflows"
     hits = []
-    for name in sorted(os.listdir(wf_dir)):
-        if not name.endswith((".yml", ".yaml")):
-            continue
-        path = os.path.join(wf_dir, name)
+
+    def scan(path):
         with open(path, encoding="utf-8") as fh:
             text = fh.read()
         if "def usd(" in text or "costpart" in text:
             hits.append(path)
+
+    wf_dir = ".github/workflows"
+    for name in sorted(os.listdir(wf_dir)):
+        if not name.endswith((".yml", ".yaml")):
+            continue
+        scan(os.path.join(wf_dir, name))
+
+    actions_dir = ".github/actions"
+    canonical = os.path.normpath(ACTION)
+    for root, _dirs, files in os.walk(actions_dir):
+        for name in sorted(files):
+            if name in ("action.yml", "action.yaml") or \
+                    name.endswith((".sh", ".py")):
+                path = os.path.join(root, name)
+                if os.path.normpath(path) == canonical:
+                    continue
+                scan(path)
+
     if hits:
         fail(case, "the per-run cost-line formatter's only home is "
                    f"{ACTION} (its cost-line output); a copy pasted into a "
-                   "workflow drifts silently the next time the formatter "
-                   "changes. Found in: " + ", ".join(hits))
+                   "workflow or composite action drifts silently the next "
+                   "time the formatter changes. Found in: " + ", ".join(hits))
     else:
-        note("no workflow carries a copy of the cost-line formatter; "
-             "all consume the composite's cost-line output")
+        note("no workflow or composite action carries a copy of the "
+             "cost-line formatter; all consume the composite's cost-line "
+             "output")
 
 
 CASES = [
