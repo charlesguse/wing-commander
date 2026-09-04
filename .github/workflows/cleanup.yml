@@ -236,9 +236,8 @@ permissions: {}
 
 jobs:
   verify-image-prerequisites:
-    # verify-image-prerequisites job (specs/038): no job-level `if:` -- this job must NEVER skip,
-    # or the whole needs-closure silently no-ops every stage (#224) -- see
-    # specs/038-runner-container-passthrough/contracts/runner-container-passthrough.md.
+    # this job must NEVER skip, or the whole needs-closure silently no-ops every stage (#224)
+    # -- see specs/038-runner-container-passthrough/contracts/runner-container-passthrough.md.
     permissions: {}
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     steps:
@@ -326,9 +325,8 @@ jobs:
   # The outcome self-selection (from raw PR facts + the derived default
   # branch — never guessed, never wrapper-side).
   select:
-    # runner/container-image passthrough (specs/038): container-image no-op and the runs-on
-    # JSON-array branch remain unverified beyond scratch-adopter-repo checks -- see
-    # specs/038-runner-container-passthrough/research.md (D2, D3).
+    # container-image no-op and the runs-on JSON-array branch stay unverified (D2, D3) -- see
+    # specs/038-runner-container-passthrough/research.md.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -337,8 +335,7 @@ jobs:
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
-    # no `if:` here -- ordinary `needs:` skip-propagation from verify-image-prerequisites is the
-    # gate (#224) -- see clarify.yml.
+    # no `if:` -- `needs:` skip-propagation is the image gate (#224) -- see clarify.yml.
     needs: verify-image-prerequisites
     permissions:
       contents: read
@@ -395,11 +392,9 @@ jobs:
   teardown-done:
     needs: select
     if: needs.select.outputs.outcome == 'teardown-done'
-    # runner/container-image passthrough (specs/038) -- see above in this file.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # environment-binding empirical basis (FR-013) -- see above in this file.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -417,8 +412,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # composite checkout must pin the exact workflow commit, falling back to the OIDC
-      # job_workflow_sha claim, never a branch -- see specs/010-reusable-pipeline/research.md D3.
+      # pin the exact commit, never a branch -- see specs/010-reusable-pipeline/research.md.
       - name: Resolve pipeline ref
         id: pipeline-ref
         env:
@@ -624,8 +618,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
-          # subagents forced synchronous (anthropics/claude-code-action#1462 / #1499): headless has
-          # no turn-boundary resume -- see clarify.yml.
+          # subagents forced synchronous, no turn-boundary resume (#1462/#1499) -- see clarify.yml.
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
@@ -634,7 +627,7 @@ jobs:
           github_token: ${{ steps.ctx.outputs.token }}
           # Wrappers may run this stage from bot-triggered events; the action
           # rejects bot actors unless allow-listed.
-          # The pipeline's own App bot is allow-listed too (bare slug, no [bot] suffix) -- see clarify.yml.
+          # the pipeline's own App bot is allow-listed too (bare slug) -- see clarify.yml.
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           prompt: |
             You are the cleanup stage of this repository's spec-driven
@@ -739,8 +732,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
 
-      # per-run cost line (FR-031c): appended to whichever status comment posts, not a new comment
-      # -- see specs/043-durable-metrics-record/data-model.md.
+      # per-run cost line (FR-031c) -- see specs/043-durable-metrics-record/data-model.md.
       - name: Compute cost line
         id: cost-line
         if: always() && steps.summarize.outcome != 'skipped'
@@ -752,8 +744,7 @@ jobs:
           [ -n "$line" ] || line="**Cost**: metrics unavailable"
           echo "line=$line" >> "$GITHUB_OUTPUT"
 
-      # over-budget is observability, not failure (FR-017) -- the runaway ceiling above is the only
-      # hard stop -- see clarify.yml.
+      # over-budget is observability, not failure (FR-017) -- see clarify.yml.
       - name: Report over-budget agent run
         if: steps.idempotency.outputs.skip != 'true' && steps.summarize-verdict.outputs.verdict == 'healthy' && steps.summarize-verdict.outputs.over-budget == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
@@ -846,11 +837,9 @@ jobs:
   teardown-rejected:
     needs: select
     if: needs.select.outputs.outcome == 'teardown-rejected'
-    # runner/container-image passthrough (specs/038) -- see above in this file.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # environment-binding empirical basis (FR-013) -- see above in this file.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -868,7 +857,6 @@ jobs:
         with:
           persist-credentials: false
 
-      # composite checkout must pin the exact workflow commit -- see above in this file.
       - name: Resolve pipeline ref
         id: pipeline-ref
         env:
@@ -935,8 +923,7 @@ jobs:
           fetch-depth: 0
           clean: false
 
-      # the spec artifacts must exist and self-identify consistently before any write -- report and
-      # stop rather than tear down the wrong thing -- see above in this file.
+      # spec artifacts must self-identify before any write -- don't tear down the wrong thing.
       - name: Verify spec artifacts and resolve lifecycle issue
         id: meta
         env:
@@ -1060,11 +1047,9 @@ jobs:
   mark-stalled:
     needs: select
     if: needs.select.outputs.outcome == 'mark-stalled'
-    # runner/container-image passthrough (specs/038) -- see above in this file.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # environment-binding empirical basis (FR-013) -- see above in this file.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -1082,7 +1067,6 @@ jobs:
         with:
           persist-credentials: false
 
-      # composite checkout must pin the exact workflow commit -- see above in this file.
       - name: Resolve pipeline ref
         id: pipeline-ref
         env:

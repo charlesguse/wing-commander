@@ -179,9 +179,8 @@ permissions: {}
 
 jobs:
   verify-image-prerequisites:
-    # verify-image-prerequisites job (specs/038): no job-level `if:` -- this job must NEVER skip,
-    # or the whole needs-closure silently no-ops every stage (#224) -- see
-    # specs/038-runner-container-passthrough/contracts/runner-container-passthrough.md.
+    # this job must NEVER skip, or the whole needs-closure silently no-ops every stage (#224)
+    # -- see specs/038-runner-container-passthrough/contracts/runner-container-passthrough.md.
     permissions: {}
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     steps:
@@ -267,9 +266,8 @@ jobs:
           fi
 
   clarify:
-    # runner/container-image passthrough (specs/038): container-image no-op and the runs-on
-    # JSON-array branch remain unverified beyond scratch-adopter-repo checks -- see
-    # specs/038-runner-container-passthrough/research.md (D2, D3).
+    # container-image no-op and the runs-on JSON-array branch stay unverified (D2, D3) -- see
+    # specs/038-runner-container-passthrough/research.md.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -278,7 +276,7 @@ jobs:
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
-    # (canonical copy -- pointed at from other stage workflows; do not condense)
+    # (canonical copy; do not condense)
     # No `if:` of its own -- ordinary needs: skip-propagation is the
     # gate here: a failed image check skips this job and everything
     # behind it. verify-image-prerequisites never skips, so there is no
@@ -304,8 +302,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # composite checkout must pin the exact workflow commit, falling back to the OIDC
-      # job_workflow_sha claim, never a branch -- see specs/010-reusable-pipeline/research.md D3.
+      # pin the exact commit, never a branch -- see specs/010-reusable-pipeline/research.md.
       - name: Resolve pipeline ref
         id: pipeline-ref
         env:
@@ -499,15 +496,14 @@ jobs:
       - name: Fold answers into the draft spec
         id: agent
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.tool-args-clarify.outputs.allowed-tools != ''
-        # post-hoc turn-budget rejection of a healthy, finished run
-        # (specs/037-agent-turn-budget-guard/, issue #204) -- see
+        # post-hoc turn-budget rejection of a healthy, finished run (#204) -- see
         # specs/037-agent-turn-budget-guard/plan.md.
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           SPECIFY_FEATURE_DIRECTORY: ${{ steps.ctx.outputs.spec-dir }}
-          # (canonical copy -- pointed at from other stage workflows; do not condense)
+          # (canonical copy; do not condense)
           # Force subagents synchronous — headless has no turn-boundary resume,
           # so a backgrounded subagent silently yields an unbuilt deliverable
           # (anthropics/claude-code-action#1462 / #1499).
@@ -517,7 +513,7 @@ jobs:
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
           use_bedrock: ${{ inputs.use-bedrock }}
           github_token: ${{ steps.ctx.outputs.token }}
-          # (canonical copy -- pointed at from other stage workflows; do not condense)
+          # (canonical copy; do not condense)
           # Wrappers may dispatch this stage via GITHUB_TOKEN (custom
           # triggers); the action rejects bot actors unless allow-listed.
           # The pipeline's own App bot is the actor whenever one stage
@@ -860,7 +856,7 @@ jobs:
       # doesn't already resolve (runner.temp only) — appending here keeps
       # that contract intact.
       #
-      # (canonical copy -- pointed at from other stage workflows; do not condense)
+      # (canonical copy; do not condense)
       # The line must reach printf via env, never inlined into the script:
       # it starts `$<digit>` (e.g. `$1.74`), which bash expands as an unset
       # positional parameter — a `$1.74` run posted as `.74` (#272).
@@ -905,7 +901,7 @@ jobs:
           pr-label: "the spec PR"
           body: ${{ steps.cost-line.outputs.line }}
 
-      # (canonical copy -- pointed at from other stage workflows; do not condense)
+      # (canonical copy; do not condense)
       # Observability, not failure (FR-017) — the intended budget was fully
       # used but the run finished healthy; the runaway ceiling above is the
       # only hard stop.

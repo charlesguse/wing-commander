@@ -1,28 +1,16 @@
 #!/usr/bin/env python3
 """Shared extraction of a lint-workflows.yml gate's python source, drift-free.
 
-WHY THIS EXISTS
----------------
-Seven of lint-workflows.yml's self-tests (Gate 6, 7, 12, 15, 16, 22, 23) each
-carried their own copy of the same ~25 lines: find the (last, non-self-test)
-step named "Gate N", then find the `python3 - <<'PYEOF' ... PYEOF` heredoc
-inside that step's `run:` block and return the source between the markers.
-Running the SHIPPED gate this way — rather than a copy of it — is the whole
-point (Gate 5 exists because a copy sat green for weeks while checking a
-filter that did not ship), but the extraction plumbing itself does not need
-to exist seven times to make that promise.
+Seven self-tests (Gate 6, 7, 12, 15, 16, 22, 23) each carried their own copy
+of the same ~25 lines: find the non-self-test step named "Gate N", then
+return the source between its `python3 - <<'PYEOF' ... PYEOF` markers.
+Running the SHIPPED gate rather than a copy of it is the whole point (Gate 5
+exists because a copy sat green for weeks while checking a filter that did
+not ship); the extraction plumbing does not need seven copies to promise it.
 
-verify-gate-7.py used to explain the duplication this way: "the extractor is
-duplicated rather than shared because a module whose filename contains
-hyphens cannot be imported." That is true of one `verify-gate-N.py` trying to
-import another — it is not true of a `wc_`-prefixed shared module, which is
-exactly the same reasoning `wc_chain_stop_conditions.py` gives for existing.
-This module is that fix applied to `extract_gate`.
-
-Gate 18 is deliberately NOT one of the seven callers here. Its gate source
-was moved out of the workflow heredoc entirely (#213) into a checked-in
-script (`verify-gate-18-scan.py`); its "extraction" is just reading that
-file's text, a different shape this module has no reason to cover.
+Gate 18 is deliberately not a caller: its source moved out of the workflow
+heredoc into a checked-in script (#213), so its "extraction" is just reading
+that file.
 
 Usage:
   from wc_lint_gate_source import extract_gate_step
@@ -48,19 +36,14 @@ HEREDOC_CLOSE = "PYEOF"
 def extract_gate_step(step_prefix, path=LINT_WORKFLOW):
     """Return a gate's python source, read out of its shipped workflow step.
 
-    Walks every job's steps in `path`, collects every step whose name starts
-    with `step_prefix` and does not contain "self-test", and returns the
-    source between the heredoc markers of the ONE such step that carries a
-    heredoc. `step_prefix` must be unique among non-self-test steps: two
-    unrelated features each landed a "Gate 22" and a "Gate 23", so those
-    callers pass a longer prefix ("Gate 22 — every job", "Gate 23 — every
-    published stage") that names their twin unambiguously. The heredoc
-    check is a second line of defense, not an identity check — a prefix
-    matching several steps only ONE of which holds a heredoc still resolves
-    to that one, so a caller that wants a specific twin must say so in its
-    prefix; two heredoc-bearing matches refuse loudly. Error text names the
-    caller as "verify-" + the prefix's "Gate N" head ("Gate 12 …" ->
-    "verify-gate-12"), which is every verifier's filename.
+    Collects every step in `path` whose name starts with `step_prefix` and
+    does not contain "self-test", and returns the source between the heredoc
+    markers of the ONE such step carrying a heredoc. `step_prefix` must be
+    unique among non-self-test steps: two unrelated features each landed a
+    "Gate 22" and a "Gate 23", so those callers pass a longer prefix ("Gate
+    22 — every job") naming their twin unambiguously; two heredoc-bearing
+    matches refuse loudly. Error text names the caller as "verify-" + the
+    prefix's "Gate N" head, which is every verifier's filename.
     """
     head = re.match(r"Gate \d+", step_prefix)
     caller = ("verify-" + head.group(0).lower().replace(" ", "-")

@@ -1,76 +1,40 @@
 #!/usr/bin/env python3
 """Gate 47 -- pointer comments and canonical-copy markers are real, not prose.
 
-WHY THIS EXISTS
----------------
-CLAUDE.md's "Shared logic has exactly one home" section says: "Repeated
-comment prose gets ONE canonical comment; every other site points at it
-(`-- see clarify.yml`). Gates enforce the pointers." PR #277's review found
-that second sentence unbacked -- no gate anywhere checked a pointer comment
-or a "(canonical copy" marker. The convention had one gate keeping it
-honest for exactly one kind of duplication (the jq cost-line formatter, via
-verify-metrics-summary-record-emission.py) and nothing behind the rest, and
-the same review found the rule's own worked example freshly violated: the
-"#272 printf-via-env" explanation had been pasted verbatim into intake.yml
-and clarify.yml with no pointer and no canonical marker at all -- the exact
-failure mode the convention exists to prevent, sitting in the file that
-states the convention. CLAUDE.md itself is explicit about why that keeps
-happening: "a rule with no gate behind it lasts until the next session."
-This is that gate.
+CLAUDE.md's "Shared logic has exactly one home" section says repeated
+comment prose gets ONE canonical comment and every other site points at it
+(`-- see clarify.yml`). This is the gate behind that sentence; without it
+the rule is one a reviewer has to remember.
 
-WHAT IT MECHANICALLY CHECKS
-----------------------------
-(a) EVERY POINTER RESOLVES. Every occurrence of the literal marker `-- see`
-    in a comment (YAML-level or shell `#` comment, anywhere under
-    .github/workflows/*.yml) is a pointer. If the text following it names a
-    concrete file (something matching `NAME.yml`, `NAME.yaml`, or a
-    `.../NAME.md` path), that file must exist on disk. A pointer that
-    doesn't name a file (` -- see above in this file.` / `... below.`) is a
-    same-file cross-reference and is exempt from this check -- there is
-    nothing external to resolve.
+WHAT IT CHECKS, over `#` comments in .github/workflows/*.yml
+-----------------------------------------------------------
+(a) EVERY POINTER RESOLVES. `-- see` marks a pointer; if the text after it
+    names a `NAME.yml` / `NAME.yaml` / `.../NAME.md`, that file must exist.
+    Same-file pointers (`-- see above in this file.`) name nothing to
+    resolve and are exempt.
 
 (b) EVERY CROSS-FILE POINTER'S TOPIC SHOWS UP AT THE TARGET. Resolving a
-    path proves the file exists, not that the pointer is pointing at the
-    right thing -- a pointer edited to aim at an unrelated file would still
-    pass (a). So this also takes the sentence immediately before `-- see`
-    (the "topic"), strips stopwords, and requires at least one of its
-    remaining significant (4+ letter) words to appear, whole-word, in the
-    target file's own text (its comments, for a workflow file; its full
-    text, for a `.md` doc). This is deliberately NOT a list of expected
-    phrases -- a list is exactly the kind of thing that goes stale
-    silently, which is the mistake #149 and the gate-wiring convention
-    (wc_gate_registry.py) both name explicitly. It is a generic overlap
-    test that works because a real pointer's prose and its target's prose
-    describe the same thing in the same words ("no turn-boundary resume"
-    appears at both the pointer in intake.yml and the canonical copy in
-    clarify.yml); a pointer aimed at the wrong file has no reason to share
-    any of that vocabulary. Same-file pointers are exempt here too -- their
-    topic words are definitionally already present in the same file, so
-    the check would be vacuous for them.
+    path proves the file exists, not that the pointer aims at the right
+    thing. So the sentence before `-- see` is stripped of stopwords and at
+    least one remaining 4+-letter word must appear, whole-word, at the
+    target (its comments for a workflow, its full text for a `.md`). A
+    generic overlap test, deliberately not a list of expected phrases --
+    a list goes stale silently (#149, wc_gate_registry.py). It works
+    because a real pointer and its target describe the same thing in the
+    same words; a misaimed one shares no vocabulary. Same-file pointers
+    are vacuous here and exempt.
 
-(c) EVERY CANONICAL MARKER IS POINTED AT. A `(canonical copy` marker
-    asserts that other workflows point here instead of repeating this
-    prose. This repo's pointers actually ship in two phrasings: the
-    `-- see FILE.` form checked above, and a second, narrower form used
-    only for the per-stage "Agent run metrics summary" step --
-    `(see intake.yml)` / `(see intake stage)`. A bare `(see ...)` scan
-    would be far too noisy to use generally (`(see above)`, `(see the
-    error above)`, `(see the teardown-done job)` etc. are ordinary prose,
-    not pointers), so this second form is recognised ONLY when the word
-    right after "see" plus ".yml", or the word right before "stage", names
-    a file that actually exists under .github/workflows/ -- a check
-    grounded in the filesystem, not a list of stage names. For each
-    canonical block, every pointer (either form, from any OTHER file) that
-    resolves to this file is a candidate; if at least one candidate's
-    topic words overlap this canonical block's topic words (same overlap
-    test as (b)), the marker is justified. A canonical marker nothing
-    points at is a claim the convention makes about itself that is not
-    true.
+(c) EVERY CANONICAL MARKER IS POINTED AT. Pointers ship in two phrasings:
+    the `-- see FILE.` form above, and `(see intake.yml)` / `(see intake
+    stage)` for the per-stage metrics-summary step. A bare `(see ...)`
+    scan would be far too noisy (`(see above)`, `(see the error above)`),
+    so the second form counts only when the named file actually exists
+    under .github/workflows/ -- grounded in the filesystem, not a list of
+    stage names. A marker is justified when some pointer from ANOTHER file
+    resolves here and its topic words overlap the block's (test (b)).
 
-Deliberately excluded: rewriting or deduplicating comment prose is not this
-gate's job (that is the human review step-gating / code-review pass this
-repo already runs). This only checks that the pointer *mechanism* -- the
-part CLAUDE.md claims is gated -- is actually wired to something real.
+Deliberately excluded: rewriting or deduplicating comment prose. This
+checks only that the pointer mechanism is wired to something real.
 
 USAGE
 -----

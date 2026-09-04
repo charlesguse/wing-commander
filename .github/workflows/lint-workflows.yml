@@ -2994,23 +2994,13 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-metrics-persist-no-writeback.py --self-test
 
-      # Gate 46 — actionlint over every workflow file, the check GitHub
-      # itself never performs: a ${{ }} expression naming a step id that
-      # is defined LATER in the job (or not at all) evaluates to empty,
-      # silently. That is how implement.yml shipped a transcript-clear
-      # step whose `if:` read steps.tool-args-post-progress-comment ten
-      # lines before that id existed — constant-false, never ran, and the
-      # stale-transcript defect it existed to fix survived four review
-      # rounds (PR #277). release.yml Gate 1a has run actionlint since
-      # specs/031, but only on a release dispatch, weeks after the pull
-      # request that introduces such a defect; its pass 1 now invokes
-      # this same script, so the PR-time and release-time answers cannot
-      # drift (the Gate 31 arrangement). The two known actionlint-1.7.7
-      # schema allowances are accounted, not blanket-ignored — the
-      # environment.deployment one is counted per binding, so it goes
-      # loudly stale the day actionlint learns the key. Shellcheck and
-      # pyflakes stay off here (release pass 2's job) so the gate is
-      # byte-identical between CI and a maintainer's machine.
+      # Gate 46 — actionlint, the check GitHub itself never performs: a
+      # ${{ }} expression naming a step id defined LATER in the job (or
+      # not at all) evaluates to empty, silently, so the `if:` reading it
+      # is constant-false and the step never runs. release.yml Gate 1a
+      # has run actionlint since specs/031, but only on a release
+      # dispatch; its pass 1 now invokes this same script so the two
+      # answers cannot drift (the Gate 31 arrangement).
       - name: Gate 46 — actionlint — every workflow expression references only what exists
         if: "!cancelled()"
         run: python3 .github/scripts/verify-actionlint.py
@@ -3018,17 +3008,12 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-actionlint.py --self-test
 
-      # Gate 47 — CLAUDE.md's "Shared logic has exactly one home" section
-      # claims pointer comments (`-- see clarify.yml`) are gate-enforced.
-      # PR #277's review found that claim unbacked, and found the rule's
-      # own worked example freshly violated in the same PR: the "#272
-      # printf-via-env" explanation had been pasted verbatim into
-      # intake.yml and clarify.yml with no pointer and no canonical marker
-      # at all. This is what makes the CLAUDE.md sentence true: every
-      # `-- see FILE` pointer must name a file that exists, its topic
-      # prose must share vocabulary with that file's own text (not just
-      # resolve to any file), and every `(canonical copy` marker must have
-      # at least one such pointer aimed at it from elsewhere.
+      # Gate 47 — what makes CLAUDE.md's "Shared logic has exactly one
+      # home" claim true: every `-- see FILE` pointer must name a file
+      # that exists, its topic prose must share vocabulary with that
+      # file's own text (resolving is not enough), and every
+      # `(canonical copy` marker must have at least one such pointer
+      # aimed at it from elsewhere.
       - name: Gate 47 — comment pointers and canonical-copy markers are real
         if: "!cancelled()"
         run: python3 .github/scripts/verify-comment-canonical-pointers.py

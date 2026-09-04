@@ -243,9 +243,8 @@ permissions: {}
 
 jobs:
   verify-image-prerequisites:
-    # verify-image-prerequisites job (specs/038): no job-level `if:` -- this job must NEVER skip,
-    # or the whole needs-closure silently no-ops every stage (#224) -- see
-    # specs/038-runner-container-passthrough/contracts/runner-container-passthrough.md.
+    # this job must NEVER skip, or the whole needs-closure silently no-ops every stage (#224)
+    # -- see specs/038-runner-container-passthrough/contracts/runner-container-passthrough.md.
     permissions: {}
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     steps:
@@ -337,17 +336,15 @@ jobs:
   # completes). Read-only beyond posting replies — a misjudged
   # classification cannot itself mutate anything (contracts/reusable-pr-conversation.md).
   classify-and-announce:
-    # runner/container-image passthrough (specs/038): container-image no-op and the runs-on
-    # JSON-array branch remain unverified beyond scratch-adopter-repo checks -- see
-    # specs/038-runner-container-passthrough/research.md (D2, D3).
+    # container-image no-op and the runs-on JSON-array branch stay unverified (D2, D3) -- see
+    # specs/038-runner-container-passthrough/research.md.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
-    # no `if:` here -- ordinary `needs:` skip-propagation from verify-image-prerequisites is the
-    # gate (#224) -- see clarify.yml.
+    # no `if:` -- `needs:` skip-propagation is the image gate (#224) -- see clarify.yml.
     needs: verify-image-prerequisites
     permissions:
       contents: read
@@ -792,8 +789,7 @@ jobs:
       - name: Classify the PR conversation request
         id: agent
         if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && steps.relay-resume.outputs.resumed != 'true' && steps.tool-args-classify.outputs.allowed-tools != ''
-        # post-hoc turn-budget rejection of a healthy, finished run
-        # (specs/037-agent-turn-budget-guard/, issue #204) -- see
+        # post-hoc turn-budget rejection of a healthy, finished run (#204) -- see
         # specs/037-agent-turn-budget-guard/plan.md.
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
@@ -1012,8 +1008,7 @@ jobs:
           [ -n "$line" ] || line="**Cost**: metrics unavailable"
           echo "line=$line" >> "$GITHUB_OUTPUT"
 
-      # over-budget is observability, not failure (FR-017) -- the runaway ceiling above is the only
-      # hard stop -- see clarify.yml.
+      # over-budget is observability, not failure (FR-017) -- see clarify.yml.
       - name: Report over-budget agent run
         if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && steps.agent-verdict.outputs.verdict == 'healthy' && steps.agent-verdict.outputs.over-budget == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
@@ -1352,7 +1347,6 @@ jobs:
     # across every leg in the matrix; harmless for a non-held leg, which
     # finishes far under this bound.
     timeout-minutes: ${{ inputs.confirm-timeout-minutes }}
-    # runner/container-image passthrough (specs/038) -- see above in this file.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -1737,7 +1731,6 @@ jobs:
       - name: Act on this classification
         id: agent
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && steps.tool-args-act.outputs.allowed-tools != ''
-        # post-hoc turn-budget rejection of a healthy, finished run (specs/037-agent-turn-budget-guard/) -- see above in this file.
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
@@ -1837,7 +1830,6 @@ jobs:
             --allowedTools "${{ steps.tool-args-act.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-act.outputs.disallowed-tools }}"
 
-      # deterministic, transcript-only verdict (specs/037) -- see above in this file.
       - name: Compute agent run verdict
         id: agent-verdict
         if: always() && steps.agent.outcome != 'skipped'
@@ -1950,7 +1942,6 @@ jobs:
             echo "artifact-url=$artifact_url"
           } >> "$GITHUB_OUTPUT"
 
-      # uniform across every rewired call site (research.md R7 step 5) -- see above in this file.
       - name: Fail loud on non-healthy agent verdict
         if: always() && steps.agent.outcome != 'skipped' && steps.agent-verdict.outputs.verdict != 'healthy'
         env:
@@ -1994,7 +1985,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
 
-      # per-run cost line (FR-031c) -- see above in this file.
       - name: Compute cost line (act)
         id: cost-line-act
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && always() && steps.agent.outcome != 'skipped'
@@ -2006,7 +1996,6 @@ jobs:
           [ -n "$line" ] || line="**Cost**: metrics unavailable"
           echo "line=$line" >> "$GITHUB_OUTPUT"
 
-      # over-budget is observability, not failure (FR-017) -- see above in this file.
       - name: Report over-budget agent run
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && steps.agent-verdict.outputs.verdict == 'healthy' && steps.agent-verdict.outputs.over-budget == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
