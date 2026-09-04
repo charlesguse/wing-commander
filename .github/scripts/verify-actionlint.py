@@ -1,49 +1,37 @@
 #!/usr/bin/env python3
 """Gate 46 -- actionlint over every workflow file, at PR time.
 
-WHY THIS EXISTS
----------------
-implement.yml once shipped a step whose `if:` read
-steps.tool-args-post-progress-comment.outputs.allowed-tools -- an id
-defined ten lines BELOW the step reading it (PR #277 review). GitHub
-evaluates a reference to a not-yet-defined step as empty, silently: the
-guard was constant-false, the step never ran, and the stale-transcript
-defect it existed to fix survived four review rounds. GitHub's own
-workflow parser cannot flag this -- expression semantics are outside its
-scope by design -- but actionlint type-checks every ${{ }} expression
-against a steps context built incrementally from the steps ABOVE the
-current one, so a use-before-definition is a hard diagnostic naming the
-exact line and the ids that were in scope.
+GitHub evaluates a ${{ }} reference to a not-yet-defined step id as
+empty, silently, so an `if:` reading a step defined below it is
+constant-false and the step never runs. GitHub's own parser cannot flag
+that (expression semantics are outside its scope); actionlint type-checks
+each expression against a steps context built from the steps ABOVE it, so
+a use-before-definition is a hard diagnostic naming the line.
 
-release.yml's Gate 1a has run actionlint since specs/031 -- but only on
-a workflow_dispatch release, weeks after the pull request that
-introduces a defect. This script is the PR-time (and, via
+release.yml's Gate 1a has run actionlint since specs/031, but only on a
+workflow_dispatch release. This is the PR-time (and, via
 run-local-gates.py, pre-push) half, over EVERY workflow file rather than
-the published stages alone: lint-workflows.yml and release.yml carry
-${{ }} expressions too, and pass 1's stage-only scope is why nothing
-ever linted them. release.yml's pass 1 now invokes this same script, so
-the release-time answer and the PR-time answer cannot drift (the Gate 31
-arrangement), and its pass 2 reuses the pinned binary this script
-downloads (--ensure-binary) rather than fetching its own.
+the published stages alone -- lint-workflows.yml and release.yml carry
+${{ }} expressions too. Gate 1a's pass 1 now invokes this same script, so
+the two answers cannot drift (the Gate 31 arrangement), and its pass 2
+reuses the pinned binary this one downloads (--ensure-binary).
 
 THE TWO ALLOWANCES (actionlint 1.7.7 schema gaps, both verified real)
 ---------------------------------------------------------------------
 - github.job_workflow_sha: a documented context property 1.7.7 does not
-  know (specs/031 research.md D3). -ignore'd outright: the message names
-  the property, so nothing else can hide behind the pattern.
+  know (specs/031 research.md D3). -ignore'd outright -- the message
+  names the property, so nothing else can hide behind the pattern.
 - environment.deployment: GitHub accepts and acts on the key
-  (specs/031-stage-environment-binding/contracts/environment-binding.md,
-  empirically verified in charlesguse/wc-env-probe); 1.7.7's schema
-  knows only name/url there. NOT -ignore'd: counted instead -- exactly
-  one diagnostic per `deployment:` binding line and nothing else -- so
-  the allowance goes loudly stale the day actionlint learns the key.
-  See classify().
+  (specs/031-stage-environment-binding/contracts/environment-binding.md);
+  1.7.7's schema knows only name/url. NOT -ignore'd: counted instead,
+  exactly one diagnostic per `deployment:` line, so the allowance goes
+  loudly stale the day actionlint learns the key. See classify().
 
-Shell/pyflakes lint of run: blocks stays release.yml pass 2's job (an
-explicit opt-in list; #149 tracks widening it): shellcheck is not on a
-maintainer's Windows machine, and a gate needing it locally would fail
-on the environment rather than the code. `-shellcheck= -pyflakes=`
-keeps this gate byte-identical between CI and run-local-gates.py.
+Shell/pyflakes lint of run: blocks stays release.yml pass 2's job (#149
+tracks widening it): shellcheck is not on a maintainer's Windows machine,
+and a gate needing it locally would fail on the environment rather than
+the code. `-shellcheck= -pyflakes=` keeps this gate byte-identical
+between CI and run-local-gates.py.
 """
 import glob
 import io

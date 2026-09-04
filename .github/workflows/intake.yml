@@ -219,9 +219,8 @@ permissions: {}
 
 jobs:
   verify-image-prerequisites:
-    # verify-image-prerequisites job (specs/038): no job-level `if:` -- this job must NEVER skip,
-    # or the whole needs-closure silently no-ops every stage (#224) -- see
-    # specs/038-runner-container-passthrough/contracts/runner-container-passthrough.md.
+    # this job must NEVER skip, or the whole needs-closure silently no-ops every stage (#224)
+    # -- see specs/038-runner-container-passthrough/contracts/runner-container-passthrough.md.
     permissions: {}
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     steps:
@@ -307,9 +306,8 @@ jobs:
           fi
 
   intake:
-    # runner/container-image passthrough (specs/038): container-image no-op and the runs-on
-    # JSON-array branch remain unverified beyond scratch-adopter-repo checks -- see
-    # specs/038-runner-container-passthrough/research.md (D2, D3).
+    # container-image no-op and the runs-on JSON-array branch stay unverified (D2, D3) -- see
+    # specs/038-runner-container-passthrough/research.md.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -324,8 +322,7 @@ jobs:
     concurrency:
       group: wing-commander-intake
       cancel-in-progress: false
-    # no `if:` here -- ordinary `needs:` skip-propagation from verify-image-prerequisites is the
-    # gate (#224) -- see clarify.yml.
+    # no `if:` -- `needs:` skip-propagation is the image gate (#224) -- see clarify.yml.
     needs: verify-image-prerequisites
     permissions:
       contents: write
@@ -344,8 +341,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # composite checkout must pin the exact workflow commit, falling back to the OIDC
-      # job_workflow_sha claim, never a branch -- see specs/010-reusable-pipeline/research.md D3.
+      # pin the exact commit, never a branch -- see specs/010-reusable-pipeline/research.md.
       - name: Resolve pipeline ref
         id: pipeline-ref
         env:
@@ -593,15 +589,13 @@ jobs:
       - name: Create spec from issue
         id: agent
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.tool-args-intake.outputs.allowed-tools != ''
-        # post-hoc turn-budget rejection of a healthy, finished run
-        # (specs/037-agent-turn-budget-guard/, issue #204) -- see
+        # post-hoc turn-budget rejection of a healthy, finished run (#204) -- see
         # specs/037-agent-turn-budget-guard/plan.md.
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
-          # subagents forced synchronous (anthropics/claude-code-action#1462 / #1499): headless has
-          # no turn-boundary resume -- see clarify.yml.
+          # subagents forced synchronous, no turn-boundary resume (#1462/#1499) -- see clarify.yml.
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
@@ -611,7 +605,7 @@ jobs:
           # Wrappers may dispatch this stage via GITHUB_TOKEN (custom
           # triggers), making the triggering actor github-actions[bot]; the
           # action rejects bot actors unless allow-listed.
-          # The pipeline's own App bot is allow-listed too (bare slug, no [bot] suffix) -- see clarify.yml.
+          # the pipeline's own App bot is allow-listed too (bare slug) -- see clarify.yml.
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           # NOTE: only the issue NUMBER is interpolated (an integer input,
           # not attacker-controlled text). The issue title/body are fetched by
@@ -808,7 +802,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
 
-      # (canonical copy -- pointed at from other stage workflows; do not condense)
+      # (canonical copy; do not condense)
       # Surface this run's own metrics (model, turns/budget, duration, tokens,
       # cost) in the run summary so tuning signals are legible without
       # downloading the artifact above. Pure read of that same transcript.
@@ -1166,8 +1160,7 @@ jobs:
             gh pr edit "$pr" --add-label "$labels"
           fi
 
-      # over-budget is observability, not failure (FR-017) -- the runaway ceiling above is the only
-      # hard stop -- see clarify.yml.
+      # over-budget is observability, not failure (FR-017) -- see clarify.yml.
       - name: Report over-budget agent run
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent-verdict.outputs.verdict == 'healthy' && steps.agent-verdict.outputs.over-budget == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout

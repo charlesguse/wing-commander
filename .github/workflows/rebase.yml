@@ -184,9 +184,8 @@ permissions: {}
 
 jobs:
   verify-image-prerequisites:
-    # verify-image-prerequisites job (specs/038): no job-level `if:` -- this job must NEVER skip,
-    # or the whole needs-closure silently no-ops every stage (#224) -- see
-    # specs/038-runner-container-passthrough/contracts/runner-container-passthrough.md.
+    # this job must NEVER skip, or the whole needs-closure silently no-ops every stage (#224)
+    # -- see specs/038-runner-container-passthrough/contracts/runner-container-passthrough.md.
     permissions: {}
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     steps:
@@ -273,9 +272,8 @@ jobs:
 
   # Compute the branch set once per call.
   discover:
-    # runner/container-image passthrough (specs/038): container-image no-op and the runs-on
-    # JSON-array branch remain unverified beyond scratch-adopter-repo checks -- see
-    # specs/038-runner-container-passthrough/research.md (D2, D3).
+    # container-image no-op and the runs-on JSON-array branch stay unverified (D2, D3) -- see
+    # specs/038-runner-container-passthrough/research.md.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -284,8 +282,7 @@ jobs:
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
-    # no `if:` here -- ordinary `needs:` skip-propagation from verify-image-prerequisites is the
-    # gate (#224) -- see clarify.yml.
+    # no `if:` -- `needs:` skip-propagation is the image gate (#224) -- see clarify.yml.
     needs: verify-image-prerequisites
     permissions:
       contents: read
@@ -299,8 +296,7 @@ jobs:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v5
 
-      # composite checkout must pin the exact workflow commit, falling back to the OIDC
-      # job_workflow_sha claim, never a branch -- see specs/010-reusable-pipeline/research.md D3.
+      # pin the exact commit, never a branch -- see specs/010-reusable-pipeline/research.md.
       - name: Resolve pipeline ref
         id: pipeline-ref
         env:
@@ -495,7 +491,6 @@ jobs:
     concurrency:
       group: wing-commander-${{ matrix.spec_dir }}
       cancel-in-progress: false
-    # runner/container-image passthrough (specs/038) -- see above in this file.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -521,7 +516,6 @@ jobs:
         with:
           persist-credentials: false
 
-      # composite checkout must pin the exact workflow commit -- see above in this file.
       - name: Resolve pipeline ref
         id: pipeline-ref
         env:
@@ -683,8 +677,7 @@ jobs:
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
-          # subagents forced synchronous (anthropics/claude-code-action#1462 / #1499): headless has
-          # no turn-boundary resume -- see clarify.yml.
+          # subagents forced synchronous, no turn-boundary resume (#1462/#1499) -- see clarify.yml.
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
@@ -693,7 +686,7 @@ jobs:
           github_token: ${{ steps.ctx.outputs.token }}
           # Wrapper triggers may be schedule/dispatch chains via GITHUB_TOKEN;
           # the action rejects bot actors unless allow-listed.
-          # The pipeline's own App bot is allow-listed too (bare slug, no [bot] suffix) -- see clarify.yml.
+          # the pipeline's own App bot is allow-listed too (bare slug) -- see clarify.yml.
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           prompt: |
             You are the conflict-resolution assistant for this repository's
@@ -794,8 +787,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
 
-      # per-run cost line (FR-031c): appended to whichever status comment posts, not a new comment
-      # -- see specs/043-durable-metrics-record/data-model.md.
+      # per-run cost line (FR-031c) -- see specs/043-durable-metrics-record/data-model.md.
       - name: Compute cost line
         id: cost-line
         if: always() && steps.agent.outcome != 'skipped'

@@ -24,11 +24,8 @@ It also pins the composite's `cost-line` output (FR-031c) on both the
 healthy and the degraded branch, and asserts the formatter behind it has
 NO other home: it was once pasted into 12 "Compute cost line" run-blocks
 across 9 stage workflows, where a rounding fix would have had to land 12
-times with nothing failing on a drifted copy (PR #277 review). The stage
-workflows now consume the output; a pasted copy reappearing in any
-workflow OR composite action under .github/actions/ fails here (PR #277
-round-4 review: the original scan missed .github/actions/, the likeliest
-paste target for shared logic per CLAUDE.md).
+times with nothing failing on a drifted copy. A copy reappearing in any
+workflow OR composite action under .github/actions/ fails here.
 """
 import json
 import os
@@ -295,13 +292,10 @@ def case_cost_line_formatter_has_exactly_one_home():
     the composite's cost-line output (plus its own one-line fallback for
     the action-never-ran case), never a copy of the jq formatter.
 
-    PR #277's round-4 review found this scan covered only
-    .github/workflows/*.yml — leaving .github/actions/ (CLAUDE.md's own
-    prescribed home for cross-workflow shell/jq) as an unchecked blind
-    spot, so a copy pasted into the likeliest paste target, a composite
-    action, would evade the gate entirely. Widened to also walk every
-    composite action.yml/action.yaml (any depth) plus any *.sh/*.py under
-    .github/actions/, excluding only the canonical home (ACTION) itself."""
+    Scans .github/workflows/*.yml AND every composite action.yml/action.yaml
+    plus *.sh/*.py under .github/actions/ — the latter being CLAUDE.md's
+    prescribed home for shared shell/jq, so the likeliest paste target —
+    excluding only the canonical home (ACTION) itself."""
     case = "cost-line formatter single home"
     hits = []
 

@@ -136,13 +136,10 @@ outputs:
     description: >
       The preformatted per-run cost line (FR-031c) rendered from this
       invocation's record — "**Cost**: <cost> · <turns> · <model>", each
-      part degrading to "... unavailable" independently. Formatted here,
-      once, because this is the formatter's ONLY home: the stage
-      workflows' "Compute cost line" steps used to each carry a pasted
-      copy of the jq below, twelve of them, and a rounding fix would
-      have had to land twelve times (PR #277 review). Callers append
-      this verbatim and keep only a one-line "**Cost**: metrics
-      unavailable" fallback for the case where this action never ran.
+      part degrading to "... unavailable" independently. This is the
+      formatter's ONLY home; callers append the value verbatim and keep
+      just a one-line "**Cost**: metrics unavailable" fallback for the
+      case where this action never ran.
     value: ${{ steps.render.outputs.cost-line }}
 
 runs:
@@ -289,12 +286,10 @@ runs:
               emitted_at: $emitted_at
             }' > "$RECORD_PATH" 2>/dev/null || printf '{}' > "$RECORD_PATH"
 
-          # The cost-line output (see this action's outputs block for why it
-          # is formatted here and nowhere else). Runs in BOTH the normal and
-          # the degraded branch — each part degrades to "... unavailable"
-          # independently, so a degraded record still yields a well-formed
-          # line. Empty only if jq itself dies; callers' one-line fallback
-          # covers that and the skipped-action case.
+          # The cost-line output (see the outputs block above). Runs in BOTH
+          # the normal and the degraded branch — each part degrades to
+          # "... unavailable" independently. Empty only if jq itself dies,
+          # which the callers' one-line fallback covers.
           cost_line="$(jq -r '
             def usd($m; $d):
               (. * $m | round | tostring) as $c | ($c | length) as $n
@@ -312,12 +307,11 @@ runs:
           {
             echo "record-key=$RECORD_KEY"
             echo "record-json=$(jq -c . "$RECORD_PATH" 2>/dev/null || printf '{}')"
-            # cost-line is heredoc-delimited (not a plain echo) because it is
-            # the one line here whose value isn't inherently single-line:
-            # record-key is a controlled key and record-json is jq -c
-            # (always one line), but cost-line's modelpart can carry a
-            # newline from a multiline model input -- see implement.yml's
-            # WING_COMMANDER_AGENT_MSG_EOF step for the same idiom.
+            # cost-line is heredoc-delimited, not echoed: its modelpart can
+            # carry a newline from a multiline model input, unlike the
+            # controlled record-key and the always-one-line jq -c
+            # record-json -- see implement.yml's WING_COMMANDER_AGENT_MSG_EOF
+            # step for the same idiom.
             echo "cost-line<<WING_COMMANDER_COST_LINE_EOF"
             printf '%s\n' "$cost_line"
             echo "WING_COMMANDER_COST_LINE_EOF"

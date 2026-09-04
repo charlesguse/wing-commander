@@ -236,9 +236,8 @@ concurrency:
 
 jobs:
   verify-image-prerequisites:
-    # verify-image-prerequisites job (specs/038): no job-level `if:` -- this job must NEVER skip,
-    # or the whole needs-closure silently no-ops every stage (#224) -- see
-    # specs/038-runner-container-passthrough/contracts/runner-container-passthrough.md.
+    # this job must NEVER skip, or the whole needs-closure silently no-ops every stage (#224)
+    # -- see specs/038-runner-container-passthrough/contracts/runner-container-passthrough.md.
     permissions: {}
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     steps:
@@ -326,12 +325,10 @@ jobs:
   # Deterministic evidence gathering — five FR-006 collectors into one
   # normalized signals.json. No agent step in this job (research.md).
   collect:
-    # no `if:` here -- ordinary `needs:` skip-propagation from verify-image-prerequisites is the
-    # gate (#224) -- see clarify.yml.
+    # no `if:` -- `needs:` skip-propagation is the image gate (#224) -- see clarify.yml.
     needs: verify-image-prerequisites
-    # runner/container-image passthrough (specs/038): container-image no-op and the runs-on
-    # JSON-array branch remain unverified beyond scratch-adopter-repo checks -- see
-    # specs/038-runner-container-passthrough/research.md (D2, D3).
+    # container-image no-op and the runs-on JSON-array branch stay unverified (D2, D3) -- see
+    # specs/038-runner-container-passthrough/research.md.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -363,8 +360,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # composite checkout must pin the exact workflow commit, falling back to the OIDC
-      # job_workflow_sha claim, never a branch -- see specs/010-reusable-pipeline/research.md D3.
+      # pin the exact commit, never a branch -- see specs/010-reusable-pipeline/research.md.
       - name: Resolve pipeline ref
         id: pipeline-ref
         env:
@@ -1177,11 +1173,9 @@ jobs:
   diagnose:
     needs: collect
     if: needs.collect.outputs.evidence-available != 'false'
-    # runner/container-image passthrough (specs/038) -- see above in this file.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # environment-binding empirical basis (FR-013) -- see above in this file.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -1423,7 +1417,7 @@ jobs:
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
           use_bedrock: ${{ inputs.use-bedrock }}
           github_token: ${{ steps.ctx.outputs.token }}
-          # The pipeline's own App bot is allow-listed too (bare slug, no [bot] suffix) -- see clarify.yml.
+          # the pipeline's own App bot is allow-listed too (bare slug) -- see clarify.yml.
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           prompt: |
             You are the diagnose step of this repository's pipeline
@@ -1769,7 +1763,6 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJson(needs.diagnose.outputs.findings) }}
-    # runner/container-image passthrough (specs/038) -- see above in this file.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -2109,11 +2102,9 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJson(needs.diagnose.outputs.findings) }}
-    # runner/container-image passthrough (specs/038) -- see above in this file.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # environment-binding empirical basis (FR-013; matrix-note variant) -- see above in this file.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -2456,11 +2447,9 @@ jobs:
     if: >-
       always() &&
       needs.verify-image-prerequisites.result == 'success'
-    # runner/container-image passthrough (specs/038) -- see above in this file.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # environment-binding empirical basis (FR-013) -- see above in this file.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}

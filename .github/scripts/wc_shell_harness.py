@@ -37,16 +37,12 @@ looks like a defect in the workflow and is not:
      nothing by that name lives in the prepended dirs. The failure shape is
      nasty: the scenario runs green against the REAL tool and the gate
      either passes while proving nothing or fails on the assertion that the
-     fixture ever fired. run_step handles this by re-applying the caller's
-     own PATH additions inside the step (see the preamble there), inferring
-     those additions from env_extra's PATH by default or taking them
-     verbatim from an explicit path_prepend= argument. When a PATH is
-     present but neither the explicit argument nor the inference applies,
-     run_step raises rather than silently skip the preamble — a stub bindir
-     that loses quietly to /mingw64/bin is exactly the green-but-meaningless
-     shape this point describes. switching to usr\\bin\\bash.exe instead is
-     not an option — invoked directly it prepends nothing, leaving no
-     coreutils (grep/sed/mv/head) on PATH at all.
+     fixture ever fired. run_step re-applies the caller's own PATH additions
+     inside the step, inferred from env_extra's PATH or taken verbatim from
+     path_prepend=; when a PATH is present but neither applies it raises
+     rather than silently skip the preamble. Using usr\\bin\\bash.exe
+     instead is not an option — invoked directly it prepends nothing,
+     leaving no coreutils (grep/sed/mv/head) on PATH at all.
 
 On ubuntu-latest all three resolve on the first try and cost one extra
 subprocess for the bash probe. None of this changes what CI does; it only
