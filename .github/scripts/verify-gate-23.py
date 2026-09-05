@@ -42,10 +42,10 @@ WHAT COUNTS AS IN SCOPE
 ------------------------
 Every step, in every job, in every .github/workflows/*.yml file, whose `uses`
 starts with `anthropics/claude-code-action` AND whose `claude_args` contains
-`--max-turns`. Steps without `--max-turns` (claude.yml, claude-code-review.yml
-as of this writing) are out of scope by design (research.md R8) — a step
-with no turn cap cannot experience the upstream defect this feature works
-around.
+`--max-turns`. Steps without `--max-turns` (none as of this writing; the
+stock claude.yml/claude-code-review.yml were the examples until their
+removal) are out of scope by design (research.md R8) — a step with no turn
+cap cannot experience the upstream defect this feature works around.
 
 WHAT EACH IN-SCOPE SITE MUST HAVE, ALL FOUR
 --------------------------------------------
@@ -393,38 +393,14 @@ import subprocess
 import sys
 import tempfile
 
-import yaml
+# __file__ here is the dispatcher's own path, injected into this body's
+# namespace by _run() at the bottom of this file (this body is exec()'d, not
+# imported) — the same trick check_derivations_agree below already relies on
+# to reach wc_published_stages.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_lint_gate_source import LINT_WORKFLOW, extract_gate_step  # noqa: E402
 
-LINT_WORKFLOW = ".github/workflows/lint-workflows.yml"
-STEP_PREFIX = "Gate 23"
-HEREDOC_OPEN = "python3 - <<'PYEOF'"
-HEREDOC_CLOSE = "PYEOF"
-
-
-def extract_gate(path=LINT_WORKFLOW):
-    """Return Gate 23's python source, read out of the shipped workflow."""
-    wf = yaml.safe_load(io.open(path, encoding="utf-8")) or {}
-    run = None
-    for job in (wf.get("jobs") or {}).values():
-        for step in (job or {}).get("steps") or []:
-            name = (step or {}).get("name", "")
-            if name.startswith(STEP_PREFIX) and "self-test" not in name:
-                run = step.get("run")
-    if run is None:
-        sys.exit(f"::error file={path}::verify-gate-23 could not find a step named "
-                 f"{STEP_PREFIX!r}. If it was renamed, update this script and the "
-                 f"workflow together.")
-
-    lines = run.splitlines()
-    try:
-        start = next(i for i, l in enumerate(lines) if l.strip() == HEREDOC_OPEN)
-        end = next(i for i, l in enumerate(lines)
-                   if i > start and l.strip() == HEREDOC_CLOSE)
-    except StopIteration:
-        sys.exit(f"::error file={path}::verify-gate-23 found the {STEP_PREFIX} step but "
-                 f"not the {HEREDOC_OPEN} ... {HEREDOC_CLOSE} block it keys on — the "
-                 f"step's shape has changed.")
-    return "\n".join(lines[start + 1:end]) + "\n"
+STEP_PREFIX = "Gate 23 — every published stage"
 
 
 # ---------------------------------------------------------------- fixtures
@@ -816,7 +792,6 @@ def check_derivations_agree(gate_path):
     Same reasoning as verify-gate-7.py / verify-gate-22.py: a stage visible
     to one derivation and invisible to the other is issue #149 again.
     """
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     try:
         from wc_published_stages import published_stages
     except ImportError as exc:
@@ -883,7 +858,7 @@ def main():
     if not os.path.isfile(LINT_WORKFLOW):
         sys.exit(f"::error::run this from the repository root; {LINT_WORKFLOW} not found.")
 
-    gate_src = extract_gate()
+    gate_src = extract_gate_step(STEP_PREFIX)
     root = tempfile.mkdtemp(prefix="verify_gate23_")
     gate_path = os.path.join(root, "gate23.py")
     io.open(gate_path, "w", encoding="utf-8").write(gate_src)

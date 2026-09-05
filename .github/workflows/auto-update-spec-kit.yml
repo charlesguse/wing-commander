@@ -211,31 +211,8 @@ concurrency:
 
 jobs:
   verify-image-prerequisites:
-    # runner/container-image passthrough (specs/038): checks the
-    # adopter-named image before any other job's own container is
-    # created. Deliberately no container: — must run directly on the
-    # runner to invoke Docker itself (contracts/runner-container-
-    # passthrough.md "The verify-image-prerequisites job").
-    # No job-level `if:`, deliberately: this job must NEVER skip.
-    # GitHub applies its implicit success() over a job's whole needs-
-    # CLOSURE, so a skipped check suppresses every job in the stage that
-    # carries no status-check function of its own -- whatever their `if:`
-    # says, and without failing anything. Between PR #222 and this fix
-    # this job was skip-conditioned on `container-image`, which is unset
-    # by default, and all eleven stages did nothing at all for a day
-    # (#224). The image work is conditioned one level down, on the step,
-    # so a run that names no image still pays only this job's idle
-    # seconds -- the cost FR-006 was written to avoid, and the cheapest
-    # honest price for the guarantee it was protecting.
-    # Zero scopes, declared rather than inherited. This job's whole body is
-    # docker login/pull/run against the adopter's own registry: it makes no
-    # GitHub API call and writes nothing. Nine of the eleven stage files
-    # carry `permissions: {}` at file level, so this job got zero there by
-    # construction -- but watchdog.yml and auto-update-spec-kit.yml carry
-    # the wide top-level grants their other jobs need, and this job silently
-    # inherited all of them. Declared on all eleven so the grant is a
-    # property of the job rather than of whichever file it happens to sit
-    # in (Gate 22 asserts it).
+    # this job must NEVER skip, or the whole needs-closure silently no-ops every stage (#224)
+    # -- see specs/038-runner-container-passthrough/contracts/runner-container-passthrough.md.
     permissions: {}
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     steps:
@@ -338,24 +315,13 @@ jobs:
     needs: verify-image-prerequisites
     if: >-
       (inputs.trigger == 'scheduled' || inputs.trigger == 'dispatch')
-    # runner/container-image passthrough (specs/038). Empty
-    # container-image is expected to be a no-op (research.md D3); live
-    # verification requires a workflow_dispatch trigger this automated
-    # implementation run could not perform (T001) and remains deferred to
-    # a human/scratch-adopter-repo pass. The runs-on ternary's JSON-array
-    # branch is likewise unverified beyond single-element arrays —
-    # multi-label self-hosted conjunction is scratch-adopter-repo-verified
-    # only (research.md D2).
+    # container-image no-op and the runs-on JSON-array branch stay unverified (D2, D3) -- see
+    # specs/038-runner-container-passthrough/research.md.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
-    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
-    # form accepts an expression in both name and deployment, and a
-    # rendered deployment value is coerced as a boolean, so false really
-    # does suppress the deployment record while keeping the gate; an
-    # unknown name is created on reference. Not part of GitHub's
-    # published schema (FR-013) — see contracts/environment-binding.md.
+    # environment-binding empirical basis (FR-013) -- see
+    # specs/031-stage-environment-binding/contracts/environment-binding.md.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -372,13 +338,7 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-      # research.md D3: the composite checkout must pin the EXACT commit of
-      # the running reusable workflow. github.job_workflow_sha is empty for
-      # some remote call shapes, so fall back to the OIDC token's
-      # job_workflow_sha claim (requires id-token: write). Never fall back
-      # to a branch name — a silent default-branch checkout would break
-      # version pinning. (Identical to every other stage's own copy of this
-      # step — watchdog.yml, rebase.yml.)
+      # pin the exact commit, never a branch -- see specs/010-reusable-pipeline/research.md.
       - name: Resolve pipeline ref
         id: pipeline-ref
         env:
@@ -550,24 +510,9 @@ jobs:
   detect:
     needs: health-check
     if: needs.health-check.result == 'success' && needs.health-check.outputs.pinned-ok != 'false'
-    # runner/container-image passthrough (specs/038). Empty
-    # container-image is expected to be a no-op (research.md D3); live
-    # verification requires a workflow_dispatch trigger this automated
-    # implementation run could not perform (T001) and remains deferred to
-    # a human/scratch-adopter-repo pass. The runs-on ternary's JSON-array
-    # branch is likewise unverified beyond single-element arrays —
-    # multi-label self-hosted conjunction is scratch-adopter-repo-verified
-    # only (research.md D2).
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
-    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
-    # form accepts an expression in both name and deployment, and a
-    # rendered deployment value is coerced as a boolean, so false really
-    # does suppress the deployment record while keeping the gate; an
-    # unknown name is created on reference. Not part of GitHub's
-    # published schema (FR-013) — see contracts/environment-binding.md.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -643,24 +588,9 @@ jobs:
   settle:
     needs: detect
     if: needs.detect.result == 'success' && needs.detect.outputs.newer == 'true'
-    # runner/container-image passthrough (specs/038). Empty
-    # container-image is expected to be a no-op (research.md D3); live
-    # verification requires a workflow_dispatch trigger this automated
-    # implementation run could not perform (T001) and remains deferred to
-    # a human/scratch-adopter-repo pass. The runs-on ternary's JSON-array
-    # branch is likewise unverified beyond single-element arrays —
-    # multi-label self-hosted conjunction is scratch-adopter-repo-verified
-    # only (research.md D2).
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
-    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
-    # form accepts an expression in both name and deployment, and a
-    # rendered deployment value is coerced as a boolean, so false really
-    # does suppress the deployment record while keeping the gate; an
-    # unknown name is created on reference. Not part of GitHub's
-    # published schema (FR-013) — see contracts/environment-binding.md.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -881,24 +811,9 @@ jobs:
       needs.verify-image-prerequisites.result == 'success' &&
       ((needs.settle.result == 'success' && needs.settle.outputs.settled == 'true') ||
        (needs.comment-reply.result == 'success' && needs.comment-reply.outputs.resumed == 'true'))
-    # runner/container-image passthrough (specs/038). Empty
-    # container-image is expected to be a no-op (research.md D3); live
-    # verification requires a workflow_dispatch trigger this automated
-    # implementation run could not perform (T001) and remains deferred to
-    # a human/scratch-adopter-repo pass. The runs-on ternary's JSON-array
-    # branch is likewise unverified beyond single-element arrays —
-    # multi-label self-hosted conjunction is scratch-adopter-repo-verified
-    # only (research.md D2).
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
-    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
-    # form accepts an expression in both name and deployment, and a
-    # rendered deployment value is coerced as a boolean, so false really
-    # does suppress the deployment record while keeping the gate; an
-    # unknown name is created on reference. Not part of GitHub's
-    # published schema (FR-013) — see contracts/environment-binding.md.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -1148,8 +1063,8 @@ jobs:
             --disallowedTools "WebSearch,WebFetch,Write,Edit,Bash(git commit:*),Bash(git push:*)"
             --json-schema '{"type":"object","properties":{"outcome":{"type":"string","enum":["clean-bump","needs-migration","ambiguous-options"]},"reasoning":{"type":"string"},"sources":{"type":"array","items":{"type":"object","properties":{"title":{"type":"string"},"url":{"type":"string"}},"required":["title","url"]}},"options":{"type":["array","null"],"items":{"type":"object","properties":{"label":{"type":"string"},"description":{"type":"string"}},"required":["label","description"]}}},"required":["outcome","reasoning","sources"]}'
 
-      # Deterministic, transcript-only verdict — replaces the raw
-      # steps.decide.outcome checks below (specs/037-agent-turn-budget-guard/).
+      # deterministic, transcript-only verdict replacing the raw steps.decide.outcome checks
+      # below -- see specs/037-agent-turn-budget-guard/data-model.md.
       # Gated on steps.decide.outcome alone: it tracks that step's own `if:`
       # without drifting from it, so a dedup decline (steps.guard skip=true —
       # already-open/queued-behind/multiple-matches, PR #211) still reaches
@@ -1473,24 +1388,9 @@ jobs:
       needs.verify-image-prerequisites.result == 'success' &&
       needs.evaluate-path.result == 'success' &&
       needs.evaluate-path.outputs.outcome == 'clean-bump'
-    # runner/container-image passthrough (specs/038). Empty
-    # container-image is expected to be a no-op (research.md D3); live
-    # verification requires a workflow_dispatch trigger this automated
-    # implementation run could not perform (T001) and remains deferred to
-    # a human/scratch-adopter-repo pass. The runs-on ternary's JSON-array
-    # branch is likewise unverified beyond single-element arrays —
-    # multi-label self-hosted conjunction is scratch-adopter-repo-verified
-    # only (research.md D2).
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
-    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
-    # form accepts an expression in both name and deployment, and a
-    # rendered deployment value is coerced as a boolean, so false really
-    # does suppress the deployment record while keeping the gate; an
-    # unknown name is created on reference. Not part of GitHub's
-    # published schema (FR-013) — see contracts/environment-binding.md.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -1705,24 +1605,9 @@ jobs:
       needs.verify-image-prerequisites.result == 'success' &&
       needs.prepare.result == 'success' &&
       needs.prepare.outputs.release-type != 'patch'
-    # runner/container-image passthrough (specs/038). Empty
-    # container-image is expected to be a no-op (research.md D3); live
-    # verification requires a workflow_dispatch trigger this automated
-    # implementation run could not perform (T001) and remains deferred to
-    # a human/scratch-adopter-repo pass. The runs-on ternary's JSON-array
-    # branch is likewise unverified beyond single-element arrays —
-    # multi-label self-hosted conjunction is scratch-adopter-repo-verified
-    # only (research.md D2).
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
-    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
-    # form accepts an expression in both name and deployment, and a
-    # rendered deployment value is coerced as a boolean, so false really
-    # does suppress the deployment record while keeping the gate; an
-    # unknown name is created on reference. Not part of GitHub's
-    # published schema (FR-013) — see contracts/environment-binding.md.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -2072,8 +1957,6 @@ jobs:
             --allowedTools "Bash(e2e-scratch/.specify/scripts/bash/create-new-feature.sh:*),Bash(bash e2e-scratch/.specify/scripts/bash/create-new-feature.sh:*),Write(e2e-scratch/**),Edit(e2e-scratch/**),Write(${{ github.workspace }}/e2e-scratch/**),Edit(${{ github.workspace }}/e2e-scratch/**)"
             --disallowedTools "WebSearch,WebFetch,Bash(git push:*)"
 
-      # Deterministic, transcript-only verdict — replaces the raw
-      # steps.decide.outcome checks below (specs/037-agent-turn-budget-guard/).
       - name: Compute agent run verdict
         id: decide-verdict
         if: always() && steps.decide.outcome != 'skipped'
@@ -2191,24 +2074,9 @@ jobs:
       always() &&
       needs.verify-image-prerequisites.result == 'success' &&
       needs.prepare.result == 'success'
-    # runner/container-image passthrough (specs/038). Empty
-    # container-image is expected to be a no-op (research.md D3); live
-    # verification requires a workflow_dispatch trigger this automated
-    # implementation run could not perform (T001) and remains deferred to
-    # a human/scratch-adopter-repo pass. The runs-on ternary's JSON-array
-    # branch is likewise unverified beyond single-element arrays —
-    # multi-label self-hosted conjunction is scratch-adopter-repo-verified
-    # only (research.md D2).
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
-    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
-    # form accepts an expression in both name and deployment, and a
-    # rendered deployment value is coerced as a boolean, so false really
-    # does suppress the deployment record while keeping the gate; an
-    # unknown name is created on reference. Not part of GitHub's
-    # published schema (FR-013) — see contracts/environment-binding.md.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -2543,24 +2411,9 @@ jobs:
        needs.prepare.result == 'failure' ||
        needs.verify.result == 'success' ||
        needs.verify.result == 'failure')
-    # runner/container-image passthrough (specs/038). Empty
-    # container-image is expected to be a no-op (research.md D3); live
-    # verification requires a workflow_dispatch trigger this automated
-    # implementation run could not perform (T001) and remains deferred to
-    # a human/scratch-adopter-repo pass. The runs-on ternary's JSON-array
-    # branch is likewise unverified beyond single-element arrays —
-    # multi-label self-hosted conjunction is scratch-adopter-repo-verified
-    # only (research.md D2).
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
-    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
-    # form accepts an expression in both name and deployment, and a
-    # rendered deployment value is coerced as a boolean, so false really
-    # does suppress the deployment record while keeping the gate; an
-    # unknown name is created on reference. Not part of GitHub's
-    # published schema (FR-013) — see contracts/environment-binding.md.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -2932,36 +2785,14 @@ jobs:
   # feature's own marker is a no-op — never assume any other PR belongs to
   # this feature.
   pr-merged:
-    # The `if:` below gates on this run's trigger and nothing else.
-    # Ordinary needs: skip-propagation is what gates the image check: a
-    # failed check skips this job and everything behind it.
-    # verify-image-prerequisites never skips, so there is no skipped
-    # result to tolerate here -- and the clause that used to say
-    # otherwise was never evaluated at all, because a job with no
-    # status-check function is suppressed before its `if:` is read
-    # (#224).
+    # no `if:` of its own -- `needs:` skip-propagation is the image gate (#224).
     needs: verify-image-prerequisites
     if: >-
       inputs.trigger == 'pr-merged' &&
       inputs.pr-merged
-    # runner/container-image passthrough (specs/038). Empty
-    # container-image is expected to be a no-op (research.md D3); live
-    # verification requires a workflow_dispatch trigger this automated
-    # implementation run could not perform (T001) and remains deferred to
-    # a human/scratch-adopter-repo pass. The runs-on ternary's JSON-array
-    # branch is likewise unverified beyond single-element arrays —
-    # multi-label self-hosted conjunction is scratch-adopter-repo-verified
-    # only (research.md D2).
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
-    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
-    # form accepts an expression in both name and deployment, and a
-    # rendered deployment value is coerced as a boolean, so false really
-    # does suppress the deployment record while keeping the gate; an
-    # unknown name is created on reference. Not part of GitHub's
-    # published schema (FR-013) — see contracts/environment-binding.md.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -3089,36 +2920,14 @@ jobs:
   # to an untrusted commenter). evaluate-path's `needs.comment-reply` gate
   # then sees a skipped (non-success) result and does not re-enter.
   comment-reply:
-    # The `if:` below gates on this run's trigger and nothing else.
-    # Ordinary needs: skip-propagation is what gates the image check: a
-    # failed check skips this job and everything behind it.
-    # verify-image-prerequisites never skips, so there is no skipped
-    # result to tolerate here -- and the clause that used to say
-    # otherwise was never evaluated at all, because a job with no
-    # status-check function is suppressed before its `if:` is read
-    # (#224).
+    # no `if:` of its own -- `needs:` skip-propagation is the image gate (#224).
     needs: verify-image-prerequisites
     if: >-
       inputs.trigger == 'comment-reply' &&
       (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), inputs.commenter-association) || inputs.commenter-id == inputs.issue-author-id)
-    # runner/container-image passthrough (specs/038). Empty
-    # container-image is expected to be a no-op (research.md D3); live
-    # verification requires a workflow_dispatch trigger this automated
-    # implementation run could not perform (T001) and remains deferred to
-    # a human/scratch-adopter-repo pass. The runs-on ternary's JSON-array
-    # branch is likewise unverified beyond single-element arrays —
-    # multi-label self-hosted conjunction is scratch-adopter-repo-verified
-    # only (research.md D2).
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
-    # Empirically verified 2026-08-05/06 against GitHub-hosted runners
-    # (charlesguse/wc-env-probe): empty name is a true no-op; the mapping
-    # form accepts an expression in both name and deployment, and a
-    # rendered deployment value is coerced as a boolean, so false really
-    # does suppress the deployment record while keeping the gate; an
-    # unknown name is created on reference. Not part of GitHub's
-    # published schema (FR-013) — see contracts/environment-binding.md.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -3283,8 +3092,6 @@ jobs:
             --disallowedTools "WebSearch,WebFetch,Write,Edit,Bash"
             --json-schema '{"type":"object","properties":{"recognized":{"type":"boolean"},"chosen_option":{"type":["string","null"]}},"required":["recognized"]}'
 
-      # Deterministic, transcript-only verdict — replaces the raw
-      # steps.interpret.outcome checks below (specs/037-agent-turn-budget-guard/).
       - name: Compute agent run verdict
         id: interpret-verdict
         if: always() && steps.interpret.outcome != 'skipped'

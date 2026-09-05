@@ -2994,6 +2994,33 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-metrics-persist-no-writeback.py --self-test
 
+      # Gate 46 — actionlint, the check GitHub itself never performs: a
+      # ${{ }} expression naming a step id defined LATER in the job (or
+      # not at all) evaluates to empty, silently, so the `if:` reading it
+      # is constant-false and the step never runs. release.yml Gate 1a
+      # has run actionlint since specs/031, but only on a release
+      # dispatch; its pass 1 now invokes this same script so the two
+      # answers cannot drift (the Gate 31 arrangement).
+      - name: Gate 46 — actionlint — every workflow expression references only what exists
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-actionlint.py
+      - name: Gate 46 self-test — the linter and allowance accounting detect what they claim to
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-actionlint.py --self-test
+
+      # Gate 47 — what makes CLAUDE.md's "Shared logic has exactly one
+      # home" claim true: every `-- see FILE` pointer must name a file
+      # that exists, its topic prose must share vocabulary with that
+      # file's own text (resolving is not enough), and every
+      # `(canonical copy` marker must have at least one such pointer
+      # aimed at it from elsewhere.
+      - name: Gate 47 — comment pointers and canonical-copy markers are real
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-comment-canonical-pointers.py
+      - name: Gate 47 self-test — the pointer/canonical scan detects what it claims to
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-comment-canonical-pointers.py --self-test
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

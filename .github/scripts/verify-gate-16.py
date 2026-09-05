@@ -35,36 +35,10 @@ import tempfile
 
 import yaml
 
-LINT_WORKFLOW = ".github/workflows/lint-workflows.yml"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_lint_gate_source import LINT_WORKFLOW, extract_gate_step  # noqa: E402
+
 STEP_PREFIX = "Gate 16"
-HEREDOC_OPEN = "python3 - <<'PYEOF'"
-HEREDOC_CLOSE = "PYEOF"
-
-
-def extract_gate(path=LINT_WORKFLOW):
-    """Return Gate 16's python source, read out of the shipped workflow."""
-    wf = yaml.safe_load(io.open(path, encoding="utf-8")) or {}
-    run = None
-    for job in (wf.get("jobs") or {}).values():
-        for step in (job or {}).get("steps") or []:
-            name = (step or {}).get("name", "")
-            if name.startswith(STEP_PREFIX) and "self-test" not in name:
-                run = step.get("run")
-    if run is None:
-        sys.exit(f"::error file={path}::verify-gate-16 could not find a step named "
-                 f"{STEP_PREFIX!r}. If it was renamed, update this script and the "
-                 f"workflow together.")
-
-    lines = run.splitlines()
-    try:
-        start = next(i for i, l in enumerate(lines) if l.strip() == HEREDOC_OPEN)
-        end = next(i for i, l in enumerate(lines)
-                   if i > start and l.strip() == HEREDOC_CLOSE)
-    except StopIteration:
-        sys.exit(f"::error file={path}::verify-gate-16 found the {STEP_PREFIX} step but "
-                 f"not the {HEREDOC_OPEN} ... {HEREDOC_CLOSE} block it keys on — the "
-                 f"step's shape has changed.")
-    return "\n".join(lines[start + 1:end]) + "\n"
 
 
 # ---------------------------------------------------------------- fixtures
@@ -172,7 +146,7 @@ def main():
     if not os.path.isfile(LINT_WORKFLOW):
         sys.exit(f"::error::run this from the repository root; {LINT_WORKFLOW} not found.")
 
-    gate_src = extract_gate()
+    gate_src = extract_gate_step(STEP_PREFIX)
     root = tempfile.mkdtemp(prefix="verify_gate16_")
     gate_path = os.path.join(root, "gate16.py")
     io.open(gate_path, "w", encoding="utf-8").write(gate_src)
