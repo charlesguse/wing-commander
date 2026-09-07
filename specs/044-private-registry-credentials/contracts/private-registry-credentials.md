@@ -89,7 +89,7 @@ against the second.**
 | `image: <public>`, `credentials:` placeholder object | Measured: login attempted, fails. |
 | `credentials: ${{ fromJSON('null') }}` | Measured: template error, same as empty string. |
 | `credentials: ${{ fromJSON('{...}') }}` (populated) | Measured: runs — the mapping may come from an expression, if it is an object. |
-| `credentials: ${{ fromJSON('{}') }}` (empty object) on a public image | **Open — this contract's own P1.2, research D3.** |
+| `credentials: ${{ fromJSON('{}') }}` (empty object) on a public image | **Open — this contract's own P1.2, research D3.** Still open after implementation (2026-09-07): the implement run had no `gh workflow run`/`gh run view`/`gh api` access under its fixed tool allowlist, so P1 could not be dispatched. |
 
 ## Timing invariant — unchanged from specs/038 (research D4, fixed regardless of probe outcome)
 
@@ -138,7 +138,10 @@ jobs:
 
 **FR-012's masking guarantee for this exact shape is open (research D4's
 P1/P2), not yet demonstrated.** `wing-commander-ecr-credentials` (below)
-does not ship until it is.
+does not ship until it is. Still undemonstrated after implementation
+(2026-09-07): the implement run had no `gh workflow run`/`gh run view`/`gh
+api` access under its fixed tool allowlist, so P2 could not be dispatched
+(see research.md).
 
 ## `wing-commander-ecr-credentials` — FR-013 (research D8) — ships only after P2 confirms the hand-off is safe
 

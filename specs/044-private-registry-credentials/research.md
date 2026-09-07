@@ -172,6 +172,20 @@ evidence per FR-016):
    already the closest available representation of "no credentials" that is
    not `null`, and it still triggers an attempt.
 
+**P1 outcome (implementation, 2026-09-07)**: not empirically verified by this
+implementation run. The automated implement stage that carried out this pass
+runs under a fixed, pre-approved shell-command allowlist that includes no
+`gh workflow run`, `gh run view`, or `gh api` — there is no way for this run
+to dispatch the throwaway `workflow_dispatch` probe workflow P1 describes, or
+to observe its result. This is the identical gap specs/038's T001 hit and
+recorded honestly (see its research.md D2/D3 "T001 outcome" paragraphs) —
+recorded here rather than fabricated. Whether `credentials: fromJSON('{}')`
+suppresses the login attempt on a public image (P1.2) remains a genuinely
+open question pending a human, or a future run with broader tool access,
+dispatching P1 against real GitHub-hosted runners per this section's own
+table. Per T006's own contingency text, Phase 3/5/7's stage-file, ECR, and
+Gate 22 edits do not proceed this pass.
+
 **Decision made without clarification, recorded per this run's own
 constraints**: this plan stage's tool allowlist has no `.github/workflows`
 write access, no push authority to any branch but this feature's own spec
@@ -275,6 +289,16 @@ the same discipline D3 applies to the binding shape itself.
   this repository has never previously built (no existing composite in
   `.github/actions/**` produces an output later consumed as another job's
   `uses:`-call secret).
+
+**P2 outcome (implementation, 2026-09-07)**: also not empirically verified.
+Same tooling gap recorded against P1 above applies here — this implementation
+run has no `gh workflow run`/`gh run view`/`gh api` access, so it could not
+dispatch the throwaway probe workflow P2 describes or download either job's
+raw log to search for the dummy token. The masked cross-job hand-off FR-012
+requires remains undemonstrated pending a human (or a future run with
+broader tool access) running P2 against a scratch adopter repository. Per
+T006's own contingency text, `wing-commander-ecr-credentials` (FR-013) does
+not ship this pass — Phase 5 (T026–T028) is not executed.
 
 ### D5: Per-job credential binding — the amended `container.credentials` expression (contingent on D3)
 
@@ -594,3 +618,15 @@ This plan stage's own tool allowlist cannot perform that run; it is
 `tasks.md`'s first task, blocking every other task, per the same discipline
 specs/038's T001 established and this repository's own issue #227 later
 proved out in practice.
+
+**T006 determination (implementation, 2026-09-07)**: P1 and P2 could not be
+dispatched at all this pass — the same tool-allowlist gap recorded above
+against P1/P2 individually. This paragraph is the recorded fact itself, per
+T006's own explicit fallback text ("If T002/T003 could not be dispatched at
+all under this pipeline's own tool allowlist... write that fact instead...
+and stop"). Tasks T007–T048 (Phases 3, 4, 5, 6, 7, 8, 9 — every task
+contingent on P1/P2's outcome) are not executed this pass. This is a valid,
+honest terminal state for this implementation pass, not a failure to hide,
+mirroring specs/038's T001/T050 precedent exactly. A future pass with
+broader tool access (or a human dispatching P1/P2 manually) must record the
+real outcome here before Phase 3/5/7 can proceed.
