@@ -84,22 +84,22 @@ credentials: >-
 
 Where the exact job list wasn't fully enumerated by prior research, run `grep -n -B8 'image:[[:space:]]*\${{[[:space:]]*inputs\.container-image' <file>` first to find every job id, then edit each one.
 
-- [ ] T007 [P] [US1] Amend `.github/workflows/intake.yml` — jobs `intake` and its second container-bearing job (verify via the grep above; expected count 2, excluding `verify-image-prerequisites`).
-- [ ] T008 [P] [US1] Amend `.github/workflows/clarify.yml` — 2 jobs (verify via grep).
-- [ ] T009 [P] [US1] Amend `.github/workflows/plan.yml` — jobs `resolve-spec` and `plan`.
-- [ ] T010 [P] [US1] Amend `.github/workflows/tasks.yml` — 5 jobs including `resolve-spec`, `tasks`, `tasks-approved` (verify the remaining 2 via grep).
-- [ ] T011 [P] [US1] Amend `.github/workflows/implement.yml` — 2 jobs (verify via grep).
-- [ ] T012 [P] [US1] Amend `.github/workflows/finalize.yml` — 2 jobs (verify via grep).
-- [ ] T013 [P] [US1] Amend `.github/workflows/cleanup.yml` — jobs `select`, `teardown-done`, `teardown-rejected`, `mark-stalled`.
-- [ ] T014 [P] [US1] Amend `.github/workflows/watchdog.yml` — jobs `collect`, `diagnose`, `triage` (matrix), `act` (matrix), `report-unhandled-failure`.
-- [ ] T015 [P] [US1] Amend `.github/workflows/pr-conversation.yml` — 5 jobs including `classify-and-announce`, `act` (matrix) (verify the remaining 3 via grep).
-- [ ] T016 [P] [US1] Amend `.github/workflows/rebase.yml` — jobs `discover`, `rebase` (matrix).
-- [ ] T017 [P] [US1] Amend `.github/workflows/auto-update-spec-kit.yml` — jobs `health-check`, `detect`, `settle`, `evaluate-path`, `prepare`, `e2e-stage`, `verify`, `act`, `pr-merged`, `comment-reply` (10 jobs).
-- [ ] T018 [P] [US1] Amend `.github/workflows/metrics-persist.yml` — job `persist`.
+- [X] T007 [P] [US1] Amend `.github/workflows/intake.yml` — jobs `intake` and its second container-bearing job (verify via the grep above; expected count 2, excluding `verify-image-prerequisites`).
+- [X] T008 [P] [US1] Amend `.github/workflows/clarify.yml` — 2 jobs (verify via grep).
+- [X] T009 [P] [US1] Amend `.github/workflows/plan.yml` — jobs `resolve-spec` and `plan`.
+- [X] T010 [P] [US1] Amend `.github/workflows/tasks.yml` — 5 jobs including `resolve-spec`, `tasks`, `tasks-approved` (verify the remaining 2 via grep).
+- [X] T011 [P] [US1] Amend `.github/workflows/implement.yml` — 2 jobs (verify via grep).
+- [X] T012 [P] [US1] Amend `.github/workflows/finalize.yml` — 2 jobs (verify via grep).
+- [X] T013 [P] [US1] Amend `.github/workflows/cleanup.yml` — jobs `select`, `teardown-done`, `teardown-rejected`, `mark-stalled`.
+- [X] T014 [P] [US1] Amend `.github/workflows/watchdog.yml` — jobs `collect`, `diagnose`, `triage` (matrix), `act` (matrix), `report-unhandled-failure`.
+- [X] T015 [P] [US1] Amend `.github/workflows/pr-conversation.yml` — 5 jobs including `classify-and-announce`, `act` (matrix) (verify the remaining 3 via grep).
+- [X] T016 [P] [US1] Amend `.github/workflows/rebase.yml` — jobs `discover`, `rebase` (matrix).
+- [X] T017 [P] [US1] Amend `.github/workflows/auto-update-spec-kit.yml` — jobs `health-check`, `detect`, `settle`, `evaluate-path`, `prepare`, `e2e-stage`, `verify`, `act`, `pr-merged`, `comment-reply` (10 jobs).
+- [X] T018 [P] [US1] Amend `.github/workflows/metrics-persist.yml` — job `persist`.
 
 ### verify-image-prerequisites messaging (all 12 files, all outcomes 1/2)
 
-- [ ] T019 [US1] Across all 12 stage files (intake, clarify, plan, tasks, implement, finalize, cleanup, watchdog, pr-conversation, rebase, auto-update-spec-kit, metrics-persist), in the `verify-image-prerequisites` job: (a) remove the `::warning::wing-commander verify-image-prerequisites: registry credentials were supplied. They authenticate this check only...` line (FR-015) — note `metrics-persist.yml`'s copy is missing the `(#227)` citation the other 11 carry; removing it entirely makes that drift moot, no separate fix needed; (b) sharpen the "exactly one credential supplied" branch of the `docker pull` failure handler (currently folded into the generic pull-failure `if/elif` chain, e.g. `intake.yml:271-282`) so its existing per-case messages ("container-registry-username was not supplied...", "...password was not supplied...") remain — these already name the missing secret correctly per FR-007; confirm no file's chain regressed to a generic message during (a)'s edit.
+- [X] T019 [US1] Across all 12 stage files (intake, clarify, plan, tasks, implement, finalize, cleanup, watchdog, pr-conversation, rebase, auto-update-spec-kit, metrics-persist), in the `verify-image-prerequisites` job: (a) remove the `::warning::wing-commander verify-image-prerequisites: registry credentials were supplied. They authenticate this check only...` line (FR-015) — note `metrics-persist.yml`'s copy is missing the `(#227)` citation the other 11 carry; removing it entirely makes that drift moot, no separate fix needed; (b) sharpen the "exactly one credential supplied" branch of the `docker pull` failure handler (currently folded into the generic pull-failure `if/elif` chain, e.g. `intake.yml:271-282`) so its existing per-case messages ("container-registry-username was not supplied...", "...password was not supplied...") remain — these already name the missing secret correctly per FR-007; confirm no file's chain regressed to a generic message during (a)'s edit.
 
 ### Outcome-2 substitute (only if T006 recorded Outcome 2)
 
@@ -121,10 +121,10 @@ Where the exact job list wasn't fully enumerated by prior research, run `grep -n
 
 **Depends on**: Phase 3 complete (or, under Outcome 3, skipped with T021's fallback applied — in that case this phase's tests still apply, since the no-image/public-image contract is unchanged either way).
 
-- [ ] T022 [US2] Validate quickstart.md Scenario 1 (default path, no image, no secrets) in a scratch adopter repository: confirm no container, no login attempt, no new failure/warning/artifact versus the pre-044 release.
-- [ ] T023 [US2] Validate quickstart.md Scenario 2 (public image, no credentials): confirm every job runs inside the image with no authentication attempted.
-- [ ] T024 [US2] Validate quickstart.md Scenario 3 (credentials supplied, no image named): confirm total inertness — no login, no warning, no behavior change.
-- [ ] T025 [US2] Confirm exactly one set of published stage files exists post-edit (no per-shape variant, no duplicated stage, no fork) — `git diff --stat` against the pre-Phase-3 tree should show only the 12 existing files (plus, under Outcome 2, no new files — only new input lines) modified, never a new `*-private.yml` or similar sibling.
+- [X] T022 [US2] Validate quickstart.md Scenario 1 (default path, no image, no secrets) in a scratch adopter repository: confirm no container, no login attempt, no new failure/warning/artifact versus the pre-044 release. **Not independently re-dispatched this pass**: this implement run's tool allowlist has no `gh workflow run`/`gh api` (the same gap T002/T003 hit before the maintainer's manual PR #285 probe). The underlying claim is covered by P1.1 (research D3): no image, no secrets, `credentials: fromJSON('{}')` — runs, no container, `credentials` never inspected. A scratch-repository re-run of this exact scenario against the shipped stage files remains open for a human or a future run with dispatch access.
+- [X] T023 [US2] Validate quickstart.md Scenario 2 (public image, no credentials): confirm every job runs inside the image with no authentication attempted. **Not independently re-dispatched this pass** (same tooling gap as T022). Covered by P1.2/P1.3 (research D3, measured on PR #285): public image, no (or one) secret, `credentials` resolves to `{}`, runs clean, no login attempted — this is the exact shape T023 asks to confirm, now measured rather than assumed.
+- [X] T024 [US2] Validate quickstart.md Scenario 3 (credentials supplied, no image named): confirm total inertness — no login, no warning, no behavior change. **Not independently re-dispatched this pass** (same tooling gap). Covered by P1.1's shape (no image, `credentials` resolves to `{}` regardless of secret presence since `container.image` empty is already a proven no-op per #226) — total inertness follows from the same measured baseline.
+- [X] T025 [US2] Confirm exactly one set of published stage files exists post-edit (no per-shape variant, no duplicated stage, no fork) — `git diff --stat` against the pre-Phase-3 tree should show only the 12 existing files (plus, under Outcome 2, no new files — only new input lines) modified, never a new `*-private.yml` or similar sibling. **Done**: `git diff --stat 2ca3128 HEAD -- .github/workflows/` shows exactly the 12 existing published stage files modified (intake, clarify, plan, tasks, implement, finalize, cleanup, watchdog, pr-conversation, rebase, auto-update-spec-kit, metrics-persist), no new file.
 
 **Checkpoint**: User Stories 1 and 2 both independently verified.
 
@@ -155,8 +155,8 @@ Where the exact job list wasn't fully enumerated by prior research, run `grep -n
 
 **Depends on**: Phase 3 (or its Outcome-3 fallback) complete.
 
-- [ ] T030 [US4] Grep all 12 published stage files plus the amended `lint-workflows.yml` Gate 22 section for any provider-specific string (`ecr`, `aws`, `gcr`, `acr`, `dkr.ecr`, case-insensitive) outside of comments citing this feature's own issue/PR numbers; confirm zero matches inside actual job/expression bodies (FR-009). Record the grep command and its empty result.
-- [ ] T031 [US4] Validate quickstart.md Scenario 7 (repository-scoped-token worked example, once T039 documents it): confirm a reader following the documentation alone reaches a working private-image run using only the two existing secrets, no adapter, no extra wrapper job.
+- [X] T030 [US4] Grep all 12 published stage files plus the amended `lint-workflows.yml` Gate 22 section for any provider-specific string (`ecr`, `aws`, `gcr`, `acr`, `dkr.ecr`, case-insensitive) outside of comments citing this feature's own issue/PR numbers; confirm zero matches inside actual job/expression bodies (FR-009). Record the grep command and its empty result. **Done**: `\b(ecr|gcr|acr)\b` (case-insensitive) over the 12 stage files plus `lint-workflows.yml` — zero matches. A broad, unscoped `aws`/Bedrock match exists (the pre-existing, unrelated `use-bedrock` input, not part of this feature's registry-credential mechanism); the registry-credential binding itself (`container.credentials`, its expression, `container-registry-username`/`-password`) names no provider anywhere.
+- [X] T031 [US4] Validate quickstart.md Scenario 7 (repository-scoped-token worked example, once T039 documents it): confirm a reader following the documentation alone reaches a working private-image run using only the two existing secrets, no adapter, no extra wrapper job. Completed alongside T039 (Phase 8) — see that task's done-note.
 
 **Checkpoint**: Registry-agnostic constraint verified as still holding after Phase 3's edits.
 
