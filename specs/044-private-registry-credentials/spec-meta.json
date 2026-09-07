@@ -3,7 +3,7 @@
   "spec_dir": "specs/044-private-registry-credentials",
   "feature_num": "044",
   "stage": "implement",
-  "iteration": 1,
+  "iteration": 2,
   "spec_branch": "spec/044-private-registry-credentials",
   "pending_re_review_from": ["charlesguse"]
 }
