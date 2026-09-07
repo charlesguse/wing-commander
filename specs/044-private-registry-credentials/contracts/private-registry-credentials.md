@@ -9,9 +9,9 @@ inputs" table, whose credential-secret rows this contract amends the
 passthrough.md`, whose "Private-registry credentials — FR-009, as corrected
 (#227)" section this contract directly supersedes.
 
-**This contract is provisional pending research D3/D4's live-runner
-probes.** Every section below states, inline, which parts are fixed
-regardless of probe outcome and which parts are contingent on it.
+**Research D3/D4's live-runner probes are resolved (2026-09-07): FR-026
+Outcome 1.** Every section below states, inline, which parts were always
+fixed regardless of probe outcome and which were contingent on it.
 
 ## Stage inputs and secrets (all 12 published stages: intake, clarify, plan,
 tasks, implement, finalize, cleanup, watchdog, pr-conversation, rebase,
@@ -89,7 +89,7 @@ against the second.**
 | `image: <public>`, `credentials:` placeholder object | Measured: login attempted, fails. |
 | `credentials: ${{ fromJSON('null') }}` | Measured: template error, same as empty string. |
 | `credentials: ${{ fromJSON('{...}') }}` (populated) | Measured: runs — the mapping may come from an expression, if it is an object. |
-| `credentials: ${{ fromJSON('{}') }}` (empty object) on a public image | **Open — this contract's own P1.2, research D3.** Still open after implementation (2026-09-07): the implement run had no `gh workflow run`/`gh run view`/`gh api` access under its fixed tool allowlist, so P1 could not be dispatched. |
+| `credentials: ${{ fromJSON('{}') }}` (empty object) on a public image | **Measured 2026-09-07 (research D3, P1.2, run 34162867583): runs clean, no login attempted, image pulled anonymously.** Resolves this contract's viability — FR-026 Outcome 1 ships. |
 
 ## Timing invariant — unchanged from specs/038 (research D4, fixed regardless of probe outcome)
 
@@ -104,10 +104,13 @@ that job runs. Two consequences, both load-bearing:
    `verify-image-prerequisites` (below) exists as a separate job, unchanged
    from specs/038.
 
-## The cross-job masked hand-off (research D4) — contingent on P2, governs FR-013 only
+## The cross-job masked hand-off (research D4) — measured 2026-09-07, governs FR-013 only
 
 A `uses:`-bodied job cannot carry additional steps, so a wrapper that mints
-a cloud-registry credential and then calls a stage needs two jobs:
+a cloud-registry credential and then calls a stage needs two jobs. **The
+hand-off is safe only in the P2.3 shape**: the mint step does not mask its
+own output, and the value is forwarded exclusively as a `secrets:` value
+into a `uses:` call, never through a plain step:
 
 ```yaml
 jobs:
@@ -136,20 +139,27 @@ jobs:
       container-registry-password: ${{ needs.mint-ecr-credentials.outputs.password }}
 ```
 
-**FR-012's masking guarantee for this exact shape is open (research D4's
-P1/P2), not yet demonstrated.** `wing-commander-ecr-credentials` (below)
-does not ship until it is. Still undemonstrated after implementation
-(2026-09-07): the implement run had no `gh workflow run`/`gh run view`/`gh
-api` access under its fixed tool allowlist, so P2 could not be dispatched
-(see research.md).
+**FR-012's masking guarantee is demonstrated for this exact shape (research
+D4, P2.3, run 34163031595): the value arrives intact and is masked in every
+job's log by the callee's own `secrets:` context — no explicit
+`::add-mask::` at the mint site.** Masking the value at the mint site
+instead (`::add-mask::` before it crosses `needs.*.outputs.*`) was also
+measured and found to silently **drop** the value at that boundary (P2/A,
+P2.1, P2.2) — not merely redundant, actively unsafe for this hand-off, since
+the value never arrives at all. Consuming the value in a plain sibling step
+instead of a `secrets:`-bound `uses:` call has no safe variant either
+(P2.4: leaks once in that step's own `env:` log header). `wing-commander-
+ecr-credentials` (below) is built to the P2.3 shape specifically: it never
+masks or prints its own output, relying entirely on the caller forwarding
+it as shown above.
 
-## `wing-commander-ecr-credentials` — FR-013 (research D8) — ships only after P2 confirms the hand-off is safe
+## `wing-commander-ecr-credentials` — FR-013 (research D8, P2.3 shape)
 
 | Field | Value |
 |---|---|
 | Location | `.github/actions/wing-commander-ecr-credentials/action.yml` — published contract, referenced by no stage |
 | Inputs | `aws-role-arn` (required), `aws-region` (required), `registry` (optional override) |
-| Outputs | `username` (fixed `"AWS"`), `password` (short-lived token, masked via `::add-mask::` before being set as a step output) |
+| Outputs | `username` (fixed `"AWS"`), `password` (short-lived token; **not** masked at this source — safe only when the caller forwards it as a `secrets:` value into a `uses:` call, per P2.3) |
 | Long-lived credential | None required or stored — OIDC role assumption only (`aws-actions/configure-aws-credentials@v4`) |
 | Caller-side permission | The adopter's own wrapper job must declare `id-token: write` (for OIDC) — the pipeline requests no new permission for itself (spec Edge Cases) |
 | Contract stability | Once shipped, inputs/outputs are maintained as published contract surface (FR-013's own text) — not a convenience that can silently narrow |

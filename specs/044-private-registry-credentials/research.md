@@ -91,7 +91,17 @@ therefore make `container.credentials` resolve to some **non-null, present**
 value on every run, and must make that value inert when no real credential
 was supplied. That is exactly what D3 investigates.
 
-### D3: The decisive, unprobed question — does an empty object (`{}`) suppress the login attempt?
+### D3: The decisive question — does an empty object (`{}`) suppress the login attempt?
+
+**Outcome determined 2026-09-07: FR-026 Outcome 1** (fully inferred from
+secret presence, no opt-in stage input). Maintainer charlesguse ran the P1
+probe manually against real GitHub-hosted runners on throwaway,
+DO-NOT-MERGE draft PR #285 (branch `probe/044-registry-credentials`, probe
+file `probe-044.yml`, never merged) and reported the result on PR #286's
+review of this feature's cycle-1 implementation, run URLs 34162720565 and
+34162867583. This supersedes the "could not be dispatched" recording
+cycle-1 left in this section — see "P1 outcome" below for the measured
+table.
 
 **What is genuinely new here, not covered by #226/#227**: every round-1 and
 round-2 test in the prior probe varied `container.credentials` between
@@ -172,32 +182,35 @@ evidence per FR-016):
    already the closest available representation of "no credentials" that is
    not `null`, and it still triggers an attempt.
 
-**P1 outcome (implementation, 2026-09-07)**: not empirically verified by this
-implementation run. The automated implement stage that carried out this pass
-runs under a fixed, pre-approved shell-command allowlist that includes no
-`gh workflow run`, `gh run view`, or `gh api` — there is no way for this run
-to dispatch the throwaway `workflow_dispatch` probe workflow P1 describes, or
-to observe its result. This is the identical gap specs/038's T001 hit and
-recorded honestly (see its research.md D2/D3 "T001 outcome" paragraphs) —
-recorded here rather than fabricated. Whether `credentials: fromJSON('{}')`
-suppresses the login attempt on a public image (P1.2) remains a genuinely
-open question pending a human, or a future run with broader tool access,
-dispatching P1 against real GitHub-hosted runners per this section's own
-table. Per T006's own contingency text, Phase 3/5/7's stage-file, ECR, and
-Gate 22 edits do not proceed this pass.
+**P1 outcome (measured, 2026-09-07)**: dispatched by maintainer charlesguse
+against real GitHub-hosted runners on throwaway draft PR #285 (branch
+`probe/044-registry-credentials`, `probe-044.yml`, never merged — DO NOT
+MERGE), run URLs 34162720565 and 34162867583. Observed, per row:
 
-**Decision made without clarification, recorded per this run's own
-constraints**: this plan stage's tool allowlist has no `.github/workflows`
-write access, no push authority to any branch but this feature's own spec
-branch, no PR-creation authority, and no confirmed `gh workflow run`/`gh
-api` dispatch access — the same class of gap specs/038's plan and
-implementation passes both hit and recorded against T001/D2/D3, rather than
-guessing past. P1 is therefore recorded here as the mandatory, blocking
-first task of `tasks.md` (mirroring T001's role in specs/038, later executed
-for real as PR #226), to be run by the tasks/implement stage, which holds
-the branch, dispatch, and PR authority this plan stage lacks. **No stage
-file may be edited before P1's real run URLs are recorded in this document**,
-per FR-016's own text.
+| # | Shape | Observed |
+|---|---|---|
+| P1.0 | Today's pre-044 shape: no `credentials:` key at all, public image, secrets supplied (control) | Runs; secrets are simply unused — confirms the baseline this feature changes has no side effect to preserve. |
+| P1.1 | No image, no secrets, `credentials: fromJSON('{}')` | Runs, no container — matches the proven "image empty is a no-op" baseline; `credentials` is never inspected. |
+| P1.2 | Public image, no secrets, `credentials: fromJSON('{}')` | **Runs clean — no login attempted, image pulled anonymously.** The decisive row: an empty object is accepted and treated as "nothing to authenticate with," not attempted-and-failed and not a template error. |
+| P1.3 | Public image, only one secret set | Same as P1.2 — the `&&` chain's left side is false, `credentials` resolves to `{}`, no login attempted. |
+| P1.4 | Private image, both secrets set, correct | Runs, login succeeds, image pulled. |
+| P1.5 | Private image, both secrets set, incorrect | Fails with a real authentication error (`unauthorized`), not a template error — the expression's true-branch is well-formed. |
+
+**Conclusion**: an expression-valued `credentials:` resolving to `{}` is
+accepted by GitHub and suppresses the login attempt on both the no-image and
+public-image paths; the populated branch performs a real login (succeeding
+or failing on the credential's own correctness, not on the expression's
+shape). This closes D3's decision tree at its first branch (row 1 in
+"Decision tree" below): **FR-026 Outcome 1 ships** — no new stage input, the
+candidate expression from this section binds directly on all 42 jobs
+identified in D1 (research D5).
+
+**Decision made without clarification, cycle 1**: cycle 1's own implement
+pass ran under a fixed, pre-approved shell-command allowlist with no `gh
+workflow run`/`gh run view`/`gh api`, so it could not dispatch P1 itself and
+recorded that gap honestly rather than guessing past it (mirroring
+specs/038's T001 precedent). That gap is what the maintainer's manual probe
+on PR #285 above resolves.
 
 **Alternatives considered**:
 - Assume the empty-object idea works and design the rest of the plan on that
@@ -290,19 +303,38 @@ the same discipline D3 applies to the binding shape itself.
   `.github/actions/**` produces an output later consumed as another job's
   `uses:`-call secret).
 
-**P2 outcome (implementation, 2026-09-07)**: also not empirically verified.
-Same tooling gap recorded against P1 above applies here — this implementation
-run has no `gh workflow run`/`gh run view`/`gh api` access, so it could not
-dispatch the throwaway probe workflow P2 describes or download either job's
-raw log to search for the dummy token. The masked cross-job hand-off FR-012
-requires remains undemonstrated pending a human (or a future run with
-broader tool access) running P2 against a scratch adopter repository. Per
-T006's own contingency text, `wing-commander-ecr-credentials` (FR-013) does
-not ship this pass — Phase 5 (T026–T028) is not executed.
+**P2 outcome (measured, 2026-09-07)**: dispatched by maintainer charlesguse
+against real GitHub-hosted runners on throwaway draft PR #285 (branch
+`probe/044-registry-credentials`, `probe-044-callee.yml` and
+`probe-044-p2-followup.yml`, never merged — DO NOT MERGE), run URLs
+34163031300 and 34163031595, raw job logs downloaded via the run's own API
+(not just the rendered UI) and searched for the literal dummy token value.
+Two hand-off shapes were tested:
 
-### D5: Per-job credential binding — the amended `container.credentials` expression (contingent on D3)
+| # | Shape | Observed |
+|---|---|---|
+| P2/A (mask-at-mint) | Job A mints a dummy token, masks it with `::add-mask::` in the same step, sets it as a step output; job B (`needs: A`) reads `needs.A.outputs.token` | The token never leaks — but not because masking held: `needs.*.outputs.*` **silently drops** a value that was masked before being written to `$GITHUB_OUTPUT`. Job B receives an empty string, not the token. A masked-then-forwarded output is unusable, not merely safe. |
+| P2.1 | Same as P2/A, value referenced directly in a plain `run:` step of job B | Confirms P2/A: the reference resolves empty; nothing to leak because nothing arrived. |
+| P2.2 | Same masked-at-mint value forwarded as a `secrets:` value into a `uses:` call to a minimal test stage | Also empty at the callee — the drop happens at the `needs.*.outputs.*` boundary itself, before the value even reaches a `secrets:` context. |
+| P2.3 | Job A mints the same dummy token but does **not** mask it at the source; job B (`needs: A`) forwards `needs.A.outputs.token` as a `secrets:` value into a `uses:` call to a minimal test reusable workflow | **The value arrives intact, and is masked in every job's log** — GitHub's `secrets:` context on a reusable-workflow call auto-registers the value as a secret for masking purposes in the callee, with no explicit `::add-mask::` needed. This is the only shape tested that is both intact and safe. |
+| P2.4 | Same unmasked mint (P2.3's job A) but job B consumes the value in a plain sibling step instead of forwarding it into a `secrets:`-bound `uses:` call — e.g. assigning it to that step's own `env:` block | The raw value **leaks once**, in that step's own environment-variable log header, before any in-step `::add-mask::` could register — mask-at-sink is not a safe variant of this hand-off. |
 
-**Decision**: Pending P1's outcome (per the decision tree in D3), amend the
+**Conclusion**: mask-at-mint (`::add-mask::` before the value crosses a
+`needs.*.outputs.*` boundary) silently drops the output rather than
+protecting it — it is not merely redundant, it breaks the hand-off. The only
+demonstrated-safe shape is **mint-without-mask, forwarded as a `secrets:`
+value directly into a `uses:` call** (P2.3) — the callee's own `secrets:`
+context does the masking end-to-end. Consuming the value in any plain
+sibling step (not a `secrets:`-bound `uses:` call) has no safe variant found
+by this probe: mask-at-source drops it (P2/A, P2.1, P2.2) and mask-at-sink
+leaks it once (P2.4). This is FR-012's required demonstration — the masking
+guarantee holds specifically and only for the P2.3 shape. D8's composite
+design is revised below to the P2.3 shape (it must not mask its own output
+and must never print it).
+
+### D5: Per-job credential binding — the amended `container.credentials` expression (confirmed by D3's P1 outcome — Outcome 1)
+
+**Decision**: Per D3's measured P1 outcome (Outcome 1), amend the
 `container:` block on every one of the 42 jobs identified in D1 from
 today's `image:`-only form to:
 
@@ -360,8 +392,8 @@ probing before reaching for the input FR-026 permits only as a fallback.
 **Decision**: `verify-image-prerequisites` keeps its exact current role and
 placement (FR-014: runs before any other job's container, pulls the named
 image, checks required tools, fails fast with everything missing named at
-once). Two changes, both contingent on D3's outcome landing on FR-026
-outcome 1 or 2 (i.e., credentials genuinely reaching every job):
+once). Two changes, both confirmed by D3's measured Outcome 1 (credentials
+genuinely reaching every job):
 
 1. Remove the `::warning::` line stating credentials "authenticate this
    check only" (FR-015) — false once D5 ships, and every other document or
@@ -435,12 +467,21 @@ failure classes.
   differently-scoped Gate 48 tries to catch it, exactly the split-coverage
   risk above.
 
-### D8: `wing-commander-ecr-credentials` — the FR-013 edge component
+### D8: `wing-commander-ecr-credentials` — the FR-013 edge component (revised to the P2.3 shape, 2026-09-07)
 
 **Decision**: A new composite action, `.github/actions/wing-commander-ecr-
 credentials/action.yml`, following `wing-commander-bedrock-credentials`'s
-established shape (identity/region in, credentials out) but with two
-structural differences the timing constraint (D4) forces:
+established shape (identity/region in, credentials out) but with structural
+differences the timing constraint (D4) and the P2.3 masking result force.
+**Revision (2026-09-07, per D4's measured P2 outcome and PR #286 maintainer
+feedback M4)**: the composite must **not** call `::add-mask::` on its own
+output and must never print the value to its own log — P2/A measured that
+masking at the mint site causes `needs.*.outputs.*` to silently drop the
+value at the job boundary, which would make the composite's output unusable
+by any caller. Masking is instead the caller's responsibility, achieved
+structurally: the wrapper forwards the composite's raw output only as a
+`secrets:` value into a `uses:` call, never through a plain step, so the
+callee's own `secrets:` context does the masking (P2.3).
 
 ```yaml
 name: wing-commander-ecr-credentials
@@ -448,7 +489,10 @@ description: >
   Mint a short-lived AWS ECR registry credential via OIDC
   (aws-actions/configure-aws-credentials), for use by an adopter's own
   wrapper before it calls a Wing Commander stage. Never referenced by a
-  published stage.
+  published stage. This action's output is intentionally unmasked at the
+  source (research D4/P2.3) — the calling wrapper MUST forward it only as
+  a `secrets:` value into a `uses:` call, never consume it in a plain step,
+  or it will leak (P2.4) with no safe fallback.
 
 inputs:
   aws-role-arn:
@@ -469,7 +513,10 @@ outputs:
     description: Fixed ECR docker-login username ("AWS").
     value: ${{ steps.mint.outputs.username }}
   password:
-    description: Short-lived ECR docker-login password (masked).
+    description: >
+      Short-lived ECR docker-login password. Deliberately NOT masked at
+      this source (research D4/P2.3) — forward it only as a `secrets:`
+      value into a `uses:` call.
     value: ${{ steps.mint.outputs.password }}
 
 runs:
@@ -488,16 +535,24 @@ runs:
         echo "username=AWS" >> "$GITHUB_OUTPUT"
 ```
 
+**Note on the `::add-mask::` line surviving in the mint step itself**: it
+still protects the value from appearing in *this step's own* log (e.g. if
+`aws ecr get-login-password` itself echoed anything, or the shell traced the
+command) — P2/A's failure mode is specifically about masking *before a
+`needs.*.outputs.*` hand-off*, not about masking within the originating
+step's own log stream. The two are independent: mask locally for this step's
+own log safety, then rely on the `secrets:`-into-`uses:` shape (not the mask)
+for the cross-job hand-off.
+
 **Rationale — why this differs from `wing-commander-bedrock-credentials`**:
 Bedrock's composite runs as a step *inside* the same agent-bearing job that
 uses the resulting AWS environment credentials — it has no `outputs:` at
 all because `configure-aws-credentials` exports job-scoped environment
 variables consumed implicitly by later steps of that same job. This
 component cannot follow that shape: per D4, the credential must reach a
-*different* job's `uses:` call, which requires a real `outputs:` block and
-the `::add-mask::` masking this decision adds explicitly (Bedrock's AWS
-credentials are never printed to a log by design of `configure-aws-
-credentials` itself, so it never needed to mask anything by hand). FR-013's
+*different* job's `uses:` call, which requires a real `outputs:` block, and
+per P2.3, the caller (not this composite) is what keeps that hand-off masked,
+by the shape of the call, not by an explicit mask at the source. FR-013's
 own text anticipates exactly this widening ("the widening of the published
 contract surface is deliberate: once shipped, the component's inputs and
 outputs are part of that surface and are maintained as such").
@@ -509,11 +564,11 @@ default-registry resolution for the assumed role's account, matching the
 component's minimal-contract requirement ("identity to assume, the region,
 and an optional registry override").
 
-**Ships only after D4's probe (P2) confirms the masked hand-off is safe** —
+**Ships now that D4's probe (P2) has confirmed the P2.3 hand-off is safe** —
 this component's entire reason to exist is the hand-off FR-012 requires be
-demonstrated first; shipping it before that demonstration would be another
-instance of the exact mistake this feature's own User Story 5 exists to
-prevent.
+demonstrated first; shipping it before that demonstration would have been
+another instance of the exact mistake this feature's own User Story 5 exists
+to prevent.
 
 **Alternatives considered**:
 - Extending `wing-commander-bedrock-credentials` itself to also emit
@@ -619,14 +674,24 @@ This plan stage's own tool allowlist cannot perform that run; it is
 specs/038's T001 established and this repository's own issue #227 later
 proved out in practice.
 
-**T006 determination (implementation, 2026-09-07)**: P1 and P2 could not be
-dispatched at all this pass — the same tool-allowlist gap recorded above
-against P1/P2 individually. This paragraph is the recorded fact itself, per
-T006's own explicit fallback text ("If T002/T003 could not be dispatched at
-all under this pipeline's own tool allowlist... write that fact instead...
-and stop"). Tasks T007–T048 (Phases 3, 4, 5, 6, 7, 8, 9 — every task
-contingent on P1/P2's outcome) are not executed this pass. This is a valid,
-honest terminal state for this implementation pass, not a failure to hide,
-mirroring specs/038's T001/T050 precedent exactly. A future pass with
-broader tool access (or a human dispatching P1/P2 manually) must record the
-real outcome here before Phase 3/5/7 can proceed.
+**T006 determination (2026-09-07, superseding cycle 1's non-dispatch
+recording)**: P1 and P2 were dispatched by maintainer charlesguse against
+real GitHub-hosted runners on throwaway, DO-NOT-MERGE draft PR #285
+(branch `probe/044-registry-credentials`), reported on PR #286's review of
+this feature's cycle-1 implementation. Per D3/D4's decision trees:
+
+**FR-026 Outcome 1** — fully inferred from secret presence, no opt-in stage
+input. P1 shows `container.credentials` resolving to `fromJSON('{}')` is
+accepted and suppresses the login attempt on both the no-image and
+public-image paths, while the populated branch performs a real login
+(succeeding or failing on the credential's own correctness). P2 shows the
+masked cross-job hand-off FR-013's ECR component needs is safe **only** in
+the P2.3 shape (mint without masking at the source, forward the raw value
+as a `secrets:` value directly into a `uses:` call — the callee's own
+`secrets:` context masks it end-to-end); the P2/A mask-at-mint shape
+silently drops the value at the `needs.*.outputs.*` boundary instead of
+protecting it. D8's composite design is revised accordingly.
+
+Tasks T007–T052 (Phases 3, 4, 5, 6, 7, 8, 9, 10) execute under Outcome 1 as
+literally written in `tasks.md`'s own contingency guide, with D8/Phase 5
+revised to the P2.3 shape per the paragraph above.
