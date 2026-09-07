@@ -1753,10 +1753,17 @@ jobs:
       #
       # Extends Gate 7's shape (specs/031-stage-environment-binding) from one
       # binding to three: the runs-on: ternary, container.image, and
-      # container.credentials.username/password. The stage set is DERIVED
-      # (any workflow declaring on.workflow_call), never listed — a hardcoded
-      # list is how watchdog.yml and auto-update-spec-kit.yml went unlinted
-      # by release.yml's Gate 1a for a whole release (issue #149).
+      # container.credentials. The stage set is DERIVED (any workflow
+      # declaring on.workflow_call), never listed — a hardcoded list is how
+      # watchdog.yml and auto-update-spec-kit.yml went unlinted by
+      # release.yml's Gate 1a for a whole release (issue #149).
+      #
+      # Amended by specs/044-private-registry-credentials (2026-09-07): the
+      # container.credentials check flips from forbidding the key outright
+      # (#227/PR #226's raw-secrets shape was a template error whenever
+      # empty) to requiring an exact expression-valued form, byte-for-byte,
+      # the same way container.image is already checked — see the
+      # EXPECTED_CREDENTIALS comparison below.
       - name: Gate 22 — every job of every published stage carries the runner/container-image passthrough
         run: |
           python3 - <<'PYEOF'
@@ -1779,10 +1786,40 @@ jobs:
           # heredoc — which would corrupt these comparison constants at the
           # SOURCE. Same technique Gate 7's OPEN/CLOSE split uses.
           DOLLAR_OPEN, DOLLAR_CLOSE = "${" + "{", "}" + "}"
-          GH_EXPR_RE = re.compile(r"\$\{\{(.*?)\}\}")
+          # DOTALL: the credentials: expression below is written as a folded
+          # block scalar (>-) spanning several more-indented lines, which
+          # YAML's folding rules preserve as literal embedded newlines
+          # (only same-indent lines fold to a space) -- unlike runs-on:/
+          # image:, which are always single physical lines. Without DOTALL
+          # "." never crosses those newlines and this regex silently fails
+          # to match the credentials value at all, leaving it uncollapsed
+          # and un-comparable.
+          #
+          # Greedy (.*), not (.*?): the credentials expression's own
+          # format('{{"username":{0},"password":{1}}}', ...) call contains
+          # a literal "}}" run well before the real closing double-brace of
+          # the outer dollar-brace-brace expression -- a non-greedy capture
+          # stops there and silently truncates. Every value this regex is
+          # ever applied to (runs-on:, image:, credentials:) is the ENTIRE
+          # scalar as one expression with nothing after it, so matching to
+          # the LAST "}}" in the string is always the correct (and only)
+          # span.
+          GH_EXPR_RE = re.compile(r"\$\{\{(.*)\}\}", re.DOTALL)
           EXPECTED_RUNS_ON = (DOLLAR_OPEN + " startsWith(inputs.runner, '[') && "
                               "fromJSON(inputs.runner) || inputs.runner " + DOLLAR_CLOSE)
           EXPECTED_IMAGE = DOLLAR_OPEN + " inputs.container-image " + DOLLAR_CLOSE
+          # research D3/D5 (specs/044), measured 2026-09-07 on PR #285: an
+          # empty-object credentials mapping suppresses the login attempt,
+          # so this single expression is unconditionally correct for every
+          # job regardless of whether an image/credential was supplied.
+          EXPECTED_CREDENTIALS = (
+              DOLLAR_OPEN + " (secrets.container-registry-username != '' "
+              "&& secrets.container-registry-password != '') "
+              "&& fromJSON(format('{{\"username\":{0},\"password\":{1}}}', "
+              "toJSON(secrets.container-registry-username), "
+              "toJSON(secrets.container-registry-password))) "
+              "|| fromJSON('{}') " + DOLLAR_CLOSE
+          )
 
           # (workflow filename, job name) -> reason. Constitution VII: a job
           # that must deviate carries a registered, machine-checked
@@ -1943,33 +1980,28 @@ jobs:
                                 f"selection diverges from the rest of its own stage.")
                           failures += 1
                           ok = False
-                      # The inverse of what this gate asserted when it
-                      # shipped, and the reason every job of every stage
-                      # failed to start once #224 let them run at all.
-                      # Measured against real runners (probe PR #226,
-                      # 2026-08-21), a job-level credentials: mapping:
-                      #   - is a template error when either value renders
-                      #     empty -- which is every run that names no image,
-                      #     and every run that names a public one;
-                      #   - cannot be made absent by an expression: the
-                      #     whole mapping may be supplied as an object
-                      #     (fromJSON), but null is rejected the same way an
-                      #     empty string is;
-                      #   - is always acted on when present, so a
-                      #     placeholder pair fails the docker login for a
-                      #     public image.
-                      # No single block serves both a public image and a
-                      # private one, so the key stays out. Private
-                      # registries need a pre-authenticated runner until a
-                      # verified mechanism exists (#227).
-                      if "credentials" in container:
-                          print(f"::error file={f}::job {jname!r}'s container: block "
-                                f"declares credentials:. Once that key is written it "
-                                f"can never be absent, and an empty value is a template "
-                                f"error that stops the job before its first step — "
-                                f"which is every run that names no image. Private "
-                                f"registries need a pre-authenticated runner instead "
-                                f"(#227, measured in PR #226).")
+                      # specs/044-private-registry-credentials D3/D5,
+                      # measured against real runners (probe PR #285,
+                      # 2026-09-07): unlike the pre-044 raw-secrets mapping
+                      # (#227, PR #226) -- which was a template error
+                      # whenever either value rendered empty, i.e. every run
+                      # naming no image or a public one -- an
+                      # expression-valued credentials: that resolves to
+                      # fromJSON('{}') when no (or one) secret is supplied
+                      # is accepted and suppresses the login attempt, while
+                      # resolving to a real mapping when both are supplied.
+                      # This makes ONE expression correct for every job
+                      # regardless of what the adopter supplied, so it is
+                      # now required (byte-for-byte, mirroring the image:
+                      # check above), not forbidden.
+                      credentials = norm_expr(container.get("credentials"))
+                      if credentials != EXPECTED_CREDENTIALS:
+                          print(f"::error file={f}::job {jname!r} wires "
+                                f"container.credentials to {container.get('credentials')!r}; "
+                                f"the contract requires the exact expression "
+                                f"{EXPECTED_CREDENTIALS!r} verbatim on every job that "
+                                f"carries container.image (specs/044 D5) — either this "
+                                f"job never got the binding, or it drifted from it.")
                           failures += 1
                           ok = False
                   bound += ok

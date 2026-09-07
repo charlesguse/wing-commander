@@ -64,45 +64,84 @@ SECRET_REQUIRED_TRUE = INPUTS_OK.replace(
     "container-registry-password:\n        required: true",
 )
 
-BOUND = """\
-    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
-    container:
-      image: ${{ inputs.container-image }}
+# specs/044-private-registry-credentials D5, measured on PR #285
+# (2026-09-07): every bound job now carries this exact expression-valued
+# credentials: sibling, unconditionally, in addition to image:.
+CREDENTIALS_OK = """\
+      credentials: >-
+        ${{
+          (secrets.container-registry-username != '' && secrets.container-registry-password != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
+            || fromJSON('{}')
+        }}
 """
+
+# Same expression, no whitespace immediately inside the outer ${{ }} braces
+# (mirroring BOUND_TIGHT's treatment of runs-on:/image: below) — the gate
+# must still recognize it as the required shape.
+CREDENTIALS_OK_TIGHT = (
+    "      credentials: ${{(secrets.container-registry-username != '' "
+    "&& secrets.container-registry-password != '') "
+    "&& fromJSON(format('{{\"username\":{0},\"password\":{1}}}', "
+    "toJSON(secrets.container-registry-username), "
+    "toJSON(secrets.container-registry-password))) "
+    "|| fromJSON('{}')}}\n"
+)
+
+# A credentials: value present but drifted from the required expression —
+# here, missing the `|| fromJSON('{}')` fallback entirely, which is exactly
+# the shape that would reintroduce D2b's null/absent-value template error
+# on any run with no (or one) secret supplied.
+CREDENTIALS_DRIFTED = """\
+      credentials: >-
+        ${{
+          fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
+        }}
+"""
+
+BOUND = f"""\
+    runs-on: ${{{{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}}}
+    container:
+      image: ${{{{ inputs.container-image }}}}
+{CREDENTIALS_OK}"""
 
 # Same binding, no whitespace inside the expressions — the gate compares the
 # input/secret a value forwards, not the byte string, so this must still pass.
-BOUND_TIGHT = """\
-    runs-on: ${{startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner}}
+BOUND_TIGHT = f"""\
+    runs-on: ${{{{startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner}}}}
     container:
-      image: ${{inputs.container-image}}
-"""
+      image: ${{{{inputs.container-image}}}}
+{CREDENTIALS_OK_TIGHT}"""
 
 BOUND_NO_CONTAINER = """\
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
 """
 
+# The pre-044 shape: container.image bound, but no credentials: sibling at
+# all. This USED to be the required (only valid) shape; specs/044 makes it
+# a failure, since credentials must now reach every job.
 BOUND_NO_CREDENTIALS = """\
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
 """
 
-BOUND_LITERAL_IMAGE = """\
-    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+BOUND_LITERAL_IMAGE = f"""\
+    runs-on: ${{{{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}}}
     container:
       image: python:3.12
-"""
+{CREDENTIALS_OK}"""
 
-BOUND_PLAIN_RUNS_ON = """\
+BOUND_PLAIN_RUNS_ON = f"""\
     runs-on: ubuntu-latest
     container:
-      image: ${{ inputs.container-image }}
-"""
+      image: ${{{{ inputs.container-image }}}}
+{CREDENTIALS_OK}"""
 
-# Any credentials: mapping at all is the defect now (PR #226): the key
-# cannot be conditionally absent, and an empty value stops the job before
-# its first step.
+# The pre-#227 raw-secrets shape (D2a, PR #226): unconditional, un-fallback-
+# guarded username/password. Still forbidden — it never matches the
+# required expression, though the reason it fails is now "wrong shape",
+# not "credentials: is forbidden outright".
 BOUND_WITH_CREDENTIALS = """\
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
@@ -111,6 +150,15 @@ BOUND_WITH_CREDENTIALS = """\
         username: ${{ secrets.container-registry-username }}
         password: ${{ secrets.container-registry-password }}
 """
+
+# credentials: present, but drifted from the required expression (missing
+# the || fromJSON('{}') fallback) — must fail, distinctly from both "absent"
+# and "the forbidden raw-secrets shape" above.
+BOUND_CREDENTIALS_DRIFTED = f"""\
+    runs-on: ${{{{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}}}
+    container:
+      image: ${{{{ inputs.container-image }}}}
+{CREDENTIALS_DRIFTED}"""
 
 UNBOUND = ""
 
@@ -199,10 +247,10 @@ CASES = [
      {"stage.yml": stage(job("only", BOUND_NO_CONTAINER))},
      True, ("'only'", "no container")),
 
-    ("no false positive: a container: block with no credentials: mapping is "
-     "the required shape",
+    ("the pre-044 shape: image: bound but no credentials: sibling at all "
+     "now fails (specs/044 D5 -- credentials must reach every job)",
      {"stage.yml": stage(job("only", BOUND_NO_CREDENTIALS))},
-     False, ()),
+     True, ("'only'", "container.credentials")),
 
     ("container.image hardcoded instead of forwarding the input",
      {"stage.yml": stage(job("only", BOUND_LITERAL_IMAGE))},
@@ -212,10 +260,15 @@ CASES = [
      {"stage.yml": stage(job("only", BOUND_PLAIN_RUNS_ON))},
      True, ("'only'", "runs-on")),
 
-    ("the PR #226 defect: a credentials: mapping stops every job that names "
-     "no image before its first step",
+    ("the pre-#227 raw-secrets shape (D2a, PR #226) still fails -- it never "
+     "matches the required expression-valued form",
      {"stage.yml": stage(job("only", BOUND_WITH_CREDENTIALS))},
-     True, ("'only'", "credentials")),
+     True, ("'only'", "container.credentials")),
+
+    ("a credentials: value present but drifted from the required expression "
+     "(missing the || fromJSON('{}') fallback) fails",
+     {"stage.yml": stage(job("only", BOUND_CREDENTIALS_DRIFTED))},
+     True, ("'only'", "container.credentials")),
 
     ("jobs bound but the inputs are never declared",
      {"stage.yml": stage(job("only", BOUND), inputs=INPUTS_MISSING)},
