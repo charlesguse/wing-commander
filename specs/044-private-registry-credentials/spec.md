@@ -416,8 +416,8 @@ that the credentials reach only the prerequisite check.
   across all three shapes of FR-003, before the plan commits to a mechanism and
   before any stage file is changed, and the evidence MUST be recorded in the
   feature's research artifact with each run identifiable. The job logs of the
-  no-image and public-image probe runs MUST show no registry login attempt and no
-  container step.
+  no-image and public-image probe runs MUST show no registry login attempt, and
+  the no-image run MUST show no container step.
 - **FR-017**: Any candidate mechanism the probe rules out MUST be recorded with the
   measured reason, so that a future reader does not re-propose it.
 - **FR-018**: Every platform behavior this feature depends on that the platform does
