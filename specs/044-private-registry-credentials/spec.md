@@ -109,8 +109,8 @@ shapes from one set of stage files, not the private one.
 
 **Independent Test**: Run a stage three times from the same stage files — no
 image; a public image with no credentials; a private image with credentials — and
-confirm each behaves per its contract, with the first two byte-for-byte identical
-to the previous release.
+confirm each behaves per its contract, with the first two behaviorally identical
+to the previous release (SC-002).
 
 **Acceptance Scenarios**:
 
@@ -205,9 +205,9 @@ adapter of any kind involved.
 
 As a maintainer of the pipeline, I want the chosen mechanism demonstrated on real
 GitHub-hosted runners across all three shapes, with the evidence recorded in the
-feature's research, before implementation begins, so that this feature cannot
-repeat #224 — a capability assumed to work, shipped to every adopter, and
-withdrawn.
+feature's research, before the plan commits to a mechanism and before any stage
+file is changed, so that this feature cannot repeat #224 — a capability assumed
+to work, shipped to every adopter, and withdrawn.
 
 **Why this priority**: The whole reason this spec exists rather than a one-line fix
 is that the last attempt assumed platform behavior it never measured. The
@@ -221,8 +221,8 @@ traceable to a run.
 
 **Acceptance Scenarios**:
 
-1. **Given** a candidate mechanism, **When** implementation is proposed, **Then**
-   a probe on real GitHub-hosted runners has already exercised all three shapes and
+1. **Given** a candidate mechanism, **When** the plan commits to it, **Then** a
+   probe on real GitHub-hosted runners has already exercised all three shapes and
    the results are recorded, with the runs identifiable.
 2. **Given** a probe result contradicts an assumption, **When** the plan is
    written, **Then** the rejected mechanism and the measured reason are recorded
@@ -252,9 +252,9 @@ a checked-in fixture.
 
 **Acceptance Scenarios**:
 
-1. **Given** a job in a published stage that does not carry the credential binding
-   every other job carries, **When** the pipeline's own PR checks run, **Then**
-   they fail and name the stage file and the job.
+1. **Given** a job in a published stage that carries the container binding but not
+   the credential binding every other such job carries, **When** the pipeline's own
+   PR checks run, **Then** they fail and name the stage file and the job.
 2. **Given** a new published stage file is added, **When** the checks run, **Then**
    it is covered automatically — the stage set stays derived, never listed.
 3. **Given** the check is amended for the new shape, **When** its self-test runs,
@@ -358,7 +358,8 @@ that the credentials reach only the prerequisite check.
   the image's registry with those credentials.
 - **FR-002**: The adopter-facing interface MUST remain the two existing stage
   secrets, unchanged in name and meaning. No registry-specific, provider-specific,
-  or credential-shape-specific input may be added to any published stage.
+  or credential-shape-specific input may be added to any published stage, other
+  than the single opt-in control FR-026 outcome 2 permits, if that outcome ships.
 - **FR-003**: All three shapes — no image named, a public image with no
   credentials, and a private image with credentials — MUST be served by one set of
   published stage files. No per-shape stage variant, duplicated stage file, or fork
@@ -383,7 +384,8 @@ that the credentials reach only the prerequisite check.
   endpoint, or credential-minting logic.
 - **FR-010**: A registry that accepts a static username/password pair MUST work
   through the two secrets alone, with no adapter, extra wrapper job, or additional
-  configuration of any kind.
+  configuration of any kind other than the single opt-in control FR-026 outcome 2
+  permits, if that outcome ships.
 - **FR-011**: Credentials minted at run time MUST be a supported first-class case.
   The pipeline MUST define where minting happens — on the caller's side, before the
   stage call, because the credential is consumed before any step of the stage job
@@ -411,8 +413,11 @@ that the credentials reach only the prerequisite check.
   that they reach nothing else MUST be removed, and no document, comment, or run
   output may continue to claim the limitation.
 - **FR-016**: The mechanism MUST be demonstrated on real GitHub-hosted runners,
-  across all three shapes of FR-003, before implementation begins, and the evidence
-  MUST be recorded in the feature's research artifact with each run identifiable.
+  across all three shapes of FR-003, before the plan commits to a mechanism and
+  before any stage file is changed, and the evidence MUST be recorded in the
+  feature's research artifact with each run identifiable. The job logs of the
+  no-image and public-image probe runs MUST show no registry login attempt and no
+  container step.
 - **FR-017**: Any candidate mechanism the probe rules out MUST be recorded with the
   measured reason, so that a future reader does not re-propose it.
 - **FR-018**: Every platform behavior this feature depends on that the platform does
@@ -421,8 +426,9 @@ that the credentials reach only the prerequisite check.
 - **FR-019**: The existing job-shape uniformity check MUST be amended deliberately
   to describe the new shape — never bypassed, disabled, or narrowed to a check that
   cannot fail — and MUST fail, naming the stage file and job, when any job of a
-  published stage lacks the credential binding its siblings carry. Its stage set
-  MUST stay derived from the workflows rather than listed.
+  published stage that carries the container binding lacks the credential binding
+  every other such job carries. Its stage set MUST stay derived from the workflows
+  rather than listed.
 - **FR-020**: The uniformity check's self-test MUST be extended so that every
   failure branch the amended check ships is exercised by a checked-in fixture,
   including the branches specific to the new shape.
@@ -516,11 +522,12 @@ that the credentials reach only the prerequisite check.
   full lifecycle with no long-lived registry secret stored anywhere, and the
   credential value appears in no workflow file, log, or job configuration.
 - **SC-005**: An adopter with a registry that accepts a static pair needs exactly
-  two secrets and zero additional components to get a private-image run.
-- **SC-006**: 100% of jobs across all published stages carry the credential binding,
-  verified by a check that fails on a job which does not — including a job added
-  after this feature ships — and whose every shipped failure branch is exercised by
-  a checked-in fixture.
+  two secrets — plus the single opt-in control FR-026 outcome 2 permits, if that
+  outcome ships — and zero additional components to get a private-image run.
+- **SC-006**: Every job across all published stages that carries the container
+  binding also carries the credential binding, verified by a check that fails on a
+  job which does not — including a job added after this feature ships — and whose
+  every shipped failure branch is exercised by a checked-in fixture.
 - **SC-007**: Every platform behavior the feature relies on that the platform does
   not document is traceable to a recorded run on real hosted runners, and each of
   the three shapes has at least one such run.
@@ -568,9 +575,17 @@ that the credentials reach only the prerequisite check.
 ## Dependencies
 
 - The platform's own handling of container-job registry authentication, including
-  whether a whole container declaration can be produced conditionally and whether
-  the secrets it needs are in scope where it is declared — undocumented behavior
-  that this feature is required to measure rather than assume.
+  whether a whole container declaration can be produced conditionally, and the
+  documented constraint on which contexts are in scope where it is declared:
+  GitHub's context-availability table documents `jobs.<job_id>.container` as
+  offering only the `github`, `needs`, `strategy`, `matrix`, `vars`, and `inputs`
+  contexts, while `jobs.<job_id>.container.credentials` additionally offers `env`
+  and `secrets`. The probe of FR-016 must confirm this or find a masked way around
+  it, and the plan must not re-derive it. The consequence: a whole-value
+  `container:` expression cannot read `secrets`, so the "infer the shape from
+  non-empty secrets" candidate of FR-026 outcome 1 needs either the opt-in control
+  of FR-026 outcome 2 or a `credentials` sub-key whose expression tolerates the
+  no-image and public-image cases.
 - The platform's rules for passing a value between jobs when that value is a
   secret, which govern the caller-side hand-off of a minted credential.
 - The existing published-stage surface, its prerequisite check, and this
