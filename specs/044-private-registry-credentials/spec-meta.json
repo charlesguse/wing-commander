@@ -2,8 +2,8 @@
   "issue": 283,
   "spec_dir": "specs/044-private-registry-credentials",
   "feature_num": "044",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 2,
   "spec_branch": "spec/044-private-registry-credentials",
-  "pending_re_review_from": ["charlesguse"]
+  "pending_re_review_from": []
 }
