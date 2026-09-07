@@ -1,0 +1,70 @@
+# TEMPORARY follow-up to P2 (specs/044 research D4, issue #283). Delete with
+# this branch — never merged. Beyond the research matrix: round 1 (run
+# 34162867583) measured that a value masked with ::add-mask:: in job A is
+# DROPPED by the runner at the needs.*.outputs boundary ("Skip output 'token'
+# since it may contain secret.") — it never leaks because it never arrives.
+# This round measures the only other cross-job shape: mint WITHOUT masking
+# (never printing the value), and rely on the receiving side's own masking.
+name: "probe · 044 P2 follow-up"
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/probe-044-p2-followup.yml
+      - .github/workflows/probe-044-callee.yml
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  p2f-mint-unmasked:
+    # Job A': same derivable synthetic token (different suffix), NO
+    # ::add-mask::, never echoed. Only length/sha are printed.
+    runs-on: ubuntu-latest
+    outputs:
+      token: ${{ steps.mint.outputs.token }}
+      token-length: ${{ steps.mint.outputs.token-length }}
+      token-sha-prefix: ${{ steps.mint.outputs.token-sha-prefix }}
+    steps:
+      - id: mint
+        shell: bash
+        run: |
+          token="p044f-$(printf '%s' "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-probe044-f" | sha256sum | cut -c1-40)"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+          echo "token-length=${#token}" >> "$GITHUB_OUTPUT"
+          echo "token-sha-prefix=$(printf '%s' "$token" | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+          echo "A': minted (not printed) length=${#token} sha256[:16]=$(printf '%s' "$token" | sha256sum | cut -c1-16)"
+
+  p2f-3-forward-unmasked-as-secret-to-callee:
+    # P2.3 (follow-up): unmasked output forwarded as a secrets: value into
+    # the reusable workflow. Hypothesis: arrives non-empty AND is rendered
+    # *** in the callee (secrets context is auto-masked there).
+    needs: p2f-mint-unmasked
+    uses: ./.github/workflows/probe-044-callee.yml
+    with:
+      expected-length: ${{ needs.p2f-mint-unmasked.outputs.token-length }}
+      expected-sha-prefix: ${{ needs.p2f-mint-unmasked.outputs.token-sha-prefix }}
+    secrets:
+      probe-token: ${{ needs.p2f-mint-unmasked.outputs.token }}
+
+  p2f-4-consume-unmasked-in-sibling-step:
+    # P2.4 (follow-up): unmasked output consumed in a sibling job's own step,
+    # which masks it as its first action. Hypothesis: it LEAKS anyway,
+    # because the runner prints step env: values in the group header before
+    # the script's ::add-mask:: can run — i.e. the sibling-step shape has no
+    # safe variant (mask-at-source drops it, mask-at-sink is too late).
+    needs: p2f-mint-unmasked
+    runs-on: ubuntu-latest
+    steps:
+      - shell: bash
+        env:
+          TOKEN: ${{ needs.p2f-mint-unmasked.outputs.token }}
+          EXPECTED_LEN: ${{ needs.p2f-mint-unmasked.outputs.token-length }}
+          EXPECTED_SHA: ${{ needs.p2f-mint-unmasked.outputs.token-sha-prefix }}
+        run: |
+          echo "::add-mask::$TOKEN"
+          echo "B': received = [$TOKEN]"
+          echo "B': length=${#TOKEN} (expected $EXPECTED_LEN)"
+          echo "B': sha256[:16]=$(printf '%s' "$TOKEN" | sha256sum | cut -c1-16) (expected $EXPECTED_SHA)"
+          if [ -z "$TOKEN" ]; then echo "::error::P2.4 token arrived EMPTY"; exit 1; fi
