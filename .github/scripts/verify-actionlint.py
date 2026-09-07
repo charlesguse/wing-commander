@@ -95,9 +95,14 @@ def ensure_binary():
                  f"({url}): {e}. If this machine is offline, note that CI "
                  f"runs this gate regardless -- it is not skippable by "
                  f"being unreachable.")
-    # Extracted next to the target and renamed into place, so a second
-    # runner racing this one sees either nothing or a whole binary.
-    part = target + ".part"
+    # Extracted next to the target under a per-process name and renamed
+    # into place, so a second runner racing this one sees either nothing
+    # or a whole binary. The pid matters: run-local-gates.py runs this
+    # gate and its --self-test concurrently (--jobs), and on a cold cache
+    # both start here at once — a shared ".part" would have them writing
+    # one file together and renaming a torn binary into place (or, on
+    # Windows, failing the rename on the other's open handle).
+    part = f"{target}.{os.getpid()}.part"
     if ext == "zip":
         with zipfile.ZipFile(io.BytesIO(payload)) as z, \
                 open(part, "wb") as out:
@@ -109,7 +114,21 @@ def ensure_binary():
                 out.write(member.read())
         os.chmod(part, os.stat(part).st_mode
                  | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    os.replace(part, target)
+    try:
+        if os.path.exists(target):
+            os.remove(part)        # a sibling won the race; its copy is whole
+        else:
+            os.replace(part, target)
+    except OSError:
+        # The rename lost to a sibling that renamed — and may already be
+        # executing — its own copy (Windows refuses to replace a running
+        # exe). Theirs is whole; keep it and drop ours.
+        if not os.path.exists(target):
+            raise
+        try:
+            os.remove(part)
+        except OSError:
+            pass
     return target
 
 
