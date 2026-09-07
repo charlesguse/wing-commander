@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,21 +31,28 @@
 
 ## Notes
 
-- Three `[NEEDS CLARIFICATION]` markers remain, at the specification's maximum. They
-  are posted to the lifecycle issue for the requester rather than blocking the draft:
-  - **FR-013 — the shape of the cloud-registry help.** A supported, versioned
-    component adopters call is a permanent addition to the published contract
-    (Constitution VII: widening that surface is a deliberate act); a documented
-    snippet is free to change but leaves every adopter owning their own copy.
-  - **FR-026 — what ships if the probe rules every candidate out.** The request
-    names two candidate mechanisms and explicitly forbids assuming either. The
-    fallback shape is a scope decision, not a planning detail, because one option
-    adds a control to the stage interface and the other delivers evidence and
-    documentation only.
-  - **FR-027 — whether this repository dogfoods the private path.** Constitution I
-    wants the repo to be its own first example; doing so here means this repository
-    owning a private image and a registry identity, which is a real cost rather than
-    a formality.
+- All three `[NEEDS CLARIFICATION]` markers were resolved by the requester on the
+  lifecycle issue (#283) and are now encoded in the requirements:
+  - **FR-013 — the shape of the cloud-registry help.** Resolved: ship a supported,
+    versioned, optional component the adopter calls from their own wrapper, mirroring
+    the existing optional credentials component for the alternate model provider. The
+    published contract surface widens deliberately (Constitution VII), bounded by a
+    minimal contract — identity, region, optional registry override in; username and
+    password out — and by the rule that no published stage may reference it. The
+    component is now also subject to FR-022's composite-action description rules.
+  - **FR-026 — what ships if the probe rules every candidate out.** Resolved as a
+    preference order rather than a single answer: infer the private case from the
+    supplied credentials if the probe shows that works (no new control); otherwise a
+    single explicit opt-in control is acceptable; only if no single set of stage files
+    can serve all three shapes does the feature reduce to evidence plus improved
+    fallback documentation. A second set of stage files is excluded under every
+    outcome.
+  - **FR-027 — whether this repository dogfoods the private path.** Resolved as a
+    narrow dogfood: one scheduled or on-demand check against a repository-scoped
+    private image through the real stage-file shape, kept separate from the lifecycle
+    stages, which stay on the no-image default. This repository takes on no cloud
+    account or cloud-registry identity; the cloud path rests on probe evidence and
+    documentation. SC-010 records the outcome.
 - The request's own "measure before planning" instruction is specified as a delivery
   condition (User Story 5, FR-016 through FR-018) rather than left to the plan, because
   the previous attempt (#219 → #224 → #227) failed precisely by treating it as one.

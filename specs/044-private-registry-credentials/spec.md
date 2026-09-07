@@ -50,8 +50,8 @@ who issued them. Registries whose credential is minted at run time are a
 first-class case, because the credential is consumed before any step of the stage
 job runs and therefore has to be minted on the caller's side and handed in;
 Wing Commander ships the means to do that easily for the first-class example (AWS
-ECR via OIDC) at the edge, in documentation and optional adapters, never inside a
-stage.
+ECR via OIDC) at the edge, as an optional supported component the adopter calls
+from their own wrapper plus the documentation to use it, never inside a stage.
 
 The feature also carries a process obligation the last attempt did not: the
 mechanism must be proven against real GitHub-hosted runners before implementation
@@ -393,15 +393,17 @@ that the credentials reach only the prerequisite check.
   or any pipeline output, including across the caller-side hand-off from wherever
   it is minted to the stage call that consumes it. The masking of that hand-off MUST
   be demonstrated rather than assumed.
-- **FR-013**: The pipeline MUST ship what an adopter needs to mint a credential for
-  the primary cloud-registry use case without rediscovering the pattern — at
-  minimum a complete, copy-pasteable worked example; any shipped adapter MUST live
-  at the edge (documentation or an optional, separately-invoked component), never
-  inside a published stage, and MUST NOT require the adopter to store a long-lived
-  cloud credential. [NEEDS CLARIFICATION: does Wing Commander ship the cloud-registry
-  credential minting as a supported, versioned component that adopters call — widening
-  the published contract surface it must then maintain and never break — or as a
-  documented snippet only, which adopters copy and own?]
+- **FR-013**: The pipeline MUST ship the cloud-registry credential minting as a
+  supported, versioned component the adopter calls from their own wrapper, together
+  with a complete copy-pasteable worked example of calling it. The component MUST be
+  optional and edge-located: no published stage may reference it, and an adopter who
+  does not need it MUST be unaffected by its existence. Its contract MUST stay
+  minimal — it takes the identity to assume, the region, and an optional registry
+  override, and emits a username and a password — and it MUST NOT require the adopter
+  to store a long-lived cloud credential. This follows the precedent of the existing
+  optional credentials component for the alternate model provider, and the widening
+  of the published contract surface is deliberate: once shipped, the component's
+  inputs and outputs are part of that surface and are maintained as such.
 - **FR-014**: The existing prerequisite check MUST keep its current fail-fast role
   and placement: running before any other job's container is created, pulling the
   named image, and failing the stage with every missing prerequisite named at once.
@@ -429,9 +431,10 @@ that the credentials reach only the prerequisite check.
   deviation and never a code comment alone.
 - **FR-022**: The pipeline's other standing checks MUST remain satisfied: the
   prerequisite-check presence and required-tool agreement, the environment-binding
-  uniformity, the caller-permission coverage for anything a shipped example or
-  wrapper requests, the permissioned-token rules, the guard-versus-degradation-path
-  rules, and the composite-action description rules.
+  uniformity, the caller-permission coverage for anything a shipped example,
+  component, or wrapper requests, the permissioned-token rules, the
+  guard-versus-degradation-path rules, and the composite-action description rules —
+  the last of which now also covers the component of FR-013.
 - **FR-023**: Adoption and setup documentation MUST state that credentials now reach
   every job, present the pre-authenticated runner as the fallback for registries
   that cannot present a username/password pair, and carry two worked examples: a
@@ -444,17 +447,30 @@ that the credentials reach only the prerequisite check.
 - **FR-025**: Shipping this MUST be an additive, non-breaking change on the current
   major line: existing adopters who set neither secret see no behavioral change, and
   no existing input, secret, or output is renamed or removed.
-- **FR-026**: If the probe of FR-016 shows that no single stage-file shape can serve
-  all three shapes of FR-003, the feature MUST NOT ship a mechanism that regresses
-  the no-image or public-image case. [NEEDS CLARIFICATION: in that outcome, what
-  should this feature deliver — nothing beyond the recorded evidence and improved
-  documentation of the existing fallback, or an opt-in the adopter sets explicitly
-  when their image is private, accepting one more control on the stage interface?]
-- **FR-027**: This repository's own use of the pipeline MUST stay consistent with
-  what the feature claims. [NEEDS CLARIFICATION: must this repository dogfood the
-  private-image path in its own runs — which requires it to own a private image and
-  a registry identity — or is the probe evidence plus adopter documentation
-  sufficient, leaving this repository's own runs on the no-image default?]
+- **FR-026**: The feature MUST NOT ship a mechanism that regresses the no-image or
+  public-image case. Which outcome ships is decided by what the probe of FR-016
+  measures, in this order of preference:
+  1. If one set of stage files serves all three shapes of FR-003 while inferring the
+     private case from the credential secrets having been supplied, that mechanism
+     MUST be chosen — it adds no control to the stage interface.
+  2. Otherwise, if one set of stage files serves all three shapes only when the
+     adopter states the private case explicitly, the feature MAY add exactly one
+     opt-in control to the stage interface for that purpose, and no more.
+  3. If no single set of stage files can serve all three shapes at all, the feature
+     MUST deliver the recorded evidence and improved documentation of the
+     pre-authenticated-runner fallback, and close as measured-and-not-possible.
+
+  Under no outcome may a second set of published stage files, a per-shape variant,
+  or a fork be introduced (FR-003).
+- **FR-027**: This repository MUST dogfood the private-image path narrowly: one
+  check, separate from the lifecycle stages and run on a schedule or on demand, that
+  pulls a private image scoped to this repository — a private package in this
+  repository's own registry, authenticated with the workflow's own token or a
+  repository secret — through the same stage-file shape adopters use. This repository
+  MUST NOT be required to own a cloud account or cloud-registry identity: the
+  cloud-registry path is covered by the probe evidence of FR-016 and the
+  documentation of FR-023, and this repository's own lifecycle stages stay on the
+  no-image default.
 
 ### Key Entities
 
@@ -470,9 +486,11 @@ that the credentials reach only the prerequisite check.
   produce a credential their registry will accept — for a cloud registry, obtaining
   a short-lived token through their own identity flow. Owned by the adopter's
   wrapper; the pipeline supplies the pattern, not the execution.
-- **Provider adapter**: Optional, edge-located help for one registry family that
-  turns an adopter's cloud identity into a username/password pair. Never referenced
-  by a published stage; absent entirely for registries that accept a static pair.
+- **Provider adapter**: A supported, versioned, optional component shipped at the
+  edge for one registry family, which turns an adopter's cloud identity into a
+  username/password pair. Called from the adopter's own wrapper and never referenced
+  by a published stage; not used at all by registries that accept a static pair. Its
+  inputs and outputs are part of the published contract surface once shipped.
 - **Prerequisite check**: The per-stage job that pulls the named image and verifies
   the tools the pipeline needs, before any other job's container exists. Keeps its
   role; loses its warning about credential reach.
@@ -512,6 +530,11 @@ that the credentials reach only the prerequisite check.
 - **SC-009**: After this ships, zero statements anywhere in the repository's
   documentation, stage output, or code comments claim that registry credentials
   reach only the prerequisite check.
+- **SC-010**: This repository demonstrates the private-image path on its own
+  infrastructure on a recurring basis, against a repository-scoped private image and
+  through the same stage-file shape adopters use, with no cloud account or
+  cloud-registry identity owned by this repository and no lifecycle stage moved off
+  the no-image default.
 
 ## Assumptions
 
@@ -529,7 +552,8 @@ that the credentials reach only the prerequisite check.
   credential, and a lifetime that comfortably exceeds a single stage run.
 - **The repository-scoped-token example is a registry that accepts the caller's own
   workflow token as a password**, which needs no adapter and demonstrates the
-  no-adapter path.
+  no-adapter path. It is also what this repository dogfoods under FR-027, so the
+  worked example and the self-check exercise the same shape.
 - **The stage never manages a credential's lifecycle** — it does not mint, refresh,
   renew, or validate one; it forwards what it was handed.
 - **This feature is orthogonal to the deployment-environment binding, the runner and
