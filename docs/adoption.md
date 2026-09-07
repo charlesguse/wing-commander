@@ -867,26 +867,92 @@ know before you set either:
 
   `container-registry-password` can be a static value or a short-lived token
   your wrapper mints in its own step, before its `uses:` call to the
-  stage — a cloud registry (ECR/GCR/ACR) credential, for instance. The stage
-  itself never mints, refreshes, or manages a credential's lifecycle; it only
-  ever forwards what you hand it. A pull failure's error message tells you
-  whether no credentials were supplied at all, or the registry rejected the
-  ones you gave it.
+  stage — a cloud registry (ECR/GCR/ACR) credential, for instance.
 
-  **These credentials reach the prerequisite check and nothing else, today.**
-  They authenticate `verify-image-prerequisites`, which pulls the image and
-  checks it for the required tools. Every *other* job pulls with whatever
-  authentication its runner already has. GitHub's job-level
-  `container.credentials` cannot be conditionally omitted — once the key is
-  written, an empty value is a template error that stops the job before its
-  first step, and that is every run that names no image — so the stages do
-  not carry one ([#227](https://github.com/charlesguse/wing-commander/issues/227),
-  measured against real runners in
-  [PR #226](https://github.com/charlesguse/wing-commander/pull/226)).
+  **These credentials reach every job of the stage, not only the
+  prerequisite check** ([specs/044](https://github.com/charlesguse/wing-commander/tree/main/specs/044-private-registry-credentials),
+  measured against real runners 2026-09-07, superseding the narrower reach
+  [#227](https://github.com/charlesguse/wing-commander/issues/227) originally
+  shipped). Supplying both secrets authenticates every job's own image pull,
+  not just `verify-image-prerequisites`'s. Supplying neither, or only one, is
+  inert everywhere the same way it always was — no login is attempted, no
+  warning is printed.
 
-  **For a private image, use a runner that is already logged in** to the
-  registry — the same `runner` input above is how you point the stage at
-  one. A public (or otherwise unauthenticated) image needs nothing.
+  The stage itself never mints, refreshes, or manages a credential's
+  lifecycle: each stage call carries whatever credential you handed it for
+  the whole run, and a credential that expires before a queued job starts
+  surfaces as a plain pull failure like any other bad credential, not a
+  distinct error — you are responsible for handing the stage a credential
+  that outlives the run. A pull failure's error message tells you whether no
+  credentials were supplied at all, exactly one was, or the registry
+  rejected the ones you gave it.
+
+  **For a registry that cannot present a username/password pair at all**
+  (some private network appliances, for instance), use a runner that is
+  already logged in to the registry instead — the same `runner` input above
+  is how you point the stage at one. This remains the documented fallback
+  for that one case; it is no longer the only path for a registry that *can*
+  take a username/password, even a short-lived one. A public (or otherwise
+  unauthenticated) image needs neither.
+
+  **Cloud-registry (ECR) worked example** — mint a token via OIDC in your
+  own wrapper job, before the job that calls the stage:
+
+  ```yaml
+  jobs:
+    mint-ecr-credentials:
+      runs-on: ubuntu-latest
+      permissions:
+        id-token: write   # required for the OIDC role assumption
+        contents: read
+      outputs:
+        username: ${{ steps.ecr.outputs.username }}
+        password: ${{ steps.ecr.outputs.password }}
+      steps:
+        - id: ecr
+          uses: charlesguse/wing-commander/.github/actions/wing-commander-ecr-credentials@v2
+          with:
+            aws-role-arn: ${{ secrets.ECR_ROLE_ARN }}
+            aws-region: us-east-1
+
+    call-plan-stage:
+      needs: mint-ecr-credentials
+      uses: charlesguse/wing-commander/.github/workflows/plan.yml@v2
+      with:
+        container-image: <account-id>.dkr.ecr.us-east-1.amazonaws.com/<repo>:<tag>
+      secrets:
+        container-registry-username: ${{ needs.mint-ecr-credentials.outputs.username }}
+        container-registry-password: ${{ needs.mint-ecr-credentials.outputs.password }}
+  ```
+
+  `wing-commander-ecr-credentials` deliberately does not mask its own
+  output — masking it before this hand-off crosses the job boundary was
+  measured to silently drop the value at that boundary rather than protect
+  it (specs/044 research D4). Forward its output only as a `secrets:` value
+  into a `uses:` call exactly as shown above; the callee's own `secrets:`
+  context masks it end-to-end. Consuming it any other way — a plain step, an
+  `env:` assignment — has no safe variant found: it either arrives empty or
+  leaks.
+
+  **Repository-scoped-token worked example** — no adapter, no long-lived
+  secret, for a private package in this same GitHub organization:
+
+  ```yaml
+  jobs:
+    call-plan-stage:
+      permissions:
+        packages: read
+      uses: charlesguse/wing-commander/.github/workflows/plan.yml@v2
+      with:
+        container-image: ghcr.io/${{ github.repository_owner }}/<private-package>:latest
+      secrets:
+        container-registry-username: ${{ github.actor }}
+        container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+  ```
+
+  The calling wrapper job needs `packages: read` in its own `permissions:`
+  block — without it, `GITHUB_TOKEN` has no pull access to a private package
+  in the same organization.
 - **Both controls are set once per stage call and apply to every job in
   that call — there is no per-job selector.** `tasks.yml`, called twice by
   `wing-commander-4-tasks.yml` (`mode: generate` and `mode: approved`),
