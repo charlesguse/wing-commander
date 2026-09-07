@@ -243,31 +243,8 @@ permissions: {}
 
 jobs:
   verify-image-prerequisites:
-    # runner/container-image passthrough (specs/038): checks the
-    # adopter-named image before any other job's own container is
-    # created. Deliberately no container: — must run directly on the
-    # runner to invoke Docker itself (contracts/runner-container-
-    # passthrough.md "The verify-image-prerequisites job").
-    # No job-level `if:`, deliberately: this job must NEVER skip.
-    # GitHub applies its implicit success() over a job's whole needs-
-    # CLOSURE, so a skipped check suppresses every job in the stage that
-    # carries no status-check function of its own -- whatever their `if:`
-    # says, and without failing anything. Between PR #222 and this fix
-    # this job was skip-conditioned on `container-image`, which is unset
-    # by default, and all eleven stages did nothing at all for a day
-    # (#224). The image work is conditioned one level down, on the step,
-    # so a run that names no image still pays only this job's idle
-    # seconds -- the cost FR-006 was written to avoid, and the cheapest
-    # honest price for the guarantee it was protecting.
-    # Zero scopes, declared rather than inherited. This job's whole body is
-    # docker login/pull/run against the adopter's own registry: it makes no
-    # GitHub API call and writes nothing. Nine of the eleven stage files
-    # carry `permissions: {}` at file level, so this job got zero there by
-    # construction -- but watchdog.yml and auto-update-spec-kit.yml carry
-    # the wide top-level grants their other jobs need, and this job silently
-    # inherited all of them. Declared on all eleven so the grant is a
-    # property of the job rather than of whichever file it happens to sit
-    # in (Gate 22 asserts it).
+    # this job must NEVER skip, or the whole needs-closure silently no-ops every stage (#224)
+    # -- see specs/038-runner-container-passthrough/contracts/runner-container-passthrough.md.
     permissions: {}
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     steps:
@@ -359,25 +336,15 @@ jobs:
   # completes). Read-only beyond posting replies — a misjudged
   # classification cannot itself mutate anything (contracts/reusable-pr-conversation.md).
   classify-and-announce:
-    # runner/container-image passthrough (specs/038). Empty
-    # container-image is expected to be a no-op (research.md D3); live
-    # verification requires a workflow_dispatch trigger this automated
-    # implementation run could not perform (T001) and remains deferred to
-    # a human/scratch-adopter-repo pass. The runs-on ternary's JSON-array
-    # branch is likewise unverified beyond single-element arrays —
-    # multi-label self-hosted conjunction is scratch-adopter-repo-verified
-    # only (research.md D2).
+    # container-image no-op and the runs-on JSON-array branch stay unverified (D2, D3) -- see
+    # specs/038-runner-container-passthrough/research.md.
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
-    # No `if:` of its own -- ordinary needs: skip-propagation is the
-    # gate here: a failed image check skips this job and everything
-    # behind it. verify-image-prerequisites never skips, so there is no
-    # skipped result to tolerate; the `if:` that used to say otherwise
-    # was never evaluated at all (#224).
+    # no `if:` -- `needs:` skip-propagation is the image gate (#224) -- see clarify.yml.
     needs: verify-image-prerequisites
     permissions:
       contents: read
@@ -410,9 +377,8 @@ jobs:
       # before `act` starts folding anything — `dispatch-once` compares its
       # own read of the tip against this to decide whether any leg folded.
       base-sha: ${{ steps.base-sha.outputs.sha }}
-      # Internal job-to-job wiring only — never a workflow_call output
-      # (research.md D3). Non-empty only when a refusal-shaped step in THIS
-      # job actually ran and refused; empty on success, skip, or a crash.
+      # internal job-to-job wiring only, never a workflow_call output (research.md D3) -- see
+      # specs/041-implement-stall-notice/research.md D3.
       refusal-reason: ${{ steps.identity.outputs.reason || steps.preflight.outputs.reason || steps.meta.outputs.reason }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
@@ -823,11 +789,8 @@ jobs:
       - name: Classify the PR conversation request
         id: agent
         if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && steps.relay-resume.outputs.resumed != 'true' && steps.tool-args-classify.outputs.allowed-tools != ''
-        # The action rejects a healthy, finished run post-hoc when its own
-        # inflated .num_turns reads above --max-turns (now the runaway
-        # ceiling, not the intended budget) — without this, that rejection
-        # stops the whole job before the verdict step below can even run
-        # (specs/037-agent-turn-budget-guard/, issue #204).
+        # post-hoc turn-budget rejection of a healthy, finished run (#204) -- see
+        # specs/037-agent-turn-budget-guard/plan.md.
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
@@ -938,10 +901,9 @@ jobs:
             --allowedTools "${{ steps.tool-args-classify.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-classify.outputs.disallowed-tools }}"
 
-      # Deterministic, transcript-only verdict (healthy/exhausted/failed/
-      # unclassifiable) — replaces the raw steps.agent.outcome checks below,
-      # which continue-on-error above means can no longer be trusted alone
-      # (specs/037-agent-turn-budget-guard/).
+      # deterministic, transcript-only verdict (healthy/exhausted/failed/unclassifiable) replacing
+      # the raw outcome check that continue-on-error above means can no longer be trusted alone --
+      # see specs/037-agent-turn-budget-guard/data-model.md.
       - name: Compute agent run verdict
         id: agent-verdict
         if: always() && steps.agent.outcome != 'skipped'
@@ -993,11 +955,9 @@ jobs:
           echo "ok=true" >> "$GITHUB_OUTPUT"
           printf '%s' "$raw" | jq -c '.classifications' > "$RUNNER_TEMP/classifications-raw.json"
 
-      # Uniform across every rewired call site (research.md R7 step 5): the
-      # single point where a non-healthy verdict actually fails the job.
-      # Genuinely errored/exhausted/unreadable runs stop here with a named
-      # cause; a healthy-but-post-hoc-rejected run skips this entirely and
-      # the stage continues.
+      # uniform across every rewired call site (research.md R7 step 5): the single point where a
+      # non-healthy verdict actually fails the job -- see
+      # specs/037-agent-turn-budget-guard/research.md R7 (step 5).
       - name: Fail loud on non-healthy agent verdict
         if: always() && steps.agent.outcome != 'skipped' && steps.agent-verdict.outputs.verdict != 'healthy'
         env:
@@ -1007,7 +967,7 @@ jobs:
           echo "::error::wing-commander pr-conversation stage: classify agent step rejected — verdict=$VERDICT: $REASON"
           exit 1
 
-      # Surface this run's own metrics in the run summary (see clarify.yml).
+      # Surface this run's own metrics in the run summary (see intake.yml).
       - name: Classify agent run metrics summary
         id: metrics-summary-classify
         if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && always() && steps.agent.outcome != 'skipped'
@@ -1035,36 +995,20 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
 
-      # Per-run cost line (specs/043-durable-metrics-record, data-model.md
-      # "Rollup — per-run cost line") — appended to whichever status
-      # comment(s) below actually post for this run, not a new comment
-      # (FR-031c).
+      # per-run cost line (FR-031c): appended to whichever status comment(s) actually post, not a
+      # new comment -- see specs/043-durable-metrics-record/data-model.md.
       - name: Compute cost line (classify)
         id: cost-line-classify
         if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && always() && steps.agent.outcome != 'skipped'
         env:
-          RECORD_JSON: ${{ steps.metrics-summary-classify.outputs.record-json }}
+          COST_LINE: ${{ steps.metrics-summary-classify.outputs.cost-line }}
         run: |
           set -uo pipefail
-          line="$(printf '%s' "$RECORD_JSON" | jq -r '
-            def usd($m; $d):
-              (. * $m | round | tostring) as $c | ($c | length) as $n
-              | if $n > $d then "$" + $c[0:$n-$d] + "." + $c[$n-$d:]
-                else "$0." + (("0" * ($d - $n)) // "") + $c end;
-            def costpart: if .cost_available then (.cost_usd | if (. * 100 | round) >= 100 then usd(100; 2) else usd(10000; 4) end) else "cost unavailable" end;
-            def turnspart:
-              if .turns.available then
-                (.turns.counted|tostring) + (if .turns.intended_budget != null then "/" + (.turns.intended_budget|tostring) else "" end) + " turns"
-              else "turns unavailable" end;
-            def modelpart: if .model_available then .model else "model unavailable" end;
-            "**Cost**: " + costpart + " · " + turnspart + " · " + modelpart
-          ' 2>/dev/null || true)"
+          line="$COST_LINE"
           [ -n "$line" ] || line="**Cost**: metrics unavailable"
           echo "line=$line" >> "$GITHUB_OUTPUT"
 
-      # Observability, not failure (FR-017) — the intended budget was fully
-      # used but the run finished healthy; the runaway ceiling above is the
-      # only hard stop.
+      # over-budget is observability, not failure (FR-017) -- see clarify.yml.
       - name: Report over-budget agent run
         if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && steps.agent-verdict.outputs.verdict == 'healthy' && steps.agent-verdict.outputs.over-budget == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
@@ -1403,14 +1347,6 @@ jobs:
     # across every leg in the matrix; harmless for a non-held leg, which
     # finishes far under this bound.
     timeout-minutes: ${{ inputs.confirm-timeout-minutes }}
-    # runner/container-image passthrough (specs/038). Empty
-    # container-image is expected to be a no-op (research.md D3); live
-    # verification requires a workflow_dispatch trigger this automated
-    # implementation run could not perform (T001) and remains deferred to
-    # a human/scratch-adopter-repo pass. The runs-on ternary's JSON-array
-    # branch is likewise unverified beyond single-element arrays —
-    # multi-label self-hosted conjunction is scratch-adopter-repo-verified
-    # only (research.md D2).
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -1795,11 +1731,6 @@ jobs:
       - name: Act on this classification
         id: agent
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && steps.tool-args-act.outputs.allowed-tools != ''
-        # The action rejects a healthy, finished run post-hoc when its own
-        # inflated .num_turns reads above --max-turns (now the runaway
-        # ceiling, not the intended budget) — without this, that rejection
-        # stops the whole job before the verdict step below can even run
-        # (specs/037-agent-turn-budget-guard/, issue #204).
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
@@ -1899,10 +1830,6 @@ jobs:
             --allowedTools "${{ steps.tool-args-act.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-act.outputs.disallowed-tools }}"
 
-      # Deterministic, transcript-only verdict (healthy/exhausted/failed/
-      # unclassifiable) — replaces the raw steps.agent.outcome checks below,
-      # which continue-on-error above means can no longer be trusted alone
-      # (specs/037-agent-turn-budget-guard/).
       - name: Compute agent run verdict
         id: agent-verdict
         if: always() && steps.agent.outcome != 'skipped'
@@ -2015,11 +1942,6 @@ jobs:
             echo "artifact-url=$artifact_url"
           } >> "$GITHUB_OUTPUT"
 
-      # Uniform across every rewired call site (research.md R7 step 5): the
-      # single point where a non-healthy verdict actually fails the job.
-      # Genuinely errored/exhausted/unreadable runs stop here with a named
-      # cause; a healthy-but-post-hoc-rejected run skips this entirely and
-      # the stage continues.
       - name: Fail loud on non-healthy agent verdict
         if: always() && steps.agent.outcome != 'skipped' && steps.agent-verdict.outputs.verdict != 'healthy'
         env:
@@ -2029,7 +1951,7 @@ jobs:
           echo "::error::wing-commander pr-conversation stage: act agent step rejected — verdict=$VERDICT: $REASON"
           exit 1
 
-      # Surface this run's own metrics in the run summary (see clarify.yml).
+      # Surface this run's own metrics in the run summary (see intake.yml).
       - name: Act agent run metrics summary
         id: metrics-summary-act
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && always() && steps.agent.outcome != 'skipped'
@@ -2063,36 +1985,17 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
 
-      # Per-run cost line (specs/043-durable-metrics-record, data-model.md
-      # "Rollup — per-run cost line") — appended to whichever status
-      # comment(s) below actually post for this run, not a new comment
-      # (FR-031c).
       - name: Compute cost line (act)
         id: cost-line-act
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && always() && steps.agent.outcome != 'skipped'
         env:
-          RECORD_JSON: ${{ steps.metrics-summary-act.outputs.record-json }}
+          COST_LINE: ${{ steps.metrics-summary-act.outputs.cost-line }}
         run: |
           set -uo pipefail
-          line="$(printf '%s' "$RECORD_JSON" | jq -r '
-            def usd($m; $d):
-              (. * $m | round | tostring) as $c | ($c | length) as $n
-              | if $n > $d then "$" + $c[0:$n-$d] + "." + $c[$n-$d:]
-                else "$0." + (("0" * ($d - $n)) // "") + $c end;
-            def costpart: if .cost_available then (.cost_usd | if (. * 100 | round) >= 100 then usd(100; 2) else usd(10000; 4) end) else "cost unavailable" end;
-            def turnspart:
-              if .turns.available then
-                (.turns.counted|tostring) + (if .turns.intended_budget != null then "/" + (.turns.intended_budget|tostring) else "" end) + " turns"
-              else "turns unavailable" end;
-            def modelpart: if .model_available then .model else "model unavailable" end;
-            "**Cost**: " + costpart + " · " + turnspart + " · " + modelpart
-          ' 2>/dev/null || true)"
+          line="$COST_LINE"
           [ -n "$line" ] || line="**Cost**: metrics unavailable"
           echo "line=$line" >> "$GITHUB_OUTPUT"
 
-      # Observability, not failure (FR-017) — the intended budget was fully
-      # used but the run finished healthy; the runaway ceiling above is the
-      # only hard stop.
       - name: Report over-budget agent run
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && steps.agent-verdict.outputs.verdict == 'healthy' && steps.agent-verdict.outputs.over-budget == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout

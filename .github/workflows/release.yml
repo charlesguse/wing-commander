@@ -50,53 +50,47 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Gate 1a: actionlint over the published stages (and this workflow's
-      # own siblings), in two passes.
+      # Gate 1a: actionlint, in two passes.
       #
-      # -ignore: actionlint 1.7.7 does not yet know the documented
-      # github.job_workflow_sha context property (research.md D3).
-      #
-      # The job-level environment: mapping's deployment sub-key is
-      # deliberately NOT blanket-ignored. actionlint 1.7.7's schema knows
-      # only name/url there, so it flags every binding; an -ignore would
-      # equally swallow any *other* diagnostic phrased that way, and would go
-      # stale in silence the day actionlint learns the key. Pass 1 counts the
-      # diagnostics instead: exactly one per binding, and nothing else.
-      # GitHub itself accepts and acts on the key
-      # (specs/031-stage-environment-binding/contracts/environment-binding.md,
-      # empirically verified 2026-08-05/06 in charlesguse/wc-env-probe).
+      # Pass 1 — the schema/expression lint with the two accounted
+      # actionlint-1.7.7 allowances (github.job_workflow_sha -ignore'd
+      # outright; environment.deployment counted one diagnostic per
+      # binding, so the allowance goes loudly stale the day actionlint
+      # learns the key) — lives in .github/scripts/verify-actionlint.py,
+      # which lint-workflows.yml runs as Gate 46 on every pull request:
+      # one implementation, so the PR-time answer and the release-time
+      # answer cannot drift (#149, the Gate 31 arrangement). It lints
+      # EVERY workflow file — a strict superset of the published stages
+      # this step used to cover, closing the gap where nothing linted
+      # lint-workflows.yml or this file — with shellcheck/pyflakes off.
+      # The full rationale for both allowances, including why deployment
+      # is counted rather than -ignore'd and why the binding count is
+      # taken from the key's own line, is that script's docstring.
       #
       # That counting is the only pre-release signal on the key, and it is a
-      # signal about actionlint, not about GitHub. GitHub's own parser cannot
-      # be asked about a branch's files at all — the dispatches endpoint
-      # answers "no workflow_dispatch trigger" for a workflow_call-only file
-      # whether or not it parses (031 research.md D8) — so the registration
-      # assertion in lint-workflows.yml Gate 1 is the only thing that can
-      # detect GitHub rejecting the key, and it sees main only, post-merge.
-      #
-      # Pass 1 covers every published stage with shellcheck/pyflakes off:
-      # watchdog.yml and auto-update-spec-kit.yml carry 14 of the 30 bindings
-      # and are absent from pass 2's list (issue #149), so without this pass
-      # nothing would lint them. Their run: blocks stay out of the shellcheck
-      # pass until #149 lands.
-      #
-      # The pass-1 stage set is DERIVED, not listed. A hardcoded list is what
-      # caused #149 in the first place, and a list here would mean the 11th
-      # stage a future spec adds is born exempt from the only schema/syntax
-      # lint it gets before release — silently, since its bindings would go
-      # uncounted too and the seen-vs-bindings check would still balance.
-      # The derivation is shared with lint-workflows.yml gate 7 rather than
-      # re-approximated here: .github/scripts/wc_published_stages.py, whose
-      # agreement with gate 7's inline copy verify-gate-7.py asserts on every
-      # PR. It parses the YAML rather than grepping for the key, because a
-      # grep silently misses a stage written in flow style or at a different
-      # indentation — and such a stage's `deployment:` lines would go
-      # uncounted too, so the diagnostics-vs-bindings balance below would
-      # still come out even. That is #149 again wearing a different hat.
+      # signal about actionlint, not about GitHub. GitHub itself accepts and
+      # acts on the key
+      # (specs/031-stage-environment-binding/contracts/environment-binding.md,
+      # empirically verified 2026-08-05/06 in charlesguse/wc-env-probe), and
+      # GitHub's own parser cannot be asked about a branch's files at all —
+      # the dispatches endpoint answers "no workflow_dispatch trigger" for a
+      # workflow_call-only file whether or not it parses (031 research.md
+      # D8) — so the registration assertion in lint-workflows.yml Gate 1 is
+      # the only thing that can detect GitHub rejecting the key, and it sees
+      # main only, post-merge.
       #
       # Pass 2's list stays explicit — it is an opt-IN to shellcheck, and
-      # #149 is the ticket for widening it — but the exemption is now stated
-      # rather than implied, and a new stage cannot join it by omission.
+      # #149 is the ticket for widening it — but the exemption is stated
+      # rather than implied, and a new stage cannot join it by omission:
+      # the closure check below fails on any published stage in neither
+      # list. Its stage set is DERIVED, not listed — a hardcoded list is
+      # what caused #149 in the first place. The derivation is shared with
+      # lint-workflows.yml gate 7 rather than re-approximated here:
+      # .github/scripts/wc_published_stages.py, whose agreement with gate
+      # 7's inline copy verify-gate-7.py asserts on every PR. It parses the
+      # YAML rather than grepping for the key, because a grep silently
+      # misses a stage written in flow style or at a different indentation.
+      # That is #149 again wearing a different hat.
       #
       # SHELLCHECK_OPTS: the gate blocks on real problems (warning+), not
       # style/info nits — actionlint forwards the variable to its embedded
@@ -106,7 +100,12 @@ jobs:
           SHELLCHECK_OPTS: "--severity=warning"
         run: |
           set -uo pipefail
-          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) 1.7.7 /tmp
+          fail=0
+
+          # Pass 1 — see the comment above. Also downloads the pinned
+          # actionlint into the temp cache, which pass 2 below reuses via
+          # --ensure-binary rather than fetching a second copy.
+          python3 .github/scripts/verify-actionlint.py || fail=1
 
           # Captured into a variable FIRST, then split. `mapfile -t a < <(cmd)`
           # reports mapfile's own status, never the process substitution's, so
@@ -116,7 +115,7 @@ jobs:
           # reporting a broken script as a moved trigger. `$(...)` propagates
           # the exit status, so this failure now names itself.
           if ! stage_list="$(python3 .github/scripts/wc_published_stages.py)"; then
-            echo "::error::could not derive the published stage set (.github/scripts/wc_published_stages.py failed); pass 1 has nothing to lint."
+            echo "::error::could not derive the published stage set (.github/scripts/wc_published_stages.py failed); the pass-2 closure check has nothing to check."
             exit 1
           fi
           # Blank lines dropped rather than kept: `<<< ""` yields ONE empty
@@ -142,13 +141,11 @@ jobs:
           # waiting on #149 rather than opting into shellcheck untested in a
           # release-blocking gate.
           shell_exempt=(.github/workflows/watchdog.yml .github/workflows/auto-update-spec-kit.yml .github/workflows/pr-conversation.yml)
-          known='unexpected key "deployment" for "environment" section'
-          fail=0
 
           # Deriving the set means an empty derivation must not read as a
           # clean pass — the same reasoning as gate 7's stages == 0 guard.
           if [ "${#all_stages[@]}" -eq 0 ]; then
-            echo "::error::no workflow declares on.workflow_call — pass 1 linted nothing. Either the published stages moved or this derivation has broken."
+            echo "::error::no workflow declares on.workflow_call — the closure check below checked nothing. Either the published stages moved or this derivation has broken."
             exit 1
           fi
 
@@ -160,41 +157,14 @@ jobs:
             esac
           done
 
-          # Pass 1 — schema/syntax over every stage file. Written under
-          # /tmp (like actionlint itself, above): $GITHUB_WORKSPACE is the
-          # checkout this release is about to tag, and a lint gate has no
-          # business leaving a file in it.
-          /tmp/actionlint -no-color -oneline -shellcheck= -pyflakes= \
-            -ignore 'property "job_workflow_sha" is not defined' \
-            "${all_stages[@]}" > /tmp/pass1.out 2>&1 || true
-          cat /tmp/pass1.out
-
-          # Matched on the key's own line rather than the full binding, so
-          # this script never contains a literal GitHub expression that
-          # Actions would interpolate before bash ever sees it.
-          bindings=$(grep -Ec '^[[:space:]]{6}deployment:' "${all_stages[@]}" | awk -F: '{ s += $NF } END { print s + 0 }')
-          seen=$(grep -Fc "$known" /tmp/pass1.out || true)
-          other=$(grep -Fv "$known" /tmp/pass1.out | grep -c . || true)
-
-          if [ "$other" -gt 0 ]; then
-            echo "::error::actionlint reported $other diagnostic(s) beyond the known environment.deployment schema gap."
-            fail=1
-          fi
-          if [ "$bindings" -gt 0 ] && [ "$seen" -eq 0 ]; then
-            echo "::error::actionlint no longer flags environment.deployment ($bindings binding(s), 0 diagnostics) — its schema has learned the key. Delete this allowance and the counting around it."
-            fail=1
-          elif [ "$seen" -ne "$bindings" ]; then
-            echo "::error::expected one environment.deployment diagnostic per binding ($bindings), saw $seen — either a binding is going unlinted or an unrelated diagnostic is being counted as known."
-            fail=1
-          fi
-          echo "Gate 1a pass 1: ${#all_stages[@]} stage files, $bindings binding(s), $seen accounted diagnostic(s), $other other."
-
           # Pass 2 — the full lint (shellcheck/pyflakes on) over the subset
           # this gate has always covered. The deployment key is ignored here
-          # because pass 1 is what accounts for it.
-          /tmp/actionlint -no-color \
+          # because pass 1 is what accounts for it, one diagnostic per
+          # binding (verify-actionlint.py).
+          actionlint_bin="$(python3 .github/scripts/verify-actionlint.py --ensure-binary)"
+          "$actionlint_bin" -no-color \
             -ignore 'property "job_workflow_sha" is not defined' \
-            -ignore "$known" \
+            -ignore 'unexpected key "deployment" for "environment" section' \
             "${shell_linted[@]}" || fail=1
 
           exit "$fail"

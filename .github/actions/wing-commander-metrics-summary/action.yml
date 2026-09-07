@@ -132,6 +132,15 @@ outputs:
       The record's run.record_key value, for callers wiring the per-run
       rollup line (contracts/persist-workflow.md).
     value: ${{ steps.render.outputs.record-key }}
+  cost-line:
+    description: >
+      The preformatted per-run cost line (FR-031c) rendered from this
+      invocation's record — "**Cost**: <cost> · <turns> · <model>", each
+      part degrading to "... unavailable" independently. This is the
+      formatter's ONLY home; callers append the value verbatim and keep
+      just a one-line "**Cost**: metrics unavailable" fallback for the
+      case where this action never ran.
+    value: ${{ steps.render.outputs.cost-line }}
 
 runs:
   using: composite
@@ -277,9 +286,35 @@ runs:
               emitted_at: $emitted_at
             }' > "$RECORD_PATH" 2>/dev/null || printf '{}' > "$RECORD_PATH"
 
+          # The cost-line output (see the outputs block above). Runs in BOTH
+          # the normal and the degraded branch — each part degrades to
+          # "... unavailable" independently. Empty only if jq itself dies,
+          # which the callers' one-line fallback covers.
+          cost_line="$(jq -r '
+            def usd($m; $d):
+              (. * $m | round | tostring) as $c | ($c | length) as $n
+              | if $n > $d then "$" + $c[0:$n-$d] + "." + $c[$n-$d:]
+                else "$0." + (("0" * ($d - $n)) // "") + $c end;
+            def costpart: if .cost_available then (.cost_usd | if (. * 100 | round) >= 100 then usd(100; 2) else usd(10000; 4) end) else "cost unavailable" end;
+            def turnspart:
+              if .turns.available then
+                (.turns.counted|tostring) + (if .turns.intended_budget != null then "/" + (.turns.intended_budget|tostring) else "" end) + " turns"
+              else "turns unavailable" end;
+            def modelpart: if .model_available then .model else "model unavailable" end;
+            "**Cost**: " + costpart + " · " + turnspart + " · " + modelpart
+          ' "$RECORD_PATH" 2>/dev/null || true)"
+
           {
             echo "record-key=$RECORD_KEY"
             echo "record-json=$(jq -c . "$RECORD_PATH" 2>/dev/null || printf '{}')"
+            # cost-line is heredoc-delimited, not echoed: its modelpart can
+            # carry a newline from a multiline model input, unlike the
+            # controlled record-key and the always-one-line jq -c
+            # record-json -- see implement.yml's WING_COMMANDER_AGENT_MSG_EOF
+            # step for the same idiom.
+            echo "cost-line<<WING_COMMANDER_COST_LINE_EOF"
+            printf '%s\n' "$cost_line"
+            echo "WING_COMMANDER_COST_LINE_EOF"
           } >> "$GITHUB_OUTPUT"
         }
 

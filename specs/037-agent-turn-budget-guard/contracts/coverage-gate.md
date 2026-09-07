@@ -71,7 +71,8 @@ missed, matching Gate 7's stated rationale for the same choice):
    sibling sites already carry `--max-turns` (a heuristic borrowed from
    Gate 6's conservative-default handling — flagged as a note for human
    judgment, not an automatic failure, since a legitimately unbounded
-   site like `claude.yml` is a real, pre-existing case).
+   site like `claude.yml` was a real, pre-existing case until PR #277
+   removed that file).
 2. For every in-scope site, assert **all** of:
    - The step immediately preceding it (or preceding it after only
      other non-agent setup steps in the same job) is
