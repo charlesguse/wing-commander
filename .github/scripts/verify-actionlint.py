@@ -16,8 +16,8 @@ ${{ }} expressions too. Gate 1a's pass 1 now invokes this same script, so
 the two answers cannot drift (the Gate 31 arrangement), and its pass 2
 reuses the pinned binary this one downloads (--ensure-binary).
 
-THE TWO ALLOWANCES (actionlint 1.7.7 schema gaps, both verified real)
----------------------------------------------------------------------
+THE ALLOWANCES (actionlint 1.7.7 schema gaps, all verified real)
+------------------------------------------------------------------
 - github.job_workflow_sha: a documented context property 1.7.7 does not
   know (specs/031 research.md D3). -ignore'd outright -- the message
   names the property, so nothing else can hide behind the pattern.
@@ -26,6 +26,17 @@ THE TWO ALLOWANCES (actionlint 1.7.7 schema gaps, both verified real)
   1.7.7's schema knows only name/url. NOT -ignore'd: counted instead,
   exactly one diagnostic per `deployment:` line, so the allowance goes
   loudly stale the day actionlint learns the key. See classify().
+- container.credentials as an expression: GitHub accepts and acts on an
+  expression-valued `credentials:` that resolves to a mapping at runtime
+  (specs/044-private-registry-credentials/research.md D3, measured
+  2026-09-07 on PR #285); 1.7.7's schema requires credentials to be a
+  literal mapping node with both username and password keys present
+  statically, so it emits two diagnostics per binding site ("credentials"
+  section is scalar node but mapping node is expected, and both
+  "username" and "password" must be specified in "credentials" section).
+  NOT -ignore'd: counted instead, exactly two diagnostics per
+  `credentials: >-` line, so this allowance goes loudly stale the day
+  actionlint learns the expression-valued shape. See classify().
 
 Shell/pyflakes lint of run: blocks stays release.yml pass 2's job (#149
 tracks widening it): shellcheck is not on a maintainer's Windows machine,
@@ -48,12 +59,17 @@ import zipfile
 ACTIONLINT_VERSION = "1.7.7"
 KNOWN = 'unexpected key "deployment" for "environment" section'
 IGNORED = 'property "job_workflow_sha" is not defined'
+CRED_SCALAR = '"credentials" section is scalar node but mapping node is expected'
+CRED_USERPASS = 'both "username" and "password" must be specified in "credentials" section'
 WORKFLOWS_DIR = ".github/workflows"
 # The binding is a job-level environment sub-key: jobs(0) / <job>(2) /
 # environment(4) / deployment(6). Matched on the key's own line rather
 # than the full binding so this file never contains a literal GitHub
 # expression (release.yml Gate 1a's original reasoning, kept verbatim).
 BINDING_RE = re.compile(r"^ {6}deployment:")
+# Same reasoning, for the container.credentials expression binding
+# (jobs(0) / <job>(2) / container(4) / credentials(6)) -- specs/044.
+CRED_BINDING_RE = re.compile(r"^ {6}credentials: >-$")
 
 
 def binary_name():
@@ -146,6 +162,14 @@ def count_bindings(files):
     return total
 
 
+def count_cred_bindings(files):
+    total = 0
+    for f in files:
+        with open(f, encoding="utf-8") as fh:
+            total += sum(1 for line in fh if CRED_BINDING_RE.match(line))
+    return total
+
+
 def run_actionlint(binary, files, extra_ignores=()):
     """Diagnostic lines from the schema/expression pass, one per line."""
     cmd = [binary, "-no-color", "-oneline", "-shellcheck=", "-pyflakes=",
@@ -158,30 +182,44 @@ def run_actionlint(binary, files, extra_ignores=()):
     return [l for l in out.splitlines() if l.strip()]
 
 
-def classify(diag_lines, bindings):
+def _check_count_allowance(errors, seen, bindings, label):
+    if bindings > 0 and seen == 0:
+        errors.append(f"actionlint no longer flags {label} "
+                      f"({bindings} binding(s), 0 diagnostics) -- its schema "
+                      f"has learned the shape. Delete this allowance and the "
+                      f"counting around it.")
+    elif seen != bindings:
+        errors.append(f"expected one {label} diagnostic per "
+                      f"binding ({bindings}), saw {seen} -- either a binding "
+                      f"is going unlinted or an unrelated diagnostic is "
+                      f"being counted as known.")
+
+
+def classify(diag_lines, bindings, cred_bindings=0):
     """The allowance accounting, as a pure function so --self-test can
     drive its failure branches without faking a linter run.
 
     Returns (errors, other_lines): errors non-empty means the gate
     fails; other_lines are the diagnostics beyond the accounted
-    environment.deployment allowance, for printing.
+    environment.deployment and container.credentials allowances, for
+    printing.
     """
     seen = sum(1 for l in diag_lines if KNOWN in l)
-    other = [l for l in diag_lines if KNOWN not in l]
+    seen_cred_scalar = sum(1 for l in diag_lines if CRED_SCALAR in l)
+    seen_cred_userpass = sum(1 for l in diag_lines if CRED_USERPASS in l)
+    other = [l for l in diag_lines
+             if KNOWN not in l and CRED_SCALAR not in l
+             and CRED_USERPASS not in l]
     errors = []
     if other:
         errors.append(f"actionlint reported {len(other)} diagnostic(s) "
-                      f"beyond the known environment.deployment schema gap.")
-    if bindings > 0 and seen == 0:
-        errors.append(f"actionlint no longer flags environment.deployment "
-                      f"({bindings} binding(s), 0 diagnostics) -- its schema "
-                      f"has learned the key. Delete this allowance and the "
-                      f"counting around it.")
-    elif seen != bindings:
-        errors.append(f"expected one environment.deployment diagnostic per "
-                      f"binding ({bindings}), saw {seen} -- either a binding "
-                      f"is going unlinted or an unrelated diagnostic is "
-                      f"being counted as known.")
+                      f"beyond the known environment.deployment and "
+                      f"container.credentials schema gaps.")
+    _check_count_allowance(errors, seen, bindings, "environment.deployment")
+    _check_count_allowance(errors, seen_cred_scalar, cred_bindings,
+                           "credentials-is-scalar")
+    _check_count_allowance(errors, seen_cred_userpass, cred_bindings,
+                           "credentials username/password")
     return errors, other
 
 
@@ -195,12 +233,14 @@ def run_gate():
     binary = ensure_binary()
     diags = run_actionlint(binary, files)
     bindings = count_bindings(files)
-    errors, other = classify(diags, bindings)
+    cred_bindings = count_cred_bindings(files)
+    errors, other = classify(diags, bindings, cred_bindings)
     for line in other:
         print(line)
     for e in errors:
         print(f"::error::{e}")
-    print(f"Gate 46: {len(files)} workflow file(s), {bindings} binding(s), "
+    print(f"Gate 46: {len(files)} workflow file(s), {bindings} deployment "
+          f"binding(s), {cred_bindings} credentials binding(s), "
           f"{len(diags) - len(other)} accounted diagnostic(s), "
           f"{len(other)} other.")
     return 1 if errors else 0
@@ -267,16 +307,58 @@ def self_test():
         errors, _ = classify(diags, bindings)
         check("and balances to a clean pass", not errors, f"got {errors!r}")
 
+        cred_binding = os.path.join(td, "cred-binding.yml")
+        with open(cred_binding, "w", encoding="utf-8", newline="\n") as f:
+            f.write(
+                "on:\n"
+                "  workflow_call:\n"
+                "    secrets:\n"
+                "      container-registry-username:\n"
+                "        required: false\n"
+                "      container-registry-password:\n"
+                "        required: false\n"
+                "jobs:\n"
+                "  a:\n"
+                "    runs-on: ubuntu-latest\n"
+                "    container:\n"
+                "      image: node:20\n"
+                "      credentials: >-\n"
+                "        ${{\n"
+                "          (secrets.container-registry-username != '' && secrets.container-registry-password != '')\n"
+                "            && fromJSON(format('{{\"username\":{0},\"password\":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))\n"
+                "            || fromJSON('{}')\n"
+                "        }}\n"
+                "    steps:\n"
+                "      - run: echo ok\n")
+        diags = run_actionlint(binary, [cred_binding])
+        cred_bindings = count_cred_bindings([cred_binding])
+        check("a credentials binding is counted, not ignored",
+              cred_bindings == 1
+              and sum(1 for l in diags if CRED_SCALAR in l) == 1
+              and sum(1 for l in diags if CRED_USERPASS in l) == 1,
+              f"cred_bindings={cred_bindings} diags={diags!r}")
+        errors, _ = classify(diags, 0, cred_bindings)
+        check("and balances to a clean pass", not errors, f"got {errors!r}")
+
     # The accounting's failure branches, driven directly (pure function).
     errors, _ = classify([], 3)
     check("stale allowance fires when bindings exist but nothing is flagged",
-          any("has learned the key" in e for e in errors))
+          any("has learned the shape" in e for e in errors))
     errors, _ = classify([f"a.yml:1:1: {KNOWN} [syntax-check]"], 2)
     check("an unlinted binding fires the imbalance branch",
           any("going unlinted" in e for e in errors))
     errors, _ = classify(["a.yml:1:1: something real [expression]"], 0)
     check("a real diagnostic is never absorbed by the allowance",
           any("beyond the known" in e for e in errors))
+    errors, _ = classify([], 0, 2)
+    check("stale credentials allowance fires when bindings exist but "
+          "nothing is flagged",
+          any("has learned the shape" in e for e in errors))
+    errors, _ = classify(
+        [f"a.yml:1:1: {CRED_SCALAR} [syntax-check]"], 0, 2)
+    check("an unlinted credentials binding fires the imbalance branch "
+          "(username/password half missing)",
+          any("going unlinted" in e for e in errors))
 
     print(f"{failures} failure(s).")
     return 1 if failures else 0
