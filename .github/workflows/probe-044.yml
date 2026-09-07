@@ -34,9 +34,14 @@ jobs:
     # image: '', credentials: {} — expected: runs, no container (baseline;
     # #226 row 1 already proved image:'' is a no-op, row 3 that a populated
     # object is ignored without an image; this checks the EMPTY object too).
+    # Round-1 finding: a LITERAL image: '' is rejected at workflow validation
+    # ("Container image cannot be empty", run 34162720565) before any job
+    # exists, so the empty image must come from an expression — which is the
+    # production shape anyway (${{ inputs.container-image }}). Same trick #226
+    # used.
     runs-on: ubuntu-latest
     container:
-      image: ''
+      image: ${{ github.event.pull_request.title == 'never' && 'alpine:3.20' || '' }}
       credentials: >-
         ${{
           (secrets.container-registry-username != '' && secrets.container-registry-password != '')
