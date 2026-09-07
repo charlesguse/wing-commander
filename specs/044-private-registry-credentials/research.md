@@ -695,3 +695,55 @@ protecting it. D8's composite design is revised accordingly.
 Tasks T007–T052 (Phases 3, 4, 5, 6, 7, 8, 9, 10) execute under Outcome 1 as
 literally written in `tasks.md`'s own contingency guide, with D8/Phase 5
 revised to the P2.3 shape per the paragraph above.
+
+## Success Criteria walk (T052, 2026-09-07)
+
+Every SC in spec.md's Measurable Outcomes, checked against what this cycle
+actually shipped:
+
+- **SC-001**: mechanism shipped (D5) and structurally enforced (Gate 22).
+  **Not independently end-to-end verified this pass**: a full scratch-
+  adopter lifecycle dispatch (T022) was not re-run under this
+  implementation pass's own tool allowlist (no `gh workflow run`). Covered
+  instead by the maintainer's direct P1 measurement (research D3) of the
+  same underlying mechanism. A full live-lifecycle dispatch on a scratch
+  adopter repository remains open for a human or a future run with
+  dispatch access.
+- **SC-002**: met — P1.1's measured result (no image, `credentials`
+  resolves to `{}`, never inspected) plus T025's `git diff --stat` (only
+  the 12 existing files touched, no fork) satisfy this directly.
+- **SC-003**: met — P1.2/P1.3's measured result (public image, no/one
+  secret, `credentials` resolves to `{}`, runs clean, no login attempted).
+- **SC-004**: met for the P2.3 shape specifically — `wing-commander-ecr-
+  credentials` mints no long-lived secret (OIDC only) and, followed as
+  documented, the value is masked end-to-end (P2.3, measured). Not, and
+  cannot be, enforced against an adopter who ignores the documented
+  warning and consumes the output in a plain step instead (P2.4) — this is
+  a usage guarantee, not a gate-checkable one.
+- **SC-005**: met, more simply than the SC anticipated — Outcome 1 shipped,
+  so there is no opt-in control at all; exactly two secrets, zero
+  additional components.
+- **SC-006**: met — Gate 22 fails any bound job missing or mismatching the
+  credential expression (T032), structurally derived so a 13th stage
+  (`private-image-dogfood.yml`, added by this same cycle) is covered
+  automatically with no manual registration (T047), and every shipped
+  failure branch has a checked-in `verify-gate-22.py` fixture (T034).
+- **SC-007**: met — P1 (D3) and P2 (D4) both trace to real runs on real
+  GitHub-hosted runners (PR #285, run URLs 34162720565, 34162867583,
+  34163031300, 34163031595), covering all three FR-003 shapes (no image,
+  public image, private image).
+- **SC-008**: met — `docs/adoption.md` carries both worked examples (ECR
+  and repository-scoped-token), copy-pasteable, in the same section (T038,
+  T039).
+- **SC-009**: met — T043's repository-wide grep found zero surviving
+  claims outside historical citations.
+- **SC-010**: **not met this pass.** `private-image-dogfood.yml` and its
+  wrapper exist and are automatically covered by Gate 6/7/22 (T044, T045,
+  T047), but the private GHCR package the wrapper points at
+  (`ghcr.io/<owner>/wing-commander-dogfood`) has never been built or
+  pushed (T046 — no `docker build`/`docker push`/`gh api` access under
+  this pass's tool allowlist), and the wrapper has never been dispatched
+  to observe a real pull (T048 — no `gh workflow run` access). This
+  repository does not yet demonstrate the private-image path on its own
+  infrastructure; it has the configuration to do so once a human (or a
+  future run with registry/dispatch access) completes T046 and T048.

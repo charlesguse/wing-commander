@@ -1,7 +1,10 @@
 # Contract: Private-Registry Credentials Reaching Every Stage Job
 
-Governs every one of Wing Commander's 12 published `workflow_call`-only
-stage workflows (FR-001 through FR-027). Companion to
+Governs every one of Wing Commander's published `workflow_call`-only
+stage workflows (FR-001 through FR-027) — the 12 lifecycle/maintenance
+stages this contract was written against, plus the 13th,
+`private-image-dogfood.yml`, added by this same feature (FR-027, research
+D10) and bound by the identical mechanism. Companion to
 `specs/010-reusable-pipeline/contracts/stage-interfaces.md`'s "Common
 inputs" table, whose credential-secret rows this contract amends the
 *description* of (reach, not name or type), and to
@@ -21,16 +24,18 @@ auto-update-spec-kit, metrics-persist — research D1)
 |---|---|---|---|
 | `container-registry-username` | secret | **Unchanged** name, type, and `required: false` (FR-002). Description text updated: reaches every job, not only `verify-image-prerequisites`. | never |
 | `container-registry-password` | secret | **Unchanged**, same as above. | never |
-| `container-registry-authenticated` (provisional name) | input | **Added only if research D3's probe forces FR-026 outcome 2.** String, `default: "false"`. Not added under the preferred outcome 1. | never |
+| `container-registry-authenticated` | input | **Not added.** Research D3's probe confirmed FR-026 Outcome 1 (2026-09-07) — the preferred, no-new-input path — so this Outcome-2 fallback input never shipped. Documented here only as the road not taken. | n/a |
 
 No other existing input, secret, `permissions:` block, or output of any
 stage changes (FR-025). This is fixed regardless of probe outcome.
 
-## Binding mechanism (research D3, D5) — contingent on P1
+## Binding mechanism (research D3, D5) — shipped, per P1's measured Outcome 1
 
-Every job in every one of the 12 stage files that already carries
-`container: { image: ${{ inputs.container-image }} }` (42 jobs today, per
-research D1) gains a `credentials:` sibling key:
+Every job in every one of the 12 pre-existing stage files that already
+carries `container: { image: ${{ inputs.container-image }} }` (42 jobs, per
+research D1), plus the one job of the 13th stage this feature adds
+(`private-image-dogfood.yml`'s `dogfood` job, research D10), carries a
+`credentials:` sibling key:
 
 ```yaml
 jobs:
@@ -51,13 +56,13 @@ scenario 1: "which jobs authenticate is not a hidden per-job rule"). Gate 22
 (below) checks this byte-for-byte, mirroring how it already checks
 `image:`.
 
-**This entire section ships only if research D3's probe (P1) confirms that
+**This section shipped because research D3's probe (P1) confirmed that
 `fromJSON('{}')` suppresses the login attempt on a public image with no
-credentials supplied.** If it does not, this section is replaced by the
-FR-026 outcome 2 shape (one opt-in input gating the whole `container:`
-value) or, if that also fails, this feature ships no per-job binding at all
-and this contract's "Binding mechanism" section is struck in favor of a
-"Measured not possible" section recording why (FR-026 outcome 3).
+credentials supplied** (measured 2026-09-07, run 34162867583) — FR-026
+Outcome 1, the preferred, no-new-input path. The FR-026 Outcome 2 shape (one
+opt-in input gating the whole `container:` value) and Outcome 3
+("measured not possible") were the alternatives this section would have
+become had P1 failed; neither applies.
 
 **A job whose body is a local `uses: ./.github/workflows/<other>.yml` call
 is exempt** — `container:` is illegal on such a job, the same carve-out
@@ -164,7 +169,7 @@ it as shown above.
 | Caller-side permission | The adopter's own wrapper job must declare `id-token: write` (for OIDC) — the pipeline requests no new permission for itself (spec Edge Cases) |
 | Contract stability | Once shipped, inputs/outputs are maintained as published contract surface (FR-013's own text) — not a convenience that can silently narrow |
 
-## Repository-scoped-token worked example (research D9) — fixed regardless of probe outcome for the credential values, contingent on P1 for whether it reaches every job
+## Repository-scoped-token worked example (research D9) — reaches every job, per P1's measured Outcome 1
 
 ```yaml
 with:
@@ -185,7 +190,7 @@ Unchanged from specs/038 (FR-014): runs before any other job's container is
 created, pulls the named image, checks the canonical required-tool list,
 fails with every missing prerequisite named at once.
 
-**Changed, contingent on P1 confirming FR-026 outcome 1 or 2 ships**:
+**Changed, per P1's measured Outcome 1**:
 - The `::warning::` stating credentials "authenticate this check only" is
   removed (FR-015).
 - The "exactly one credential supplied" failure message names which secret
