@@ -1,0 +1,85 @@
+# Like every shared composite, this action is resolved from the pipeline
+# repository's own checkout at github.job_workflow_sha (see the header of
+# .github/actions/wing-commander-context/action.yml for the verified
+# self-checkout snippet), so it must never assume it lives in the
+# workspace-root repository.
+#
+# specs/044-private-registry-credentials D4/D8, measured 2026-09-07 on PR
+# #285 (research.md D4, P2/A vs P2.3): mask-at-mint (::add-mask:: on this
+# action's own output before it crosses a needs.*.outputs.* boundary into a
+# caller's next job) silently DROPS the value at that boundary -- it does
+# not merely fail to protect it, it makes the hand-off unusable. This
+# composite therefore deliberately does NOT mask its own output and never
+# prints it. The only measured-safe hand-off is the caller forwarding this
+# action's raw output exclusively as a `secrets:` value into a `uses:` call
+# to a stage -- the callee's own `secrets:` context does the masking,
+# end-to-end, with no explicit mask needed. Consuming the output any other
+# way (a plain sibling step, an `env:` assignment) has no safe variant this
+# probe found: mask-at-source drops it (P2/A), mask-at-sink leaks it once
+# in that step's own environment-variable log header (P2.4). See research.md
+# D4 for the full P2/A + P2.1-P2.4 probe table.
+#
+# Never referenced by a published stage (FR-013's own text): this is an
+# edge component an adopter's own wrapper calls before it calls a stage.
+name: wing-commander-ecr-credentials
+description: >
+  Mint a short-lived AWS ECR registry credential via OIDC
+  (aws-actions/configure-aws-credentials), for use by an adopter's own
+  wrapper before it calls a Wing Commander stage. The password output is
+  deliberately unmasked at this source (research D4/P2.3) -- forward it
+  only as a secrets value into a uses call to a stage, never through a
+  plain step, or it will leak with no safe fallback (P2.4).
+
+inputs:
+  aws-role-arn:
+    description: IAM role ARN to assume via OIDC.
+    required: true
+  aws-region:
+    description: AWS region for both credential configuration and ECR.
+    required: true
+  registry:
+    description: >
+      Optional ECR registry override (account-id.dkr.ecr.region.amazonaws.com).
+      Defaults to the caller's own default registry for aws-region.
+    required: false
+    default: ""
+
+outputs:
+  username:
+    description: Fixed ECR docker-login username ("AWS").
+    value: ${{ steps.mint.outputs.username }}
+  password:
+    description: >
+      Short-lived ECR docker-login password. Deliberately NOT masked at
+      this source (research D4/P2.3) -- forward it only as a secrets
+      value into a uses call to a stage.
+    value: ${{ steps.mint.outputs.password }}
+
+runs:
+  using: composite
+  steps:
+    - uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ inputs.aws-role-arn }}
+        aws-region: ${{ inputs.aws-region }}
+    - id: mint
+      shell: bash
+      env:
+        AWS_REGION: ${{ inputs.aws-region }}
+      run: |
+        # No ::add-mask:: here (research D4/P2/A): masking before this
+        # value crosses a needs.*.outputs.* boundary drops it at that
+        # boundary rather than protecting it. This step also never echoes
+        # the password to its own log.
+        #
+        # `registry` (inputs.registry) is not passed to get-login-password:
+        # the AWS CLI has no such override for this call -- the token it
+        # mints authenticates the assumed role's own identity, which the
+        # caller then presents to whichever registry host their image
+        # reference names (including a cross-account registry that grants
+        # this role pull access via a repository policy). The input exists
+        # so the caller's own wrapper can document/construct that host; it
+        # is not consumed here.
+        password="$(aws ecr get-login-password --region "$AWS_REGION")"
+        echo "password=$password" >> "$GITHUB_OUTPUT"
+        echo "username=AWS" >> "$GITHUB_OUTPUT"
