@@ -2,7 +2,7 @@
   "issue": 283,
   "spec_dir": "specs/044-private-registry-credentials",
   "feature_num": "044",
-  "stage": "plan",
+  "stage": "tasks",
   "iteration": 0,
   "spec_branch": "spec/044-private-registry-credentials"
 }
