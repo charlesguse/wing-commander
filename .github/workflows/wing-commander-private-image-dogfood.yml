@@ -1,0 +1,29 @@
+# Private-image dogfood (thin wrapper) — FR-027, SC-010,
+# specs/044-private-registry-credentials.
+# Owns the trigger (scheduled + on-demand, mirroring
+# wing-commander-auto-update-spec-kit.yml's pattern) and the private
+# package reference (this repository's own GHCR namespace, authenticated
+# with the calling job's own GITHUB_TOKEN — no cloud account or
+# cloud-registry identity, per FR-027). Everything else (the
+# verify-image-prerequisites job, the credential binding) lives in the
+# published private-image-dogfood.yml, identical to what an adopter's own
+# wrapper would call.
+name: "Wing Commander · private-image-dogfood"
+
+on:
+  schedule:
+    - cron: "37 8 * * *"
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  dogfood:
+    permissions:
+      packages: read
+    uses: ./.github/workflows/private-image-dogfood.yml
+    with:
+      container-image: ghcr.io/${{ github.repository_owner }}/wing-commander-dogfood:latest
+    secrets:
+      container-registry-username: ${{ github.actor }}
+      container-registry-password: ${{ secrets.GITHUB_TOKEN }}
