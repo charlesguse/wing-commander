@@ -1,0 +1,169 @@
+# TEMPORARY probe for specs/044-private-registry-credentials (issue #283).
+# Delete with this branch — never merged. Mirrors PR #226's method: one job
+# per matrix row of research.md D3 (P1) and D4 (P2), each independent so no
+# failure hides another. Every credential value below is synthetic; the only
+# real token referenced is the run's own GITHUB_TOKEN, by name, for P1.4.
+#
+# P1 — does a present, non-null, EMPTY credentials object ({}) suppress the
+#      docker login attempt? The candidate expression under test is research
+#      D5's, verbatim:
+#        (secrets.u != '' && secrets.p != '')
+#          && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.u), toJSON(secrets.p)))
+#          || fromJSON('{}')
+#      where secrets.u / secrets.p are container-registry-username/-password
+#      (never set on this repository, so they render '' exactly as on an
+#      adopter's default run).
+# P2 — does a value minted in job A, masked with ::add-mask::, forwarded via
+#      needs.A.outputs.*, stay masked in (P2.1) a sibling job's own step and
+#      (P2.2) a reusable workflow it is passed to as a secrets: value?
+name: "probe · 044 registry credentials"
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/probe-044.yml
+      - .github/workflows/probe-044-callee.yml
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  # ------------------------------------------------------------------ P1
+  p1-1-no-image-no-secrets:
+    # image: '', credentials: {} — expected: runs, no container (baseline;
+    # #226 row 1 already proved image:'' is a no-op, row 3 that a populated
+    # object is ignored without an image; this checks the EMPTY object too).
+    runs-on: ubuntu-latest
+    container:
+      image: ''
+      credentials: >-
+        ${{
+          (secrets.container-registry-username != '' && secrets.container-registry-password != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
+            || fromJSON('{}')
+        }}
+    steps:
+      - run: echo "P1.1 ok; in container = $([ -f /.dockerenv ] && echo yes || echo no)"
+
+  p1-2-public-image-no-secrets:
+    # image: alpine:3.20, credentials: {} — THE decisive row. Expected if
+    # the candidate works: runs inside the container, no login attempted.
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:3.20
+      credentials: >-
+        ${{
+          (secrets.container-registry-username != '' && secrets.container-registry-password != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
+            || fromJSON('{}')
+        }}
+    steps:
+      - run: echo "P1.2 ok; in container = $([ -f /.dockerenv ] && echo yes || echo no); $(cat /etc/alpine-release)"
+
+  p1-3-public-image-one-secret:
+    # image: alpine:3.20, exactly ONE side of the conjunction non-empty
+    # (GITHUB_TOKEN stands in for "the one secret the adopter did set";
+    # container-registry-username is unset, so the && chain is false and the
+    # expression must still resolve to {}). Expected: same as P1.2.
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:3.20
+      credentials: >-
+        ${{
+          (secrets.container-registry-username != '' && secrets.GITHUB_TOKEN != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.GITHUB_TOKEN)))
+            || fromJSON('{}')
+        }}
+    steps:
+      - run: echo "P1.3 ok; in container = $([ -f /.dockerenv ] && echo yes || echo no)"
+
+  p1-4-image-correct-credentials:
+    # Both sides non-empty and CORRECT: github.actor + the run's own
+    # GITHUB_TOKEN against ghcr.io. Deviation from research row P1.4: this
+    # repository has no private image (research D10), so the pull target is
+    # a public ghcr.io image — the login still really happens and must
+    # succeed, which is what the row exists to show (the true branch of the
+    # &&/|| chain is well-formed and composes with the false branch).
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ghcr.io/linuxcontainers/alpine:3.20
+      credentials: >-
+        ${{
+          (github.actor != '' && secrets.GITHUB_TOKEN != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(github.actor), toJSON(secrets.GITHUB_TOKEN)))
+            || fromJSON('{}')
+        }}
+    steps:
+      - run: echo "P1.4 ok; in container = $([ -f /.dockerenv ] && echo yes || echo no); $(cat /etc/alpine-release)"
+
+  p1-5-image-wrong-credentials:
+    # Both sides non-empty but WRONG (synthetic). Expected: a real docker
+    # login/unauthorized failure, not a template error — so the row is
+    # expected to fail and is continue-on-error to keep the run readable.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    container:
+      image: alpine:3.20
+      credentials: >-
+        ${{
+          ('probe044-wrong-user' != '' && 'probe044-wrong-password' != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON('probe044-wrong-user'), toJSON('probe044-wrong-password')))
+            || fromJSON('{}')
+        }}
+    steps:
+      - run: echo "P1.5 unexpectedly ran; in container = $([ -f /.dockerenv ] && echo yes || echo no)"
+
+  # ------------------------------------------------------------------ P2
+  p2-mint:
+    # Job A: mint a synthetic, DERIVABLE token (so the leak grep below can
+    # know what to look for without the value ever being written down),
+    # mask it, export it as a step output -> job output. Echoes it once
+    # AFTER masking so the mask itself is demonstrated in this job's log.
+    runs-on: ubuntu-latest
+    outputs:
+      token: ${{ steps.mint.outputs.token }}
+      token-length: ${{ steps.mint.outputs.token-length }}
+      token-sha-prefix: ${{ steps.mint.outputs.token-sha-prefix }}
+    steps:
+      - id: mint
+        shell: bash
+        run: |
+          token="p044-$(printf '%s' "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-probe044" | sha256sum | cut -c1-40)"
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+          echo "token-length=${#token}" >> "$GITHUB_OUTPUT"
+          echo "token-sha-prefix=$(printf '%s' "$token" | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+          echo "A: token after mask = [$token] length=${#token} sha256[:16]=$(printf '%s' "$token" | sha256sum | cut -c1-16)"
+
+  p2-1-consume-in-sibling-step:
+    # P2.1: job B consumes needs.A.outputs.token in a plain step. Expected if
+    # safe: the literal never appears in this log AND it arrives non-empty
+    # (length/sha match job A's).
+    needs: p2-mint
+    runs-on: ubuntu-latest
+    env:
+      TOKEN: ${{ needs.p2-mint.outputs.token }}
+      EXPECTED_LEN: ${{ needs.p2-mint.outputs.token-length }}
+      EXPECTED_SHA: ${{ needs.p2-mint.outputs.token-sha-prefix }}
+    steps:
+      - shell: bash
+        run: |
+          echo "B: received = [$TOKEN]"
+          echo "B: length=${#TOKEN} (expected $EXPECTED_LEN)"
+          echo "B: sha256[:16]=$(printf '%s' "$TOKEN" | sha256sum | cut -c1-16) (expected $EXPECTED_SHA)"
+          if [ -z "$TOKEN" ]; then echo "::error::P2.1 token arrived EMPTY across the needs.*.outputs boundary"; exit 1; fi
+
+  p2-2-forward-as-secret-to-callee:
+    # P2.2: the same masked output forwarded as a secrets: value into a
+    # uses: reusable workflow; its log is inspected the same way.
+    needs: p2-mint
+    uses: ./.github/workflows/probe-044-callee.yml
+    with:
+      expected-length: ${{ needs.p2-mint.outputs.token-length }}
+      expected-sha-prefix: ${{ needs.p2-mint.outputs.token-sha-prefix }}
+    secrets:
+      probe-token: ${{ needs.p2-mint.outputs.token }}

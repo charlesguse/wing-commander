@@ -1,0 +1,41 @@
+# TEMPORARY probe callee for specs/044 P2.2 (issue #283). Delete with this
+# branch — never merged. Stands in for "a minimal test stage": receives one
+# secret from a caller and reports ONLY whether it arrived non-empty, its
+# length, and a sha256 prefix. The value itself is echoed once so the log can
+# be inspected for masking, but is never written anywhere else.
+#
+# NOTE: because this file declares on.workflow_call it is inside the derived
+# published-stage set (wc_published_stages.py) and will fail Gates 6/7/22 on
+# the draft PR. That red lint check is expected and is not the data.
+name: "probe · 044 callee"
+
+on:
+  workflow_call:
+    inputs:
+      expected-length:
+        type: string
+        required: true
+      expected-sha-prefix:
+        type: string
+        required: true
+    secrets:
+      probe-token:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  receive:
+    runs-on: ubuntu-latest
+    env:
+      TOKEN: ${{ secrets.probe-token }}
+      EXPECTED_LEN: ${{ inputs.expected-length }}
+      EXPECTED_SHA: ${{ inputs.expected-sha-prefix }}
+    steps:
+      - shell: bash
+        run: |
+          echo "callee: received = [$TOKEN]"
+          echo "callee: length=${#TOKEN} (expected $EXPECTED_LEN)"
+          echo "callee: sha256[:16]=$(printf '%s' "$TOKEN" | sha256sum | cut -c1-16) (expected $EXPECTED_SHA)"
+          if [ -z "$TOKEN" ]; then echo "::error::P2.2 secret arrived EMPTY in the callee"; exit 1; fi
