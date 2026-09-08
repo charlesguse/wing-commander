@@ -1,0 +1,32 @@
+# Throwaway (specs/044 T046): publish the private dogfood image once.
+# Lives only on this probe branch; never merged.
+name: "probe-044 · publish dogfood image"
+on:
+  pull_request:
+    paths: [".github/workflows/probe-044-publish-dogfood-image.yml"]
+  workflow_dispatch: {}
+permissions: {}
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - name: Log in to ghcr.io
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Build the image with every tool verify-image-prerequisites requires, and push
+        run: |
+          set -euo pipefail
+          owner="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          ref="ghcr.io/${owner}/wing-commander-dogfood:latest"
+          cat > Dockerfile <<'DF'
+          FROM alpine:3.20
+          RUN apk add --no-cache git github-cli jq curl python3 bash coreutils nodejs \
+              && ln -sf /usr/bin/python3 /usr/bin/python
+          LABEL org.opencontainers.image.source="https://github.com/charlesguse/wing-commander"
+          DF
+          docker build -t "$ref" .
+          docker run --rm --entrypoint sh "$ref" -c 'for t in git gh jq curl python3 bash node timeout; do command -v "$t" >/dev/null || { echo "missing $t"; exit 1; }; done; echo all-tools-present'
+          docker push "$ref"
+          echo "pushed $ref"
