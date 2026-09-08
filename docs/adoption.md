@@ -934,25 +934,40 @@ know before you set either:
   `env:` assignment — has no safe variant found: it either arrives empty or
   leaks.
 
-  **Repository-scoped-token worked example** — no adapter, no long-lived
-  secret, for a private package in this same GitHub organization:
+  **Repository-scoped-token worked example** — no OIDC/cloud-role adapter,
+  for a private package in this same GitHub organization. `GITHUB_TOKEN`
+  does **not** work for this shape: forwarding `secrets.GITHUB_TOKEN`
+  through a wrapper job's own `secrets:` block into a `uses:` call carries
+  that *calling* job's token, but the pull itself happens inside the
+  *called* stage's own job, which never receives the caller's `packages:
+  read` grant through that hand-off — the pull is rejected before the
+  credential binding is even exercised (specs/044 research D9/D10, measured
+  against real runners). Use a personal access token with `read:packages`
+  scope instead, stored as this repository's own
+  `WING_COMMANDER_CONTAINER_REGISTRY_USERNAME`/
+  `WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD` secrets ([docs/setup.md](setup.md)):
 
   ```yaml
   jobs:
     call-plan-stage:
-      permissions:
-        packages: read
       uses: charlesguse/wing-commander/.github/workflows/plan.yml@v2
       with:
         container-image: ghcr.io/${{ github.repository_owner }}/<private-package>:latest
       secrets:
-        container-registry-username: ${{ github.actor }}
-        container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+        container-registry-username: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME }}
+        container-registry-password: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD }}
   ```
 
-  The calling wrapper job needs `packages: read` in its own `permissions:`
-  block — without it, `GITHUB_TOKEN` has no pull access to a private package
-  in the same organization.
+  GHCR authenticates on the token alone, so the username can be any
+  placeholder value (e.g. `x-access-token`) — **do not use your GitHub
+  login as the username.** Both registry secrets are masked in every job of
+  every stage regardless of which registry they target, and a masked
+  substring collides with any other run output that happens to contain the
+  same text, silently dropping that output wholesale — a job output
+  containing masked text does not survive the `needs.*.outputs.*` boundary.
+  A GitHub login is exactly the kind of string that already appears
+  elsewhere in ordinary pipeline output (PR authorship, `git log`, review
+  comments), so it is the one username value most likely to trigger this.
 - **Both controls are set once per stage call and apply to every job in
   that call — there is no per-job selector.** `tasks.yml`, called twice by
   `wing-commander-4-tasks.yml` (`mode: generate` and `mode: approved`),

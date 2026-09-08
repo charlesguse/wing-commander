@@ -54,6 +54,12 @@ outputs:
       this source (research D4/P2.3) -- forward it only as a secrets
       value into a uses call to a stage.
     value: ${{ steps.mint.outputs.password }}
+  registry:
+    description: >
+      Resolved ECR registry host for building container-image: inputs.registry
+      verbatim if you set it, else the assumed role's own default registry
+      for aws-region (account-id.dkr.ecr.region.amazonaws.com).
+    value: ${{ steps.mint.outputs.registry }}
 
 runs:
   using: composite
@@ -66,20 +72,12 @@ runs:
       shell: bash
       env:
         AWS_REGION: ${{ inputs.aws-region }}
+        REGISTRY_OVERRIDE: ${{ inputs.registry }}
       run: |
         # No ::add-mask:: here (research D4/P2/A): masking before this
         # value crosses a needs.*.outputs.* boundary drops it at that
         # boundary rather than protecting it. This step also never echoes
         # the password to its own log.
-        #
-        # `registry` (inputs.registry) is not passed to get-login-password:
-        # the AWS CLI has no such override for this call -- the token it
-        # mints authenticates the assumed role's own identity, which the
-        # caller then presents to whichever registry host their image
-        # reference names (including a cross-account registry that grants
-        # this role pull access via a repository policy). The input exists
-        # so the caller's own wrapper can document/construct that host; it
-        # is not consumed here.
         #
         # The password output is written with the heredoc delimiter form
         # (random delimiter, per the GITHUB_OUTPUT multiline contract) so a
@@ -92,3 +90,17 @@ runs:
         delim="wc_$(openssl rand -hex 16)"
         { printf 'password<<%s\n%s\n%s\n' "$delim" "$token" "$delim"; } >> "$GITHUB_OUTPUT"
         echo "username=AWS" >> "$GITHUB_OUTPUT"
+
+        # `registry` (inputs.registry) is never passed to get-login-password:
+        # the AWS CLI has no such override for that call, so the input stays
+        # void for authentication itself (research D8). It is still
+        # consumed here, resolved into this step's own `registry` output so
+        # the caller's wrapper can build container-image without
+        # re-deriving the default host (or a cross-account override) itself.
+        if [ -n "$REGISTRY_OVERRIDE" ]; then
+          registry="$REGISTRY_OVERRIDE"
+        else
+          account="$(aws sts get-caller-identity --query Account --output text)"
+          registry="${account}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+        fi
+        echo "registry=$registry" >> "$GITHUB_OUTPUT"

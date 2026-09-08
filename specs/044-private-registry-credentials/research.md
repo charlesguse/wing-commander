@@ -518,6 +518,13 @@ outputs:
       this source (research D4/P2.3) — forward it only as a `secrets:`
       value into a `uses:` call.
     value: ${{ steps.mint.outputs.password }}
+  registry:
+    description: >
+      Resolved ECR registry host for building `container-image`:
+      `inputs.registry` verbatim if set, else the assumed role's own
+      default registry for `aws-region`
+      (`<account-id>.dkr.ecr.<region>.amazonaws.com`).
+    value: ${{ steps.mint.outputs.registry }}
 
 runs:
   using: composite
@@ -528,21 +535,49 @@ runs:
         aws-region: ${{ inputs.aws-region }}
     - id: mint
       shell: bash
+      env:
+        AWS_REGION: ${{ inputs.aws-region }}
+        REGISTRY_OVERRIDE: ${{ inputs.registry }}
       run: |
-        token="$(aws ecr get-login-password --region "${{ inputs.aws-region }}")"
+        token="$(aws ecr get-login-password --region "$AWS_REGION")"
         delim="wc_$(openssl rand -hex 16)"
         { printf 'password<<%s\n%s\n%s\n' "$delim" "$token" "$delim"; } >> "$GITHUB_OUTPUT"
         echo "username=AWS" >> "$GITHUB_OUTPUT"
+
+        if [ -n "$REGISTRY_OVERRIDE" ]; then
+          registry="$REGISTRY_OVERRIDE"
+        else
+          account="$(aws sts get-caller-identity --query Account --output text)"
+          registry="${account}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+        fi
+        echo "registry=$registry" >> "$GITHUB_OUTPUT"
 ```
 
-**Note on the `::add-mask::` line surviving in the mint step itself**: it
-still protects the value from appearing in *this step's own* log (e.g. if
-`aws ecr get-login-password` itself echoed anything, or the shell traced the
-command) — P2/A's failure mode is specifically about masking *before a
-`needs.*.outputs.*` hand-off*, not about masking within the originating
-step's own log stream. The two are independent: mask locally for this step's
-own log safety, then rely on the `secrets:`-into-`uses:` shape (not the mask)
-for the cross-job hand-off.
+**No `::add-mask::` anywhere in this step** (revised again, PR #286 review item 3):
+an earlier revision of this section described an `::add-mask::` line as
+still present for the mint step's own log safety even after D4/P2/A ruled
+it out for the cross-job hand-off. That line was in fact removed entirely
+(commit 52ec38c) — the step neither masks nor echoes the password anywhere,
+relying solely on the `secrets:`-into-`uses:` shape (P2.3) for the cross-job
+hand-off, and on the password never appearing in this step's own command
+substitution output (`get-login-password` prints only the token itself, so
+there is nothing else to mask locally).
+
+**Why `inputs.registry` was declared but initially left unconsumed, and how
+it is consumed now** (PR #286 review item 3): `aws ecr get-login-password`
+has no registry-override parameter — the token it mints authenticates the
+assumed role's own identity, which is valid against whichever registry host
+the caller's image reference names, override or not. So the override
+input is, and remains, void for the authentication call itself. What was
+missing was a second use for it: resolving the registry host so the
+caller's own wrapper doesn't have to duplicate the
+`<account-id>.dkr.ecr.<region>.amazonaws.com` construction (or hand-carry a
+cross-account override) into its own `container-image` value. The mint
+step now does that resolution and exposes it as the `registry` output —
+`inputs.registry` verbatim when the caller sets it, otherwise computed from
+`aws sts get-caller-identity` against the same assumed role. This keeps the
+input meaningful (FR-013's contract still names it) without pretending it
+changes how `get-login-password` itself authenticates.
 
 **Rationale — why this differs from `wing-commander-bedrock-credentials`**:
 Bedrock's composite runs as a step *inside* the same agent-bearing job that
@@ -584,22 +619,66 @@ to prevent.
 
 ### D9: Repository-scoped-token worked example (FR-023's second worked example)
 
-**Decision**: The second documented example (a registry that accepts the
-caller's own workflow token as a password, needing no adapter) uses GitHub
-Container Registry against the calling repository's own token:
+**Revision (2026-09-08, PR #286 review N1)**: the original decision below
+used `secrets.GITHUB_TOKEN` forwarded through a wrapper job's own
+`secrets:` block into a `uses:` call. That does **not** work: a
+`GITHUB_TOKEN`'s permission scope is fixed by the job that mints it — the
+*calling* wrapper job, if that is where `secrets.GITHUB_TOKEN` is
+evaluated — but the actual `docker pull` happens inside a *different* job,
+the called stage's own `verify-image-prerequisites`/binding job. That
+callee job never receives the caller's `packages: read` grant merely
+because the caller forwarded its token value as a plain `secrets:` string;
+the callee has its own `permissions:` block (this repository ships every
+stage with `permissions: {}` at the workflow level and per-job), and
+GitHub does not extend a forwarded token's scope across that boundary. The
+result is a pull rejected at `verify-image-prerequisites` before the
+credential binding (D5) is ever exercised — exactly the failure mode the
+maintainer's review named, distinct from P1.4 (research D3), which only
+measured a *single* workflow's own job with `packages: read`, not this
+called-workflow shape. The worked example (and D10's dogfood check) now use
+a manually issued personal access token with `read:packages` scope, stored
+as this repository's own `WING_COMMANDER_CONTAINER_REGISTRY_USERNAME`/
+`WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD` secrets (docs/setup.md) — the
+same two secrets every other published-stage wrapper in this repository
+already wires to `container-registry-username`/`container-registry-password`.
+This trades "no long-lived secret" for "no adapter, no per-call OIDC
+minting step," which is still the property FR-023's second worked example
+exists to demonstrate; a fully ephemeral, zero-secret GHCR credential
+through a called workflow is not achievable with `GITHUB_TOKEN` alone.
+
+**Decision**: The second documented example (a registry that accepts a
+long-lived personal access token as a password, needing no OIDC/cloud-role
+adapter) uses GitHub Container Registry:
 
 ```yaml
 container-image: ghcr.io/${{ github.repository_owner }}/<private-package>:latest
 secrets:
-  container-registry-username: ${{ github.actor }}
-  container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+  container-registry-username: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME }}
+  container-registry-password: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD }}
 ```
 
-with a documented note that the calling wrapper's job needs `packages: read`
-in its own `permissions:` block for `GITHUB_TOKEN` to have pull access to a
-private package in the same organization (this repository's own existing
-per-job `permissions:` discipline, Gate 12, already establishes the pattern
-of declaring exactly the scope a step needs).
+with a documented note (per PR #286 review N5) that the username must not
+be a string that collides with anything the runner's own output masker
+already redacts elsewhere in the run (in particular, a GitHub login) —
+GHCR authenticates on the token alone, so any placeholder username works,
+and both registry secrets are masked in every job of every stage regardless
+of which registry they target.
+
+**This exact masking collision is why this PR's own fold was dropped three
+times before this classification** (PR #286, 2026-09-08 re-post): once
+because a worked example's placeholder username matched the maintainer's
+own GitHub login, which the runner had already masked earlier in the same
+run, and twice more from ordinary review/repository text (a classifier
+output, a comment quoting a line from this feature's own files) that the
+runner's masker treated as a credential and dropped wholesale — the same
+`needs.*.outputs.*`/masked-substring failure mode D4/P2/A describes for
+this feature's own ECR component, but triggered here by *unrelated* text
+colliding with an already-masked value rather than by this feature's own
+credential hand-off. The pipeline-side hardening for this class of failure
+is tracked separately as #287; this document records the collision risk and
+the mitigation (avoid masking-prone placeholder values) but does not fix
+the underlying masked-substring-drops-the-whole-output behavior, which is
+out of this feature's scope.
 
 **Rationale**: FR-023 asks for a worked example demonstrating "the no-
 adapter path," and the spec's own Assumptions section names this exact
@@ -607,12 +686,34 @@ shape as the one FR-027 also dogfoods, so the worked example and the
 self-check exercise the same mechanism (Assumptions: "the worked example and
 the self-check exercise the same shape").
 
-**Alternatives considered**: a generic Docker registry with a long-lived PAT
-— rejected: `GITHUB_TOKEN` demonstrates the "no long-lived secret, no
-adapter" case more completely, and this repository can dogfood it (FR-027)
-without provisioning any external credential.
+**Alternatives considered**:
+- `secrets.GITHUB_TOKEN` forwarded through a wrapper's `secrets:` block —
+  rejected per the revision above: measured not to work through a called
+  workflow.
+- A generic Docker registry with a long-lived PAT under an arbitrary name —
+  rejected in favor of naming the exact two secrets
+  (`WING_COMMANDER_CONTAINER_REGISTRY_USERNAME`/`_PASSWORD`) this
+  repository's own wrapper workflows and docs/setup.md already establish as
+  the standard place to put registry credentials, rather than inventing a
+  second name for the same purpose.
 
 ### D10: This repository's own dogfood check (FR-027)
+
+**Revision (2026-09-08, PR #286 review N1/N2)**: like D9, the original
+decision authenticated with `secrets.GITHUB_TOKEN` forwarded through the
+wrapper's `secrets:` block into its `uses:` call to `private-image-
+dogfood.yml`. Measured not to work, for the identical reason D9 records:
+the callee job that actually runs `docker pull` never receives the
+caller's `packages: read` grant through that hand-off. The wrapper
+(`wing-commander-private-image-dogfood.yml`) now authenticates with this
+repository's own `WING_COMMANDER_CONTAINER_REGISTRY_USERNAME`/
+`WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD` secrets instead — the same PAT
+shape D9's worked example documents — and the `container-image` value moved
+from a hard-coded string to the `WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE`
+repository variable, with the wrapper's `dogfood` job gated on that variable
+being non-empty, so a repository that has not yet built and pushed the
+dogfood image (or configured the two secrets) gets a clean scheduled no-op
+instead of a permanently failing run.
 
 **Decision**: One new workflow, scheduled and `workflow_dispatch`-triggered
 (mirroring `auto-update-spec-kit.yml`'s `on: schedule: / workflow_dispatch:
@@ -623,9 +724,9 @@ minimal private image this repository publishes to its own `ghcr.io`
 namespace (none exists today — confirmed by research: no
 `docker/build-push-action`/`docker/login-action`/`ghcr.io` reference
 anywhere in this repository's `.github/` or `docs/` today), authenticated
-with `secrets.GITHUB_TOKEN` (or a repository secret, if a token's default
-scope proves insufficient at implementation time) — never a cloud account or
-cloud-registry identity, per FR-027's explicit prohibition. This
+with the repository's `WING_COMMANDER_CONTAINER_REGISTRY_USERNAME`/
+`WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD` secrets — never a cloud account
+or cloud-registry identity, per FR-027's explicit prohibition. This
 repository's own lifecycle stages are not moved onto this image; the check
 is additive and separate.
 
