@@ -125,7 +125,7 @@ jobs:
           while IFS= read -r stage_path; do
             [ -n "$stage_path" ] && all_stages+=("$stage_path")
           done <<< "$stage_list"
-          shell_linted=(.github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase,metrics-persist}.yml .github/workflows/release.yml)
+          shell_linted=(.github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase,metrics-persist,private-image-dogfood}.yml .github/workflows/release.yml)
           # Stages knowingly outside pass 2 (issue #149). Anything published
           # and NOT in shell_linted must be listed here, so the exemption is
           # a decision someone wrote down rather than a file nobody added.
@@ -158,13 +158,19 @@ jobs:
           done
 
           # Pass 2 — the full lint (shellcheck/pyflakes on) over the subset
-          # this gate has always covered. The deployment key is ignored here
-          # because pass 1 is what accounts for it, one diagnostic per
-          # binding (verify-actionlint.py).
+          # this gate has always covered. The deployment key and the two
+          # container.credentials diagnostics are ignored here because pass 1
+          # is what accounts for them, one diagnostic per binding
+          # (verify-actionlint.py; specs/044 research D3 for credentials).
+          # The credentials ignores were added after the 2026-09-08 v2.7.0
+          # dispatch went red on 44 of them: #286 had merged with every
+          # PR-time gate green, because nothing at PR time runs this pass.
           actionlint_bin="$(python3 .github/scripts/verify-actionlint.py --ensure-binary)"
           "$actionlint_bin" -no-color \
             -ignore 'property "job_workflow_sha" is not defined' \
             -ignore 'unexpected key "deployment" for "environment" section' \
+            -ignore '"credentials" section is scalar node but mapping node is expected' \
+            -ignore 'both "username" and "password" must be specified in "credentials" section' \
             "${shell_linted[@]}" || fail=1
 
           exit "$fail"
