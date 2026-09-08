@@ -54,7 +54,7 @@ Settings → Secrets and variables → Actions → **Secrets**:
 | `WING_COMMANDER_APP_ID` | yes | The App ID from step 1 |
 | `WING_COMMANDER_APP_PRIVATE_KEY` | yes | Full contents of the downloaded `.pem` |
 | `PIPELINE_REPO_TOKEN` | only if the pipeline repository you pin is **private** (e.g. a private fork) | Read-only contents token for that private pipeline repository (e.g. a single-repo fine-grained PAT) — see [docs/adoption.md](adoption.md#private-pipeline-repository). Not needed when pinning the public `charlesguse/wing-commander`, and never needed in the pipeline repository itself. |
-| `WING_COMMANDER_CONTAINER_REGISTRY_USERNAME` | only if `WING_COMMANDER_CONTAINER_IMAGE` (below) is set **and** its registry is private | Username for that registry — see [docs/adoption.md](adoption.md#runners-and-container-images) |
+| `WING_COMMANDER_CONTAINER_REGISTRY_USERNAME` | only if `WING_COMMANDER_CONTAINER_IMAGE` (below) is set **and** its registry is private | Username for that registry — see [docs/adoption.md](adoption.md#runners-and-container-images). **Avoid a value that collides with other masked or ordinary run output, e.g. a GitHub login**: both registry secrets are masked in every job of every stage, and a job output containing masked text is dropped wholesale rather than truncated. A registry that authenticates on the token alone (GHCR, for instance) accepts any placeholder username — prefer one, e.g. `x-access-token`, over your own login |
 | `WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD` | only if `WING_COMMANDER_CONTAINER_IMAGE` is set **and** its registry is private | Password or token for that registry; may be a short-lived token minted by the wrapper before its `uses:` call — see [docs/adoption.md](adoption.md#runners-and-container-images) |
 
 Both Claude credentials are first-class: every stage accepts either, exactly
@@ -118,6 +118,7 @@ create them now so the stubs' documentation stays true):
 | `WING_COMMANDER_PR_CONVERSATION_CONFIRM_ENVIRONMENT` | `pr-conversation-confirm` | Deployment environment name the `act` job binds to for a classification requiring confirmation |
 | `WING_COMMANDER_RUNNER` | `ubuntu-latest` | Runner label every stage job runs on — a single label, or a JSON array (e.g. `["self-hosted","linux","x64"]`) applied as a conjunction — see [docs/adoption.md](adoption.md#runners-and-container-images) |
 | `WING_COMMANDER_CONTAINER_IMAGE` | unset (no container) | Container image every stage job runs inside; empty means every job runs directly on the runner, unchanged from today — see [docs/adoption.md](adoption.md#runners-and-container-images) |
+| `WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE` | unset (dogfood check is a no-op) | Private GHCR image reference for this repository's own private-registry-credentials dogfood check (`wing-commander-private-image-dogfood.yml`), e.g. `ghcr.io/<owner>/wing-commander-dogfood:latest`. Unset, the scheduled/on-demand wrapper job is skipped entirely rather than failing — see [docs/adoption.md](adoption.md#runners-and-container-images) |
 
 The watchdog reads no consuming-repo config file. It is a pure reporter: it
 files, comments on, or reopens one `pipeline-defect` issue per finding and

@@ -1041,6 +1041,32 @@ question and the "please reply more clearly" re-ask use `kind: action`.
 
 ---
 
+## Private-image dogfood (`private-image-dogfood.yml`, wrapper `wing-commander-private-image-dogfood.yml`)
+
+**Trigger**: daily `schedule` (`cron: "37 8 * * *"`, distinct from every
+other scheduled wrapper to avoid a pile-up) + manual `workflow_dispatch`,
+mirroring Auto-Update Spec Kit's trigger shape above.
+
+Unnumbered and outside the intake→cleanup chain, like Rebase and Auto-Update
+Spec Kit — this repository's own demonstration of the private-registry-
+credentials mechanism (`specs/044-private-registry-credentials`) on its own
+infrastructure, not a lifecycle stage. The published stage
+(`private-image-dogfood.yml`) carries the exact same `verify-image-
+prerequisites` job and `container.credentials` binding every other
+published stage carries, pulling a private package this repository
+publishes to its own `ghcr.io` namespace. The wrapper owns the trigger and
+the image/credential wiring: `container-image` comes from the
+`WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE` repository variable (never
+hard-coded), and the two registry secrets are this repository's own
+`WING_COMMANDER_CONTAINER_REGISTRY_USERNAME`/`_PASSWORD` — the same pair
+every other wrapper already wires to `container-registry-username`/
+`container-registry-password`, not `GITHUB_TOKEN` (see [docs/setup.md](setup.md)
+and `specs/044-private-registry-credentials/research.md` D9/D10 for why a
+called workflow can't use a forwarded `GITHUB_TOKEN` for this). The
+wrapper's `dogfood` job is gated on the image variable being non-empty, so a
+repository that hasn't built and pushed the dogfood image yet gets a clean
+scheduled no-op instead of a permanently failing run.
+
 ## Reusability (current state — `specs/010-reusable-pipeline/`)
 
 Extraction is done: every stage is a published `workflow_call` workflow, and

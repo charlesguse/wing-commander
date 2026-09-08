@@ -1,0 +1,37 @@
+# Private-image dogfood (thin wrapper) — FR-027, SC-010,
+# specs/044-private-registry-credentials.
+# Owns the trigger (scheduled + on-demand, mirroring
+# wing-commander-auto-update-spec-kit.yml's pattern) and the private
+# package reference (this repository's own GHCR namespace, authenticated
+# with the repository's own WING_COMMANDER_CONTAINER_REGISTRY_USERNAME/
+# _PASSWORD secrets — no cloud account or cloud-registry identity, per
+# FR-027). A GITHUB_TOKEN forwarded through this job's own `secrets:` block
+# into the called workflow does NOT work for this: the token's scope is
+# fixed by the *calling* job's permissions, but a job whose only step is a
+# reusable-workflow `uses:` call never gets the packages: read grant applied
+# to the package pull that happens inside the callee's own job — see
+# research.md D9/D10 for the measured failure. Gated on
+# vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE so a repository that
+# hasn't built and pushed the dogfood image yet gets a clean no-op instead
+# of a permanently failing scheduled run. Everything else (the
+# verify-image-prerequisites job, the credential binding) lives in the
+# published private-image-dogfood.yml, identical to what an adopter's own
+# wrapper would call.
+name: "Wing Commander · private-image-dogfood"
+
+on:
+  schedule:
+    - cron: "37 8 * * *"
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  dogfood:
+    if: vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE != ''
+    uses: ./.github/workflows/private-image-dogfood.yml
+    with:
+      container-image: ${{ vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE }}
+    secrets:
+      container-registry-username: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME }}
+      container-registry-password: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD }}

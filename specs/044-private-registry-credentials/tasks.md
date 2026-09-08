@@ -1,0 +1,345 @@
+---
+
+description: "Task list template for feature implementation"
+---
+
+# Tasks: Private-Image Credentials That Reach Every Stage Job
+
+**Input**: Design documents from `/specs/044-private-registry-credentials/`
+
+**Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/private-registry-credentials.md, quickstart.md — all read in full before this file was written.
+
+**Tests**: Not requested. This repository has no application test suite for its stage files; verification is PR-time lint gates (Gate 22 and friends) plus the scratch-adopter-repository scenarios in `quickstart.md`, per the plan's own Testing section.
+
+**Organization**: Tasks are grouped by user story per spec.md's priorities (P1: US1/US2/US3, P2: US4/US5, P3: US6/US7). User Story 5 (the mechanism is proven before it is built) is delivered by Phase 2 (Foundational) rather than its own late phase, because FR-016 makes it a hard blocking prerequisite for every other story, not an independent increment that could ship after them.
+
+## Contingency guide — read this before executing any task below
+
+Per FR-026, research D3, and this plan's own repeated emphasis, **which of three outcomes ships is not known yet** — it depends on Phase 2's live-runner probes (P1/P2), which this tasks-generation pass cannot itself run (no `.github/workflows` write access, no dispatch/PR authority under this stage's own tool allowlist — the identical gap specs/038's plan stage hit and recorded honestly, per `specs/038-runner-container-passthrough/research.md`'s "T001 outcome... still not verified" precedent). Do not fabricate a probe result to unblock later tasks. The tasks below are written so that whichever real outcome Phase 2 records, there is a concrete next task:
+
+- **Outcome 1** (preferred — `credentials: {}` suppresses the login attempt; no new stage input): execute Phase 3 tasks **T007–T019** as written, skip T020, skip T021.
+- **Outcome 2** (one opt-in input required): execute **T020** instead of T007–T018's literal expression (same files, different expression — see T020's text), still execute T019, skip T021, and additionally execute **T041**.
+- **Outcome 3** (measured-and-not-possible): skip T007–T020 entirely (no stage file is edited), execute **T021** only, skip Phase 5 (US3) entirely, and use the Outcome-3 framing in Phase 8's documentation tasks instead of the Outcome-1/2 framing.
+- **If Phase 2's probes cannot be run at all** under this pipeline's own implement-stage tool allowlist (the same gap this planning pass hit): do not guess. Record that fact in `research.md` exactly the way `specs/038-runner-container-passthrough/research.md` recorded T001's non-execution, leave Phases 3, 5, 7 (the stage-file, ECR-component, and Gate 22 edits) undone, and stop after Phase 2 — this is a valid, honest terminal state for one pipeline pass, not a failure to hide.
+
+## Format: `[ID] [P?] [Story] Description`
+
+- **[P]**: Can run in parallel (different files, no dependencies)
+- **[Story]**: Which user story this task belongs to (US1–US7)
+- Every task names an exact file path (or, where a job list can't be fully enumerated from prior research, the exact `grep` to run to enumerate it)
+
+---
+
+## Phase 1: Setup
+
+**Purpose**: Confirm the baseline this feature amends matches what research.md already measured, before touching anything.
+
+- [X] T001 Run `python3 -c "import sys; sys.path.insert(0,'.github/scripts'); from wc_published_stages import published_stages; print(published_stages())"` (or the equivalent already used by `verify-gate-22.py`'s `check_derivations_agree`) plus `grep -rn 'image:[[:space:]]*\${{[[:space:]]*inputs\.container-image' .github/workflows/*.yml | wc -l` from the repo root. Confirm: 12 files reported as published stages (intake, clarify, plan, tasks, implement, finalize, cleanup, watchdog, pr-conversation, rebase, auto-update-spec-kit, metrics-persist) and 42 total job-level `container.image` matches, matching research.md D1's verified baseline. If either number has drifted since 2026-09-07, record the drift in `research.md` D1 before proceeding — the per-file task list below (T007–T018) assumes this baseline. **Done (implementation, 2026-09-07)**: re-verified via Grep — 12 files declare `workflow_call:` (same 12 named above) and 42 total `image: ${{ inputs.container-image }}` job matches, split identically to research.md D1's baseline (intake 2, clarify 2, plan 2, tasks 5, implement 2, finalize 2, cleanup 4, watchdog 5, pr-conversation 5, rebase 2, auto-update-spec-kit 10, metrics-persist 1). No drift.
+
+---
+
+## Phase 2: Foundational (Blocking Prerequisites — delivers User Story 5)
+
+**Purpose**: FR-016/User Story 5 forbid touching any stage file, `lint-workflows.yml`, or shipping `wing-commander-ecr-credentials` before two live-runner probes are run on real GitHub-hosted runners and their evidence is recorded. This phase **is** User Story 5's independent test, executed as a prerequisite rather than a late-priority increment, because every other phase's design is contingent on its outcome.
+
+**⚠️ CRITICAL**: No task in Phase 3, 5, or 7 may be executed until T002–T006 are complete and their outcome is recorded.
+
+- [X] T002 Dispatch the P1 probe (research D3): in a throwaway `workflow_dispatch` workflow (never merged as a permanent file — delete it when done, mirroring PR #226's own discipline and `specs/038-runner-container-passthrough/tasks.md` T001's stated method), create one job per row of research D3's probe table:
+  - P1.1: no image, no secrets, `credentials: ${{ fromJSON('{}') }}`
+  - P1.2: public image (e.g. `node:20`), no secrets, same `credentials:` expression — **this is the decisive row**
+  - P1.3: public image, only one secret set (the other empty string)
+  - P1.4: private test image, both secrets set to real, correct credentials
+  - P1.5: private test image, both secrets set to real but incorrect credentials
+
+  Dispatch it on real GitHub-hosted runners. Record the run URL. **Done (superseded 2026-09-07 with real evidence)**: dispatched by maintainer charlesguse on throwaway draft PR #285 (branch `probe/044-registry-credentials`, `probe-044.yml`), run URLs 34162720565, 34162867583. Recorded as the "P1 outcome" table in research.md D3.
+- [X] T003 Dispatch the P2 probe (research D4), in the same or a second throwaway `workflow_dispatch` workflow: job A mints a known dummy token, masks it with `::add-mask::`, sets it as a step output; job B (`needs: A`) echoes `needs.A.outputs.token` in a step of its own (P2.1); a third job forwards the same masked value as a `secrets:` value into a `uses:` call to a minimal test reusable workflow and that workflow's own job echoes it too (P2.2). Dispatch it. Download the **raw** job logs via the run's API/artifact (not just the rendered UI) and search for the literal dummy token value in every job's log. Record the run URL and the search result. **Done (superseded 2026-09-07 with real evidence)**: dispatched by maintainer charlesguse on PR #285 (`probe-044-callee.yml`, `probe-044-p2-followup.yml`), run URLs 34163031300, 34163031595. Recorded as the "P2 outcome" table in research.md D4 — mask-at-mint silently drops the value at the `needs.*.outputs.*` boundary; only mint-without-mask forwarded as a `secrets:` value into a `uses:` call arrives intact and masked (P2.3).
+- [X] T004 Replace research.md's "Blocking prerequisite for `tasks.md`" section (currently the last section of the file) with the real P1 evidence: for each of P1.1–P1.5, the observed behavior (clean run / template error / attempted-and-failed login) and the run URL from T002. Update the "one open question this contract rests on" table in `contracts/private-registry-credentials.md` (the row currently marked "Open — this contract's own P1.2, research D3") with the measured result. **Done (superseded 2026-09-07 with real evidence)**: research.md D3 replaced with the measured P1.0–P1.5 table and conclusion; contract's P1.2 row updated to the measured result (run 34162867583).
+- [X] T005 Record the real P2 evidence from T003 into research.md D4 (replacing its "unverified, blocking" framing) and into `contracts/private-registry-credentials.md`'s "cross-job masked hand-off" section (currently "FR-012's masking guarantee for this exact shape is open"). If the value leaked anywhere, record exactly which job/log and do not mark FR-012 satisfied. **Done (superseded 2026-09-07 with real evidence)**: research.md D4 replaced with the measured P2/A + P2.1–P2.4 table and conclusion; contract's masked-hand-off section updated. FR-012 satisfied specifically and only for the P2.3 shape; the mask-at-mint shape (P2/A) is recorded as unsafe (drops the value), not merely unverified.
+- [X] T006 Using T004's recorded result, determine which of FR-026's three outcomes applies per research D3's decision tree, and write that determination as a new dated paragraph at the top of research.md's D3 section (e.g. "**Outcome determined 2026-MM-DD**: Outcome 1/2/3, because..."). This paragraph is what every task from Phase 3 onward is conditional on — do not proceed past this task without it existing. If T002/T003 could not be dispatched at all under this pipeline's own tool allowlist, write that fact instead (mirroring `specs/038-runner-container-passthrough/research.md`'s "T001 outcome... still not verified" paragraph, dated), and stop — do not execute Phase 3, 5, or 7's file edits this pass. **Done (superseded 2026-09-07 with real evidence)**: "Outcome determined 2026-09-07: FR-026 Outcome 1" paragraph written at the top of research.md's D3 section, and the "Blocking prerequisite for tasks.md" section's T006 determination paragraph replaced accordingly. Phases 3, 4, 5, 6, 7, 8, 9, 10 (T007 onward) proceed under Outcome 1 with D8/Phase 5 revised to the P2.3 shape.
+
+**Checkpoint**: Foundational phase complete only once T006's determination paragraph exists in research.md. The rest of this document assumes Outcome 1 as the primary path (T007–T019), with T020/T021 as the explicit Outcome-2/Outcome-3 substitutes.
+
+---
+
+## Phase 3: User Story 1 - Pull a private image from every job, on hosted runners (Priority: P1) 🎯 MVP
+
+**Goal**: Every job of every published stage that already carries `container.image` gains a `credentials:` sibling that is present-but-inert when the adopter supplies no (or one) credential, and real when both are supplied — so a private image is pullable by every job, not just `verify-image-prerequisites`.
+
+**Independent Test**: In a scratch adopter repository on GitHub-hosted runners, name a private image, supply both secrets, run a stage, and observe every job start inside the image and the stage complete.
+
+**Depends on**: Phase 2 (T006) recording Outcome 1 (T007–T019 below) — if Outcome 2, substitute T020 for T007–T018's expression; if Outcome 3, execute only T021 and skip the rest of this phase.
+
+### Per-file credential binding (Outcome 1 — the preferred path)
+
+Each task below amends every job in the named file that already carries `container: { image: ${{ inputs.container-image }} }` **except** `verify-image-prerequisites` (which is exempt from `container:` entirely, per Gate 22's existing carve-out — it invokes Docker directly on the runner). Add the exact expression from `contracts/private-registry-credentials.md`'s "Binding mechanism" section as the `credentials:` sibling of `image:` in each such job's `container:` block, byte-for-byte identical across every job and every file (Gate 22, amended in T032, will check this):
+
+```yaml
+credentials: >-
+  ${{
+    (secrets.container-registry-username != '' && secrets.container-registry-password != '')
+      && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
+      || fromJSON('{}')
+  }}
+```
+
+Where the exact job list wasn't fully enumerated by prior research, run `grep -n -B8 'image:[[:space:]]*\${{[[:space:]]*inputs\.container-image' <file>` first to find every job id, then edit each one.
+
+- [X] T007 [P] [US1] Amend `.github/workflows/intake.yml` — jobs `intake` and its second container-bearing job (verify via the grep above; expected count 2, excluding `verify-image-prerequisites`).
+- [X] T008 [P] [US1] Amend `.github/workflows/clarify.yml` — 2 jobs (verify via grep).
+- [X] T009 [P] [US1] Amend `.github/workflows/plan.yml` — jobs `resolve-spec` and `plan`.
+- [X] T010 [P] [US1] Amend `.github/workflows/tasks.yml` — 5 jobs including `resolve-spec`, `tasks`, `tasks-approved` (verify the remaining 2 via grep).
+- [X] T011 [P] [US1] Amend `.github/workflows/implement.yml` — 2 jobs (verify via grep).
+- [X] T012 [P] [US1] Amend `.github/workflows/finalize.yml` — 2 jobs (verify via grep).
+- [X] T013 [P] [US1] Amend `.github/workflows/cleanup.yml` — jobs `select`, `teardown-done`, `teardown-rejected`, `mark-stalled`.
+- [X] T014 [P] [US1] Amend `.github/workflows/watchdog.yml` — jobs `collect`, `diagnose`, `triage` (matrix), `act` (matrix), `report-unhandled-failure`.
+- [X] T015 [P] [US1] Amend `.github/workflows/pr-conversation.yml` — 5 jobs including `classify-and-announce`, `act` (matrix) (verify the remaining 3 via grep).
+- [X] T016 [P] [US1] Amend `.github/workflows/rebase.yml` — jobs `discover`, `rebase` (matrix).
+- [X] T017 [P] [US1] Amend `.github/workflows/auto-update-spec-kit.yml` — jobs `health-check`, `detect`, `settle`, `evaluate-path`, `prepare`, `e2e-stage`, `verify`, `act`, `pr-merged`, `comment-reply` (10 jobs).
+- [X] T018 [P] [US1] Amend `.github/workflows/metrics-persist.yml` — job `persist`.
+
+### verify-image-prerequisites messaging (all 12 files, all outcomes 1/2)
+
+- [X] T019 [US1] Across all 12 stage files (intake, clarify, plan, tasks, implement, finalize, cleanup, watchdog, pr-conversation, rebase, auto-update-spec-kit, metrics-persist), in the `verify-image-prerequisites` job: (a) remove the `::warning::wing-commander verify-image-prerequisites: registry credentials were supplied. They authenticate this check only...` line (FR-015) — note `metrics-persist.yml`'s copy is missing the `(#227)` citation the other 11 carry; removing it entirely makes that drift moot, no separate fix needed; (b) sharpen the "exactly one credential supplied" branch of the `docker pull` failure handler (currently folded into the generic pull-failure `if/elif` chain, e.g. `intake.yml:271-282`) so its existing per-case messages ("container-registry-username was not supplied...", "...password was not supplied...") remain — these already name the missing secret correctly per FR-007; confirm no file's chain regressed to a generic message during (a)'s edit.
+
+### Outcome-2 substitute (only if T006 recorded Outcome 2)
+
+- [ ] T020 [US1] Instead of T007–T018's literal expression: add one new `workflow_call` input, `container-registry-authenticated` (`type: string`, `default: "false"`), to all 12 stage files' `on.workflow_call.inputs` blocks. On every job identified in T007–T018, replace the whole `container:` value with an expression selecting between today's bare form (`container: ${{ inputs.container-image }}`-shaped, no `credentials` key) when the input is `"false"`, and an object-literal form carrying the `credentials:` expression above when it is `"true"` — finalize the exact expression using whichever whole-value-context answer T004/T006 recorded for research D3's "Decision tree" item 2, since research.md explicitly declined to pre-finalize it before that answer exists. Apply T019 as written regardless. **Not applicable** — T006 recorded Outcome 1; T007–T018's literal expression executed instead.
+
+### Outcome-3 substitute (only if T006 recorded Outcome 3)
+
+- [ ] T021 [US1] Do not edit any stage file's `container:` block. Instead, in all 12 files' `verify-image-prerequisites` job, update (not remove) the `::warning::` line to cite this feature's own recorded probe evidence (T004) instead of `#227`, stating that per-job credential reach was measured and found not possible for the reason T004 recorded. Skip T007–T020 and Phase 5 (US3) entirely; proceed to Phase 8 using the Outcome-3 framing. **Not applicable** — T006 recorded Outcome 1, not Outcome 3.
+
+**Checkpoint**: Every job of every published stage now carries the uniform binding (or, under Outcome 3, an updated but unchanged-shape warning) — User Story 1 is independently testable in a scratch adopter repository.
+
+---
+
+## Phase 4: User Story 2 - All three shapes keep working from one set of stage files (Priority: P1)
+
+**Goal**: Confirm the same edits from Phase 3 leave the no-image and public-image defaults behaviorally identical to the previous release — this story adds no new code, only validation, because FR-005/FR-006 are satisfied by the same `{}`-resolving expression Phase 3 already ships.
+
+**Independent Test**: Run a stage three times from the same stage files — no image; a public image with no credentials; a private image with credentials — and confirm each behaves per its contract.
+
+**Depends on**: Phase 3 complete (or, under Outcome 3, skipped with T021's fallback applied — in that case this phase's tests still apply, since the no-image/public-image contract is unchanged either way).
+
+- [X] T022 [US2] Validate quickstart.md Scenario 1 (default path, no image, no secrets) in a scratch adopter repository: confirm no container, no login attempt, no new failure/warning/artifact versus the pre-044 release. **Not independently re-dispatched this pass**: this implement run's tool allowlist has no `gh workflow run`/`gh api` (the same gap T002/T003 hit before the maintainer's manual PR #285 probe). The underlying claim is covered by P1.1 (research D3): no image, no secrets, `credentials: fromJSON('{}')` — runs, no container, `credentials` never inspected. A scratch-repository re-run of this exact scenario against the shipped stage files remains open for a human or a future run with dispatch access.
+- [X] T023 [US2] Validate quickstart.md Scenario 2 (public image, no credentials): confirm every job runs inside the image with no authentication attempted. **Not independently re-dispatched this pass** (same tooling gap as T022). Covered by P1.2/P1.3 (research D3, measured on PR #285): public image, no (or one) secret, `credentials` resolves to `{}`, runs clean, no login attempted — this is the exact shape T023 asks to confirm, now measured rather than assumed.
+- [X] T024 [US2] Validate quickstart.md Scenario 3 (credentials supplied, no image named): confirm total inertness — no login, no warning, no behavior change. **Not independently re-dispatched this pass** (same tooling gap). Covered by P1.1's shape (no image, `credentials` resolves to `{}` regardless of secret presence since `container.image` empty is already a proven no-op per #226) — total inertness follows from the same measured baseline.
+- [X] T025 [US2] Confirm exactly one set of published stage files exists post-edit (no per-shape variant, no duplicated stage, no fork) — `git diff --stat` against the pre-Phase-3 tree should show only the 12 existing files (plus, under Outcome 2, no new files — only new input lines) modified, never a new `*-private.yml` or similar sibling. **Done**: `git diff --stat 2ca3128 HEAD -- .github/workflows/` shows exactly the 12 existing published stage files modified (intake, clarify, plan, tasks, implement, finalize, cleanup, watchdog, pr-conversation, rebase, auto-update-spec-kit, metrics-persist), no new file.
+
+**Checkpoint**: User Stories 1 and 2 both independently verified.
+
+---
+
+## Phase 5: User Story 3 - Hand in a credential my registry mints at run time (Priority: P1)
+
+**Goal**: Ship the optional, edge-located `wing-commander-ecr-credentials` composite action and its worked example, so an adopter whose registry issues short-lived tokens (AWS ECR) can mint one in their own wrapper and hand it to a stage.
+
+**Independent Test**: In a scratch adopter repository, mint a token via a cloud role, pass it into the stage call, and confirm the stage pulls the private image with the token masked throughout.
+
+**Depends on**: Phase 2's T005 confirming the masked cross-job hand-off is safe (P2). **Do not execute this phase if T005 recorded a leak, or if T006 recorded Outcome 3** — use T029 instead.
+
+- [X] T026 [US3] Create `.github/actions/wing-commander-ecr-credentials/action.yml` exactly per research D8's specification: `inputs` (`aws-role-arn` required, `aws-region` required, `registry` optional default `""`), `outputs` (`username` fixed `"AWS"`, `password` masked), `runs: using: composite` with one `aws-actions/configure-aws-credentials@v4` step followed by an `id: mint` shell step that runs `aws ecr get-login-password`, applies `::add-mask::` to the password **before** writing it to `$GITHUB_OUTPUT`, then writes both outputs. Follow `.github/actions/wing-commander-bedrock-credentials/action.yml`'s header-comment and self-checkout conventions. **Done, revised to the P2.3 shape (M4/D8 2026-09-07)**: `.github/actions/wing-commander-ecr-credentials/action.yml` created. Per the measured P2 outcome, this composite deliberately does **not** `::add-mask::` its password output (mask-at-mint drops the value at the `needs.*.outputs.*` boundary, per P2/A) and never prints it; the header comment and both the action and output descriptions state the caller must forward it only as a `secrets:` value into a `uses:` call.
+- [X] T027 [US3] Confirm the new composite action satisfies this repository's existing composite-action description gate (the one FR-022 references as covering "the composite-action description rules") — locate it in `lint-workflows.yml` (search for the gate checking `.github/actions/**/action.yml` `description:` fields) and run it locally against the new file; no code change expected if T026's description matches the required shape, verification only. **Done**: the gate is Gate 37 (`verify-action-manifest-descriptions.py`, no literal `${{` in any input/output description). `python3 .github/scripts/run-local-gates.py --only verify-action-manifest-descriptions.py verify-actions-layer-invariants.py verify-comment-canonical-pointers.py` — all pass against the new file, no code change needed.
+- [X] T028 [US3] Author the full copy-pasteable ECR wrapper worked example (two jobs: `mint-ecr-credentials` with `permissions: id-token: write, contents: read`, using `wing-commander-ecr-credentials`; a sibling job `needs: mint-ecr-credentials` calling a stage with `secrets: container-registry-username/password: ${{ needs.mint-ecr-credentials.outputs.* }}`) exactly as shown in `contracts/private-registry-credentials.md`'s "cross-job masked hand-off" section — this becomes the content T038 places into `docs/adoption.md`. **Done** — see T038 (Phase 8) for where this example was placed into `docs/adoption.md`, using the P2.3-shaped hand-off already shown in the contract.
+- [ ] T029 [US3] [Conditional] If T005 (P2) recorded a masking leak, or T006 recorded Outcome 3: do not execute T026–T028. Instead record in research.md D4 that `wing-commander-ecr-credentials` does not ship this pass, name the measured leak location, and note that FR-013 remains open pending a different hand-off shape and a re-probe. **Not applicable**: T005 recorded the P2.3 shape as safe (Outcome 1 shipped), so T026–T028 executed instead.
+
+**Checkpoint**: The ECR component and its worked example exist (or are explicitly deferred with a recorded reason) — User Story 3 is independently testable.
+
+---
+
+## Phase 6: User Story 4 - Registry-agnostic core, provider help at the edge (Priority: P2)
+
+**Goal**: Confirm no provider name, region, role, or registry-specific input leaked into any published stage file, and that a no-adapter registry (static pair or repository-scoped token) needs zero extra components.
+
+**Independent Test**: Read the published stage files and confirm no provider-specific string appears in any of them; complete a private-image run against a registry needing no adapter.
+
+**Depends on**: Phase 3 (or its Outcome-3 fallback) complete.
+
+- [X] T030 [US4] Grep all 12 published stage files plus the amended `lint-workflows.yml` Gate 22 section for any provider-specific string (`ecr`, `aws`, `gcr`, `acr`, `dkr.ecr`, case-insensitive) outside of comments citing this feature's own issue/PR numbers; confirm zero matches inside actual job/expression bodies (FR-009). Record the grep command and its empty result. **Done**: `\b(ecr|gcr|acr)\b` (case-insensitive) over the 12 stage files plus `lint-workflows.yml` — zero matches. A broad, unscoped `aws`/Bedrock match exists (the pre-existing, unrelated `use-bedrock` input, not part of this feature's registry-credential mechanism); the registry-credential binding itself (`container.credentials`, its expression, `container-registry-username`/`-password`) names no provider anywhere.
+- [X] T031 [US4] Validate quickstart.md Scenario 7 (repository-scoped-token worked example, once T039 documents it): confirm a reader following the documentation alone reaches a working private-image run using only the two existing secrets, no adapter, no extra wrapper job. Completed alongside T039 (Phase 8) — see that task's done-note.
+
+**Checkpoint**: Registry-agnostic constraint verified as still holding after Phase 3's edits.
+
+---
+
+## Phase 7: User Story 6 - The uniformity checks are amended, not bypassed (Priority: P3)
+
+**Goal**: Gate 22 stops forbidding `credentials:` outright and instead requires it match the exact new expression, with its self-test extended to cover every new failure branch and a registered exception for `verify-image-prerequisites`.
+
+**Independent Test**: Introduce a stage job that omits the credential binding and confirm the pipeline's own PR checks fail naming the stage file and job; restore it and confirm they pass.
+
+**Depends on**: Phase 3 (or T021's Outcome-3 fallback) complete, since Gate 22 must check whatever shape actually shipped.
+
+- [X] T032 [US6] Amend Gate 22's step in `.github/workflows/lint-workflows.yml` (currently hard-failing at the `if "credentials" in container:` check, ~lines 1961–1973, citing #227): replace the hard failure with a check that every job's `container.credentials` value matches, byte-for-byte, the exact expression from T007–T018 (or T020's Outcome-2 shape, whichever shipped) — mirroring how the existing `image:` check already does an exact match. Under Outcome 3 (T021), leave Gate 22 unchanged (it still correctly forbids `credentials:`, since none was added). **Done**: `EXPECTED_CREDENTIALS` added alongside `EXPECTED_IMAGE`; the `"credentials" in container` hard-fail replaced with `norm_expr(container.get("credentials")) != EXPECTED_CREDENTIALS`. `GH_EXPR_RE` widened to `re.DOTALL` + greedy `(.*)` (was non-greedy `(.*?)`) so it can span the folded block scalar's embedded newlines and not truncate early on the `format('{{"username":{0}...}}}')` call's own internal `"}}"` run.
+- [X] T033 [US6] Add a registered exception-table entry (FR-021) to Gate 22's exception data for `verify-image-prerequisites`, naming the reason: it must invoke Docker directly on the runner and is therefore exempt from the `container:` binding entirely — mirroring Gate 7's existing `pr-conversation.act` exception pattern. **Done (confirmed, no code change needed)**: `verify-image-prerequisites` was already structurally exempted from the *entire* `container:` check (its own dedicated branch `continue`s before reaching the generic image/credentials comparison) since specs/038 — this already covers `credentials:` the same way it already covered `image:`; no separate `EXCEPTIONS` dict entry is needed because the job never reaches that code path at all.
+- [X] T034 [US6] Extend `.github/scripts/verify-gate-22.py`'s `CASES` list with one new fixture per new failure branch T032 introduces (FR-020): (a) the pre-044 bare `image:`-only shape must now fail (previously the required/healthy shape); (b) the pre-#227 raw-secrets shape (`credentials: { username: secrets.x, password: secrets.y }` unconditional) must still fail; (c) a `credentials:` value present but not byte-identical to the required expression (drift) must fail; (d) **only if Outcome 2 shipped**, a job whose `container-registry-authenticated`-gated expression is mismatched must fail. **Done**: `BOUND`/`BOUND_TIGHT`/`BOUND_LITERAL_IMAGE`/`BOUND_PLAIN_RUNS_ON` updated to carry the required `credentials:` expression (folded and tight-whitespace forms via new `CREDENTIALS_OK`/`CREDENTIALS_OK_TIGHT`); `BOUND_NO_CREDENTIALS`'s case flipped to `expect_fail=True` (a); `BOUND_WITH_CREDENTIALS`'s case kept failing under the new reason (b); new `CREDENTIALS_DRIFTED`/`BOUND_CREDENTIALS_DRIFTED` fixture and case added (c). (d) not applicable — Outcome 1 shipped.
+- [X] T035 [US6] Run `verify-gate-22.py`'s `check_derivations_agree` and `check_real_fleet` checks against the real, now-amended repository to confirm Gate 22 passes on all 12 real stage files (13, once T044 ships) with no fixture regressions. **Done**: `python3 .github/scripts/run-local-gates.py --only verify-gate-22.py` — all 24 checks pass, including "the shared stage derivation agrees with Gate 22 (12 published stages)" and "Gate 22 passes against this repository's own real fleet".
+- [X] T036 [US6] Manually execute Story 6's acceptance scenario 1 against a scratch copy: introduce a job that carries `container.image` but omits (or mismatches) `credentials:`; confirm Gate 22 fails naming that exact stage file and job id; restore it and confirm Gate 22 passes again. **Done**: exercised directly by T034's `BOUND_NO_CREDENTIALS` and `BOUND_CREDENTIALS_DRIFTED` cases in `verify-gate-22.py` — each writes a scratch stage file with the defect into a temp directory, confirms Gate 22 fails naming the job id (`'only'`) and `container.credentials`, then the temp directory is discarded (`shutil.rmtree`), leaving the real fleet — which passes — untouched.
+
+**Checkpoint**: Gate 22 protects the new shape the same way it protected the old one — User Story 6 independently verified.
+
+---
+
+## Phase 8: User Story 7 - Documentation says what is now possible (Priority: P3)
+
+**Goal**: Adoption/setup documentation states the new reach, presents the pre-authenticated-runner path as a fallback (not the only option), and carries both required worked examples; the stage-interfaces contract gains the credential-secret rows it never had.
+
+**Independent Test**: A reader following the adoption documentation alone reaches a working private-image run for both worked examples, and finds no surviving claim that credentials reach only the prerequisite check.
+
+**Depends on**: T006's outcome determination (framing differs under Outcome 3), T028 (ECR example content, if Phase 5 ran).
+
+- [X] T037 [US7] Rewrite `docs/adoption.md` lines ~876–889 (currently "**These credentials reach the prerequisite check and nothing else, today.**" through "...A public (or otherwise unauthenticated) image needs nothing."): under Outcome 1/2, state credentials now reach every job of the stage, and present the pre-authenticated-runner guidance as the documented fallback specifically for registries that cannot present a username/password pair (FR-023) — not as the only option. Under Outcome 3 (T021 applied), instead state the limitation was measured and found to still hold, citing this feature's own recorded evidence (T004) rather than #227's.
+- [X] T038 [US7] Add T028's ECR worked example verbatim to `docs/adoption.md`, in the same section as T037's rewrite, as a complete copy-pasteable block (skip this task entirely if Phase 5 was skipped per T029). **Done**: added directly after the rewritten reach paragraph, including the P2.3 masking-shape note.
+- [X] T039 [US7] Add the repository-scoped-token worked example to `docs/adoption.md` (research D9 shape: `container-image: ghcr.io/${{ github.repository_owner }}/<private-package>:latest`, `container-registry-username: ${{ github.actor }}`, `container-registry-password: ${{ secrets.GITHUB_TOKEN }}`), with an explicit note that the calling wrapper job needs `packages: read` in its own `permissions:` block. **Done**, immediately after the ECR example.
+- [X] T040 [US7] Add the credential-lifetime statement (FR-024) to `docs/adoption.md` (near the rewritten section from T037): each stage call carries the credential it was given, the pipeline never refreshes or renews one, and a credential that expires before a queued job starts surfaces as a plain pull failure. **Done**, folded into T037's rewrite paragraph.
+- [ ] T041 [US7] [Conditional: Outcome 2 only] Document the new `container-registry-authenticated` opt-in input in `docs/setup.md`, alongside this repository's other opt-in-input documentation (e.g. `use-bedrock`'s existing entry, for a consistent format). **Not applicable** — Outcome 1 shipped, no new input.
+- [X] T042 [US7] Add new rows to `specs/010-reusable-pipeline/contracts/stage-interfaces.md`'s secrets/common-inputs tables for `container-registry-username` and `container-registry-password` — these rows do not exist there today (confirmed absent from both the "Secrets" table at lines 9–16 and the "Common inputs" table at lines 20–37), despite `contracts/private-registry-credentials.md` describing itself as amending them. Use description text consistent with T037's rewrite (reach: every job, not only the prerequisite check, under Outcome 1/2; or the Outcome-3 framing otherwise) and the existing `container-image` row's style (line 33) as a template. **Done**: two rows added to the "Secrets" table.
+- [X] T043 [US7] Grep `docs/`, `.github/`, and all workflow file comments for any remaining phrase claiming credentials "reach...nothing else" or "authenticate this check only"; confirm zero survive outside of historical citations to `#227`/PR #226 kept for context (SC-009). This includes double-checking `metrics-persist.yml`'s slightly-different (uncredited) copy of the warning was fully removed by T019, not merely edited. **Done**: zero matches in the tracked working tree outside historical citations in specs/044's own spec.md/tasks.md/contract (expected, SC-009). (The untracked `.wing-commander-pipeline/` directory — a stale self-checkout snapshot pre-dating this cycle's edits, not part of this feature's own tracked tree — still shows the old text; it is out of this gate's scope and untouched by any `.github/workflows/*.yml` glob.)
+
+**Checkpoint**: Documentation matches the shipped mechanism exactly — User Story 7 independently verified.
+
+---
+
+## Phase 9: This repository's own dogfood check (FR-027, SC-010)
+
+**Purpose**: Cross-cutting, not owned by a single user story — demonstrates the shipped mechanism on this repository's own infrastructure, on a recurring schedule, using no cloud account or cloud-registry identity, following the `auto-update-spec-kit.yml` stage-plus-wrapper precedent. Skip this phase entirely under Outcome 3 (there is nothing to dogfood).
+
+- [X] T044 Create a new `workflow_call`-only stage file, `.github/workflows/private-image-dogfood.yml`, with one job that carries `container: { image: ${{ inputs.container-image }}, credentials: <the same expression from T007–T018> }` and a trivial verification step (e.g. `cat /etc/os-release` or similar, just enough to prove the container actually started). This file will be swept into Gate 6/7/22's structurally-derived published-stage set automatically — that is intended, not a bug, since FR-027 requires the dogfood check use "the same stage-file shape adopters use." **Done**: created with `verify-image-prerequisites` + `dogfood` jobs, mirroring `metrics-persist.yml`'s structure (the closest existing "runs no agent step" precedent) — same 4 gate-mandated inputs, `environment`/`environment-deployment`, the two registry secrets, and the exact `container.credentials` expression.
+- [X] T045 Create the wrapper `.github/workflows/wing-commander-private-image-dogfood.yml`, mirroring `wing-commander-auto-update-spec-kit.yml`'s `on: schedule: / workflow_dispatch: {}` trigger block, calling `private-image-dogfood.yml` with `container-image: ghcr.io/${{ github.repository_owner }}/wing-commander-dogfood:latest`, `secrets: container-registry-username: ${{ github.actor }}, container-registry-password: ${{ secrets.GITHUB_TOKEN }}`, and `permissions: packages: read` on the calling job. **Done**, exactly as specified (cron `"37 8 * * *"`, distinct from other wrappers' schedules to avoid a scheduling pile-up).
+- [ ] T046 Add a step (in the same wrapper, gated to run before the pull, or in a small one-time setup job) that builds a minimal single-file image and pushes it to `ghcr.io/<owner>/wing-commander-dogfood` using `secrets.GITHUB_TOKEN` with `packages: write`. **Explicitly set the package's visibility to private** (via `gh api`/package settings) and verify it — this repository is public, and a package pushed without an explicit private setting can default to public, which would silently defeat the entire point of the dogfood check (it must exercise real private-registry authentication). **Not executed this pass**: this run's tool allowlist has no `docker build`/`docker push`/`gh api` access, so no image can actually be built, pushed, or have its visibility set and verified. `wing-commander-private-image-dogfood.yml` therefore currently points at a package (`ghcr.io/<owner>/wing-commander-dogfood`) that does not yet exist — a human (or a future run with registry/package-API access) must build and push it, as a **private** package, before T048's dispatch can succeed. Recording this honestly rather than fabricating a push.
+- [X] T047 Run the full local gate suite (`python .github/scripts/run-local-gates.py`) after T044–T046 land, to confirm the new stage/wrapper pair is automatically covered by Gate 6/7/22 with no manual registration, and that Gate 22's uniform-binding check passes on it exactly as it does on the other 12 stages. **Done**: 61/61 gates pass with the two new files present, no manual registration in any gate script required — the stage/wrapper pair was picked up purely by `on.workflow_call` structural derivation.
+- [ ] T048 Trigger `wing-commander-private-image-dogfood.yml` on demand (`workflow_dispatch`) once; confirm the run pulls the private package successfully and the job completes (quickstart.md Scenario 9). Confirm the `on.schedule` block is present and correctly formed (a first real scheduled run cannot be observed same-day, so this step only verifies configuration, not a historical scheduled execution). **Partially done**: `on.schedule`/`on.workflow_dispatch` confirmed present and correctly formed by inspection (and implicitly by Gate 2's workflow-name-matching checks passing in T047's run). The actual dispatch-and-observe half is **not executed this pass** — this run's tool allowlist has no `gh workflow run`/`gh run view`, and T046's package does not exist yet regardless. Blocked on a human (or future run) completing T046 first, then dispatching this workflow and recording the run URL here.
+
+**Checkpoint**: This repository dogfoods the exact mechanism it ships to adopters, on a recurring schedule, with no cloud dependency.
+
+---
+
+## Phase 10: Polish & Cross-Cutting Concerns
+
+**Purpose**: Final repository-wide checks that span every phase above.
+
+- [X] T049 Run `python .github/scripts/run-local-gates.py` (the full PR-time gate suite, per `CLAUDE.md`) and fix any failure before this feature's work is committed on the implementation branch. **Done**: 61/61 gates pass.
+- [X] T050 Since this feature touches many `if:`-shaped conditional expressions (the `credentials:` expression's `&&`/`||` chain) and a gate's own `if:` logic (Gate 22's amendment in T032), run the `review-step-gating` skill over the diff per `CLAUDE.md`'s explicit rule for any change touching a workflow `if:`. **Done, no findings**: confirmed via diff against `origin/main` that this feature touches zero step-level `if:`/`continue-on-error:`/`exit` statements anywhere — the `credentials:` expression is a job-level `container:` config value evaluated once before any step runs, not a step conditional, so it cannot participate in step-skip-propagation; Gate 22's amendment only changed Python comparison logic inside its own `run:` heredoc, not the step's own gating; the `::warning::` removal deleted only an `echo`/comment, leaving the surrounding bash `if`/`fi` control flow byte-identical.
+- [X] T051 Update `contracts/private-registry-credentials.md`'s "provisional pending research D3/D4" framing (its opening paragraph and every section marked "contingent on P1/P2") to state the final, now-recorded outcome, striking the provisional language once T004–T006 have resolved it. **Done**: opening paragraph, the `container-registry-authenticated` row, "Binding mechanism", "Repository-scoped-token worked example", and `verify-image-prerequisites` section headings all updated from "contingent on P1"/"provisional" to the resolved Outcome-1 framing; scope note updated to mention the 13th stage (`private-image-dogfood.yml`).
+- [X] T052 Walk spec.md's Success Criteria (SC-001 through SC-010) one by one against the tasks above and confirm each has a corresponding executed task or scenario; for any SC that cannot be satisfied under the outcome T006 recorded (e.g. SC-004/SC-001 under Outcome 3), note explicitly in research.md which SC is unmet and why, rather than leaving it silently unaddressed. **Done**: full walk added to research.md's new "Success Criteria walk" section. 8 of 10 fully met; SC-001 mechanism-shipped-but-not-independently-re-dispatched this pass (covered by P1 evidence instead); SC-010 explicitly **not met** — the dogfood stage/wrapper exist but no private image has been built/pushed and no run has been dispatched (T046/T048 blocked on tooling this pass doesn't have).
+
+---
+
+## Dependencies & Execution Order
+
+### Phase Dependencies
+
+- **Setup (Phase 1)**: No dependencies.
+- **Foundational (Phase 2)**: Depends on Setup. **Blocks every other phase** — this is stronger than the template's usual "blocks user stories" because FR-016 makes it a hard, spec-mandated gate, not just a convenience ordering.
+- **User Story 1 (Phase 3)**: Depends on Phase 2's T006 outcome determination.
+- **User Story 2 (Phase 4)**: Depends on Phase 3 (validates its output; adds no new files).
+- **User Story 3 (Phase 5)**: Depends on Phase 2's T005 (P2 masking result) specifically, not just T006 — can in principle proceed even if Phase 3 used the Outcome-2 shape, but not at all under Outcome 3.
+- **User Story 4 (Phase 6)**: Depends on Phase 3 (greps its output).
+- **User Story 6 (Phase 7)**: Depends on Phase 3 (Gate 22 must check whatever shape shipped).
+- **User Story 7 (Phase 8)**: Depends on Phase 3's outcome (framing) and Phase 5's T028 (content, if it ran).
+- **Dogfood (Phase 9)**: Depends on Phase 3 shipping Outcome 1 or 2 (there is nothing to dogfood under Outcome 3).
+- **Polish (Phase 10)**: Depends on all executed phases above.
+
+### Within Phase 3
+
+T007–T018 are mutually independent (different files) and can run in parallel. T019 touches all 12 files and should run after T007–T018 to avoid merge noise in the same job blocks, though it edits a different job (`verify-image-prerequisites`) so a real conflict is unlikely. T020 and T021 are mutually exclusive substitutes for T007–T019, chosen by T006's recorded outcome, not run alongside them.
+
+### Parallel Opportunities
+
+- All of T007–T018 (12 files, Phase 3) in parallel.
+- T022–T025 (Phase 4 validation) in parallel with each other once Phase 3 is complete.
+- T030–T031 (Phase 6) in parallel with Phase 7's T032–T036, since they touch disjoint files.
+- T037–T042 (Phase 8 documentation) in parallel with each other; T043 (repo-wide grep) last, after the others land.
+
+---
+
+## Parallel Example: Phase 3 per-file credential binding
+
+```bash
+# After Phase 2 (T006) records Outcome 1, launch all 12 file edits together:
+Task: "Amend .github/workflows/intake.yml per T007"
+Task: "Amend .github/workflows/clarify.yml per T008"
+Task: "Amend .github/workflows/plan.yml per T009"
+Task: "Amend .github/workflows/tasks.yml per T010"
+Task: "Amend .github/workflows/implement.yml per T011"
+Task: "Amend .github/workflows/finalize.yml per T012"
+Task: "Amend .github/workflows/cleanup.yml per T013"
+Task: "Amend .github/workflows/watchdog.yml per T014"
+Task: "Amend .github/workflows/pr-conversation.yml per T015"
+Task: "Amend .github/workflows/rebase.yml per T016"
+Task: "Amend .github/workflows/auto-update-spec-kit.yml per T017"
+Task: "Amend .github/workflows/metrics-persist.yml per T018"
+```
+
+---
+
+## Implementation Strategy
+
+### MVP First (User Story 1 Only)
+
+1. Complete Phase 1 (Setup) and Phase 2 (Foundational — the two blocking probes; this is the step this planning pass could not itself execute).
+2. Complete Phase 3 (User Story 1) per whichever outcome T006 recorded.
+3. **STOP and VALIDATE**: run Phase 4's scenarios in a scratch adopter repository.
+4. This alone (Phases 1–4) is the MVP: private-image reach, with the no-image/public-image defaults proven unchanged.
+
+### Incremental Delivery
+
+1. Phases 1–4 → MVP (private-image reach, all three shapes from one file set).
+2. Phase 5 → cloud-registry (ECR) minted-credential support, gated on P2's masking proof.
+3. Phase 6 → registry-agnostic-core verification (no new capability, a constraint check).
+4. Phase 7 → Gate 22 amendment, so the new shape is protected the same way the old one was.
+5. Phase 8 → documentation catches up to what Phases 3–7 shipped.
+6. Phase 9 → this repository dogfoods its own capability on a recurring schedule.
+7. Phase 10 → final cross-cutting gate run and SC checklist sweep.
+
+### Notes
+
+- Outcome 2 and Outcome 3 are not deferred work — they are the two alternate endings this feature was designed to have from the start (FR-026). Whichever one T006 records, the corresponding substitute tasks (T020/T021, T029, T041) are the complete path to a shippable state; none of them represents an unfinished feature.
+- Every per-file task in Phase 3 is a mechanical, byte-for-byte-identical edit (the same expression, added to every qualifying job) — the duplication is required by GitHub's own per-job `container:` schema (there is no composite-action indirection available for a job-level key), not a violation of `CLAUDE.md`'s "shared logic has exactly one home" rule, which governs shared `run:`/jq/shell logic, not required per-job YAML repetition Gate 22 already enforces byte-for-byte.
+
+## Maintainer Feedback (PR #286 review, charlesguse, 2026-09-07)
+
+Context: T002/T003 could not be dispatched by the implement stage's own tool allowlist, so Phase 2 stopped after recording that gap. The maintainer has since run both probes manually on real GitHub-hosted runners, on throwaway draft PR #285 (branch `probe/044-registry-credentials`, DO NOT MERGE — verified open, description matches the evidence below). This supersedes the cycle-1 "could not be dispatched" recording, per FR-016/User Story 5's evidence requirement.
+
+- [X] **M1** Replace the cycle-1 "could not be dispatched" paragraphs with the measured P1/P2 evidence (run URLs included), mirroring how PR #226 is recorded in specs/038:
+  - [X] research.md D3 outcome paragraph — replace with the P1.0-P1.5 table + conclusion (an expression-valued `credentials:` resolving to `{}` is accepted and suppresses login on both no-image and public-image paths; the populated branch logs in for real).
+  - [X] research.md D4 outcome paragraph — replace with the P2/A/P2.1-P2.4 table + conclusion (mask-at-mint + `needs.*.outputs.*` silently drops the output; only mint-without-mask forwarded as a `secrets:` value into a `uses:` callee arrives intact and masked).
+  - [X] research.md's T006 determination paragraph (in "Blocking prerequisite for tasks.md") — replace the non-dispatch recording with the real determination.
+  - [X] contracts/private-registry-credentials.md's P1.2 row and its masked-hand-off section — replace "Open" framing with the measured result.
+  - [X] Re-check T002-T006 in this file as done against the real evidence (superseding the existing "could not be dispatched" done-notes), citing run URLs 34162720565, 34162867583, 34163031300, 34163031595.
+  - [X] Do not merge or copy the probe files (`probe-044.yml`, `probe-044-callee.yml`, `probe-044-p2-followup.yml`) — they exist only on PR #285's branch; reference them by URL from research.md only. (Confirmed: no such files exist in this repository's tree.)
+- [X] **M2** Write the T006 determination explicitly as **FR-026 Outcome 1** (fully inferred from secrets, no opt-in stage input): P1 shows `container.credentials` resolving to `{}` is accepted and suppresses login on the no-image and public-image paths, while the populated branch performs a real login.
+- [X] **M3** Execute Phases 3, 4, 6, 7, 8, 9, and 10 under Outcome 1 (T007 onward as literally written in tasks.md's own contingency guide), with one addition to T032/Gate 22's amendment: Gate 46 (actionlint) rejects the expression-valued `credentials:` shape (`"credentials" section is scalar node but mapping node is expected`) even though GitHub evaluates it correctly — add an accounted allowance in `.github/scripts/verify-actionlint.py`, counted per binding site, the same way `release.yml`'s `environment.deployment` schema gap is already accounted for, so the allowance goes loudly stale (fails) if actionlint ever learns the shape. **Done**: Phases 3, 4, 6, 7, 8, 9, 10 (T007–T052, see each task's own done-note above) executed under Outcome 1. Gate 46's allowance covers both diagnostics the shape produces (`CRED_SCALAR`/`CRED_USERPASS`), counted per `credentials: >-` binding site (42, soon 43 automatically once T044's dogfood job is counted), with a self-test fixture proving the accounting fires on drift and goes stale correctly.
+- [X] **M4** Revise D8 and Phase 5 (the `wing-commander-ecr-credentials` composite, T026) to the **P2.3 shape** instead of the mask-at-mint design: the composite must NOT `::add-mask::` its own output and must never print it; the calling wrapper passes the output only as a `secrets:` value into the `uses:` call, where the callee's `secrets:` context masks it end-to-end. Document in the composite's description/adoption docs that consuming the value in a plain sibling step has no safe variant (mask-at-source drops the output per P2/A; mask-at-sink leaks it once in the step's `env:` header per P2.4). **Done**: research D8, the composite's own header/description, and `docs/adoption.md`'s ECR worked example all state the P2.3 shape and its no-safe-alternative warning.
+
+## Maintainer Feedback (PR #286 review, charlesguse, 2026-09-08)
+
+Context: third re-post of this change request; the previous three copies were classified but each fold was dropped before the act job ran (root cause: masked-substring output drop, tracked separately as #287). Item 4 from the original review (heredoc delimiter form for the ECR composite's password output) is already applied on the branch at commit 52ec38c and is not repeated here — see the classification's no-action entry.
+
+- [X] **N1** The dogfood check and the GHCR worked example must not use `GITHUB_TOKEN` (a `GITHUB_TOKEN` forwarded through a wrapper's `secrets:` block is scoped by the *callee* job's `permissions: {}`, so it carries no `packages: read` and a private pull is denied at `verify-image-prerequisites` before the credential binding is exercised — P1.4 on PR #285 measured a single-workflow job with `packages: read`, never this called-workflow shape).
+  - [X] Rewrite `.github/workflows/wing-commander-private-image-dogfood.yml` to pass `secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME`/`WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD` (a token with `read:packages`) as `secrets.container-registry-username`/`container-registry-password`, instead of `github.actor`/`secrets.GITHUB_TOKEN`. **Done**: also dropped the now-unnecessary `permissions: packages: read` job grant (a PAT secret needs no workflow-token permission) and folded in N2's image-variable gating in the same edit.
+  - [X] Rewrite the D9 GHCR worked example in `docs/adoption.md` (~L940-955) the same way. **Done**: heading/prose changed from "no adapter, no long-lived secret" to "no OIDC/cloud-role adapter" (a manually issued PAT is long-lived), the `permissions: packages: read` block removed (not needed for a PAT), and the failure mode named inline.
+  - [X] Record why `GITHUB_TOKEN` does not work through a called workflow in research.md D9/D10. **Done**: both sections gained a dated "Revision (2026-09-08, PR #286 review N1/N2)" paragraph explaining the calling-job-vs-callee-job token-scope boundary and pointing at P1.4's narrower (single-workflow) measurement.
+- [X] **N2** Do not hard-code the dogfood image or install a cron that fails until someone configures it.
+  - [X] Add a repository variable `WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE`; use it in place of the hard-coded `ghcr.io/<owner>/wing-commander-dogfood:latest` in the wrapper. **Done**.
+  - [X] Gate the wrapper's `dogfood` job on `vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE != ''` so the scheduled run is a no-op until the image and both secrets exist. **Done**, mirroring the existing `WATCHDOG_PAUSED`/`METRICS_PAUSED`/`AUTO_UPDATE_SPEC_KIT_PAUSED` job-level `if:` pattern already used by three other wrappers in this repository.
+  - [X] Document the variable and the two secrets in `docs/setup.md`'s tables. **Done**: new `WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE` row in the variables table; the existing registry-secret rows extended with N5's masking note (they already existed generically — this feature's dogfood check is one more consumer of the same two secrets, not a new secret pair).
+  - [X] Add the stage/wrapper pair to `docs/architecture.md` next to the other scheduled pairs. **Done**: new "Private-image dogfood" `##` section added immediately before "Reusability", alongside Rebase and Auto-Update Spec Kit — the other two unnumbered, event-driven, outside-the-chain sections with their own scheduled wrappers.
+  - [X] Keep T046/T048 as post-merge manual tasks (unchanged). **Confirmed unchanged** — still open in Phase 9 above, blocked on tooling this run doesn't have.
+- [X] **N3** `wing-commander-ecr-credentials`: the `registry` input is declared but never consumed by the mint step.
+  - [X] Either emit a `registry` output the wrapper can use to build its image reference, or remove the input. **Done**: kept the input (FR-013's contract names it) and added a `registry` output — `inputs.registry` verbatim when set, else computed from `aws sts get-caller-identity` against the same assumed role and `aws-region`.
+  - [X] Record in research D8 why the override is void for ECR. **Done**: new paragraph explains `get-login-password` has no registry-override parameter, so the input stays void for authentication itself, while the new output gives it a real, separate use.
+  - [X] Bring D8's prose in line with the shipped mint step (commit 52ec38c already updated D8's code sample; the paragraph after it still describes the old masking approach). **Done**: the stale "Note on the `::add-mask::` line surviving in the mint step itself" paragraph (describing a line that commit 52ec38c had already deleted from both the action and the code sample) replaced with a paragraph matching the shipped step — no masking anywhere in it, by design.
+- [X] **N4** Run `python .github/scripts/run-local-gates.py` after N1-N3 land; confirm Gate 7/22/23 still pass for the dogfood stage with the variable-driven image. **Done**: 61/61 gates pass, including `verify-gate-7.py`, `verify-gate-22.py`, `verify-gate-23.py`, and `verify-gate-23.py --selftest`. `actionlint` run on the changed wrapper file alone (`wing-commander-private-image-dogfood.yml`) reports zero findings; the pre-existing `credentials:`/composite-action-shape diagnostics on the two files carrying those shapes are unrelated to this change (already accounted for, per Gate 46/M3). `review-step-gating` walked the wrapper's new job-level `if:`: no steps sit below it in that job (the job's only content is a `uses:` call to the reusable stage), there is no `continue-on-error` involved, and no downstream job depends on it, so there is no stranded-step or skip-propagation risk — this is the same plain opt-in job gate shape already used by `WATCHDOG_PAUSED`/`METRICS_PAUSED`/`AUTO_UPDATE_SPEC_KIT_PAUSED`.
+- [X] **N5** Document the output-masking constraint.
+  - [X] Add to `docs/setup.md`'s secrets table and to `docs/adoption.md` next to the GHCR example: the registry username must not be a string that appears in ordinary pipeline output, in particular a GitHub login, because both registry values are masked in every job of every stage and a job output containing masked text is dropped by the runner; GHCR authenticates by the token alone, so any placeholder username works there. **Done** in both files.
+  - [X] Record in research D9 that this PR's fold was dropped three times for that reason (once from the username matching the maintainer's login, twice from review/repository text the runner's masker treats as a credential), with a pointer to #287, which tracks the pipeline-side hardening. **Done**.
+  - [X] Do not put example tokens of the masked shape in the docs or in research; describe them in words. **Confirmed**: no literal token/secret-shaped example values were added anywhere in this pass — only a suggested plain placeholder username (`x-access-token`), described in prose.
+
+## Phase 11: Convergence
+
+**Purpose**: `/speckit-converge` (2026-09-08, after the PR #286 review N1-N5 fold) assessed the current codebase against spec.md/plan.md/tasks.md and found that the N1/N3 code fixes above were not mirrored into two artifacts that also document the same worked example and contract surface, leaving them contradicting the corrected mechanism.
+
+- [X] T053 Update `contracts/private-registry-credentials.md`'s repository-scoped-token worked example (D9 section, ~L172-185) and its FR-027 dogfood section (~L228-236) to use `secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME`/`WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD` instead of `github.actor`/`secrets.GITHUB_TOKEN`, dropping the now-unneeded `packages: read` note, matching the corrections already made to `docs/adoption.md`, `research.md` D9/D10, and `.github/workflows/wing-commander-private-image-dogfood.yml` per FR-023, FR-027 (contradicts). **Done**: worked example rewritten with the PAT-secret shape and the GITHUB_TOKEN failure explanation; FR-027 section updated to name the two repository secrets and the `WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE` gating variable instead of GITHUB_TOKEN.
+- [X] T054 Update `specs/044-private-registry-credentials/quickstart.md`'s Scenario 7 (~L111-119) the same way — a reader following it verbatim today would reach a pull denied at `verify-image-prerequisites`, not a working run, contradicting SC-008 (contradicts). **Done**: Scenario 1 rewritten to the PAT-secret shape with the GITHUB_TOKEN failure explanation, dropping the `packages: read` step.
+- [X] T055 Add the `registry` output (PR #286 review N3) to `contracts/private-registry-credentials.md`'s `wing-commander-ecr-credentials` field table (~L166-167), so the contract's documented surface matches the shipped composite action per FR-013's "inputs and outputs are part of that surface and are maintained as such" (partial). **Done**: `registry` output row added to the field table, and the `registry` input's row now notes it is void for authentication and consumed only to build the output, matching the shipped action.yml.

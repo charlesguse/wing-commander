@@ -14,6 +14,8 @@ repurpose these without a major version bump (see [versioning.md](versioning.md)
 | `anthropic-api-key` | one of the two Claude credentials (agent stages) |
 | `speckit-app-id` | yes — GitHub App identity for pushes/PRs/comments |
 | `speckit-app-private-key` | yes |
+| `container-registry-username` | no — meaningful only when `container-image` is set. Reaches every job of the stage, not only the `verify-image-prerequisites` check ([`specs/044-private-registry-credentials/`](../../044-private-registry-credentials/contracts/private-registry-credentials.md)). Supplying neither this nor `container-registry-password`, or only one, is inert everywhere — no login is attempted. |
+| `container-registry-password` | no — same as above. Can be a static value or a short-lived token minted by the caller's own wrapper step, before its `uses:` call to the stage. |
 
 Credential behavior: see [credentials.md](credentials.md).
 

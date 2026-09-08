@@ -122,7 +122,6 @@ jobs:
           REQUIRED_TOOLS="git gh jq curl python3 bash node timeout"
 
           if [ -n "$REGISTRY_USERNAME" ] && [ -n "$REGISTRY_PASSWORD" ]; then
-            echo "::warning::wing-commander verify-image-prerequisites: registry credentials were supplied. They authenticate this check only -- the stage's other jobs pull with whatever authentication their runner already has. For a private image, use a runner that is logged in to the registry."
             candidate=""
             case "$IMAGE" in
               */*) candidate="${IMAGE%%/*}" ;;
@@ -168,6 +167,12 @@ jobs:
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
+      credentials: >-
+        ${{
+          (secrets.container-registry-username != '' && secrets.container-registry-password != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
+            || fromJSON('{}')
+        }}
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
