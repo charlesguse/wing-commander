@@ -529,9 +529,9 @@ runs:
     - id: mint
       shell: bash
       run: |
-        password="$(aws ecr get-login-password --region "${{ inputs.aws-region }}")"
-        echo "::add-mask::$password"
-        echo "password=$password" >> "$GITHUB_OUTPUT"
+        token="$(aws ecr get-login-password --region "${{ inputs.aws-region }}")"
+        delim="wc_$(openssl rand -hex 16)"
+        { printf 'password<<%s\n%s\n%s\n' "$delim" "$token" "$delim"; } >> "$GITHUB_OUTPUT"
         echo "username=AWS" >> "$GITHUB_OUTPUT"
 ```
 

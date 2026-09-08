@@ -80,6 +80,15 @@ runs:
         # this role pull access via a repository policy). The input exists
         # so the caller's own wrapper can document/construct that host; it
         # is not consumed here.
-        password="$(aws ecr get-login-password --region "$AWS_REGION")"
-        echo "password=$password" >> "$GITHUB_OUTPUT"
+        #
+        # The password output is written with the heredoc delimiter form
+        # (random delimiter, per the GITHUB_OUTPUT multiline contract) so a
+        # value containing a newline can neither truncate the output nor
+        # smuggle additional keys. The shell variable is deliberately not
+        # named `password`: the runner's log masker redacts any key=value
+        # token whose key is a password-like word (research D9), and a job
+        # output containing masked text is dropped wholesale.
+        token="$(aws ecr get-login-password --region "$AWS_REGION")"
+        delim="wc_$(openssl rand -hex 16)"
+        { printf 'password<<%s\n%s\n%s\n' "$delim" "$token" "$delim"; } >> "$GITHUB_OUTPUT"
         echo "username=AWS" >> "$GITHUB_OUTPUT"
