@@ -163,26 +163,37 @@ it as shown above.
 | Field | Value |
 |---|---|
 | Location | `.github/actions/wing-commander-ecr-credentials/action.yml` — published contract, referenced by no stage |
-| Inputs | `aws-role-arn` (required), `aws-region` (required), `registry` (optional override) |
-| Outputs | `username` (fixed `"AWS"`), `password` (short-lived token; **not** masked at this source — safe only when the caller forwards it as a `secrets:` value into a `uses:` call, per P2.3) |
+| Inputs | `aws-role-arn` (required), `aws-region` (required), `registry` (optional override — void for authentication itself, since `get-login-password` takes no registry-override parameter; consumed instead to build the `registry` output below) |
+| Outputs | `username` (fixed `"AWS"`), `password` (short-lived token; **not** masked at this source — safe only when the caller forwards it as a `secrets:` value into a `uses:` call, per P2.3), `registry` (resolved ECR registry host for building `container-image`: `inputs.registry` verbatim if set, else computed from `aws sts get-caller-identity` against the assumed role and `aws-region`) |
 | Long-lived credential | None required or stored — OIDC role assumption only (`aws-actions/configure-aws-credentials@v4`) |
 | Caller-side permission | The adopter's own wrapper job must declare `id-token: write` (for OIDC) — the pipeline requests no new permission for itself (spec Edge Cases) |
 | Contract stability | Once shipped, inputs/outputs are maintained as published contract surface (FR-013's own text) — not a convenience that can silently narrow |
 
 ## Repository-scoped-token worked example (research D9) — reaches every job, per P1's measured Outcome 1
 
+`GITHUB_TOKEN` does **not** work for this shape: forwarding
+`secrets.GITHUB_TOKEN` through a wrapper job's own `secrets:` block into a
+`uses:` call carries that *calling* job's token, but the pull happens
+inside the *called* stage's own job, which never receives the caller's
+`packages: read` grant through that hand-off — the pull is rejected before
+the credential binding is even exercised (research D9/D10, measured against
+real runners; P1.4 only measured the narrower single-workflow shape). Use a
+personal access token with `read:packages` scope instead, stored as this
+repository's own `WING_COMMANDER_CONTAINER_REGISTRY_USERNAME`/
+`WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD` secrets:
+
 ```yaml
 with:
   container-image: ghcr.io/${{ github.repository_owner }}/<private-package>:latest
 secrets:
-  container-registry-username: ${{ github.actor }}
-  container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+  container-registry-username: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME }}
+  container-registry-password: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD }}
 ```
 
-Requires `packages: read` in the calling wrapper job's own `permissions:`
-block. No adapter, no extra wrapper job, no long-lived secret — the
-no-adapter path FR-023/FR-010/SC-005 all require at least one worked example
-of.
+No adapter, no extra wrapper job — the no-adapter path FR-023/FR-010/SC-005
+all require at least one worked example of. GHCR authenticates on the token
+alone, so the username can be any placeholder value; do not use a GitHub
+login as the username (research D9's masking-collision finding, #287).
 
 ## `verify-image-prerequisites` — unchanged role, updated messaging (research D6)
 
@@ -230,10 +241,17 @@ expression is mismatched.
 One new workflow, scheduled and `workflow_dispatch`-triggered (mirroring
 `auto-update-spec-kit.yml`), separate from every lifecycle stage, pulling a
 new private GHCR package scoped to this repository through the exact
-binding this contract ships, authenticated with `secrets.GITHUB_TOKEN` (or a
-repository secret, if needed) — no cloud account or cloud-registry identity
-owned by this repository. This repository's own lifecycle stages are not
-moved onto this image.
+binding this contract ships, authenticated with this repository's own
+`WING_COMMANDER_CONTAINER_REGISTRY_USERNAME`/
+`WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD` secrets — not
+`secrets.GITHUB_TOKEN`, which does not carry the calling job's `packages:
+read` grant across a `uses:` call into the callee's own job (research
+D9/D10) — no cloud account or cloud-registry identity owned by this
+repository. The wrapper is gated on a
+`WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE` repository variable being
+non-empty, so a repository that has not yet built and pushed the dogfood
+image gets a clean no-op instead of a permanently failing scheduled run.
+This repository's own lifecycle stages are not moved onto this image.
 
 ## Non-goals (unchanged from specs/038, restated for this contract's boundary)
 

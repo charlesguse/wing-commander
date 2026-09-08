@@ -112,8 +112,15 @@ confirm the shipped feature once those probes have picked a mechanism. See
 
 1. Follow `docs/adoption.md`'s worked example verbatim: `container-image:
    ghcr.io/<owner>/<private-package>`, `container-registry-username:
-   github.actor`, `container-registry-password: secrets.GITHUB_TOKEN`, with
-   `packages: read` granted to the calling job.
+   secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME`,
+   `container-registry-password:
+   secrets.WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD` — a personal access
+   token with `read:packages` scope, stored as the repository's own
+   secrets. `github.actor`/`secrets.GITHUB_TOKEN` does **not** work for this
+   shape: the token's scope is fixed by the calling job's permissions, and a
+   job whose only step is a reusable-workflow `uses:` call never carries
+   that grant into the pull that happens inside the callee's own job
+   (research D9/D10).
 2. **Expected**: a reader following the documentation alone reaches a
    working private-image run with no adapter and no extra wrapper job
    (SC-008).
