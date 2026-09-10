@@ -413,14 +413,29 @@ def case_cost_line_formatter_has_exactly_one_home():
              "output")
 
 
+def _pins_bash(shell):
+    """True if a `shell:` value pins bash -- either the bare `bash` keyword
+    or a custom command-template whose program is bash (e.g. `bash
+    --noprofile --norc -eo pipefail {0}`, which is what GitHub itself
+    expands the bare keyword to; a step that spells that out explicitly is
+    no less protected than one that writes `bash`)."""
+    return bool(shell) and shell.split()[0] == "bash"
+
+
 def case_container_pipefail_steps_pin_shell_bash():
     """Every `run:` step in a caller-supplied-container job whose body
     calls `set ... pipefail` must declare `shell: bash` (directly, or via
-    the job's `defaults: run: shell:`) -- see the module docstring for the
-    "Illegal option -o pipefail" failure this prevents and why the check
-    is scoped to the general pipefail-bearing class rather than to steps
-    named "Compute cost line" (the version of this check PR #293 shipped
-    first).
+    a job- or workflow-level `defaults: run: shell:`) -- see the module
+    docstring for the "Illegal option -o pipefail" failure this prevents
+    and why the check is scoped to the general pipefail-bearing class
+    rather than to steps named "Compute cost line" (the version of this
+    check PR #293 shipped first).
+
+    A step's own `shell:` always wins over its job's `defaults:`, which in
+    turn wins over the workflow's `defaults:` -- the same precedence
+    Actions itself uses, not an OR of all three: a step that explicitly
+    opts into a non-bash shell must not be marked covered just because its
+    job happens to default to bash.
 
     Scoped to every workflow except KNOWN_PIPEFAIL_SHELL_GAP_WORKFLOWS --
     that gap is real (found by this same review) and tracked as separate
@@ -432,6 +447,7 @@ def case_container_pipefail_steps_pin_shell_bash():
     for path, doc in sorted(docs.items()):
         if doc is None or path in KNOWN_PIPEFAIL_SHELL_GAP_WORKFLOWS:
             continue
+        workflow_shell = ((doc.get("defaults") or {}).get("run") or {}).get("shell")
         for job in (doc.get("jobs") or {}).values():
             job = job or {}
             container = job.get("container")
@@ -445,17 +461,20 @@ def case_container_pipefail_steps_pin_shell_bash():
                 if not run or not PIPEFAIL_RE.search(str(run)):
                     continue
                 covered += 1
-                if not (step.get("shell") == "bash" or job_shell == "bash"):
+                effective_shell = step.get("shell") or job_shell or workflow_shell
+                if not _pins_bash(effective_shell):
                     missing.append(f"{path}: {step.get('name')!r}")
     scanned = len(docs) - len(KNOWN_PIPEFAIL_SHELL_GAP_WORKFLOWS)
     if missing:
         fail(case, "every `run:` step that calls `set ... pipefail` inside "
                    "a job whose container image is caller-supplied must "
-                   "declare `shell: bash` (directly, or via the job's "
-                   "`defaults: run: shell:`) -- without it, an adopter "
-                   "image resolving to a non-bash default shell hits "
-                   "\"Illegal option -o pipefail\" before the step writes "
-                   "its output. Missing on: " + ", ".join(missing))
+                   "declare `shell: bash` (directly, a job- or "
+                   "workflow-level `defaults: run: shell:`, or a custom "
+                   "shell command template whose program is bash) -- "
+                   "without it, an adopter image resolving to a non-bash "
+                   "default shell hits \"Illegal option -o pipefail\" "
+                   "before the step writes its output. Missing on: "
+                   + ", ".join(missing))
     elif covered == 0:
         fail(case, f"found zero pipefail-bearing steps in any "
                    f"caller-supplied-container job across {scanned} scanned "
