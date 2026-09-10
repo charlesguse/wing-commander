@@ -997,6 +997,7 @@ jobs:
       # new comment -- see specs/043-durable-metrics-record/data-model.md.
       - name: Compute cost line (classify)
         id: cost-line-classify
+        shell: bash
         if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && always() && steps.agent.outcome != 'skipped'
         env:
           COST_LINE: ${{ steps.metrics-summary-classify.outputs.cost-line }}
@@ -1991,6 +1992,7 @@ jobs:
 
       - name: Compute cost line (act)
         id: cost-line-act
+        shell: bash
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && always() && steps.agent.outcome != 'skipped'
         env:
           COST_LINE: ${{ steps.metrics-summary-act.outputs.cost-line }}

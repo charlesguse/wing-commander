@@ -26,6 +26,20 @@ NO other home: it was once pasted into 12 "Compute cost line" run-blocks
 across 9 stage workflows, where a rounding fix would have had to land 12
 times with nothing failing on a drifted copy. A copy reappearing in any
 workflow OR composite action under .github/actions/ fails here.
+
+Every "Compute cost line" call site also runs inside a job whose
+`container: image:` is a caller-supplied input, never one this repo
+controls (implement.yml's verify-image-prerequisites checks a tool only
+for PRESENCE, not for which shell Actions resolves by default inside that
+image). None of these `run:` steps declared a `shell:` key, so each one's
+own `set -uo pipefail` line ran under whatever shell Actions picked for
+that container -- on an adopter image without bash reachable the way
+Actions expects, that can be `sh`, which does not understand `-o
+pipefail` and dies with "Illegal option -o pipefail" before the step ever
+writes its output. Every call site now pins `shell: bash` so the step
+runs under the same bash `required-tools.txt` already requires the image
+to carry, independent of container shell-resolution; this gate keeps a
+future call site from being added without it.
 """
 import json
 import os
@@ -333,6 +347,48 @@ def case_cost_line_formatter_has_exactly_one_home():
              "output")
 
 
+def case_cost_line_steps_pin_shell_bash():
+    """Every "Compute cost line" step must declare `shell: bash` explicitly.
+
+    These steps run inside a job whose `container: image:` is a caller
+    input (an adopter's own image), never one this repo controls. A `run:`
+    step with no `shell:` key has its shell resolved by Actions from
+    whatever that container offers; on an image without bash on the
+    resolution path that can be `sh`, and this step's own
+    `set -uo pipefail` line is not valid POSIX sh, so the step dies with
+    "Illegal option -o pipefail" before it ever writes its output --
+    exactly the failure a prior run against a consuming project's image
+    hit, and the reason every call site now pins `shell: bash`."""
+    case = "cost-line steps pin shell: bash"
+    import yaml as _yaml
+    missing = []
+    wf_dir = ".github/workflows"
+    for name in sorted(os.listdir(wf_dir)):
+        if not name.endswith((".yml", ".yaml")):
+            continue
+        path = os.path.join(wf_dir, name)
+        try:
+            doc = _yaml.safe_load(open(path, encoding="utf-8")) or {}
+        except _yaml.YAMLError:
+            continue
+        for job in (doc.get("jobs") or {}).values():
+            for step in (job or {}).get("steps") or []:
+                step_name = (step or {}).get("name") or ""
+                if not step_name.startswith("Compute cost line"):
+                    continue
+                if step.get("shell") != "bash":
+                    missing.append(f"{path}: {step_name!r}")
+    if missing:
+        fail(case, "every \"Compute cost line\" step must declare "
+                   "`shell: bash` -- it runs inside a job whose container "
+                   "image is an adopter's own, and without an explicit "
+                   "shell: key the step's `set -uo pipefail` line can land "
+                   "on a shell that rejects pipefail. Missing on: "
+                   + ", ".join(missing))
+    else:
+        note("every \"Compute cost line\" step pins shell: bash")
+
+
 CASES = [
     case_healthy_transcript_emits_a_valid_record,
     case_missing_transcript_degrades,
@@ -340,6 +396,7 @@ CASES = [
     case_unparseable_transcript_degrades,
     case_repeated_invocation_in_one_job_gets_distinct_record_keys,
     case_cost_line_formatter_has_exactly_one_home,
+    case_cost_line_steps_pin_shell_bash,
 ]
 
 

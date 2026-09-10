@@ -897,6 +897,7 @@ jobs:
       # per-run cost line (FR-031c) -- see specs/043-durable-metrics-record/data-model.md.
       - name: Compute cost line (cycle)
         id: cost-line-cycle
+        shell: bash
         if: always() && steps.cycle.outcome != 'skipped'
         env:
           COST_LINE: ${{ steps.metrics-summary-cycle.outputs.cost-line }}
@@ -1313,6 +1314,7 @@ jobs:
 
       - name: Compute cost line (retry)
         id: cost-line-retry
+        shell: bash
         if: always() && steps.retry.outcome != 'skipped'
         env:
           COST_LINE: ${{ steps.metrics-summary-retry.outputs.cost-line }}
@@ -1790,6 +1792,7 @@ jobs:
 
       - name: Compute cost line (progress)
         id: cost-line-progress
+        shell: bash
         if: always() && steps.progress.outcome != 'skipped'
         env:
           COST_LINE: ${{ steps.metrics-summary-progress.outputs.cost-line }}
