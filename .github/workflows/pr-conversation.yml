@@ -424,6 +424,7 @@ jobs:
       # not merely unauthorized (FR-018).
       - name: Resolve PR identity and check qualification
         id: identity
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ inputs.pr-number }}
@@ -643,6 +644,7 @@ jobs:
       # pass entirely for this event when a match is found.
       - name: Check for relay confirmation
         id: relay-resume
+        shell: bash
         if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -1067,6 +1069,7 @@ jobs:
       # spent on a leg that only posts a link (FR-020).
       - name: Compute confirmation requirements
         id: confirm
+        shell: bash
         if: steps.schema-check.outputs.ok == 'true' || steps.relay-resume.outputs.resumed == 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -1261,6 +1264,7 @@ jobs:
       # parses back out of this comment (data-model.md IntentAnnouncement,
       # research.md D10).
       - name: Post intent announcements
+        shell: bash
         if: steps.confirm.outputs.classifications != ''
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -1312,6 +1316,7 @@ jobs:
       # problem) rather than the bare `origin` remote.
       - name: Read branch tip before folding
         id: base-sha
+        shell: bash
         if: steps.identity.outputs.qualifies == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1517,6 +1522,7 @@ jobs:
       # this gate.
       - name: Relayed-request risk-confirmation gate
         id: relay-gate
+        shell: bash
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           PR_NUMBER: ${{ inputs.pr-number }}
@@ -1604,6 +1610,7 @@ jobs:
       # classify-and-announce.
       - name: Resolve effective category and route
         id: route
+        shell: bash
         if: steps.relay-gate.outputs.proceed == 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -2025,6 +2032,7 @@ jobs:
       # `gh workflow run` (that call, and the "fold all before any dispatch"
       # guarantee it protects, moved out of the per-leg matrix entirely).
       - name: Reply confirming fold-in (no dispatch)
+        shell: bash
         if: >-
           steps.act-result.outputs.mutated == 'true' &&
           (steps.route.outputs.effective-category == 'in-scope-change' ||
@@ -2057,6 +2065,7 @@ jobs:
       # complete the tasks.md append/commit/push) still needs a PR reply,
       # and this is the only step that posts one for a non-dispatch outcome.
       - name: Report mutation outcome
+        shell: bash
         if: >-
           steps.agent-verdict.outputs.verdict == 'healthy' && steps.act-result.outputs.mutated != '' &&
           !(steps.act-result.outputs.mutated == 'true' &&
@@ -2102,6 +2111,7 @@ jobs:
       # (after replying on the PR) when neither source produces one. An
       # unrecorded spin-off can therefore no longer pass silently.
       - name: Post outstanding task item on the lifecycle issue
+        shell: bash
         if: steps.act-result.outputs.artifact-url != ''
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -2126,6 +2136,7 @@ jobs:
       # T022/T023/T033 (FR-009/FR-010/FR-025): no mutation, no artifact — the
       # content was already fully drafted by classify (T006).
       - name: Reply for question, needs-info, or push-back
+        shell: bash
         if: steps.relay-gate.outputs.proceed == 'true' && contains(fromJSON('["question","needs-info","push-back"]'), matrix.category)
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -2177,6 +2188,7 @@ jobs:
       # leg only exists because classify-and-announce's own actor gate
       # (T004) already passed.
       - name: Stop procedure
+        shell: bash
         if: steps.relay-gate.outputs.proceed == 'true' && matrix.category == 'stop'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -2382,6 +2394,7 @@ jobs:
       # nothing to dispatch (US1 AS-none, gate-coverage-042.md scenario 6).
       - name: Read branch tip after folding
         id: tip
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ needs.classify-and-announce.outputs.slug }}
@@ -2405,6 +2418,7 @@ jobs:
       # same range this decision is made from, so the PR comment's list and
       # the dispatch decision can never disagree.
       - name: Dispatch implement once for the whole review
+        shell: bash
         if: steps.tip.outputs.sha != needs.classify-and-announce.outputs.base-sha && steps.tip.outputs.sha != ''
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -2547,6 +2561,7 @@ jobs:
 
       - name: Read branch tip for outcome check
         id: tip
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ needs.classify-and-announce.outputs.slug }}
@@ -2569,6 +2584,7 @@ jobs:
       # (T010's per-instance name), and reads its GitHub-set `conclusion` —
       # never a value the leg's own steps had to publish (FR-006a).
       - name: Report fold-route leg outcomes
+        shell: bash
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ACTIONS_TOKEN: ${{ github.token }}
@@ -2729,6 +2745,7 @@ jobs:
       # be updated" branch (research.md D5) handles that gracefully.
       - name: Resolve PR identity independently
         id: identity
+        shell: bash
         if: needs.classify-and-announce.outputs.refusal-reason == ''
         continue-on-error: true
         env:

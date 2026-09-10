@@ -1680,6 +1680,7 @@ jobs:
       # than a missing progress comment.
       - name: Post progress comment
         id: progress-post
+        shell: bash
         if: steps.progress.outcome != 'skipped'
         continue-on-error: true
         env:

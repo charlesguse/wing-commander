@@ -845,6 +845,7 @@ jobs:
       # recorded one).
       - name: Assemble PR body
         id: body
+        shell: bash
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
         env:
           CONVERGED: ${{ inputs.converged }}
@@ -1113,6 +1114,7 @@ jobs:
       # not swallowed.
       - name: Request re-review from the answered reviewer(s)
         id: re-review
+        shell: bash
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.pr-state == 'open'
         continue-on-error: true
         env:
