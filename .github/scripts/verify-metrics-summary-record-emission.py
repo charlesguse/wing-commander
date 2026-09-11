@@ -48,9 +48,16 @@ fix already touches (rebase.yml's "Attempt rebase", pr-conversation.yml's
 PR-identity/qualification and act/dispatch/report steps, and others) --
 patched alongside the original 12. `case_container_pipefail_steps_pin_shell_bash`
 below checks the general class, not just the one step name, across every
-workflow except a tracked, commented exclusion list -- so a future
-`set ... pipefail` step anywhere in scope fails this gate at PR time
-without waiting for it to crash against a real adopter image first.
+workflow -- so a future `set ... pipefail` step anywhere in scope fails
+this gate at PR time without waiting for it to crash against a real
+adopter image first.
+
+That same review found 65 more sites carrying the identical gap in
+watchdog.yml and auto-update-spec-kit.yml -- large enough that fixing them
+was scoped out of PR #293 and tracked as its own follow-up, with the two
+files temporarily excluded from this case so it could ship without
+failing on debt it didn't create. That follow-up has since landed: both
+files are fixed and the case now checks every workflow with no exclusions.
 """
 import json
 import os
@@ -79,18 +86,6 @@ TRANSCRIPT_NAME = "claude-execution-output.json"
 # so forms like `set -e -o pipefail` or `set -o errexit -o pipefail` are
 # caught too, not just `set -eo pipefail` / `set -o pipefail`.
 PIPEFAIL_RE = re.compile(r"\bset\b[^\n;&|]*\bpipefail\b")
-
-# Workflows already known (PR #293's review, #298-ish latent-step count) to
-# carry the same caller-supplied-container / no-shell / pipefail exposure
-# case_container_pipefail_steps_pin_shell_bash checks for, but not yet
-# audited and fixed -- a much larger, separate sweep (65 sites across these
-# two files alone). Excluded here so THIS gate stays green while that sweep
-# is tracked as its own follow-up, rather than silently narrowing the check
-# to hide them or failing the build on debt this change didn't create.
-KNOWN_PIPEFAIL_SHELL_GAP_WORKFLOWS = {
-    ".github/workflows/watchdog.yml",
-    ".github/workflows/auto-update-spec-kit.yml",
-}
 
 failures = []
 MUTATING = False
@@ -434,15 +429,15 @@ def case_container_pipefail_steps_pin_shell_bash():
     always wins over its job's `defaults:`, which wins over the
     workflow's, never an OR of all three).
 
-    Scoped to every workflow except KNOWN_PIPEFAIL_SHELL_GAP_WORKFLOWS --
-    that gap is real (found by this same review) and tracked as separate
-    follow-up work, not silently hidden or fixed as a side effect here."""
+    Scoped to every workflow in the repo -- see the module docstring for
+    the watchdog.yml / auto-update-spec-kit.yml follow-up that closed the
+    last exclusions."""
     case = "container-bound pipefail steps pin shell: bash"
     docs = _workflow_docs(case)
     covered = 0
     missing = []
     for path, doc in sorted(docs.items()):
-        if doc is None or path in KNOWN_PIPEFAIL_SHELL_GAP_WORKFLOWS:
+        if doc is None:
             continue
         for job in (doc.get("jobs") or {}).values():
             job = job or {}
@@ -456,7 +451,7 @@ def case_container_pipefail_steps_pin_shell_bash():
                 covered += 1
                 if not pins_bash(effective_shell(step, job, doc)):
                     missing.append(f"{path}: {step.get('name')!r}")
-    scanned = len(docs) - len(KNOWN_PIPEFAIL_SHELL_GAP_WORKFLOWS)
+    scanned = len(docs)
     if missing:
         fail(case, "every `run:` step that calls `set ... pipefail` inside "
                    "a job whose container image is caller-supplied must "
