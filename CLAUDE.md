@@ -10,6 +10,9 @@ lint-workflows.yml actually invokes, so it is the same set CI runs:
 A change that touches any `if:`, `continue-on-error:`, or failing step in a
 workflow should also get a pass from the `review-step-gating` skill.
 
+A change that adds a `container:` block to a job, or a `run:` step inside
+one, should also get a pass from the `container-shell-safety` skill.
+
 ## Shared logic has exactly one home
 
 Before pasting a `run:` block, jq program, or shell helper into a second

@@ -66,6 +66,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_gate_registry import workflow_files  # noqa: E402
 from wc_shell_harness import (  # noqa: E402
     ensure_jq, find_step, resolve_bash, run_step, use_utf8_stdout)
+from wc_shell_pin import effective_shell, is_container_bound, pins_bash  # noqa: E402
 
 ACTION = ".github/actions/wing-commander-metrics-summary/action.yml"
 STEP_NAME = "Render agent run metrics summary"
@@ -413,15 +414,6 @@ def case_cost_line_formatter_has_exactly_one_home():
              "output")
 
 
-def _pins_bash(shell):
-    """True if a `shell:` value pins bash -- either the bare `bash` keyword
-    or a custom command-template whose program is bash (e.g. `bash
-    --noprofile --norc -eo pipefail {0}`, which is what GitHub itself
-    expands the bare keyword to; a step that spells that out explicitly is
-    no less protected than one that writes `bash`)."""
-    return bool(shell) and shell.split()[0] == "bash"
-
-
 def case_container_pipefail_steps_pin_shell_bash():
     """Every `run:` step in a caller-supplied-container job whose body
     calls `set ... pipefail` must declare `shell: bash` (directly, or via
@@ -431,11 +423,12 @@ def case_container_pipefail_steps_pin_shell_bash():
     rather than to steps named "Compute cost line" (the version of this
     check PR #293 shipped first).
 
-    A step's own `shell:` always wins over its job's `defaults:`, which in
-    turn wins over the workflow's `defaults:` -- the same precedence
-    Actions itself uses, not an OR of all three: a step that explicitly
-    opts into a non-bash shell must not be marked covered just because its
-    job happens to default to bash.
+    Shell precedence and the caller-supplied-container test both come from
+    wc_shell_pin -- shared with the container-shell-safety skill's
+    unpinned-container-steps.py so the two cannot independently drift on
+    what "covered" or "caller-supplied" means (a step's own `shell:`
+    always wins over its job's `defaults:`, which wins over the
+    workflow's, never an OR of all three).
 
     Scoped to every workflow except KNOWN_PIPEFAIL_SHELL_GAP_WORKFLOWS --
     that gap is real (found by this same review) and tracked as separate
@@ -447,22 +440,17 @@ def case_container_pipefail_steps_pin_shell_bash():
     for path, doc in sorted(docs.items()):
         if doc is None or path in KNOWN_PIPEFAIL_SHELL_GAP_WORKFLOWS:
             continue
-        workflow_shell = ((doc.get("defaults") or {}).get("run") or {}).get("shell")
         for job in (doc.get("jobs") or {}).values():
             job = job or {}
-            container = job.get("container")
-            if not isinstance(container, dict) or \
-                    "inputs.container-image" not in str(container.get("image", "")):
+            if not is_container_bound(job):
                 continue
-            job_shell = ((job.get("defaults") or {}).get("run") or {}).get("shell")
             for step in job.get("steps") or []:
                 step = step or {}
                 run = step.get("run")
                 if not run or not PIPEFAIL_RE.search(str(run)):
                     continue
                 covered += 1
-                effective_shell = step.get("shell") or job_shell or workflow_shell
-                if not _pins_bash(effective_shell):
+                if not pins_bash(effective_shell(step, job, doc)):
                     missing.append(f"{path}: {step.get('name')!r}")
     scanned = len(docs) - len(KNOWN_PIPEFAIL_SHELL_GAP_WORKFLOWS)
     if missing:
