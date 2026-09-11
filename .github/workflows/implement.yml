@@ -939,6 +939,7 @@ jobs:
       # record advancing, takes today's failed path unchanged.
       - name: Read back cycle outcome
         id: outcome
+        shell: bash
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
         env:
           SLUG: ${{ steps.spec.outputs.slug }}
@@ -1349,6 +1350,7 @@ jobs:
       # not inherit the primary attempt's partial work as evidence.
       - name: Read back retry outcome
         id: retry-outcome
+        shell: bash
         if: steps.lifecycle-gate.outputs.is-open == 'true' && (steps.retry.outcome == 'success' || steps.retry.outcome == 'failure')
         env:
           SLUG: ${{ steps.spec.outputs.slug }}

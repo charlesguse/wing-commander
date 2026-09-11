@@ -75,11 +75,11 @@ from wc_shell_pin import effective_shell, is_container_bound, pins_bash  # noqa:
 BASHISMS = {
     "pipefail": (re.compile(r"\bpipefail\b"),
                  "set -o pipefail (any spelling, incl. split flags)"),
-    "array": (re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\s*\+?=\s*\("),
+    "array": (re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\+?=\("),
               "array assignment (arr=(...) / arr+=(...))"),
     "assoc-array": (re.compile(r"\bdeclare\s+-[Aa]\b"),
                     "declare -A (associative array)"),
-    "double-bracket": (re.compile(r"\[\[.*\]\]"),
+    "double-bracket": (re.compile(r"\[\[\s.*\s\]\]"),
                        "[[ ... ]] conditional"),
     "local": (re.compile(r"(?:^|[;&|]|\bthen\b|\bdo\b)\s*local\s+\w",
                           re.MULTILINE),
@@ -88,6 +88,20 @@ BASHISMS = {
                     "process substitution (<(...) or $(<file))"),
     "read-d": (re.compile(r"\bread\s+(?:-\w+\s+)*-d\b"),
               "read -d (delimiter option)"),
+    "here-string": (re.compile(r"<<<"),
+                    "here-string (<<<)"),
+    "substring-expansion": (re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*:[0-9]"),
+                            "substring/offset expansion (${var:offset[:length]})"),
+    "case-modification": (re.compile(
+        r"\$\{[A-Za-z_][A-Za-z0-9_]*(?:,,?|\^\^?)\}"),
+        "case modification (${var,,} / ${var^^} etc.)"),
+    "redirect": (re.compile(r"(?<![0-9])&>|\|&"),
+                "&> / |& redirect"),
+    "echo-e": (re.compile(r"\becho\s+-[a-zA-Z]*e"),
+              "echo -e (dash prints -e literally)"),
+    "bashism-builtin": (re.compile(
+        r"\b(?:source\s|mapfile\b|readarray\b|shopt\b|pushd\b)"),
+        "source / mapfile / readarray / shopt / pushd"),
 }
 
 
@@ -112,7 +126,17 @@ def step_label(step, index):
     return str(name) if name else f"step[{index}]"
 
 
+def _strip_comment_lines(run_text):
+    """Drop full-line `#` comments (mirrors wc_gate_registry._run_text) so a
+    comment that merely MENTIONS a bashism keyword in prose -- "the only
+    place this script's own source appears", "[[:space:]]" inside a sed
+    expression -- does not count as the construct actually running."""
+    return "\n".join(l for l in run_text.splitlines()
+                      if not l.lstrip().startswith("#"))
+
+
 def matched_bashisms(run_text):
+    run_text = _strip_comment_lines(run_text)
     return [label for _key, (rx, label) in BASHISMS.items()
             if rx.search(run_text)]
 
