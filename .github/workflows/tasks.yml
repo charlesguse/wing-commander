@@ -910,6 +910,7 @@ jobs:
       # per-run cost line (FR-031c) -- see specs/043-durable-metrics-record/data-model.md.
       - name: Compute cost line
         id: cost-line
+        shell: bash
         if: >-
           always() &&
           (steps.agent-auto.outcome != 'skipped' ||

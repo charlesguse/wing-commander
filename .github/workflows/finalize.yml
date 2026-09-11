@@ -771,6 +771,7 @@ jobs:
       # per-run cost line (FR-031c) -- see specs/043-durable-metrics-record/data-model.md.
       - name: Compute cost line
         id: cost-line
+        shell: bash
         if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.summarize.outcome != 'skipped'
         env:
           COST_LINE: ${{ steps.metrics-summary.outputs.cost-line }}
@@ -844,6 +845,7 @@ jobs:
       # recorded one).
       - name: Assemble PR body
         id: body
+        shell: bash
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
         env:
           CONVERGED: ${{ inputs.converged }}
@@ -1112,6 +1114,7 @@ jobs:
       # not swallowed.
       - name: Request re-review from the answered reviewer(s)
         id: re-review
+        shell: bash
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.pr-state == 'open'
         continue-on-error: true
         env:

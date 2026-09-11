@@ -26,17 +26,47 @@ NO other home: it was once pasted into 12 "Compute cost line" run-blocks
 across 9 stage workflows, where a rounding fix would have had to land 12
 times with nothing failing on a drifted copy. A copy reappearing in any
 workflow OR composite action under .github/actions/ fails here.
+
+Every "Compute cost line" call site also runs inside a job whose
+`container: image:` is a caller-supplied input, never one this repo
+controls (implement.yml's verify-image-prerequisites checks a tool only
+for PRESENCE, not for which shell Actions resolves by default inside that
+image). None of these `run:` steps declared a `shell:` key, so each one's
+own `set -uo pipefail` line ran under whatever shell Actions picked for
+that container -- on an adopter image without bash reachable the way
+Actions expects, that can be `sh`, which does not understand `-o
+pipefail` and dies with "Illegal option -o pipefail" before the step ever
+writes its output. Every call site now pins `shell: bash` so the step
+runs under the same bash `required-tools.txt` already requires the image
+to carry, independent of container shell-resolution.
+
+PR #293's own review of that fix found the bug is not specific to
+"Compute cost line": ANY `run:` step in a caller-supplied-container job
+whose body calls `set ... pipefail` and declares no `shell:` is exposed
+the same way, and 26 such steps existed in the same 9 workflows this
+fix already touches (rebase.yml's "Attempt rebase", pr-conversation.yml's
+PR-identity/qualification and act/dispatch/report steps, and others) --
+patched alongside the original 12. `case_container_pipefail_steps_pin_shell_bash`
+below checks the general class, not just the one step name, across every
+workflow except a tracked, commented exclusion list -- so a future
+`set ... pipefail` step anywhere in scope fails this gate at PR time
+without waiting for it to crash against a real adopter image first.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 
+import yaml
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_gate_registry import workflow_files  # noqa: E402
 from wc_shell_harness import (  # noqa: E402
     ensure_jq, find_step, resolve_bash, run_step, use_utf8_stdout)
+from wc_shell_pin import effective_shell, is_container_bound, pins_bash  # noqa: E402
 
 ACTION = ".github/actions/wing-commander-metrics-summary/action.yml"
 STEP_NAME = "Render agent run metrics summary"
@@ -44,6 +74,23 @@ ACTION_DIR = os.path.abspath(os.path.dirname(ACTION))
 SCHEMA_GATE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            "verify-metrics-record-schema.py")
 TRANSCRIPT_NAME = "claude-execution-output.json"
+# Matches `pipefail` anywhere in the same `set` command -- not just when it
+# is bundled into one `-...o` flag group or immediately follows `set -o` --
+# so forms like `set -e -o pipefail` or `set -o errexit -o pipefail` are
+# caught too, not just `set -eo pipefail` / `set -o pipefail`.
+PIPEFAIL_RE = re.compile(r"\bset\b[^\n;&|]*\bpipefail\b")
+
+# Workflows already known (PR #293's review, #298-ish latent-step count) to
+# carry the same caller-supplied-container / no-shell / pipefail exposure
+# case_container_pipefail_steps_pin_shell_bash checks for, but not yet
+# audited and fixed -- a much larger, separate sweep (65 sites across these
+# two files alone). Excluded here so THIS gate stays green while that sweep
+# is tracked as its own follow-up, rather than silently narrowing the check
+# to hide them or failing the build on debt this change didn't create.
+KNOWN_PIPEFAIL_SHELL_GAP_WORKFLOWS = {
+    ".github/workflows/watchdog.yml",
+    ".github/workflows/auto-update-spec-kit.yml",
+}
 
 failures = []
 MUTATING = False
@@ -60,6 +107,48 @@ def fail(case, msg):
 
 def note(msg):
     print(f"note: {msg}")
+
+
+# --- shared, cached workflow-file access --------------------------------
+# main() runs run_suite() three times (real / mutated / residual) as part
+# of the mutation self-test below, but SCRIPT/MUTATING -- what the mutation
+# actually varies -- is the composite action's run: block, never a workflow
+# file. Every case that scans .github/workflows therefore produces the same
+# result all three times; parsing the whole directory three times over is
+# pure waste that grows with the workflow count (31 files today, up from
+# the 9 this gate's docstring originally cited). Caching here, once, is
+# also the single place an unparseable workflow gets reported -- see
+# verify-gate-23.py's convention this mirrors: an unreadable workflow is an
+# unchecked workflow, not a file quietly dropped from every case's coverage.
+_WORKFLOW_DOCS = None
+_WORKFLOW_TEXTS = None
+
+
+def _workflow_docs(case):
+    """Every .github/workflows/*.yml, YAML-parsed once and cached."""
+    global _WORKFLOW_DOCS
+    if _WORKFLOW_DOCS is None:
+        docs = {}
+        for path in workflow_files():
+            try:
+                docs[path] = yaml.safe_load(open(path, encoding="utf-8")) or {}
+            except yaml.YAMLError as exc:
+                docs[path] = None
+                fail(case, f"{path}: could not parse as YAML ({exc}) -- "
+                           f"cannot confirm its steps are covered, so this "
+                           f"gate fails rather than silently dropping the "
+                           f"file from coverage.")
+        _WORKFLOW_DOCS = docs
+    return _WORKFLOW_DOCS
+
+
+def _workflow_texts():
+    """Every .github/workflows/*.yml, raw text, read once and cached."""
+    global _WORKFLOW_TEXTS
+    if _WORKFLOW_TEXTS is None:
+        _WORKFLOW_TEXTS = {path: open(path, encoding="utf-8").read()
+                           for path in workflow_files()}
+    return _WORKFLOW_TEXTS
 
 
 # --- transcript builders (mirrors Gate 11's shape) --------------------------
@@ -299,17 +388,12 @@ def case_cost_line_formatter_has_exactly_one_home():
     case = "cost-line formatter single home"
     hits = []
 
-    def scan(path):
-        with open(path, encoding="utf-8") as fh:
-            text = fh.read()
+    def scan(path, text):
         if "def usd(" in text or "costpart" in text:
             hits.append(path)
 
-    wf_dir = ".github/workflows"
-    for name in sorted(os.listdir(wf_dir)):
-        if not name.endswith((".yml", ".yaml")):
-            continue
-        scan(os.path.join(wf_dir, name))
+    for path, text in _workflow_texts().items():
+        scan(path, text)
 
     actions_dir = ".github/actions"
     canonical = os.path.normpath(ACTION)
@@ -320,7 +404,8 @@ def case_cost_line_formatter_has_exactly_one_home():
                 path = os.path.join(root, name)
                 if os.path.normpath(path) == canonical:
                     continue
-                scan(path)
+                with open(path, encoding="utf-8") as fh:
+                    scan(path, fh.read())
 
     if hits:
         fail(case, "the per-run cost-line formatter's only home is "
@@ -333,6 +418,68 @@ def case_cost_line_formatter_has_exactly_one_home():
              "output")
 
 
+def case_container_pipefail_steps_pin_shell_bash():
+    """Every `run:` step in a caller-supplied-container job whose body
+    calls `set ... pipefail` must declare `shell: bash` (directly, or via
+    a job- or workflow-level `defaults: run: shell:`) -- see the module
+    docstring for the "Illegal option -o pipefail" failure this prevents
+    and why the check is scoped to the general pipefail-bearing class
+    rather than to steps named "Compute cost line" (the version of this
+    check PR #293 shipped first).
+
+    Shell precedence and the caller-supplied-container test both come from
+    wc_shell_pin -- shared with the container-shell-safety skill's
+    unpinned-container-steps.py so the two cannot independently drift on
+    what "covered" or "caller-supplied" means (a step's own `shell:`
+    always wins over its job's `defaults:`, which wins over the
+    workflow's, never an OR of all three).
+
+    Scoped to every workflow except KNOWN_PIPEFAIL_SHELL_GAP_WORKFLOWS --
+    that gap is real (found by this same review) and tracked as separate
+    follow-up work, not silently hidden or fixed as a side effect here."""
+    case = "container-bound pipefail steps pin shell: bash"
+    docs = _workflow_docs(case)
+    covered = 0
+    missing = []
+    for path, doc in sorted(docs.items()):
+        if doc is None or path in KNOWN_PIPEFAIL_SHELL_GAP_WORKFLOWS:
+            continue
+        for job in (doc.get("jobs") or {}).values():
+            job = job or {}
+            if not is_container_bound(job):
+                continue
+            for step in job.get("steps") or []:
+                step = step or {}
+                run = step.get("run")
+                if not run or not PIPEFAIL_RE.search(str(run)):
+                    continue
+                covered += 1
+                if not pins_bash(effective_shell(step, job, doc)):
+                    missing.append(f"{path}: {step.get('name')!r}")
+    scanned = len(docs) - len(KNOWN_PIPEFAIL_SHELL_GAP_WORKFLOWS)
+    if missing:
+        fail(case, "every `run:` step that calls `set ... pipefail` inside "
+                   "a job whose container image is caller-supplied must "
+                   "declare `shell: bash` (directly, a job- or "
+                   "workflow-level `defaults: run: shell:`, or a custom "
+                   "shell command template whose program is bash) -- "
+                   "without it, an adopter image resolving to a non-bash "
+                   "default shell hits \"Illegal option -o pipefail\" "
+                   "before the step writes its output. Missing on: "
+                   + ", ".join(missing))
+    elif covered == 0:
+        fail(case, f"found zero pipefail-bearing steps in any "
+                   f"caller-supplied-container job across {scanned} scanned "
+                   f"workflow(s) -- if every such step were renamed or "
+                   f"restructured this check may have silently stopped "
+                   f"covering anything; an empty `missing` list alone does "
+                   f"not prove the scan still matches real steps.")
+    else:
+        note(f"{covered} pipefail-bearing step(s) in caller-supplied-"
+             f"container jobs across {scanned} scanned workflow(s) all "
+             f"pin shell: bash")
+
+
 CASES = [
     case_healthy_transcript_emits_a_valid_record,
     case_missing_transcript_degrades,
@@ -340,6 +487,7 @@ CASES = [
     case_unparseable_transcript_degrades,
     case_repeated_invocation_in_one_job_gets_distinct_record_keys,
     case_cost_line_formatter_has_exactly_one_home,
+    case_container_pipefail_steps_pin_shell_bash,
 ]
 
 

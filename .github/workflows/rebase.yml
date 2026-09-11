@@ -357,6 +357,7 @@ jobs:
       # Select the eligible branch set.
       - name: Select in-flight branches
         id: select
+        shell: bash
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           DB: ${{ steps.defbranch.outputs.name }}
@@ -589,6 +590,7 @@ jobs:
       # so later steps can route on the outcome.
       - name: Attempt rebase
         id: attempt
+        shell: bash
         env:
           SLUG: ${{ matrix.slug }}
           BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
@@ -632,6 +634,7 @@ jobs:
       # that left the tip unchanged is a no-op — no push, no comment.
       - name: Evaluate clean rebase
         id: clean
+        shell: bash
         if: steps.attempt.outputs.outcome == 'clean'
         env:
           SLUG: ${{ matrix.slug }}
@@ -794,6 +797,7 @@ jobs:
       # per-run cost line (FR-031c) -- see specs/043-durable-metrics-record/data-model.md.
       - name: Compute cost line
         id: cost-line
+        shell: bash
         if: always() && steps.agent.outcome != 'skipped'
         env:
           COST_LINE: ${{ steps.metrics-summary.outputs.cost-line }}
@@ -833,6 +837,7 @@ jobs:
       # edit ⇒ abandon.
       - name: Verify AI resolution scope
         id: verify
+        shell: bash
         if: always() && steps.attempt.outputs.outcome == 'conflict'
         env:
           SLUG: ${{ matrix.slug }}
@@ -924,6 +929,7 @@ jobs:
       # status-gated and would still set push=true on a cancelled run, so
       # cancelling mid-flight force-pushed the spec branch anyway.
       - name: Publish rebased branch
+        shell: bash
         if: >-
           !cancelled() &&
           (steps.clean.outputs.push == 'true' || steps.verify.outputs.push == 'true')
@@ -965,6 +971,7 @@ jobs:
       # reaching this arm after an earlier step failed.
       - name: Abandon and escalate
         id: escalate
+        shell: bash
         if: >-
           !cancelled() &&
           (steps.verify.outputs.escalate == 'true' || steps.attempt.outputs.outcome == 'error')

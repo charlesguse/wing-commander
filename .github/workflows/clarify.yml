@@ -647,6 +647,7 @@ jobs:
       # specs/043-durable-metrics-record/data-model.md.
       - name: Compute cost line
         id: cost-line
+        shell: bash
         if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.agent.outcome != 'skipped'
         env:
           COST_LINE: ${{ steps.metrics-summary.outputs.cost-line }}

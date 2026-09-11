@@ -939,6 +939,7 @@ jobs:
       # run before every outcome-announcing callout/comment below.
       - name: Compute cost line
         id: cost-line
+        shell: bash
         if: >-
           always() &&
           (steps.agent-pr.outcome != 'skipped' ||
