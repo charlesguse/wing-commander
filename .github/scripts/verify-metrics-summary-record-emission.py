@@ -74,7 +74,11 @@ ACTION_DIR = os.path.abspath(os.path.dirname(ACTION))
 SCHEMA_GATE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            "verify-metrics-record-schema.py")
 TRANSCRIPT_NAME = "claude-execution-output.json"
-PIPEFAIL_RE = re.compile(r"set\s+-[a-zA-Z]*o\s+pipefail|set\s+-o\s+pipefail")
+# Matches `pipefail` anywhere in the same `set` command -- not just when it
+# is bundled into one `-...o` flag group or immediately follows `set -o` --
+# so forms like `set -e -o pipefail` or `set -o errexit -o pipefail` are
+# caught too, not just `set -eo pipefail` / `set -o pipefail`.
+PIPEFAIL_RE = re.compile(r"\bset\b[^\n;&|]*\bpipefail\b")
 
 # Workflows already known (PR #293's review, #298-ish latent-step count) to
 # carry the same caller-supplied-container / no-shell / pipefail exposure

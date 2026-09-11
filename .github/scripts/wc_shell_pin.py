@@ -31,9 +31,14 @@ def pins_bash(shell):
     """True if a `shell:` value pins bash -- either the bare `bash`
     keyword or a custom command-template whose program is bash (e.g.
     `bash --noprofile --norc -eo pipefail {0}`, which is what GitHub
-    itself expands the bare keyword to; a step that spells that out
-    explicitly is no less protected than one that writes `bash`)."""
-    return bool(shell) and str(shell).split()[0] == "bash"
+    itself expands the bare keyword to, or a path-qualified spelling like
+    `/bin/bash --noprofile --norc -eo pipefail {0}`; a step that spells
+    that out explicitly is no less protected than one that writes
+    `bash`)."""
+    if not shell:
+        return False
+    program = str(shell).split()[0]
+    return program == "bash" or program.rsplit("/", 1)[-1] == "bash"
 
 
 def effective_shell(step, job, workflow_doc):
