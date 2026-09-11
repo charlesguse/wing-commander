@@ -390,6 +390,7 @@ jobs:
 
       - name: Read currently pinned version
         id: pinned-version
+        shell: bash
         env:
           DB: ${{ steps.defbranch.outputs.name }}
         run: |
@@ -408,6 +409,7 @@ jobs:
       # (plan.md), not factored into a new composite action.
       - name: Lightweight verification (pinned version on ${{ steps.defbranch.outputs.name }})
         id: verify-pinned
+        shell: bash
         env:
           TARGET_REF: refs/remotes/origin/${{ steps.defbranch.outputs.name }}
         run: |
@@ -481,6 +483,7 @@ jobs:
       # speckit_version, and reading the diff's removed line.
       - name: Compute rollback target from git history
         id: rollback-target
+        shell: bash
         if: steps.verify-pinned.outputs.passed == 'false'
         env:
           DB: ${{ steps.defbranch.outputs.name }}
@@ -530,6 +533,7 @@ jobs:
       # App token needed here.
       - name: Compare pinned version against latest eligible upstream release
         id: compare
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           PINNED_VERSION: ${{ needs.health-check.outputs.pinned-version }}
@@ -651,6 +655,7 @@ jobs:
       # marker is deliberately INDEX-FREE — see the long note in the step.
       - name: Settle-tracking state machine
         id: state
+        shell: bash
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           LATEST: ${{ needs.detect.outputs.latest-upstream }}
@@ -888,6 +893,7 @@ jobs:
 
       - name: Resolve default branch
         id: defbranch
+        shell: bash
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           DEFAULT_BRANCH: ${{ inputs.default-branch }}
@@ -902,6 +908,7 @@ jobs:
       # be stale by the time a resume happens days later.
       - name: Resolve entry context (issue, candidate version, release type)
         id: entry
+        shell: bash
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           SETTLE_ISSUE: ${{ needs.settle.outputs.issue-number }}
@@ -951,6 +958,7 @@ jobs:
       # `|| echo '[]'`.
       - name: Guard against an already-open version-bump PR
         id: guard
+        shell: bash
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           CANDIDATE: ${{ steps.entry.outputs.candidate-version }}
@@ -988,6 +996,7 @@ jobs:
       # convention every comment-triggered stage uses for issue bodies.
       - name: Fetch candidate release notes
         id: notes
+        shell: bash
         if: steps.entry.outputs.resumed != 'true' && steps.guard.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -1128,6 +1137,7 @@ jobs:
       # needs-migration (route to a human) rather than guessing clean-bump.
       - name: Read back decision
         id: decide-outcome
+        shell: bash
         env:
           RESUMED: ${{ steps.entry.outputs.resumed }}
           ISSUE: ${{ steps.entry.outputs.issue-number }}
@@ -1208,6 +1218,7 @@ jobs:
       # never maintaining dedup state for it.
       - name: Compose the guard-skip narration
         id: guard-narrate
+        shell: bash
         if: steps.decide-outcome.outputs.outcome == 'guard-skip'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -1307,6 +1318,7 @@ jobs:
       # clean-bump).
       - name: Compose needs-migration narration
         id: migration-body
+        shell: bash
         if: steps.decide-outcome.outputs.outcome == 'needs-migration' && steps.entry.outputs.resumed != 'true'
         env:
           REASONING: ${{ steps.decide-outcome.outputs.reasoning }}
@@ -1340,6 +1352,7 @@ jobs:
       # verified maintainer's reply via the comment-reply job (T024-T027).
       - name: Compose ambiguous-options question and flag the issue
         id: ambiguous-body
+        shell: bash
         if: steps.decide-outcome.outputs.outcome == 'ambiguous-options' && steps.entry.outputs.resumed != 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -1464,6 +1477,7 @@ jobs:
 
       - name: Resolve default branch
         id: defbranch
+        shell: bash
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           DEFAULT_BRANCH: ${{ inputs.default-branch }}
@@ -1487,6 +1501,7 @@ jobs:
 
       - name: Write version-bump diff
         id: diff
+        shell: bash
         env:
           DB: ${{ steps.defbranch.outputs.name }}
           CANDIDATE: ${{ needs.evaluate-path.outputs.candidate-version }}
@@ -1707,6 +1722,7 @@ jobs:
       # the consuming repository ever runs under it.
       - name: Split the scratch repository into owner and name
         id: scratch-parts
+        shell: bash
         env:
           SCRATCH_REPO: ${{ inputs.e2e-scratch-repo }}
         run: |
@@ -1748,6 +1764,7 @@ jobs:
 
       - name: Resolve the scratch repository
         id: scratch-repo
+        shell: bash
         env:
           GH_TOKEN: ${{ steps.scratch-token.outputs.token }}
           TOKEN_OUTCOME: ${{ steps.scratch-token.outcome }}
@@ -1797,6 +1814,7 @@ jobs:
 
       - name: Scaffold and force-push the candidate into the scratch repository
         id: scaffold
+        shell: bash
         env:
           # The scratch-scoped token, not steps.ctx's — see the mint step.
           GH_TOKEN: ${{ steps.scratch-token.outputs.token }}
@@ -2030,6 +2048,7 @@ jobs:
       # completion-vs-shape distinction).
       - name: Read back stage result
         id: readback
+        shell: bash
         env:
           DECIDE_OUTCOME: ${{ steps.decide-verdict.outputs.verdict }}
         run: |
@@ -2074,6 +2093,7 @@ jobs:
       # since the gating assertion already happened against the local
       # working tree above.
       - name: Push agent-produced spec.md to the scratch repository (best-effort)
+        shell: bash
         if: steps.readback.outputs.passed == 'true'
         continue-on-error: true
         env:
@@ -2165,6 +2185,7 @@ jobs:
           path: ${{ runner.temp }}/prepare-bundle
 
       - name: Fetch prepared branch from bundle
+        shell: bash
         env:
           BRANCH: ${{ needs.prepare.outputs.branch }}
         run: |
@@ -2176,6 +2197,7 @@ jobs:
       # version on main).
       - name: Lightweight verification (prepared candidate)
         id: lightweight
+        shell: bash
         env:
           TARGET_REF: refs/heads/${{ needs.prepare.outputs.branch }}
         run: |
@@ -2245,6 +2267,7 @@ jobs:
       # non-empty/shape assertions below.
       - name: End-to-end verification (minor/major only)
         id: end-to-end
+        shell: bash
         if: needs.prepare.outputs.release-type != 'patch' && steps.lightweight.outputs.passed == 'true'
         env:
           WORKTREE: ${{ steps.lightweight.outputs.worktree }}
@@ -2332,6 +2355,7 @@ jobs:
       # `passed` is otherwise still read from the tiers' own verdicts.
       - name: Combine verification result
         id: result
+        shell: bash
         if: always()
         env:
           RELEASE_TYPE: ${{ needs.prepare.outputs.release-type }}
@@ -2500,6 +2524,7 @@ jobs:
 
       - name: Resolve default branch
         id: defbranch
+        shell: bash
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           DEFAULT_BRANCH: ${{ inputs.default-branch }}
@@ -2515,6 +2540,7 @@ jobs:
       # outcome FR-010 wants visible, not something that auto-closes
       # anything) plus a flagged, reused-if-open issue.
       - name: Rollback (health-check failed)
+        shell: bash
         if: needs.health-check.outputs.pinned-ok == 'false'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -2608,6 +2634,7 @@ jobs:
           path: ${{ runner.temp }}/prepare-bundle
 
       - name: Fetch prepared branch from bundle
+        shell: bash
         if: needs.health-check.outputs.pinned-ok != 'false' && needs.prepare.result == 'success'
         env:
           BRANCH: ${{ needs.prepare.outputs.branch }}
@@ -2623,6 +2650,7 @@ jobs:
       # instead of a raw non-fast-forward push rejection.
       - name: Check for a pre-existing branch or pull request
         id: preflight
+        shell: bash
         if: needs.health-check.outputs.pinned-ok != 'false' && needs.prepare.result == 'success' && needs.verify.outputs.passed == 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -2688,6 +2716,7 @@ jobs:
       # open a version-bump PR. This feature never merges it itself
       # (constitution V, FR-017).
       - name: Open version-bump PR
+        shell: bash
         if: needs.health-check.outputs.pinned-ok != 'false' && needs.prepare.result == 'success' && needs.verify.outputs.passed == 'true' && steps.preflight.outputs.blocked != 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -2759,6 +2788,7 @@ jobs:
           body: ${{ needs.verify.outputs.failure-detail }}
 
       - name: Apply the failed label
+        shell: bash
         if: needs.health-check.outputs.pinned-ok != 'false' && needs.prepare.result == 'success' && needs.verify.outputs.passed != 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -2809,6 +2839,7 @@ jobs:
             ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: Apply the failed label (prepare failed)
+        shell: bash
         if: needs.health-check.outputs.pinned-ok != 'false' && needs.prepare.result == 'failure'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -2887,6 +2918,7 @@ jobs:
       # feature.
       - name: Verify this PR carries this feature's marker
         id: guard
+        shell: bash
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           PR_NUMBER: ${{ inputs.pr-number }}
@@ -2910,6 +2942,7 @@ jobs:
       # with a human closing it manually). This posts the one additional
       # rich summary SC-004 requires.
       - name: Post closing summary (version-bump)
+        shell: bash
         if: steps.guard.outputs.kind == 'version-bump'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -2937,6 +2970,7 @@ jobs:
       # A revert PR's merge does NOT close anything — its issue is the
       # failure record and stays open per FR-010 (data-model.md).
       - name: Post closing summary (revert)
+        shell: bash
         if: steps.guard.outputs.kind == 'revert'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -3041,6 +3075,7 @@ jobs:
       # actually holding an open question is a no-op.
       - name: Verify this issue carries the marker and awaits a decision
         id: guard
+        shell: bash
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
@@ -3081,6 +3116,7 @@ jobs:
       # prompt, matching wing-commander-2-clarify.yml's convention.
       - name: Stage the reply and question context as data files
         id: stage
+        shell: bash
         if: steps.guard.outputs.proceed == 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -3182,6 +3218,7 @@ jobs:
       # (ask for a clearer reply) rather than guessing a choice.
       - name: Read back interpretation
         id: decision
+        shell: bash
         if: steps.guard.outputs.proceed == 'true'
         run: |
           set -uo pipefail
@@ -3227,6 +3264,7 @@ jobs:
       # wiring).
       - name: Record the decision and re-enter the upgrade path
         id: resume
+        shell: bash
         if: steps.guard.outputs.proceed == 'true' && steps.decision.outputs.recognized == 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}

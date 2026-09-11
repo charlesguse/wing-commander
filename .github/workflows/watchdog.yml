@@ -412,6 +412,7 @@ jobs:
       # the inspected run (branch, sha, conclusion, url) is fetched here.
       - name: Fetch inspected run metadata
         id: run-meta
+        shell: bash
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ACTIONS_TOKEN: ${{ github.token }}
@@ -441,6 +442,7 @@ jobs:
       # destination exists rather than failing the job.
       - name: Resolve inspected run's spec slug and lifecycle issue
         id: spec-slug
+        shell: bash
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           HEAD_BRANCH: ${{ steps.run-meta.outputs.head-branch }}
@@ -525,6 +527,7 @@ jobs:
       # never a step failure — a source being empty is data, not an error.
       - name: "Collect: execution-output artifacts"
         id: collect-execution-output
+        shell: bash
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -664,6 +667,7 @@ jobs:
       # reported this exact condition.
       - name: "Collect: branch drift"
         id: collect-branch-drift
+        shell: bash
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -784,6 +788,7 @@ jobs:
       # primary stage field alone by design.
       - name: "Collect: spec-meta state vs. expected stage"
         id: collect-spec-meta
+        shell: bash
         continue-on-error: true
         env:
           RUN_NAME: ${{ inputs.run-name }}
@@ -839,6 +844,7 @@ jobs:
       # around it). A job whose log cannot be fetched is skipped, not failed.
       - name: "Collect: step summaries"
         id: collect-step-summary
+        shell: bash
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -975,6 +981,7 @@ jobs:
       # each job in the inspected run.
       - name: "Collect: annotations"
         id: collect-annotations
+        shell: bash
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -1049,6 +1056,7 @@ jobs:
       # that did not exist when this map was written.
       - name: Stamp signal ids
         id: signal-ids
+        shell: bash
         run: |
           set -uo pipefail
           f="$RUNNER_TEMP/signals.json"
@@ -1115,6 +1123,7 @@ jobs:
       # (data-model.md).
       - name: Aggregate signals
         id: aggregate
+        shell: bash
         run: |
           set -uo pipefail
           failed=0
@@ -1151,6 +1160,7 @@ jobs:
       # FR-005: never fabricate a finding when evidence itself is
       # unreadable — record inability instead.
       - name: Report "could not inspect" to lifecycle issue
+        shell: bash
         if: steps.aggregate.outputs.evidence-available == 'false'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -1320,6 +1330,7 @@ jobs:
       # self-heals after exactly one occurrence.
       - name: Resolve finding-class vocabulary
         id: class-vocab
+        shell: bash
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           LABEL_PREFIX: "🐕 · "
@@ -1643,6 +1654,7 @@ jobs:
       # degrades to zero Findings rather than fabricating one.
       - name: Read back diagnose outcome
         id: diagnose-outcome
+        shell: bash
         run: |
           set -uo pipefail
           file="${{ runner.temp }}/claude-execution-output.json"
@@ -1705,6 +1717,7 @@ jobs:
 
       # FR-004: zero Findings ⇒ record "passed inspection," file nothing.
       - name: Report "passed inspection" to lifecycle issue
+        shell: bash
         if: steps.diagnose-outcome.outputs.outcome == 'passed-inspection'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -1736,6 +1749,7 @@ jobs:
       # intentional — this one names the affected lifecycle issue, that one
       # survives this job dying outright.
       - name: Report "diagnose failed" to lifecycle issue
+        shell: bash
         if: steps.diagnose-outcome.outputs.outcome == 'diagnose-failed'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -1831,6 +1845,7 @@ jobs:
       # final report as "already reported by <job>" (FR-024).
       - name: Coexistence suppression check
         id: suppress
+        shell: bash
         env:
           ALREADY_HANDLED: ${{ matrix.alreadyHandledBy }}
         run: |
@@ -1850,6 +1865,7 @@ jobs:
       # "new" class forever.
       - name: Register new finding class
         id: register-class
+        shell: bash
         if: steps.suppress.outputs.suppressed != 'true' && matrix.newClass
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -1876,6 +1892,7 @@ jobs:
       # run, never that the cited facts exist.
       - name: Evidence validity gate
         id: evidence-gate
+        shell: bash
         if: steps.suppress.outputs.suppressed != 'true'
         env:
           FINDING_CLASS: ${{ matrix.class }}
@@ -1952,6 +1969,7 @@ jobs:
       # output, so equal problems produce equal ids by construction.
       - name: Compute fingerprint
         id: fingerprint
+        shell: bash
         if: steps.suppress.outputs.suppressed != 'true' && steps.evidence-gate.outputs.valid != 'false'
         env:
           FINDING_CLASS: ${{ matrix.class }}
@@ -1984,6 +2002,7 @@ jobs:
       # call.
       - name: Dedup search
         id: dedup
+        shell: bash
         if: steps.suppress.outputs.suppressed != 'true' && steps.evidence-gate.outputs.valid != 'false'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -2037,6 +2056,7 @@ jobs:
       # runner, over the SAME Finding array — see act's comment) to consume
       # by downloading the artifact matching its own matrix.index.
       - name: Persist triage decision
+        shell: bash
         if: always()
         env:
           SUPPRESSED: ${{ steps.suppress.outputs.suppressed }}
@@ -2181,6 +2201,7 @@ jobs:
 
       - name: Load triage decision
         id: decision
+        shell: bash
         run: |
           set -uo pipefail
           f="${{ runner.temp }}/triage/watchdog-triage-decision.json"
@@ -2233,6 +2254,7 @@ jobs:
       # 8b is what listens to 8, and nothing listens to 8b.
       - name: Self-dispatch depth
         id: self-dispatch-depth
+        shell: bash
         if: inputs.run-name == 'Wing Commander · 8 watchdog'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -2323,6 +2345,7 @@ jobs:
       # fingerprint, which is reported (below) but not auto-acted on.
       - name: Ensure pipeline-defect issue
         id: ensure-issue
+        shell: bash
         if: >-
           steps.decision.outputs.suppressed != 'true' &&
           steps.decision.outputs.evidence-valid != 'false' &&
@@ -2392,6 +2415,7 @@ jobs:
       # evidence + dedup outcome + action taken (data-model.md's Lifecycle
       # issue report shape).
       - name: Report finding to lifecycle issue
+        shell: bash
         if: always()
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -2574,6 +2598,7 @@ jobs:
       # view, or a missing checkout (git fetch/show simply find nothing).
       - name: Resolve inspected run's lifecycle issue
         id: issue
+        shell: bash
         if: steps.gate.outputs.any-failed == 'true'
         continue-on-error: true
         env:
@@ -2639,6 +2664,7 @@ jobs:
       # strip is only safe once the suffix is gone.
       - name: Resolve failed job log URLs
         id: job-urls
+        shell: bash
         if: steps.gate.outputs.any-failed == 'true'
         continue-on-error: true
         env:
@@ -2663,6 +2689,7 @@ jobs:
       # failure shape occurred without cross-referencing anything else.
       - name: Report unhandled job failure
         id: report
+        shell: bash
         if: steps.gate.outputs.any-failed == 'true'
         continue-on-error: true
         env:
