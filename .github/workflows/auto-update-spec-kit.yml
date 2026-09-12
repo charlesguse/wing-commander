@@ -2296,9 +2296,9 @@ jobs:
           if [ "$pass" = "true" ]; then
             feature_spec="$(printf '%s' "$sp_out" | tail -1 | jq -r '.FEATURE_SPEC // empty' 2>/dev/null || true)"
             impl_plan="$(printf '%s' "$sp_out" | tail -1 | jq -r '.IMPL_PLAN // empty' 2>/dev/null || true)"
-            feature_dir="$(printf '%s' "$sp_out" | tail -1 | jq -r '.FEATURE_DIR // empty' 2>/dev/null || true)"
+            sp_feature_dir="$(printf '%s' "$sp_out" | tail -1 | jq -r '.FEATURE_DIR // empty' 2>/dev/null || true)"
             sp_branch="$(printf '%s' "$sp_out" | tail -1 | jq -r '.BRANCH // empty' 2>/dev/null || true)"
-            if [ -z "$feature_spec" ] || [ -z "$impl_plan" ] || [ -z "$feature_dir" ] || [ -z "$sp_branch" ]; then
+            if [ -z "$feature_spec" ] || [ -z "$impl_plan" ] || [ -z "$sp_feature_dir" ] || [ -z "$sp_branch" ]; then
               pass=false
               detail="setup-plan.sh --json did not produce the documented FEATURE_SPEC/IMPL_PLAN/FEATURE_DIR/BRANCH shape: $(printf '%s' "$sp_out" | tail -c 500)"
             elif [ ! -s "$impl_plan" ]; then
