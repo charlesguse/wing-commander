@@ -43,15 +43,15 @@ independent of the transcript).
 | `turns.intended_budget` | integer or null | The caller's `max-turns` input value (the tunable budget). |
 | `turns.enforced_ceiling` | integer or null | The caller's `ceiling` input value (`wing-commander-turn-ceiling`'s output — the literal `--max-turns` the runtime enforced). |
 | `turns.available` | boolean | `false` when counting itself failed (unreadable transcript shape). |
-| `tokens.input` / `.output` / `.cache_read` / `.cache_creation` | integer or null | From `.usage.*`, matching the fields the rendered summary already shows. |
-| `tokens.available` | boolean | `false` when `.usage` was absent/unparseable. |
+| `tokens.input` / `.output` / `.cache_read` / `.cache_creation` | integer or null | The sum across `per_model` when a per-model breakdown is available — `.usage.*` carries only the main model's counts, so on a multi-model run it does not satisfy the invariant below; `.usage.*` (the fields the rendered summary shows) only when `.modelUsage` is absent. |
+| `tokens.available` | boolean | `false` when neither `.modelUsage` nor `.usage` was usable. |
 | `cost_usd` | number or null | From `.total_cost_usd`. |
 | `cost_available` | boolean | | 
 | `duration_ms` | integer or null | From `.duration_ms`. |
 | `duration_available` | boolean | |
 | `outcome` | string | One of `healthy` \| `exhausted` \| `failed` \| `unclassifiable` \| `unavailable` — `unavailable` only when the transcript itself couldn't be read; the other four match the existing verdict vocabulary spec 037 already established, computed the same way. |
 | `per_model` | array of objects | One entry per model actually used (FR-005a) — `{model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, cost_usd}`, from `.modelUsage`. A single-model run still carries one entry (not zero). The only nested array field in the record; every other field above is flat. |
-| `per_model_available` | boolean | `false` when `.modelUsage` was absent/unparseable — the flat `tokens.*`/`cost_usd` fields may still be available independently (they come from `.usage`/`.total_cost_usd`, not `.modelUsage`). |
+| `per_model_available` | boolean | `false` when `.modelUsage` was absent/unparseable — the flat `tokens.*`/`cost_usd` fields may still be available independently (they then come from `.usage`/`.total_cost_usd`). |
 | `emitted_at` | string (ISO-8601 UTC) | Wall-clock time the record was written, from the emitting step's own clock — informational only, never used as an ordering or dedup key (that's `record_key`). |
 
 **Invariant** (checked by gate R12.2): `sum(per_model[].input_tokens) ==

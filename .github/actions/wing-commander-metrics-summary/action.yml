@@ -433,6 +433,30 @@ runs:
           fi
         fi
 
+        # The record's tokens.* are the SUM across per_model, not `.usage`
+        # copied verbatim: `.usage` carries only the main model's counts,
+        # while `.modelUsage` also carries every other model the run used
+        # (a watchdog diagnose transcript showed an opus main loop plus
+        # haiku calls), so on any multi-model run the two disagree and the
+        # record failed contracts/metrics-record-schema.md's invariant
+        # (spec.md acceptance scenario 2: "its entries sum to the record's
+        # own token and cost totals") — the collector rejected every such
+        # record (persist run 34311334476). `.usage` stays the source when
+        # no per-model breakdown is available (or its sums are not
+        # numbers). The rendered table above is untouched (FR-011); only
+        # the record sums.
+        if [ "$per_model_available" = "true" ]; then
+          sum_input="$(printf '%s' "$per_model_json" | jq -r '[.[].input_tokens] | add' 2>/dev/null || true)"
+          sum_output="$(printf '%s' "$per_model_json" | jq -r '[.[].output_tokens] | add' 2>/dev/null || true)"
+          sum_cache_read="$(printf '%s' "$per_model_json" | jq -r '[.[].cache_read_tokens] | add' 2>/dev/null || true)"
+          sum_cache_creation="$(printf '%s' "$per_model_json" | jq -r '[.[].cache_creation_tokens] | add' 2>/dev/null || true)"
+          if is_number "$sum_input" && is_number "$sum_output" && is_number "$sum_cache_read" && is_number "$sum_cache_creation"; then
+            tok_input="$sum_input"; tok_output="$sum_output"
+            tok_cache_read="$sum_cache_read"; tok_cache_creation="$sum_cache_creation"
+            tokens_available=true
+          fi
+        fi
+
         # --- record outcome: reuse the caller's own wing-commander-agent-verdict
         # output when wired (already healthy/exhausted/failed/unclassifiable);
         # otherwise fall back to the same classification that action performs
