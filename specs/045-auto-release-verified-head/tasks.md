@@ -165,8 +165,8 @@ input path exists by which the scheduled run could set it otherwise
 
 ### Implementation for User Story 4
 
-- [ ] T019 [US4] In `.github/workflows/auto-release.yml`'s `dispatch-release` job (T010), confirm `-f breaking=false -f breaking-notes=` are literal, hardcoded values in the `gh workflow run` invocation — not read from any variable, label, or job output — and that no other step in the file sets or overrides them (FR-018/FR-019). If T010 was written any other way, fix it here.
-- [ ] T020 [US4] In `.github/workflows/auto-release.yml`'s `decide-version` job (T009), confirm the `bump` computation has exactly two possible values (`patch`, `minor`) with no branch that can produce `major`, and that `next-version`'s increment never touches the major component (FR-018). If T009 was written any other way, fix it here.
+- [X] T019 [US4] In `.github/workflows/auto-release.yml`'s `dispatch-release` job (T010), confirm `-f breaking=false -f breaking-notes=` are literal, hardcoded values in the `gh workflow run` invocation — not read from any variable, label, or job output — and that no other step in the file sets or overrides them (FR-018/FR-019). If T010 was written any other way, fix it here.
+- [X] T020 [US4] In `.github/workflows/auto-release.yml`'s `decide-version` job (T009), confirm the `bump` computation has exactly two possible values (`patch`, `minor`) with no branch that can produce `major`, and that `next-version`'s increment never touches the major component (FR-018). If T009 was written any other way, fix it here.
 
 **Checkpoint**: All four of Stories 1-4 hold — inspecting `dispatch-release`
 and `decide-version` shows no code path, input, or label that produces a
