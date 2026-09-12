@@ -144,12 +144,9 @@ jobs:
       # mention, which also matches `#1462`-style issue refs in comments)
       # — lives in .github/scripts/verify-release-contract.py (Gate 50),
       # run and invoked the same way. Those three stayed here as inline
-      # greps after Gate 31, on a stage set derived the way Gate 1a
-      # derives it, which fixed COVERAGE and left TIMING exactly as
-      # described above: a violation merged with every PR-time gate green
-      # and turned red on the next release dispatch (#308). The derived
-      # list was necessary, not sufficient; the script's docstring carries
-      # each check's rule and rationale.
+      # greps after Gate 31, on a derived stage set, which fixed COVERAGE
+      # and left TIMING exactly as described above (#308). The script's
+      # docstring is the one home for each check's rule and that history.
       #
       # Each script prints its own ::error lines; this step only sums the
       # verdicts so both halves report before the job fails.

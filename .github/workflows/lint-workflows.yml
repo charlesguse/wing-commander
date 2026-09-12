@@ -3088,12 +3088,10 @@ jobs:
       # Gate 50 — release.yml's three release-contract checks, at PR time:
       # no literal main as a branch ref, the publisher's owner/repo only as
       # the pipeline-repo input default, and --model plus --max-turns on
-      # every agent step. Gate 31 took the layer-boundary checks out of
-      # release.yml's Gate 1b; these three stayed behind on a derived stage
-      # set, which fixed their coverage and not their timing (#308): a
-      # violation still merged green and turned red on the next release
-      # dispatch. release.yml's Gate 1b now invokes this same script so the
-      # two answers cannot drift (the Gate 31 arrangement, as Gate 48).
+      # every agent step. release.yml's Gate 1b invokes this same script so
+      # the two answers cannot drift (the Gate 31 arrangement, as Gate 48).
+      # Each check's rule, and why the release-only timing was a defect
+      # (#308), is in the script's docstring — the one home for both.
       - name: Gate 50 — no published stage hardcodes main or the publisher, and every agent step declares --model and --max-turns
         if: "!cancelled()"
         run: python3 .github/scripts/verify-release-contract.py
