@@ -1,0 +1,87 @@
+# Scheduled auto-release: detects unreleased work on main, verifies it
+# end-to-end against a maintainer-onboarded test repository running the
+# published stages, computes the next non-breaking version, and dispatches
+# release.yml to cut it. Never requests a breaking/major release -- that
+# stays a deliberate human act through release.yml's own manual dispatch.
+# See specs/045-auto-release-verified-head/contracts/auto-release-workflow.md,
+# e2e-repository-wiring.md, and release-dispatch.md for the full contract.
+#
+# on: workflow_dispatch only in addition to schedule -- no workflow_call.
+# This file is not a published stage (research.md D1 of specs/045): it
+# releases THIS repository, not an adopter's, and carries no ambient event
+# payload that needs translating into typed inputs.
+name: "auto-release"
+
+on:
+  schedule:
+    - cron: "9 9 * * *"   # one-line, PR-reviewed knob (FR-002) -- not repository-variable-configurable
+  workflow_dispatch: {}    # FR-005: on-demand, no inputs needed
+
+permissions: {}
+
+concurrency:
+  group: wing-commander-auto-release
+  cancel-in-progress: false
+
+jobs:
+  # Detecting unreleased work costs nothing extra (research.md D4): "is
+  # there new work" and "has this head already been auto-released" are
+  # answered by the same read -- the highest exact vX.Y.Z release tag
+  # compared against HEAD. No separate ledger of "already attempted this
+  # head" is needed; the tag itself is that record.
+  detect:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    outputs:
+      head-sha: ${{ steps.resolve.outputs.head-sha }}
+      tag-exists: ${{ steps.resolve.outputs.tag-exists }}
+      latest-tag: ${{ steps.resolve.outputs.latest-tag }}
+      has-new-work: ${{ steps.resolve.outputs.has-new-work }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Resolve latest release tag and unreleased head
+        id: resolve
+        shell: bash
+        run: |
+          set -uo pipefail
+          head_sha="$(git rev-parse HEAD)"
+
+          # Strict vX.Y.Z only -- excludes the floating vX major tags and any
+          # pre-release/build suffix (data-model.md "Latest release tag").
+          latest_tag="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | sort -V | tail -1 || true)"
+
+          if [ -z "$latest_tag" ]; then
+            {
+              echo "head-sha=$head_sha"
+              echo "tag-exists=false"
+              echo "latest-tag="
+              echo "has-new-work=false"
+            } >> "$GITHUB_OUTPUT"
+            echo "detect: no release tag exists yet -- nothing to compare against." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # The commit the tag's annotated object points at, never the tag
+          # object's own SHA (data-model.md).
+          tag_sha="$(git rev-parse "${latest_tag}^{commit}")"
+          if [ "$head_sha" != "$tag_sha" ]; then
+            has_new_work=true
+          else
+            has_new_work=false
+          fi
+
+          {
+            echo "head-sha=$head_sha"
+            echo "tag-exists=true"
+            echo "latest-tag=$latest_tag"
+            echo "has-new-work=$has_new_work"
+          } >> "$GITHUB_OUTPUT"
+          echo "detect: latest release $latest_tag ($tag_sha); head $head_sha; has-new-work=$has_new_work." >> "$GITHUB_STEP_SUMMARY"
