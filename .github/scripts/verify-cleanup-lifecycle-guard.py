@@ -45,7 +45,11 @@ one. Plus:
     result produces a confident, wrong diagnosis;
   * all three copies of the guard are byte-identical, so a fix applied to one
     arm cannot leave the other two on the old shape. Which arm reached the
-    guard says nothing about the branch it is reading.
+    guard says nothing about the branch it is reading;
+  * the same for the three copies of "Resolve spec checkout ref" (#282), the
+    branch probe that sits just above the guard in every arm: byte-identical
+    `run:` bodies (only their env: differs), each pinned to `shell: bash`
+    because the arms run inside a caller-supplied container.
 
 Mutations at the end reintroduce the shipped defect and four plausible drifts
 and assert the suite fails on each.
@@ -72,6 +76,9 @@ from wc_shell_harness import (ensure_jq, resolve_bash, run_step,
 
 STAGE = ".github/workflows/cleanup.yml"
 STEP_NAME = "Verify spec artifacts and resolve lifecycle issue"
+# The branch probe every arm runs just above the guard (#282). Same rule:
+# three copies, kept identical by comparison rather than by trust.
+PROBE_STEP_NAME = "Resolve spec checkout ref"
 # The arm #73 was reported against. The other two carry the same step and are
 # asserted identical to it below.
 JOB = "mark-stalled"
@@ -120,6 +127,47 @@ def load_guards():
                  f"{JOB!r}. If it was renamed, update the workflow and this "
                  f"gate together — do not drop the check.")
     return found
+
+
+def load_probes():
+    """The probe step per job: (run text, shell), so the copies can be
+    compared and their shell pin checked."""
+    with open(STAGE, encoding="utf-8") as fh:
+        wf = yaml.safe_load(fh) or {}
+    found = {}
+    for job_name, job in (wf.get("jobs") or {}).items():
+        for step in (job or {}).get("steps") or []:
+            if (step or {}).get("name") == PROBE_STEP_NAME:
+                found[job_name] = (step.get("run") or "", step.get("shell"))
+    return found
+
+
+def check_probes(probes):
+    """Failures for the probe copies: one per arm that carries the guard,
+    byte-identical run bodies, `shell: bash` on each."""
+    failures = []
+    if set(probes) != set(load_guards()):
+        failures.append(
+            f"{PROBE_STEP_NAME!r} is present in jobs {sorted(probes)} but the "
+            f"guard {STEP_NAME!r} in {sorted(load_guards())} — every arm that "
+            f"reads the spec branch must probe for it first (#282), or the "
+            f"checkout above the guard hard-fails once the branch is deleted "
+            f"at close time.")
+        return failures
+    reference = probes.get(JOB, ("", None))[0]
+    for job_name, (run, shell) in sorted(probes.items()):
+        if run != reference:
+            failures.append(
+                f"job {job_name!r}'s copy of {PROBE_STEP_NAME!r} has drifted "
+                f"from job {JOB!r}'s — keep the three run: bodies identical "
+                f"(only env: may differ) or give this gate a scenario for "
+                f"the difference.")
+        if shell != "bash":
+            failures.append(
+                f"job {job_name!r}'s copy of {PROBE_STEP_NAME!r} is not "
+                f"`shell: bash` (got {shell!r}); it runs inside a "
+                f"caller-supplied container and its body uses pipefail.")
+    return failures
 
 
 RESOLVE_ANCHOR = "issue=$(jq -r '.issue // empty'"
@@ -414,6 +462,28 @@ def main():
                 f"wording is allowed to differ.")
     print(f"cleanup lifecycle guard: {len(guards)} copies of the step, "
           f"{'identical' if not failures else 'DRIFTED'}.")
+
+    probes = load_probes()
+    probe_failures = check_probes(probes)
+    failures += probe_failures
+    print(f"cleanup branch probe: {len(probes)} copies of "
+          f"{PROBE_STEP_NAME!r}, "
+          f"{'identical and bash-pinned' if not probe_failures else 'DRIFTED'}.")
+    # Prove the comparison can fail: one copy edited in memory, one unpinned.
+    if probes:
+        drifted = dict(probes)
+        other = next(j for j in sorted(drifted) if j != JOB)
+        drifted[other] = (drifted[other][0] + "\ntrue\n", drifted[other][1])
+        unpinned = dict(probes)
+        unpinned[other] = (unpinned[other][0], None)
+        for label, mutated in (("a drifted copy", drifted),
+                               ("an unpinned copy", unpinned)):
+            if check_probes(mutated):
+                print(f"Mutation OK — {label}: caught.")
+            else:
+                print(f"::error::MUTATION SURVIVED — {label} of "
+                      f"{PROBE_STEP_NAME!r} passed the probe comparison.")
+                failures.append(f"mutation survived: {label}")
 
     root = tempfile.mkdtemp()
     try:

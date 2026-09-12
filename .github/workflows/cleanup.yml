@@ -516,7 +516,9 @@ jobs:
       # indistinguishable from "absent".
       #
       # The three copies of this step (one per arm) carry the same run:
-      # body on purpose; only BRANCH and FALLBACK_REF differ.
+      # body on purpose; only BRANCH and FALLBACK_REF differ, and
+      # verify-cleanup-lifecycle-guard.py byte-compares the bodies so a
+      # fix applied to one arm cannot leave the other two on the old shape.
       - name: Resolve spec checkout ref
         id: spec-ref
         shell: bash
@@ -1519,6 +1521,7 @@ jobs:
       # bare `always()` would let this run with ISSUE empty and comment into
       # the void.
       - name: Flip stage label and comment stalled notice
+        shell: bash
         if: always() && steps.idempotency.outcome == 'success' && steps.idempotency.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
