@@ -203,7 +203,7 @@ runs:
             fi
 
             job_key="$(printf '%s' "$rec" | jq -r '.run.job_key // empty')"
-            job_id="$(printf '%s' "$jobs_json" | jq -r --arg n "$job_key" '[.[] | select(.name == $n or (.name | endswith(" / " + $n)))] | if length == 1 then .[0].id else empty end')"
+            job_id="$(printf '%s' "$jobs_json" | jq -r --arg n "$job_key" '[.[] | select(.name == $n or ((.name // "") | endswith(" / " + $n)))] | if length == 1 then .[0].id else empty end')"
             if [ -n "$job_id" ]; then
               rec="$(printf '%s' "$rec" | jq -c --argjson jid "$job_id" \
                 '.run.job_id = $jid | .run.record_key = "\(.run.workflow_run_id):\($jid):\(.run.step_index)"')"
