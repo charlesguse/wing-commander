@@ -366,10 +366,39 @@ jobs:
       slug: ${{ steps.identity.outputs.slug }}
       default-branch: ${{ steps.identity.outputs.default-branch }}
       issue-number: ${{ steps.meta.outputs.issue-number }}
-      classifications: ${{ steps.confirm.outputs.classifications }}
+      # #287 — the prose-free-output rule, stated once here (the act and
+      # report-fold-outcomes jobs point at this block): a job output must
+      # never carry text a person or a model wrote, or text copied out of
+      # the repository. The runner checks every JOB output at job
+      # completion and, if any substring would be redacted by its secret
+      # masker, drops the WHOLE output ("Skip output '<name>' since it may
+      # contain secret") — and the masker also redacts any key=value token
+      # whose key is one of two well-known credential words (the p-word and
+      # its three-letter abbreviation), matching secret or not. The
+      # classified legs used to travel through a `classifications` output
+      # here; a drafted task quoting one such shell line from the
+      # repository emptied it, `act` was skipped, and the stage reported
+      # success with nothing folded (four review folds lost on one PR).
+      #
+      # So the full bodies now travel in the pr-conversation-classifications
+      # artifact ("Upload classification bodies" below; `act` and
+      # report-fold-outcomes download it), and the matrix is built from
+      # `legs`: a projection to the two values `act` must know at JOB start
+      # — `id` (its per-leg job name) and `confirm-environment` (its
+      # environment binding; an adopter-configured input, not prose).
+      # `leg-count` is how the legs-dropped job downstream tells "nothing
+      # was classified" from "the runner withheld the list". Gate 49
+      # (verify-job-outputs-prose-free.py) enforces this shape: a tainted
+      # step may feed a job output only through a `# prose-free:`
+      # declaration it can verify against the write line.
+      # prose-free: map({id, "confirm-environment"})
+      legs: ${{ steps.confirm.outputs.legs }}
+      # prose-free: length
+      leg-count: ${{ steps.confirm.outputs.leg-count }}
       # T072: the group `act` joins — the canonical per-spec group, except
       # for a stop-only run, which mutates nothing and must not queue behind
       # the very run it was asked to cancel.
+      # prose-free: literal
       concurrency-group: ${{ steps.confirm.outputs.concurrency-group }}
       # research.md D3/data-model.md §2: the spec branch's tip immediately
       # before `act` starts folding anything — `dispatch-once` compares its
@@ -1223,7 +1252,17 @@ jobs:
             # actually execute in.
             | sort_by(if .["requires-confirmation"] then 1 else 0 end)
           ')
+          # #287: `classifications` stays a STEP output — "Post intent
+          # announcements" reads it, and step outputs never go through the
+          # job-output secret check — but it is no longer lifted to the job.
+          # The bodies go to a file for the artifact, and the job-level
+          # `legs`/`leg-count` are the prose-free projection the outputs:
+          # block above declares (Gate 49 verifies these two lines bear
+          # exactly the declared jq programs).
           echo "classifications=$result" >> "$GITHUB_OUTPUT"
+          printf '%s' "$result" > "$RUNNER_TEMP/classifications.json"
+          echo "legs=$(printf '%s' "$result" | jq -c 'map({id, "confirm-environment"})')" >> "$GITHUB_OUTPUT"
+          echo "leg-count=$(printf '%s' "$result" | jq 'length')" >> "$GITHUB_OUTPUT"
 
           # T072/FR-024/SC-009: pick the concurrency group `act` will join.
           # A `stop` classification mutates NO spec state — it only cancels a
@@ -1247,6 +1286,32 @@ jobs:
           else
             echo "concurrency-group=wing-commander-${SPEC_DIR}" >> "$GITHUB_OUTPUT"
           fi
+
+      # #287: the classified bodies reach `act` and report-fold-outcomes as
+      # an artifact, never as a job output -- see the outputs: block above
+      # in this file. Uploaded BEFORE the announcements below on purpose: if
+      # this upload fails, the job fails here, nothing has been announced,
+      # `act` is skipped by needs-propagation and `stalled` reports the
+      # stage did not start — FR-023's announce-before-act still holds, and
+      # no announced item is left with no leg to act on it.
+      #
+      # `overwrite: true` is load-bearing: "Re-run all jobs" keeps the run
+      # id and re-executes this job, and upload-artifact v4+ refuses a name
+      # that already exists in the run — so without it the second attempt
+      # dies here, `act`/`dispatch-once`/report-fold-outcomes/legs-dropped
+      # all skip, and a re-run (which worked before the artifact existed)
+      # becomes the one path that loses the review. The fresh classification
+      # is the right one to keep: every downstream reader belongs to the
+      # same attempt.
+      - name: Upload classification bodies
+        if: steps.confirm.outputs.legs != ''
+        uses: actions/upload-artifact@v6
+        with:
+          name: pr-conversation-classifications
+          path: ${{ runner.temp }}/classifications.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 90
 
       # T008/FR-023: posted BEFORE act starts — structurally guaranteed,
       # since act's environment: binding cannot begin evaluating until
@@ -1337,10 +1402,15 @@ jobs:
   # and report independently.
   act:
     needs: classify-and-announce
+    # `legs != ''` is load-bearing beyond "nothing classified": an empty
+    # string reaches fromJson below as a strategy error that kills the job,
+    # and it is also what the runner leaves behind when it withholds an
+    # output (#287) — the legs-dropped job below is what turns that case
+    # into a failure instead of a silent skip.
     if: >-
       needs.classify-and-announce.outputs.qualifies == 'true' &&
-      needs.classify-and-announce.outputs.classifications != '' &&
-      needs.classify-and-announce.outputs.classifications != '[]'
+      needs.classify-and-announce.outputs.legs != '' &&
+      needs.classify-and-announce.outputs.legs != '[]'
     # data-model.md §4 point 2: an explicit per-instance job name, keyed by
     # the stable `id` T005 assigns, so report-fold-outcomes can identify
     # each leg's own GitHub Actions job by id in the run's job list.
@@ -1395,8 +1465,14 @@ jobs:
       # out-of-PR ones" true under serialization: the in-PR work is already
       # finished by the time anything waits on a human.
       max-parallel: 1
+      # #287: one entry per leg carrying ONLY `id` and `confirm-environment`
+      # — the two values evaluated at job start (the job name and the
+      # environment binding below). Everything else about a leg is read
+      # from the classification artifact by "Load this leg's
+      # classification" -- see the classify-and-announce outputs: block
+      # above in this file.
       matrix:
-        include: ${{ fromJson(needs.classify-and-announce.outputs.classifications) }}
+        include: ${{ fromJson(needs.classify-and-announce.outputs.legs) }}
     # matrix is an available context for this key, so each leg's
     # environment.name can be a distinct expression — T029/FR-020: bound
     # only for a classification whose own category is in confirm-categories;
@@ -1503,6 +1579,58 @@ jobs:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
 
+      # #287: the leg's body (category, drafted content, summary, relay
+      # fields) comes from the artifact classify-and-announce uploaded, not
+      # from the matrix -- see the classify-and-announce outputs: block
+      # above in this file. A missing artifact fails this leg here, before
+      # anything is mutated, rather than acting on an empty body.
+      - name: Download classification bodies
+        uses: actions/download-artifact@v4
+        with:
+          name: pr-conversation-classifications
+          path: ${{ runner.temp }}/classifications
+
+      # Every field a later step used to read as `matrix.<x>` is exposed as
+      # a STEP output here — step outputs are stored in the job unmasked and
+      # never go through the job-output secret check, so a drafted answer
+      # that quotes a credential-shaped line still reaches its reply step.
+      # Heredoc form because a drafted answer or risk note can span lines;
+      # the random delimiter keeps a crafted body from ending the block
+      # early. The `json` output is the leg exactly as classify-and-announce
+      # produced it — the relay gate compares it structurally against the
+      # marker an earlier run embedded, so its shape must not be reduced.
+      - name: Load this leg's classification
+        id: leg
+        shell: bash
+        env:
+          LEG_ID: ${{ matrix.id }}
+        run: |
+          set -euo pipefail
+          f="$RUNNER_TEMP/classifications/classifications.json"
+          leg=$(jq -c --arg id "$LEG_ID" '[.[] | select(.id == $id)] | .[0] // empty' "$f")
+          if [ -z "$leg" ]; then
+            echo "::error::wing-commander pr-conversation stage: no classification with id $LEG_ID in the pr-conversation-classifications artifact — the matrix and the artifact are written by the same step, so one of them was altered after the fact. Nothing was done for this leg."
+            exit 1
+          fi
+          emit() {
+            local d="wc-leg-eof-$RANDOM$RANDOM$RANDOM"
+            printf '%s<<%s\n%s\n%s\n' "$1" "$d" "$2" "$d" >> "$GITHUB_OUTPUT"
+          }
+          field() { printf '%s' "$leg" | jq -r "$1"; }
+          emit json "$leg"
+          emit category "$(field '.category // ""')"
+          emit fold-target "$(field '.["fold-target"] // ""')"
+          emit summary "$(field '.summary // ""')"
+          emit drafted-content "$(field '.["drafted-content"] // {} | tojson')"
+          emit out-of-pr "$(field '.["out-of-pr"] // false')"
+          emit permission-match "$(field '.["permission-match"] // "none"')"
+          emit permission-match-url "$(field '.["permission-match-url"] // ""')"
+          emit constitution-conflict "$(field '.["constitution-conflict"] // ""')"
+          emit answer "$(field '.["drafted-content"].answer // ""')"
+          emit clarifying-question "$(field '.["drafted-content"]["clarifying-question"] // ""')"
+          emit relayed-risk "$(field '.relayed.risk // false')"
+          emit relayed-risk-note "$(field '.relayed["risk-note"] // ""')"
+
       # T009/T049/FR-022/FR-018/data-model.md RelayedRequest: applies AHEAD
       # of every other category's route, including in-scope-change. Not
       # risky, or not relayed at all -> proceed immediately. Risky and
@@ -1526,10 +1654,10 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           PR_NUMBER: ${{ inputs.pr-number }}
-          RISK: ${{ matrix.relayed.risk }}
-          RISK_NOTE: ${{ matrix.relayed['risk-note'] }}
+          RISK: ${{ steps.leg.outputs.relayed-risk }}
+          RISK_NOTE: ${{ steps.leg.outputs.relayed-risk-note }}
           ACTOR_LOGIN: ${{ inputs.actor-login }}
-          CLASSIFICATION_JSON: ${{ toJson(matrix) }}
+          CLASSIFICATION_JSON: ${{ steps.leg.outputs.json }}
           BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -euo pipefail
@@ -1614,11 +1742,11 @@ jobs:
         if: steps.relay-gate.outputs.proceed == 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
-          CATEGORY: ${{ matrix.category }}
-          FOLD_TARGET: ${{ matrix['fold-target'] }}
-          DRAFTED_CONTENT: ${{ toJson(matrix['drafted-content']) }}
-          PERMISSION_MATCH: ${{ matrix['permission-match'] }}
-          PERMISSION_MATCH_URL: ${{ matrix['permission-match-url'] }}
+          CATEGORY: ${{ steps.leg.outputs.category }}
+          FOLD_TARGET: ${{ steps.leg.outputs.fold-target }}
+          DRAFTED_CONTENT: ${{ steps.leg.outputs.drafted-content }}
+          PERMISSION_MATCH: ${{ steps.leg.outputs.permission-match }}
+          PERMISSION_MATCH_URL: ${{ steps.leg.outputs.permission-match-url }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
           SLUG: ${{ needs.classify-and-announce.outputs.slug }}
           DEFAULT_BRANCH: ${{ needs.classify-and-announce.outputs.default-branch }}
@@ -1705,13 +1833,14 @@ jobs:
       # Any small-unrelated-change size-backstop reshape (issue-title/
       # issue-body replacing pr-title/pr-body/file-changes) already
       # happened in classify-and-announce, before this job even started —
-      # see the NOTE in "Resolve effective category and route" — so
-      # matrix['drafted-content'] staged here is already the final shape
-      # for this leg's effective category; no override branch needed.
+      # see the NOTE in "Resolve effective category and route" — so the
+      # drafted-content loaded from the artifact and staged here is already
+      # the final shape for this leg's effective category; no override
+      # branch needed.
       - name: Stage drafted content for the act agent
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true'
         env:
-          DRAFTED_CONTENT: ${{ toJson(matrix['drafted-content']) }}
+          DRAFTED_CONTENT: ${{ steps.leg.outputs.drafted-content }}
         run: |
           mkdir -p /tmp/wing-commander
           printf '%s' "$DRAFTED_CONTENT" > /tmp/wing-commander/act-drafted-content.json
@@ -1791,7 +1920,7 @@ jobs:
               who to ask for re-review once this fold's implementation
               cycle finalizes again; do not remove any existing entry).
               Commit BOTH files together in one commit whose message starts
-              with "fold(${{ matrix.id }}): ${{ matrix.summary }}"
+              with "fold(${{ matrix.id }}): ${{ steps.leg.outputs.summary }}"
               and push to the current branch. Do NOT run `gh workflow run`
               yourself — a later job (`dispatch-once`) dispatches implement
               exactly once, after every item in this review has folded.
@@ -1871,7 +2000,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           PR_NUMBER: ${{ inputs.pr-number }}
-          OUT_OF_PR: ${{ matrix['out-of-pr'] }}
+          OUT_OF_PR: ${{ steps.leg.outputs.out-of-pr }}
           EFFECTIVE_CATEGORY: ${{ steps.route.outputs.effective-category }}
           EFFECTIVE_FOLD_TARGET: ${{ steps.route.outputs.effective-fold-target }}
           LEG_START: ${{ steps.route.outputs.leg-start }}
@@ -2137,14 +2266,14 @@ jobs:
       # content was already fully drafted by classify (T006).
       - name: Reply for question, needs-info, or push-back
         shell: bash
-        if: steps.relay-gate.outputs.proceed == 'true' && contains(fromJSON('["question","needs-info","push-back"]'), matrix.category)
+        if: steps.relay-gate.outputs.proceed == 'true' && contains(fromJSON('["question","needs-info","push-back"]'), steps.leg.outputs.category)
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           PR_NUMBER: ${{ inputs.pr-number }}
-          CATEGORY: ${{ matrix.category }}
-          ANSWER: ${{ matrix['drafted-content'].answer }}
-          CLARIFYING_QUESTION: ${{ matrix['drafted-content']['clarifying-question'] }}
-          CONSTITUTION_CONFLICT: ${{ matrix['constitution-conflict'] }}
+          CATEGORY: ${{ steps.leg.outputs.category }}
+          ANSWER: ${{ steps.leg.outputs.answer }}
+          CLARIFYING_QUESTION: ${{ steps.leg.outputs.clarifying-question }}
+          CONSTITUTION_CONFLICT: ${{ steps.leg.outputs.constitution-conflict }}
         run: |
           set -euo pipefail
           # T071: `drafted-content` is agent-produced, so a `question` can
@@ -2189,7 +2318,7 @@ jobs:
       # (T004) already passed.
       - name: Stop procedure
         shell: bash
-        if: steps.relay-gate.outputs.proceed == 'true' && matrix.category == 'stop'
+        if: steps.relay-gate.outputs.proceed == 'true' && steps.leg.outputs.category == 'stop'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           DISPATCH_TOKEN: ${{ github.token }}
@@ -2317,7 +2446,8 @@ jobs:
       always() &&
       needs.verify-image-prerequisites.result == 'success' &&
       needs.classify-and-announce.outputs.qualifies == 'true' &&
-      needs.classify-and-announce.outputs.classifications != '[]'
+      needs.classify-and-announce.outputs.legs != '' &&
+      needs.classify-and-announce.outputs.legs != '[]'
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -2499,7 +2629,8 @@ jobs:
       always() &&
       needs.verify-image-prerequisites.result == 'success' &&
       needs.classify-and-announce.outputs.qualifies == 'true' &&
-      needs.classify-and-announce.outputs.classifications != '[]'
+      needs.classify-and-announce.outputs.legs != '' &&
+      needs.classify-and-announce.outputs.legs != '[]'
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -2559,6 +2690,25 @@ jobs:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
 
+      # #287: the leg bodies this report keys on (id, category, fold-target,
+      # summary) come from the classification artifact, re-exposed as a
+      # STEP output so the report step below reads the same CLASSIFICATIONS
+      # variable it always did -- see the classify-and-announce outputs:
+      # block above in this file.
+      - name: Download classification bodies
+        uses: actions/download-artifact@v4
+        with:
+          name: pr-conversation-classifications
+          path: ${{ runner.temp }}/classifications
+
+      - name: Load classification bodies
+        id: bodies
+        shell: bash
+        run: |
+          set -euo pipefail
+          d="wc-bodies-eof-$RANDOM$RANDOM$RANDOM"
+          printf 'classifications<<%s\n%s\n%s\n' "$d" "$(jq -c '.' "$RUNNER_TEMP/classifications/classifications.json")" "$d" >> "$GITHUB_OUTPUT"
+
       - name: Read branch tip for outcome check
         id: tip
         shell: bash
@@ -2590,7 +2740,7 @@ jobs:
           ACTIONS_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ inputs.pr-number }}
           RUN_ID: ${{ github.run_id }}
-          CLASSIFICATIONS: ${{ needs.classify-and-announce.outputs.classifications }}
+          CLASSIFICATIONS: ${{ steps.bodies.outputs.classifications }}
           BASE_SHA: ${{ needs.classify-and-announce.outputs.base-sha }}
           TIP_SHA: ${{ steps.tip.outputs.sha }}
         run: |
@@ -2653,6 +2803,84 @@ jobs:
             echo "> Check this run's job list for the failing leg — nothing else in this review was affected."
           } > "$body_file"
           gh pr comment "$PR_NUMBER" --body-file "$body_file"
+
+  # #287: the only place a dropped `legs` output can be seen. The runner
+  # withholds an output at job completion, AFTER every step of
+  # classify-and-announce has succeeded, so that job cannot notice; and
+  # `act`, `dispatch-once` and report-fold-outcomes are all gated on
+  # `legs != ''`, so they skip — a silent skip is exactly the symptom. This
+  # job fires when the same confirm step that wrote `legs` also wrote
+  # `leg-count` and `concurrency-group`, yet `legs` came through empty.
+  # Either sibling suffices as the "confirm ran" witness — for the runner
+  # to hide all three, its masker would have to match a bare count and a
+  # group name as well as the id projection.
+  #
+  # `!cancelled()` rather than the default success(): the drop is decided
+  # at output collection, independently of how classify-and-announce
+  # ended. A job outputs whatever its completed steps set even when a
+  # later step fails, so a classify that announced leg 1 and then died
+  # posting leg 2's announcement has still lost every leg if `legs` was
+  # withheld — the run is already red, but nothing would say WHICH way it
+  # went wrong. A classify that failed before confirm ran sets none of
+  # the three outputs and cannot fire this. `!cancelled()` defeats
+  # skip-propagation, so the image gate is re-checked explicitly (Gate 23,
+  # the `stalled` job's shape). It posts the loss on the PR first (T063's
+  # ordering lesson: a reply after a failing step is a reply that never
+  # happens), then fails the run.
+  legs-dropped:
+    needs: [verify-image-prerequisites, classify-and-announce]
+    if: >-
+      !cancelled() &&
+      needs.verify-image-prerequisites.result == 'success' &&
+      needs.classify-and-announce.outputs.legs == '' &&
+      (needs.classify-and-announce.outputs.leg-count != '' ||
+       needs.classify-and-announce.outputs.concurrency-group != '')
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials: >-
+        ${{
+          (secrets.container-registry-username != '' && secrets.container-registry-password != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
+            || fromJSON('{}')
+        }}
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    permissions:
+      pull-requests: write
+    steps:
+      # github.token rather than the App token: this job exists to say
+      # something went wrong with as few moving parts as possible, and a
+      # pipeline checkout plus the context composite are two more things
+      # that could fail on the way to the one comment that matters.
+      - name: Report the lost review on the PR and fail
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr-number }}
+          LEG_COUNT: ${{ needs.classify-and-announce.outputs.leg-count }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          n="${LEG_COUNT:-an unknown number of}"
+          body_file="$RUNNER_TEMP/legs-dropped-reply.md"
+          {
+            echo "> [!CAUTION]"
+            echo "> **This review was announced but never acted on.**"
+            echo ">"
+            echo "> $n classification(s) were announced above, but the runner withheld the \`legs\` output of the classify-and-announce job (its log says it skipped that output because it may contain a secret), so the \`act\` matrix never ran: nothing was folded, no spin-off was opened, and no reply was posted for any of them."
+            echo ">"
+            echo "> That output carries only leg ids and the configured confirmation-environment name, so the secret masker matched one of those. Inspect the classify-and-announce job log at $RUN_URL, remove the cause, and repeat the request."
+          } > "$body_file"
+          # `-R` is load-bearing: nothing was checked out in this job, so
+          # there is no origin remote for gh to infer the repository from.
+          # The comment failing must not pre-empt the error below — the
+          # run going red is the floor, the comment is the courtesy.
+          gh pr comment "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --body-file "$body_file" \
+            || echo "::warning::wing-commander pr-conversation stage: could not post the lost-review notice on PR #$PR_NUMBER; the error below is the only record of it."
+          echo "::error::wing-commander pr-conversation stage: $n classification(s) were announced but the legs job output was empty — the runner dropped it as possibly containing a secret, so the act matrix was skipped and the review was never acted on (#287)."
+          exit 1
 
   # Survivor job (the #224 idiom, research.md D4): watches
   # classify-and-announce only (data-model.md's pr-conversation row) — `act`
