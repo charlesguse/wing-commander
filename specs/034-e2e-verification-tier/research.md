@@ -39,7 +39,7 @@ already produced:
    only checks `create-new-feature.sh`'s JSON fields `BRANCH_NAME`/
    `SPEC_FILE`, never the file's actual content).
 2. `SPECIFY_FEATURE_DIRECTORY="$FEATURE_DIR" bash .specify/scripts/bash/setup-plan.sh --json`
-   — assert `FEATURE_SPEC`/`IMPL_PLAN`/`SPECS_DIR`/`BRANCH` are all present
+   — assert `FEATURE_SPEC`/`IMPL_PLAN`/`FEATURE_DIR`/`BRANCH` are all present
    and non-empty, and that `$FEATURE_DIR/plan.md` (the `IMPL_PLAN` path) is
    non-empty on disk.
 3. `SPECIFY_FEATURE_DIRECTORY="$FEATURE_DIR" bash .specify/scripts/bash/setup-tasks.sh --json`
