@@ -1,0 +1,816 @@
+# Scheduled auto-release: detects unreleased work on main, verifies it
+# end-to-end against a maintainer-onboarded test repository running the
+# published stages, computes the next non-breaking version, and dispatches
+# release.yml to cut it. Never requests a breaking/major release -- that
+# stays a deliberate human act through release.yml's own manual dispatch.
+# See specs/045-auto-release-verified-head/contracts/auto-release-workflow.md,
+# e2e-repository-wiring.md, and release-dispatch.md for the full contract.
+#
+# on: workflow_dispatch only in addition to schedule -- no workflow_call.
+# This file is not a published stage (research.md D1 of specs/045): it
+# releases THIS repository, not an adopter's, and carries no ambient event
+# payload that needs translating into typed inputs.
+name: "auto-release"
+
+on:
+  schedule:
+    - cron: "9 9 * * *"   # one-line, PR-reviewed knob (FR-002) -- not repository-variable-configurable
+  workflow_dispatch: {}    # FR-005: on-demand, no inputs needed
+
+permissions: {}
+
+concurrency:
+  group: wing-commander-auto-release
+  cancel-in-progress: false
+
+jobs:
+  # Detecting unreleased work costs nothing extra (research.md D4): "is
+  # there new work" and "has this head already been auto-released" are
+  # answered by the same read -- the highest exact vX.Y.Z release tag
+  # compared against HEAD. No separate ledger of "already attempted this
+  # head" is needed; the tag itself is that record.
+  detect:
+    if: vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    outputs:
+      head-sha: ${{ steps.resolve.outputs.head-sha }}
+      tag-exists: ${{ steps.resolve.outputs.tag-exists }}
+      latest-tag: ${{ steps.resolve.outputs.latest-tag }}
+      has-new-work: ${{ steps.resolve.outputs.has-new-work }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Resolve latest release tag and unreleased head
+        id: resolve
+        shell: bash
+        run: |
+          set -uo pipefail
+          head_sha="$(git rev-parse HEAD)"
+
+          # Strict vX.Y.Z only -- excludes the floating vX major tags and any
+          # pre-release/build suffix (data-model.md "Latest release tag").
+          latest_tag="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | sort -V | tail -1 || true)"
+
+          if [ -z "$latest_tag" ]; then
+            {
+              echo "head-sha=$head_sha"
+              echo "tag-exists=false"
+              echo "latest-tag="
+              echo "has-new-work=false"
+            } >> "$GITHUB_OUTPUT"
+            echo "detect: no release tag exists yet -- nothing to compare against." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # The commit the tag's annotated object points at, never the tag
+          # object's own SHA (data-model.md).
+          tag_sha="$(git rev-parse "${latest_tag}^{commit}")"
+          if [ "$head_sha" != "$tag_sha" ]; then
+            has_new_work=true
+          else
+            has_new_work=false
+          fi
+
+          {
+            echo "head-sha=$head_sha"
+            echo "tag-exists=true"
+            echo "latest-tag=$latest_tag"
+            echo "has-new-work=$has_new_work"
+          } >> "$GITHUB_OUTPUT"
+          echo "detect: latest release $latest_tag ($tag_sha); head $head_sha; has-new-work=$has_new_work." >> "$GITHUB_STEP_SUMMARY"
+
+  # Resolve/validate the test repository, reset its default branch,
+  # scaffold the published stages at the verified head, kick off the fixed
+  # trivial feature, poll to a verdict, assert per-stage outputs. Every step
+  # here degrades to a fail-infra/fail-timeout/fail-incomplete/
+  # fail-wrong-output verdict rather than crashing the job (research.md
+  # D10/D11, data-model.md "End-to-end verdict") -- decide-version below
+  # reads this job's `verdict` output unconditionally, so it must always be
+  # valid JSON regardless of which step here stopped the run.
+  verify-e2e:
+    needs: detect
+    if: needs.detect.outputs.has-new-work == 'true' && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    permissions: {}
+    outputs:
+      verdict: ${{ steps.config.outputs.verdict || steps.reachable.outputs.verdict || steps.reset.outputs.verdict || steps.scaffold.outputs.verdict || steps.kickoff.outputs.verdict || steps.poll.outputs.verdict }}
+    steps:
+      - name: Resolve and validate the end-to-end test repository configuration
+        id: config
+        shell: bash
+        env:
+          E2E_REPO: ${{ vars.WING_COMMANDER_AUTO_RELEASE_E2E_REPO }}
+          HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
+        run: |
+          set -uo pipefail
+          if [ -z "$E2E_REPO" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              jq -n --arg head "$HEAD_SHA" \
+                '{outcome:"fail-infra", verified_head:$head, failing_check:"WING_COMMANDER_AUTO_RELEASE_E2E_REPO is unset", expected:"a repository variable set to OWNER/NAME of a pre-onboarded test repository", observed:"unset", evidence_url:"WING_COMMANDER_AUTO_RELEASE_E2E_REPO"}'
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_REPO is unset -- see docs/setup.md."
+            exit 0
+          fi
+          case "$E2E_REPO" in
+            */*/*|/*|*/|*[[:space:]]*) shape=bad ;;
+            */*)                       shape=ok ;;
+            *)                         shape=bad ;;
+          esac
+          if [ "$shape" = "bad" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" \
+                '{outcome:"fail-infra", verified_head:$head, failing_check:"WING_COMMANDER_AUTO_RELEASE_E2E_REPO shape", expected:"OWNER/NAME", observed:$repo, evidence_url:"WING_COMMANDER_AUTO_RELEASE_E2E_REPO"}'
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_REPO is '$E2E_REPO', which is not an OWNER/NAME pair."
+            exit 0
+          fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "e2e-repo=$E2E_REPO" >> "$GITHUB_OUTPUT"
+          echo "owner=${E2E_REPO%%/*}" >> "$GITHUB_OUTPUT"
+          echo "name=${E2E_REPO#*/}" >> "$GITHUB_OUTPUT"
+
+      # continue-on-error, re-checked in the next step -- mirrors
+      # auto-update-spec-kit.yml's scratch-token step. With neither `owner`
+      # nor `repositories` set this action scopes to the CURRENT repository
+      # only (research.md D11), so a second, narrowly-scoped token is always
+      # minted here rather than reusing any other token in this workflow.
+      - name: Mint a scoped App token for the test repository
+        id: token
+        if: steps.config.outputs.ready == 'true'
+        continue-on-error: true
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+          private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
+          owner: ${{ steps.config.outputs.owner }}
+          repositories: ${{ steps.config.outputs.name }}
+
+      - name: Confirm the test repository is reachable
+        id: reachable
+        if: steps.config.outputs.ready == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          TOKEN_OUTCOME: ${{ steps.token.outcome }}
+          E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
+          HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
+        run: |
+          set -uo pipefail
+          if [ "$TOKEN_OUTCOME" != "success" ] || [ -z "$GH_TOKEN" ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" \
+                '{outcome:"fail-infra", verified_head:$head, failing_check:"wing-commander App installation on the test repository", expected:"installed on the test repository with Contents/Issues/Pull requests read-write", observed:"token mint failed", evidence_url:$repo}'
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            echo "::error::wing-commander auto-release verify-e2e: the wing-commander App could not mint a token for $E2E_REPO -- install it there (docs/setup.md)."
+            exit 0
+          fi
+          default_branch="$(gh repo view "$E2E_REPO" --json defaultBranchRef --jq '.defaultBranchRef.name // empty' 2>/dev/null || true)"
+          if [ -z "$default_branch" ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" \
+                '{outcome:"fail-infra", verified_head:$head, failing_check:"test repository reachability", expected:"gh repo view succeeds and reports a default branch", observed:"unreachable, or has no default branch", evidence_url:$repo}'
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            echo "::error::wing-commander auto-release verify-e2e: could not read $E2E_REPO's default branch -- is it reachable, and does the App installation cover it?"
+            exit 0
+          fi
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+          echo "default-branch=$default_branch" >> "$GITHUB_OUTPUT"
+
+      # Any open issue/PR left by a previous attempt is closed (best-effort)
+      # before the reset -- an orphan-reset default branch otherwise leaves
+      # a stale open PR pointing at history that no longer exists
+      # (research.md D6's consequence). Then the default branch itself is
+      # the "per-run branch" (research.md D6): GitHub only evaluates
+      # non-ref-scoped triggers like `issues` from the default branch, so
+      # scaffolding anywhere else would produce wrapper workflows that never
+      # fire.
+      - name: Close prior leftovers and reset the default branch
+        id: reset
+        if: steps.reachable.outputs.ok == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
+          DEFAULT_BRANCH: ${{ steps.reachable.outputs.default-branch }}
+          HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
+        run: |
+          set -uo pipefail
+
+          mapfile -t open_issues < <(gh issue list --repo "$E2E_REPO" --state open --json number --jq '.[].number' 2>/dev/null || true)
+          for n in "${open_issues[@]}"; do
+            [ -n "$n" ] || continue
+            gh issue close "$n" --repo "$E2E_REPO" --comment "Closed by wing-commander's auto-release.yml before a fresh verification attempt." >/dev/null 2>&1 || true
+          done
+          mapfile -t open_prs < <(gh pr list --repo "$E2E_REPO" --state open --json number --jq '.[].number' 2>/dev/null || true)
+          for n in "${open_prs[@]}"; do
+            [ -n "$n" ] || continue
+            gh pr close "$n" --repo "$E2E_REPO" --comment "Closed by wing-commander's auto-release.yml before a fresh verification attempt." >/dev/null 2>&1 || true
+          done
+
+          rm -rf e2e-test-repo
+          auth_url="https://x-access-token:${GH_TOKEN}@github.com/${E2E_REPO}.git"
+          if ! git clone --quiet "$auth_url" e2e-test-repo 2>"$RUNNER_TEMP/auto-release-clone-err.txt"; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" --arg detail "$(tail -c 500 "$RUNNER_TEMP/auto-release-clone-err.txt")" \
+                '{outcome:"fail-infra", verified_head:$head, failing_check:"cloning the test repository", expected:"a clone over the scoped App token succeeds", observed:$detail, evidence_url:$repo}'
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          (
+            cd e2e-test-repo
+            git remote set-url origin "https://github.com/${E2E_REPO}.git"
+            git config user.name "wing-commander-auto-release[bot]"
+            git config user.email "wing-commander-auto-release[bot]@users.noreply.github.com"
+            # Detach-and-delete, same technique as auto-update-spec-kit.yml's
+            # scratch-repository reset, applied to the DEFAULT branch itself
+            # (research.md D6/D7) rather than a side branch.
+            if git rev-parse --verify HEAD >/dev/null 2>&1; then
+              git checkout --quiet --detach
+              git branch -D "$DEFAULT_BRANCH" >/dev/null 2>&1 || true
+              git checkout --quiet --orphan "$DEFAULT_BRANCH"
+              git rm -rq --cached . >/dev/null 2>&1 || true
+              find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+            else
+              git checkout --quiet -b "$DEFAULT_BRANCH"
+            fi
+            git commit --quiet --allow-empty -m "chore: reset for a fresh end-to-end verification attempt"
+          )
+
+          if ! git -C e2e-test-repo push --force --quiet "$auth_url" "HEAD:refs/heads/${DEFAULT_BRANCH}" 2>"$RUNNER_TEMP/auto-release-push-err.txt"; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" --arg detail "$(tail -c 500 "$RUNNER_TEMP/auto-release-push-err.txt")" \
+                '{outcome:"fail-infra", verified_head:$head, failing_check:"resetting the test repository default branch", expected:"a force-push of the reset branch succeeds", observed:$detail, evidence_url:$repo}'
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout this repository at the verified head (wrapper fixture + supported Spec Kit version)
+        if: steps.reset.outputs.ok == 'true'
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.detect.outputs.head-sha }}
+          persist-credentials: false
+          path: e2e-source
+
+      - name: Resolve this repository's supported Spec Kit version
+        id: speckit-version
+        if: steps.reset.outputs.ok == 'true'
+        shell: bash
+        run: |
+          set -uo pipefail
+          v="$(sed -n 's/.*SPECKIT_SUPPORTED_VERSION: "\([^"]*\)".*/\1/p' e2e-source/.github/actions/wing-commander-preflight/action.yml | head -1)"
+          if [ -z "$v" ]; then
+            echo "::error::wing-commander auto-release verify-e2e: could not resolve SPECKIT_SUPPORTED_VERSION from wing-commander-preflight/action.yml."
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Install uv (provides uvx for the Spec Kit CLI)
+        if: steps.reset.outputs.ok == 'true'
+        uses: astral-sh/setup-uv@v10.0.0
+
+      # Scaffolds `specify init` output at this repository's own pinned
+      # version, plus the minimal wrapper set docs/adoption.md documents --
+      # copied from THIS repository's own dogfooded wrappers (its local
+      # `uses: ./.github/workflows/<stage>.yml` calls rewritten to the
+      # published cross-repository form, pinned at the exact unreleased
+      # commit under verification, never a tag or `@main` (research.md D7)).
+      # Copying this repository's own wrapper files is the single home for
+      # that content -- there is no second copy to drift from docs/adoption.md.
+      - name: Scaffold the fixture and push it to the test repository
+        id: scaffold
+        if: steps.reset.outputs.ok == 'true'
+        shell: bash
+        working-directory: e2e-test-repo
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
+          DEFAULT_BRANCH: ${{ steps.reachable.outputs.default-branch }}
+          HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
+          SPECKIT_VERSION: ${{ steps.speckit-version.outputs.version }}
+        run: |
+          set -uo pipefail
+
+          if ! command -v uvx >/dev/null 2>&1; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" \
+                '{outcome:"fail-infra", verified_head:$head, failing_check:"scaffolding the test repository", expected:"uvx available on the runner", observed:"uvx not found", evidence_url:$repo}'
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! uvx --from "git+https://github.com/github/spec-kit.git@v${SPECKIT_VERSION}" \
+              specify init . --integration claude --script sh --force --ignore-agent-tools \
+              > "$RUNNER_TEMP/auto-release-scaffold-install.log" 2>&1; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" --arg detail "$(tail -c 500 "$RUNNER_TEMP/auto-release-scaffold-install.log")" \
+                '{outcome:"fail-infra", verified_head:$head, failing_check:"specify init in the test repository", expected:"specify init exits 0", observed:$detail, evidence_url:$repo}'
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          declare -A stage_file=(
+            [wing-commander-1-intake.yml]=intake.yml
+            [wing-commander-2-clarify.yml]=clarify.yml
+            [wing-commander-3-plan.yml]=plan.yml
+            [wing-commander-4-tasks.yml]=tasks.yml
+            [wing-commander-5-implement.yml]=implement.yml
+            [wing-commander-6-finalize.yml]=finalize.yml
+            [wing-commander-7-cleanup.yml]=cleanup.yml
+            [wing-commander-rebase.yml]=rebase.yml
+          )
+          mkdir -p .github/workflows
+          for f in "${!stage_file[@]}"; do
+            stage="${stage_file[$f]}"
+            cp "../e2e-source/.github/workflows/$f" ".github/workflows/$f"
+            sed -i "s#uses: \./\.github/workflows/${stage}#uses: charlesguse/wing-commander/.github/workflows/${stage}@${HEAD_SHA}#" ".github/workflows/$f"
+          done
+          # docs/adoption.md's own instruction: replace the literal `main`
+          # in the two wrappers whose gate/trigger names it, since the test
+          # repository's default branch name is whatever the maintainer chose.
+          sed -i "s/== 'main'/== '${DEFAULT_BRANCH}'/" .github/workflows/wing-commander-3-plan.yml
+          sed -i "s/branches: \[main\]/branches: [${DEFAULT_BRANCH}]/" .github/workflows/wing-commander-rebase.yml
+
+          git add -A
+          git commit --quiet -m "chore: scaffold end-to-end verification fixture at ${HEAD_SHA:0:7}"
+          auth_url="https://x-access-token:${GH_TOKEN}@github.com/${E2E_REPO}.git"
+          if ! git push --force --quiet "$auth_url" "HEAD:refs/heads/${DEFAULT_BRANCH}" 2>"$RUNNER_TEMP/auto-release-scaffold-push-err.txt"; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" --arg detail "$(tail -c 500 "$RUNNER_TEMP/auto-release-scaffold-push-err.txt")" \
+                '{outcome:"fail-infra", verified_head:$head, failing_check:"pushing the scaffolded fixture", expected:"a force-push of the scaffold succeeds", observed:$detail, evidence_url:$repo}'
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+
+      # Create, then label, never both at once (research.md D8): creating an
+      # issue with a label attached is reported as an `opened` event, not a
+      # `labeled` one, so the intake wrapper's `issues: {types: [labeled]}`
+      # trigger would never fire.
+      - name: Kick off the trivial end-to-end feature
+        id: kickoff
+        if: steps.scaffold.outputs.ok == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
+          HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
+        run: |
+          set -uo pipefail
+          short_sha="${HEAD_SHA:0:7}"
+          {
+            echo "Add a single new markdown file under \`docs/\` stating the verified commit and timestamp."
+            echo ""
+            echo "Opened by wing-commander's own \`auto-release.yml\` scheduled verification run to confirm the published pipeline stages still carry a trivial change through intake, clarify, plan, tasks, implement, review, and cleanup, at commit ${HEAD_SHA}."
+          } > "$RUNNER_TEMP/auto-release-e2e-issue-body.md"
+
+          url="$(gh issue create --repo "$E2E_REPO" --title "wing-commander auto-release verification at ${short_sha}" --body-file "$RUNNER_TEMP/auto-release-e2e-issue-body.md" 2>"$RUNNER_TEMP/auto-release-kickoff-err.txt")"
+          if [ -z "$url" ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" --arg detail "$(tail -c 500 "$RUNNER_TEMP/auto-release-kickoff-err.txt")" \
+                '{outcome:"fail-infra", verified_head:$head, failing_check:"creating the kickoff issue", expected:"gh issue create succeeds", observed:$detail, evidence_url:$repo}'
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          issue_number="${url##*/}"
+
+          if ! gh issue edit "$issue_number" --repo "$E2E_REPO" --add-label spec-request >"$RUNNER_TEMP/auto-release-label-err.txt" 2>&1; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" --arg detail "$(tail -c 500 "$RUNNER_TEMP/auto-release-label-err.txt")" \
+                '{outcome:"fail-infra", verified_head:$head, failing_check:"labelling the kickoff issue spec-request", expected:"the spec-request label exists and gh issue edit succeeds", observed:$detail, evidence_url:$repo}'
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+          echo "issue-number=$issue_number" >> "$GITHUB_OUTPUT"
+          echo "issue-url=$url" >> "$GITHUB_OUTPUT"
+
+      # Poll over the issue's own state/labels/timeline, plus artifact
+      # presence -- never agent narration (research.md D10). Bounded by
+      # POLL_BUDGET_SECONDS rather than the step's own `timeout-minutes`, so
+      # a timeout still produces a `fail-timeout` verdict instead of the
+      # runner killing the step before it can write one.
+      - name: Poll the test repository to a verdict
+        id: poll
+        if: steps.kickoff.outputs.ok == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
+          ISSUE: ${{ steps.kickoff.outputs.issue-number }}
+          ISSUE_URL: ${{ steps.kickoff.outputs.issue-url }}
+          HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
+          POLL_BUDGET_SECONDS: "6900"
+        run: |
+          set -uo pipefail
+
+          write_verdict() {
+            jq -n --arg outcome "$1" --arg head "$HEAD_SHA" --arg failing_check "$2" \
+                  --arg expected "$3" --arg observed "$4" --arg url "$ISSUE_URL" \
+              '{outcome:$outcome, verified_head:$head,
+                failing_check: (if $failing_check == "" then null else $failing_check end),
+                expected: (if $expected == "" then null else $expected end),
+                observed: (if $observed == "" then null else $observed end),
+                evidence_url:$url}' > "$RUNNER_TEMP/auto-release-verdict.json"
+          }
+          emit_verdict() {
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              cat "$RUNNER_TEMP/auto-release-verdict.json"
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+          }
+
+          state=""
+          labels=""
+          terminal=false
+          while [ "$SECONDS" -lt "$POLL_BUDGET_SECONDS" ]; do
+            info="$(gh issue view "$ISSUE" --repo "$E2E_REPO" --json state,labels 2>/dev/null || true)"
+            if [ -n "$info" ]; then
+              state="$(printf '%s' "$info" | jq -r '.state')"
+              labels="$(printf '%s' "$info" | jq -r '[.labels[].name] | join(",")')"
+              if [ "$state" = "CLOSED" ] || printf ',%s,' "$labels" | grep -q ',stage:stalled,'; then
+                terminal=true
+                break
+              fi
+            fi
+            sleep 30
+          done
+
+          if [ "$terminal" != "true" ]; then
+            write_verdict "fail-timeout" "end-to-end run reaching a terminal state" \
+              "closed with stage:done, or stage:stalled, within the poll budget" \
+              "still open with labels [$labels] after ${POLL_BUDGET_SECONDS}s"
+            emit_verdict
+            exit 0
+          fi
+
+          if [ "$state" != "CLOSED" ] || ! printf ',%s,' "$labels" | grep -q ',stage:done,'; then
+            write_verdict "fail-incomplete" "end-to-end run reaching stage:done" \
+              "issue closed with the stage:done label" \
+              "state=$state labels=[$labels]"
+            emit_verdict
+            exit 0
+          fi
+
+          timeline="$(gh api "repos/${E2E_REPO}/issues/${ISSUE}/timeline" --paginate --jq '.[] | select(.event=="labeled") | .label.name' 2>/dev/null | jq -s '.' 2>/dev/null)" || timeline='[]'
+          missing_stage=""
+          for s in stage:spec stage:clarify stage:plan stage:tasks stage:implement stage:review; do
+            if ! printf '%s' "$timeline" | jq -e --arg s "$s" 'index($s) != null' >/dev/null 2>&1; then
+              missing_stage="$s"
+              break
+            fi
+          done
+          if [ -n "$missing_stage" ]; then
+            write_verdict "fail-wrong-output" "every intermediate stage label present in the issue timeline" \
+              "$missing_stage present at some point in the timeline" "timeline=$timeline"
+            emit_verdict
+            exit 0
+          fi
+
+          slug="$(gh api "repos/${E2E_REPO}/contents/specs" --jq '[.[] | select(.type=="dir")][0].name // empty' 2>/dev/null || true)"
+          missing_file=""
+          if [ -z "$slug" ]; then
+            missing_file="specs/<slug>/"
+          else
+            for name in spec.md plan.md tasks.md; do
+              if ! gh api "repos/${E2E_REPO}/contents/specs/${slug}/${name}" >/dev/null 2>&1; then
+                missing_file="specs/${slug}/${name}"
+                break
+              fi
+            done
+          fi
+          if [ -n "$missing_file" ]; then
+            write_verdict "fail-wrong-output" "specs/<slug>/{spec,plan,tasks}.md present after stage:done" \
+              "$missing_file present in the default branch" "not found"
+            emit_verdict
+            exit 0
+          fi
+
+          write_verdict "pass" "" "" ""
+          emit_verdict
+
+  # Patch-vs-minor signal collection (research.md D5) plus tag-collision
+  # detection (data-model.md "Version decision"). Never produces `major` --
+  # there is no code path here that can (User Story 4, T019/T020).
+  decide-version:
+    needs: [detect, verify-e2e]
+    if: fromJSON(needs.verify-e2e.outputs.verdict || '{}').outcome == 'pass' && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      next-version: ${{ steps.decide.outputs.next-version }}
+      collision: ${{ steps.decide.outputs.collision }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Compute the next version
+        id: decide
+        shell: bash
+        env:
+          LATEST_TAG: ${{ needs.detect.outputs.latest-tag }}
+          HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bump="patch"
+          while IFS= read -r merge_sha; do
+            [ -n "$merge_sha" ] || continue
+            subject="$(git log -1 --format=%s "$merge_sha")"
+            pr_number=""
+            case "$subject" in
+              *"Merge pull request #"*)
+                pr_number="${subject#*Merge pull request #}"
+                pr_number="${pr_number%% *}"
+                ;;
+              *"(#"*")"*)
+                pr_number="${subject##*(#}"
+                pr_number="${pr_number%%)*}"
+                ;;
+            esac
+            [ -n "$pr_number" ] || continue
+            labels="$(gh pr view "$pr_number" --repo "$GITHUB_REPOSITORY" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null || true)"
+            case ",$labels," in
+              *,release:minor,*) bump="minor" ;;
+            esac
+          done < <(git log "${LATEST_TAG}..${HEAD_SHA}" --merges --format=%H)
+
+          version="${LATEST_TAG#v}"
+          IFS='.' read -r major minor patch <<< "$version"
+          if [ "$bump" = "minor" ]; then
+            next="v${major}.$((minor + 1)).0"
+          else
+            next="v${major}.${minor}.$((patch + 1))"
+          fi
+
+          collision=false
+          if git rev-parse -q --verify "refs/tags/$next" >/dev/null; then
+            collision=true
+          fi
+
+          {
+            echo "bump=$bump"
+            echo "next-version=$next"
+            echo "collision=$collision"
+          } >> "$GITHUB_OUTPUT"
+          echo "decide-version: bump=$bump next-version=$next collision=$collision." >> "$GITHUB_STEP_SUMMARY"
+
+  # `release.yml` is workflow_dispatch-only and cannot be `uses:`-invoked, so
+  # `gh workflow run` is the only mechanism (research.md D12) -- run with
+  # `github.token`, never the wing-commander App token (that token has no
+  # `actions` permission; a documented 403, issue/spec 005). A successful
+  # dispatch only means GitHub accepted the request, so this polls the
+  # dispatched run to its own conclusion before reporting `released`.
+  dispatch-release:
+    needs: [detect, decide-version]
+    if: needs.decide-version.outputs.collision == 'false' && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    outputs:
+      release-outcome: ${{ steps.watch.outputs.release-outcome }}
+    steps:
+      - name: Dispatch release.yml and wait for its conclusion
+        id: watch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.decide-version.outputs.next-version }}
+          VERIFIED_HEAD: ${{ needs.detect.outputs.head-sha }}
+        run: |
+          set -uo pipefail
+
+          # release.yml's own checkout carries no ref: override, so
+          # `gh workflow run` tags whatever main's tip is at dispatch time,
+          # not the commit verify-e2e actually verified (FR-016) -- and
+          # verify-e2e can run for up to this workflow's own
+          # timeout-minutes before this job starts, during which main can
+          # advance. A tag must never land on a commit no end-to-end run
+          # ever saw, so skip the dispatch entirely when main has moved.
+          current_tip="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha 2>/dev/null || true)"
+          if [ -z "$current_tip" ]; then
+            echo "::error::wing-commander auto-release dispatch-release: could not resolve main's current tip; not dispatching against an unconfirmed head."
+            echo "release-outcome=failed" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$current_tip" != "$VERIFIED_HEAD" ]; then
+            echo "::notice::wing-commander auto-release dispatch-release: main advanced from the verified head (${VERIFIED_HEAD}) to ${current_tip} before dispatch; skipping this attempt."
+            echo "release-outcome=stale-head" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! gh workflow run release.yml -f "version=${VERSION}" -f breaking=false -f breaking-notes=; then
+            echo "::error::wing-commander auto-release dispatch-release: gh workflow run release.yml was rejected."
+            echo "release-outcome=failed" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          run_id=""
+          attempt=0
+          while [ "$attempt" -lt 12 ] && [ -z "$run_id" ]; do
+            run_id="$(gh run list --workflow=release.yml -b main --json databaseId,status,conclusion -L 1 --jq '.[0].databaseId // empty' 2>/dev/null || true)"
+            [ -n "$run_id" ] || sleep 5
+            attempt=$((attempt + 1))
+          done
+
+          if [ -z "$run_id" ]; then
+            echo "::error::wing-commander auto-release dispatch-release: gh workflow run release.yml was accepted but no run appeared within 60s."
+            echo "release-outcome=failed" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if gh run watch "$run_id" --exit-status >/dev/null 2>&1; then
+            echo "release-outcome=released" >> "$GITHUB_OUTPUT"
+          else
+            echo "release-outcome=failed" >> "$GITHUB_OUTPUT"
+          fi
+          echo "release-run-id=$run_id" >> "$GITHUB_OUTPUT"
+
+  # The only place this feature writes anything maintainer-facing
+  # (contracts/release-dispatch.md Reporting). Reads whichever prior jobs
+  # actually ran -- `always()` so a paused/no-op/failed run still reports.
+  report:
+    if: always() && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'
+    needs: [detect, verify-e2e, decide-version, dispatch-release]
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Report this run's outcome
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
+          HAS_NEW_WORK: ${{ needs.detect.outputs.has-new-work }}
+          TAG_EXISTS: ${{ needs.detect.outputs.tag-exists }}
+          LATEST_TAG: ${{ needs.detect.outputs.latest-tag }}
+          VERDICT_JSON: ${{ needs.verify-e2e.outputs.verdict }}
+          NEXT_VERSION: ${{ needs.decide-version.outputs.next-version }}
+          COLLISION: ${{ needs.decide-version.outputs.collision }}
+          RELEASE_OUTCOME: ${{ needs.dispatch-release.outputs.release-outcome }}
+        run: |
+          set -uo pipefail
+
+          # No new work: verify-e2e never ran, so VERDICT_JSON is empty --
+          # that must never be misread as a verification failure. Two
+          # distinctly worded no-op lines (FR-003 vs FR-004): a baseline tag
+          # exists and HEAD already matches it, or no baseline tag exists at
+          # all yet to compare against.
+          if [ "$HAS_NEW_WORK" != "true" ]; then
+            if [ "$TAG_EXISTS" = "true" ]; then
+              echo "no new work since ${LATEST_TAG}" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "no release tag exists yet -- nothing to compare against, nothing cut" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            exit 0
+          fi
+
+          FAILED_LABEL="auto-release:failed"
+
+          # Dedup by label (research.md D13): update the one open report
+          # rather than filing a second, and rebuild its body from the
+          # LATEST attempt's detail on every recurrence (data-model.md
+          # "Failure report" -- only the newest attempt is actionable).
+          file_or_update_failure() {
+            local body_file="$1"
+            local existing
+            existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label "$FAILED_LABEL" --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+            if [ -n "$existing" ]; then
+              gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body-file "$body_file"
+            else
+              gh label create "$FAILED_LABEL" --color B60205 --description "wing-commander auto-release: a scheduled verification/release attempt failed" --force
+              gh issue create --repo "$GITHUB_REPOSITORY" --title "Auto-release verification failed at ${HEAD_SHA:0:7}" --label "$FAILED_LABEL" --body-file "$body_file"
+            fi
+          }
+
+          close_failure_on_success() {
+            local existing
+            existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label "$FAILED_LABEL" --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+            if [ -n "$existing" ]; then
+              gh issue close "$existing" --repo "$GITHUB_REPOSITORY" --comment "Resolved: ${NEXT_VERSION} released."
+            fi
+          }
+
+          outcome="$(printf '%s' "$VERDICT_JSON" | jq -r '.outcome // empty' 2>/dev/null || true)"
+
+          if [ "$outcome" != "pass" ]; then
+            failing_check="$(printf '%s' "$VERDICT_JSON" | jq -r '.failing_check // "unknown"' 2>/dev/null || echo unknown)"
+            expected="$(printf '%s' "$VERDICT_JSON" | jq -r '.expected // "unknown"' 2>/dev/null || echo unknown)"
+            observed="$(printf '%s' "$VERDICT_JSON" | jq -r '.observed // "unknown"' 2>/dev/null || echo unknown)"
+            evidence_url="$(printf '%s' "$VERDICT_JSON" | jq -r '.evidence_url // "unknown"' 2>/dev/null || echo unknown)"
+            classification="pipeline defect"
+            [ "$outcome" = "fail-infra" ] && classification="infrastructure"
+            echo "verification failed: ${failing_check}" >> "$GITHUB_STEP_SUMMARY"
+            {
+              echo "**Classification**: ${classification} (${outcome:-unknown})"
+              echo ""
+              echo "**Verified head**: ${HEAD_SHA}"
+              echo ""
+              echo "**Failing check**: ${failing_check}"
+              echo ""
+              echo "**Expected**: ${expected}"
+              echo ""
+              echo "**Observed**: ${observed}"
+              echo ""
+              echo "**Evidence**: ${evidence_url}"
+            } > "$RUNNER_TEMP/auto-release-failure-body.md"
+            file_or_update_failure "$RUNNER_TEMP/auto-release-failure-body.md"
+            exit 0
+          fi
+
+          if [ "$COLLISION" = "true" ]; then
+            echo "version collision: ${NEXT_VERSION} already tagged" >> "$GITHUB_STEP_SUMMARY"
+            {
+              echo "**Classification**: version collision"
+              echo ""
+              echo "**Verified head**: ${HEAD_SHA}"
+              echo ""
+              echo "**Computed next version**: ${NEXT_VERSION} already exists as a tag -- no dispatch was attempted."
+            } > "$RUNNER_TEMP/auto-release-failure-body.md"
+            file_or_update_failure "$RUNNER_TEMP/auto-release-failure-body.md"
+            exit 0
+          fi
+
+          if [ "$RELEASE_OUTCOME" = "released" ]; then
+            echo "released ${NEXT_VERSION}" >> "$GITHUB_STEP_SUMMARY"
+            close_failure_on_success
+            exit 0
+          fi
+
+          # main advanced past the verified head before dispatch-release
+          # ran -- expected behavior (the next scheduled check verifies the
+          # new head), not a defect, so this does not file/update the
+          # auto-release:failed issue.
+          if [ "$RELEASE_OUTCOME" = "stale-head" ]; then
+            echo "no release: main advanced past the verified head (${HEAD_SHA}) before dispatch" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # Anything else here means dispatch-release ran and did not
+          # report `released` -- a release failure, distinct from a
+          # verification failure or a collision (FR-029).
+          echo "release dispatch failed for ${NEXT_VERSION}" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "**Classification**: release failure"
+            echo ""
+            echo "**Verified head**: ${HEAD_SHA}"
+            echo ""
+            echo "**Computed next version**: ${NEXT_VERSION}"
+            echo ""
+            echo "release.yml was dispatched but did not conclude successfully -- see its own run for detail."
+          } > "$RUNNER_TEMP/auto-release-failure-body.md"
+          file_or_update_failure "$RUNNER_TEMP/auto-release-failure-body.md"
