@@ -493,12 +493,69 @@ jobs:
           echo "slug=$slug"           >> "$GITHUB_OUTPUT"
           echo "spec-dir=specs/$slug" >> "$GITHUB_OUTPUT"
 
+      # The head branch may already be gone. Merging with --delete-branch
+      # (or the UI's "Delete branch" button) removes it a second before this
+      # pull_request: closed run starts, and a checkout by name then
+      # hard-fails — every step below it skipped, the lifecycle issue left
+      # open at stage:review with nothing posted anywhere (#282; #289 is
+      # the same failure on this repository's own spec 044). The spec
+      # identity is already resolved above, so probe for the branch and
+      # pick the ref to check out: the branch while it exists, otherwise a
+      # ref that outlives it and carries the same spec artifacts — the
+      # merge commit on this arm (it is on the default branch),
+      # refs/pull/N/head on the two unmerged arms (GitHub keeps a PR's head
+      # reachable there after its branch is deleted).
+      #
+      # Three outcomes, never two: present, absent (HTTP 404 — the only
+      # answer read as "gone"), and FAILED. A failed read is not an absent
+      # branch (#188): anything but a 404 refuses with the API's own
+      # diagnostic rather than checking out a fallback for a branch that
+      # may well still exist. `gh api` with the bot token, not
+      # `git ls-remote origin`: the bootstrap checkout above persists no
+      # credentials, so on a private repository ls-remote fails in a way
+      # indistinguishable from "absent".
+      #
+      # The three copies of this step (one per arm) carry the same run:
+      # body on purpose; only BRANCH and FALLBACK_REF differ.
+      - name: Resolve spec checkout ref
+        id: spec-ref
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          BRANCH: ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
+          FALLBACK_REF: ${{ inputs.merge-commit-sha }}
+          PR_NUMBER: ${{ inputs.pr-number }}
+        run: |
+          set -uo pipefail
+          fail() {
+            msg="wing-commander cleanup stage: $1"
+            echo "::error::$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+            gh pr comment "$PR_NUMBER" --body "⚠️ $msg"
+            exit 1
+          }
+          probe_err="$RUNNER_TEMP/cleanup-branch-probe-err.txt"
+          if gh api -X GET "repos/$GITHUB_REPOSITORY/branches/$BRANCH" --jq .name >/dev/null 2>"$probe_err"; then
+            echo "ref=$BRANCH"          >> "$GITHUB_OUTPUT"
+            echo "branch-present=true"  >> "$GITHUB_OUTPUT"
+          elif grep -q "HTTP 404" "$probe_err"; then
+            if [ -z "$FALLBACK_REF" ]; then
+              fail "branch $BRANCH no longer exists and no fallback ref was supplied for pull request #$PR_NUMBER, so its spec artifacts cannot be read — refusing to guess."
+            fi
+            echo "ref=$FALLBACK_REF"    >> "$GITHUB_OUTPUT"
+            echo "branch-present=false" >> "$GITHUB_OUTPUT"
+            echo "Branch \`$BRANCH\` no longer exists (deleted when the pull request was closed) — reading the spec artifacts from \`$FALLBACK_REF\` instead." >> "$GITHUB_STEP_SUMMARY"
+          else
+            detail=$(tr '\r\n\t' '   ' < "$probe_err" | tr -s ' ' | head -c 300)
+            fail "the existence check for branch $BRANCH FAILED, so whether it still exists is unknown: ${detail:-gh gave no diagnostic}. Refusing — a failed read is not an absent branch."
+          fi
+
       # clean: false — a default `git clean` here would delete the untracked
       # .wing-commander-pipeline checkout the composite steps below still need.
       - name: Checkout spec branch as wing-commander-bot
         uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
+          ref: ${{ steps.spec-ref.outputs.ref }}
           token: ${{ steps.ctx.outputs.token }}
           fetch-depth: 0
           clean: false
@@ -836,6 +893,71 @@ jobs:
             delete_branch "${ref#refs/heads/}"
           done
 
+      # The loud failure #282 asks for. This arm's trigger is a one-shot
+      # pull_request: closed that nothing re-dispatches, and the feature it
+      # tears down is merged and working — so a red run here is the only
+      # symptom, and nobody is watching it. Whatever failed above (an
+      # adopter image missing a tool, a credential outage, an API hiccup, a
+      # refusal), say so where the still-open lifecycle issue is actually
+      # looked at, with the run link and what to do by hand.
+      #
+      # `failure()`, not always(): the agent step and its verdict guard are
+      # continue-on-error and do not flip the job status, so a merely
+      # degraded summary does not fire this; a cancelled run is deliberate
+      # and posts nothing. The token falls back to github.token because
+      # `ctx` may never have run (a Preflight refusal, say) — the job's own
+      # permissions cover the comment. The issue number is known only once
+      # the guard resolved it; before that the closed PR is the channel.
+      - name: Report incomplete teardown on the lifecycle issue
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token || github.token }}
+          ISSUE: ${{ steps.meta.outputs.issue }}
+          SLUG: ${{ steps.spec.outputs.slug }}
+          PR_NUMBER: ${{ inputs.pr-number }}
+          SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          PLAN_PREFIX: ${{ inputs.plan-prefix }}
+          TASKS_PREFIX: ${{ inputs.tasks-prefix }}
+          IMPL_PREFIX: ${{ inputs.impl-prefix }}
+        run: |
+          set -uo pipefail
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          issue_ref="${ISSUE:-<lifecycle issue number>}"
+          slug_ref="${SLUG:-<NNN-slug>}"
+          report="$RUNNER_TEMP/cleanup-incomplete.md"
+          {
+            echo "⚠️ **Cleanup could not complete the teardown** for this specification after its final pull request (#$PR_NUMBER) merged — [this cleanup run]($run_url) failed partway. The merged change itself is unaffected, but the lifecycle issue may still be open under its old stage label and pipeline branches may still exist."
+            echo ""
+            echo "Fix the cause and re-run the failed run (every teardown step is idempotent), or finish by hand:"
+            echo ""
+            echo '```'
+            if [ -z "$ISSUE" ]; then
+              echo "# the lifecycle issue is the one issue labelled spec:$slug_ref"
+              echo "gh issue list --label \"spec:$slug_ref\" --state all"
+            fi
+            echo "gh label create \"stage:done\" --force"
+            echo "gh issue edit $issue_ref --add-label stage:done   # then remove any other stage:* label"
+            echo "gh issue close $issue_ref --comment \"Specification merged; torn down manually.\""
+            echo "gh pr edit $PR_NUMBER --add-label stage:done"
+            echo "# skip any branch that no longer exists — deleting an absent branch is a no-op"
+            echo "git push origin --delete ${SPEC_DRAFT_PREFIX}$slug_ref"
+            echo "git push origin --delete ${SPEC_PREFIX}$slug_ref"
+            echo "git push origin --delete ${PLAN_PREFIX}$slug_ref"
+            echo "git push origin --delete ${TASKS_PREFIX}$slug_ref"
+            echo "# and any ${IMPL_PREFIX}$slug_ref-iterN branches"
+            echo '```'
+          } > "$report"
+          if [ -n "$ISSUE" ] && gh issue comment "$ISSUE" --body-file "$report"; then
+            echo "Reported the incomplete teardown on lifecycle issue #$ISSUE." >> "$GITHUB_STEP_SUMMARY"
+          elif gh pr comment "$PR_NUMBER" --body-file "$report"; then
+            echo "Reported the incomplete teardown on pull request #$PR_NUMBER." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::wing-commander cleanup stage: the teardown did not complete AND the report could not be posted on issue #${ISSUE:-?} or pull request #$PR_NUMBER — the lifecycle issue must be closed by hand."
+            cat "$report" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   # A rejected draft is torn down, but the issue stays open so the requester
   # can revise and re-enter the pipeline. No agent step — no credential
   # required.
@@ -925,11 +1047,48 @@ jobs:
           echo "slug=$slug"           >> "$GITHUB_OUTPUT"
           echo "spec-dir=specs/$slug" >> "$GITHUB_OUTPUT"
 
+      # Branch probe and fallback — see the teardown-done job's copy of this
+      # step for the full note (#282). A draft closed together with its
+      # branch is the same shape; the fallback is the closed PR's own head
+      # ref, which outlives the deleted branch.
+      - name: Resolve spec checkout ref
+        id: spec-ref
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          BRANCH: ${{ inputs.spec-draft-prefix }}${{ steps.spec.outputs.slug }}
+          FALLBACK_REF: refs/pull/${{ inputs.pr-number }}/head
+          PR_NUMBER: ${{ inputs.pr-number }}
+        run: |
+          set -uo pipefail
+          fail() {
+            msg="wing-commander cleanup stage: $1"
+            echo "::error::$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+            gh pr comment "$PR_NUMBER" --body "⚠️ $msg"
+            exit 1
+          }
+          probe_err="$RUNNER_TEMP/cleanup-branch-probe-err.txt"
+          if gh api -X GET "repos/$GITHUB_REPOSITORY/branches/$BRANCH" --jq .name >/dev/null 2>"$probe_err"; then
+            echo "ref=$BRANCH"          >> "$GITHUB_OUTPUT"
+            echo "branch-present=true"  >> "$GITHUB_OUTPUT"
+          elif grep -q "HTTP 404" "$probe_err"; then
+            if [ -z "$FALLBACK_REF" ]; then
+              fail "branch $BRANCH no longer exists and no fallback ref was supplied for pull request #$PR_NUMBER, so its spec artifacts cannot be read — refusing to guess."
+            fi
+            echo "ref=$FALLBACK_REF"    >> "$GITHUB_OUTPUT"
+            echo "branch-present=false" >> "$GITHUB_OUTPUT"
+            echo "Branch \`$BRANCH\` no longer exists (deleted when the pull request was closed) — reading the spec artifacts from \`$FALLBACK_REF\` instead." >> "$GITHUB_STEP_SUMMARY"
+          else
+            detail=$(tr '\r\n\t' '   ' < "$probe_err" | tr -s ' ' | head -c 300)
+            fail "the existence check for branch $BRANCH FAILED, so whether it still exists is unknown: ${detail:-gh gave no diagnostic}. Refusing — a failed read is not an absent branch."
+          fi
+
       # clean: false — preserve .wing-commander-pipeline (see the teardown-done job).
       - name: Checkout draft branch as wing-commander-bot
         uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.spec-draft-prefix }}${{ steps.spec.outputs.slug }}
+          ref: ${{ steps.spec-ref.outputs.ref }}
           token: ${{ steps.ctx.outputs.token }}
           fetch-depth: 0
           clean: false
@@ -1175,11 +1334,50 @@ jobs:
           echo "spec-dir=specs/$slug" >> "$GITHUB_OUTPUT"
           echo "arm=$arm"             >> "$GITHUB_OUTPUT"
 
+      # Branch probe and fallback — see the teardown-done job's copy of this
+      # step for the full note (#282). The fallback is the closed PR's own
+      # head ref. On the final arm that is the spec branch's last tip; on
+      # the non-final arm the probed branch is the PR's BASE (this spec's
+      # own branch), so the fallback only fires when someone deleted that
+      # by hand, and the PR head still carries the spec artifacts.
+      - name: Resolve spec checkout ref
+        id: spec-ref
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          BRANCH: ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
+          FALLBACK_REF: refs/pull/${{ inputs.pr-number }}/head
+          PR_NUMBER: ${{ inputs.pr-number }}
+        run: |
+          set -uo pipefail
+          fail() {
+            msg="wing-commander cleanup stage: $1"
+            echo "::error::$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+            gh pr comment "$PR_NUMBER" --body "⚠️ $msg"
+            exit 1
+          }
+          probe_err="$RUNNER_TEMP/cleanup-branch-probe-err.txt"
+          if gh api -X GET "repos/$GITHUB_REPOSITORY/branches/$BRANCH" --jq .name >/dev/null 2>"$probe_err"; then
+            echo "ref=$BRANCH"          >> "$GITHUB_OUTPUT"
+            echo "branch-present=true"  >> "$GITHUB_OUTPUT"
+          elif grep -q "HTTP 404" "$probe_err"; then
+            if [ -z "$FALLBACK_REF" ]; then
+              fail "branch $BRANCH no longer exists and no fallback ref was supplied for pull request #$PR_NUMBER, so its spec artifacts cannot be read — refusing to guess."
+            fi
+            echo "ref=$FALLBACK_REF"    >> "$GITHUB_OUTPUT"
+            echo "branch-present=false" >> "$GITHUB_OUTPUT"
+            echo "Branch \`$BRANCH\` no longer exists (deleted when the pull request was closed) — reading the spec artifacts from \`$FALLBACK_REF\` instead." >> "$GITHUB_STEP_SUMMARY"
+          else
+            detail=$(tr '\r\n\t' '   ' < "$probe_err" | tr -s ' ' | head -c 300)
+            fail "the existence check for branch $BRANCH FAILED, so whether it still exists is unknown: ${detail:-gh gave no diagnostic}. Refusing — a failed read is not an absent branch."
+          fi
+
       # clean: false — preserve .wing-commander-pipeline (see the teardown-done job).
       - name: Checkout spec branch as wing-commander-bot
         uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
+          ref: ${{ steps.spec-ref.outputs.ref }}
           token: ${{ steps.ctx.outputs.token }}
           fetch-depth: 0
           clean: false
@@ -1284,9 +1482,12 @@ jobs:
           fi
 
       # Commit directly onto the still-intact spec branch — a no-op write
-      # when already "stalled" must not fail the job.
+      # when already "stalled" must not fail the job. Skipped when that
+      # branch is already gone (#282): the checkout above is then a
+      # detached PR head with nothing to push to, and the label flip plus
+      # the stalled notice below are the record instead.
       - name: Mark lifecycle record stalled
-        if: steps.idempotency.outputs.skip != 'true'
+        if: steps.idempotency.outputs.skip != 'true' && steps.spec-ref.outputs.branch-present == 'true'
         env:
           SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
           SLUG: ${{ steps.spec.outputs.slug }}
@@ -1331,6 +1532,7 @@ jobs:
           PLAN_PREFIX: ${{ inputs.plan-prefix }}
           TASKS_PREFIX: ${{ inputs.tasks-prefix }}
           IMPL_PREFIX: ${{ inputs.impl-prefix }}
+          BRANCH_PRESENT: ${{ steps.spec-ref.outputs.branch-present }}
         run: |
           gh label create "stage:stalled" --color E99695 --description "Pipeline stalled; manual restart or teardown required" --force
           gh issue edit "$ISSUE" --add-label "stage:stalled"
@@ -1348,6 +1550,10 @@ jobs:
             echo ""
             echo "Closed pull request: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/pull/$PR_NUMBER"
             echo ""
+            if [ "$BRANCH_PRESENT" != "true" ]; then
+              echo "Note: \`${SPEC_PREFIX}$SLUG\` had already been deleted when this ran (the pull request was closed together with its branch), so the stalled marker could not be committed to it. The closed pull request's head is still reachable as \`refs/pull/$PR_NUMBER/head\` if you revive it."
+              echo ""
+            fi
             echo "### Optional — full teardown"
             echo ""
             echo "If you'd rather tear this specification down completely instead of reviving it, run (skip any branch that doesn't exist — deleting an absent branch is a no-op):"

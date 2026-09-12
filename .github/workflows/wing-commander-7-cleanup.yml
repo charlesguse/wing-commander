@@ -11,6 +11,12 @@
 # every outcome is silently skipped. The sweeper re-derives the raw event
 # facts from the API for any recently closed pipeline PR whose close left
 # no cleanup run behind, and re-delivers them to the same stage.
+#
+# The race's other outcome — the run IS created, but the head branch is
+# already gone when it starts (#282) — is handled inside cleanup.yml, not
+# here: each arm probes for its branch and reads the spec artifacts from
+# the merge commit or the PR's head ref instead, so both this event arm and
+# a re-delivered sweep complete rather than failing at the checkout.
 name: "Wing Commander · 7 cleanup"
 
 on:
