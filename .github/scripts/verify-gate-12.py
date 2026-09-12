@@ -225,6 +225,12 @@ CASES = [
             ['gh api -X PATCH "repos/$REPO/issues/comments/$ID" -f body=hi']),
      False, ()),
 
+    ("gh api under the App token reading a branch (cleanup.yml's #282 probe: "
+     "branches/ is Contents, which the App holds)",
+     mkcase("", "", [APP_ENV],
+            ['gh api -X GET "repos/$REPO/branches/$BRANCH" --jq .name']),
+     False, ()),
+
     ("cross-repository gh api call is out of scope (different owner/repo)",
      mkcase("", "", [DEFAULT_ENV],
             ['releases="$(gh api repos/github/spec-kit/releases)"']),

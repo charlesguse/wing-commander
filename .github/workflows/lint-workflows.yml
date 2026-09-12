@@ -834,10 +834,16 @@ jobs:
 
           # `gh api PATH` — PATH's first segment under repos/{owner}/{repo}/ decides
           # the permission, the same way SUBCOMMAND_PERMS does for named subcommands.
+          # "branches": cleanup.yml's branch probe (#282) — GET
+          # /repos/{owner}/{repo}/branches/{branch}; the REST reference for "Get a
+          # branch" lists "Contents" repository permissions (read) as the
+          # fine-grained token requirement, and docs/setup.md grants the App
+          # Contents: Read and write.
           API_CATEGORY_PERM = {
               "actions": "actions", "check-runs": "checks", "check-suites": "checks",
               "issues": "issues", "pulls": "pull-requests", "contents": "contents",
               "releases": "contents", "labels": "issues", "milestones": "issues",
+              "branches": "contents",
           }
 
           GH_INVOKE_RE = re.compile(

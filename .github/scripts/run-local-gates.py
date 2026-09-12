@@ -31,6 +31,22 @@ than CI is not a rehearsal of CI, and the discrepancy hides well because
 both ends look green on a good day. A gate CI invokes twice with different
 flags now runs twice here too.
 
+INLINE GATES
+------------
+The larger gates are not scripts: Gates 2, 3, 6, 12, 15, 16, 22, 23 and
+the bash -n pass are `python3 - <<'PYEOF'` heredocs inlined in
+lint-workflows.yml, and until #282's fix this runner could not see them.
+It ran their self-tests (verify-gate-N.py, synthetic fixtures) and never
+the shipped check over the real fleet, so PR #301 passed 61/61 locally
+and then failed Gate 12 in CI on a table entry no fixture exercises. Each
+such step's whole `run:` block now runs here VERBATIM under the resolved
+bash (wc_gate_registry.pr_time_inline_steps), labelled
+`inline-gate-N.sh`, with `python3` on PATH shimmed to THIS interpreter -
+bare `python3` on Windows is the Microsoft Store stub, the same trap
+command_for avoids for the scripts. A heredoc step that cannot be run
+verbatim (an env: block, a `${{ }}` expression) is not silently dropped:
+verify-gate-wiring.py fails on it.
+
 WHAT IT DOES NOT RUN
 --------------------
 Checks wired to other workflows — verify-watchdog-run.sh belongs to the
@@ -135,13 +151,15 @@ reality automatically.
 import concurrent.futures
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from wc_gate_registry import pr_time_invocations  # noqa: E402
+from wc_gate_registry import (pr_time_inline_steps,  # noqa: E402
+                              pr_time_invocations)
 from wc_shell_harness import ensure_jq, resolve_bash, use_utf8_stdout  # noqa: E402
 
 
@@ -217,6 +235,40 @@ def command_for(script, bash, args=()):
     return [bash, script] + list(args)
 
 
+def _inline_gate_files(bash):
+    """Write every runnable inline gate's run: block to a temp .sh and
+    return [(path, [])] in the same shape as pr_time_invocations, so the
+    rest of this runner treats them as ordinary bash gates. Also puts a
+    `python3` shim for this interpreter, and the resolved bash's own
+    directory, at the front of PATH for every child - see INLINE GATES in
+    the module docstring."""
+    runnable, _ = pr_time_inline_steps()
+    if not runnable:
+        return []
+    root = tempfile.mkdtemp(prefix="wc-inline-gates-")
+    shim = os.path.join(root, "python3")
+    exe = sys.executable.replace("\\", "/")
+    with open(shim, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(f'#!/bin/sh\nexec "{exe}" "$@"\n')
+    os.chmod(shim, 0o755)
+    os.environ["PATH"] = os.pathsep.join(
+        [root, os.path.dirname(bash), os.environ.get("PATH", "")])
+    # Inline gates open files with the platform default encoding; the
+    # workflows they read are UTF-8 (em-dashes in comments), and the
+    # Python 3.14 default on Windows is still cp1252.
+    os.environ.setdefault("PYTHONUTF8", "1")
+    out = []
+    for name, run in runnable:
+        head = re.match(r"Gate \d+", name)
+        slug = (head.group(0).lower().replace(" ", "-") if head
+                else re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40])
+        path = os.path.join(root, f"inline-{slug}.sh")
+        with open(path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(run if run.endswith("\n") else run + "\n")
+        out.append((path, []))
+    return out
+
+
 def _parse_jobs_flag(argv):
     """Pull `--jobs N` / `--jobs=N` out of argv; everything else is a filter.
 
@@ -280,7 +332,7 @@ def main(argv):
     ensure_jq()
     bash = resolve_bash()
 
-    all_gates = pr_time_invocations()
+    all_gates = pr_time_invocations() + _inline_gate_files(bash)
 
     def label_of(script, args):
         base = os.path.basename(script)
