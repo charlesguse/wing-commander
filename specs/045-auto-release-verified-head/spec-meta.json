@@ -2,7 +2,7 @@
   "issue": 296,
   "spec_dir": "specs/045-auto-release-verified-head",
   "feature_num": "045",
-  "stage": "spec",
+  "stage": "plan",
   "iteration": 0,
-  "spec_branch": null
+  "spec_branch": "spec/045-auto-release-verified-head"
 }
