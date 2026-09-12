@@ -62,9 +62,11 @@ prove. Each step has a rule.
   re-driving one run (`gh workflow run` on the wrapper that can dispatch
   it) and recording the evidence on the PR or the issue.
 - Pipeline agent runs and local Claude sessions share one usage window.
-  Keep concurrent local agents to about three, and note any lifecycle
-  issue in `stage:implement` before fanning out so a stall can be
-  attributed to the burst rather than to the pipeline.
+  Keep concurrent local agents to two, run review finders in batches of
+  two, and treat any agent that has run longer than ten minutes as having
+  spent most of the window. Note any lifecycle issue in `stage:implement`
+  before fanning out so a stall can be attributed to the burst rather
+  than to the pipeline.
 - `gh pr merge` on a PR that touches `.github/workflows/` needs a token
   with the `workflow` scope. When GitHub refuses for that reason, hand the
   merge to the maintainer (`gh auth refresh -h github.com -s workflow`);
