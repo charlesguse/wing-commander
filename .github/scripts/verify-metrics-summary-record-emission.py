@@ -370,6 +370,81 @@ def case_repeated_invocation_in_one_job_gets_distinct_record_keys():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def case_multi_model_record_tokens_sum_across_per_model():
+    """A run that used two models (the watchdog diagnose site: an opus
+    main loop plus a haiku helper) carries BOTH in `.modelUsage`, but the
+    result record's flat `.usage` holds only the main model's counts. The
+    record shipped copying `.usage` into `tokens.*` verbatim, so every
+    multi-model record failed contracts/metrics-record-schema.md's sum
+    invariant (spec.md acceptance scenario 2: "its entries sum to the
+    record's own token and cost totals") and the persist collector
+    rejected it with only a warning — persist run 34311334476 rejected
+    34311229932:diagnose:0 exactly this way (tokens.input 4 against a
+    per_model sum of 2608). The transcript below mirrors that run's
+    shape; validate_schema() applies the real invariant."""
+    case = "multi-model transcript sums tokens across per_model"
+    tmp = tempfile.mkdtemp(prefix="wc-metrics-record-")
+    try:
+        transcript = healthy_transcript(main=2)
+        transcript[-1].update({
+            "total_cost_usd": 0.248365,
+            "usage": {"input_tokens": 4, "output_tokens": 620,
+                      "cache_read_input_tokens": 21682,
+                      "cache_creation_input_tokens": 21930},
+            "modelUsage": {
+                "claude-haiku-4-5": {
+                    "inputTokens": 2604, "outputTokens": 20,
+                    "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0,
+                    "costUSD": 0.002704},
+                "claude-opus-5": {
+                    "inputTokens": 4, "outputTokens": 620,
+                    "cacheReadInputTokens": 21682,
+                    "cacheCreationInputTokens": 21930,
+                    "costUSD": 0.245661}}})
+        rc, _outputs, summary, record, output = run_case(
+            tmp, records=transcript, env_over={"MODEL": "claude-opus-5"})
+        if rc != 0:
+            fail(case, f"exited {rc}: {output.strip()[:300]}")
+            return
+        if record is None:
+            fail(case, "record-path was not written")
+            return
+        validate_schema(case, record)
+        per_model = record.get("per_model") or []
+        if len(per_model) != 2 or record.get("per_model_available") is not True:
+            fail(case, f"expected two per_model entries, got {per_model!r}")
+            return
+        want = {"input": 2608, "output": 640, "cache_read": 21682,
+                "cache_creation": 21930}
+        got = {k: record.get("tokens", {}).get(k) for k in want}
+        if got != want or record.get("tokens", {}).get("available") is not True:
+            fail(case, f"tokens.* must be the sum across per_model, got "
+                       f"{got!r} (available={record.get('tokens', {}).get('available')!r}), "
+                       f"want {want!r} — a record copying the main model's "
+                       f".usage alone fails the schema's sum invariant and "
+                       f"is rejected by the persist collector")
+            return
+        # FR-004 / acceptance scenario 3: the rendered table's Tokens cell
+        # and the record derive from ONE extraction. Pin the agreement in
+        # fmt_tokens' own format so the cell cannot quietly go back to
+        # rendering `.usage` (main model only) while the record sums.
+        tok = record["tokens"]
+        want_cell = "{0} (in {1}, out {2}, cache {3})".format(
+            tok["input"] + tok["output"] + tok["cache_creation"] + tok["cache_read"],
+            tok["input"], tok["output"], tok["cache_creation"] + tok["cache_read"])
+        if f"| {want_cell} |" not in summary:
+            fail(case, f"the rendered Tokens cell must equal the record's "
+                       f"tokens.* ({want_cell!r}) — the record and the step "
+                       f"summary disagreed about the same run (FR-004). "
+                       f"Summary was: {summary.strip()[:400]!r}")
+            return
+        note("a two-model transcript produces a record whose tokens.* equal "
+             "the per_model sums, so the collector's sum invariant holds, "
+             "and the rendered Tokens cell shows those same totals")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def case_cost_line_formatter_has_exactly_one_home():
     """The 12-site paste this gate's docstring describes must not creep
     back: a workflow or composite action needing the cost line consumes
@@ -481,6 +556,7 @@ CASES = [
     case_empty_transcript_degrades,
     case_unparseable_transcript_degrades,
     case_repeated_invocation_in_one_job_gets_distinct_record_keys,
+    case_multi_model_record_tokens_sum_across_per_model,
     case_cost_line_formatter_has_exactly_one_home,
     case_container_pipefail_steps_pin_shell_bash,
 ]

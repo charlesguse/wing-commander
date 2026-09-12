@@ -23,7 +23,32 @@ This runs the SHIPPED "Append records with retry" `run:` block (same
 extraction technique as gate 43/44's harnesses — no copied logic to drift
 out of sync) against real local bare git repositories, so branch creation
 and append share one code path under test exactly as they do in production.
+
+WHY THE VALIDATE STEP IS UNDER TEST TOO
+---------------------------------------
+Every case above feeds the append step a hand-written, already one-line
+batch. Production feeds it the batch the SHIPPED "Validate records and
+build the new-records batch" step wrote — and for the first two weeks that
+step never produced a batch the append step could read. Persist runs
+34562607603 and 34287169782 died in the append step with
+
+    jq: parse error: Unfinished JSON term at EOF at line 1, column 1
+
+(exit 5), and origin/metrics:records.jsonl stayed at 0 bytes after its
+init commit. The chain: wing-commander-metrics-summary writes its record
+pretty-printed; the validate step re-serialised it to one line ONLY on
+the branch that resolved a numeric job_id, and that lookup matched
+`.name == $job_key` exactly — but every stage job here is a reusable-
+workflow job, which the jobs API names `<caller job> / <callee job>`
+(`watchdog / diagnose`), while the record carries `github.job`
+(`diagnose`). The lookup missed every time, the 52-line record went into
+the JSONL batch verbatim, and the append step's per-line jq read `{` as
+a whole record. case_validate_then_append_persists_reusable_workflow_
+records runs both shipped steps back to back on a pretty-printed record
+with a `watchdog / diagnose`-style job name (plus a multi-model one), so
+a batch the append step cannot read fails here, not on the metrics branch.
 """
+import json
 import os
 import shutil
 import stat
@@ -37,9 +62,17 @@ from wc_shell_harness import (  # noqa: E402
 
 ACTION = ".github/actions/wing-commander-metrics-persist/action.yml"
 STEP_NAME = "Append records with retry"
+VALIDATE_STEP_NAME = "Validate records and build the new-records batch"
 SCRIPT = find_step(ACTION, STEP_NAME)["run"]
+VALIDATE_SCRIPT = find_step(ACTION, VALIDATE_STEP_NAME)["run"]
 BASH = None
 DEST_PATH = "records.jsonl"
+# Gate 39's multi-model positive fixture, read (never copied) so the two
+# gates cannot disagree on what a valid multi-model record looks like.
+# Gate 39 pins that directory's file count, so nothing is added there.
+MULTI_MODEL_FIXTURE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "fixtures", "metrics-record-schema", "valid-multi-model-sums-correct.json")
 
 failures = []
 
@@ -392,6 +425,168 @@ def case_idempotent_repeat_persistence_is_byte_for_byte_unchanged():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _reusable_workflow_record(run_id, job_key, step_index=0):
+    """A schema-version-1 record exactly as wing-commander-metrics-summary
+    emits it for a reusable-workflow job: job_id null, record_key in its
+    emission-time run_id:job_key:step_index form. Shape mirrors the
+    metrics-record-diagnose artifact of run 34562449781."""
+    return {
+        "schema_version": 1, "record_available": True,
+        "run": {"workflow_run_id": run_id, "job_key": job_key,
+                "job_id": None, "step_index": step_index,
+                "record_key": f"{run_id}:{job_key}:{step_index}"},
+        "stage": "watchdog", "stage_available": True, "run_label": job_key,
+        "spec": {"spec_dir": None, "issue": None, "identity_available": False},
+        "model": "claude-opus-5", "model_available": True,
+        "turns": {"counted": 2, "reported": 4, "intended_budget": 30,
+                  "enforced_ceiling": 75, "available": True},
+        "tokens": {"input": 4, "output": 663, "cache_read": 21730,
+                   "cache_creation": 21978, "available": True},
+        "cost_usd": 0.24724, "cost_available": True,
+        "duration_ms": 58418, "duration_available": True,
+        "outcome": "healthy",
+        "per_model": [{"model": "claude-opus-5", "input_tokens": 4,
+                       "output_tokens": 663, "cache_read_tokens": 21730,
+                       "cache_creation_tokens": 21978, "cost_usd": 0.24724}],
+        "per_model_available": True,
+        "emitted_at": "2026-09-11T04:32:29Z",
+    }
+
+
+def _write_pretty(path, record):
+    # indent=2, deliberately: the emitter writes its record pretty-printed
+    # (`jq -n` without -c), and a compact fixture here would pass against
+    # the exact validate step that shipped broken.
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(record, f, indent=2)
+        f.write("\n")
+
+
+def case_validate_then_append_persists_reusable_workflow_records():
+    # The production path end to end (see the module docstring): the shipped
+    # validate step reads pretty-printed artifacts and a jobs listing whose
+    # names carry the reusable-workflow `<caller> / <callee>` prefix, then
+    # the shipped append step reads the batch validate wrote.
+    case = "validate then append persists reusable-workflow records"
+    tmp = tempfile.mkdtemp(prefix="wc-metrics-retry-")
+    try:
+        origin = new_bare_repo(tmp, "origin.git")
+        seed_branch(tmp, origin, "metrics", "")
+
+        run_id = "34562449781"
+        diagnose_job_id = 103147908588
+        work = new_clone(tmp, origin, "a-work")
+        runner_temp = os.path.join(tmp, "a-runnertemp")
+        wc_dir = os.path.join(runner_temp, "wc-metrics-persist")
+        dl_dir = os.path.join(wc_dir, "downloaded")
+        for name in ("metrics-record-diagnose", "metrics-record-act",
+                     "metrics-record-collect"):
+            os.makedirs(os.path.join(dl_dir, name), exist_ok=True)
+        # The jobs listing exactly as the discover step stores it: an array
+        # of the jobs API's objects, named the way GitHub displays reusable-
+        # workflow jobs. No job is named bare "diagnose". Two callers share
+        # the "collect" suffix, so that job_key is ambiguous.
+        with open(os.path.join(wc_dir, "jobs.json"), "w", encoding="utf-8") as f:
+            json.dump([
+                {"id": 103147788791, "name": "resolve"},
+                {"id": 103147821739, "name": "watchdog / collect"},
+                {"id": 103147821740, "name": "watchdog-self / collect"},
+                {"id": diagnose_job_id, "name": "watchdog / diagnose"},
+                {"id": 103148182551, "name": "watchdog / act"},
+            ], f)
+        _write_pretty(os.path.join(dl_dir, "metrics-record-diagnose",
+                                   "wing-commander-metrics-record.json"),
+                      _reusable_workflow_record(run_id, "diagnose"))
+        # An ambiguous suffix must keep job_id null and the emission-time
+        # record_key — never guess one of the two ids — and still persist.
+        _write_pretty(os.path.join(dl_dir, "metrics-record-collect",
+                                   "wing-commander-metrics-record.json"),
+                      _reusable_workflow_record(run_id, "collect"))
+        # A multi-model record whose per_model entries sum to its own
+        # totals must pass validation, not be rejected with a warning
+        # (persist run 34311334476's shape once the emitter sums correctly).
+        with open(MULTI_MODEL_FIXTURE, encoding="utf-8") as f:
+            multi = json.load(f)
+        multi["run"] = {"workflow_run_id": run_id, "job_key": "act",
+                        "job_id": None, "step_index": 0,
+                        "record_key": f"{run_id}:act:0"}
+        _write_pretty(os.path.join(dl_dir, "metrics-record-act",
+                                   "wing-commander-metrics-record.json"), multi)
+
+        rc, output, outputs, _summary = run_step(
+            BASH, VALIDATE_SCRIPT, work, {"RUN_ID": run_id}, runner_temp)
+        if rc != 0:
+            fail(case, f"validate step exited {rc}: {output.strip()[:500]}")
+            return
+        if outputs.get("rejected", "").strip():
+            fail(case, "validate rejected a well-formed record: "
+                       f"{outputs.get('rejected')!r} — a multi-model record "
+                       "whose per_model sums to its own totals must persist")
+        batch_path = os.path.join(wc_dir, "new-records.jsonl")
+        with open(batch_path, encoding="utf-8") as f:
+            batch_lines = [line for line in f.read().split("\n") if line.strip()]
+        if len(batch_lines) != 3:
+            fail(case, "the batch must hold exactly one line per record "
+                       f"(JSONL), got {len(batch_lines)} non-empty line(s) — "
+                       "a pretty-printed record appended verbatim is what the "
+                       "append step's per-line jq dies on ('Unfinished JSON "
+                       "term at EOF', persist runs 34562607603/34287169782)")
+            return
+        by_key = {}
+        for line in batch_lines:
+            try:
+                rec = json.loads(line)
+            except ValueError as exc:
+                fail(case, f"batch line is not one JSON record: {exc}: {line[:120]!r}")
+                return
+            by_key[rec["run"]["job_key"]] = rec
+        diag = by_key.get("diagnose", {}).get("run", {})
+        if diag.get("job_id") != diagnose_job_id:
+            fail(case, "job_key 'diagnose' must resolve to the job the API "
+                       f"names 'watchdog / diagnose' (id {diagnose_job_id}), "
+                       f"got job_id={diag.get('job_id')!r} — reusable-workflow "
+                       "jobs are displayed as '<caller job> / <callee job>', "
+                       "never as the bare github.job the record carries")
+        want_key = f"{run_id}:{diagnose_job_id}:0"
+        if diag.get("record_key") != want_key:
+            fail(case, f"expected the persisted record_key rewritten to "
+                       f"{want_key!r}, got {diag.get('record_key')!r}")
+        coll = by_key.get("collect", {}).get("run", {})
+        if coll.get("job_id") is not None or coll.get("record_key") != f"{run_id}:collect:0":
+            fail(case, "job_key 'collect' matches two callers ('watchdog / "
+                       "collect' and 'watchdog-self / collect'), so it must "
+                       "keep job_id null and its emission-time record_key "
+                       f"rather than guess — got job_id={coll.get('job_id')!r}, "
+                       f"record_key={coll.get('record_key')!r}")
+
+        rc, output, outputs, _summary = run_step(
+            BASH, SCRIPT, work,
+            {"BRANCH": "metrics", "DEST_PATH": DEST_PATH, "RUN_ID": run_id,
+             "GH_TOKEN": "stub-token"}, runner_temp)
+        shutil.rmtree(work, ignore_errors=True)
+        if rc != 0:
+            fail(case, f"append step exited {rc} on the batch validate "
+                       f"wrote: {output.strip()[:500]}")
+            return
+        if outputs.get("persisted-count") != "3":
+            fail(case, f"expected persisted-count=3, got {outputs.get('persisted-count')!r}")
+
+        text, final_work = fetch_dest(tmp, origin, "metrics", "final")
+        shutil.rmtree(final_work, ignore_errors=True)
+        dest_lines = [line for line in (text or "").split("\n") if line.strip()]
+        if len(dest_lines) != 3 or want_key not in (text or "") \
+                or f"{run_id}:collect:0" not in (text or ""):
+            fail(case, f"destination must hold exactly the three records, one "
+                       f"per line (numeric-job_id key for the resolved one, "
+                       f"emission-time key for the ambiguous one); got: {text!r}")
+        note("pretty-printed records from a 'watchdog / diagnose'-style job, "
+             "an ambiguous two-caller 'collect' job (job_id kept null), and "
+             "a multi-model run all validated and persisted as one JSONL "
+             "line each")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 CASES = [
     case_zero_artifact_batch_against_existing_branch_is_zero_failure,
     case_first_write_creates_missing_destination_branch,
@@ -399,6 +594,7 @@ CASES = [
     case_first_push_rejected_by_concurrent_writer_recovers_without_loss,
     case_sustained_contention_fails_loudly_naming_the_key,
     case_idempotent_repeat_persistence_is_byte_for_byte_unchanged,
+    case_validate_then_append_persists_reusable_workflow_records,
 ]
 
 
