@@ -258,3 +258,54 @@ def pr_time_invocations(root=".",
                         seen.add(key)
                         out.append((script, args))
     return out
+
+
+# The larger PR-time gates are not scripts at all: they are `python3 -
+# <<'PYEOF'` heredocs inlined in lint-workflows.yml (Gates 2, 3, 5, 6, 7,
+# 12, 15, 16, 22, 23 and the bash -n pass). `pr_time_invocations` cannot see them,
+# so until #282's fix the local sweep ran only their synthetic self-tests
+# (verify-gate-N.py) and never the shipped check over the real fleet:
+# PR #301 passed 61/61 locally and failed Gate 12 in CI on a table entry
+# the self-test's fixtures never exercise. The loose grammar below is the
+# ONE home of "a line invoking python that opens a heredoc":
+# verify-gate-wiring.py imports it to decide whether a heredoc was MISSED,
+# so the two readers cannot disagree on membership.
+LOOSE_PY_HEREDOC_RE = re.compile(r"^[ \t]*python3? +[^\n]*<<", re.M)
+
+
+def pr_time_inline_steps(root=".",
+                         workflow=".github/workflows/lint-workflows.yml"):
+    """(runnable, unrunnable) for every PR-time step whose run: block opens
+    a python heredoc.
+
+    `runnable` is [(step name, run text)]: steps a local sweep can execute
+    VERBATIM - the whole run: block under bash, exactly as CI does - because
+    they carry no `env:` and no `${{ }}` expression the runner would have to
+    invent a value for. `unrunnable` is [(step name, reason)] for the rest.
+    Returned rather than dropped so verify-gate-wiring.py can fail on a
+    heredoc gate that quietly stopped being rehearsed locally, the same way
+    check_local_runner_parity fails on a script gate the tokenizer cannot
+    read.
+    """
+    path = os.path.join(root, workflow) if root != "." else workflow
+    try:
+        wf = yaml.safe_load(open(path, encoding="utf-8")) or {}
+    except (yaml.YAMLError, OSError):
+        return [], []
+    runnable, unrunnable = [], []
+    for job in (wf.get("jobs") or {}).values():
+        if not _job_runs_on_pull_request(job):
+            continue
+        for step in (job or {}).get("steps") or []:
+            run = str((step or {}).get("run") or "")
+            if not LOOSE_PY_HEREDOC_RE.search(run):
+                continue
+            name = str(step.get("name") or "(unnamed step)")
+            if step.get("env"):
+                unrunnable.append((name, "the step carries an env: block"))
+            elif "${{" in run:
+                unrunnable.append((name, "the run: block carries a ${{ }} "
+                                         "expression"))
+            else:
+                runnable.append((name, run))
+    return runnable, unrunnable

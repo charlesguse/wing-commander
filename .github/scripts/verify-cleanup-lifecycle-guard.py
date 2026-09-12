@@ -45,7 +45,21 @@ one. Plus:
     result produces a confident, wrong diagnosis;
   * all three copies of the guard are byte-identical, so a fix applied to one
     arm cannot leave the other two on the old shape. Which arm reached the
-    guard says nothing about the branch it is reading.
+    guard says nothing about the branch it is reading;
+  * each arm checks out the right thing once its branch may be gone (#282):
+    teardown-done the merge commit outright (no probe — inputs.merge-commit-sha
+    is definitionally the commit being torn down), the two unmerged arms via
+    wing-commander-resolve-checkout-ref with the closed PR's own head ref as
+    the fallback. The call sites are compared to that shape, with mutations
+    proving a wrong fallback or a dropped probe fails;
+  * the shipped-lifecycle guards hold. Once spec/<slug> could be gone without
+    the checkout failing first, a stale stage PR closed AFTER the feature
+    shipped reached "Flip stage label and comment stalled notice" and
+    "Comment rejection and remove labels" on a closed, stage:done issue. Both
+    arms' idempotency checks are executed here against a stubbed issue in
+    every state that matters — closed, stage:done, already stalled, label
+    absent, healthy, and a FAILED read, which must stop the job rather than
+    pass as any of the others.
 
 Mutations at the end reintroduce the shipped defect and four plausible drifts
 and assert the suite fails on each.
@@ -72,6 +86,24 @@ from wc_shell_harness import (ensure_jq, resolve_bash, run_step,
 
 STAGE = ".github/workflows/cleanup.yml"
 STEP_NAME = "Verify spec artifacts and resolve lifecycle issue"
+# The checkout shape each arm must have once its branch may be gone (#282).
+PROBE_STEP_NAME = "Resolve spec checkout ref"
+PROBE_ACTION = "wing-commander-resolve-checkout-ref"
+PR_HEAD_FALLBACK = "refs/pull/${{ inputs.pr-number }}/head"
+MERGE_SHA_REF = "${{ inputs.merge-commit-sha }}"
+PROBE_REF = "${{ steps.spec-ref.outputs.ref }}"
+CHECKOUT_SHAPES = {
+    # job: (probe expected?, branch input prefix, checkout step name)
+    "teardown-done": (False, None, "Checkout merge commit as wing-commander-bot"),
+    "teardown-rejected": (True, "${{ inputs.spec-draft-prefix }}",
+                          "Checkout draft branch as wing-commander-bot"),
+    "mark-stalled": (True, "${{ inputs.spec-prefix }}",
+                     "Checkout spec branch as wing-commander-bot"),
+}
+IDEMPOTENCY_STEPS = {
+    "teardown-rejected": "Idempotency check (identity label)",
+    "mark-stalled": "Idempotency check (stage label)",
+}
 # The arm #73 was reported against. The other two carry the same step and are
 # asserted identical to it below.
 JOB = "mark-stalled"
@@ -120,6 +152,211 @@ def load_guards():
                  f"{JOB!r}. If it was renamed, update the workflow and this "
                  f"gate together — do not drop the check.")
     return found
+
+
+def load_jobs():
+    with open(STAGE, encoding="utf-8") as fh:
+        wf = yaml.safe_load(fh) or {}
+    return wf.get("jobs") or {}
+
+
+def check_checkout_shapes(jobs):
+    """Failures for the per-arm checkout shape (#282)."""
+    failures = []
+    for job_name, (probed, prefix, checkout_name) in CHECKOUT_SHAPES.items():
+        steps = (jobs.get(job_name) or {}).get("steps") or []
+        by_name = {(st or {}).get("name"): st for st in steps}
+        probe = by_name.get(PROBE_STEP_NAME)
+        checkout = by_name.get(checkout_name)
+        ref = ((checkout or {}).get("with") or {}).get("ref")
+        if not probed:
+            if probe is not None:
+                failures.append(
+                    f"job {job_name!r} carries a {PROBE_STEP_NAME!r} step. The "
+                    f"merged arm needs no probe: inputs.merge-commit-sha is "
+                    f"definitionally the commit whose spec artifacts are torn "
+                    f"down, and the live branch may have moved past it.")
+            if ref != MERGE_SHA_REF:
+                failures.append(
+                    f"job {job_name!r}'s {checkout_name!r} checks out {ref!r}, "
+                    f"not {MERGE_SHA_REF!r} — a checkout by branch name "
+                    f"hard-fails once the merge deleted the branch (#282).")
+            continue
+        if probe is None:
+            failures.append(
+                f"job {job_name!r} has no {PROBE_STEP_NAME!r} step, so its "
+                f"checkout hard-fails once the branch is deleted at close "
+                f"time (#282).")
+            continue
+        uses = str(probe.get("uses") or "")
+        with_ = probe.get("with") or {}
+        if not uses.endswith("/" + PROBE_ACTION):
+            failures.append(
+                f"job {job_name!r}'s {PROBE_STEP_NAME!r} does not call the "
+                f"{PROBE_ACTION} composite (uses: {uses!r}) — the probe has "
+                f"exactly one home.")
+        if with_.get("fallback-ref") != PR_HEAD_FALLBACK:
+            failures.append(
+                f"job {job_name!r}'s {PROBE_STEP_NAME!r} passes fallback-ref="
+                f"{with_.get('fallback-ref')!r}; an unmerged arm has no merge "
+                f"commit, so the only ref that outlives the deleted branch is "
+                f"{PR_HEAD_FALLBACK!r}.")
+        if not str(with_.get("branch") or "").startswith(prefix):
+            failures.append(
+                f"job {job_name!r}'s {PROBE_STEP_NAME!r} probes branch="
+                f"{with_.get('branch')!r}, which does not start with "
+                f"{prefix!r} — the arm would probe a branch it never checks "
+                f"out.")
+        if ref != PROBE_REF:
+            failures.append(
+                f"job {job_name!r}'s {checkout_name!r} checks out {ref!r}, "
+                f"not the probe's {PROBE_REF!r}, so the probe decides nothing.")
+    return failures
+
+
+def _mut_wrong_fallback(jobs):
+    """mark-stalled falls back to the merge commit an unmerged PR lacks."""
+    jobs = copy.deepcopy(jobs)
+    for st in jobs["mark-stalled"]["steps"]:
+        if st.get("name") == PROBE_STEP_NAME:
+            st["with"]["fallback-ref"] = MERGE_SHA_REF
+    return jobs
+
+
+def _mut_probe_dropped(jobs):
+    """teardown-rejected checks out by name again."""
+    jobs = copy.deepcopy(jobs)
+    jobs["teardown-rejected"]["steps"] = [
+        st for st in jobs["teardown-rejected"]["steps"]
+        if st.get("name") != PROBE_STEP_NAME]
+    return jobs
+
+
+def _mut_merged_arm_by_name(jobs):
+    """teardown-done checks out the spec branch by name again."""
+    jobs = copy.deepcopy(jobs)
+    for st in jobs["teardown-done"]["steps"]:
+        if st.get("name") == CHECKOUT_SHAPES["teardown-done"][2]:
+            st["with"]["ref"] = "${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}"
+    return jobs
+
+
+SHAPE_MUTATIONS = [
+    ("an unmerged arm falls back to the merge commit", _mut_wrong_fallback),
+    ("an unmerged arm drops its probe", _mut_probe_dropped),
+    ("the merged arm checks out the spec branch by name", _mut_merged_arm_by_name),
+]
+
+
+# `gh issue view --json state,labels` is the one call the idempotency checks
+# make; GH_ISSUE_JSON is its answer, GH_ISSUE_VIEW_RC makes it FAIL instead.
+GH_ISSUE_STUB = """#!/bin/sh
+echo "gh $*" >> "$GH_CALLS"
+case "$1 $2" in
+  "issue view")
+    if [ "${GH_ISSUE_VIEW_RC:-0}" != 0 ]; then
+      echo "gh: Bad Gateway (HTTP 502)" >&2
+      exit "$GH_ISSUE_VIEW_RC"
+    fi
+    printf '%s\\n' "$GH_ISSUE_JSON"
+    ;;
+esac
+exit 0
+"""
+
+
+def issue_json(state, *labels):
+    return json.dumps({"state": state,
+                       "labels": [{"name": l} for l in labels]})
+
+
+def run_idempotency(body, root, state_json, view_rc="0"):
+    work = tempfile.mkdtemp(dir=root)
+    runner_temp = os.path.join(work, "runner_temp")
+    bindir = os.path.join(work, "bin")
+    calls = os.path.join(work, "gh_calls")
+    os.makedirs(runner_temp, exist_ok=True)
+    os.makedirs(bindir, exist_ok=True)
+    open(calls, "w").close()
+    stub = os.path.join(bindir, "gh")
+    with open(stub, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(GH_ISSUE_STUB)
+    os.chmod(stub, 0o755)
+    rc, out, outputs, summary = run_step(
+        BASH, body, work,
+        {"GH_TOKEN": "x", "ISSUE": "68", "SLUG": SLUG,
+         "GH_CALLS": calls, "GH_ISSUE_JSON": state_json,
+         "GH_ISSUE_VIEW_RC": view_rc,
+         "PATH": bindir + os.pathsep + os.environ["PATH"]},
+        runner_temp)
+    return rc, out, outputs, summary
+
+
+# (label, issue json, view rc, expected skip or None for "must fail",
+#  word the summary must carry or None)
+def idempotency_scenarios(job_name):
+    shipped = "shipped"
+    common = [
+        ("closed issue carrying stage:done", issue_json("CLOSED", "stage:done", f"spec:{SLUG}"), "0", "true", shipped),
+        ("open issue carrying stage:done", issue_json("OPEN", "stage:done", f"spec:{SLUG}"), "0", "true", shipped),
+        ("closed issue, lowercase state", issue_json("closed", "stage:review", f"spec:{SLUG}"), "0", "true", shipped),
+        ("FAILED read", issue_json("OPEN", "stage:review", f"spec:{SLUG}"), "1", None, None),
+    ]
+    if job_name == "teardown-rejected":
+        return common + [
+            ("healthy: open, identity label present", issue_json("OPEN", "stage:spec", f"spec:{SLUG}"), "0", "false", None),
+            ("identity label already absent", issue_json("OPEN", "stage:spec"), "0", "true", "absent"),
+        ]
+    return common + [
+        ("healthy: open, not yet stalled", issue_json("OPEN", "stage:review"), "0", "false", None),
+        ("already stage:stalled", issue_json("OPEN", "stage:stalled"), "0", "true", "stalled"),
+    ]
+
+
+def idempotency_failures(job_name, body, root):
+    failures = []
+    for label, state_json, view_rc, expect_skip, word in idempotency_scenarios(job_name):
+        rc, out, outputs, summary = run_idempotency(body, root, state_json, view_rc)
+        where = f"{job_name} / {IDEMPOTENCY_STEPS[job_name]} [{label}]"
+        if expect_skip is None:
+            if rc == 0:
+                failures.append(f"{where}: the read FAILED and the step exited 0 — a "
+                                f"failed read must stop the job, never pass as "
+                                f"shipped, stalled or absent (#188).")
+            if outputs.get("skip"):
+                failures.append(f"{where}: the read FAILED yet skip="
+                                f"{outputs.get('skip')!r} was published.")
+            continue
+        if rc != 0:
+            failures.append(f"{where}: step exited {rc}: {out.strip()}")
+            continue
+        if outputs.get("skip") != expect_skip:
+            failures.append(f"{where}: published skip={outputs.get('skip')!r}, "
+                            f"expected {expect_skip!r}. A shipped lifecycle "
+                            f"(closed or stage:done) must be left alone; a "
+                            f"live one must be acted on.")
+        if word and word not in summary.lower():
+            failures.append(f"{where}: the step summary never says {word!r}, so "
+                            f"the skip is silent. Summary: {summary.strip()!r}")
+    return failures
+
+
+def _mut_shipped_guard_removed(body):
+    """The #282-era gap: a closed or stage:done issue is not a reason to skip."""
+    return body.replace('if [ "$state" = "closed" ] || has_label "stage:done"; then',
+                        'if false; then')
+
+
+def _mut_failed_read_reads_as_answer(body):
+    """`|| true`: a dead API becomes an empty issue and falls through."""
+    return body.replace('if ! info=$(gh issue view "$ISSUE" --json state,labels); then',
+                        'if ! info=$(gh issue view "$ISSUE" --json state,labels || true); then')
+
+
+IDEMPOTENCY_MUTATIONS = [
+    ("the shipped-lifecycle guard is removed", _mut_shipped_guard_removed),
+    ("a failed read falls through as an answer", _mut_failed_read_reads_as_answer),
+]
 
 
 RESOLVE_ANCHOR = "issue=$(jq -r '.issue // empty'"
@@ -415,9 +652,51 @@ def main():
     print(f"cleanup lifecycle guard: {len(guards)} copies of the step, "
           f"{'identical' if not failures else 'DRIFTED'}.")
 
+    jobs = load_jobs()
+    shape_failures = check_checkout_shapes(jobs)
+    failures += shape_failures
+    print(f"cleanup checkout shapes: {len(CHECKOUT_SHAPES)} arm(s), "
+          f"{'as required' if not shape_failures else 'WRONG'}.")
+    for label, apply_mutation in SHAPE_MUTATIONS:
+        if check_checkout_shapes(apply_mutation(jobs)):
+            print(f"Mutation OK — {label}: caught.")
+        else:
+            print(f"::error::MUTATION SURVIVED — {label} passed the checkout "
+                  f"shape check.")
+            failures.append(f"mutation survived: {label}")
+
     root = tempfile.mkdtemp()
     try:
         failures += scenarios(guard, root)
+
+        for job_name, step_name in IDEMPOTENCY_STEPS.items():
+            body = None
+            for st in (jobs.get(job_name) or {}).get("steps") or []:
+                if (st or {}).get("name") == step_name:
+                    body = st.get("run")
+            if body is None:
+                failures.append(f"job {job_name!r} has no step named "
+                                f"{step_name!r} — the shipped-lifecycle guard "
+                                f"has moved; update this gate with it.")
+                continue
+            got = idempotency_failures(job_name, body, root)
+            failures += got
+            print(f"cleanup shipped-lifecycle guard ({job_name}): "
+                  f"{len(idempotency_scenarios(job_name))} state(s), "
+                  f"{'held' if not got else 'BROKEN'}.")
+            for label, apply_mutation in IDEMPOTENCY_MUTATIONS:
+                mutated = apply_mutation(body)
+                if mutated == body:
+                    print(f"::error::mutation {label!r} changed nothing in "
+                          f"{job_name} — the code it edits was rewritten.")
+                    failures.append(f"mutation inapplicable: {label} ({job_name})")
+                elif idempotency_failures(job_name, mutated, root):
+                    print(f"Mutation OK — {label} ({job_name}): caught.")
+                else:
+                    print(f"::error::MUTATION SURVIVED — {label} in {job_name} "
+                          f"broke nothing.")
+                    failures.append(f"mutation survived: {label} ({job_name})")
+
         for f in failures:
             print(f"::error::{f}")
 

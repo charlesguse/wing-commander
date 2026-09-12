@@ -1188,10 +1188,17 @@ can race GitHub's creation of the `pull_request: closed` run — the close
 then produces **no cleanup run at all**, and every outcome is silently
 skipped. Prefer closing first and deleting the branch after the cleanup run
 appears (for pipeline branches, prefer not deleting at all — teardown owns
-that). The reference wrapper also carries a daily scheduled **sweeper**: it
-re-derives the raw facts from the API for any pipeline PR closed in the
-last 48 hours whose close left no `pull_request`-event cleanup run behind,
-marks the PR with a comment, and re-delivers the facts to this same stage.
+that). When the run *is* created but the head branch is already gone when
+it starts (a merge with `--delete-branch`, or the UI's "Delete branch"
+button — #282), the stage no longer fails at its checkout: it reads the
+spec artifacts from the merge commit (merged) or the PR's own head ref
+(unmerged) and completes; and if a merged final PR's teardown fails for any
+other reason, it posts the run link and a manual runbook on the lifecycle
+issue instead of only going red. The reference wrapper also carries a daily
+scheduled **sweeper**: it re-derives the raw facts from the API for any
+pipeline PR closed in the last 48 hours whose close left no
+`pull_request`-event cleanup run behind, marks the PR with a comment, and
+re-delivers the facts to this same stage.
 To adopt the sweeper, copy the reference wrapper's `schedule` and
 `workflow_dispatch` triggers plus its `sweep` and `resweep` jobs
 ([`wing-commander-7-cleanup.yml`](../.github/workflows/wing-commander-7-cleanup.yml) —

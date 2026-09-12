@@ -60,9 +60,9 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_gate_registry import (  # noqa: E402
-    SCRIPTS_DIR, _self_check, invocations, pr_time_gates,
-    pr_time_invocations, referenced_script_paths, shared_modules,
-    workflow_files)
+    LOOSE_PY_HEREDOC_RE, SCRIPTS_DIR, _self_check, invocations,
+    pr_time_gates, pr_time_inline_steps, pr_time_invocations,
+    referenced_script_paths, shared_modules, workflow_files)
 
 
 LINT_WORKFLOW = os.path.join(".github", "workflows", "lint-workflows.yml")
@@ -97,8 +97,10 @@ PY_HEREDOC_RE = re.compile(
 # PY_HEREDOC_RE cannot read (an interpreter flag before the `-`, an
 # unquoted delimiter, `python -` instead of `python3 -`) shows up here and
 # nowhere else, which is exactly the disagreement _check_heredoc_reader
-# reports. Same one-precise-one-loose technique as LOOSE_PATH_RE.
-LOOSE_PY_HEREDOC_RE = re.compile(r"^[ \t]*python3? +[^\n]*<<", re.M)
+# reports. Same one-precise-one-loose technique as LOOSE_PATH_RE. The
+# pattern itself lives in wc_gate_registry (LOOSE_PY_HEREDOC_RE, imported
+# above): pr_time_inline_steps decides local-suite membership with the
+# same grammar, and one home means the two readers cannot drift apart.
 
 # The SECOND, deliberately dumber reader of the same sources. SUBJECT_PATH_RE
 # defines the set the triggers rule is enforced over, and a check cannot fail
@@ -413,6 +415,29 @@ def check_local_runner_parity():
     if not failures:
         print(f"ok    all {len(pr_time_gates())} PR-time gate(s) are "
               f"reproducible locally ({len(pr_time_invocations())} invocation(s))")
+
+    # The same promise for the heredoc gates (Gate 12's live scan among
+    # them). pr_time_inline_steps and LOOSE_PY_HEREDOC_RE share one grammar
+    # for "this step opens a python heredoc"; a PR-time step it cannot run
+    # verbatim is reported here rather than dropped, and a lint-workflows.yml
+    # with no runnable heredoc gate at all means the reader broke, not that
+    # the gates went away.
+    runnable, unrunnable = pr_time_inline_steps()
+    for name, reason in unrunnable:
+        failures.append(
+            f"lint-workflows.yml step {name!r} runs a python heredoc in the "
+            f"PR-time suite, but run-local-gates.py cannot execute it "
+            f"verbatim ({reason}), so the local sweep is quietly rehearsing "
+            f"less than CI runs. Give it a script the registry can invoke, "
+            f"or keep the step self-contained.")
+    if not runnable:
+        failures.append(
+            "pr_time_inline_steps found no runnable python-heredoc step in "
+            "lint-workflows.yml's PR-time jobs - Gates 2/3/6/12/15/16/22/23 "
+            "are written that way, so the reader has stopped seeing them.")
+    elif not unrunnable:
+        print(f"ok    all {len(runnable)} PR-time heredoc gate(s) run "
+              f"verbatim in run-local-gates.py")
     return failures
 
 

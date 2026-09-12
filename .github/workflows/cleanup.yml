@@ -493,12 +493,40 @@ jobs:
           echo "slug=$slug"           >> "$GITHUB_OUTPUT"
           echo "spec-dir=specs/$slug" >> "$GITHUB_OUTPUT"
 
+      # The merge commit, never the spec branch (#282). A final PR merged
+      # with --delete-branch (or the UI's "Delete branch" button) loses its
+      # head a second before this run starts, and a checkout by name then
+      # hard-failed — every step below it skipped, the lifecycle issue left
+      # open at stage:review with nothing posted anywhere (#289 is the same
+      # failure on this repository's own spec 044). inputs.merge-commit-sha
+      # is populated whenever merged is true (the event arm and the sweeper
+      # both wire it), it is definitionally the commit whose spec artifacts
+      # are being torn down, and it is on the default branch — so it needs
+      # no probe, and the live branch, when it still exists, may even have
+      # moved past it. Nothing in this job pushes to the spec branch: the
+      # only push below is `--delete`. The two unmerged arms have no merge
+      # commit and probe via wing-commander-resolve-checkout-ref instead.
+      - name: Require the merge commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          MERGE_COMMIT_SHA: ${{ inputs.merge-commit-sha }}
+          PR_NUMBER: ${{ inputs.pr-number }}
+        run: |
+          if [ -z "$MERGE_COMMIT_SHA" ]; then
+            msg="wing-commander cleanup stage: pull request #$PR_NUMBER is recorded as merged but no merge-commit-sha was supplied, so there is no commit to read the spec artifacts from — refusing to guess."
+            echo "::error::$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+            gh pr comment "$PR_NUMBER" --body "⚠️ $msg"
+            exit 1
+          fi
+
       # clean: false — a default `git clean` here would delete the untracked
       # .wing-commander-pipeline checkout the composite steps below still need.
-      - name: Checkout spec branch as wing-commander-bot
+      - name: Checkout merge commit as wing-commander-bot
         uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
+          ref: ${{ inputs.merge-commit-sha }}
           token: ${{ steps.ctx.outputs.token }}
           fetch-depth: 0
           clean: false
@@ -836,6 +864,78 @@ jobs:
             delete_branch "${ref#refs/heads/}"
           done
 
+      # The loud failure #282 asks for. This arm's trigger is a one-shot
+      # pull_request: closed that nothing re-dispatches, and the feature it
+      # tears down is merged and working — so a red run here is the only
+      # symptom, and nobody is watching it. Whatever failed above (an
+      # adopter image missing a tool, a credential outage, an API hiccup, a
+      # refusal), say so where the still-open lifecycle issue is actually
+      # looked at, with the run link and what to do by hand.
+      #
+      # `failure()`, not always(): the agent step and its verdict guard are
+      # continue-on-error and do not flip the job status, so a merely
+      # degraded summary does not fire this; a cancelled run is deliberate
+      # and posts nothing. The token falls back to github.token because
+      # `ctx` may never have run (a Preflight refusal, say) — the job's own
+      # permissions cover the comment. The issue number is known only once
+      # the guard resolved it; before that the closed PR is the channel.
+      #
+      # Deliberately this arm only. On the two unmerged arms the outcome is
+      # a label and a notice on a still-open lifecycle whose owner is
+      # already acting on it, every refusal there already comments on the
+      # closed PR, and mark-stalled's notice is always()-gated itself; here
+      # the feature has shipped, the pipeline's promise is a closed issue,
+      # and nobody is left looking — silence is the case that matters.
+      - name: Report incomplete teardown on the lifecycle issue
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token || github.token }}
+          ISSUE: ${{ steps.meta.outputs.issue }}
+          SLUG: ${{ steps.spec.outputs.slug }}
+          PR_NUMBER: ${{ inputs.pr-number }}
+          SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          PLAN_PREFIX: ${{ inputs.plan-prefix }}
+          TASKS_PREFIX: ${{ inputs.tasks-prefix }}
+          IMPL_PREFIX: ${{ inputs.impl-prefix }}
+        run: |
+          set -uo pipefail
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          issue_ref="${ISSUE:-<lifecycle issue number>}"
+          slug_ref="${SLUG:-<NNN-slug>}"
+          report="$RUNNER_TEMP/cleanup-incomplete.md"
+          {
+            echo "⚠️ **Cleanup could not complete the teardown** for this specification after its final pull request (#$PR_NUMBER) merged — [this cleanup run]($run_url) failed partway. The merged change itself is unaffected, but the lifecycle issue may still be open under its old stage label and pipeline branches may still exist."
+            echo ""
+            echo "Fix the cause and re-run the failed run (every teardown step is idempotent), or finish by hand:"
+            echo ""
+            echo '```'
+            if [ -z "$ISSUE" ]; then
+              echo "# the lifecycle issue is the one issue labelled spec:$slug_ref"
+              echo "gh issue list --label \"spec:$slug_ref\" --state all"
+            fi
+            echo "gh label create \"stage:done\" --force"
+            echo "gh issue edit $issue_ref --add-label stage:done   # then remove any other stage:* label"
+            echo "gh issue close $issue_ref --comment \"Specification merged; torn down manually.\""
+            echo "gh pr edit $PR_NUMBER --add-label stage:done"
+            echo "# skip any branch that no longer exists — deleting an absent branch is a no-op"
+            echo "git push origin --delete ${SPEC_DRAFT_PREFIX}$slug_ref"
+            echo "git push origin --delete ${SPEC_PREFIX}$slug_ref"
+            echo "git push origin --delete ${PLAN_PREFIX}$slug_ref"
+            echo "git push origin --delete ${TASKS_PREFIX}$slug_ref"
+            echo "# and any ${IMPL_PREFIX}$slug_ref-iterN branches"
+            echo '```'
+          } > "$report"
+          if [ -n "$ISSUE" ] && gh issue comment "$ISSUE" --body-file "$report"; then
+            echo "Reported the incomplete teardown on lifecycle issue #$ISSUE." >> "$GITHUB_STEP_SUMMARY"
+          elif gh pr comment "$PR_NUMBER" --body-file "$report"; then
+            echo "Reported the incomplete teardown on pull request #$PR_NUMBER." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::wing-commander cleanup stage: the teardown did not complete AND the report could not be posted on issue #${ISSUE:-?} or pull request #$PR_NUMBER — the lifecycle issue must be closed by hand."
+            cat "$report" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   # A rejected draft is torn down, but the issue stays open so the requester
   # can revise and re-enter the pipeline. No agent step — no credential
   # required.
@@ -925,11 +1025,25 @@ jobs:
           echo "slug=$slug"           >> "$GITHUB_OUTPUT"
           echo "spec-dir=specs/$slug" >> "$GITHUB_OUTPUT"
 
+      # The draft branch may already be gone — a draft closed together with
+      # its branch is the same race as #282. wing-commander-resolve-checkout-ref
+      # probes for it and falls back to the closed PR's own head ref, which
+      # outlives the deleted branch; see that action's header for the note.
+      - name: Resolve spec checkout ref
+        id: spec-ref
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-resolve-checkout-ref
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          repository: ${{ github.repository }}
+          branch: ${{ inputs.spec-draft-prefix }}${{ steps.spec.outputs.slug }}
+          fallback-ref: refs/pull/${{ inputs.pr-number }}/head
+          pr-number: ${{ inputs.pr-number }}
+
       # clean: false — preserve .wing-commander-pipeline (see the teardown-done job).
       - name: Checkout draft branch as wing-commander-bot
         uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.spec-draft-prefix }}${{ steps.spec.outputs.slug }}
+          ref: ${{ steps.spec-ref.outputs.ref }}
           token: ${{ steps.ctx.outputs.token }}
           fetch-depth: 0
           clean: false
@@ -998,16 +1112,35 @@ jobs:
           echo "issue=$issue" >> "$GITHUB_OUTPUT"
 
       # An already-absent identity label means a prior run finished this part
-      # — skip straight to (harmless, idempotent) branch deletion.
+      # — skip straight to (harmless, idempotent) branch deletion. A CLOSED
+      # issue, or one carrying stage:done, means the specification already
+      # shipped: teardown-done closes the issue with stage:done and leaves
+      # spec:<slug> on it, so a stale draft PR closed afterwards would
+      # otherwise strip that label and announce a rejection on a finished
+      # lifecycle. Before #282 the by-name checkout of the deleted branch
+      # happened to fail first and hid this; now that it does not, this is
+      # the guard, and Gate 29 executes it. A failed read is neither
+      # "shipped" nor "label absent" (#188): it stops the job.
       - name: Idempotency check (identity label)
         id: idempotency
+        shell: bash
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ISSUE: ${{ steps.meta.outputs.issue }}
           SLUG: ${{ steps.spec.outputs.slug }}
         run: |
-          present=$(gh issue view "$ISSUE" --json labels --jq ".labels | map(.name) | index(\"spec:$SLUG\") != null")
-          if [ "$present" = "true" ]; then
+          if ! info=$(gh issue view "$ISSUE" --json state,labels); then
+            echo "::error::wing-commander cleanup stage: could not read the state and labels of issue #$ISSUE — refusing to guess whether this specification already shipped."
+            exit 1
+          fi
+          state=$(jq -r '.state | ascii_downcase' <<<"$info")
+          has_label() {
+            jq -e --arg l "$1" '[.labels[].name] | index($l) != null' <<<"$info" >/dev/null
+          }
+          if [ "$state" = "closed" ] || has_label "stage:done"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Issue #$ISSUE is already closed or stage:done — this specification has shipped; leaving its labels alone and posting no rejection notice." >> "$GITHUB_STEP_SUMMARY"
+          elif has_label "spec:$SLUG"; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
           else
             echo "skip=true" >> "$GITHUB_OUTPUT"
@@ -1175,11 +1308,27 @@ jobs:
           echo "spec-dir=specs/$slug" >> "$GITHUB_OUTPUT"
           echo "arm=$arm"             >> "$GITHUB_OUTPUT"
 
+      # The probed branch may already be gone (#282). wing-commander-resolve-
+      # checkout-ref probes for it and falls back to the closed PR's own head
+      # ref. On the final arm that is the spec branch's last tip; on the
+      # non-final arm the probed branch is the PR's BASE (this spec's own
+      # branch), so the fallback only fires when someone deleted that by
+      # hand, and the PR head still carries the spec artifacts.
+      - name: Resolve spec checkout ref
+        id: spec-ref
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-resolve-checkout-ref
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          repository: ${{ github.repository }}
+          branch: ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
+          fallback-ref: refs/pull/${{ inputs.pr-number }}/head
+          pr-number: ${{ inputs.pr-number }}
+
       # clean: false — preserve .wing-commander-pipeline (see the teardown-done job).
       - name: Checkout spec branch as wing-commander-bot
         uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
+          ref: ${{ steps.spec-ref.outputs.ref }}
           token: ${{ steps.ctx.outputs.token }}
           fetch-depth: 0
           clean: false
@@ -1268,15 +1417,35 @@ jobs:
 
       # The stage label already reading stage:stalled means a prior run
       # finished this part — nothing left to do (no branch deletion exists on
-      # this path to fall back to).
+      # this path to fall back to). A CLOSED issue, or one carrying
+      # stage:done, means the specification already shipped: teardown-done
+      # deletes plan/, tasks/ and impl/ branches but a stale stage PR closed
+      # after that would otherwise strip stage:done, add stage:stalled and
+      # post a stalled notice on a finished lifecycle. Before #282 the
+      # by-name checkout of the deleted spec branch happened to fail first
+      # and hid this; now that it does not, this is the guard, and Gate 29
+      # executes it. A failed read is neither "shipped" nor "not yet
+      # stalled" (#188): it stops the job, and the always()-gated notice
+      # below keys on this step's outcome for exactly that reason.
       - name: Idempotency check (stage label)
         id: idempotency
+        shell: bash
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ISSUE: ${{ steps.meta.outputs.issue }}
         run: |
-          present=$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name] | index("stage:stalled") != null')
-          if [ "$present" = "true" ]; then
+          if ! info=$(gh issue view "$ISSUE" --json state,labels); then
+            echo "::error::wing-commander cleanup stage: could not read the state and labels of issue #$ISSUE — refusing to guess whether this specification already shipped or stalled."
+            exit 1
+          fi
+          state=$(jq -r '.state | ascii_downcase' <<<"$info")
+          has_label() {
+            jq -e --arg l "$1" '[.labels[].name] | index($l) != null' <<<"$info" >/dev/null
+          }
+          if [ "$state" = "closed" ] || has_label "stage:done"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Issue #$ISSUE is already closed or stage:done — this specification has shipped; not marking it stalled." >> "$GITHUB_STEP_SUMMARY"
+          elif has_label "stage:stalled"; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "Issue #$ISSUE is already stage:stalled — skipping metadata/label/comment steps." >> "$GITHUB_STEP_SUMMARY"
           else
@@ -1284,9 +1453,13 @@ jobs:
           fi
 
       # Commit directly onto the still-intact spec branch — a no-op write
-      # when already "stalled" must not fail the job.
+      # when already "stalled" must not fail the job. Skipped when that
+      # branch is already gone (#282): the checkout above is then a
+      # detached PR head with nothing to push to, and the label flip plus
+      # the stalled notice below are the record instead.
       - name: Mark lifecycle record stalled
-        if: steps.idempotency.outputs.skip != 'true'
+        if: steps.idempotency.outputs.skip != 'true' && steps.spec-ref.outputs.branch-present == 'true'
+        shell: bash
         env:
           SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
           SLUG: ${{ steps.spec.outputs.slug }}
@@ -1318,6 +1491,7 @@ jobs:
       # bare `always()` would let this run with ISSUE empty and comment into
       # the void.
       - name: Flip stage label and comment stalled notice
+        shell: bash
         if: always() && steps.idempotency.outcome == 'success' && steps.idempotency.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -1331,6 +1505,7 @@ jobs:
           PLAN_PREFIX: ${{ inputs.plan-prefix }}
           TASKS_PREFIX: ${{ inputs.tasks-prefix }}
           IMPL_PREFIX: ${{ inputs.impl-prefix }}
+          BRANCH_PRESENT: ${{ steps.spec-ref.outputs.branch-present }}
         run: |
           gh label create "stage:stalled" --color E99695 --description "Pipeline stalled; manual restart or teardown required" --force
           gh issue edit "$ISSUE" --add-label "stage:stalled"
@@ -1348,6 +1523,10 @@ jobs:
             echo ""
             echo "Closed pull request: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/pull/$PR_NUMBER"
             echo ""
+            if [ "$BRANCH_PRESENT" != "true" ]; then
+              echo "Note: \`${SPEC_PREFIX}$SLUG\` no longer existed when this ran, so the stalled marker could not be committed to it. The closed pull request's head is still reachable as \`refs/pull/$PR_NUMBER/head\` if you revive it."
+              echo ""
+            fi
             echo "### Optional — full teardown"
             echo ""
             echo "If you'd rather tear this specification down completely instead of reviving it, run (skip any branch that doesn't exist — deleting an absent branch is a no-op):"
