@@ -37,6 +37,39 @@ formatter reappears in a workflow. When you consolidate something like
 this, add the "single home" check to the nearest existing gate the same
 way — a rule with no gate behind it lasts until the next session.
 
+## Working the issue board
+
+Open issues are worked in this order: triage, route, fix, review, merge,
+prove. Each step has a rule.
+
+- Triage against current main before touching code. Read the commits
+  since the issue was filed and the run it cites. A watchdog
+  `pipeline-defect` whose execution-output artifact records an API 429
+  (a `rate_limit_event`, `api_error_status: 429`, one turn, zero cost) or
+  an upstream action bump is closed with that evidence quoted, not fixed.
+- Route by shape. A change that is deterministic and gate-shaped (a new
+  `verify-*.py`, a plumbing fix, a comment correction) and carries no
+  design trade-off is a local fix PR. A change that needs the owner to
+  decide a trade-off, spans several stages, or would benefit from the
+  clarify stage's questions gets the `spec-request` label so the pipeline
+  runs it. File the issue first and apply the label as a separate action;
+  the label event is what starts intake.
+- Every fix PR gets a code review before merge. Fix the findings in the
+  same PR. A bug the review surfaces outside the PR's scope becomes a new
+  issue carrying the line `Found by the code review of #N`, never an
+  extra commit that widens the PR.
+- A fix to behaviour that only runs in Actions is proven after merge by
+  re-driving one run (`gh workflow run` on the wrapper that can dispatch
+  it) and recording the evidence on the PR or the issue.
+- Pipeline agent runs and local Claude sessions share one usage window.
+  Keep concurrent local agents to about three, and note any lifecycle
+  issue in `stage:implement` before fanning out so a stall can be
+  attributed to the burst rather than to the pipeline.
+- `gh pr merge` on a PR that touches `.github/workflows/` needs a token
+  with the `workflow` scope. When GitHub refuses for that reason, hand the
+  merge to the maintainer (`gh auth refresh -h github.com -s workflow`);
+  never push to main around the refusal.
+
 ## Other repo-specific rules
 
 - Workflow comments are load-bearing: gates byte-compare and mutate them.
