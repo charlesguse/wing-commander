@@ -94,6 +94,7 @@ import yaml
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_actionlint import ensure_shellcheck  # noqa: E402
 from wc_published_stages import published_stages  # noqa: E402
+from wc_shell_harness import use_utf8_stdout  # noqa: E402
 
 # The opt-in. release.yml is not a published stage (workflow_dispatch),
 # but it is release-blocking bash and has always been linted here.
@@ -286,6 +287,13 @@ def shellcheck_script(shellcheck, sh, script):
     env = dict(os.environ, SHELLCHECK_OPTS=SHELLCHECK_OPTS)
     proc = subprocess.run(cmd, input=payload, capture_output=True, env=env)
     stdout = proc.stdout.decode("utf-8", errors="replace")
+    # 0 is clean and 1 is "findings"; 2/3/4 mean shellcheck did not run
+    # the script (bad option, unsupported shell, internal error) and its
+    # stdout is empty -- which must not read as "no findings", the exact
+    # silent-skip shape this gate exists to rule out.
+    if proc.returncode not in (0, 1):
+        sys.exit(f"shellcheck exited {proc.returncode} without linting the "
+                 f"script: {proc.stderr.decode('utf-8', 'replace').strip()!r}")
     try:
         findings = json.loads(stdout or "[]")
     except json.JSONDecodeError:
@@ -517,6 +525,9 @@ def self_test():
 
 
 def main(argv):
+    # Findings quote step names verbatim; a cp1252 console must not turn
+    # a non-ASCII one into a traceback in place of the verdict.
+    use_utf8_stdout()
     if argv == ["--self-test"]:
         return self_test()
     if argv:
