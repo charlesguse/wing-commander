@@ -674,6 +674,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
           HAS_NEW_WORK: ${{ needs.detect.outputs.has-new-work }}
+          TAG_EXISTS: ${{ needs.detect.outputs.tag-exists }}
+          LATEST_TAG: ${{ needs.detect.outputs.latest-tag }}
           VERDICT_JSON: ${{ needs.verify-e2e.outputs.verdict }}
           NEXT_VERSION: ${{ needs.decide-version.outputs.next-version }}
           COLLISION: ${{ needs.decide-version.outputs.collision }}
@@ -682,8 +684,16 @@ jobs:
           set -uo pipefail
 
           # No new work: verify-e2e never ran, so VERDICT_JSON is empty --
-          # that must never be misread as a verification failure.
+          # that must never be misread as a verification failure. Two
+          # distinctly worded no-op lines (FR-003 vs FR-004): a baseline tag
+          # exists and HEAD already matches it, or no baseline tag exists at
+          # all yet to compare against.
           if [ "$HAS_NEW_WORK" != "true" ]; then
+            if [ "$TAG_EXISTS" = "true" ]; then
+              echo "no new work since ${LATEST_TAG}" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "no release tag exists yet -- nothing to compare against, nothing cut" >> "$GITHUB_STEP_SUMMARY"
+            fi
             exit 0
           fi
 
