@@ -387,7 +387,7 @@ jobs:
       # — `id` (its per-leg job name) and `confirm-environment` (its
       # environment binding; an adopter-configured input, not prose).
       # `leg-count` is how the legs-dropped job downstream tells "nothing
-      # was classified" from "the runner withheld the list". Gate 48
+      # was classified" from "the runner withheld the list". Gate 49
       # (verify-job-outputs-prose-free.py) enforces this shape: a tainted
       # step may feed a job output only through a `# prose-free:`
       # declaration it can verify against the write line.
@@ -1257,7 +1257,7 @@ jobs:
           # job-output secret check — but it is no longer lifted to the job.
           # The bodies go to a file for the artifact, and the job-level
           # `legs`/`leg-count` are the prose-free projection the outputs:
-          # block above declares (Gate 48 verifies these two lines bear
+          # block above declares (Gate 49 verifies these two lines bear
           # exactly the declared jq programs).
           echo "classifications=$result" >> "$GITHUB_OUTPUT"
           printf '%s' "$result" > "$RUNNER_TEMP/classifications.json"
@@ -1294,6 +1294,15 @@ jobs:
       # `act` is skipped by needs-propagation and `stalled` reports the
       # stage did not start — FR-023's announce-before-act still holds, and
       # no announced item is left with no leg to act on it.
+      #
+      # `overwrite: true` is load-bearing: "Re-run all jobs" keeps the run
+      # id and re-executes this job, and upload-artifact v4+ refuses a name
+      # that already exists in the run — so without it the second attempt
+      # dies here, `act`/`dispatch-once`/report-fold-outcomes/legs-dropped
+      # all skip, and a re-run (which worked before the artifact existed)
+      # becomes the one path that loses the review. The fresh classification
+      # is the right one to keep: every downstream reader belongs to the
+      # same attempt.
       - name: Upload classification bodies
         if: steps.confirm.outputs.legs != ''
         uses: actions/upload-artifact@v6
@@ -1301,6 +1310,7 @@ jobs:
           name: pr-conversation-classifications
           path: ${{ runner.temp }}/classifications.json
           if-no-files-found: error
+          overwrite: true
           retention-days: 90
 
       # T008/FR-023: posted BEFORE act starts — structurally guaranteed,
@@ -2799,19 +2809,29 @@ jobs:
   # classify-and-announce has succeeded, so that job cannot notice; and
   # `act`, `dispatch-once` and report-fold-outcomes are all gated on
   # `legs != ''`, so they skip — a silent skip is exactly the symptom. This
-  # job runs when classify-and-announce succeeded (the default success()
-  # gate is the right one: a FAILED classify announced nothing, so there is
-  # nothing to have lost) and the same confirm step that wrote `legs` also
-  # wrote `leg-count` and `concurrency-group`, yet `legs` came through
-  # empty. Either sibling suffices as the "confirm ran" witness — for the
-  # runner to hide all three, its masker would have to match a bare count
-  # and a group name as well as the id projection. It posts the loss on the
-  # PR first (T063's ordering lesson: a reply after a failing step is a
-  # reply that never happens), then fails the run.
+  # job fires when the same confirm step that wrote `legs` also wrote
+  # `leg-count` and `concurrency-group`, yet `legs` came through empty.
+  # Either sibling suffices as the "confirm ran" witness — for the runner
+  # to hide all three, its masker would have to match a bare count and a
+  # group name as well as the id projection.
+  #
+  # `!cancelled()` rather than the default success(): the drop is decided
+  # at output collection, independently of how classify-and-announce
+  # ended. A job outputs whatever its completed steps set even when a
+  # later step fails, so a classify that announced leg 1 and then died
+  # posting leg 2's announcement has still lost every leg if `legs` was
+  # withheld — the run is already red, but nothing would say WHICH way it
+  # went wrong. A classify that failed before confirm ran sets none of
+  # the three outputs and cannot fire this. `!cancelled()` defeats
+  # skip-propagation, so the image gate is re-checked explicitly (Gate 23,
+  # the `stalled` job's shape). It posts the loss on the PR first (T063's
+  # ordering lesson: a reply after a failing step is a reply that never
+  # happens), then fails the run.
   legs-dropped:
     needs: [verify-image-prerequisites, classify-and-announce]
     if: >-
-      needs.classify-and-announce.outputs.qualifies == 'true' &&
+      !cancelled() &&
+      needs.verify-image-prerequisites.result == 'success' &&
       needs.classify-and-announce.outputs.legs == '' &&
       (needs.classify-and-announce.outputs.leg-count != '' ||
        needs.classify-and-announce.outputs.concurrency-group != '')

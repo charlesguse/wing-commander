@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 48: no published stage lifts free prose into a job-level output.
+"""Gate 49: no published stage lifts free prose into a job-level output.
 
 WHY THIS EXISTS (issue #287)
 ----------------------------
@@ -33,7 +33,13 @@ carries a VERIFIED prose-free declaration.
 A step is prose-tainted when any of these hold:
 
   (a) it is an agent step — `uses:` names `claude-code-action` — so its
-      outputs and its transcript are model-authored;
+      outputs and its transcript are model-authored; or it `uses:` a local
+      composite under .github/actions (by either checkout path) whose
+      action.yml declares an OUTPUT whose description contains the phrase
+      "free-text" (case-insensitive) — wing-commander-agent-verdict's
+      `reason` ("Free-text explanation of the verdict", which can quote the
+      transcript) is the shipped instance, and that phrase is the marker a
+      composite author uses to say "this value is prose";
   (b) its `run:`, `env:` or `with:` text references a taint SOURCE:
         - the agent transcript file, claude-execution-output.json;
         - a request-text input (`inputs.<x>` whose name ends in body, hunk,
@@ -59,8 +65,15 @@ Deliberately NOT modelled (say so rather than pretend): text fetched with
 too), and repository files read directly with `cat`/`jq` from the checkout.
 Widening the sources to those flags nearly every identity-resolution step
 in the fleet (spec-meta.json reads, PR head refs) for outputs that are
-numbers and branch names. The declaration mechanism below is how a future
-output that genuinely needs one of those sources says so verifiably.
+numbers and branch names. Composites are otherwise OPAQUE: beyond the
+free-text output marker in (a), a composite's own steps are not scanned,
+so a composite that reads the transcript but describes its outputs
+without that phrase (wing-commander-metrics-summary's cost line,
+wing-commander-preflight's "One-sentence reason") does not taint its
+caller — a composite author who adds a prose output must say "free-text"
+in its description for this gate to see it. The declaration mechanism
+below is how a future output that genuinely needs one of those sources
+says so verifiably.
 
 VERIFIED DECLARATIONS
 ---------------------
@@ -138,7 +151,13 @@ EXCEPTIONS = {
     (".github/workflows/implement.yml", "implement", "final-reason"):
         "PROSE: the consolidated outcome reason can quote the transcript's "
         "terminal result.",
+    (".github/workflows/auto-update-spec-kit.yml", "e2e-stage", "failure-detail"):
+        "PROSE: the e2e read-back's diagnostic, built from the agent "
+        "verdict's free-text reason.",
     # ENUM
+    (".github/workflows/auto-update-spec-kit.yml", "e2e-stage", "passed"):
+        "ENUM: true/false chosen by the read-back step, which consumes the "
+        "agent verdict's free-text reason.",
     (".github/workflows/implement.yml", "implement", "final-ok"):
         "ENUM: true/false chosen by the consolidate step.",
     (".github/workflows/implement.yml", "implement", "final-tier"):
@@ -154,6 +173,10 @@ EXCEPTIONS = {
 }
 
 AGENT_USES = re.compile(r"claude-code-action")
+# A local composite, by either checkout path this repo uses:
+# `./.github/actions/<name>` or `./.wing-commander-pipeline/.github/actions/<name>`.
+LOCAL_COMPOSITE = re.compile(r"\.github/actions/([\w-]+)/?$")
+FREE_TEXT_MARK = re.compile(r"free-text", re.IGNORECASE)
 SOURCE_PATTERNS = [
     re.compile(r"claude-execution-output\.json"),
     re.compile(r"\binputs\.[\w-]*(?:body|hunk|text|message|prompt)\b"),
@@ -189,7 +212,28 @@ def _step_text(step):
     return "\n".join(_text(step.get(k)) for k in ("run", "env", "with"))
 
 
-def taint_jobs(wf):
+def composite_declares_prose(uses, root="."):
+    """Rule (a), composite half: does the local composite `uses` names
+    declare an output whose description says "free-text"? A composite that
+    cannot be found under root is opaque and reads as not tainted — the
+    docstring says so — rather than failing every workflow that pins a
+    composite this checkout does not carry."""
+    m = LOCAL_COMPOSITE.search(str(uses or ""))
+    if not m:
+        return False
+    path = os.path.join(root, ".github", "actions", m.group(1), "action.yml")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            action = yaml.safe_load(fh) or {}
+    except (OSError, yaml.YAMLError):
+        return False
+    for out in ((action.get("outputs") or {}).values()):
+        if FREE_TEXT_MARK.search(str((out or {}).get("description") or "")):
+            return True
+    return False
+
+
+def taint_jobs(wf, root="."):
     """-> {job_id: {step_id_or_index: bool tainted}} plus the tainted
     artifact-name set, following the docstring's rules (a)-(e)."""
     tainted_artifacts = set()
@@ -204,7 +248,7 @@ def taint_jobs(wf):
             text = _step_text(step)
             uses = str(step.get("uses") or "")
             tainted = False
-            if AGENT_USES.search(uses):
+            if AGENT_USES.search(uses) or composite_declares_prose(uses, root):
                 tainted = True
             if any(p.search(text) for p in SOURCE_PATTERNS):
                 tainted = True
@@ -336,7 +380,7 @@ def scan(root=".", exceptions=None):
             raw = fh.read()
         raw_lines = raw.splitlines()
         wf = yaml.safe_load(raw) or {}
-        taints = taint_jobs(wf)
+        taints = taint_jobs(wf, root)
         for job_id, job in (wf.get("jobs") or {}).items():
             steps = _steps_by_id(job)
             tainted_ids = {s for s, t in taints.get(job_id, {}).items() if t}
@@ -490,7 +534,56 @@ FIXTURE_LITERAL_SUBSTITUTION = _declared_fixture(
     'echo "group=$(printf \'%s\' "$result" | jq -r \'.[0].summary\')"')
 
 
-def _run_fixture(text, name="fixture.yml"):
+# Rule (a)'s composite half: a step calling a local composite whose
+# action.yml marks an output as free-text is tainted; a sibling composite
+# whose outputs carry no such marker is opaque and is not.
+FIXTURE_COMPOSITE_PROSE = STAGE_HEAD + """\
+  j:
+    runs-on: ubuntu-latest
+    outputs:
+      why: ${{ steps.verdict.outputs.reason }}
+    steps:
+      - id: verdict
+        uses: ./.wing-commander-pipeline/.github/actions/verdict-like
+"""
+FIXTURE_COMPOSITE_OPAQUE = FIXTURE_COMPOSITE_PROSE.replace(
+    "verdict-like", "terse-like")
+COMPOSITE_FILES = {
+    ".github/actions/verdict-like/action.yml": """\
+name: verdict-like
+description: fixture
+outputs:
+  verdict:
+    description: healthy | exhausted | failed
+    value: ${{ steps.x.outputs.verdict }}
+  reason:
+    description: Free-text explanation of the verdict.
+    value: ${{ steps.x.outputs.reason }}
+runs:
+  using: composite
+  steps:
+    - id: x
+      shell: bash
+      run: echo ok
+""",
+    ".github/actions/terse-like/action.yml": """\
+name: terse-like
+description: fixture
+outputs:
+  reason:
+    description: One-sentence reason, set only when refused is "true".
+    value: ${{ steps.x.outputs.reason }}
+runs:
+  using: composite
+  steps:
+    - id: x
+      shell: bash
+      run: echo ok
+""",
+}
+
+
+def _run_fixture(text, name="fixture.yml", extra_files=None):
     root = tempfile.mkdtemp()
     try:
         wdir = os.path.join(root, ".github", "workflows")
@@ -498,6 +591,11 @@ def _run_fixture(text, name="fixture.yml"):
         with open(os.path.join(wdir, name), "w", encoding="utf-8",
                   newline="\n") as fh:
             fh.write(text)
+        for rel, body in (extra_files or {}).items():
+            path = os.path.join(root, *rel.split("/"))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(body)
         return scan(root, exceptions={})
     finally:
         shutil.rmtree(root, ignore_errors=True)
@@ -538,8 +636,8 @@ def _subject_mutations():
 def self_test():
     failures = []
 
-    def expect(label, text, flagged, needle=None):
-        found, _ = _run_fixture(text)
+    def expect(label, text, flagged, needle=None, extra_files=None):
+        found, _ = _run_fixture(text, extra_files=extra_files)
         if flagged and not found:
             failures.append(f"{label}: expected a finding, got none")
         elif not flagged and found:
@@ -563,6 +661,11 @@ def self_test():
            FIXTURE_UNDECLARED_PROJECTION, True, "prose-tainted")
     expect("literal declaration hiding a command substitution",
            FIXTURE_LITERAL_SUBSTITUTION, True, "command substitution")
+    expect("local composite declaring a free-text output",
+           FIXTURE_COMPOSITE_PROSE, True, "prose-tainted",
+           extra_files=COMPOSITE_FILES)
+    expect("local composite with no free-text output (opaque)",
+           FIXTURE_COMPOSITE_OPAQUE, False, extra_files=COMPOSITE_FILES)
 
     # The gate must be able to fail its own subject.
     original, mutations = _subject_mutations()
@@ -595,7 +698,7 @@ def self_test():
 
     for f in failures:
         print(f"::error::self-test: {f}")
-    print(f"Gate 48 self-test: 9 fixture(s), {len(mutations)} subject "
+    print(f"Gate 49 self-test: 11 fixture(s), {len(mutations)} subject "
           f"mutation(s); {len(failures)} failure(s).")
     return 1 if failures else 0
 
@@ -608,7 +711,7 @@ def main(argv):
         print(f"::warning::{w}")
     for f in failures:
         print(f"::error::{f}")
-    print(f"Gate 48: {len(failures)} failure(s), {len(warnings)} registered "
+    print(f"Gate 49: {len(failures)} failure(s), {len(warnings)} registered "
           f"exception(s) still flagged.")
     return 1 if failures else 0
 

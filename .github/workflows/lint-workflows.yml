@@ -3070,7 +3070,7 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-stage-shell-lint.py --self-test
 
-      # Gate 48 — issue #287: the runner drops a whole job output when any
+      # Gate 49 — issue #287: the runner drops a whole job output when any
       # substring of it would be masked, and it masks more than secrets. A
       # job output built from a model's or a person's text is therefore a
       # silent skip waiting to happen — pr-conversation lost four review
@@ -3078,10 +3078,10 @@ jobs:
       # stage whose job-level output is fed from a step that reads such
       # text, unless the output carries a declaration the gate can verify
       # against the write line (an id projection, a count, or literal text).
-      - name: Gate 48 — no published stage lifts free prose into a job output
+      - name: Gate 49 — no published stage lifts free prose into a job output
         if: "!cancelled()"
         run: python3 .github/scripts/verify-job-outputs-prose-free.py
-      - name: Gate 48 self-test — the taint scan fails its own subject
+      - name: Gate 49 self-test — the taint scan fails its own subject
         if: "!cancelled()"
         run: python3 .github/scripts/verify-job-outputs-prose-free.py --self-test
 
