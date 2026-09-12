@@ -127,30 +127,25 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_published_stages import published_stages  # noqa: E402
 
 # Keys a `map({...})` projection may carry into a job output. Every entry
-# is a value the workflow itself synthesizes (`leg-<index>`) or copies from
-# a declared workflow_call input (an adopter's environment name) — nothing
-# a person typed into a comment or a model drafted.
-PROSE_FREE_KEYS = {"id", "confirm-environment"}
+# is a value the workflow itself synthesizes (`leg-<index>`; watchdog's
+# zero-based `index`, which its read-back step assigns with
+# `to_entries | map(.value + {index: .key})`, overwriting anything the
+# model emitted under that name) or copies from a declared workflow_call
+# input (an adopter's environment name) — nothing a person typed into a
+# comment or a model drafted.
+PROSE_FREE_KEYS = {"id", "confirm-environment", "index"}
 
 # (file, job, output) -> why it is tolerated. See REGISTERED EXCEPTIONS.
 # Two groups, both pre-dating this gate. PROSE: the value really can carry
 # model-authored text, so these are #287's defect class waiting to recur —
-# each needs the artifact treatment in its own change. ENUM: the value is a
-# fixed token or boolean the step chose, computed from a tainted read; a
-# masked substring there is implausible, but the rule cannot tell an enum
-# write from a prose write without shell dataflow, and a declaration shape
-# for "one of these literals" does not exist yet.
+# each needs the artifact treatment in its own change (#309 gave it to
+# watchdog's findings and implement's final-reason/agent-final-message).
+# ENUM: the value is a fixed token or boolean the step chose, computed from
+# a tainted read; a masked substring there is implausible, but the rule
+# cannot tell an enum write from a prose write without shell dataflow, and
+# a declaration shape for "one of these literals" does not exist yet.
 EXCEPTIONS = {
     # PROSE
-    (".github/workflows/watchdog.yml", "diagnose", "findings"):
-        "PROSE: the diagnose agent's findings (description/evidence text) "
-        "feed act's matrix through this output — the same shape as #287.",
-    (".github/workflows/implement.yml", "implement", "agent-final-message"):
-        "PROSE: the implement agent's final message, lifted for the "
-        "lifecycle-issue reply.",
-    (".github/workflows/implement.yml", "implement", "final-reason"):
-        "PROSE: the consolidated outcome reason can quote the transcript's "
-        "terminal result.",
     (".github/workflows/auto-update-spec-kit.yml", "e2e-stage", "failure-detail"):
         "PROSE: the e2e read-back's diagnostic, built from the agent "
         "verdict's free-text reason.",
