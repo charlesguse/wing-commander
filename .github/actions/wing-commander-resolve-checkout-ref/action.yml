@@ -1,0 +1,108 @@
+# Answers exactly one question — "does this branch still exist, and if not,
+# which ref should be checked out instead?" — for the cleanup arms that act
+# on a pull request closed WITHOUT merging (#282). Closing a PR together
+# with "Delete branch" removes its head a second before the pull_request:
+# closed run starts; a checkout by name then hard-fails, every step below
+# it is skipped, and the lifecycle issue is left exactly as it was with
+# nothing posted anywhere. The spec identity is already known by the time
+# this runs, so the caller probes here and checks out whatever this
+# resolves: the branch while it exists, otherwise a ref that outlives it
+# and carries the same spec artifacts (refs/pull/N/head — GitHub keeps a
+# PR's head reachable there after its branch is deleted).
+#
+# Three outcomes, never two: present, absent (HTTP 404 — the only answer
+# read as "gone"), and FAILED. A failed read is not an absent branch
+# (#188): anything but a 404 refuses with the API's own diagnostic rather
+# than checking out a fallback for a branch that may well still exist. The
+# probe is `gh api` with the caller's token, not `git ls-remote origin`:
+# the caller's bootstrap checkout persists no credentials, so on a private
+# repository ls-remote fails in a way indistinguishable from "absent".
+#
+# The merged arm (teardown-done) does not call this: inputs.merge-commit-sha
+# is definitionally the commit whose spec artifacts are being torn down,
+# and the live branch — when it still exists — may have moved past it.
+#
+# Like every shared composite, this action is resolved from the pipeline
+# repository's own checkout at github.job_workflow_sha (see the header of
+# .github/actions/wing-commander-context/action.yml for the verified
+# snippet), so it must never assume it lives in the workspace-root
+# repository — it touches no workspace paths. Its one write is the refusal
+# comment on the closed pull request, the same channel every other
+# refusal in cleanup.yml uses.
+name: wing-commander-resolve-checkout-ref
+description: >
+  Probe whether a branch still exists (gh api, 404 read as absent, any
+  other failure refused) and expose the ref a cleanup arm should check
+  out: the branch itself while it exists, otherwise the supplied fallback
+  ref that outlives it and carries the same spec artifacts. Refuses, with
+  a comment on the closed pull request, when the branch is gone and no
+  fallback was supplied or when the probe itself fails.
+
+inputs:
+  token:
+    description: >
+      GitHub token with contents: read on the repository (the same App
+      installation token every stage mints via wing-commander-context;
+      it also posts the refusal comment, which needs pull-requests: write).
+    required: true
+  repository:
+    description: "owner/name of the repository the branch lives in"
+    required: true
+  branch:
+    description: The branch to probe for (a full name such as `spec/044-example`)
+    required: true
+  fallback-ref:
+    description: >
+      Ref to check out instead when the branch no longer exists, e.g.
+      `refs/pull/286/head`. Empty means "no fallback" — the step then
+      refuses when the branch is gone.
+    required: false
+    default: ""
+  pr-number:
+    description: The closed pull request to post a refusal on, if any
+    required: true
+
+outputs:
+  ref:
+    description: The ref the caller should check out — the branch name, or fallback-ref
+    value: ${{ steps.probe.outputs.ref }}
+  branch-present:
+    description: "\"true\" iff the branch still exists, \"false\" iff the fallback was selected"
+    value: ${{ steps.probe.outputs.branch-present }}
+
+runs:
+  using: composite
+  steps:
+    - name: Probe branch and select checkout ref
+      id: probe
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPOSITORY: ${{ inputs.repository }}
+        BRANCH: ${{ inputs.branch }}
+        FALLBACK_REF: ${{ inputs.fallback-ref }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+      run: |
+        set -uo pipefail
+        fail() {
+          msg="wing-commander cleanup stage: $1"
+          echo "::error::$msg"
+          echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          gh pr comment "$PR_NUMBER" --repo "$REPOSITORY" --body "⚠️ $msg"
+          exit 1
+        }
+        probe_err="$RUNNER_TEMP/wing-commander-branch-probe-err.txt"
+        if gh api -X GET "repos/$REPOSITORY/branches/$BRANCH" --jq .name >/dev/null 2>"$probe_err"; then
+          echo "ref=$BRANCH"          >> "$GITHUB_OUTPUT"
+          echo "branch-present=true"  >> "$GITHUB_OUTPUT"
+        elif grep -q "HTTP 404" "$probe_err"; then
+          if [ -z "$FALLBACK_REF" ]; then
+            fail "branch $BRANCH no longer exists and no fallback ref was supplied for pull request #$PR_NUMBER, so its spec artifacts cannot be read — refusing to guess."
+          fi
+          echo "ref=$FALLBACK_REF"    >> "$GITHUB_OUTPUT"
+          echo "branch-present=false" >> "$GITHUB_OUTPUT"
+          echo "Branch \`$BRANCH\` no longer exists — reading the spec artifacts from \`$FALLBACK_REF\` instead." >> "$GITHUB_STEP_SUMMARY"
+        else
+          detail=$(tr '\r\n\t' '   ' < "$probe_err" | tr -s ' ' | head -c 300)
+          fail "the existence check for branch $BRANCH FAILED, so whether it still exists is unknown: ${detail:-gh gave no diagnostic}. Refusing — a failed read is not an absent branch."
+        fi
