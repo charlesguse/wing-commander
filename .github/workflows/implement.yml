@@ -350,11 +350,20 @@ jobs:
       id-token: write
     # The stalled job below consumes these to mark an exhausted-retry
     # failure. final-ok is empty (not "false") when the guard skipped the run.
+    #
+    # #309: the failure reason and the agent's final message are NOT here.
+    # Both are prose — the message is the agent's own words, the reason can
+    # quote the transcript's terminal result — and a job output must never
+    # carry text a model wrote -- see pr-conversation.yml for the runner's
+    # job-output masker check and what a dropped output cost there. Here
+    # the cost was quieter: the stall notice lost its "why" line and its
+    # final-message block for exactly the stall whose message a maintainer
+    # most needed to read (one that quoted a credential-shaped line). They
+    # travel in the implement-stall-diagnostics artifact instead ("Upload
+    # stall diagnostics" below; the stalled job downloads it).
     outputs:
       final-ok: ${{ steps.final.outputs.ok }}
       final-tier: ${{ steps.final.outputs.tier }}
-      final-reason: ${{ steps.final.outputs.reason }}
-      agent-final-message: ${{ steps.agentmsg.outputs.message }}
       slug: ${{ steps.spec.outputs.slug }}
       spec-dir: ${{ steps.spec.outputs.spec-dir }}
       converged: ${{ steps.final.outputs.converged }}
@@ -1588,20 +1597,45 @@ jobs:
       # workflows permission"). The action leaves its transcript in the runner
       # temp dir; the file reflects the LAST attempt that ran (a retry
       # overwrites the primary's, which was already uploaded as an artifact).
+      # #309: written to a file for the artifact below, together with the
+      # consolidated reason, rather than lifted as job outputs -- see the
+      # outputs: block above in this file.
       - name: Extract agent final message
         id: agentmsg
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.final.outputs.ok == 'false'
+        shell: bash
+        env:
+          REASON: ${{ steps.final.outputs.reason }}
         run: |
           file="$RUNNER_TEMP/claude-execution-output.json"
           msg=""
           if [ -f "$file" ]; then
             msg=$(jq -r '[.[] | select(.type == "result")] | last | .result // empty' "$file" 2>/dev/null | head -c 1500 || true)
           fi
-          {
-            echo "message<<WING_COMMANDER_AGENT_MSG_EOF"
-            printf '%s\n' "$msg"
-            echo "WING_COMMANDER_AGENT_MSG_EOF"
-          } >> "$GITHUB_OUTPUT"
+          jq -n --arg reason "$REASON" --arg message "$msg" \
+            '{reason: $reason, "agent-message": $message}' \
+            > "$RUNNER_TEMP/implement-stall-diagnostics.json"
+
+      # #309: the bodies reach the stalled job as an artifact, never as job
+      # outputs -- see the outputs: block above in this file. `overwrite:
+      # true` -- see pr-conversation.yml: a "Re-run all jobs" keeps the run
+      # id, and upload-artifact v4+ refuses a name that already exists in
+      # it. Gated on the extract step, which runs only for a judged-failed
+      # cycle: every other path has nothing to upload and no reader.
+      # continue-on-error because the stalled job already degrades to a
+      # notice without these bodies when the artifact is missing; a failed
+      # upload must not also strand "Record truncated-cycle count" below,
+      # which carries no always() and this path still needs.
+      - name: Upload stall diagnostics
+        if: steps.agentmsg.outcome == 'success'
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: implement-stall-diagnostics
+          path: ${{ runner.temp }}/implement-stall-diagnostics.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 90
 
       # A short per-cycle progress comment: Haiku (the constitution's tier
       # for diff summaries) COMPOSES the summary in a separate step so the
@@ -2148,6 +2182,52 @@ jobs:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
 
+      # #309: the reason the attempt was judged failed and the agent's final
+      # message come from the artifact the implement job uploaded, not from
+      # its job outputs -- see the implement job's outputs: block above in
+      # this file. continue-on-error: an implement that died before its
+      # extract step ran, or whose upload failed, has no artifact — the
+      # notice below then falls back to "see the failing run's step
+      # summary", as it did when the output was withheld, but with a
+      # warning in this log saying so rather than silence.
+      - name: Download stall diagnostics
+        if: needs.implement.outputs.final-ok == 'false'
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: implement-stall-diagnostics
+          path: ${{ runner.temp }}/stall-diagnostics
+
+      # Re-exposed as STEP outputs — stored in the job unmasked, never put
+      # through the job-output secret check — so the report step below
+      # reads the same REASON / AGENT_MSG variables it always did. Heredoc
+      # form because the message is multi-line and agent-authored; the
+      # random delimiter keeps a crafted body from ending the block early.
+      # No `-e`: an unreadable file degrades to empty fields, the same as a
+      # missing one — this step must never fail, since "Mark lifecycle
+      # record stalled" below carries no always() and would be stranded.
+      - name: Load stall diagnostics
+        id: stall-diagnostics
+        if: needs.implement.outputs.final-ok == 'false'
+        shell: bash
+        run: |
+          set -uo pipefail
+          f="$RUNNER_TEMP/stall-diagnostics/implement-stall-diagnostics.json"
+          reason=""
+          message=""
+          if [ -f "$f" ]; then
+            reason=$(jq -r '.reason // ""' "$f" 2>/dev/null || true)
+            message=$(jq -r '."agent-message" // ""' "$f" 2>/dev/null || true)
+          else
+            echo "::warning::wing-commander implement stage: no implement-stall-diagnostics artifact — the stall notice will carry neither the failure reason nor the agent's final message; read the implement job's step summary instead."
+          fi
+          emit() {
+            local d="wc-stall-eof-$RANDOM$RANDOM$RANDOM"
+            printf '%s<<%s\n%s\n%s\n' "$1" "$d" "$2" "$d" >> "$GITHUB_OUTPUT"
+          }
+          emit reason "$reason"
+          emit agent-message "$message"
+
       # clean: false — preserve .wing-commander-pipeline (see the implement job).
       - name: Checkout spec branch as wing-commander-bot
         if: needs.implement.outputs.final-ok == 'false'
@@ -2202,8 +2282,8 @@ jobs:
           ITERATION: ${{ inputs.iteration }}
           SPEC_DIR: ${{ needs.implement.outputs.spec-dir }}
           TIER: ${{ needs.implement.outputs.final-tier }}
-          REASON: ${{ needs.implement.outputs.final-reason }}
-          AGENT_MSG: ${{ needs.implement.outputs.agent-final-message }}
+          REASON: ${{ steps.stall-diagnostics.outputs.reason }}
+          AGENT_MSG: ${{ steps.stall-diagnostics.outputs.agent-message }}
           SELF_WORKFLOW: ${{ inputs.self-workflow }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
