@@ -2853,7 +2853,12 @@ jobs:
             echo ">"
             echo "> That output carries only leg ids and the configured confirmation-environment name, so the secret masker matched one of those. Inspect the classify-and-announce job log at $RUN_URL, remove the cause, and repeat the request."
           } > "$body_file"
-          gh pr comment "$PR_NUMBER" --body-file "$body_file"
+          # `-R` is load-bearing: nothing was checked out in this job, so
+          # there is no origin remote for gh to infer the repository from.
+          # The comment failing must not pre-empt the error below — the
+          # run going red is the floor, the comment is the courtesy.
+          gh pr comment "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --body-file "$body_file" \
+            || echo "::warning::wing-commander pr-conversation stage: could not post the lost-review notice on PR #$PR_NUMBER; the error below is the only record of it."
           echo "::error::wing-commander pr-conversation stage: $n classification(s) were announced but the legs job output was empty — the runner dropped it as possibly containing a secret, so the act matrix was skipped and the review was never acted on (#287)."
           exit 1
 
