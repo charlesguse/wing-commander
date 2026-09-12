@@ -142,8 +142,8 @@ Scenario 1).
 
 ### Implementation for User Story 3
 
-- [ ] T017 [US3] In `.github/workflows/auto-release.yml`'s `report` job (T011), add the no-new-work path: when `detect.outputs.has-new-work == 'false'` and `detect.outputs.tag-exists == 'true'`, write the `$GITHUB_STEP_SUMMARY` line `no new work since ${{ needs.detect.outputs.latest-tag }}` (FR-030, FR-003).
-- [ ] T018 [US3] In the same `report` job, add the no-baseline path: when `detect.outputs.tag-exists == 'false'`, write a `$GITHUB_STEP_SUMMARY` line stating there is no release tag to compare against and nothing was cut, distinct in wording from T017's line (FR-004, FR-030).
+- [X] T017 [US3] In `.github/workflows/auto-release.yml`'s `report` job (T011), add the no-new-work path: when `detect.outputs.has-new-work == 'false'` and `detect.outputs.tag-exists == 'true'`, write the `$GITHUB_STEP_SUMMARY` line `no new work since ${{ needs.detect.outputs.latest-tag }}` (FR-030, FR-003).
+- [X] T018 [US3] In the same `report` job, add the no-baseline path: when `detect.outputs.tag-exists == 'false'`, write a `$GITHUB_STEP_SUMMARY` line stating there is no release tag to compare against and nothing was cut, distinct in wording from T017's line (FR-004, FR-030).
 
 **Checkpoint**: All three of Stories 1-3 work together — a no-op tick's
 summary reads `no new work since <tag>` (or the no-baseline line) with
