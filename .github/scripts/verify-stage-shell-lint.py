@@ -82,19 +82,22 @@ USAGE
     python3 .github/scripts/verify-stage-shell-lint.py --self-test
 """
 import concurrent.futures
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
+import zipfile
 
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from wc_actionlint import ensure_shellcheck  # noqa: E402
+from wc_actionlint import ensure_pinned_tool, ensure_shellcheck  # noqa: E402
 from wc_published_stages import published_stages  # noqa: E402
 from wc_shell_harness import use_utf8_stdout  # noqa: E402
+from wc_shell_pin import effective_shell  # noqa: E402
 
 # The opt-in. release.yml is not a published stage (workflow_dispatch),
 # but it is release-blocking bash and has always been linted here.
@@ -201,25 +204,28 @@ def _shell_name(shell):
 
 
 def _default_shell(job):
+    """What Actions uses when no `shell:` is set anywhere: pwsh on a
+    windows runner, bash otherwise (actionlint's VisitJobPre). Only a
+    literal-string runs-on is read -- the linted files carry no other
+    shape, and a label list or `{group, labels}` mapping is not a silent
+    gap: it falls through to bash and is linted, so a pwsh script under
+    it surfaces as bash findings rather than going unlinted."""
     runs_on = job.get("runs-on")
-    labels = [runs_on] if isinstance(runs_on, str) else \
-        list(runs_on) if isinstance(runs_on, list) else \
-        list((runs_on or {}).get("labels") or []) \
-        if isinstance(runs_on, dict) else []
-    if any(isinstance(l, str) and "windows" in l.lower() for l in labels):
+    if isinstance(runs_on, str) and "windows" in runs_on.lower():
         return "pwsh"
     return "bash"
 
 
-def _node_lines(path):
-    """{(job id, step index): 1-based line of that step's `run:` key},
-    read off the YAML node tree so a finding can name the line the way
-    actionlint does; the values come from safe_load in run_blocks()."""
+def _node_positions(path):
+    """{(job id, step index): (line, column)} of each step's `run:` key,
+    1-based, read off the YAML node tree so a finding can name the key
+    the way actionlint does; the values come from safe_load in
+    run_blocks()."""
     with open(path, encoding="utf-8") as fh:
         root = yaml.compose(fh)
-    lines = {}
+    positions = {}
     if not isinstance(root, yaml.MappingNode):
-        return lines
+        return positions
     for k, v in root.value:
         if k.value != "jobs" or not isinstance(v, yaml.MappingNode):
             continue
@@ -234,38 +240,40 @@ def _node_lines(path):
                         continue
                     for pk, _ in step.value:
                         if pk.value == "run":
-                            lines[(jk.value, i)] = pk.start_mark.line + 1
-    return lines
+                            positions[(jk.value, i)] = (
+                                pk.start_mark.line + 1,
+                                pk.start_mark.column + 1)
+    return positions
 
 
 def run_blocks(path):
     """Every shellcheck-able `run:` step of a workflow, resolved the way
     actionlint resolves it.
 
-    -> [(job id, step index, step name, shell, script, line)], shell in
-    {"bash", "sh"}. Steps whose shell is anything else are left out,
-    exactly as actionlint leaves them out.
+    -> [(job id, step index, step name, shell, script, (line, column))],
+    shell in {"bash", "sh"}. Steps whose shell is anything else are left
+    out, exactly as actionlint leaves them out. The step > job >
+    workflow precedence is wc_shell_pin.effective_shell -- PR #293 is
+    what a second copy of that chain cost -- and this adds only the
+    runner default beneath it.
     """
     with open(path, encoding="utf-8") as fh:
         wf = yaml.safe_load(fh) or {}
-    lines = _node_lines(path)
-    wf_shell = ((wf.get("defaults") or {}).get("run") or {}).get("shell")
+    positions = _node_positions(path)
     out = []
     for jid, job in (wf.get("jobs") or {}).items():
         job = job or {}
-        job_shell = ((job.get("defaults") or {}).get("run") or {}).get("shell")
         for i, step in enumerate(job.get("steps") or []):
             step = step or {}
             run = step.get("run")
             if run is None:
                 continue
-            shell = step.get("shell") or job_shell or wf_shell \
-                or _default_shell(job)
+            shell = effective_shell(step, job, wf) or _default_shell(job)
             sh = _shell_name(str(shell))
             if sh is None:
                 continue
             out.append((jid, i, str(step.get("name") or ""), sh, str(run),
-                        lines.get((jid, i), 0)))
+                        positions.get((jid, i), (0, 0))))
     return out
 
 
@@ -307,17 +315,18 @@ def shellcheck_script(shellcheck, sh, script):
 
 def lint_files(shellcheck, files, jobs=8):
     """Diagnostic lines, actionlint's format, for every bash/sh run:
-    step of `files`. The line in `SC####:level:LINE:COL` is relative to
+    step of `files`. The leading file:line:col is the `run:` key's own
+    position; the LINE:COL inside `SC####:level:LINE:COL` is relative to
     the script with the one-line prologue subtracted, as actionlint
     reports it."""
     blocks = [(f,) + b for f in files for b in run_blocks(f)]
 
     def one(block):
-        f, jid, i, name, sh, script, line = block
+        f, jid, i, name, sh, script, (line, col) = block
         out = []
         for e in shellcheck_script(shellcheck, sh, script):
             msg = str(e.get("message", "")).rstrip(".")
-            out.append(f"{f}:{line}:9: shellcheck reported issue in this "
+            out.append(f"{f}:{line}:{col}: shellcheck reported issue in this "
                        f"script (job {jid}, step {i + 1}"
                        f"{' ' + repr(name) if name else ''}): "
                        f"SC{e.get('code')}:{e.get('level')}:"
@@ -450,6 +459,30 @@ def self_test():
                                   ".github/workflows/s1.yml"], root=td)
               == [".github/workflows/py.yml"])
 
+    # --- the pin: a wrong archive never reaches extraction ---------------
+    with tempfile.TemporaryDirectory() as td:
+        fake = os.path.join(td, "fake.zip")
+        with zipfile.ZipFile(fake, "w") as z:
+            z.writestr("tool.exe", b"not a binary")
+        url = "file:///" + fake.replace(os.sep, "/").lstrip("/")
+        good = hashlib.sha256(open(fake, "rb").read()).hexdigest()
+        try:
+            ensure_pinned_tool("wc-selftest-pin", "tool.exe", url,
+                               "tool.exe", "0" * 64, cache_root=td)
+            check("a sha256 mismatch fails before extraction", False,
+                  "ensure_pinned_tool returned")
+        except SystemExit as e:
+            check("a sha256 mismatch fails before extraction",
+                  "sha256 mismatch" in str(e)
+                  and not os.path.exists(
+                      os.path.join(td, "wc-selftest-pin", "tool.exe")),
+                  f"got {e}")
+        got = ensure_pinned_tool("wc-selftest-pin", "tool.exe", url,
+                                 "tool.exe", good, cache_root=td)
+        check("and the pinned digest extracts the member",
+              os.path.isfile(got)
+              and open(got, "rb").read() == b"not a binary", f"got {got}")
+
     # --- the shellcheck pass, against the pinned binary -----------------
     shellcheck = ensure_shellcheck()
     with tempfile.TemporaryDirectory() as td:
@@ -519,6 +552,45 @@ def self_test():
         got = [sh for _, _, _, sh, _, _ in run_blocks(dflt)]
         check("a workflow-level defaults.run.shell is honoured",
               got == ["sh"], f"got {got!r}")
+
+        jdflt = os.path.join(td, "jdflt.yml")
+        _write(jdflt, "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n"
+                      "    defaults:\n      run:\n        shell: sh\n"
+                      "    steps:\n      - run: echo $(ls)\n")
+        got = [sh for _, _, _, sh, _, _ in run_blocks(jdflt)]
+        check("a job-level defaults.run.shell is honoured",
+              got == ["sh"], f"got {got!r}")
+
+        prec = os.path.join(td, "prec.yml")
+        _write(prec, "on: push\ndefaults:\n  run:\n    shell: pwsh\n"
+                     "jobs:\n  a:\n    runs-on: ubuntu-latest\n"
+                     "    defaults:\n      run:\n        shell: sh\n"
+                     "    steps:\n      - run: echo one\n"
+                     "      - shell: bash\n        run: echo two\n")
+        got = [(i, sh) for _, i, _, sh, _, _ in run_blocks(prec)]
+        check("step beats job beats workflow (the PR #293 layering)",
+              got == [(0, "sh"), (1, "bash")], f"got {got!r}")
+
+        lbl = os.path.join(td, "lbl.yml")
+        _write(lbl, "on: push\njobs:\n  a:\n    runs-on: [self-hosted, linux]\n"
+                    "    steps:\n      - run: echo $(ls)\n")
+        got = [sh for _, _, _, sh, _, _ in run_blocks(lbl)]
+        check("a non-string runs-on falls through to bash (linted, never "
+              "silently skipped)", got == ["bash"], f"got {got!r}")
+
+        deep = os.path.join(td, "deep.yml")
+        _write(deep, "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n"
+                     "    steps:\n      - name: indented differently\n"
+                     "        run: echo $(ls)\n")
+        _, diags = lint_files(shellcheck, [deep])
+        check("the finding names the run: key's real line and column",
+              len(diags) == 1 and f"{deep}:7:9:" in diags[0], f"diags={diags!r}")
+        flow = os.path.join(td, "flow.yml")
+        _write(flow, "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n"
+                     "    steps: [{run: echo $(ls)}]\n")
+        _, diags = lint_files(shellcheck, [flow])
+        check("and a flow-style step's column is read, not assumed",
+              len(diags) == 1 and f"{flow}:5:14:" in diags[0], f"diags={diags!r}")
 
     print(f"{failures} failure(s).")
     return 1 if failures else 0
