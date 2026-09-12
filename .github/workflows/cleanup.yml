@@ -1459,6 +1459,7 @@ jobs:
       # the stalled notice below are the record instead.
       - name: Mark lifecycle record stalled
         if: steps.idempotency.outputs.skip != 'true' && steps.spec-ref.outputs.branch-present == 'true'
+        shell: bash
         env:
           SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
           SLUG: ${{ steps.spec.outputs.slug }}

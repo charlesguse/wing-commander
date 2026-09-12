@@ -33,8 +33,8 @@ flags now runs twice here too.
 
 INLINE GATES
 ------------
-The larger gates are not scripts: Gates 2, 3, 6, 12, 15, 16, 22, 23 and
-the bash -n pass are `python3 - <<'PYEOF'` heredocs inlined in
+The larger gates are not scripts: Gates 2, 3, 5, 6, 7, 12, 15, 16, 22, 23
+and the bash -n pass are `python3 - <<'PYEOF'` heredocs inlined in
 lint-workflows.yml, and until #282's fix this runner could not see them.
 It ran their self-tests (verify-gate-N.py, synthetic fixtures) and never
 the shipped check over the real fleet, so PR #301 passed 61/61 locally

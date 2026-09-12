@@ -261,16 +261,16 @@ def pr_time_invocations(root=".",
 
 
 # The larger PR-time gates are not scripts at all: they are `python3 -
-# <<'PYEOF'` heredocs inlined in lint-workflows.yml (Gates 2, 3, 6, 12, 15,
-# 16, 22, 23 and the bash -n pass). `pr_time_invocations` cannot see them,
+# <<'PYEOF'` heredocs inlined in lint-workflows.yml (Gates 2, 3, 5, 6, 7,
+# 12, 15, 16, 22, 23 and the bash -n pass). `pr_time_invocations` cannot see them,
 # so until #282's fix the local sweep ran only their synthetic self-tests
 # (verify-gate-N.py) and never the shipped check over the real fleet:
 # PR #301 passed 61/61 locally and failed Gate 12 in CI on a table entry
-# the self-test's fixtures never exercise. The loose grammar below is
-# deliberately the same one verify-gate-wiring.py's LOOSE_PY_HEREDOC_RE
-# uses to decide whether a heredoc was MISSED - "a line invoking python
-# that opens a heredoc" - so the two readers cannot disagree on membership.
-_LOOSE_PY_HEREDOC_RE = re.compile(r"^[ \t]*python3? +[^\n]*<<", re.M)
+# the self-test's fixtures never exercise. The loose grammar below is the
+# ONE home of "a line invoking python that opens a heredoc":
+# verify-gate-wiring.py imports it to decide whether a heredoc was MISSED,
+# so the two readers cannot disagree on membership.
+LOOSE_PY_HEREDOC_RE = re.compile(r"^[ \t]*python3? +[^\n]*<<", re.M)
 
 
 def pr_time_inline_steps(root=".",
@@ -298,7 +298,7 @@ def pr_time_inline_steps(root=".",
             continue
         for step in (job or {}).get("steps") or []:
             run = str((step or {}).get("run") or "")
-            if not _LOOSE_PY_HEREDOC_RE.search(run):
+            if not LOOSE_PY_HEREDOC_RE.search(run):
                 continue
             name = str(step.get("name") or "(unnamed step)")
             if step.get("env"):

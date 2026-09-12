@@ -60,9 +60,9 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_gate_registry import (  # noqa: E402
-    SCRIPTS_DIR, _self_check, invocations, pr_time_gates,
-    pr_time_inline_steps, pr_time_invocations, referenced_script_paths,
-    shared_modules, workflow_files)
+    LOOSE_PY_HEREDOC_RE, SCRIPTS_DIR, _self_check, invocations,
+    pr_time_gates, pr_time_inline_steps, pr_time_invocations,
+    referenced_script_paths, shared_modules, workflow_files)
 
 
 LINT_WORKFLOW = os.path.join(".github", "workflows", "lint-workflows.yml")
@@ -97,8 +97,10 @@ PY_HEREDOC_RE = re.compile(
 # PY_HEREDOC_RE cannot read (an interpreter flag before the `-`, an
 # unquoted delimiter, `python -` instead of `python3 -`) shows up here and
 # nowhere else, which is exactly the disagreement _check_heredoc_reader
-# reports. Same one-precise-one-loose technique as LOOSE_PATH_RE.
-LOOSE_PY_HEREDOC_RE = re.compile(r"^[ \t]*python3? +[^\n]*<<", re.M)
+# reports. Same one-precise-one-loose technique as LOOSE_PATH_RE. The
+# pattern itself lives in wc_gate_registry (LOOSE_PY_HEREDOC_RE, imported
+# above): pr_time_inline_steps decides local-suite membership with the
+# same grammar, and one home means the two readers cannot drift apart.
 
 # The SECOND, deliberately dumber reader of the same sources. SUBJECT_PATH_RE
 # defines the set the triggers rule is enforced over, and a check cannot fail
