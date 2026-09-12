@@ -443,8 +443,10 @@ runs:
         # own token and cost totals") — the collector rejected every such
         # record (persist run 34311334476). `.usage` stays the source when
         # no per-model breakdown is available (or its sums are not
-        # numbers). The rendered table above is untouched (FR-011); only
-        # the record sums.
+        # numbers). The table's Tokens cell below renders from these same
+        # tok_* values (FR-004: one extraction, so record and summary
+        # cannot disagree about the same run) — its format is unchanged
+        # (FR-011), and a single-model run renders byte-for-byte as before.
         if [ "$per_model_available" = "true" ]; then
           sum_input="$(printf '%s' "$per_model_json" | jq -r '[.[].input_tokens] | add' 2>/dev/null || true)"
           sum_output="$(printf '%s' "$per_model_json" | jq -r '[.[].output_tokens] | add' 2>/dev/null || true)"
@@ -575,7 +577,20 @@ runs:
         fi
         duration_disp="$(fmt_duration "$duration_ms")"
         cost_disp="$(fmt_cost "$cost_usd")"
-        tokens_disp="$(fmt_tokens "$usage_json")"
+        # The Tokens cell is rendered from the record's own tok_* values,
+        # not from usage_json directly (FR-004) — see the per_model summing
+        # block above for why the two differ on a multi-model run. Rebuilt
+        # in usage_json's field shape so fmt_tokens' format stays as is.
+        tokens_json=""
+        if [ "$tokens_available" = "true" ]; then
+          tokens_json="$(jq -cn --arg i "$tok_input" --arg o "$tok_output" \
+            --arg cr "$tok_cache_read" --arg cc "$tok_cache_creation" '
+            def n($s): if $s == "" then 0 else ($s | tonumber) end;
+            {input_tokens: n($i), output_tokens: n($o),
+             cache_read_input_tokens: n($cr), cache_creation_input_tokens: n($cc)}
+          ' 2>/dev/null || true)"
+        fi
+        tokens_disp="$(fmt_tokens "$tokens_json")"
         per_model_line="$(fmt_per_model "$model_usage_json")"
 
         {

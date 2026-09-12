@@ -479,21 +479,29 @@ def case_validate_then_append_persists_reusable_workflow_records():
         runner_temp = os.path.join(tmp, "a-runnertemp")
         wc_dir = os.path.join(runner_temp, "wc-metrics-persist")
         dl_dir = os.path.join(wc_dir, "downloaded")
-        for name in ("metrics-record-diagnose", "metrics-record-act"):
+        for name in ("metrics-record-diagnose", "metrics-record-act",
+                     "metrics-record-collect"):
             os.makedirs(os.path.join(dl_dir, name), exist_ok=True)
         # The jobs listing exactly as the discover step stores it: an array
         # of the jobs API's objects, named the way GitHub displays reusable-
-        # workflow jobs. No job is named bare "diagnose".
+        # workflow jobs. No job is named bare "diagnose". Two callers share
+        # the "collect" suffix, so that job_key is ambiguous.
         with open(os.path.join(wc_dir, "jobs.json"), "w", encoding="utf-8") as f:
             json.dump([
                 {"id": 103147788791, "name": "resolve"},
                 {"id": 103147821739, "name": "watchdog / collect"},
+                {"id": 103147821740, "name": "watchdog-self / collect"},
                 {"id": diagnose_job_id, "name": "watchdog / diagnose"},
                 {"id": 103148182551, "name": "watchdog / act"},
             ], f)
         _write_pretty(os.path.join(dl_dir, "metrics-record-diagnose",
                                    "wing-commander-metrics-record.json"),
                       _reusable_workflow_record(run_id, "diagnose"))
+        # An ambiguous suffix must keep job_id null and the emission-time
+        # record_key — never guess one of the two ids — and still persist.
+        _write_pretty(os.path.join(dl_dir, "metrics-record-collect",
+                                   "wing-commander-metrics-record.json"),
+                      _reusable_workflow_record(run_id, "collect"))
         # A multi-model record whose per_model entries sum to its own
         # totals must pass validation, not be rejected with a warning
         # (persist run 34311334476's shape once the emitter sums correctly).
@@ -517,7 +525,7 @@ def case_validate_then_append_persists_reusable_workflow_records():
         batch_path = os.path.join(wc_dir, "new-records.jsonl")
         with open(batch_path, encoding="utf-8") as f:
             batch_lines = [line for line in f.read().split("\n") if line.strip()]
-        if len(batch_lines) != 2:
+        if len(batch_lines) != 3:
             fail(case, "the batch must hold exactly one line per record "
                        f"(JSONL), got {len(batch_lines)} non-empty line(s) — "
                        "a pretty-printed record appended verbatim is what the "
@@ -543,6 +551,13 @@ def case_validate_then_append_persists_reusable_workflow_records():
         if diag.get("record_key") != want_key:
             fail(case, f"expected the persisted record_key rewritten to "
                        f"{want_key!r}, got {diag.get('record_key')!r}")
+        coll = by_key.get("collect", {}).get("run", {})
+        if coll.get("job_id") is not None or coll.get("record_key") != f"{run_id}:collect:0":
+            fail(case, "job_key 'collect' matches two callers ('watchdog / "
+                       "collect' and 'watchdog-self / collect'), so it must "
+                       "keep job_id null and its emission-time record_key "
+                       f"rather than guess — got job_id={coll.get('job_id')!r}, "
+                       f"record_key={coll.get('record_key')!r}")
 
         rc, output, outputs, _summary = run_step(
             BASH, SCRIPT, work,
@@ -553,18 +568,21 @@ def case_validate_then_append_persists_reusable_workflow_records():
             fail(case, f"append step exited {rc} on the batch validate "
                        f"wrote: {output.strip()[:500]}")
             return
-        if outputs.get("persisted-count") != "2":
-            fail(case, f"expected persisted-count=2, got {outputs.get('persisted-count')!r}")
+        if outputs.get("persisted-count") != "3":
+            fail(case, f"expected persisted-count=3, got {outputs.get('persisted-count')!r}")
 
         text, final_work = fetch_dest(tmp, origin, "metrics", "final")
         shutil.rmtree(final_work, ignore_errors=True)
         dest_lines = [line for line in (text or "").split("\n") if line.strip()]
-        if len(dest_lines) != 2 or want_key not in (text or ""):
-            fail(case, f"destination must hold exactly the two records, one "
-                       f"per line, keyed by numeric job_id; got: {text!r}")
-        note("a pretty-printed record from a 'watchdog / diagnose'-style job "
-             "and a multi-model record both validated, resolved to numeric "
-             "job ids, and persisted as one JSONL line each")
+        if len(dest_lines) != 3 or want_key not in (text or "") \
+                or f"{run_id}:collect:0" not in (text or ""):
+            fail(case, f"destination must hold exactly the three records, one "
+                       f"per line (numeric-job_id key for the resolved one, "
+                       f"emission-time key for the ambiguous one); got: {text!r}")
+        note("pretty-printed records from a 'watchdog / diagnose'-style job, "
+             "an ambiguous two-caller 'collect' job (job_id kept null), and "
+             "a multi-model run all validated and persisted as one JSONL "
+             "line each")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

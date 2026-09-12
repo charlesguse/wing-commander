@@ -401,7 +401,7 @@ def case_multi_model_record_tokens_sum_across_per_model():
                     "cacheReadInputTokens": 21682,
                     "cacheCreationInputTokens": 21930,
                     "costUSD": 0.245661}}})
-        rc, _outputs, _summary, record, output = run_case(
+        rc, _outputs, summary, record, output = run_case(
             tmp, records=transcript, env_over={"MODEL": "claude-opus-5"})
         if rc != 0:
             fail(case, f"exited {rc}: {output.strip()[:300]}")
@@ -424,8 +424,23 @@ def case_multi_model_record_tokens_sum_across_per_model():
                        f".usage alone fails the schema's sum invariant and "
                        f"is rejected by the persist collector")
             return
+        # FR-004 / acceptance scenario 3: the rendered table's Tokens cell
+        # and the record derive from ONE extraction. Pin the agreement in
+        # fmt_tokens' own format so the cell cannot quietly go back to
+        # rendering `.usage` (main model only) while the record sums.
+        tok = record["tokens"]
+        want_cell = "{0} (in {1}, out {2}, cache {3})".format(
+            tok["input"] + tok["output"] + tok["cache_creation"] + tok["cache_read"],
+            tok["input"], tok["output"], tok["cache_creation"] + tok["cache_read"])
+        if f"| {want_cell} |" not in summary:
+            fail(case, f"the rendered Tokens cell must equal the record's "
+                       f"tokens.* ({want_cell!r}) — the record and the step "
+                       f"summary disagreed about the same run (FR-004). "
+                       f"Summary was: {summary.strip()[:400]!r}")
+            return
         note("a two-model transcript produces a record whose tokens.* equal "
-             "the per_model sums, so the collector's sum invariant holds")
+             "the per_model sums, so the collector's sum invariant holds, "
+             "and the rendered Tokens cell shows those same totals")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

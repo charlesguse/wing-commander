@@ -43,7 +43,7 @@ independent of the transcript).
 | `turns.intended_budget` | integer or null | The caller's `max-turns` input value (the tunable budget). |
 | `turns.enforced_ceiling` | integer or null | The caller's `ceiling` input value (`wing-commander-turn-ceiling`'s output — the literal `--max-turns` the runtime enforced). |
 | `turns.available` | boolean | `false` when counting itself failed (unreadable transcript shape). |
-| `tokens.input` / `.output` / `.cache_read` / `.cache_creation` | integer or null | The sum across `per_model` when a per-model breakdown is available — `.usage.*` carries only the main model's counts, so on a multi-model run it does not satisfy the invariant below; `.usage.*` (the fields the rendered summary shows) only when `.modelUsage` is absent. |
+| `tokens.input` / `.output` / `.cache_read` / `.cache_creation` | integer or null | The sum across `per_model` when a per-model breakdown is available (`.usage.*` carries only the main model's counts, so on a multi-model run it would not satisfy the invariant below); `.usage.*` only when `.modelUsage` is absent. The rendered summary's Tokens cell shows these same values (FR-004). |
 | `tokens.available` | boolean | `false` when neither `.modelUsage` nor `.usage` was usable. |
 | `cost_usd` | number or null | From `.total_cost_usd`. |
 | `cost_available` | boolean | | 
