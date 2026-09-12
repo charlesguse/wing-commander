@@ -30,6 +30,7 @@ jobs:
   # compared against HEAD. No separate ledger of "already attempted this
   # head" is needed; the tag itself is that record.
   detect:
+    if: vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -96,7 +97,7 @@ jobs:
   # valid JSON regardless of which step here stopped the run.
   verify-e2e:
     needs: detect
-    if: needs.detect.outputs.has-new-work == 'true'
+    if: needs.detect.outputs.has-new-work == 'true' && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions: {}
@@ -541,7 +542,7 @@ jobs:
   # there is no code path here that can (User Story 4, T019/T020).
   decide-version:
     needs: [detect, verify-e2e]
-    if: fromJSON(needs.verify-e2e.outputs.verdict).outcome == 'pass'
+    if: fromJSON(needs.verify-e2e.outputs.verdict || '{}').outcome == 'pass' && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -615,7 +616,7 @@ jobs:
   # dispatched run to its own conclusion before reporting `released`.
   dispatch-release:
     needs: decide-version
-    if: needs.decide-version.outputs.collision == 'false'
+    if: needs.decide-version.outputs.collision == 'false' && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -662,7 +663,7 @@ jobs:
   # (contracts/release-dispatch.md Reporting). Reads whichever prior jobs
   # actually ran -- `always()` so a paused/no-op/failed run still reports.
   report:
-    if: always()
+    if: always() && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'
     needs: [detect, verify-e2e, decide-version, dispatch-release]
     runs-on: ubuntu-latest
     permissions:
