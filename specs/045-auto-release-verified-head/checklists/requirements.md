@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,22 +31,33 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain by design — FR-002 (how the
-  cadence is made configurable), FR-008 (how much of the lifecycle the
-  end-to-end run must exercise), and FR-017 (how patch vs. minor is decided).
-  These are the three open questions the requester explicitly asked the
-  spec/clarify stage to pin down rather than have guessed, so they are
-  carried as markers instead of being answered with a default. Intake runs
-  headless and does not block on answers; the questions are posted to the
-  lifecycle issue for the requester to answer, and the answers are folded in
-  before planning.
+- All three [NEEDS CLARIFICATION] markers are resolved from the requester's
+  answer on the lifecycle issue
+  ([#296 comment](https://github.com/charlesguse/wing-commander/issues/296#issuecomment-5642340595)):
+  - **FR-008 / FR-008a — lifecycle coverage**: the full intake→cleanup
+    lifecycle, every stage including the implement⟲converge loop, driven
+    against a deliberately trivial feature sized to converge in one
+    iteration. Multi-iteration convergence, retry, and escalation paths are
+    accordingly out of scope for this verification; that limitation is stated
+    in FR-008a and in the Assumptions rather than left implied.
+  - **FR-002 — cadence**: a fixed interval in the workflow file, changed by
+    pull request. No repository variable and no last-attempt timestamp,
+    matching the watchdog, auto-updater, and private-image dogfood
+    workflows.
+  - **FR-017 / FR-017a / FR-017b — patch vs. minor**: always patch unless a
+    merged pull request in the range carries the opt-in minor label; any one
+    minor signal in the range wins, and a missing label degrades to a patch
+    rather than blocking a release.
 - Every other requirement was resolved with a documented default recorded in
   the Assumptions section — notably: all commits count as new work (no
   adopter-visible filter), the first release stays a human act, breaking
   detection is out of scope in every form, and an unconfigured test
   repository means no release rather than an unverified one.
-- Naming of the concrete repository variables, workflow files, and dispatch
-  inputs is deliberately left out of the spec; the requirements name the
-  *behaviour* (a kill-switch variable, a variable naming the test repository,
-  reuse of the existing release automation) and planning resolves the names
-  against the established precedents cited in the Assumptions section.
+- Naming of the concrete repository variables, workflow files, dispatch
+  inputs, the minor opt-in label, and the cadence's cron expression is
+  deliberately left out of the spec; the requirements name the *behaviour* (a
+  kill-switch variable, a variable naming the test repository, a label that
+  requests a minor, a fixed schedule in the workflow file, reuse of the
+  existing release automation) and planning resolves the names and the
+  interval against the established precedents cited in the Assumptions
+  section.
