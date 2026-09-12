@@ -615,7 +615,7 @@ jobs:
   # dispatch only means GitHub accepted the request, so this polls the
   # dispatched run to its own conclusion before reporting `released`.
   dispatch-release:
-    needs: decide-version
+    needs: [detect, decide-version]
     if: needs.decide-version.outputs.collision == 'false' && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -630,8 +630,29 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.decide-version.outputs.next-version }}
+          VERIFIED_HEAD: ${{ needs.detect.outputs.head-sha }}
         run: |
           set -uo pipefail
+
+          # release.yml's own checkout carries no ref: override, so
+          # `gh workflow run` tags whatever main's tip is at dispatch time,
+          # not the commit verify-e2e actually verified (FR-016) -- and
+          # verify-e2e can run for up to this workflow's own
+          # timeout-minutes before this job starts, during which main can
+          # advance. A tag must never land on a commit no end-to-end run
+          # ever saw, so skip the dispatch entirely when main has moved.
+          current_tip="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha 2>/dev/null || true)"
+          if [ -z "$current_tip" ]; then
+            echo "::error::wing-commander auto-release dispatch-release: could not resolve main's current tip; not dispatching against an unconfirmed head."
+            echo "release-outcome=failed" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$current_tip" != "$VERIFIED_HEAD" ]; then
+            echo "::notice::wing-commander auto-release dispatch-release: main advanced from the verified head (${VERIFIED_HEAD}) to ${current_tip} before dispatch; skipping this attempt."
+            echo "release-outcome=stale-head" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           if ! gh workflow run release.yml -f "version=${VERSION}" -f breaking=false -f breaking-notes=; then
             echo "::error::wing-commander auto-release dispatch-release: gh workflow run release.yml was rejected."
             echo "release-outcome=failed" >> "$GITHUB_OUTPUT"
@@ -767,6 +788,15 @@ jobs:
           if [ "$RELEASE_OUTCOME" = "released" ]; then
             echo "released ${NEXT_VERSION}" >> "$GITHUB_STEP_SUMMARY"
             close_failure_on_success
+            exit 0
+          fi
+
+          # main advanced past the verified head before dispatch-release
+          # ran -- expected behavior (the next scheduled check verifies the
+          # new head), not a defect, so this does not file/update the
+          # auto-release:failed issue.
+          if [ "$RELEASE_OUTCOME" = "stale-head" ]; then
+            echo "no release: main advanced past the verified head (${HEAD_SHA}) before dispatch" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
