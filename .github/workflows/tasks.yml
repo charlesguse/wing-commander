@@ -629,7 +629,7 @@ jobs:
         id: tool-args-tasks-direct-commit
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
         with:
-          default-allowed-tools: "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git ls-tree:*),Bash(git branch:*),Bash(echo:*),Bash(ls:*),Bash(cat:*),Bash(grep:*),Bash(head:*),Bash(tail:*),Bash(sort:*),Bash(uniq:*),Bash(wc:*),Bash(cut:*),Bash(printenv SPECIFY_FEATURE_DIRECTORY),Bash(.specify/scripts/bash/setup-tasks.sh:*),Bash(bash .specify/scripts/bash/setup-tasks.sh:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh issue list:*),Bash(gh auth status),Bash(gh api -X GET:*)"
+          default-allowed-tools: "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git ls-tree:*),Bash(git branch:*),Bash(echo:*),Bash(ls:*),Bash(cat:*),Bash(grep:*),Bash(head:*),Bash(tail:*),Bash(sort:*),Bash(uniq:*),Bash(wc:*),Bash(cut:*),Bash(printenv SPECIFY_FEATURE_DIRECTORY),Bash(.specify/scripts/bash/setup-tasks.sh:*),Bash(bash .specify/scripts/bash/setup-tasks.sh:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh issue list:*),Bash(gh auth status)"
           default-disallowed-tools: "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
           extra-allowed-tools: ${{ inputs.extra-allowed-tools }}
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
@@ -703,19 +703,16 @@ jobs:
             statement is derived from this run's own composed allowed and
             disallowed tool lists, so a command's presence or absence here
             matches what this run actually permits. Anything absent is
-            auto-denied and only burns turns. A denied `gh` call is that list
-            refusing it, never an authentication problem: `gh auth status`,
-            `gh --version` and `gh workflow list` will not explain it. If a
-            check needs a command not listed, note it for the human instead
-            of retrying variants.
+            auto-denied and only burns turns. If a check needs a command not
+            listed, note it for the human instead of retrying variants.
 
             Shell constraints in this headless run. Each of these cost real
             turns in earlier runs, so read them before your first Bash call:
             - Every part of a compound command must be separately allowed:
               `cmd; echo done` is denied whole even when `cmd` alone is fine.
             - Never reference a shell variable. Any `$NAME` in a command is
-              rejected outright ("Contains simple_expansion") before the list
-              above is consulted — that is why `for f in ...; do ... "$f";
+              rejected outright ("Contains simple_expansion") before the
+              allowlist is consulted — that is why `for f in ...; do ... "$f";
               done` loops and `echo "$SPECIFY_FEATURE_DIRECTORY"` fail. Every
               value you need (spec directory, issue number, branch) is written
               out in this prompt; use it literally.
@@ -729,13 +726,16 @@ jobs:
             - To search or inspect many files at once use the Grep and Glob
               tools (they take a path and a glob) — never a shell loop.
             - No output redirection (`>`, `>>`) — use the Write tool instead.
+              The same goes for a flag that writes a file (`sort -o`,
+              `uniq IN OUT`): the Write tool is the only way to create one.
               A long comment body goes in on stdin:
               `gh issue comment <n> --body-file - <<'EOF' ... EOF` works;
               `cat <<'EOF' > /tmp/body.md` does not.
-            - `gh api` is permitted only as an explicit read spelled with the
-              method first — `gh api -X GET <path> [--jq <filter>]`; any other
-              spelling is denied. Prefer `gh pr view`/`gh issue view` where
-              they answer the question.
+            - A denied `gh` call is the allowlist refusing it, never an
+              authentication problem: `gh auth status`, `gh --version` and
+              `gh workflow list` will not explain it. `gh api` is not granted
+              in this run; read PRs and issues with whichever `gh pr ...` /
+              `gh issue ...` verbs this run permits.
             - Bash cannot reach paths outside the checkout, but the Write tool
               can. Never mkdir or ls a temp path first to prepare it.
             A denial is not a hint to retry a variant. Switch to the allowed form
@@ -778,7 +778,7 @@ jobs:
         id: tool-args-tasks-pr
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
         with:
-          default-allowed-tools: "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git checkout:*),Bash(git switch:*),Bash(git push:*),Bash(git branch:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git ls-tree:*),Bash(echo:*),Bash(ls:*),Bash(cat:*),Bash(grep:*),Bash(head:*),Bash(tail:*),Bash(sort:*),Bash(uniq:*),Bash(wc:*),Bash(cut:*),Bash(printenv SPECIFY_FEATURE_DIRECTORY),Bash(.specify/scripts/bash/setup-tasks.sh:*),Bash(bash .specify/scripts/bash/setup-tasks.sh:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh issue list:*),Bash(gh auth status),Bash(gh api -X GET:*),Bash(gh pr create:*)"
+          default-allowed-tools: "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git checkout:*),Bash(git switch:*),Bash(git push:*),Bash(git branch:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git ls-tree:*),Bash(echo:*),Bash(ls:*),Bash(cat:*),Bash(grep:*),Bash(head:*),Bash(tail:*),Bash(sort:*),Bash(uniq:*),Bash(wc:*),Bash(cut:*),Bash(printenv SPECIFY_FEATURE_DIRECTORY),Bash(.specify/scripts/bash/setup-tasks.sh:*),Bash(bash .specify/scripts/bash/setup-tasks.sh:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh issue list:*),Bash(gh auth status),Bash(gh pr create:*)"
           default-disallowed-tools: "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
           extra-allowed-tools: ${{ inputs.extra-allowed-tools }}
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
@@ -858,19 +858,16 @@ jobs:
             statement is derived from this run's own composed allowed and
             disallowed tool lists, so a command's presence or absence here
             matches what this run actually permits. Anything absent is
-            auto-denied and only burns turns. A denied `gh` call is that list
-            refusing it, never an authentication problem: `gh auth status`,
-            `gh --version` and `gh workflow list` will not explain it. If a
-            check needs a command not listed, note it for the human instead
-            of retrying variants.
+            auto-denied and only burns turns. If a check needs a command not
+            listed, note it for the human instead of retrying variants.
 
             Shell constraints in this headless run. Each of these cost real
             turns in earlier runs, so read them before your first Bash call:
             - Every part of a compound command must be separately allowed:
               `cmd; echo done` is denied whole even when `cmd` alone is fine.
             - Never reference a shell variable. Any `$NAME` in a command is
-              rejected outright ("Contains simple_expansion") before the list
-              above is consulted — that is why `for f in ...; do ... "$f";
+              rejected outright ("Contains simple_expansion") before the
+              allowlist is consulted — that is why `for f in ...; do ... "$f";
               done` loops and `echo "$SPECIFY_FEATURE_DIRECTORY"` fail. Every
               value you need (spec directory, issue number, branch) is written
               out in this prompt; use it literally.
@@ -884,13 +881,16 @@ jobs:
             - To search or inspect many files at once use the Grep and Glob
               tools (they take a path and a glob) — never a shell loop.
             - No output redirection (`>`, `>>`) — use the Write tool instead.
+              The same goes for a flag that writes a file (`sort -o`,
+              `uniq IN OUT`): the Write tool is the only way to create one.
               A long comment body goes in on stdin:
               `gh issue comment <n> --body-file - <<'EOF' ... EOF` works;
               `cat <<'EOF' > /tmp/body.md` does not.
-            - `gh api` is permitted only as an explicit read spelled with the
-              method first — `gh api -X GET <path> [--jq <filter>]`; any other
-              spelling is denied. Prefer `gh pr view`/`gh issue view` where
-              they answer the question.
+            - A denied `gh` call is the allowlist refusing it, never an
+              authentication problem: `gh auth status`, `gh --version` and
+              `gh workflow list` will not explain it. `gh api` is not granted
+              in this run; read PRs and issues with whichever `gh pr ...` /
+              `gh issue ...` verbs this run permits.
             - Bash cannot reach paths outside the checkout, but the Write tool
               can. Never mkdir or ls a temp path first to prepare it.
             A denial is not a hint to retry a variant. Switch to the allowed form
