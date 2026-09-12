@@ -1,11 +1,11 @@
 # Release automation (contracts/versioning.md).
 # Manually triggered — tag creation is deliberate, not per-merge:
-#   1. Lint gate: actionlint over all 10 published stage workflows
-#      (schema/syntax), plus the embedded shellcheck/pyflakes pass and the
-#      published-stage invariant greps over the 8
-#      ({intake,clarify,plan,tasks,implement,finalize,cleanup,rebase}.yml)
-#      those two have always covered — see Gate 1a/1b below for why the
-#      subsets differ.
+#   1. Lint gate: the PR-time workflow lint, re-run here from the same
+#      scripts — actionlint over every workflow file
+#      (verify-actionlint.py), shellcheck over the opt-in list of stages
+#      plus the closure check on that list (verify-stage-shell-lint.py),
+#      and the published-stage invariant checks — see Gate 1a/1b below
+#      for why the shellcheck subset is an opt-in.
 #   2. Create annotated tag vX.Y.Z at the default branch head.
 #   3. Create-or-advance the floating major tag for the release's OWN major:
 #      force-move vX for a non-breaking release; create it when the release
@@ -50,22 +50,23 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Gate 1a: actionlint, in two passes.
+      # Gate 1a: the workflow lint, in two passes — both of them scripts
+      # under .github/scripts that lint-workflows.yml runs on every pull
+      # request, so the release-time answer and the PR-time answer cannot
+      # drift (#149, the Gate 31 arrangement; #291 closed the pass-2 half).
       #
-      # Pass 1 — the schema/expression lint with the two accounted
-      # actionlint-1.7.7 allowances (github.job_workflow_sha -ignore'd
-      # outright; environment.deployment counted one diagnostic per
-      # binding, so the allowance goes loudly stale the day actionlint
-      # learns the key) — lives in .github/scripts/verify-actionlint.py,
-      # which lint-workflows.yml runs as Gate 46 on every pull request:
-      # one implementation, so the PR-time answer and the release-time
-      # answer cannot drift (#149, the Gate 31 arrangement). It lints
-      # EVERY workflow file — a strict superset of the published stages
-      # this step used to cover, closing the gap where nothing linted
-      # lint-workflows.yml or this file — with shellcheck/pyflakes off.
-      # The full rationale for both allowances, including why deployment
-      # is counted rather than -ignore'd and why the binding count is
-      # taken from the key's own line, is that script's docstring.
+      # Pass 1 — the actionlint schema/expression lint over EVERY
+      # workflow file, with the accounted actionlint-1.7.7 allowances
+      # (github.job_workflow_sha -ignore'd outright; environment.deployment
+      # and the two container.credentials diagnostics counted one per
+      # binding, so each allowance goes loudly stale the day actionlint
+      # learns the shape) — .github/scripts/verify-actionlint.py, Gate 46.
+      # A strict superset of the published stages this step used to cover,
+      # closing the gap where nothing linted lint-workflows.yml or this
+      # file, with shellcheck off. The full rationale for the allowances,
+      # including why deployment is counted rather than -ignore'd and why
+      # the binding count is taken from the key's own line, is that
+      # script's docstring.
       #
       # That counting is the only pre-release signal on the key, and it is a
       # signal about actionlint, not about GitHub. GitHub itself accepts and
@@ -79,100 +80,33 @@ jobs:
       # the only thing that can detect GitHub rejecting the key, and it sees
       # main only, post-merge.
       #
-      # Pass 2's list stays explicit — it is an opt-IN to shellcheck, and
-      # #149 is the ticket for widening it — but the exemption is stated
-      # rather than implied, and a new stage cannot join it by omission:
-      # the closure check below fails on any published stage in neither
-      # list. Its stage set is DERIVED, not listed — a hardcoded list is
-      # what caused #149 in the first place. The derivation is shared with
-      # lint-workflows.yml gate 7 rather than re-approximated here:
-      # .github/scripts/wc_published_stages.py, whose agreement with gate
-      # 7's inline copy verify-gate-7.py asserts on every PR. It parses the
-      # YAML rather than grepping for the key, because a grep silently
-      # misses a stage written in flow style or at a different indentation.
-      # That is #149 again wearing a different hat.
+      # Pass 2 — shellcheck over the opt-in list, and the closure check
+      # that every published stage is either on that list or knowingly
+      # exempt — .github/scripts/verify-stage-shell-lint.py, Gate 48. The
+      # list is an opt-IN to shellcheck and #149 is the ticket for
+      # widening it, but the exemption is stated rather than implied: a
+      # new stage cannot join it by omission. Both lists, each exemption's
+      # reason, the severity floor and the excluded codes live in that
+      # script, and so does the history of the two release dispatches
+      # this pass turned red after a change had merged with every PR-time
+      # gate green: 2026-08-20 (pr-conversation.yml, once recorded here
+      # above a shell_exempt array) and 2026-09-08 (#290). That is why the
+      # pass runs at PR time now. Its stage set is DERIVED, not listed --
+      # a hardcoded list is what caused #149 in the first place — from
+      # .github/scripts/wc_published_stages.py, the derivation shared with
+      # lint-workflows.yml gate 7 (verify-gate-7.py asserts their agreement
+      # on every PR), which parses the YAML rather than grepping for the
+      # key: a grep silently misses a stage written in flow style or at a
+      # different indentation. That is #149 again wearing a different hat.
       #
-      # SHELLCHECK_OPTS: the gate blocks on real problems (warning+), not
-      # style/info nits — actionlint forwards the variable to its embedded
-      # shellcheck pass.
-      - name: Lint published stages (actionlint)
-        env:
-          SHELLCHECK_OPTS: "--severity=warning"
+      # Each script prints its own ::error lines; this step only sums the
+      # verdicts so both passes report before the job fails.
+      - name: Lint published stages (actionlint, shellcheck)
         run: |
           set -uo pipefail
           fail=0
-
-          # Pass 1 — see the comment above. Also downloads the pinned
-          # actionlint into the temp cache, which pass 2 below reuses via
-          # --ensure-binary rather than fetching a second copy.
           python3 .github/scripts/verify-actionlint.py || fail=1
-
-          # Captured into a variable FIRST, then split. `mapfile -t a < <(cmd)`
-          # reports mapfile's own status, never the process substitution's, so
-          # written that way the `if !` below can never fire and a dead
-          # derivation (an import error, a missing interpreter) would fall
-          # through to the "no workflow declares on.workflow_call" guard —
-          # reporting a broken script as a moved trigger. `$(...)` propagates
-          # the exit status, so this failure now names itself.
-          if ! stage_list="$(python3 .github/scripts/wc_published_stages.py)"; then
-            echo "::error::could not derive the published stage set (.github/scripts/wc_published_stages.py failed); the pass-2 closure check has nothing to check."
-            exit 1
-          fi
-          # Blank lines dropped rather than kept: `<<< ""` yields ONE empty
-          # element, which would make the `-eq 0` guard below read an empty
-          # derivation as a one-stage fleet.
-          all_stages=()
-          while IFS= read -r stage_path; do
-            [ -n "$stage_path" ] && all_stages+=("$stage_path")
-          done <<< "$stage_list"
-          shell_linted=(.github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase,metrics-persist,private-image-dogfood}.yml .github/workflows/release.yml)
-          # Stages knowingly outside pass 2 (issue #149). Anything published
-          # and NOT in shell_linted must be listed here, so the exemption is
-          # a decision someone wrote down rather than a file nobody added.
-          #
-          # pr-conversation.yml (specs/033) is here because this gate caught
-          # it: it shipped as a published stage without joining either list,
-          # and the check below turned every release dispatch red from that
-          # merge onwards -- the 2026-08-20 attempt included, which is how it
-          # was found. Exempting it changes nothing about what is linted
-          # today (pass 2 has never seen it); it writes the decision down and
-          # unblocks releases. It is an agent-bearing stage of watchdog's
-          # size and shape, so it joins watchdog and auto-update-spec-kit in
-          # waiting on #149 rather than opting into shellcheck untested in a
-          # release-blocking gate.
-          shell_exempt=(.github/workflows/watchdog.yml .github/workflows/auto-update-spec-kit.yml .github/workflows/pr-conversation.yml)
-
-          # Deriving the set means an empty derivation must not read as a
-          # clean pass — the same reasoning as gate 7's stages == 0 guard.
-          if [ "${#all_stages[@]}" -eq 0 ]; then
-            echo "::error::no workflow declares on.workflow_call — the closure check below checked nothing. Either the published stages moved or this derivation has broken."
-            exit 1
-          fi
-
-          for f in "${all_stages[@]}"; do
-            case " ${shell_linted[*]} ${shell_exempt[*]} " in
-              *" $f "*) ;;
-              *) echo "::error::$f is a published stage but is in neither the shellcheck list nor the declared exemption list. Add it to shell_linted, or to shell_exempt with a note on the tracking issue — a new stage must not become exempt by being forgotten (#149)."
-                 fail=1 ;;
-            esac
-          done
-
-          # Pass 2 — the full lint (shellcheck/pyflakes on) over the subset
-          # this gate has always covered. The deployment key and the two
-          # container.credentials diagnostics are ignored here because pass 1
-          # is what accounts for them, one diagnostic per binding
-          # (verify-actionlint.py; specs/044 research D3 for credentials).
-          # The credentials ignores were added after the 2026-09-08 v2.7.0
-          # dispatch went red on 44 of them: #286 had merged with every
-          # PR-time gate green, because nothing at PR time runs this pass.
-          actionlint_bin="$(python3 .github/scripts/verify-actionlint.py --ensure-binary)"
-          "$actionlint_bin" -no-color \
-            -ignore 'property "job_workflow_sha" is not defined' \
-            -ignore 'unexpected key "deployment" for "environment" section' \
-            -ignore '"credentials" section is scalar node but mapping node is expected' \
-            -ignore 'both "username" and "password" must be specified in "credentials" section' \
-            "${shell_linted[@]}" || fail=1
-
+          python3 .github/scripts/verify-stage-shell-lint.py || fail=1
           exit "$fail"
 
       # Gate 1b: published-stage invariants (research.md D2/D5, FR-005,
