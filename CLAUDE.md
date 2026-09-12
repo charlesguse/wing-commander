@@ -44,3 +44,8 @@ way — a rule with no gate behind it lasts until the next session.
 - This repository is public. Never reference private downstream consumers
   (repo names, orgs, customers) in code, comments, commits, PRs, or
   issues.
+- The Sync Impact Report comments stacked at the top of
+  `.specify/memory/constitution.md` are this repository's amendment
+  history. Keep them. The vendored `speckit-constitution` skill (Spec Kit
+  v1.0.5+) calls its report temporary scratch to be removed before commit;
+  that instruction does not apply here.

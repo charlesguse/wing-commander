@@ -21,7 +21,7 @@ In the same isolated worktree the lightweight tier already created
    in `$WORKTREE`. Fail (non-zero exit) → `failure-detail` names
    `setup-plan.sh` and the captured stderr tail (same `tail -c 500` pattern
    the lightweight tier's checks already use). Success → assert
-   `FEATURE_SPEC`/`IMPL_PLAN`/`SPECS_DIR`/`BRANCH` are all present and
+   `FEATURE_SPEC`/`IMPL_PLAN`/`FEATURE_DIR`/`BRANCH` are all present and
    non-empty in the JSON, and `[ -s "$IMPL_PLAN" ]` on disk. Either failing →
    `failure-detail` names the missing field or empty file, plus the FR-008
    hint when the cause is the empty-file case.

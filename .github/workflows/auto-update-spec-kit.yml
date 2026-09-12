@@ -2296,11 +2296,11 @@ jobs:
           if [ "$pass" = "true" ]; then
             feature_spec="$(printf '%s' "$sp_out" | tail -1 | jq -r '.FEATURE_SPEC // empty' 2>/dev/null || true)"
             impl_plan="$(printf '%s' "$sp_out" | tail -1 | jq -r '.IMPL_PLAN // empty' 2>/dev/null || true)"
-            specs_dir="$(printf '%s' "$sp_out" | tail -1 | jq -r '.SPECS_DIR // empty' 2>/dev/null || true)"
+            sp_feature_dir="$(printf '%s' "$sp_out" | tail -1 | jq -r '.FEATURE_DIR // empty' 2>/dev/null || true)"
             sp_branch="$(printf '%s' "$sp_out" | tail -1 | jq -r '.BRANCH // empty' 2>/dev/null || true)"
-            if [ -z "$feature_spec" ] || [ -z "$impl_plan" ] || [ -z "$specs_dir" ] || [ -z "$sp_branch" ]; then
+            if [ -z "$feature_spec" ] || [ -z "$impl_plan" ] || [ -z "$sp_feature_dir" ] || [ -z "$sp_branch" ]; then
               pass=false
-              detail="setup-plan.sh --json did not produce the documented FEATURE_SPEC/IMPL_PLAN/SPECS_DIR/BRANCH shape: $(printf '%s' "$sp_out" | tail -c 500)"
+              detail="setup-plan.sh --json did not produce the documented FEATURE_SPEC/IMPL_PLAN/FEATURE_DIR/BRANCH shape: $(printf '%s' "$sp_out" | tail -c 500)"
             elif [ ! -s "$impl_plan" ]; then
               pass=false
               detail="expected $impl_plan (setup-plan.sh's IMPL_PLAN) to exist and be non-empty, but it did not. This may also mean the candidate legitimately reorganized its templates or scripts rather than that it is broken — see specs/027-auto-update-spec-kit's FR-018 for the non-clean-bump route a maintainer can choose instead."
