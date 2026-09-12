@@ -99,7 +99,7 @@ jobs:
     needs: detect
     if: needs.detect.outputs.has-new-work == 'true' && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
     permissions: {}
     outputs:
       verdict: ${{ steps.config.outputs.verdict || steps.reachable.outputs.verdict || steps.reset.outputs.verdict || steps.scaffold.outputs.verdict || steps.kickoff.outputs.verdict || steps.poll.outputs.verdict }}
