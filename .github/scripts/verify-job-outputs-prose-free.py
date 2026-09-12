@@ -101,6 +101,15 @@ Three shapes exist; anything else is a failure, not an exemption:
 A declaration whose shape the run: text does not bear is reported as its
 own failure, so the comment can never drift into a lie.
 
+TWIN STEPS
+----------
+An artifact-loading step that replaces a prose output sits FIRST in its
+job, before the checkouts, so a missing body fails the leg before any
+write — which a local composite cannot do, since it needs the pipeline
+checkout first. So the same run: text lives in two jobs of one file
+(watchdog.yml's triage and act), and TWIN_STEPS is the check that keeps
+the copies from drifting: run:, env: and shell: must be identical.
+
 REGISTERED EXCEPTIONS
 ---------------------
 EXCEPTIONS below names (file, job, output) triples that are flagged today
@@ -166,6 +175,13 @@ EXCEPTIONS = {
     (".github/workflows/auto-update-spec-kit.yml", "comment-reply", "resumed"):
         "ENUM: the literal true, written after the decision is recorded.",
 }
+
+# (file, step name, job ids) whose steps must be byte-identical. See
+# TWIN STEPS. Checked only when the file is in the published stage set
+# of the root being scanned, so fixture roots are not asked to carry it.
+TWIN_STEPS = [
+    (".github/workflows/watchdog.yml", "Load this finding", ("triage", "act")),
+]
 
 AGENT_USES = re.compile(r"claude-code-action")
 # A local composite, by either checkout path this repo uses:
@@ -359,6 +375,35 @@ def verify_declaration(decl, step, oname, tainted_ids):
     return f"unknown declaration shape {decl!r}"
 
 
+def twin_step_failures(root=".", stages=None):
+    """-> failures for TWIN_STEPS entries whose copies differ."""
+    out = []
+    stages = set(published_stages(root) if stages is None else stages)
+    for rel, name, jobs in TWIN_STEPS:
+        if rel not in stages:
+            continue
+        path = os.path.join(root, rel) if root != "." else rel
+        with open(path, encoding="utf-8") as fh:
+            wf = yaml.safe_load(fh) or {}
+        copies = {}
+        for job_id in jobs:
+            job = (wf.get("jobs") or {}).get(job_id) or {}
+            hits = [s for s in (job.get("steps") or [])
+                    if (s or {}).get("name") == name]
+            if len(hits) != 1:
+                out.append(f"{rel}: job {job_id!r} has {len(hits)} step(s) "
+                           f"named {name!r}; TWIN_STEPS expects exactly one")
+                continue
+            copies[job_id] = repr((hits[0].get("run"), hits[0].get("env"),
+                                   hits[0].get("shell")))
+        if len(copies) == len(jobs) and len(set(copies.values())) > 1:
+            out.append(f"{rel}: the {name!r} steps in jobs {list(jobs)} "
+                       f"have drifted apart (run:/env:/shell: differ). They "
+                       f"read one artifact under one contract and must stay "
+                       f"byte-identical — change both or neither.")
+    return out
+
+
 def scan(root=".", exceptions=None):
     """-> (failures, warnings). Each is a list of strings."""
     exceptions = EXCEPTIONS if exceptions is None else exceptions
@@ -410,6 +455,7 @@ def scan(root=".", exceptions=None):
                             f"declares `prose-free: {decl}` but the run: "
                             f"text does not bear it — {why}. A declaration "
                             f"the code does not honour is worse than none.")
+    failures += twin_step_failures(root, stages)
     for key, reason in exceptions.items():
         if key not in seen_exceptions:
             failures.append(
@@ -691,10 +737,44 @@ def self_test():
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
+    # The twin-step check must fail its own subject too: the shipped
+    # watchdog.yml is clean, and one edited copy of the load step is not.
+    root = tempfile.mkdtemp()
+    try:
+        rel, name, jobs = TWIN_STEPS[0]
+        with open(rel, encoding="utf-8") as fh:
+            original = fh.read()
+        target = os.path.join(root, rel)
+        os.makedirs(os.path.dirname(target))
+        marker = "emit class \"$(field '.class // \"\"')\""
+        if original.count(marker) != 2:
+            failures.append(f"twin-step self-test: expected the load "
+                            f"step's class line twice in {rel}, found "
+                            f"{original.count(marker)} — update the marker")
+        else:
+            second = original.rfind(marker)
+            mutated = (original[:second]
+                       + marker.replace("// \"\"", "// \"unclassified\"")
+                       + original[second + len(marker):])
+            for label, text, want in (("shipped copies", original, False),
+                                      ("one copy edited", mutated, True)):
+                with open(target, "w", encoding="utf-8", newline="\n") as fh:
+                    fh.write(text)
+                found = twin_step_failures(root, [rel])
+                if bool(found) != want:
+                    failures.append(f"twin-step self-test ({label}): "
+                                    f"expected {'a failure' if want else 'clean'}"
+                                    f", got {found!r}")
+                else:
+                    print(f"Twin steps OK — {label}: "
+                          f"{'caught' if want else 'clean'}.")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
     for f in failures:
         print(f"::error::self-test: {f}")
     print(f"Gate 49 self-test: 11 fixture(s), {len(mutations)} subject "
-          f"mutation(s); {len(failures)} failure(s).")
+          f"mutation(s), 1 twin-step subject; {len(failures)} failure(s).")
     return 1 if failures else 0
 
 

@@ -1755,8 +1755,15 @@ jobs:
       # upload-artifact v4+ refuses a name that already exists in the run;
       # without it the re-run dies here. The fresh read-back is the right
       # one to keep: every downstream reader belongs to the same attempt.
+      #
+      # Gated on the count, not on outcome=findings: triage and act key on
+      # the index projection (as they keyed on the array before #309), and
+      # a diagnose-failed verdict whose transcript still parsed as a
+      # findings array schedules them anyway — so the artifact must exist
+      # whenever the projection is non-empty, or every leg would die at its
+      # download instead of at the crafted "no Finding with index" check.
       - name: Upload findings
-        if: steps.diagnose-outcome.outputs.outcome == 'findings'
+        if: steps.diagnose-outcome.outputs.finding-count != '' && steps.diagnose-outcome.outputs.finding-count != '0'
         uses: actions/upload-artifact@v6
         with:
           name: watchdog-findings
@@ -1890,7 +1897,10 @@ jobs:
         run: |
           set -euo pipefail
           f="$RUNNER_TEMP/findings/watchdog-findings.json"
-          finding=$(jq -c --argjson i "$INDEX" '[.[] | select(.index == $i)] | .[0] // empty' "$f")
+          if ! finding=$(jq -c --argjson i "$INDEX" '[.[] | select(.index == $i)] | .[0] // empty' "$f"); then
+            echo "::error::wing-commander watchdog stage: the watchdog-findings artifact could not be read (missing, or not valid JSON) — nothing was done for Finding $INDEX."
+            exit 1
+          fi
           if [ -z "$finding" ]; then
             echo "::error::wing-commander watchdog stage: no Finding with index $INDEX in the watchdog-findings artifact — the matrix and the artifact are written by the same step, so one of them was altered after the fact. Nothing was done for this Finding."
             exit 1
@@ -2165,9 +2175,15 @@ jobs:
       # Persist this matrix instance's decision for the act job (a separate
       # runner, over the SAME Finding array — see act's comment) to consume
       # by downloading the artifact matching its own matrix.index.
+      # `steps.finding.outcome == 'success'` (#309): with no body loaded,
+      # suppress / evidence-gate / fingerprint / dedup never ran, and an
+      # always() persist would record their defaults — not suppressed,
+      # evidence valid, dedup "" — as a decision for act to file on. No
+      # artifact is the honest record: act's "Load triage decision" treats
+      # a missing one as dedup=unknown, report-only.
       - name: Persist triage decision
         shell: bash
-        if: always()
+        if: always() && steps.finding.outcome == 'success'
         env:
           SUPPRESSED: ${{ steps.suppress.outputs.suppressed }}
           EVIDENCE_VALID: ${{ steps.evidence-gate.outputs.valid }}
@@ -2192,7 +2208,7 @@ jobs:
             > "${{ runner.temp }}/watchdog-triage-decision.json"
 
       - name: Upload triage decision artifact
-        if: always()
+        if: always() && steps.finding.outcome == 'success'
         uses: actions/upload-artifact@v6
         with:
           name: watchdog-triage-decision-${{ matrix.index }}
@@ -2299,7 +2315,10 @@ jobs:
         run: |
           set -euo pipefail
           f="$RUNNER_TEMP/findings/watchdog-findings.json"
-          finding=$(jq -c --argjson i "$INDEX" '[.[] | select(.index == $i)] | .[0] // empty' "$f")
+          if ! finding=$(jq -c --argjson i "$INDEX" '[.[] | select(.index == $i)] | .[0] // empty' "$f"); then
+            echo "::error::wing-commander watchdog stage: the watchdog-findings artifact could not be read (missing, or not valid JSON) — nothing was done for Finding $INDEX."
+            exit 1
+          fi
           if [ -z "$finding" ]; then
             echo "::error::wing-commander watchdog stage: no Finding with index $INDEX in the watchdog-findings artifact — the matrix and the artifact are written by the same step, so one of them was altered after the fact. Nothing was done for this Finding."
             exit 1
@@ -2736,7 +2755,12 @@ jobs:
   # so this last line of defense cannot itself become a new single point of
   # failure — unlike collect's identical-looking but hard-failing versions.
   report-unhandled-failure:
-    needs: [collect, diagnose, triage, act, verify-image-prerequisites]
+    # findings-dropped is in the list (#309) so its own failure — an image
+    # pull or a timeout before its one step posts — still gets a verdict
+    # here. Its deliberate exit 1 after posting is counted too, so a
+    # withheld output yields two comments: its specific notice, then this
+    # generic one. Two is the price of never zero.
+    needs: [collect, diagnose, triage, act, findings-dropped, verify-image-prerequisites]
     if: >-
       always() &&
       needs.verify-image-prerequisites.result == 'success'
@@ -2811,6 +2835,7 @@ jobs:
           DIAGNOSE_RESULT: ${{ needs.diagnose.result }}
           TRIAGE_RESULT: ${{ needs.triage.result }}
           ACT_RESULT: ${{ needs.act.result }}
+          FINDINGS_DROPPED_RESULT: ${{ needs.findings-dropped.result }}
           # Every agent step in this stage is continue-on-error, so a crashed
           # agent leaves its job green and needs.*.result cannot see it. These
           # two carry the step-level truth out of the job.
@@ -2819,7 +2844,7 @@ jobs:
         run: |
           any_failed=false
           failed_jobs=""
-          for pair in "collect:$COLLECT_RESULT" "diagnose:$DIAGNOSE_RESULT" "triage:$TRIAGE_RESULT" "act:$ACT_RESULT"; do
+          for pair in "collect:$COLLECT_RESULT" "diagnose:$DIAGNOSE_RESULT" "triage:$TRIAGE_RESULT" "act:$ACT_RESULT" "findings-dropped:$FINDINGS_DROPPED_RESULT"; do
             result="${pair#*:}"
             if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
               any_failed=true
