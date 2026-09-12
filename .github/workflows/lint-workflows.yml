@@ -3085,6 +3085,20 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-job-outputs-prose-free.py --self-test
 
+      # Gate 50 — release.yml's three release-contract checks, at PR time:
+      # no literal main as a branch ref, the publisher's owner/repo only as
+      # the pipeline-repo input default, and --model plus --max-turns on
+      # every agent step. release.yml's Gate 1b invokes this same script so
+      # the two answers cannot drift (the Gate 31 arrangement, as Gate 48).
+      # Each check's rule, and why the release-only timing was a defect
+      # (#308), is in the script's docstring — the one home for both.
+      - name: Gate 50 — no published stage hardcodes main or the publisher, and every agent step declares --model and --max-turns
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-release-contract.py
+      - name: Gate 50 self-test — each of the three checks fails its own mutation
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-release-contract.py --self-test
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

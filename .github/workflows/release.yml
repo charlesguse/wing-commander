@@ -4,8 +4,9 @@
 #      scripts — actionlint over every workflow file
 #      (verify-actionlint.py), shellcheck over the opt-in list of stages
 #      plus the closure check on that list (verify-stage-shell-lint.py),
-#      and the published-stage invariant checks — see Gate 1a/1b below
-#      for why the shellcheck subset is an opt-in.
+#      the layer-boundary invariants (verify-stage-invariants.py) and the
+#      three release-contract checks (verify-release-contract.py) — see
+#      Gate 1a/1b below for why the shellcheck subset is an opt-in.
 #   2. Create annotated tag vX.Y.Z at the default branch head.
 #   3. Create-or-advance the floating major tag for the release's OWN major:
 #      force-move vX for a non-breaking release; create it when the release
@@ -111,10 +112,13 @@ jobs:
 
       # Gate 1b: published-stage invariants (research.md D2/D5, FR-005,
       # constitution II/VII, spec edge case 3). Interface rules that
-      # actionlint cannot express.
+      # actionlint cannot express — both halves of them scripts under
+      # .github/scripts that lint-workflows.yml runs on every pull
+      # request, so the release-time answer and the PR-time answer cannot
+      # drift (#149; #308 closed the release-contract half).
       #
       # The layer-boundary half — no `github.event` read, no `vars.*` read,
-      # no `secrets: inherit` — is no longer implemented here. It lives in
+      # no `secrets: inherit` — lives in
       # .github/scripts/verify-stage-invariants.py (Gate 31), which
       # lint-workflows.yml runs on every pull request touching
       # .github/workflows/**, and which this step invokes unchanged: one
@@ -133,71 +137,25 @@ jobs:
       # It did not miss a window between checks; it ran, and could not see
       # the file. A hardcoded list at PR time would have passed identically.
       #
-      # The three release-contract checks below stay here, but they no
-      # longer carry that list either — the stage set is derived, the same
-      # way Gate 1a derives it:
-      #   - no literal main as a branch ref (default-branch input/derivation)
-      #   - the publisher's owner/repo only as the pipeline-repo default
-      #   - every agent step (a `uses: anthropics/claude-code-action` line —
-      #     NOT a bare mention, which also matches `#1462`-style issue refs in
-      #     comments) carries --model and --max-turns
+      # The release-contract half — no literal main as a branch ref, the
+      # publisher's owner/repo only as the pipeline-repo default, and
+      # --model plus --max-turns on every agent step (counted on the
+      # `uses: anthropics/claude-code-action` wiring form, NOT a bare
+      # mention, which also matches `#1462`-style issue refs in comments)
+      # — lives in .github/scripts/verify-release-contract.py (Gate 50),
+      # run and invoked the same way. Those three stayed here as inline
+      # greps after Gate 31, on a derived stage set, which fixed COVERAGE
+      # and left TIMING exactly as described above (#308). The script's
+      # docstring is the one home for each check's rule and that history.
+      #
+      # Each script prints its own ::error lines; this step only sums the
+      # verdicts so both halves report before the job fails.
       - name: Published-stage invariant checks
         run: |
           set -uo pipefail
           fail=0
-
-          # Constitution VII, same script the PR gate runs.
           python3 .github/scripts/verify-stage-invariants.py || fail=1
-
-          # Captured FIRST, then split — `mapfile -t a < <(cmd)` reports
-          # mapfile's own status, so a dead derivation would fall through to
-          # the zero-stage guard and be reported as a moved trigger rather
-          # than as a broken script. Same reasoning as Gate 1a's.
-          if ! stage_list="$(python3 .github/scripts/wc_published_stages.py)"; then
-            echo "::error::could not derive the published stage set (.github/scripts/wc_published_stages.py failed); the checks below have nothing to read."
-            exit 1
-          fi
-          stages=()
-          while IFS= read -r stage_path; do
-            [ -n "$stage_path" ] && stages+=("$stage_path")
-          done <<< "$stage_list"
-          if [ "${#stages[@]}" -eq 0 ]; then
-            echo "::error::no workflow declares on.workflow_call — these checks examined nothing, which must never read as a pass."
-            exit 1
-          fi
-
-          # Literal default-branch assumptions: 'main' used as a ref/base.
-          # The word may appear in prose comments; check the wired forms.
-          if grep -nE -- "(--base main|ref: main|origin/main[^_]|'main'|\"main\")" "${stages[@]}"; then
-            echo "::error::reusable stages must not hardcode the branch name main — use the default-branch input or its derived value (spec edge case 3)."
-            fail=1
-          fi
-
-          # Hardcoded publisher strings are allowed ONLY as the pipeline-repo
-          # input default (FR-005).
-          stray=$(grep -n 'charlesguse/wing-commander' "${stages[@]}" | grep -v 'default: charlesguse/wing-commander' || true)
-          if [ -n "$stray" ]; then
-            printf '%s\n' "$stray"
-            echo "::error::the publisher's owner/repo may appear only as the pipeline-repo input default (FR-005)."
-            fail=1
-          fi
-
-          # Every claude_args block must declare --model and --max-turns
-          # (constitution II). Count agent steps vs. declarations. Anchor on the
-          # `uses:` wiring form so comment references to the action's issue
-          # tracker (e.g. anthropics/claude-code-action#1462) are not miscounted
-          # as agent steps.
-          for f in "${stages[@]}"; do
-            agents=$(grep -c 'uses: anthropics/claude-code-action' "$f" || true)
-            models=$(grep -c -- '--model ' "$f" || true)
-            turns=$(grep -c -- '--max-turns ' "$f" || true)
-            if [ "$agents" -gt "$models" ] || [ "$agents" -gt "$turns" ]; then
-              echo "::error::$f: $agents agent step(s) but only $models --model / $turns --max-turns declarations (constitution II requires both on every agent step)."
-              fail=1
-            fi
-          done
-
-          echo "Gate 1b: ${#stages[@]} published stage(s) checked."
+          python3 .github/scripts/verify-release-contract.py || fail=1
           exit "$fail"
 
       # Gate 2: version syntax, tag collision, and the breaking-release rule
