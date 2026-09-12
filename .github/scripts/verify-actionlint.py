@@ -13,8 +13,11 @@ workflow_dispatch release. This is the PR-time (and, via
 run-local-gates.py, pre-push) half, over EVERY workflow file rather than
 the published stages alone -- lint-workflows.yml and release.yml carry
 ${{ }} expressions too. Gate 1a's pass 1 now invokes this same script, so
-the two answers cannot drift (the Gate 31 arrangement), and its pass 2
-reuses the pinned binary this one downloads (--ensure-binary).
+the two answers cannot drift (the Gate 31 arrangement). Its pass 2 -- the
+shellcheck pass over the opt-in list, and the closure check on that list
+-- is verify-stage-shell-lint.py (Gate 48), which drives a pinned
+shellcheck directly; the pinned-binary cache both gates download into
+and the allowance strings below live in wc_actionlint.py.
 
 THE ALLOWANCES (actionlint 1.7.7 schema gaps, all verified real)
 ------------------------------------------------------------------
@@ -38,29 +41,22 @@ THE ALLOWANCES (actionlint 1.7.7 schema gaps, all verified real)
   `credentials: >-` line, so this allowance goes loudly stale the day
   actionlint learns the expression-valued shape. See classify().
 
-Shell/pyflakes lint of run: blocks stays release.yml pass 2's job (#149
-tracks widening it): shellcheck is not on a maintainer's Windows machine,
-and a gate needing it locally would fail on the environment rather than
-the code. `-shellcheck= -pyflakes=` keeps this gate byte-identical
+Shell lint of run: blocks is Gate 48's job (verify-stage-shell-lint.py;
+#149 tracks widening its opt-in list). `-shellcheck= -pyflakes=` keeps
+this gate's subject the schema/expression pass alone, byte-identical
 between CI and run-local-gates.py.
 """
 import glob
-import io
 import os
 import re
-import stat
 import subprocess
 import sys
-import tarfile
 import tempfile
-import urllib.request
-import zipfile
 
-ACTIONLINT_VERSION = "1.7.7"
-KNOWN = 'unexpected key "deployment" for "environment" section'
-IGNORED = 'property "job_workflow_sha" is not defined'
-CRED_SCALAR = '"credentials" section is scalar node but mapping node is expected'
-CRED_USERPASS = 'both "username" and "password" must be specified in "credentials" section'
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_actionlint import (  # noqa: E402
+    COUNTED, CRED_SCALAR, CRED_USERPASS, IGNORED, KNOWN, ensure_actionlint)
+
 WORKFLOWS_DIR = ".github/workflows"
 # The binding is a job-level environment sub-key: jobs(0) / <job>(2) /
 # environment(4) / deployment(6). Matched on the key's own line rather
@@ -72,80 +68,10 @@ BINDING_RE = re.compile(r"^ {6}deployment:")
 CRED_BINDING_RE = re.compile(r"^ {6}credentials: >-$")
 
 
-def binary_name():
-    return "actionlint.exe" if os.name == "nt" else "actionlint"
-
-
 def ensure_binary():
-    """Path to the pinned actionlint, downloading into a temp cache once.
-
-    Cached under the OS temp dir (RUNNER_TEMP in CI) rather than the
-    checkout: a lint gate has no business leaving a file in the tree it
-    lints, and the version in the directory name makes a bump a fresh
-    download rather than a stale hit.
-    """
-    cache = os.path.join(os.environ.get("RUNNER_TEMP") or tempfile.gettempdir(),
-                         f"wc-actionlint-{ACTIONLINT_VERSION}")
-    target = os.path.join(cache, binary_name())
-    if os.path.exists(target):
-        return target
-    os.makedirs(cache, exist_ok=True)
-
-    machine = os.environ.get("PROCESSOR_ARCHITECTURE", "") \
-        if os.name == "nt" else os.uname().machine
-    arch = "arm64" if machine.lower() in ("arm64", "aarch64") else "amd64"
-    if sys.platform.startswith("win"):
-        osname, ext = "windows", "zip"
-    elif sys.platform == "darwin":
-        osname, ext = "darwin", "tar.gz"
-    else:
-        osname, ext = "linux", "tar.gz"
-    url = (f"https://github.com/rhysd/actionlint/releases/download/"
-           f"v{ACTIONLINT_VERSION}/actionlint_{ACTIONLINT_VERSION}_"
-           f"{osname}_{arch}.{ext}")
-    try:
-        with urllib.request.urlopen(url, timeout=60) as resp:
-            payload = resp.read()
-    except OSError as e:
-        sys.exit(f"could not download actionlint {ACTIONLINT_VERSION} "
-                 f"({url}): {e}. If this machine is offline, note that CI "
-                 f"runs this gate regardless -- it is not skippable by "
-                 f"being unreachable.")
-    # Extracted next to the target under a per-process name and renamed
-    # into place, so a second runner racing this one sees either nothing
-    # or a whole binary. The pid matters: run-local-gates.py runs this
-    # gate and its --self-test concurrently (--jobs), and on a cold cache
-    # both start here at once — a shared ".part" would have them writing
-    # one file together and renaming a torn binary into place (or, on
-    # Windows, failing the rename on the other's open handle).
-    part = f"{target}.{os.getpid()}.part"
-    if ext == "zip":
-        with zipfile.ZipFile(io.BytesIO(payload)) as z, \
-                open(part, "wb") as out:
-            out.write(z.read(binary_name()))
-    else:
-        with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as t:
-            member = t.extractfile(binary_name())
-            with open(part, "wb") as out:
-                out.write(member.read())
-        os.chmod(part, os.stat(part).st_mode
-                 | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    try:
-        if os.path.exists(target):
-            os.remove(part)        # a sibling won the race; its copy is whole
-        else:
-            os.replace(part, target)
-    except OSError:
-        # The rename lost to a sibling that renamed — and may already be
-        # executing — its own copy (Windows refuses to replace a running
-        # exe). Theirs is whole; keep it and drop ours.
-        if not os.path.exists(target):
-            raise
-        try:
-            os.remove(part)
-        except OSError:
-            pass
-    return target
+    """Path to the pinned actionlint -- wc_actionlint.ensure_actionlint,
+    which Gate 48 shares, so both passes lint with one binary."""
+    return ensure_actionlint()
 
 
 def workflow_files(root="."):
@@ -208,8 +134,7 @@ def classify(diag_lines, bindings, cred_bindings=0):
     seen_cred_scalar = sum(1 for l in diag_lines if CRED_SCALAR in l)
     seen_cred_userpass = sum(1 for l in diag_lines if CRED_USERPASS in l)
     other = [l for l in diag_lines
-             if KNOWN not in l and CRED_SCALAR not in l
-             and CRED_USERPASS not in l]
+             if not any(c in l for c in COUNTED)]
     errors = []
     if other:
         errors.append(f"actionlint reported {len(other)} diagnostic(s) "
@@ -365,14 +290,11 @@ def self_test():
 
 
 def main(argv):
-    if argv == ["--ensure-binary"]:
-        print(ensure_binary())
-        return 0
     if argv == ["--self-test"]:
         return self_test()
     if argv:
-        sys.exit(f"unknown arguments {argv!r}; takes --self-test, "
-                 f"--ensure-binary, or nothing.")
+        sys.exit(f"unknown arguments {argv!r}; takes --self-test or "
+                 f"nothing.")
     return run_gate()
 
 
