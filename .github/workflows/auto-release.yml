@@ -672,10 +672,104 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_OUTCOME: ${{ needs.dispatch-release.outputs.release-outcome }}
+          HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
+          HAS_NEW_WORK: ${{ needs.detect.outputs.has-new-work }}
+          VERDICT_JSON: ${{ needs.verify-e2e.outputs.verdict }}
           NEXT_VERSION: ${{ needs.decide-version.outputs.next-version }}
+          COLLISION: ${{ needs.decide-version.outputs.collision }}
+          RELEASE_OUTCOME: ${{ needs.dispatch-release.outputs.release-outcome }}
         run: |
           set -uo pipefail
+
+          # No new work: verify-e2e never ran, so VERDICT_JSON is empty --
+          # that must never be misread as a verification failure.
+          if [ "$HAS_NEW_WORK" != "true" ]; then
+            exit 0
+          fi
+
+          FAILED_LABEL="auto-release:failed"
+
+          # Dedup by label (research.md D13): update the one open report
+          # rather than filing a second, and rebuild its body from the
+          # LATEST attempt's detail on every recurrence (data-model.md
+          # "Failure report" -- only the newest attempt is actionable).
+          file_or_update_failure() {
+            local body_file="$1"
+            local existing
+            existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label "$FAILED_LABEL" --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+            if [ -n "$existing" ]; then
+              gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body-file "$body_file"
+            else
+              gh label create "$FAILED_LABEL" --color B60205 --description "wing-commander auto-release: a scheduled verification/release attempt failed" --force
+              gh issue create --repo "$GITHUB_REPOSITORY" --title "Auto-release verification failed at ${HEAD_SHA:0:7}" --label "$FAILED_LABEL" --body-file "$body_file"
+            fi
+          }
+
+          close_failure_on_success() {
+            local existing
+            existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label "$FAILED_LABEL" --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+            if [ -n "$existing" ]; then
+              gh issue close "$existing" --repo "$GITHUB_REPOSITORY" --comment "Resolved: ${NEXT_VERSION} released."
+            fi
+          }
+
+          outcome="$(printf '%s' "$VERDICT_JSON" | jq -r '.outcome // empty' 2>/dev/null || true)"
+
+          if [ "$outcome" != "pass" ]; then
+            failing_check="$(printf '%s' "$VERDICT_JSON" | jq -r '.failing_check // "unknown"' 2>/dev/null || echo unknown)"
+            expected="$(printf '%s' "$VERDICT_JSON" | jq -r '.expected // "unknown"' 2>/dev/null || echo unknown)"
+            observed="$(printf '%s' "$VERDICT_JSON" | jq -r '.observed // "unknown"' 2>/dev/null || echo unknown)"
+            evidence_url="$(printf '%s' "$VERDICT_JSON" | jq -r '.evidence_url // "unknown"' 2>/dev/null || echo unknown)"
+            classification="pipeline defect"
+            [ "$outcome" = "fail-infra" ] && classification="infrastructure"
+            echo "verification failed: ${failing_check}" >> "$GITHUB_STEP_SUMMARY"
+            {
+              echo "**Classification**: ${classification} (${outcome:-unknown})"
+              echo ""
+              echo "**Verified head**: ${HEAD_SHA}"
+              echo ""
+              echo "**Failing check**: ${failing_check}"
+              echo ""
+              echo "**Expected**: ${expected}"
+              echo ""
+              echo "**Observed**: ${observed}"
+              echo ""
+              echo "**Evidence**: ${evidence_url}"
+            } > "$RUNNER_TEMP/auto-release-failure-body.md"
+            file_or_update_failure "$RUNNER_TEMP/auto-release-failure-body.md"
+            exit 0
+          fi
+
+          if [ "$COLLISION" = "true" ]; then
+            echo "version collision: ${NEXT_VERSION} already tagged" >> "$GITHUB_STEP_SUMMARY"
+            {
+              echo "**Classification**: version collision"
+              echo ""
+              echo "**Verified head**: ${HEAD_SHA}"
+              echo ""
+              echo "**Computed next version**: ${NEXT_VERSION} already exists as a tag -- no dispatch was attempted."
+            } > "$RUNNER_TEMP/auto-release-failure-body.md"
+            file_or_update_failure "$RUNNER_TEMP/auto-release-failure-body.md"
+            exit 0
+          fi
+
           if [ "$RELEASE_OUTCOME" = "released" ]; then
             echo "released ${NEXT_VERSION}" >> "$GITHUB_STEP_SUMMARY"
+            close_failure_on_success
+            exit 0
           fi
+
+          # Anything else here means dispatch-release ran and did not
+          # report `released` -- a release failure, distinct from a
+          # verification failure or a collision (FR-029).
+          echo "release dispatch failed for ${NEXT_VERSION}" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "**Classification**: release failure"
+            echo ""
+            echo "**Verified head**: ${HEAD_SHA}"
+            echo ""
+            echo "**Computed next version**: ${NEXT_VERSION}"
+            echo ""
+            echo "release.yml was dispatched but did not conclude successfully -- see its own run for detail."
+          } > "$RUNNER_TEMP/auto-release-failure-body.md"
+          file_or_update_failure "$RUNNER_TEMP/auto-release-failure-body.md"
