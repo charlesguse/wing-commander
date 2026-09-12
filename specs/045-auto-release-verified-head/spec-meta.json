@@ -2,7 +2,8 @@
   "issue": 296,
   "spec_dir": "specs/045-auto-release-verified-head",
   "feature_num": "045",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 2,
-  "spec_branch": "spec/045-auto-release-verified-head"
+  "spec_branch": "spec/045-auto-release-verified-head",
+  "pending_re_review_from": []
 }
