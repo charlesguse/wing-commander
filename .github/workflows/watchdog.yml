@@ -713,9 +713,34 @@ jobs:
           # own window. Only compare when the run's head branch IS the branch
           # the stage pushes to; the before-sha baseline is only meaningful
           # for that branch anyway.
+          #
+          # #318: the same rule when no slug resolved at all. A
+          # workflow_dispatch-triggered stage reports the DEFAULT branch as
+          # its head (the dispatch inputs that name the spec are not in the
+          # run's metadata), so spec-slug derives nothing. The guard used to
+          # read `[ -n "$SLUG" ] && ...`, so an empty slug skipped the GUARD
+          # rather than the measurement: the collector measured `main`
+          # across implement run 34709026525, found the zero commits main
+          # correctly had, and filed lost-progress while the run's sixteen
+          # commits sat on spec/045-auto-release-verified-head. No stage
+          # pushes to a branch that is not one of the pipeline's own, so an
+          # unresolved slug means the head branch owes no commits either.
+          #
+          # Known blind spot, stated rather than hidden: every implement run
+          # is dispatched (the stage has no other trigger) and lands here, so
+          # this collector never measures implement at all. An implement run
+          # that reports success but pushed nothing is not caught by it, nor
+          # by implement.yml's stalled job (which fires on failure, not on
+          # silent success). Closing that needs spec-slug to learn the spec
+          # from something a dispatched run does leave behind (its metrics
+          # record carries spec.spec_dir) - tracked separately.
           _spec_prefix="${SPEC_PREFIX:-spec/}"
-          if [ -n "$SLUG" ] && [ "$HEAD_BRANCH" != "${_spec_prefix}${SLUG}" ]; then
-            echo "branch-drift: run head is '$HEAD_BRANCH' but this stage pushes to '${_spec_prefix}${SLUG}' — the head branch owes no commits. Skipping." >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$SLUG" ] || [ "$HEAD_BRANCH" != "${_spec_prefix}${SLUG}" ]; then
+            if [ -z "$SLUG" ]; then
+              echo "branch-drift: no spec slug resolved for run head '$HEAD_BRANCH' (a dispatched run reports the default branch) — this stage pushes to a spec branch, so the head branch owes no commits. Skipping." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "branch-drift: run head is '$HEAD_BRANCH' but this stage pushes to '${_spec_prefix}${SLUG}' — the head branch owes no commits. Skipping." >> "$GITHUB_STEP_SUMMARY"
+            fi
             exit 0
           fi
 
