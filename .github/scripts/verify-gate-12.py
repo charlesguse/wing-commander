@@ -70,6 +70,10 @@ DOCS_OK = """\
 DOCS_ISSUES_READONLY = DOCS_OK.replace("Issues: **Read and write**",
                                        "Issues: **Read-only**")
 
+# Same doc, but Pull requests at Read-only - the `gh pr close` mirror of T073.
+DOCS_PRS_READONLY = DOCS_OK.replace("Pull requests: **Read and write**",
+                                    "Pull requests: **Read-only**")
+
 APP_ENV = 'GH_TOKEN: ${{ steps.ctx.outputs.token }}'
 DEFAULT_ENV = 'GH_TOKEN: ${{ github.token }}'
 
@@ -93,6 +97,31 @@ def step(env_lines, run_lines):
 ACTIONS_WRITE = "      actions: write\n"
 ACTIONS_READ = "      actions: read\n"
 ISSUES_WRITE = "      issues: write\n"
+CONTENTS_READ = "      contents: read\n"
+
+
+def minted_wf(minter_uses, run_lines, step_id="e2e-token"):
+    """A job whose first step mints a token (or pretends to) under `step_id`
+    and whose second step runs `gh` under `steps.<step_id>.outputs.token`.
+    Gate 12 recognises the output as the App token only when the minting
+    step really `uses: actions/create-github-app-token` - structurally, per
+    job - so the same generic step id under any other action stays an
+    unrecognised token, not a silently-inherited App classification."""
+    run = "".join(f"          {l}\n" for l in run_lines)
+    return ("name: minted\n"
+            "on:\n  workflow_dispatch: {}\n"
+            "jobs:\n  work:\n    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            f"      - name: mint\n        id: {step_id}\n"
+            f"        uses: {minter_uses}\n"
+            "      - name: call\n        env:\n"
+            f"          GH_TOKEN: ${{{{ steps.{step_id}.outputs.token }}}}\n"
+            "        run: |\n" + run)
+
+
+def mkcase_minted(minter_uses, run_lines, docs=DOCS_OK, step_id="e2e-token"):
+    return {".github/workflows/w.yml": minted_wf(minter_uses, run_lines, step_id),
+            "docs/setup.md": docs}
 
 
 def mkcase(job_perms, job_env, env_lines, run_lines, docs=DOCS_OK):
@@ -239,6 +268,74 @@ CASES = [
     ("unrecognised subcommand fails loudly rather than passing silently",
      mkcase("", "", [APP_ENV], ['gh totallynew thing "$X"']),
      True, ("totallynew", "SUBCOMMAND_PERMS")),
+
+    # --- auto-release.yml's call sites (#319) ---------------------------
+    ("gh run watch is a read: github.token with actions:write (the "
+     "dispatching job's grant) satisfies it",
+     mkcase(ACTIONS_WRITE, "", [DEFAULT_ENV],
+            ['gh run watch "$run_id" --exit-status >/dev/null 2>&1']),
+     False, ()),
+
+    ("gh run watch under the App token fails: the App has no Actions grant",
+     mkcase("", "", [APP_ENV], ['gh run watch "$run_id" --exit-status']),
+     True, ("run watch", "App token", "actions")),
+
+    ("gh api .../commits/... is a Contents read: github.token with "
+     "contents:read satisfies it",
+     mkcase(CONTENTS_READ, "", [DEFAULT_ENV],
+            ['tip="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"']),
+     False, ()),
+
+    ("gh api .../commits/... under github.token with only actions:read "
+     "fails, naming contents",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ['tip="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"']),
+     True, ("commits", "contents")),
+
+    ("gh pr close under the App token passes against the documented "
+     "Pull requests: Read and write grant",
+     mkcase("", "", [APP_ENV],
+            ['gh pr close "$n" --repo "$E2E_REPO" --comment "leftover"']),
+     False, ()),
+
+    ("gh pr close under the App token fails when Pull requests is "
+     "Read-only (the T073 level check, on the new entry)",
+     mkcase("", "", [APP_ENV],
+            ['gh pr close "$n" --repo "$E2E_REPO" --comment "leftover"'],
+            docs=DOCS_PRS_READONLY),
+     True, ("pr close", "App token", "pull-requests")),
+
+    # --- structural App-token recognition (#319) -------------------------
+    ("a token minted by actions/create-github-app-token in the same job IS "
+     "the App token: its gh issue create passes against the documented grant",
+     mkcase_minted("actions/create-github-app-token@v3",
+                   ['gh issue create --repo "$E2E_REPO" --title t --body b']),
+     False, ()),
+
+    ("... and is held to that grant: gh issue create fails when the doc "
+     "says Issues is Read-only",
+     mkcase_minted("actions/create-github-app-token@v3",
+                   ['gh issue create --repo "$E2E_REPO" --title t --body b'],
+                   docs=DOCS_ISSUES_READONLY),
+     True, ("issue create", "App token", "issues")),
+
+    ("... and the recognition follows the minting step, not the id: the "
+     "generic id `token` under some other action is an unrecognised token "
+     "(reported unverified, neither passed as the App nor failed)",
+     mkcase_minted("some-org/mint-a-different-token@v1",
+                   ['gh issue create --repo "$OTHER" --title t --body b'],
+                   step_id="token"),
+     False, ("unrecognised token", "Unverified")),
+
+    ("... and a job cannot borrow another job's minted token by name: the "
+     "same expression in a job with no minting step is unrecognised",
+     {".github/workflows/w.yml":
+          minted_wf("actions/create-github-app-token@v3",
+                    ['gh issue view "$N"']).replace(
+              "      - name: mint\n        id: e2e-token\n"
+              "        uses: actions/create-github-app-token@v3\n", ""),
+      "docs/setup.md": DOCS_OK},
+     False, ("unrecognised token", "Unverified")),
 
     ("an unresolvable gh api path (traced to a $(...) computed value) fails "
      "loudly rather than being silently skipped",
