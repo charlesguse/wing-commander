@@ -797,8 +797,13 @@ jobs:
           # pre-created scratch repository — a scope the context token cannot
           # cover, since create-github-app-token defaults to the current
           # repository and one installation token cannot span two owners.
+          # auto-release.yml's `token` step is the same shape again: the same
+          # App, minted for the pre-onboarded end-to-end test repository, so
+          # its `gh issue`/`gh pr` calls against that repository are checked
+          # against the same documented grant rather than left unverified.
           APP_TOKEN_EXPRS = {"steps.ctx.outputs.token",
-                             "steps.scratch-token.outputs.token"}
+                             "steps.scratch-token.outputs.token",
+                             "steps.token.outputs.token"}
           DEFAULT_TOKEN_EXPRS = {"github.token", "secrets.GITHUB_TOKEN"}
 
           SUBCOMMAND_PERMS = {
@@ -806,6 +811,11 @@ jobs:
               ("run", "download"):   frozenset({("actions", "read")}),
               ("run", "list"):       frozenset({("actions", "read")}),
               ("run", "view"):       frozenset({("actions", "read")}),
+              # auto-release.yml polls the release.yml run it dispatched.
+              # `gh run watch` is `gh run view` in a loop: GET
+              # /repos/{o}/{r}/actions/runs/{id} plus its jobs until the run
+              # completes - reads only, so the same actions:read as view.
+              ("run", "watch"):      frozenset({("actions", "read")}),
               ("workflow", "run"):   frozenset({("actions", "write")}),
               ("workflow", "view"):  frozenset({("actions", "read")}),
               ("workflow", "list"):  frozenset({("actions", "read")}),
@@ -823,6 +833,11 @@ jobs:
               ("pr", "create"):      frozenset({("pull-requests", "write"),
                                                  ("contents", "read")}),
               ("pr", "edit"):        frozenset({("pull-requests", "write")}),
+              # auto-release.yml closes the previous attempt's leftover PRs in
+              # the end-to-end test repository. Closing is the closePullRequest
+              # GraphQL mutation (with --comment, an addComment first): a
+              # pull-request write, the same level as `gh issue close` above.
+              ("pr", "close"):       frozenset({("pull-requests", "write")}),
               ("pr", "list"):        frozenset({("pull-requests", "read")}),
               ("pr", "ready"):       frozenset({("pull-requests", "write"),
                                                  ("contents", "write")}),
@@ -844,6 +859,11 @@ jobs:
               "issues": "issues", "pulls": "pull-requests", "contents": "contents",
               "releases": "contents", "labels": "issues", "milestones": "issues",
               "branches": "contents",
+              # auto-release.yml resolves main's tip (GET .../commits/main)
+              # before dispatching release.yml. The commits endpoints are the
+              # "Contents" permission's surface in GitHub's fine-grained
+              # permission reference, same as .../contents/... itself.
+              "commits": "contents",
           }
 
           GH_INVOKE_RE = re.compile(
