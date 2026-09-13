@@ -444,6 +444,35 @@ def strip_conclusion_guard(script, var_name):
     return new
 
 
+def reintroduce_slug_hole(script):
+    """Put back the #318 defect exactly as it shipped: branch-drift's
+    push-target guard read `[ -n "$SLUG" ] && [ "$HEAD_BRANCH" != ... ]`, so
+    an EMPTY slug (a dispatch-triggered run whose head is the default
+    branch) skipped the guard instead of the measurement, and `main` was
+    measured for commits it never owed. The fixed guard is
+    `[ -z "$SLUG" ] || [ ... ]`. Mutation for the scenario that exercises it."""
+    fixed = 'if [ -z "$SLUG" ] || [ "$HEAD_BRANCH" != '
+    broken = 'if [ -n "$SLUG" ] && [ "$HEAD_BRANCH" != '
+    if script.count(fixed) != 1:
+        sys.exit("::error::verify-gate-19: could not locate branch-drift's "
+                 "unresolved-slug guard (#318) to mutate — the step text may "
+                 "have changed shape; update this harness alongside it.")
+    return script.replace(fixed, broken, 1)
+
+
+def run_script_mutation(label, suite_fn, mutated, env, tmproot):
+    """run_attribution_mutation's tail for a guard that is not a case/esac
+    block: rerun `suite_fn` on an already-mutated script and confirm at
+    least one scenario breaks."""
+    broke = suite_fn(mutated, env, tmproot)
+    if broke:
+        print(f"Mutation OK - {label}: {len(broke)} assertion(s) fail.")
+        return []
+    print(f"::error::MUTATION SURVIVED - removing {label} broke nothing "
+          f"in this suite, so the suite is not testing that defect.")
+    return [f"mutation survived: {label}"]
+
+
 def mut_array_collecting_annotations(script):
     """Reintroduce the array-collecting --jq '[...]' shape (the T067 defect):
     wrapping the per-item filter in [...] makes gh emit one ARRAY per page
@@ -642,6 +671,37 @@ BD_SCENARIOS = [
         revlist_fail=False,
         expect_outcome=None,
     ),
+    # #318: a workflow_dispatch-triggered stage reports the default branch
+    # as its head and spec-slug resolves nothing from it. The collector
+    # measured `main` across implement run 34709026525, found the zero
+    # commits main correctly had, and filed lost-progress while the run's
+    # sixteen commits sat on spec/045-auto-release-verified-head. An
+    # unresolved slug means the head is not a pipeline branch and owes no
+    # commits: no fetch, no outcome entry, no signal.
+    dict(
+        name="no spec slug resolved (dispatch-triggered run, head is the "
+             "default branch): the head owes no commits, nothing fetched (#318)",
+        head_branch="main",
+        slug="",
+        fetch_fail=False,
+        fetch_msg="",
+        revparse_fail=False,
+        revlist_fail=False,
+        expect_outcome=None,
+    ),
+    # #112: the head is a pipeline branch, but not the one this stage pushes
+    # to (a pull_request-triggered run reports the draft branch).
+    dict(
+        name="slug resolved but the head is not the branch this stage pushes "
+             "to (draft-branch head): nothing fetched (#112)",
+        head_branch="spec-draft/999-torn-down",
+        slug="999-torn-down",
+        fetch_fail=False,
+        fetch_msg="",
+        revparse_fail=False,
+        revlist_fail=False,
+        expect_outcome=None,
+    ),
 ]
 
 
@@ -712,9 +772,12 @@ def run_bd_one(script, env, sc, tmproot):
     run_env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
     run_env["RUN_NAME"] = "Wing Commander · 5 implement"
     run_env["RUN_CONCLUSION"] = sc.get("run_conclusion", "success")
-    run_env["HEAD_BRANCH"] = "spec/999-torn-down"
+    # The head IS the branch the stage pushes to unless a scenario says
+    # otherwise: before #318 the harness ran with SLUG empty, a shape the
+    # collector now (correctly) declines to measure at all.
+    run_env["HEAD_BRANCH"] = sc.get("head_branch", "spec/999-torn-down")
     run_env["HEAD_SHA"] = "0000000000000000000000000000000000000000"
-    run_env["SLUG"] = ""
+    run_env["SLUG"] = sc.get("slug", "999-torn-down")
     run_env["META_STAGE"] = ""
     run_env["STALLED_LABEL"] = "false"
     run_env["SPEC_PREFIX"] = "spec/"
@@ -1172,6 +1235,9 @@ def main():
         bd_failures.extend(run_attribution_mutation(
             "branch-drift's RUN_CONCLUSION attribution guard (FR-026)",
             suite_bd, bd_script, bd_env, bd_tmproot, "RUN_CONCLUSION"))
+        bd_failures.extend(run_script_mutation(
+            "branch-drift's unresolved-slug guard (#318)",
+            suite_bd, reintroduce_slug_hole(bd_script), bd_env, bd_tmproot))
     finally:
         shutil.rmtree(bd_tmproot, ignore_errors=True)
     for f in bd_failures:

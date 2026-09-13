@@ -713,9 +713,24 @@ jobs:
           # own window. Only compare when the run's head branch IS the branch
           # the stage pushes to; the before-sha baseline is only meaningful
           # for that branch anyway.
+          #
+          # #318: the same rule when no slug resolved at all. A
+          # workflow_dispatch-triggered stage reports the DEFAULT branch as
+          # its head (the dispatch inputs that name the spec are not in the
+          # run's metadata), so spec-slug derives nothing and the guard
+          # above never fired; the collector then measured `main` across
+          # implement run 34709026525, found the zero commits that main
+          # correctly had, and filed lost-progress while the run's sixteen
+          # commits sat on spec/045-auto-release-verified-head. No stage
+          # pushes to a branch that is not one of the pipeline's own, so an
+          # unresolved slug means the head branch owes no commits either -
+          # the guard used to be `[ -n "$SLUG" ] && ...`, which let an empty
+          # slug fall through to the measurement. Cost: a dispatched run
+          # whose work really was lost is not caught here; the stalled
+          # automation named below still covers it.
           _spec_prefix="${SPEC_PREFIX:-spec/}"
-          if [ -n "$SLUG" ] && [ "$HEAD_BRANCH" != "${_spec_prefix}${SLUG}" ]; then
-            echo "branch-drift: run head is '$HEAD_BRANCH' but this stage pushes to '${_spec_prefix}${SLUG}' — the head branch owes no commits. Skipping." >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$SLUG" ] || [ "$HEAD_BRANCH" != "${_spec_prefix}${SLUG}" ]; then
+            echo "branch-drift: run head is '$HEAD_BRANCH' but this stage pushes to '${_spec_prefix}${SLUG:-<unresolved slug>}' — the head branch owes no commits. Skipping." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
