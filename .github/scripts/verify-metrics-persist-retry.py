@@ -480,7 +480,8 @@ def case_validate_then_append_persists_reusable_workflow_records():
         wc_dir = os.path.join(runner_temp, "wc-metrics-persist")
         dl_dir = os.path.join(wc_dir, "downloaded")
         for name in ("metrics-record-diagnose", "metrics-record-act",
-                     "metrics-record-collect", "metrics-record-cost-mismatch"):
+                     "metrics-record-collect", "metrics-record-cost-mismatch",
+                     "metrics-record-cost-unverifiable"):
             os.makedirs(os.path.join(dl_dir, name), exist_ok=True)
         # The jobs listing exactly as the discover step stores it: an array
         # of the jobs API's objects, named the way GitHub displays reusable-
@@ -523,6 +524,17 @@ def case_validate_then_append_persists_reusable_workflow_records():
         bad_cost_key = bad_cost["run"]["record_key"]
         _write_pretty(os.path.join(dl_dir, "metrics-record-cost-mismatch",
                                    "wing-commander-metrics-record.json"), bad_cost)
+        # The same cost mismatch with tokens.available=false must PERSIST:
+        # the contract applies every sum invariant only when tokens.available
+        # and per_model_available both hold, and Gate 39 gates its cost check
+        # the same way. The collector must agree with it here too (#320
+        # review), not reject on cost_available alone.
+        unverifiable = _reusable_workflow_record(run_id, "cost-unverifiable")
+        unverifiable["tokens"]["available"] = False
+        unverifiable["per_model"][0]["cost_usd"] = 0.1
+        unverifiable_key = unverifiable["run"]["record_key"]
+        _write_pretty(os.path.join(dl_dir, "metrics-record-cost-unverifiable",
+                                   "wing-commander-metrics-record.json"), unverifiable)
 
         rc, output, outputs, _summary = run_step(
             BASH, VALIDATE_SCRIPT, work, {"RUN_ID": run_id}, runner_temp)
@@ -540,7 +552,7 @@ def case_validate_then_append_persists_reusable_workflow_records():
         batch_path = os.path.join(wc_dir, "new-records.jsonl")
         with open(batch_path, encoding="utf-8") as f:
             batch_lines = [line for line in f.read().split("\n") if line.strip()]
-        if len(batch_lines) != 3:
+        if len(batch_lines) != 4:
             fail(case, "the batch must hold exactly one line per record "
                        f"(JSONL), got {len(batch_lines)} non-empty line(s) — "
                        "a pretty-printed record appended verbatim is what the "
@@ -558,6 +570,11 @@ def case_validate_then_append_persists_reusable_workflow_records():
         if "cost-mismatch" in by_key:
             fail(case, "the cost-mismatch record reached the batch despite being "
                        "rejected — a rejected record must never be appended")
+        if "cost-unverifiable" not in by_key:
+            fail(case, "the tokens.available=false record with a per_model cost "
+                       "that does not sum to cost_usd must persist: the sum "
+                       "invariants apply only when tokens.available and "
+                       "per_model_available both hold (contract; Gate 39 agrees)")
         diag = by_key.get("diagnose", {}).get("run", {})
         if diag.get("job_id") != diagnose_job_id:
             fail(case, "job_key 'diagnose' must resolve to the job the API "
@@ -586,22 +603,28 @@ def case_validate_then_append_persists_reusable_workflow_records():
             fail(case, f"append step exited {rc} on the batch validate "
                        f"wrote: {output.strip()[:500]}")
             return
-        if outputs.get("persisted-count") != "3":
-            fail(case, f"expected persisted-count=3, got {outputs.get('persisted-count')!r}")
+        if outputs.get("persisted-count") != "4":
+            fail(case, f"expected persisted-count=4, got {outputs.get('persisted-count')!r}")
 
         text, final_work = fetch_dest(tmp, origin, "metrics", "final")
         shutil.rmtree(final_work, ignore_errors=True)
         dest_lines = [line for line in (text or "").split("\n") if line.strip()]
-        if len(dest_lines) != 3 or want_key not in (text or "") \
-                or f"{run_id}:collect:0" not in (text or ""):
-            fail(case, f"destination must hold exactly the three records, one "
-                       f"per line (numeric-job_id key for the resolved one, "
-                       f"emission-time key for the ambiguous one); got: {text!r}")
+        if len(dest_lines) != 4 or want_key not in (text or "") \
+                or f"{run_id}:collect:0" not in (text or "") \
+                or unverifiable_key not in (text or "") \
+                or bad_cost_key in (text or ""):
+            fail(case, f"destination must hold exactly the four accepted records, "
+                       f"one per line (numeric-job_id key for the resolved one, "
+                       f"emission-time key for the ambiguous one, the "
+                       f"tokens-unavailable one) and not the rejected "
+                       f"cost-mismatch record; got: {text!r}")
         note("pretty-printed records from a 'watchdog / diagnose'-style job, "
              "an ambiguous two-caller 'collect' job (job_id kept null), and "
              "a multi-model run all validated and persisted as one JSONL "
              "line each; the token-consistent, cost-inconsistent record was "
-             "rejected by record_key and never reached the batch")
+             "rejected by record_key and never reached the batch, while the "
+             "same mismatch with tokens.available=false persisted (invariants "
+             "apply only when the numbers are comparable, as in Gate 39)")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

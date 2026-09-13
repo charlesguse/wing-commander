@@ -173,12 +173,14 @@ runs:
             # Minimal schema-version-1 shape check (field presence +
             # types) mirroring contracts/metrics-record-schema.md's field
             # table, plus the per_model sum invariant: the four token sums
-            # and (#316) the cost sum, within the same 1e-9 tolerance Gate
-            # 39 (verify-metrics-record-schema.py) applies, so the shipped
-            # collector and the local gate agree on what a valid record is.
-            # A per_model entry with no cost_usd counts as 0, as it does
-            # there. Rejects and names the record_key (FR-041:
-            # deterministic code, never judgment).
+            # and (#316) the cost sum, gated and tolerated exactly as Gate
+            # 39 (verify-metrics-record-schema.py) does it so the shipped
+            # collector and the local gate agree on what a valid record is
+            # - all five only when tokens.available and per_model_available,
+            # the cost sum additionally only when cost_available and
+            # cost_usd is non-null, within 1e-9, with a per_model entry
+            # lacking cost_usd counting as 0. Rejects and names the
+            # record_key (FR-041: deterministic code, never judgment).
             key="$(printf '%s' "$rec" | jq -r '.run.record_key // "unknown"')"
             ok="$(printf '%s' "$rec" | jq -r '
               def hasfields($o; $f): ($f - ($o | keys)) == [];
@@ -196,11 +198,11 @@ runs:
                     ([$r.per_model[].output_tokens] | add) == $r.tokens.output and
                     ([$r.per_model[].cache_read_tokens] | add) == $r.tokens.cache_read and
                     ([$r.per_model[].cache_creation_tokens] | add) == $r.tokens.cache_creation
-                  )
-                )
-                and (
-                  ($r.cost_available != true) or ($r.per_model_available != true) or (
-                    (([$r.per_model[] | (.cost_usd // 0)] | add // 0) - $r.cost_usd | fabs) <= 1e-9
+                    and (
+                      ($r.cost_available != true) or ($r.cost_usd == null) or (
+                        (([$r.per_model[] | (.cost_usd // 0)] | add // 0) - $r.cost_usd | fabs) <= 1e-9
+                      )
+                    )
                   )
                 )
               ) as $valid

@@ -278,8 +278,8 @@ def _fixture_files():
     found = sorted(glob.glob(os.path.join(FIXTURES_DIR, "*.json")))
     # Pinned count: a bare glob makes a deleted fixture read as a smaller
     # clean pass (PR #267 re-review). Update deliberately with the set.
-    if len(found) != 7:
-        sys.exit("::error::metrics-record-schema: expected exactly 7 "
+    if len(found) != 8:
+        sys.exit("::error::metrics-record-schema: expected exactly 8 "
                  "fixtures under {0}, found {1} - a fixture was added or "
                  "removed without updating this pin.".format(
                      FIXTURES_DIR, len(found)))
