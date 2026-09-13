@@ -621,6 +621,15 @@ Two constraints the wrappers must hold, both enforced by
     the correct answer. Issue #112: a run was filed as `lost-progress`
     against `spec-draft/022-…` while that same run pushed `e97b9b6` to
     `spec/022-…` inside its own measurement window.
+  - `branch-drift` likewise emits nothing when no spec slug resolves from
+    the head branch at all. A `workflow_dispatch`-triggered run reports the
+    default branch as its head, and the dispatch inputs that name the spec
+    are not in the run's metadata, so the head is not a pipeline branch and
+    owes no commits. Issue #318: implement run 34709026525 was filed as
+    `lost-progress` against `main` while its sixteen commits sat on
+    `spec/045-…`. Every implement run is dispatched, so this collector does
+    not measure implement at all today; that blind spot is tracked
+    separately.
 
   Best-effort spec-slug/lifecycle-issue
   resolution: a run that can't be tied to a spec (e.g. a `main`-based

@@ -461,9 +461,10 @@ def reintroduce_slug_hole(script):
 
 
 def run_script_mutation(label, suite_fn, mutated, env, tmproot):
-    """run_attribution_mutation's tail for a guard that is not a case/esac
-    block: rerun `suite_fn` on an already-mutated script and confirm at
-    least one scenario breaks."""
+    """Rerun `suite_fn` on an already-mutated script and confirm at least one
+    scenario breaks. run_attribution_mutation below is the case/esac-guard
+    front end for this; a guard of any other shape mutates itself and calls
+    this directly."""
     broke = suite_fn(mutated, env, tmproot)
     if broke:
         print(f"Mutation OK - {label}: {len(broke)} assertion(s) fail.")
@@ -689,8 +690,6 @@ BD_SCENARIOS = [
         revlist_fail=False,
         expect_outcome=None,
     ),
-    # #112: the head is a pipeline branch, but not the one this stage pushes
-    # to (a pull_request-triggered run reports the draft branch).
     dict(
         name="slug resolved but the head is not the branch this stage pushes "
              "to (draft-branch head): nothing fetched (#112)",
@@ -1162,14 +1161,8 @@ def run_attribution_mutation(label, suite_fn, script, env, tmproot, var_name):
     rerun `suite_fn` with that guard stripped and confirm at least one
     scenario then breaks. A guard with no fixture that exercises its
     removal is not proven to do anything (Constitution VIII)."""
-    mutated = strip_conclusion_guard(script, var_name)
-    broke = suite_fn(mutated, env, tmproot)
-    if broke:
-        print(f"Mutation OK - {label}: {len(broke)} assertion(s) fail.")
-        return []
-    print(f"::error::MUTATION SURVIVED - removing {label} broke nothing "
-          f"in this suite, so the suite is not testing that defect.")
-    return [f"mutation survived: {label}"]
+    return run_script_mutation(label, suite_fn,
+                               strip_conclusion_guard(script, var_name), env, tmproot)
 
 
 def main():
