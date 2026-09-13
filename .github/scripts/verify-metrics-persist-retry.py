@@ -480,7 +480,7 @@ def case_validate_then_append_persists_reusable_workflow_records():
         wc_dir = os.path.join(runner_temp, "wc-metrics-persist")
         dl_dir = os.path.join(wc_dir, "downloaded")
         for name in ("metrics-record-diagnose", "metrics-record-act",
-                     "metrics-record-collect"):
+                     "metrics-record-collect", "metrics-record-cost-mismatch"):
             os.makedirs(os.path.join(dl_dir, name), exist_ok=True)
         # The jobs listing exactly as the discover step stores it: an array
         # of the jobs API's objects, named the way GitHub displays reusable-
@@ -512,16 +512,31 @@ def case_validate_then_append_persists_reusable_workflow_records():
                         "record_key": f"{run_id}:act:0"}
         _write_pretty(os.path.join(dl_dir, "metrics-record-act",
                                    "wing-commander-metrics-record.json"), multi)
+        # #316: a record whose four TOKEN sums are correct but whose
+        # per_model costs do not add up to cost_usd. The contract's fifth
+        # invariant; the shipped validate step checked only the four token
+        # sums, so this record used to be appended and its bad cost rolled
+        # into the cumulative-spend totals. The pre-existing mismatch
+        # fixture breaks the token sums too, so nothing exercised this.
+        bad_cost = _reusable_workflow_record(run_id, "cost-mismatch")
+        bad_cost["per_model"][0]["cost_usd"] = 0.1      # cost_usd stays 0.24724
+        bad_cost_key = bad_cost["run"]["record_key"]
+        _write_pretty(os.path.join(dl_dir, "metrics-record-cost-mismatch",
+                                   "wing-commander-metrics-record.json"), bad_cost)
 
         rc, output, outputs, _summary = run_step(
             BASH, VALIDATE_SCRIPT, work, {"RUN_ID": run_id}, runner_temp)
         if rc != 0:
             fail(case, f"validate step exited {rc}: {output.strip()[:500]}")
             return
-        if outputs.get("rejected", "").strip():
-            fail(case, "validate rejected a well-formed record: "
-                       f"{outputs.get('rejected')!r} — a multi-model record "
-                       "whose per_model sums to its own totals must persist")
+        rejected = outputs.get("rejected", "").split()
+        if rejected != [bad_cost_key]:
+            fail(case, f"validate must reject exactly the cost-mismatch record "
+                       f"by record_key ({bad_cost_key!r}) and nothing else — got "
+                       f"rejected={rejected!r}. A multi-model record whose "
+                       "per_model sums to its own totals must persist; a record "
+                       "whose per_model cost_usd does not sum to cost_usd must "
+                       "not (contracts/metrics-record-schema.md, fifth invariant)")
         batch_path = os.path.join(wc_dir, "new-records.jsonl")
         with open(batch_path, encoding="utf-8") as f:
             batch_lines = [line for line in f.read().split("\n") if line.strip()]
@@ -540,6 +555,9 @@ def case_validate_then_append_persists_reusable_workflow_records():
                 fail(case, f"batch line is not one JSON record: {exc}: {line[:120]!r}")
                 return
             by_key[rec["run"]["job_key"]] = rec
+        if "cost-mismatch" in by_key:
+            fail(case, "the cost-mismatch record reached the batch despite being "
+                       "rejected — a rejected record must never be appended")
         diag = by_key.get("diagnose", {}).get("run", {})
         if diag.get("job_id") != diagnose_job_id:
             fail(case, "job_key 'diagnose' must resolve to the job the API "
@@ -582,7 +600,8 @@ def case_validate_then_append_persists_reusable_workflow_records():
         note("pretty-printed records from a 'watchdog / diagnose'-style job, "
              "an ambiguous two-caller 'collect' job (job_id kept null), and "
              "a multi-model run all validated and persisted as one JSONL "
-             "line each")
+             "line each; the token-consistent, cost-inconsistent record was "
+             "rejected by record_key and never reached the batch")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
