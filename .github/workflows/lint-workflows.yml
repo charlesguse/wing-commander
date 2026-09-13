@@ -789,22 +789,43 @@ jobs:
           # repository's own workflows make. An empty frozenset means no repository
           # permission is needed at all (repo metadata is always readable,
           # regardless of token).
-          # Both are installation tokens for the SAME App, so both carry the
-          # permission grant docs/setup.md documents. They differ only in
-          # repository scope: `ctx` is the shared wing-commander-context token
-          # (scoped to the repository the stage runs in), `scratch-token` is
-          # auto-update-spec-kit e2e-stage's separately minted token for the
-          # pre-created scratch repository — a scope the context token cannot
-          # cover, since create-github-app-token defaults to the current
-          # repository and one installation token cannot span two owners.
-          # auto-release.yml's `token` step is the same shape again: the same
-          # App, minted for the pre-onboarded end-to-end test repository, so
-          # its `gh issue`/`gh pr` calls against that repository are checked
-          # against the same documented grant rather than left unverified.
-          APP_TOKEN_EXPRS = {"steps.ctx.outputs.token",
-                             "steps.scratch-token.outputs.token",
-                             "steps.token.outputs.token"}
+          # `ctx` is the shared wing-commander-context composite's token: the
+          # App installation token for the repository the stage runs in,
+          # minted inside the composite, so the workflow only ever sees the
+          # composite's output and nothing structural in the workflow file
+          # says it is an App token. It is the one App-token expression that
+          # has to be named here.
+          #
+          # Every OTHER App token this repository mints is a workflow step
+          # that `uses: actions/create-github-app-token` directly — e2e-stage's
+          # `scratch-token` for the pre-created scratch repository, and
+          # auto-release.yml's `token` for the pre-onboarded end-to-end test
+          # repository (each a scope the context token cannot cover, since
+          # one installation token cannot span two owners). Those are
+          # recognised STRUCTURALLY, per job, by app_token_exprs_for() below:
+          # a step id is only an App token in the job that mints it, so a
+          # generic id like `token` in some other job never inherits the
+          # classification by name. Same App, same grant, so the same
+          # docs/setup.md check applies. Should this repository ever mint a
+          # token for a second App, that App needs its own documented grant
+          # and its own classification — do not fold it into this one.
+          APP_TOKEN_EXPRS = {"steps.ctx.outputs.token"}
+          APP_TOKEN_MINTER = "actions/create-github-app-token"
           DEFAULT_TOKEN_EXPRS = {"github.token", "secrets.GITHUB_TOKEN"}
+
+
+          def app_token_exprs_for(job):
+              """APP_TOKEN_EXPRS plus `steps.<id>.outputs.token` for every step
+              in THIS job that mints an installation token with
+              actions/create-github-app-token."""
+              out = set(APP_TOKEN_EXPRS)
+              for st in job.get("steps") or []:
+                  st = st or {}
+                  sid = st.get("id")
+                  uses = str(st.get("uses") or "")
+                  if sid and uses.split("@")[0] == APP_TOKEN_MINTER:
+                      out.add(f"steps.{sid}.outputs.token")
+              return out
 
           SUBCOMMAND_PERMS = {
               ("run", "cancel"):     frozenset({("actions", "write")}),
@@ -1026,10 +1047,11 @@ jobs:
               return (scope, rest[0]) if rest else (scope, None)
 
 
-          def resolve_token(tokexpr, step_env, job_env):
-              """-> (kind, detail). kind in app/default/other/unresolved."""
+          def resolve_token(tokexpr, step_env, job_env, app_exprs):
+              """-> (kind, detail). kind in app/default/other/unresolved.
+              app_exprs is app_token_exprs_for() of the job the call runs in."""
               def classify(expr):
-                  if expr in APP_TOKEN_EXPRS:
+                  if expr in app_exprs:
                       return "app"
                   if expr in DEFAULT_TOKEN_EXPRS:
                       return "default"
@@ -1161,6 +1183,7 @@ jobs:
                   job = job or {}
                   job_env = job.get("env") or {}
                   job_perms = effective_job_permissions(wf, job)
+                  job_app_exprs = app_token_exprs_for(job)
                   pending_tools = []  # (verb1, verb2, source-step-name)
 
                   # --- category C: tools granted where a stage is CALLED -----
@@ -1204,7 +1227,7 @@ jobs:
                                   continue
                               where = f"{f} :: {jname} / {sname}"
                               tok_kind, tok_detail = resolve_token(
-                                  m.group("tokexpr"), step_env, job_env)
+                                  m.group("tokexpr"), step_env, job_env, job_app_exprs)
 
                               if m.group("apipath"):
                                   resolved = resolve_paths(m.group("apipath"), assigns)
@@ -1266,7 +1289,8 @@ jobs:
                                       pending_tools.append((gm.group(1), gm.group(2), sname))
 
                       if uses.startswith("anthropics/claude-code-action"):
-                          tok_kind, tok_detail = resolve_token(None, step_env, job_env)
+                          tok_kind, tok_detail = resolve_token(None, step_env, job_env,
+                                                               job_app_exprs)
                           # #215: the same context category C needs, recorded here
                           # rather than re-derived, so the two checks can never
                           # disagree about which token a step runs under.
