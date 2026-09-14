@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,27 +31,28 @@
 
 ## Notes
 
-- Three `[NEEDS CLARIFICATION]` markers remain open by design, at the
-  maximum the specify workflow permits. Each is a trade-off the issue
-  explicitly routed to the owner rather than a gap the specifier could
-  close with a reasonable default:
-  - **FR-002** — the form of correlating evidence (run title token, request
-    time plus actor, or both). All three prevent the observed defect; they
-    differ in whether the release automation's presentation contract changes
-    and in how much they lean on API-reported timestamps.
-  - **FR-007** — what counts as authoritative proof that this attempt's
-    release happened: the correlated run's conclusion, the resulting tag
-    state, or both. This decides whether correlation is load-bearing for
-    correctness or only for diagnostics.
-  - **FR-010** — how the tagged-commit guarantee is enforced: a commit input
-    the release automation checks out and refuses when stale, an
-    assert-only expected-head input, or after-the-fact detection. The third
-    accepts that a wrong tag can be published, which the spec flags as a
-    trade-off rather than an equal alternative.
-- These markers are left in place deliberately: this run is the pipeline's
-  intake stage, which posts the questions to the lifecycle issue instead of
-  blocking on an interactive answer. Everything else in the spec is settled;
-  the markers do not block `/speckit-plan` from being run once answered.
+- The three `[NEEDS CLARIFICATION]` markers the intake stage left open were
+  answered by the owner on the lifecycle issue and are now resolved in the
+  spec. The answers are recorded in the `## Clarifications` section:
+  - **FR-002** — the form of correlating evidence: **both** a run title
+    carrying the version and an attempt token, and a time bound requiring the
+    run to have started after the request. Title for identity, time bound for
+    the retry-of-a-failed-version case.
+  - **FR-007** — authoritative proof that this attempt's release happened:
+    **the tag state** (the exact version tag exists and points at the
+    verified commit). The correlated run supplies log links and diagnostics
+    only, so correlation lag can no longer cost a correct report.
+  - **FR-010** — how the tagged-commit guarantee is enforced: **an optional
+    commit input** the release automation checks out and refuses to tag
+    unless it is still the branch tip at tag time. Assert-only and
+    after-the-fact detection were declined because both leave a wrong tag
+    publishable.
+- Folding the answers in added FR-002a, FR-007a and FR-010a, and changed the
+  requirements and scenarios that had been written to stay neutral between
+  the options — chiefly US1 scenarios 2 and 3, FR-005, FR-008, FR-015,
+  FR-016, FR-018, SC-005, and the "release happened but was never correlated"
+  edge case, which now reports the release on the tag rather than staying
+  silent. Nothing blocks `/speckit-plan`.
 - Requirement wording deliberately avoids naming workflow files, step ids,
   or API endpoints. Where the spec names spec 045's FR-016, FR-020, FR-021
   and FR-027, it is citing an already-agreed requirement of the feature this
