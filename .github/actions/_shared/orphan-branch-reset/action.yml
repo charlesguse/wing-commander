@@ -1,0 +1,109 @@
+# The orphan-branch force-reset idiom, in one home.
+#
+# Extracted from auto-release.yml's "Close prior leftovers and reset the
+# default branch" step and auto-update-spec-kit.yml's "Scaffold and
+# force-push the candidate into the scratch repository" step -- both clone
+# a target repository over a tokenised URL, detach from and delete an
+# existing branch, recreate it as an orphan with an empty tree, and
+# force-push one placeholder commit, so a caller can then scaffold real
+# content onto a known-empty branch. See
+# specs/049-single-home-release-idioms/contracts/orphan-branch-reset.md
+# and research.md D1/D2.
+#
+# This composite's contract ends at "an empty-tree branch exists on the
+# remote, ready for real content" -- everything before it (issue/PR
+# cleanup) and after it (a caller's own scaffolding, commit, and push) is
+# the call site's own step, never re-implemented here.
+#
+# Internal to this repository (constitution VII's underscore-prefixed-
+# directory clarification, specs/049): never resolved by a workflow_call
+# stage or a published composite; Gate 53 enforces that.
+name: orphan-branch-reset
+description: >
+  Clones a target repository, force-resets one branch to an empty tree via
+  detach/delete/orphan/clear, and force-pushes a single placeholder commit.
+
+inputs:
+  token:
+    description: Already-minted, already-verified token for the target repository
+    required: true
+  repo:
+    description: "owner/name of the target repository"
+    required: true
+  branch:
+    description: Branch to reset
+    required: true
+  bot-name:
+    description: "Commit identity, e.g. wing-commander-auto-release[bot]"
+    required: true
+  bot-email:
+    description: "Commit identity email, matching [bot]@users.noreply.github.com"
+    required: true
+  workdir:
+    description: Local clone directory name (caller-chosen so two callers in one job never collide)
+    required: true
+  commit-message:
+    description: The placeholder commit message
+    required: true
+
+outputs:
+  ok:
+    description: "\"true\"/\"false\" -- whether the clone, reset, and push all succeeded"
+    value: ${{ steps.reset.outputs.ok }}
+  failure-stage:
+    description: One of clone | push | "" (empty on success)
+    value: ${{ steps.reset.outputs.failure-stage }}
+
+runs:
+  using: composite
+  steps:
+    - name: Force-reset the branch to an empty tree
+      id: reset
+      shell: bash
+      env:
+        TOKEN: ${{ inputs.token }}
+        REPO: ${{ inputs.repo }}
+        BRANCH: ${{ inputs.branch }}
+        BOT_NAME: ${{ inputs.bot-name }}
+        BOT_EMAIL: ${{ inputs.bot-email }}
+        WORKDIR: ${{ inputs.workdir }}
+        COMMIT_MESSAGE: ${{ inputs.commit-message }}
+      run: |
+        set -uo pipefail
+
+        rm -rf "$WORKDIR"
+        auth_url="https://x-access-token:${TOKEN}@github.com/${REPO}.git"
+        if ! git clone --quiet "$auth_url" "$WORKDIR" 2>"$RUNNER_TEMP/orphan-branch-reset-clone-err.txt"; then
+          echo "ok=false" >> "$GITHUB_OUTPUT"
+          echo "failure-stage=clone" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        (
+          cd "$WORKDIR"
+          # Rewritten back to the plain HTTPS URL before this step ends, so
+          # the token is never left in .git/config (FR-002's load-bearing
+          # property).
+          git remote set-url origin "https://github.com/${REPO}.git"
+          git config user.name "$BOT_NAME"
+          git config user.email "$BOT_EMAIL"
+          if git rev-parse --verify HEAD >/dev/null 2>&1; then
+            git checkout --quiet --detach
+            git branch -D "$BRANCH" >/dev/null 2>&1 || true
+            git checkout --quiet --orphan "$BRANCH"
+            git rm -rq --cached . >/dev/null 2>&1 || true
+            find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          else
+            git checkout --quiet -b "$BRANCH"
+          fi
+          git commit --quiet --allow-empty -m "$COMMIT_MESSAGE"
+        )
+
+        if ! git -C "$WORKDIR" push --force --quiet "$auth_url" "HEAD:refs/heads/${BRANCH}" 2>"$RUNNER_TEMP/orphan-branch-reset-push-err.txt"; then
+          echo "ok=false" >> "$GITHUB_OUTPUT"
+          echo "failure-stage=push" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        echo "ok=true" >> "$GITHUB_OUTPUT"
+        echo "failure-stage=" >> "$GITHUB_OUTPUT"
