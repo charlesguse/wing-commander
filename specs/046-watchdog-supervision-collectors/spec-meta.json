@@ -3,6 +3,6 @@
   "spec_dir": "specs/046-watchdog-supervision-collectors",
   "feature_num": "046",
   "stage": "implement",
-  "iteration": 1,
+  "iteration": 2,
   "spec_branch": "spec/046-watchdog-supervision-collectors"
 }
