@@ -2565,6 +2565,29 @@ jobs:
             echo "suppressed=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # research.md R9 (specs/046-watchdog-supervision-collectors): a
+      # narrative-drift Finding is fully diagnosed, fingerprinted, and
+      # dedup-searched exactly like any other class below — this step only
+      # decides, via a fixed class check, whether `act`'s `Ensure
+      # pipeline-defect issue` step gets to run at all (FR-025). It sits
+      # beside the coexistence check above, never inside it: coexistence
+      # means "someone else already reported this exact problem";
+      # issue-exemption means "this class is permanently cosmetic-severity
+      # by design." Neither the evidence-validity gate, fingerprint, nor
+      # dedup steps below are touched (FR-032).
+      - name: Determine issue-filing eligibility
+        id: eligibility
+        shell: bash
+        env:
+          FINDING_CLASS: ${{ steps.finding.outputs.class }}
+        run: |
+          set -uo pipefail
+          if [ "$FINDING_CLASS" = "narrative-drift" ]; then
+            echo "issueless=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "issueless=false" >> "$GITHUB_OUTPUT"
+          fi
+
       # Registers a genuinely new finding class in the label vocabulary the
       # diagnose schema is compiled from, so the NEXT run is offered it as an
       # enum choice instead of inventing another synonym. Deliberately here
@@ -2787,6 +2810,7 @@ jobs:
           CANONICAL_FACTS: ${{ steps.fingerprint.outputs.canonical-facts }}
           DEDUP_OUTCOME: ${{ steps.dedup.outputs.outcome }}
           DEDUP_ISSUE: ${{ steps.dedup.outputs.issue-number }}
+          ISSUELESS: ${{ steps.eligibility.outputs.issueless }}
         run: |
           set -uo pipefail
           jq -n \
@@ -2798,7 +2822,8 @@ jobs:
             --arg canonicalfacts "${CANONICAL_FACTS:-}" \
             --arg dedup "${DEDUP_OUTCOME:-}" \
             --arg dedupissue "${DEDUP_ISSUE:-}" \
-            '{suppressed: $suppressed, "evidence-valid": $evidencevalid, "evidence-reason": $evidencereason, fingerprint: $fingerprint, "short-fingerprint": $shortfp, "canonical-facts": $canonicalfacts, dedup: $dedup, "dedup-issue": $dedupissue}' \
+            --argjson issueless "${ISSUELESS:-false}" \
+            '{suppressed: $suppressed, "evidence-valid": $evidencevalid, "evidence-reason": $evidencereason, fingerprint: $fingerprint, "short-fingerprint": $shortfp, "canonical-facts": $canonicalfacts, dedup: $dedup, "dedup-issue": $dedupissue, issueless: $issueless}' \
             > "${{ runner.temp }}/watchdog-triage-decision.json"
 
       - name: Upload triage decision artifact
@@ -2999,6 +3024,7 @@ jobs:
               echo "canonical-facts=$(jq -r '."canonical-facts" // ""' "$f")"
               echo "dedup=$(jq -r '.dedup' "$f")"
               echo "dedup-issue=$(jq -r '."dedup-issue"' "$f")"
+              echo "issueless=$(jq -r '.issueless // false' "$f")"
             } >> "$GITHUB_OUTPUT"
           else
             echo "::warning::no triage decision artifact for index ${{ matrix.index }} — treating this Finding as report-only."
@@ -3020,6 +3046,7 @@ jobs:
               # ""`, which fails the job under this run: block's `-e`.
               echo "dedup=unknown"
               echo "dedup-issue="
+              echo "issueless=false"
             } >> "$GITHUB_OUTPUT"
           fi
 
@@ -3135,7 +3162,8 @@ jobs:
           steps.decision.outputs.evidence-valid != 'false' &&
           steps.write-suppression.outputs.suppressed != 'true' &&
           steps.decision.outputs.dedup != 'data-integrity' &&
-          steps.decision.outputs.dedup != 'unknown'
+          steps.decision.outputs.dedup != 'unknown' &&
+          steps.decision.outputs.issueless != 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           DEDUP_OUTCOME: ${{ steps.decision.outputs.dedup }}
@@ -3225,6 +3253,7 @@ jobs:
           ISSUE_NUMBER: ${{ steps.ensure-issue.outputs.issue-number }}
           WRITE_SUPPRESSED: ${{ steps.write-suppression.outputs.suppressed }}
           WRITE_SUPPRESS_REASON: ${{ steps.write-suppression.outputs.reason }}
+          ISSUELESS: ${{ steps.decision.outputs.issueless }}
         run: |
           set -uo pipefail
           {
@@ -3246,6 +3275,17 @@ jobs:
                 self-dispatch-cap) echo "_Self-dispatch cap reached — reporting only, no write performed._" ;;
                 paused) echo "_The watchdog's writes are paused (\`WING_COMMANDER_WATCHDOG_PAUSED\`) — reporting only. Gate your wrapper on the same variable to stop the run entirely._" ;;
                 *) echo "_Write suppressed — reporting only._" ;;
+              esac
+            elif [ "$ISSUELESS" = "true" ]; then
+              # research.md R9: distinct wording from the coexistence-
+              # suppressed branch above — this class is permanently
+              # cosmetic-severity by design, not "someone else already
+              # handled it." Still distinguishes new vs. recurrence, since
+              # dedup ran normally for this Finding.
+              case "$DEDUP_OUTCOME" in
+                none) echo "_Cosmetic narrative mismatch — reported here only; no \`pipeline-defect\` issue filed by design (narrative-drift is issue-exempt)._" ;;
+                match-open|match-closed) echo "_Cosmetic narrative mismatch — recurrence of a previously reported mismatch, reported here only; no \`pipeline-defect\` issue filed by design (narrative-drift is issue-exempt)._" ;;
+                *) echo "_Cosmetic narrative mismatch — reported here only; no \`pipeline-defect\` issue filed by design (narrative-drift is issue-exempt)._" ;;
               esac
             else
               case "$DEDUP_OUTCOME" in
