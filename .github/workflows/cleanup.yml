@@ -801,7 +801,14 @@ jobs:
           COST_LINE: ${{ steps.cost-line.outputs.line }}
         run: |
           f="${{ runner.temp }}/cleanup-summary.md"
-          if [ "${{ steps.summarize-verdict.outputs.verdict }}" != "healthy" ] || [ ! -s "$f" ]; then
+          verdict="${{ steps.summarize-verdict.outputs.verdict }}"
+          # A rate-limited verdict gets its own fallback line (FR-015a,
+          # specs/047-rate-limited-verdict): "automated summary unavailable"
+          # alone reads as a crash, and this was a usage-window outage, not
+          # one -- the lifecycle issue still closes normally either way.
+          if [ "$verdict" = "rate-limited" ]; then
+            echo "Specification merged (the usage window was exhausted during the final summarize step; automated summary unavailable)." > "$f"
+          elif [ "$verdict" != "healthy" ] || [ ! -s "$f" ]; then
             echo "Specification merged (automated summary unavailable)." > "$f"
           fi
           [ -n "$COST_LINE" ] && printf '\n%s\n' "$COST_LINE" >> "$f"

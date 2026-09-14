@@ -260,7 +260,7 @@ outcome.
 
 ### Implementation for User Story 3
 
-- [ ] T008 [P] [US3] In
+- [X] T008 [P] [US3] In
   `.github/actions/wing-commander-metrics-summary/action.yml`'s
   outcome-resolution statement (`case "$VERDICT" in
   healthy|exhausted|failed|unclassifiable) ...`, ~line 468), add
@@ -273,7 +273,7 @@ outcome.
   `**Verdict**: %s — %s` line needs no other change; it renders whatever
   it is handed (FR-014).
 
-- [ ] T009 [P] [US3] Author
+- [X] T009 [P] [US3] Author
   `.github/scripts/verify-rate-limited-exemption.py` (Gate 51), following
   `.github/scripts/verify-gate-23.py`'s existing YAML-parsed-never-grepped
   template. It must walk every step, in every job, in every
@@ -299,7 +299,7 @@ outcome.
   registration (must FAIL, by name) — proving the gate can fail its own
   subject (constitution VIII).
 
-- [ ] T010 [US3] Wire Gate 51 into `.github/workflows/lint-workflows.yml`'s
+- [X] T010 [US3] Wire Gate 51 into `.github/workflows/lint-workflows.yml`'s
   `lint` job, immediately after the existing Gate 50 steps (~line 3138-
   3150): a "Gate 51 — every verdict-gated issue/comment write excludes
   rate-limited or is a registered handler" step running `python3
@@ -308,7 +308,7 @@ outcome.
   passes for the new script in the same PR (it fails on any orphaned
   `verify-*.py`). Depends on T009.
 
-- [ ] T011 [P] [US3] Run Gate 51 (from T010) against the repository and
+- [X] T011 [P] [US3] Run Gate 51 (from T010) against the repository and
   fix every non-watchdog site it reports. Two candidates are already
   known (research.md R7 — not an exhaustive list; Gate 51's own run is
   authoritative): `finalize.yml`'s "Verify agent output"/"Announce
@@ -327,7 +327,7 @@ outcome.
   that research.md did not anticipate. Depends on T010 (needs the gate to
   confirm each fix).
 
-- [ ] T012 [US3] Confirm (no code expected) that every stage's existing
+- [X] T012 [US3] Confirm (no code expected) that every stage's existing
   "Fail loud on non-healthy agent verdict" step is unmodified by T008-
   T011: `rate-limited` is not `healthy`, so each one still fails its job
   for it exactly as for `exhausted`/`failed`/`unclassifiable`, and no

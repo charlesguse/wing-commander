@@ -797,10 +797,16 @@ jobs:
             (${{ steps.summarize-ceiling.outputs.ceiling }}) is the only hard
             stop; this is an observability note, not a failure.
 
-      # Fail loudly rather than opening a PR with incomplete content.
+      # Fail loudly rather than opening a PR with incomplete content. Skipped
+      # for a rate-limited verdict (FR-015a, specs/047-rate-limited-verdict):
+      # a usage-window rejection never produced real output by design, so
+      # there is nothing to verify, and this step's failed=true output must
+      # not fire the "Announce finalize failure" comment below for it — the
+      # unchanged "Fail loud on non-healthy agent verdict" step still fails
+      # the job for it (FR-015).
       - name: Verify agent output
         id: verify-agent-output
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true' && steps.summarize-verdict.outputs.verdict != 'rate-limited'
         env:
           SUMMARIZE_VERDICT: ${{ steps.summarize-verdict.outputs.verdict }}
         run: |

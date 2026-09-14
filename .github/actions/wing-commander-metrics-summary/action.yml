@@ -460,12 +460,17 @@ runs:
         fi
 
         # --- record outcome: reuse the caller's own wing-commander-agent-verdict
-        # output when wired (already healthy/exhausted/failed/unclassifiable);
-        # otherwise fall back to the same classification that action performs
+        # output when wired (already
+        # healthy/exhausted/rate-limited/failed/unclassifiable); otherwise
+        # fall back to the same classification that action performs
         # (order matters: error_max_turns before is_error, same as there).
+        # The fallback below is deliberately NOT taught rate-limiting
+        # (specs/047-rate-limited-verdict/research.md R3) — every in-scope
+        # call site already passes verdict explicitly, and teaching the
+        # fallback too would create the second home FR-006 forbids.
         outcome_val="unclassifiable"
         case "$VERDICT" in
-          healthy|exhausted|failed|unclassifiable) outcome_val="$VERDICT" ;;
+          healthy|exhausted|rate-limited|failed|unclassifiable) outcome_val="$VERDICT" ;;
         esac
         if [ -z "$VERDICT" ]; then
           if [ "$subtype" = "error_max_turns" ]; then
