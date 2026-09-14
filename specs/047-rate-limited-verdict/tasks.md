@@ -351,7 +351,7 @@ nothing extra about it.
 **Purpose**: Documentation and the full local gate suite this repository
 requires before any push (CLAUDE.md "Before pushing").
 
-- [ ] T013 [P] Update `docs/architecture.md`'s existing verdict-vocabulary
+- [X] T013 [P] Update `docs/architecture.md`'s existing verdict-vocabulary
   paragraph (currently "a `wing-commander-agent-verdict` step classifies
   each run (healthy/exhausted/failed/unclassifiable) from the transcript
   alone", ~line 233-239) to list `rate-limited` in the same enumeration,
@@ -359,7 +359,7 @@ requires before any push (CLAUDE.md "Before pushing").
   51, immediately after the existing Gate 22/23 sentence (FR-017).
   Depends on T003 (Gate 22's new cases) and T010 (Gate 51 exists).
 
-- [ ] T014 Run `python .github/scripts/run-local-gates.py` (the full
+- [X] T014 Run `python .github/scripts/run-local-gates.py` (the full
   PR-time gate suite, per CLAUDE.md) and confirm it passes, including
   Gate 22, Gate 36, and the new Gate 51, and that no other gate regresses
   (SC-005). Then walk quickstart.md's twelve scenarios end to end as a
