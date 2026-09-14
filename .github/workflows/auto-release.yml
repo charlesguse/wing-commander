@@ -812,22 +812,35 @@ jobs:
           # whatever the layer. `cancelled` is the run being stopped, not
           # a failure: summarised, never filed. `skipped` and `success`
           # fall through to the outputs, which then mean what they say.
-          file_job_failure() {
-            local job="$1" role="$2"
-            echo "infrastructure failure: the ${job} job did not succeed" >> "$GITHUB_STEP_SUMMARY"
+          # The one home of the failure body's shape (data-model.md "Failure
+          # report": classification, verified head, failing check, expected,
+          # observed, evidence). Every filing path below calls this; none
+          # spells the fields out itself.
+          write_failure_body() {
+            local classification="$1" failing_check="$2" expected="$3" observed="$4" evidence="$5"
             {
-              echo "**Classification**: infrastructure (job failure)"
+              echo "**Classification**: ${classification}"
               echo ""
               echo "**Verified head**: ${HEAD_SHA:-unknown (detect did not report one)}"
               echo ""
-              echo "**Failing check**: the \`${job}\` job (${role}) ended with result \`failure\` before writing its outputs"
+              echo "**Failing check**: ${failing_check}"
               echo ""
-              echo "**Expected**: the job to succeed, or to degrade to a verdict this report could name"
+              echo "**Expected**: ${expected}"
               echo ""
-              echo "**Observed**: no outputs from \`${job}\`; nothing downstream of it ran, and nothing was cut"
+              echo "**Observed**: ${observed}"
               echo ""
-              echo "**Evidence**: ${RUN_URL}"
+              echo "**Evidence**: ${evidence}"
             } > "$RUNNER_TEMP/auto-release-failure-body.md"
+          }
+
+          file_job_failure() {
+            local job="$1" role="$2"
+            echo "infrastructure failure: the ${job} job did not succeed" >> "$GITHUB_STEP_SUMMARY"
+            write_failure_body "infrastructure (job failure)" \
+              "the \`${job}\` job (${role}) ended with result \`failure\` before writing its outputs" \
+              "the job to succeed, or to degrade to a verdict this report could name" \
+              "no outputs from \`${job}\`; nothing downstream of it ran, and nothing was cut" \
+              "${RUN_URL}"
             file_or_update_failure "$RUNNER_TEMP/auto-release-failure-body.md"
           }
 
@@ -856,17 +869,34 @@ jobs:
             exit 0
           fi
 
+          # A cancelled verify-e2e wrote no verdict either, and is the run
+          # being stopped (a hung poll cancelled by hand), not a failure:
+          # summarised, never filed -- the same rule as the other three
+          # jobs (#325).
+          case "$VERIFY_RESULT" in
+            cancelled)
+              echo "run cancelled during verify-e2e -- nothing verified, nothing cut" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+          esac
+
           # verify-e2e's contract is a verdict on every path, but a job that
           # dies before any step writes one (a runner failure, an action
           # that cannot download) hands this job an empty string; jq on
           # empty input prints nothing and exits 0, so every field below
           # would render blank rather than "unknown". Substitute a verdict
-          # that says exactly that and points at this run, carrying the
-          # job's own result so the body says whether it crashed or was
-          # skipped.
+          # that says exactly that and points at this run. The observed
+          # text follows the job's own result: a job that succeeded and
+          # still handed over no JSON object did not "stop", it broke its
+          # contract, and the body must not claim otherwise.
           if ! printf '%s' "$VERDICT_JSON" | jq -e 'type == "object"' >/dev/null 2>&1; then
-            VERDICT_JSON="$(jq -n --arg head "$HEAD_SHA" --arg url "$RUN_URL" --arg result "${VERIFY_RESULT:-unknown}" \
-              '{outcome:"fail-infra", verified_head:$head, failing_check:"verify-e2e produced no verdict", expected:"a JSON verdict from verify-e2e on every path", observed:("the job stopped before any step wrote one (job result: " + $result + ")"), evidence_url:$url}')"
+            if [ "$VERIFY_RESULT" = "success" ]; then
+              no_verdict_observed="the job succeeded but its verdict output is not a JSON object (contract broken; the verdict chain in verify-e2e's outputs: block dropped it)"
+            else
+              no_verdict_observed="the job stopped before any step wrote one (job result: ${VERIFY_RESULT:-unknown})"
+            fi
+            VERDICT_JSON="$(jq -n --arg head "$HEAD_SHA" --arg url "$RUN_URL" --arg observed "$no_verdict_observed" \
+              '{outcome:"fail-infra", verified_head:$head, failing_check:"verify-e2e produced no verdict", expected:"a JSON verdict from verify-e2e on every path", observed:$observed, evidence_url:$url}')"
           fi
           outcome="$(printf '%s' "$VERDICT_JSON" | jq -r '.outcome // empty' 2>/dev/null || true)"
 
@@ -878,19 +908,7 @@ jobs:
             classification="pipeline defect"
             [ "$outcome" = "fail-infra" ] && classification="infrastructure"
             echo "verification failed: ${failing_check}" >> "$GITHUB_STEP_SUMMARY"
-            {
-              echo "**Classification**: ${classification} (${outcome:-unknown})"
-              echo ""
-              echo "**Verified head**: ${HEAD_SHA}"
-              echo ""
-              echo "**Failing check**: ${failing_check}"
-              echo ""
-              echo "**Expected**: ${expected}"
-              echo ""
-              echo "**Observed**: ${observed}"
-              echo ""
-              echo "**Evidence**: ${evidence_url}"
-            } > "$RUNNER_TEMP/auto-release-failure-body.md"
+            write_failure_body "${classification} (${outcome:-unknown})" "$failing_check" "$expected" "$observed" "$evidence_url"
             file_or_update_failure "$RUNNER_TEMP/auto-release-failure-body.md"
             exit 0
           fi
@@ -943,19 +961,11 @@ jobs:
           # and there is no release.yml run to point at.
           if [ "$RELEASE_OUTCOME" = "tip-unresolved" ]; then
             echo "infrastructure failure: could not resolve main's current tip before dispatch" >> "$GITHUB_STEP_SUMMARY"
-            {
-              echo "**Classification**: infrastructure (tip unresolved)"
-              echo ""
-              echo "**Verified head**: ${HEAD_SHA}"
-              echo ""
-              echo "**Failing check**: reading main's current tip (repos/${GITHUB_REPOSITORY}/commits/main) before dispatching release.yml"
-              echo ""
-              echo "**Expected**: a SHA to compare against the verified head"
-              echo ""
-              echo "**Observed**: the read returned nothing, so release.yml was not dispatched"
-              echo ""
-              echo "**Evidence**: ${RUN_URL}"
-            } > "$RUNNER_TEMP/auto-release-failure-body.md"
+            write_failure_body "infrastructure (tip unresolved)" \
+              "reading main's current tip (repos/${GITHUB_REPOSITORY}/commits/main) before dispatching release.yml" \
+              "a SHA to compare against the verified head" \
+              "the read returned nothing, so release.yml was not dispatched" \
+              "${RUN_URL}"
             file_or_update_failure "$RUNNER_TEMP/auto-release-failure-body.md"
             exit 0
           fi

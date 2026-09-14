@@ -31,7 +31,6 @@ Requires: bash, jq. See wc_shell_harness.py for running this on Windows.
 """
 import json
 import os
-import re
 import shutil
 import sys
 import tempfile
@@ -123,6 +122,26 @@ SCENARIOS = [
         body_contains=["infrastructure", "verify-e2e produced no verdict",
                        "job result: failure", RUN_URL],
         summary_contains="verification failed",
+    ),
+    dict(
+        name="run cancelled during verify-e2e (a hung poll stopped by hand): "
+             "summarised, nothing filed -- not an infrastructure failure",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="cancelled"),
+        filed=None,
+        summary_contains="cancelled",
+        summary_excludes="verification failed",
+    ),
+    dict(
+        name="verify-e2e succeeded but its verdict is not a JSON object: "
+             "fail-infra whose body says the contract broke, not that the "
+             "job stopped",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
+                 VERDICT_JSON="pass"),
+        filed="create",
+        body_contains=["infrastructure", "verify-e2e produced no verdict", "contract broken"],
+        body_excludes=["the job stopped"],
     ),
     dict(
         name="a fail-wrong-output verdict: pipeline defect, filed with the "
@@ -350,28 +369,44 @@ def suite(script, env, tmproot):
 # --------------------------------------------------------------------------
 # Mutations: each puts one #325 defect back.
 # --------------------------------------------------------------------------
-def strip_case(script, var_name):
-    """Remove the `case "$VAR" in ... esac` block that reads a job result."""
-    pattern = re.compile(r'[ \t]*case "\$' + re.escape(var_name) + r'" in\b.*?\n[ \t]*esac\n',
-                         re.DOTALL)
-    new = pattern.sub("", script, count=1)
-    if new == script:
-        sys.exit(f"::error::verify-auto-release-report: could not locate the "
-                 f"{var_name!r} case block to mutate — the step text may have "
-                 f"changed shape; update this harness alongside it.")
-    return new
+def blind_case(script, var_name):
+    """Make the `case "$VAR" in` that reads a job result match nothing: the
+    subject becomes a string no arm names, so the step behaves as if it
+    never read that result -- the pre-#325 shape -- while the script stays
+    syntactically whole. (Deleting the block instead left an empty `if`
+    body for the one case nested inside an `if`, which failed every
+    scenario with a bash parse error rather than for the reason under test.)"""
+    old = 'case "$' + var_name + '" in'
+    if script.count(old) != 1:
+        sys.exit(f"::error::verify-auto-release-report: expected exactly one "
+                 f"{old!r} to mutate, found {script.count(old)} — the step text "
+                 f"may have changed shape; update this harness alongside it.")
+    return script.replace(old, 'case "mutated-$' + var_name + '" in', 1)
 
 
 def mut_ignore_detect_result(script):
-    return strip_case(script, "DETECT_RESULT")
+    return blind_case(script, "DETECT_RESULT")
+
+
+def mut_ignore_verify_result(script):
+    return blind_case(script, "VERIFY_RESULT")
 
 
 def mut_ignore_decide_result(script):
-    return strip_case(script, "DECIDE_RESULT")
+    return blind_case(script, "DECIDE_RESULT")
 
 
 def mut_ignore_dispatch_result(script):
-    return strip_case(script, "DISPATCH_RESULT")
+    return blind_case(script, "DISPATCH_RESULT")
+
+
+def mut_no_verdict_always_stopped(script):
+    old = 'if [ "$VERIFY_RESULT" = "success" ]; then'
+    if script.count(old) != 1:
+        sys.exit("::error::verify-auto-release-report: could not locate the "
+                 "no-verdict wording branch to mutate — the step text may have "
+                 "changed shape; update this harness alongside it.")
+    return script.replace(old, 'if false; then', 1)
 
 
 def mut_tip_unresolved_is_a_release_failure(script):
@@ -394,6 +429,9 @@ def mut_always_point_at_release_run(script):
 
 MUTATIONS = [
     ("report ignoring detect's job result (#325 case 1)", mut_ignore_detect_result),
+    ("report filing a cancelled verify-e2e as infrastructure", mut_ignore_verify_result),
+    ("a succeeded verify-e2e with no verdict described as 'the job stopped'",
+     mut_no_verdict_always_stopped),
     ("report ignoring decide-version's job result (#325 case 2)", mut_ignore_decide_result),
     ("report ignoring dispatch-release's job result", mut_ignore_dispatch_result),
     ("tip-unresolved reported as a release failure (#325 case 3)",
