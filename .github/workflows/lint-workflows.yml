@@ -3149,6 +3149,21 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-release-contract.py --self-test
 
+      # Gate 51 — specs/047-rate-limited-verdict, FR-015b: every step, in
+      # every job, whose run: writes `gh issue create`/`gh issue comment`/
+      # `gh pr comment` and whose own if:, or its job's if:, is gated on a
+      # `.outputs.verdict`-shaped expression must either narrow that
+      # condition to exclude `rate-limited`, or be one of the small
+      # registered EXEMPT_SITES handlers (contracts/exemption-gate.md) — so
+      # a future stage's issue-writing step cannot silently reintroduce the
+      # "usage outage reads as a crash" filing this feature exists to stop.
+      - name: Gate 51 — every verdict-gated issue/comment write excludes rate-limited or is a registered handler
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-rate-limited-exemption.py
+      - name: Gate 51 self-test — the enumeration and exemption logic fails its own subject
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-rate-limited-exemption.py --self-test
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

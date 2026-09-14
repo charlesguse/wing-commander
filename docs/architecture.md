@@ -231,13 +231,21 @@ rejected once its inflated `.num_turns` crossed the same number. Every call
 site now feeds `--max-turns` a runaway ceiling (`wing-commander-turn-ceiling`,
 intended budget × 2.5, rounded up) instead of the intended budget directly,
 and a `wing-commander-agent-verdict` step classifies each run
-(healthy/exhausted/failed/unclassifiable) from the transcript alone, so a
-stage can tell a post-hoc-rejected-but-healthy run from a genuine failure and
-continue rather than fail loud on the former. Gate 22
+(healthy/exhausted/rate-limited/failed/unclassifiable) from the transcript
+alone, so a stage can tell a post-hoc-rejected-but-healthy run from a genuine
+failure and continue rather than fail loud on the former. Gate 22
 (`verify-agent-verdict.py`) proves that classification under mutation; Gate 23
 (`verify-gate-23.py`) proves every agent call site in the repository carries
 the full ceiling/verdict/fail-loud wiring and catches both a newly-added
-unprotected site and a ceiling regressed back to its intended budget.
+unprotected site and a ceiling regressed back to its intended budget. Gate 22
+also carries the `rate-limited` cases (a terminal API 429, a mid-run 429 the
+runtime recovered from, and a non-429 API error that must not be widened
+into `rate-limited`), and Gate 51 (`verify-rate-limited-exemption.py`,
+`specs/047-rate-limited-verdict/`) enumerates every verdict-gated issue/
+comment-writing step across the fleet and fails unless it excludes
+`rate-limited` or is one of the two sanctioned watchdog handlers, so a
+usage-window outage can never silently reintroduce a `pipeline-defect`-style
+filing.
 
 **Bedrock pass-through** (`specs/016-bedrock-support/`): the per-stage
 `use-bedrock` input changes only which backend serves these already-tiered

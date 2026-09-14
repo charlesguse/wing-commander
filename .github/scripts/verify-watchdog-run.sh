@@ -65,6 +65,31 @@ fi
 # (The step/artifact checks below no-op harmlessly on a zero-job run; the
 # two reasons above already fail it.)
 
+# ── Checks 3-6 setup: step-level truth in the conditional reporting steps ──
+# Fetched here (before check 2) because check 2's duration-floor arm below
+# needs the rate-limited evidence this section computes.
+jobs_json="$(api "actions/runs/$RUN_ID/jobs?per_page=100")" || { echo "::error::cannot fetch jobs"; exit 2; }
+
+# step <job-name-suffix> <step-name> -> conclusion (empty if job/step absent).
+# Job display names carry the reusable-workflow prefix ("watchdog / diagnose");
+# match on suffix so this works for stage 8, 8b, and direct calls alike.
+step() {
+  jq -r --arg j "$1" --arg s "$2" \
+    '[.jobs[] | select(.name == $j or (.name | endswith("/ " + $j)))
+      | .steps[] | select(.name == $s) | .conclusion] | first // empty' <<<"$jobs_json"
+}
+
+# Rate-limited evidence: the diagnose job's "Report 'rate-limited' to
+# lifecycle issue" step ran (not skipped) exactly when the classifier found
+# a usage-window rejection (contracts/verifier-suppression.md,
+# specs/047-rate-limited-verdict) — no new API call, jobs_json already
+# covers this step. An unreadable lookup (empty $c, e.g. a gh stub failure
+# upstream) resolves to false: fail safe, never silently suppress a real
+# reason.
+c="$(step diagnose 'Report "rate-limited" to lifecycle issue')"
+rate_limited=false
+[ -n "$c" ] && [ "$c" != "skipped" ] && rate_limited=true
+
 # ── Check 2: runtime anomaly vs. this workflow's own successful history ────
 # Median of the last 20 successful runs (excluding this one). Bounds are
 # deliberately loose — this gates issue creation, and a run with real
@@ -89,25 +114,17 @@ if [ -n "$hist" ] && [ "$count" -ge 3 ]; then
   ceiling=$(( median * 6 )); [ "$ceiling" -lt 900 ] && ceiling=900
   note "duration band from $count runs: median=${median}s floor=${floor}s ceiling=${ceiling}s"
   if [ "$duration" -lt "$floor" ]; then
-    reason "run finished in ${duration}s — under the ${floor}s floor (median ${median}s); too fast to have done real work"
+    if [ "$rate_limited" = "true" ]; then
+      note "run finished in ${duration}s, under the ${floor}s floor — expected, rate-limited run (one-turn rejection)"
+    else
+      reason "run finished in ${duration}s — under the ${floor}s floor (median ${median}s); too fast to have done real work"
+    fi
   elif [ "$duration" -gt "$ceiling" ]; then
     reason "run took ${duration}s — over the ${ceiling}s ceiling (median ${median}s); something stalled"
   fi
 else
   note "fewer than 3 prior successful runs; skipping the duration band"
 fi
-
-# ── Checks 3-6: step-level truth in the conditional reporting steps ─────────
-jobs_json="$(api "actions/runs/$RUN_ID/jobs?per_page=100")" || { echo "::error::cannot fetch jobs"; exit 2; }
-
-# step <job-name-suffix> <step-name> -> conclusion (empty if job/step absent).
-# Job display names carry the reusable-workflow prefix ("watchdog / diagnose");
-# match on suffix so this works for stage 8, 8b, and direct calls alike.
-step() {
-  jq -r --arg j "$1" --arg s "$2" \
-    '[.jobs[] | select(.name == $j or (.name | endswith("/ " + $j)))
-      | .steps[] | select(.name == $s) | .conclusion] | first // empty' <<<"$jobs_json"
-}
 
 # Any job red at all (belt-and-braces; conclusion above should already say).
 failed_jobs="$(jq -r '[.jobs[] | select(.conclusion != null and .conclusion != "success" and .conclusion != "skipped") | .name] | join(", ")' <<<"$jobs_json")"
@@ -176,7 +193,11 @@ if gh run download "$RUN_ID" -R "$REPO" -n claude-execution-output-diagnose -D "
     if ! jq -e '([.[] | select(.type=="result")] | last) as $r
         | $r != null and $r.is_error == false and $r.subtype == "success"' \
         "$out" >/dev/null 2>&1; then
-      reason "diagnose execution log has no successful terminal result record (empty output, is_error, or an error subtype) — the agent never produced a real verdict"
+      if [ "$rate_limited" = "true" ]; then
+        note "diagnose execution log has no successful terminal result — expected, rate-limited run"
+      else
+        reason "diagnose execution log has no successful terminal result record (empty output, is_error, or an error subtype) — the agent never produced a real verdict"
+      fi
     fi
     # Legacy fabrication tripwire (the old prompt's example locator).
     if grep -aq 'WebFetch denied 4 times across turns 12,15,19,22' "$out"; then

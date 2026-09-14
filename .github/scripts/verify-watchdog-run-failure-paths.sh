@@ -222,6 +222,114 @@ scenarios() {
   fi
   printf '' > "$work/fixtures/issue-search.txt"
   sed -i 's/"conclusion": "failure"/"conclusion": "success"/' "$work/fixtures/run.json"
+
+  # ── specs/047-rate-limited-verdict: the verifier's rate-limited suppression ──
+  cp "$work/fixtures/run.json" "$work/run.json.bak_rl"
+  cp "$work/fixtures/jobs.json" "$work/jobs.json.bak_rl"
+  cp "$work/fixtures/artifact.json" "$work/artifact.json.bak_rl"
+
+  # A rate-limited diagnose job: "Report rate-limited..." ran, "Report
+  # diagnose failed..." was skipped, a short (under-floor) run duration, and
+  # a terminal artifact shaped like the real #300/#278 evidence (429).
+  cat > "$work/fixtures/run.json" <<'JSON'
+{"id": 9001, "conclusion": "success", "workflow_id": 777,
+ "run_started_at": "2026-08-25T01:00:00Z", "updated_at": "2026-08-25T01:00:15Z",
+ "html_url": "https://example.invalid/runs/9001"}
+JSON
+  cat > "$work/fixtures/jobs.json" <<'JSON'
+{"total_count": 3, "jobs": [
+  {"id": 1, "name": "watchdog / collect", "conclusion": "success",
+   "started_at": "2026-08-25T01:00:00Z", "completed_at": "2026-08-25T01:00:05Z",
+   "steps": [
+     {"name": "Report \"could not inspect\" to lifecycle issue", "conclusion": "skipped"}
+   ]},
+  {"id": 2, "name": "watchdog / diagnose", "conclusion": "success",
+   "started_at": "2026-08-25T01:00:05Z", "completed_at": "2026-08-25T01:00:10Z",
+   "steps": [
+     {"name": "Report \"rate-limited\" to lifecycle issue", "conclusion": "success"},
+     {"name": "Report \"diagnose failed\" to lifecycle issue", "conclusion": "skipped"},
+     {"name": "Read back diagnose outcome", "conclusion": "success"}
+   ]},
+  {"id": 3, "name": "watchdog / report-unhandled-failure", "conclusion": "success",
+   "started_at": "2026-08-25T01:00:11Z", "completed_at": "2026-08-25T01:00:14Z",
+   "steps": [
+     {"name": "Determine failed jobs", "conclusion": "success"},
+     {"name": "Report unhandled job failure", "conclusion": "skipped"},
+     {"name": "Report unhandled job failure to run summary", "conclusion": "skipped"}
+   ]}
+]}
+JSON
+  cat > "$work/fixtures/artifact.json" <<'JSON'
+[{"type": "rate_limit_event", "status": "rejected", "resetsAt": "2026-08-25T05:00:00Z"},
+ {"type": "result", "num_turns": 0, "is_error": true, "subtype": "success",
+  "terminal_reason": "api_error", "api_error_status": 429, "result": ""}]
+JSON
+
+  # s7: rate-limited diagnose, nothing else wrong -> exits 0, no pipeline-
+  # defect issue created or commented.
+  run_scenario "$script" '' true
+  created="$(grep -c '^issue create' "$work/calls.log" || true)"
+  commented="$(grep -c '^issue comment' "$work/calls.log" || true)"
+  if [ "$rc" = "0" ] && [ "$created" = "0" ] && [ "$commented" = "0" ]; then
+    ok "$tag s7: rate-limited diagnose alone verifies healthy, no pipeline-defect issue"
+  else
+    fail "$tag s7: expected exit 0 and zero issue create/comment calls; got rc=$rc create=$created comment=$commented"
+  fi
+
+  # s8: rate-limited diagnose AND an unrelated red job (collect) -> exits 1
+  # for the unrelated reason alone; the suppressed reasons stay silent.
+  sed -i 's/"name": "watchdog \/ collect", "conclusion": "success"/"name": "watchdog \/ collect", "conclusion": "failure"/' "$work/fixtures/jobs.json"
+  run_scenario "$script" '' true
+  created="$(grep -c '^issue create' "$work/calls.log" || true)"
+  if [ "$rc" = "1" ] && [ "$created" = "1" ] \
+     && grep -q "failed jobs: watchdog / collect" <<<"$out" \
+     && ! grep -q "too fast to have done real work" <<<"$out" \
+     && ! grep -q "no successful terminal result record" <<<"$out"; then
+    ok "$tag s8: rate-limited diagnose plus an unrelated red job fails, and files, for that reason alone"
+  else
+    fail "$tag s8: expected exit 1 + one issue-create naming only the unrelated red job, got rc=$rc create=$created: $(tail -5 <<<"$out")"
+  fi
+  sed -i 's/"name": "watchdog \/ collect", "conclusion": "failure"/"name": "watchdog \/ collect", "conclusion": "success"/' "$work/fixtures/jobs.json"
+
+  # s9: rate-limited diagnose AND a stalled RUN duration (ceiling breach) ->
+  # exits 1 for the stall alone -- proves the ceiling arm is genuinely
+  # unaffected by the floor-arm suppression.
+  cat > "$work/fixtures/run.json" <<'JSON'
+{"id": 9001, "conclusion": "success", "workflow_id": 777,
+ "run_started_at": "2026-08-25T01:00:00Z", "updated_at": "2026-08-25T02:00:00Z",
+ "html_url": "https://example.invalid/runs/9001"}
+JSON
+  run_scenario "$script" '' false
+  if [ "$rc" = "1" ] && grep -qE "over the [0-9]+s ceiling" <<<"$out" \
+     && ! grep -q "too fast to have done real work" <<<"$out" \
+     && ! grep -q "no successful terminal result record" <<<"$out"; then
+    ok "$tag s9: a rate-limited diagnose plus a stalled run fails for the stall alone"
+  else
+    fail "$tag s9: expected exit 1 naming only the ceiling breach, got rc=$rc: $(tail -5 <<<"$out")"
+  fi
+
+  # s10: the "Report rate-limited..." step is absent from the jobs response
+  # (a degraded/unreadable evidence read, the same real 429 artifact) ->
+  # rate_limited resolves to false and the pre-existing checks (floor,
+  # missing successful terminal result) still fire -- fails safe, never a
+  # silent pass over a run that really was rejected.
+  cp "$work/jobs.json.bak_rl" "$work/fixtures/jobs.json"
+  cat > "$work/fixtures/run.json" <<'JSON'
+{"id": 9001, "conclusion": "success", "workflow_id": 777,
+ "run_started_at": "2026-08-25T01:00:00Z", "updated_at": "2026-08-25T01:00:15Z",
+ "html_url": "https://example.invalid/runs/9001"}
+JSON
+  run_scenario "$script" '' false
+  if [ "$rc" = "1" ] && grep -q "too fast to have done real work" <<<"$out" \
+     && grep -q "no successful terminal result record" <<<"$out"; then
+    ok "$tag s10: the rate-limited report step absent from the jobs response fails safe -- pre-existing checks still fire, never a silent pass"
+  else
+    fail "$tag s10: expected exit 1 with both pre-existing reasons firing, got rc=$rc: $(tail -5 <<<"$out")"
+  fi
+
+  mv "$work/run.json.bak_rl" "$work/fixtures/run.json"
+  mv "$work/jobs.json.bak_rl" "$work/fixtures/jobs.json"
+  mv "$work/artifact.json.bak_rl" "$work/fixtures/artifact.json"
 }
 
 # ── The real script must pass every scenario ───────────────────────────────
@@ -273,5 +381,5 @@ sed 's/if existing="$(gh issue list/existing="$(gh issue list/; s/--jq '"'"'.\[0
   "$SCRIPT" > "$mut"
 run_mutation "$mut" "m2" "s5" "reverting the search-failure guard files a duplicate again"
 
-echo "Gate 36: 6 scenario(s) x 3 runs + 2 mutation(s); $bad failure(s)."
+echo "Gate 36: 10 scenario(s) x 3 runs + 2 mutation(s); $bad failure(s)."
 exit $([ "$bad" -eq 0 ] && echo 0 || echo 1)
