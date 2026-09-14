@@ -19,6 +19,18 @@ FILES = [
     ".github/workflows/wing-commander-auto-update-spec-kit.yml",
 ]
 
+# specs/049-single-home-release-idioms: the shared composites this workflow
+# now calls for the orphan-branch-reset and durable-failure-issue idioms.
+# Their `runs.steps` are extracted the same way a job's `steps` are, keyed
+# under a synthetic "actions" workflow name and a job name of the
+# composite's own directory, so a test can run e.g.
+# `actions__orphan-branch-reset__*` immediately before the workflow step
+# that now assumes the composite already ran.
+COMPOSITE_FILES = [
+    ".github/actions/_shared/orphan-branch-reset/action.yml",
+    ".github/actions/_shared/durable-failure-issue/action.yml",
+]
+
 
 def slug(s):
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")[:60]
@@ -46,6 +58,20 @@ def main():
                 with open(os.path.join(out, fn), "w", encoding="utf-8", newline="\n") as fh:
                     fh.write(body if body.endswith("\n") else body + "\n")
                 manifest.append((wf, job_name, name, step.get("id", ""), fn))
+    for rel in COMPOSITE_FILES:
+        path = os.path.join(repo, rel)
+        with open(path, encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh)
+        job_name = rel.split("/")[-2]
+        for i, step in enumerate((doc.get("runs") or {}).get("steps") or []):
+            if "run" not in step:
+                continue
+            name = step.get("name", step.get("id", "step%d" % i))
+            fn = "actions__%s__%02d-%s.sh" % (slug(job_name), i, slug(name))
+            body = step["run"]
+            with open(os.path.join(out, fn), "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(body if body.endswith("\n") else body + "\n")
+            manifest.append(("actions", job_name, name, step.get("id", ""), fn))
     with open(os.path.join(out, "MANIFEST.tsv"), "w", encoding="utf-8", newline="\n") as fh:
         for row in manifest:
             fh.write("\t".join(row) + "\n")

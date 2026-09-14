@@ -392,8 +392,12 @@ for bad in "wing-commander/wc/extra" "wc-speckit-e2e" "wing-commander/" "/wc-spe
 done
 
 echo "  configured and visible: resolves to the repo and this issue's own branch"
+# specs/049-single-home-release-idioms: the mint-then-verify mechanics
+# (GH_TOKEN/TOKEN_OUTCOME, and the gh repo view reachability check) moved
+# into the shared scoped-app-token composite; this step now only reads
+# that composite's OK/FAILURE_REASON outputs.
 new_step_env
-export GH_TOKEN=stub TOKEN_OUTCOME=success SCRATCH_REPO="wing-commander/wc-speckit-e2e" ISSUE=77
+export OK=true FAILURE_REASON="" SCRATCH_REPO="wing-commander/wc-speckit-e2e" ISSUE=77
 GHA_SUBST=()
 run_step 'auto-update-spec-kit__e2e-stage__*resolve-the-scratch-repository*.sh' >/dev/null 2>&1
 check "S7 resolves the configured repository" "$(out full-name)" "wing-commander/wc-speckit-e2e"
@@ -416,8 +420,13 @@ check "S7 no repo delete call was ever made" "$(grep -c 'repo delete' "$GH_CALLS
 # gate this step now owns, and an unchecked one would let the stage proceed
 # with an empty token and fail later with an unrelated message.
 echo "  the scratch-scoped token mint failed: fails HERE, naming the fix, not later on a git error"
+# The GH_TOKEN/TOKEN_OUTCOME empty-token-despite-success-outcome distinction
+# this scenario used to exercise directly now lives inside the shared
+# scoped-app-token composite (its own "Confirm the target repository is
+# reachable" step) -- this outer step only sees the composite's collapsed
+# OK=false, FAILURE_REASON=token-mint-failed result either way.
 new_step_env
-export GH_TOKEN="" TOKEN_OUTCOME=failure SCRATCH_REPO="wing-commander/wc-speckit-e2e" ISSUE=88
+export OK=false FAILURE_REASON=token-mint-failed SCRATCH_REPO="wing-commander/wc-speckit-e2e" ISSUE=88
 GHA_SUBST=()
 run_step 'auto-update-spec-kit__e2e-stage__*resolve-the-scratch-repository*.sh' >"$WORK/resolve-nomint.log" 2>&1
 check "S7 failed token mint fails the step" "$?" "1"
@@ -425,24 +434,18 @@ check "S7 failed token mint leaves full-name unset" "$(out full-name)" ""
 check_contains "S7 failed token mint names the repository" "$(cat "$WORK/resolve-nomint.log")" "wing-commander/wc-speckit-e2e"
 check_contains "S7 failed token mint tells the maintainer to install the App" "$(cat "$WORK/resolve-nomint.log")" "Install the App on that repository"
 
-echo "  ...and a mint that 'succeeded' with an empty token is caught by the same gate"
-new_step_env
-export GH_TOKEN="" TOKEN_OUTCOME=success SCRATCH_REPO="wing-commander/wc-speckit-e2e" ISSUE=88
-GHA_SUBST=()
-run_step 'auto-update-spec-kit__e2e-stage__*resolve-the-scratch-repository*.sh' >"$WORK/resolve-emptytok.log" 2>&1
-check "S7 empty scratch token fails the step" "$?" "1"
-check "S7 empty scratch token leaves full-name unset" "$(out full-name)" ""
-
 echo "  configured but invisible to the App token: fails, and says which of the two things to fix (T037, FR-021 edge case)"
+# The gh repo view reachability check this scenario used to fail via
+# GH_STUB_FAIL now runs inside the shared scoped-app-token composite; this
+# step only reads its FAILURE_REASON=unreachable result.
 new_step_env
-export GH_TOKEN=stub TOKEN_OUTCOME=success SCRATCH_REPO="wing-commander/wc-speckit-e2e" ISSUE=88 GH_STUB_FAIL="repo view"
+export OK=false FAILURE_REASON=unreachable SCRATCH_REPO="wing-commander/wc-speckit-e2e" ISSUE=88
 GHA_SUBST=()
 run_step 'auto-update-spec-kit__e2e-stage__*resolve-the-scratch-repository*.sh' >"$WORK/resolve-invisible.log" 2>&1
 check "S7 invisible scratch repo fails the step" "$?" "1"
 check "S7 invisible leaves full-name unset" "$(out full-name)" ""
 check_contains "S7 invisible names the repository" "$(cat "$WORK/resolve-invisible.log")" "wing-commander/wc-speckit-e2e"
 check_contains "S7 invisible tells the maintainer to install the App" "$(cat "$WORK/resolve-invisible.log")" "install the App on it"
-unset GH_STUB_FAIL
 
 echo "  ...and the verify job's combine step still narrates the incomplete stage, distinguishable from a candidate-artifact failure"
 combine minor true "" success true "" failure

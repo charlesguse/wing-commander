@@ -77,6 +77,34 @@ remote_refs() { # remote_refs <ref-pattern> -> match count
   git ls-remote "$PWD/../origin.git" "$1" 2>/dev/null | wc -l | tr -d ' '
 }
 
+ROLLBACK_STEP='auto-update-spec-kit__act__*rollback*.sh'
+FAILURE_ISSUE_STEP='actions__durable-failure-issue__*'
+
+# specs/049-single-home-release-idioms: the rollback step now only decides
+# WHETHER to file/update the auto-update:failed issue (writing action/title
+# outputs + the body file); the label/lookup/create-or-comment mechanics
+# that used to be inline are now the shared durable-failure-issue composite,
+# run as its own extracted step immediately after, in the same working
+# directory, exactly as the real workflow's two `uses:` steps do. Callers
+# set GHA_SUBST for the rollback step's own inputs before calling this.
+run_rollback_and_file() { # run_rollback_and_file <log-suffix> -> echoes the rollback step's exit code
+  run_step "$ROLLBACK_STEP" >"$WORK/act-rollback-$1.log" 2>&1
+  local rc=$?
+  if [ "$rc" -eq 0 ] && [ "$(out action)" = "report" ]; then
+    # The composite's own `env:` block (GH_TOKEN/OPERATION/LABEL/
+    # LABEL_COLOR/LABEL_DESCRIPTION/TITLE/BODY_FILE/CLOSE_COMMENT) is
+    # never part of the extracted run: text -- plain exports, matching
+    # every other extracted step here, not GHA_SUBST (see t8_scaffold.sh's
+    # own note on this).
+    export OPERATION=report LABEL=auto-update:failed LABEL_COLOR=E99695 \
+      LABEL_DESCRIPTION="Spec Kit upgrade blocked or rolled back; needs maintainer attention" \
+      TITLE="$(out title)" BODY_FILE="$RUNNER_TEMP/rollback-issue-body.md"
+    GHA_SUBST=()
+    run_step "$FAILURE_ISSUE_STEP" >>"$WORK/act-rollback-$1.log" 2>&1
+  fi
+  echo "$rc"
+}
+
 echo "=== Scenario 8: health-check failed WITH a recoverable rollback target ==="
 R="$(build)"; new_step_env; cd "$R"
 printf '{"issues":{},"prs":{},"labels":[],"next_issue":50,"next_pr":70,"default_branch":"main"}' > "$GH_STATE"
@@ -84,9 +112,8 @@ printf '{"issues":{},"prs":{},"labels":[],"next_issue":50,"next_pr":70,"default_
 GHA_SUBST=("steps.ctx.outputs.token=stub" "steps.defbranch.outputs.name=main")
 export GH_TOKEN=stub DB=main ROLLBACK_TARGET=0.12.4 PINNED_VERSION=0.13.0 BOT_SLUG=wing-commander
 export FAILURE_DETAIL="create-new-feature.sh --json exited non-zero: boom: unsupported runtime"
-run_step 'auto-update-spec-kit__act__*rollback*.sh' >"$WORK/act.log" 2>&1
-RB_RC=$?
-sed 's/^/      /' "$WORK/act.log" | head -5
+RB_RC="$(run_rollback_and_file s8)"
+sed 's/^/      /' "$WORK/act-rollback-s8.log" | head -5
 # Attribute a push failure to the push, not merely to the PR that never
 # appeared: an unauthenticated push aborts the step under `bash -e` long
 # before gh is reached, and every assertion below would fail without saying why.
@@ -125,7 +152,7 @@ R2="$(build)"; new_step_env; cd "$R2"
 printf '{"issues":{},"prs":{},"labels":[],"next_issue":50,"next_pr":70,"default_branch":"main"}' > "$GH_STATE"
 GHA_SUBST=("steps.ctx.outputs.token=stub" "steps.defbranch.outputs.name=main")
 export GH_TOKEN=stub DB=main ROLLBACK_TARGET="" PINNED_VERSION=0.13.0 BOT_SLUG=wing-commander FAILURE_DETAIL="boom"
-run_step 'auto-update-spec-kit__act__*rollback*.sh' >"$WORK/act2.log" 2>&1
+run_rollback_and_file s8b >/dev/null
 check "S8b no PR is opened without a target" "$("$PY" -c "import json,os;print(len(json.load(open(os.environ['GH_STATE']))['prs']))")" "0"
 check "S8b a flagged issue is still filed" "$("$PY" -c "import json,os;print(len(json.load(open(os.environ['GH_STATE']))['issues']))")" "1"
 check "S8b nothing pushed" "$(remote_refs 'refs/heads/auto-update-spec-kit/*')" "0"
@@ -138,8 +165,8 @@ R3="$(build)"; new_step_env; cd "$R3"
 printf '{"issues":{},"prs":{},"labels":[],"next_issue":50,"next_pr":70,"default_branch":"main"}' > "$GH_STATE"
 GHA_SUBST=("steps.ctx.outputs.token=stub" "steps.defbranch.outputs.name=main")
 export GH_TOKEN=stub DB=main ROLLBACK_TARGET="" PINNED_VERSION=0.13.0 BOT_SLUG=wing-commander FAILURE_DETAIL="boom"
-run_step 'auto-update-spec-kit__act__*rollback*.sh' >/dev/null 2>&1
-run_step 'auto-update-spec-kit__act__*rollback*.sh' >/dev/null 2>&1
+run_rollback_and_file s8c-1 >/dev/null
+run_rollback_and_file s8c-2 >/dev/null
 check "S8c still exactly one flagged issue" "$("$PY" -c "import json,os;print(len(json.load(open(os.environ['GH_STATE']))['issues']))")" "1"
 check "S8c second run commented instead" "$("$PY" -c "import json,os;s=json.load(open(os.environ['GH_STATE']));print(len(list(s['issues'].values())[0]['comments']))")" "1"
 cd - >/dev/null

@@ -17,6 +17,11 @@ set -uo pipefail
 . "$(dirname "$0")/lib.sh"
 
 SCAFFOLD_STEP='auto-update-spec-kit__e2e-stage__*-scaffold-and-force-push-the-candidate*'
+# specs/049-single-home-release-idioms: the detach-through-push portion the
+# scaffold step used to do inline is now the shared orphan-branch-reset
+# composite, run as its own extracted step immediately before $SCAFFOLD_STEP
+# in the SAME working directory -- see scaffold_run() below.
+RESET_STEP='actions__orphan-branch-reset__*'
 
 # Stand up a scratch "remote" plus the environment the step expects. Each call
 # to scaffold_run below is one pipeline run against the same remote.
@@ -62,7 +67,29 @@ STUB
 scaffold_run() { # scaffold_run <marker-file-name>  -> echoes the step's exit code
   export UVX_MARKER="$1"
   rm -rf "$RUNDIR/w"; mkdir -p "$RUNDIR/w"
-  ( cd "$RUNDIR/w" && run_step "$SCAFFOLD_STEP" ) > "$WORK/scaffold-$1.log" 2>&1
+  (
+    cd "$RUNDIR/w"
+    # The composite's own `env:` block (TOKEN/REPO/BRANCH/BOT_NAME/
+    # BOT_EMAIL/WORKDIR/COMMIT_MESSAGE) is never part of the extracted
+    # run: text -- it is a separate step key extract.py does not pull in
+    # (the same reason every other extracted step here gets its `env:`
+    # values via plain `export`, not GHA_SUBST, which only renders `${{ }}`
+    # literally embedded in the run: script body).
+    export TOKEN="$GH_TOKEN" REPO="$FULL_NAME" BRANCH="$BRANCH" \
+      BOT_NAME="${BOT_SLUG}[bot]" BOT_EMAIL="${BOT_SLUG}[bot]@users.noreply.github.com" \
+      WORKDIR="e2e-scratch" COMMIT_MESSAGE="chore: reset for a fresh end-to-end scaffold attempt"
+    GHA_SUBST=()
+    run_step "$RESET_STEP" || exit "$?"
+    RESET_OK="$(out ok)"
+    RESET_FAILURE_STAGE="$(out failure-stage)"
+    export RESET_OK RESET_FAILURE_STAGE
+    # GH_TOKEN/FULL_NAME/BRANCH/CANDIDATE are already exported by
+    # setup_scratch() -- the follow-up step's own env: block maps them from
+    # steps.scratch-token/scratch-repo/needs.prepare, all of which this
+    # fixture already stands in for the same way the pre-split step did.
+    GHA_SUBST=()
+    run_step "$SCAFFOLD_STEP"
+  ) > "$WORK/scaffold-$1.log" 2>&1
   echo "$?"
 }
 
@@ -72,7 +99,11 @@ echo "--- first scaffold into an empty scratch repository ---"
 setup_scratch
 rc="$(scaffold_run first)"
 check "run 1 exit code" "$rc" "0"
-check "run 1 branch commit count" "$(remote rev-list --count "$BRANCH" 2>/dev/null || echo missing)" "1"
+# 2, not 1: specs/049-single-home-release-idioms split this into the
+# shared orphan-branch-reset composite's own placeholder commit, then this
+# step's real-content commit on top -- two commits, two pushes, per the
+# composite's own contract.
+check "run 1 branch commit count" "$(remote rev-list --count "$BRANCH" 2>/dev/null || echo missing)" "2"
 check_contains "run 1 pushed the scaffold" \
   "$(remote ls-tree -r --name-only "$BRANCH" 2>/dev/null)" ".specify/scripts/bash/create-new-feature.sh"
 check_contains "run 1 pushed its marker" \
@@ -90,7 +121,7 @@ check "run 2 exit code" "$rc" "0"
 check_not_contains "run 2 did not hit the branch-exists fatal" \
   "$(cat "$WORK/scaffold-second.log")" "already exists"
 # Orphan, not a child of run 1: the branch is reset, never appended to.
-check "run 2 branch commit count" "$(remote rev-list --count "$BRANCH" 2>/dev/null || echo missing)" "1"
+check "run 2 branch commit count" "$(remote rev-list --count "$BRANCH" 2>/dev/null || echo missing)" "2"
 check_contains "run 2 pushed its own marker" \
   "$(remote ls-tree -r --name-only "$BRANCH" 2>/dev/null)" "second"
 check_not_contains "run 2 cleared run 1's tree" \
@@ -100,7 +131,7 @@ echo
 echo "--- third scaffold: the failure was not a one-off, so neither is the check ---"
 rc="$(scaffold_run third)"
 check "run 3 exit code" "$rc" "0"
-check "run 3 branch commit count" "$(remote rev-list --count "$BRANCH" 2>/dev/null || echo missing)" "1"
+check "run 3 branch commit count" "$(remote rev-list --count "$BRANCH" 2>/dev/null || echo missing)" "2"
 check_contains "run 3 pushed its own marker" \
   "$(remote ls-tree -r --name-only "$BRANCH" 2>/dev/null)" "third"
 
@@ -117,7 +148,7 @@ seed="$WORK/seed"; git init -q "$seed"
 remote symbolic-ref HEAD refs/heads/main
 rc="$(scaffold_run onmain)"
 check "default-main exit code" "$rc" "0"
-check "default-main branch commit count" "$(remote rev-list --count "$BRANCH" 2>/dev/null || echo missing)" "1"
+check "default-main branch commit count" "$(remote rev-list --count "$BRANCH" 2>/dev/null || echo missing)" "2"
 check_not_contains "default-main dropped the seeded tree" \
   "$(remote ls-tree -r --name-only "$BRANCH" 2>/dev/null)" "README.md"
 check "default-main left main alone" "$(remote rev-list --count main 2>/dev/null || echo missing)" "1"

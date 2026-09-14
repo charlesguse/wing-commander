@@ -116,8 +116,7 @@ jobs:
             echo "ready=false" >> "$GITHUB_OUTPUT"
             {
               echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              jq -n --arg head "$HEAD_SHA" \
-                '{outcome:"fail-infra", verified_head:$head, failing_check:"WING_COMMANDER_AUTO_RELEASE_E2E_REPO is unset", expected:"a repository variable set to OWNER/NAME of a pre-onboarded test repository", observed:"unset", evidence_url:"WING_COMMANDER_AUTO_RELEASE_E2E_REPO"}'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "WING_COMMANDER_AUTO_RELEASE_E2E_REPO is unset" "a repository variable set to OWNER/NAME of a pre-onboarded test repository" "unset" "WING_COMMANDER_AUTO_RELEASE_E2E_REPO"
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
             echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_REPO is unset -- see docs/setup.md."
@@ -132,8 +131,7 @@ jobs:
             echo "ready=false" >> "$GITHUB_OUTPUT"
             {
               echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" \
-                '{outcome:"fail-infra", verified_head:$head, failing_check:"WING_COMMANDER_AUTO_RELEASE_E2E_REPO shape", expected:"OWNER/NAME", observed:$repo, evidence_url:"WING_COMMANDER_AUTO_RELEASE_E2E_REPO"}'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "WING_COMMANDER_AUTO_RELEASE_E2E_REPO shape" "OWNER/NAME" "$E2E_REPO" "WING_COMMANDER_AUTO_RELEASE_E2E_REPO"
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
             echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_REPO is '$E2E_REPO', which is not an OWNER/NAME pair."
@@ -151,8 +149,7 @@ jobs:
             echo "ready=false" >> "$GITHUB_OUTPUT"
             {
               echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" \
-                '{outcome:"fail-infra", verified_head:$head, failing_check:"WING_COMMANDER_AUTO_RELEASE_E2E_REPO names this repository", expected:"a separate, dedicated, pre-onboarded test repository", observed:$repo, evidence_url:"WING_COMMANDER_AUTO_RELEASE_E2E_REPO"}'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "WING_COMMANDER_AUTO_RELEASE_E2E_REPO names this repository" "a separate, dedicated, pre-onboarded test repository" "$E2E_REPO" "WING_COMMANDER_AUTO_RELEASE_E2E_REPO"
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
             echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_REPO is '$E2E_REPO', which is this repository itself. The end-to-end run resets the test repository's default branch; refusing."
@@ -317,8 +314,7 @@ jobs:
             echo "ok=false" >> "$GITHUB_OUTPUT"
             {
               echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              jq -n --arg head "$HEAD_SHA" \
-                '{outcome:"fail-infra", verified_head:$head, failing_check:"resolving SPECKIT_SUPPORTED_VERSION", expected:"a SPECKIT_SUPPORTED_VERSION line in .github/actions/wing-commander-preflight/action.yml at the verified head", observed:"no such line matched", evidence_url:$head}'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "resolving SPECKIT_SUPPORTED_VERSION" "a SPECKIT_SUPPORTED_VERSION line in .github/actions/wing-commander-preflight/action.yml at the verified head" "no such line matched" "$HEAD_SHA"
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
             echo "::error::wing-commander auto-release verify-e2e: could not resolve SPECKIT_SUPPORTED_VERSION from wing-commander-preflight/action.yml."
@@ -361,8 +357,7 @@ jobs:
             echo "ok=false" >> "$GITHUB_OUTPUT"
             {
               echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" \
-                '{outcome:"fail-infra", verified_head:$head, failing_check:"scaffolding the test repository", expected:"uvx available on the runner", observed:"uvx not found", evidence_url:$repo}'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "scaffolding the test repository" "uvx available on the runner" "uvx not found" "$E2E_REPO"
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
             exit 0
@@ -374,8 +369,7 @@ jobs:
             echo "ok=false" >> "$GITHUB_OUTPUT"
             {
               echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" --arg detail "$(tail -c 500 "$RUNNER_TEMP/auto-release-scaffold-install.log")" \
-                '{outcome:"fail-infra", verified_head:$head, failing_check:"specify init in the test repository", expected:"specify init exits 0", observed:$detail, evidence_url:$repo}'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "specify init in the test repository" "specify init exits 0" "$(tail -c 500 "$RUNNER_TEMP/auto-release-scaffold-install.log")" "$E2E_REPO"
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
             exit 0
@@ -410,8 +404,7 @@ jobs:
             echo "ok=false" >> "$GITHUB_OUTPUT"
             {
               echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" --arg detail "$(tail -c 500 "$RUNNER_TEMP/auto-release-scaffold-push-err.txt")" \
-                '{outcome:"fail-infra", verified_head:$head, failing_check:"pushing the scaffolded fixture", expected:"a force-push of the scaffold succeeds", observed:$detail, evidence_url:$repo}'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "pushing the scaffolded fixture" "a force-push of the scaffold succeeds" "$(tail -c 500 "$RUNNER_TEMP/auto-release-scaffold-push-err.txt")" "$E2E_REPO"
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
             exit 0
@@ -445,8 +438,7 @@ jobs:
             echo "ok=false" >> "$GITHUB_OUTPUT"
             {
               echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" --arg detail "$(tail -c 500 "$RUNNER_TEMP/auto-release-kickoff-err.txt")" \
-                '{outcome:"fail-infra", verified_head:$head, failing_check:"creating the kickoff issue", expected:"gh issue create succeeds", observed:$detail, evidence_url:$repo}'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "creating the kickoff issue" "gh issue create succeeds" "$(tail -c 500 "$RUNNER_TEMP/auto-release-kickoff-err.txt")" "$E2E_REPO"
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
             exit 0
@@ -457,8 +449,7 @@ jobs:
             echo "ok=false" >> "$GITHUB_OUTPUT"
             {
               echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" --arg detail "$(tail -c 500 "$RUNNER_TEMP/auto-release-label-err.txt")" \
-                '{outcome:"fail-infra", verified_head:$head, failing_check:"labelling the kickoff issue spec-request", expected:"the spec-request label exists and gh issue edit succeeds", observed:$detail, evidence_url:$repo}'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "labelling the kickoff issue spec-request" "the spec-request label exists and gh issue edit succeeds" "$(tail -c 500 "$RUNNER_TEMP/auto-release-label-err.txt")" "$E2E_REPO"
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
             exit 0
@@ -488,13 +479,7 @@ jobs:
           set -uo pipefail
 
           write_verdict() {
-            jq -n --arg outcome "$1" --arg head "$HEAD_SHA" --arg failing_check "$2" \
-                  --arg expected "$3" --arg observed "$4" --arg url "$ISSUE_URL" \
-              '{outcome:$outcome, verified_head:$head,
-                failing_check: (if $failing_check == "" then null else $failing_check end),
-                expected: (if $expected == "" then null else $expected end),
-                observed: (if $observed == "" then null else $observed end),
-                evidence_url:$url}' > "$RUNNER_TEMP/auto-release-verdict.json"
+            bash .github/actions/_shared/auto-release-verdict.sh "$1" "$HEAD_SHA" "$2" "$3" "$4" "$ISSUE_URL" > "$RUNNER_TEMP/auto-release-verdict.json"
           }
           emit_verdict() {
             {
@@ -875,8 +860,7 @@ jobs:
             else
               no_verdict_observed="the job stopped before any step wrote one (job result: ${VERIFY_RESULT:-unknown})"
             fi
-            VERDICT_JSON="$(jq -n --arg head "$HEAD_SHA" --arg url "$RUN_URL" --arg observed "$no_verdict_observed" \
-              '{outcome:"fail-infra", verified_head:$head, failing_check:"verify-e2e produced no verdict", expected:"a JSON verdict from verify-e2e on every path", observed:$observed, evidence_url:$url}')"
+            VERDICT_JSON="$(bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "verify-e2e produced no verdict" "a JSON verdict from verify-e2e on every path" "$no_verdict_observed" "$RUN_URL")"
           fi
           outcome="$(printf '%s' "$VERDICT_JSON" | jq -r '.outcome // empty' 2>/dev/null || true)"
 
