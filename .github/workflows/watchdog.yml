@@ -490,19 +490,23 @@ jobs:
           # step is `shell: bash` (errexit on), so every read below is
           # guarded — a failed download must not kill the collect job.
           #
-          # Not for the watchdog's own runs (inspected by the 8b wrapper):
-          # the diagnose job's metrics record carries the spec of the run
-          # THAT watchdog inspected (needs.collect.outputs.spec-dir), not a
-          # spec the watchdog run itself advanced, so tying a watchdog run
-          # to it would route findings about the watchdog onto some spec's
-          # lifecycle issue. Those runs stay reported against their own URL.
-          record_fallback=true
+          # Only for the six stages whose every run advances exactly ONE
+          # spec, so the record's identity IS the run's. Everywhere else the
+          # record names a spec the run did not advance: the watchdog's own
+          # diagnose record (inspected by the 8b wrapper) borrows the spec of
+          # the run THAT watchdog inspected, a rebase run writes one record
+          # per matrix slug, and a cleanup sweep can touch several specs.
+          # "First record wins" would tie those runs to an arbitrary spec and
+          # route findings about them onto its lifecycle issue; they stay
+          # reported against their own run URL, exactly as before.
+          record_fallback=false
           case "$RUN_NAME" in
-            "Wing Commander · 8 watchdog") record_fallback=false ;;
+            "Wing Commander · 1 intake"|"Wing Commander · 2 clarify"|"Wing Commander · 3 plan"|"Wing Commander · 4 tasks"|"Wing Commander · 5 implement"|"Wing Commander · 6 finalize")
+              record_fallback=true ;;
           esac
           if [ -z "$slug" ] && [ -n "$RUN_ID" ] && [ "$record_fallback" = "true" ]; then
             mr_dir="$RUNNER_TEMP/spec-slug-metrics-record"
-            mkdir -p "$mr_dir"
+            mkdir -p "$mr_dir" 2>/dev/null || true
             if GH_TOKEN="$ACTIONS_TOKEN" gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -p 'metrics-record*' -D "$mr_dir" >"$RUNNER_TEMP/spec-slug-mr-dl.log" 2>&1; then
               # First record that carries a spec_dir under specs/. A run
               # with several records (implement's cycle + progress) names
@@ -807,10 +811,13 @@ jobs:
           # history since it diverged — never zero, a measurement that can
           # never fire. `--since=<createdAt>` counts commits whose committer
           # date is at or after the run was created; the runner commits
-          # after that instant. A rebase.yml force-push in between rewrites
-          # committer dates and inflates the count (implement run
-          # 34709026525 reads 22 after a rebase, 16 before) — a missed
-          # detection, never a false one.
+          # after that instant. Anything else that lands on the branch
+          # inside the window inflates the count: a rebase.yml force-push
+          # rewrites committer dates (implement run 34709026525 reads 22
+          # after a rebase, 16 before), and a later run on the same branch
+          # (a retry, the next cycle) that has already pushed by the time
+          # this one is inspected adds its own commits. Both are missed
+          # detections, never false ones.
           _spec_prefix="${SPEC_PREFIX:-spec/}"
           measure_branch="$HEAD_BRANCH"
           baseline="head-sha"

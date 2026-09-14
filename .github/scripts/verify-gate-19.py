@@ -1018,6 +1018,9 @@ SPEC_META_FIXTURE = json.dumps({"spec_dir": "specs/045-auto-release-verified-hea
 RECORD_045 = json.dumps({"schema_version": 1, "stage": "implement",
                          "spec": {"spec_dir": "specs/045-auto-release-verified-head",
                                   "issue": 296, "identity_available": True}})
+RECORD_046 = json.dumps({"schema_version": 1, "stage": "rebase",
+                         "spec": {"spec_dir": "specs/046-watchdog-supervision-collectors",
+                                  "issue": 274, "identity_available": True}})
 RECORD_NO_IDENTITY = json.dumps({"schema_version": 1, "stage": "implement",
                                  "spec": {"spec_dir": None, "issue": None,
                                           "identity_available": False}})
@@ -1074,9 +1077,10 @@ SPEC_SLUG_SCENARIOS = [
         expect=dict(slug="", **{"slug-source": "", "lifecycle-issue": ""}),
         expect_download=True,
     ),
-    # The watchdog's own diagnose record borrows the INSPECTED run's spec
-    # identity, so a watchdog run (inspected by the 8b wrapper) must not be
-    # tied to that spec through it: no download, no slug.
+    # Only the six single-spec stages get the fallback. The watchdog's own
+    # diagnose record borrows the INSPECTED run's spec identity, and a
+    # rebase run writes one record per matrix slug — "first record wins"
+    # would tie either to an arbitrary spec. No download, no slug.
     dict(
         name="a watchdog run with the default-branch head: its record names "
              "the spec it inspected, not one it advanced — no artifact read, "
@@ -1087,6 +1091,27 @@ SPEC_SLUG_SCENARIOS = [
         show_json=SPEC_META_FIXTURE,
         expect=dict(slug="", **{"slug-source": "", "lifecycle-issue": ""}),
         expect_download=False,
+    ),
+    dict(
+        name="a rebase run with the default-branch head: one record per "
+             "rebased spec, none of them 'the' spec — no artifact read, no slug",
+        run_name="Wing Commander · rebase",
+        head_branch="main",
+        records=[RECORD_045, RECORD_046],
+        show_json=SPEC_META_FIXTURE,
+        expect=dict(slug="", **{"slug-source": "", "lifecycle-issue": ""}),
+        expect_download=False,
+    ),
+    dict(
+        name="a dispatched tasks run: single-spec stage, slug read from the "
+             "record like implement",
+        run_name="Wing Commander · 4 tasks",
+        head_branch="main",
+        records=[RECORD_045],
+        show_json=SPEC_META_FIXTURE,
+        expect=dict(slug="045-auto-release-verified-head", **{"slug-source": "metrics-record",
+                                                              "lifecycle-issue": "296"}),
+        expect_download=True,
     ),
     dict(
         name="slug from the record but the spec branch has no spec-meta.json: "

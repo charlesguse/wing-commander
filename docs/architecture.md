@@ -641,10 +641,13 @@ Two constraints the wrappers must hold, both enforced by
     implement are only ever dispatched — so no run's head was ever the spec
     branch. A `rebase.yml` force-push between the run and its inspection
     rewrites committer dates and inflates the count: a missed detection,
-    never a false one. The watchdog's own runs are exempt from the record
-    fallback: their diagnose record carries the spec of the run *they*
-    inspected, so tying one to it would route findings about the watchdog
-    onto that spec's lifecycle issue.
+    never a false one, as is a later run on the same branch that has
+    already pushed by the time this one is inspected. The record fallback
+    applies only to the six stages whose every run advances exactly one
+    spec (intake through finalize): the watchdog's own diagnose record
+    carries the spec of the run *it* inspected, a rebase run writes one
+    record per matrix slug, and a cleanup sweep can touch several specs, so
+    those runs stay reported against their own run URL.
 
   Best-effort spec-slug/lifecycle-issue
   resolution: a run that can't be tied to a spec (e.g. a `main`-based
