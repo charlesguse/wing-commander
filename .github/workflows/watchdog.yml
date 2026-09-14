@@ -1334,7 +1334,18 @@ jobs:
           cost_token="null"
           observed_text="null"
           if [ -n "$ISSUE" ]; then
-            if comments_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments" --paginate --jq '[.[] | {body, createdAt: .created_at}]' 2>"$RUNNER_TEMP/cr-comments-err.txt")"; then
+            # Gate 18: --paginate emits one comment object per line across
+            # every page; the wrapping array is built AFTER paginating
+            # (jq -s), never inside the --jq filter itself, or a
+            # multi-page response would resolve to one array per page
+            # instead of one array overall. PIPESTATUS[0] (not the
+            # pipeline's own exit code) is what must gate cr_outcome: `jq
+            # -cs` on an empty stream still exits 0, which would otherwise
+            # silently read a failed `gh api` call as "zero comments."
+            comments_rc=0
+            gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments" --paginate --jq '.[] | {body, createdAt: .created_at}' 2>"$RUNNER_TEMP/cr-comments-err.txt" | jq -cs '.' > "$RUNNER_TEMP/cr-comments.json" || comments_rc="${PIPESTATUS[0]}"
+            if [ "$comments_rc" = "0" ]; then
+              comments_json="$(cat "$RUNNER_TEMP/cr-comments.json")"
               attributable="$(printf '%s' "$comments_json" | jq -c --arg since "$CREATED_AT" '[.[] | select($since == "" or .createdAt >= $since)] | sort_by(.createdAt) | .[0] // empty')"
               if [ -n "$attributable" ]; then
                 comment_found="true"
@@ -1432,14 +1443,22 @@ jobs:
           # history — this job's checkout is shallow and lacks both refs.
           compare_json='{}'
           if [ -n "$base_sha" ] && [ -n "$head_sha" ]; then
-            compare_json="$(gh api "repos/$GITHUB_REPOSITORY/compare/$base_sha...$head_sha" --paginate --jq '{total_commits, added: [.files[]? | select(.status=="added") | .filename]}' 2>"$RUNNER_TEMP/fp-compare-err.txt")" || { compare_json='{}'; fp_outcome="failed"; }
+            # No --paginate: the compare endpoint's single response already
+            # covers every file for the sizes this repository's finalize PRs
+            # produce, and --paginate here would repeat this object-shaped
+            # jq filter once per page and concatenate the results (Gate 18) —
+            # a PR touching more files than one page returns is a known,
+            # stated limitation, not a silent truncation (the same
+            # single-page trade-off spec.md's own R7 test-count ground truth
+            # already accepts).
+            compare_json="$(gh api "repos/$GITHUB_REPOSITORY/compare/$base_sha...$head_sha" --jq '{total_commits, added: [.files[]? | select(.status=="added") | .filename]}' 2>"$RUNNER_TEMP/fp-compare-err.txt")" || { compare_json='{}'; fp_outcome="failed"; }
           fi
           commits_actual="$(printf '%s' "$compare_json" | jq -r '.total_commits // 0')"
           tests_actual="$(printf '%s' "$compare_json" | jq -r '[.added[]? | select(test("/fixtures/"))] | length' 2>/dev/null || echo 0)"
 
           tasks_actual="0"
           if [ -n "$SPEC_DIR" ]; then
-            tasks_actual="$(gh api "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/tasks.md" -F ref="${_spec_prefix}${SLUG}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | grep -c '^- \[[xX]\]' || echo 0)"
+            tasks_actual="$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/tasks.md" -F ref="${_spec_prefix}${SLUG}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | grep -c '^- \[[xX]\]' || echo 0)"
           fi
 
           # Best-effort natural-language extraction (research.md R6): a
