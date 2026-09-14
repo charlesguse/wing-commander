@@ -1055,6 +1055,493 @@ jobs:
           [ "$an_failed" = "0" ] || an_outcome="failed"
           jq -c --arg c "collect-annotations" --arg o "$an_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
 
+      # specs/046-watchdog-supervision-collectors: a developing turn-budget
+      # trend, not just a single over-budget run — research.md R2/R3/R4.
+      # Config knobs are vars.* read directly here, extending the one
+      # documented exception this workflow already carries for its
+      # branch-prefix reads (release.yml Gate 1b) rather than opening a
+      # second mechanism for the same class of collector-internal knob.
+      # WING_COMMANDER_METRICS_BRANCH/_PATH are the same two wrapper-owned
+      # vars wing-commander-metrics-persist.yml already resolves — read here
+      # too because this collector, unlike that wrapper, needs to locate the
+      # durable store from inside a reusable stage.
+      #
+      # TURN_BUDGET_FILTER is a self-contained function of (this run's own
+      # metrics record, the stage's recent history, the two thresholds) —
+      # no gh/git call inside it — so verify-turn-budget-collector.sh can
+      # feed it fixtures directly, the same separation gate 5 established
+      # for collect-execution-output.
+      - name: "Collect: turn budget"
+        id: collect-turn-budget
+        shell: bash
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ACTIONS_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run-id }}
+          RUN_CONCLUSION: ${{ steps.run-meta.outputs.conclusion }}
+          METRICS_BRANCH: ${{ vars.WING_COMMANDER_METRICS_BRANCH }}
+          METRICS_PATH: ${{ vars.WING_COMMANDER_METRICS_PATH }}
+          HISTORY_WINDOW: ${{ vars.WING_COMMANDER_TURN_BUDGET_HISTORY_WINDOW }}
+          CONSECUTIVE_TRIGGER: ${{ vars.WING_COMMANDER_TURN_BUDGET_CONSECUTIVE_TRIGGER }}
+          CLIMB_FRACTION: ${{ vars.WING_COMMANDER_TURN_BUDGET_CLIMB_FRACTION }}
+        run: |
+          set -uo pipefail
+          case "$RUN_CONCLUSION" in
+            skipped|cancelled)
+              echo "turn-budget: run conclusion is '$RUN_CONCLUSION' — nothing executed, so no turn data is attributable. Skipping." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+          esac
+          metrics_branch="${METRICS_BRANCH:-metrics}"
+          metrics_path="${METRICS_PATH:-records.jsonl}"
+          history_window="${HISTORY_WINDOW:-10}"
+          consecutive_trigger="${CONSECUTIVE_TRIGGER:-3}"
+          climb_fraction="${CLIMB_FRACTION:-0.6}"
+          printf '%s' "$history_window" | grep -Eq '^[1-9][0-9]*$' || history_window=10
+          printf '%s' "$consecutive_trigger" | grep -Eq '^[1-9][0-9]*$' || consecutive_trigger=3
+          printf '%s' "$climb_fraction" | grep -Eq '^[0-9]*\.?[0-9]+$' || climb_fraction=0.6
+
+          # shellcheck disable=SC2016 # this is a jq program — its $vars must
+          # NOT be shell-expanded.
+          TURN_BUDGET_FILTER='
+            . as $in
+            | ($in.own // {}) as $own
+            | (($own.available // false) == true) as $own_available
+            | (if $own_available and $own.counted != null and $own.intended != null and ($own.counted >= $own.intended)
+               then {
+                 source:"turn-budget","class-hint":null,
+                 facts:{
+                   stage:$in.stage, run:$in.run,
+                   "counted-turns":$own.counted, "intended-budget":$own.intended,
+                   "enforced-ceiling":$own.ceiling,
+                   "consumed-ceiling-fraction": (if ($own.ceiling // 0) > 0 then (($own.counted / $own.ceiling * 1000 | round) / 1000) else 0 end)
+                 }
+               }
+               else null end) as $per_run
+            | ($in.history // []) as $hist0
+            | (if $own_available and $own.counted != null then
+                 (if ($hist0|length) > 0 and ($hist0[-1].run == $in.run) then $hist0
+                  else $hist0 + [{run:$in.run, counted:$own.counted, intended:$own.intended, ceiling:$own.ceiling}] end)
+               else $hist0 end) as $hist1
+            | ($in.history_window // 10) as $n
+            | ($hist1[-$n:]) as $window
+            | ([$window[] | (.counted != null and .intended != null and .counted >= .intended)] | reverse
+                | reduce .[] as $b ({n:0,stop:false}; if .stop then . elif $b then {n:(.n+1),stop:false} else {n:.n,stop:true} end) | .n
+              ) as $consecutive
+            | ([$window[] | select((.ceiling // 0) > 0) | (.counted / .ceiling)] | if length>0 then max else 0 end) as $max_frac_raw
+            | (($max_frac_raw*1000|round)/1000) as $max_frac
+            | ((((1-$max_frac)*1000)|round)/1000) as $headroom
+            | ($consecutive >= ($in.consecutive_trigger // 3)) as $meets_consecutive
+            | ($max_frac >= ($in.climb_fraction // 0.6)) as $meets_climb
+            | (if $meets_consecutive and $meets_climb then "critical"
+               elif $meets_consecutive then "watch"
+               elif $meets_climb then "elevated"
+               else null end) as $band
+            | {
+                "per-run": $per_run,
+                "trend": (if $band == null then null else {
+                   stage: $in.stage, band: $band, "window-size": ($window|length),
+                   "consecutive-at-or-over-budget": $consecutive,
+                   "max-consumed-ceiling-fraction": $max_frac,
+                   "headroom-remaining-fraction": $headroom,
+                   history: [$window[] | {run: .run, "counted-turns": .counted, "intended-budget": .intended}]
+                } end)
+              }
+          '
+
+          tb_outcome="ok"
+
+          # Prefer the spec-043 durable store (research.md R3): a git-fetch
+          # failure that means the branch simply doesn't exist yet (no
+          # adopter has wired metrics-persist.yml) is expected and does not
+          # make this collector untrusted; any other fetch failure does.
+          durable=""
+          fetch_log="$(git fetch --no-tags --quiet origin "refs/heads/$metrics_branch:refs/remotes/origin/$metrics_branch" 2>&1)" || fetch_rc=$?
+          if [ -n "${fetch_rc:-}" ]; then
+            if ! printf '%s' "$fetch_log" | grep -qi "couldn't find remote ref\|couldn't find remote branch"; then
+              tb_outcome="failed"
+            fi
+          else
+            durable="$(git show "refs/remotes/origin/$metrics_branch:$metrics_path" 2>/dev/null || true)"
+          fi
+          records_json='[]'
+          if [ -n "$durable" ]; then
+            records_json="$(printf '%s\n' "$durable" | jq -R -c 'fromjson? // empty' 2>/dev/null | jq -cs '.' 2>/dev/null || echo '[]')"
+          fi
+
+          own_record="$(printf '%s' "$records_json" | jq -c --arg rid "$RUN_ID" '[.[] | select((.run.workflow_run_id // "") == $rid)] | last // empty' 2>/dev/null || true)"
+
+          if [ -z "$own_record" ]; then
+            # Fall back to this run's own metrics-record artifact
+            # (research.md R3's interpretation of FR-014) — the same
+            # download idiom collect-execution-output already uses.
+            dl_dir="$RUNNER_TEMP/turn-budget-metrics"
+            mkdir -p "$dl_dir"
+            if GH_TOKEN="$ACTIONS_TOKEN" gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -p 'metrics-record*' -D "$dl_dir" >"$RUNNER_TEMP/tb-dl.log" 2>&1; then
+              for f in "$dl_dir"/*/*.json "$dl_dir"/*.json; do
+                [ -e "$f" ] || continue
+                own_record="$(cat "$f")"
+                break
+              done
+            else
+              grep -qiE "no artifact|no valid artifacts|no artifacts" "$RUNNER_TEMP/tb-dl.log" 2>/dev/null || tb_outcome="failed"
+            fi
+          fi
+
+          if [ -z "$own_record" ]; then
+            echo "turn-budget: no metrics record (durable store or artifact) found for this run — out of scope for this stage. Skipping." >> "$GITHUB_STEP_SUMMARY"
+            jq -c --arg c "collect-turn-budget" --arg o "$tb_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
+            exit 0
+          fi
+
+          stage="$(printf '%s' "$own_record" | jq -r '.stage // empty')"
+          turns_available="$(printf '%s' "$own_record" | jq -r '.turns.available // false')"
+
+          if [ -z "$stage" ] || [ "$turns_available" != "true" ]; then
+            echo "turn-budget: stage unresolved or turns.available is false for this run — out of scope (FR-014's fallback-of-fallback). Skipping." >> "$GITHUB_STEP_SUMMARY"
+            jq -c --arg c "collect-turn-budget" --arg o "$tb_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
+            exit 0
+          fi
+
+          history_for_stage="$(printf '%s' "$records_json" | jq -c --arg stage "$stage" '[.[] | select(.stage == $stage) | {run: .run.workflow_run_id, counted: .turns.counted, intended: .turns.intended_budget, ceiling: .turns.enforced_ceiling}]')"
+
+          filter_input="$(jq -n \
+            --arg stage "$stage" --arg run "$RUN_ID" \
+            --argjson own "$(printf '%s' "$own_record" | jq -c '{available: (.turns.available // false), counted: (.turns.counted // null), intended: (.turns.intended_budget // null), ceiling: (.turns.enforced_ceiling // null)}')" \
+            --argjson history "$history_for_stage" \
+            --argjson history_window "$history_window" \
+            --argjson consecutive_trigger "$consecutive_trigger" \
+            --argjson climb_fraction "$climb_fraction" \
+            '{stage:$stage, run:$run, own:$own, history:$history, history_window:$history_window, consecutive_trigger:$consecutive_trigger, climb_fraction:$climb_fraction}')"
+
+          computed="$(printf '%s' "$filter_input" | jq -c "$TURN_BUDGET_FILTER")"
+
+          per_run="$(printf '%s' "$computed" | jq -c '.["per-run"]')"
+          if [ "$per_run" != "null" ]; then
+            jq -c --argjson new "[$per_run]" '. + $new' "$RUNNER_TEMP/signals.json" > "$RUNNER_TEMP/signals.json.tmp" && mv "$RUNNER_TEMP/signals.json.tmp" "$RUNNER_TEMP/signals.json"
+          fi
+
+          trend="$(printf '%s' "$computed" | jq -c '.trend')"
+          if [ "$trend" != "null" ]; then
+            band="$(printf '%s' "$trend" | jq -r '.band')"
+            # research.md R4 suppression pre-check: replicate, byte-for-byte
+            # (verify-turn-budget-suppression.sh diffs this), the identity
+            # hash `Stamp signal ids` would compute for {stage, band} and the
+            # concatenation `Compute fingerprint` would hash it into, then
+            # check whether a CLOSED pipeline-defect issue already carries
+            # that exact fingerprint. A match means a maintainer already
+            # accepted this trend at this band — emit nothing.
+            python3 - "$stage" "$band" > "$RUNNER_TEMP/tb-would-id.txt" <<'PY'
+          import hashlib, json, sys
+          stage, band = sys.argv[1].lower(), sys.argv[2].lower()
+          basis = "turn-budget-trend" + "|" + json.dumps({"stage": stage, "band": band}, sort_keys=True, separators=(",", ":"))
+          print(hashlib.sha256(basis.encode()).hexdigest()[:16])
+          PY
+            would_id="$(cat "$RUNNER_TEMP/tb-would-id.txt")"
+            would_fp="$(printf 'turn-budget-trend|signals:%s' "$would_id" | sha256sum | cut -d' ' -f1)"
+            closed_match="false"
+            if results="$(gh issue list --repo "$GITHUB_REPOSITORY" --label "pipeline-defect" --label "🐕 · turn-budget-trend" --state closed --limit 200 --json body 2>"$RUNNER_TEMP/tb-suppress-err.txt")"; then
+              if printf '%s' "$results" | jq -e --arg fp "$would_fp" '[.[] | select(.body | contains("fingerprint=" + $fp))] | length > 0' >/dev/null 2>&1; then
+                closed_match="true"
+              fi
+            else
+              echo "::warning::collect-turn-budget: suppression pre-check's issue lookup failed ($(tr -d '\n' < "$RUNNER_TEMP/tb-suppress-err.txt" | head -c 200)) — emitting the trend signal rather than silently swallowing it."
+            fi
+            if [ "$closed_match" != "true" ]; then
+              jq -c --argjson new "[{\"source\":\"turn-budget-trend\",\"class-hint\":\"turn-budget-trend\",\"facts\":$trend}]" '. + $new' "$RUNNER_TEMP/signals.json" > "$RUNNER_TEMP/signals.json.tmp" && mv "$RUNNER_TEMP/signals.json.tmp" "$RUNNER_TEMP/signals.json"
+            fi
+          fi
+
+          jq -c --arg c "collect-turn-budget" --arg o "$tb_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
+
+      # specs/046-watchdog-supervision-collectors: every cost-bearing stage
+      # run's spend must actually reach the lifecycle issue, correctly
+      # formatted. COST_REPORT_FILTER is self-contained (research.md R8's
+      # magnitude-aware pattern) so the gate can fixture it directly.
+      - name: "Collect: cost report"
+        id: collect-cost-report
+        shell: bash
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ACTIONS_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run-id }}
+          RUN_CONCLUSION: ${{ steps.run-meta.outputs.conclusion }}
+          CREATED_AT: ${{ steps.run-meta.outputs.created-at }}
+          ISSUE: ${{ steps.spec-slug.outputs.lifecycle-issue }}
+        run: |
+          set -uo pipefail
+          case "$RUN_CONCLUSION" in
+            skipped|cancelled)
+              echo "cost-report: run conclusion is '$RUN_CONCLUSION' — nothing executed, so no cost is attributable. Skipping." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+          esac
+
+          # shellcheck disable=SC2016 # this is a jq program — its $vars must
+          # NOT be shell-expanded.
+          COST_REPORT_FILTER='
+            . as $in
+            | if ($in.cost_available // false) != true then []
+              elif ($in.comment_found // false) != true then
+                [{source:"cost-report","class-hint":"cost-line-missing",facts:{stage:$in.stage,run:$in.run,"cost-available":true,"lifecycle-comment-found":false}}]
+              elif ($in.cost_token // null) == null then
+                [{source:"cost-report","class-hint":"cost-line-missing",facts:{stage:$in.stage,run:$in.run,"cost-available":true,"lifecycle-comment-found":true}}]
+              else
+                ($in.cost_token) as $tok
+                | ((($tok | test("^\\$[1-9][0-9]*\\.[0-9]{2}$")) or ($tok | test("^\\$0\\.[0-9]{4}$")))) as $valid
+                | if $valid then []
+                  else [{source:"cost-report","class-hint":"cost-line-malformed",facts:{stage:$in.stage,run:$in.run,"observed-text":$in.observed_text,"expected-pattern":"currency amount, 2dp if >= $1 else 4dp (research.md R8)"}}]
+                  end
+              end
+          '
+
+          cr_outcome="ok"
+          dl_dir="$RUNNER_TEMP/cost-report-metrics"
+          mkdir -p "$dl_dir"
+          own_record=""
+          if GH_TOKEN="$ACTIONS_TOKEN" gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -p 'metrics-record*' -D "$dl_dir" >"$RUNNER_TEMP/cr-dl.log" 2>&1; then
+            for f in "$dl_dir"/*/*.json "$dl_dir"/*.json; do
+              [ -e "$f" ] || continue
+              own_record="$(cat "$f")"
+              break
+            done
+          else
+            grep -qiE "no artifact|no valid artifacts|no artifacts" "$RUNNER_TEMP/cr-dl.log" 2>/dev/null || cr_outcome="failed"
+          fi
+
+          if [ -z "$own_record" ]; then
+            echo "cost-report: no metrics record found for this run — not a cost-bearing agent stage. Skipping." >> "$GITHUB_STEP_SUMMARY"
+            jq -c --arg c "collect-cost-report" --arg o "$cr_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
+            exit 0
+          fi
+
+          stage="$(printf '%s' "$own_record" | jq -r '.stage // empty')"
+          cost_available="$(printf '%s' "$own_record" | jq -r '.cost_available // false')"
+
+          if [ -z "$stage" ] || [ "$cost_available" != "true" ]; then
+            jq -c --arg c "collect-cost-report" --arg o "$cr_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
+            exit 0
+          fi
+
+          # Attribution (spec.md edge case): the earliest lifecycle-issue
+          # comment created at or after this run's own start is the one this
+          # run itself is expected to have posted — the same "the comment
+          # closest to this run" reasoning the rest of this file uses when
+          # attributing artifacts to a run.
+          comment_found="false"
+          cost_token="null"
+          observed_text="null"
+          if [ -n "$ISSUE" ]; then
+            if comments_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments" --paginate --jq '[.[] | {body, createdAt: .created_at}]' 2>"$RUNNER_TEMP/cr-comments-err.txt")"; then
+              attributable="$(printf '%s' "$comments_json" | jq -c --arg since "$CREATED_AT" '[.[] | select($since == "" or .createdAt >= $since)] | sort_by(.createdAt) | .[0] // empty')"
+              if [ -n "$attributable" ]; then
+                comment_found="true"
+                body="$(printf '%s' "$attributable" | jq -r '.body')"
+                observed="$(printf '%s' "$body" | grep -oE '\*{0,2}Cost\*{0,2}:[^\n]*' | head -1 | sed 's/\*//g' | sed -E 's/^ +//')"
+                if [ -n "$observed" ]; then
+                  observed_text="$(jq -n --arg t "$observed" '$t')"
+                  token="$(printf '%s' "$observed" | grep -oE '\$[^ ]*' | head -1)"
+                  [ -n "$token" ] && cost_token="$(jq -n --arg t "$token" '$t')"
+                fi
+              fi
+            else
+              cr_outcome="failed"
+            fi
+          fi
+
+          filter_input="$(jq -n --arg stage "$stage" --arg run "$RUN_ID" --argjson cost_available true --arg comment_found "$comment_found" --argjson cost_token "$cost_token" --argjson observed_text "$observed_text" \
+            '{stage:$stage, run:$run, cost_available:$cost_available, comment_found:($comment_found=="true"), cost_token:$cost_token, observed_text:$observed_text}')"
+
+          entries="$(printf '%s' "$filter_input" | jq -c "$COST_REPORT_FILTER")"
+          jq -c --argjson new "$entries" '. + $new' "$RUNNER_TEMP/signals.json" > "$RUNNER_TEMP/signals.json.tmp" && mv "$RUNNER_TEMP/signals.json.tmp" "$RUNNER_TEMP/signals.json"
+          jq -c --arg c "collect-cost-report" --arg o "$cr_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
+
+      # specs/046-watchdog-supervision-collectors: the final PR's own
+      # narrative, independently re-derived from the repository it
+      # describes (research.md R6/R7). Scoped to finalize-stage runs only.
+      # NARRATIVE_DRIFT_FILTER is self-contained so the gate can fixture it
+      # directly; ground truth is fetched via the GitHub compare API rather
+      # than local git history, since this job's checkout is shallow.
+      - name: "Collect: final PR claims"
+        id: collect-final-pr-claims
+        shell: bash
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          RUN_NAME: ${{ inputs.run-name }}
+          RUN_CONCLUSION: ${{ steps.run-meta.outputs.conclusion }}
+          SLUG: ${{ steps.spec-slug.outputs.slug }}
+          SPEC_DIR: ${{ steps.spec-slug.outputs.spec-dir }}
+          SPEC_PREFIX: ${{ vars.WING_COMMANDER_SPEC_PREFIX }}
+        run: |
+          set -uo pipefail
+          case "$RUN_CONCLUSION" in
+            skipped|cancelled)
+              echo "final-pr-claims: run conclusion is '$RUN_CONCLUSION' — skipping." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+          esac
+          if [ "$RUN_NAME" != "Wing Commander · 6 finalize" ]; then
+            echo "final-pr-claims: '$RUN_NAME' is not the finalize stage — skipping (scope guard)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ -z "$SLUG" ]; then
+            echo "final-pr-claims: no spec slug resolved for this run — skipping." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # shellcheck disable=SC2016 # this is a jq program — its $vars must
+          # NOT be shell-expanded.
+          NARRATIVE_DRIFT_FILTER='
+            . as $in
+            | if ($in.stage_is_finalize // false) != true then []
+              else
+                ( if ($in.tasks_claim != null) and ($in.tasks_claim != $in.tasks_actual)
+                  then [{source:"final-pr-claims","class-hint":"narrative-drift",facts:{pr:$in.pr,"claim-type":"tasks","claimed-value":$in.tasks_claim,"actual-value":$in.tasks_actual,"actual-source":"tasks.md checked-box count on the PR head ref"}}]
+                  else [] end )
+                + ( if ($in.commits_claim != null) and ($in.commits_claim != $in.commits_actual)
+                    then [{source:"final-pr-claims","class-hint":"narrative-drift",facts:{pr:$in.pr,"claim-type":"commits","claimed-value":$in.commits_claim,"actual-value":$in.commits_actual,"actual-source":"git rev-list --count <base>..<head>"}}]
+                    else [] end )
+                + ( if ($in.tests_claim != null) and ($in.tests_claim != $in.tests_actual)
+                    then [{source:"final-pr-claims","class-hint":"narrative-drift",facts:{pr:$in.pr,"claim-type":"tests","claimed-value":$in.tests_claim,"actual-value":$in.tests_actual,"actual-source":"fixture files added under */fixtures/* between base and head"}}]
+                    else [] end )
+              end
+          '
+
+          fp_outcome="ok"
+          _spec_prefix="${SPEC_PREFIX:-spec/}"
+          pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "${_spec_prefix}${SLUG}" --state all --json number --limit 10 --jq 'sort_by(.number) | reverse | .[0].number // empty' 2>"$RUNNER_TEMP/fp-pr-err.txt")" || pr=""
+          if [ -z "$pr" ]; then
+            echo "final-pr-claims: no final PR resolvable for branch '${_spec_prefix}${SLUG}' — skipping." >> "$GITHUB_STEP_SUMMARY"
+            jq -c --arg c "collect-final-pr-claims" --arg o "$fp_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
+            exit 0
+          fi
+
+          if ! pr_json="$(gh pr view "$pr" --repo "$GITHUB_REPOSITORY" --json body,baseRefName,headRefName,baseRefOid,headRefOid 2>"$RUNNER_TEMP/fp-view-err.txt")"; then
+            fp_outcome="failed"
+            jq -c --arg c "collect-final-pr-claims" --arg o "$fp_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
+            exit 0
+          fi
+          body="$(printf '%s' "$pr_json" | jq -r '.body // ""')"
+          base_sha="$(printf '%s' "$pr_json" | jq -r '.baseRefOid // empty')"
+          head_sha="$(printf '%s' "$pr_json" | jq -r '.headRefOid // empty')"
+
+          # research.md R7: ground truth via the compare API, not local git
+          # history — this job's checkout is shallow and lacks both refs.
+          compare_json='{}'
+          if [ -n "$base_sha" ] && [ -n "$head_sha" ]; then
+            compare_json="$(gh api "repos/$GITHUB_REPOSITORY/compare/$base_sha...$head_sha" --paginate --jq '{total_commits, added: [.files[]? | select(.status=="added") | .filename]}' 2>"$RUNNER_TEMP/fp-compare-err.txt")" || { compare_json='{}'; fp_outcome="failed"; }
+          fi
+          commits_actual="$(printf '%s' "$compare_json" | jq -r '.total_commits // 0')"
+          tests_actual="$(printf '%s' "$compare_json" | jq -r '[.added[]? | select(test("/fixtures/"))] | length' 2>/dev/null || echo 0)"
+
+          tasks_actual="0"
+          if [ -n "$SPEC_DIR" ]; then
+            tasks_actual="$(gh api "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/tasks.md" -F ref="${_spec_prefix}${SLUG}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | grep -c '^- \[[xX]\]' || echo 0)"
+          fi
+
+          # Best-effort natural-language extraction (research.md R6): a
+          # number immediately before OR after the claim word. No match is
+          # an absence of evidence (FR-023), never a finding.
+          extract_claim() {
+            local text="$1" word="$2" m
+            m="$(printf '%s' "$text" | grep -oiE "[0-9]+ ?(${word})" | head -1 | grep -oE '[0-9]+' | head -1)"
+            if [ -z "$m" ]; then
+              m="$(printf '%s' "$text" | grep -oiE "(${word})[^0-9]{0,20}[0-9]+" | head -1 | grep -oE '[0-9]+' | tail -1)"
+            fi
+            printf '%s' "$m"
+          }
+          tasks_claim="$(extract_claim "$body" 'tasks?')"
+          commits_claim="$(extract_claim "$body" 'commits?')"
+          tests_claim="$(extract_claim "$body" 'test cases?|tests?')"
+
+          filter_input="$(jq -n \
+            --arg pr "$pr" --argjson stage_is_finalize true \
+            --argjson tasks_claim "${tasks_claim:-null}" --argjson tasks_actual "${tasks_actual:-0}" \
+            --argjson commits_claim "${commits_claim:-null}" --argjson commits_actual "${commits_actual:-0}" \
+            --argjson tests_claim "${tests_claim:-null}" --argjson tests_actual "${tests_actual:-0}" \
+            '{pr:($pr|tonumber), stage_is_finalize:$stage_is_finalize, tasks_claim:$tasks_claim, tasks_actual:$tasks_actual, commits_claim:$commits_claim, commits_actual:$commits_actual, tests_claim:$tests_claim, tests_actual:$tests_actual}')"
+
+          entries="$(printf '%s' "$filter_input" | jq -c "$NARRATIVE_DRIFT_FILTER")"
+          jq -c --argjson new "$entries" '. + $new' "$RUNNER_TEMP/signals.json" > "$RUNNER_TEMP/signals.json.tmp" && mv "$RUNNER_TEMP/signals.json.tmp" "$RUNNER_TEMP/signals.json"
+          jq -c --arg c "collect-final-pr-claims" --arg o "$fp_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
+
+      # specs/046-watchdog-supervision-collectors: two in-flight specs
+      # claiming the same number, detected on the intake run that itself
+      # allocated one of the colliding numbers (FR-004's attribution
+      # invariant). SPEC_COLLISION_FILTER is self-contained so the gate can
+      # fixture it directly.
+      - name: "Collect: spec collision"
+        id: collect-spec-collision
+        shell: bash
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          RUN_NAME: ${{ inputs.run-name }}
+          RUN_CONCLUSION: ${{ steps.run-meta.outputs.conclusion }}
+          SLUG: ${{ steps.spec-slug.outputs.slug }}
+          SPEC_DRAFT_PREFIX: ${{ vars.WING_COMMANDER_SPEC_DRAFT_PREFIX }}
+          SPEC_PREFIX: ${{ vars.WING_COMMANDER_SPEC_PREFIX }}
+        run: |
+          set -uo pipefail
+          case "$RUN_CONCLUSION" in
+            skipped|cancelled)
+              echo "spec-collision: run conclusion is '$RUN_CONCLUSION' — skipping." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+          esac
+          if [ "$RUN_NAME" != "Wing Commander · 1 intake" ]; then
+            echo "spec-collision: '$RUN_NAME' is not the intake stage — skipping (scope guard)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          own_number="$(printf '%s' "$SLUG" | grep -oE '^[0-9]{3}' || true)"
+          if [ -z "$own_number" ]; then
+            echo "spec-collision: no three-digit spec number resolved from slug '$SLUG' — skipping." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # shellcheck disable=SC2016 # this is a jq program — its $vars must
+          # NOT be shell-expanded.
+          SPEC_COLLISION_FILTER='
+            . as $in
+            | (($in.pr_claimants // []) | map(select(.number == $in.own_number)) | map({kind:"open-pr", pr, branch})) as $own_prs
+            | (($in.dir_claimants // []) | map(select(.number == $in.own_number)) | map({kind:"main-directory", dir})) as $own_dirs
+            | (($own_prs + $own_dirs) | unique) as $claimants
+            | if ($claimants | length) >= 2 then
+                [{source:"spec-collision","class-hint":"spec-number-collision",facts:{number:$in.own_number, claimants: ($claimants | sort_by([.kind, (.pr // 0), (.dir // "")]))}}]
+              else [] end
+          '
+
+          sc_outcome="ok"
+          _draft_prefix="${SPEC_DRAFT_PREFIX:-spec-draft/}"
+          _spec_prefix="${SPEC_PREFIX:-spec/}"
+          pr_claimants='[]'
+          if prs_json="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --json number,headRefName --limit 200 2>"$RUNNER_TEMP/sc-pr-err.txt")"; then
+            pr_claimants="$(printf '%s' "$prs_json" | jq -c --arg dp "$_draft_prefix" --arg sp "$_spec_prefix" '
+              [.[] | . as $p
+                | ($p.headRefName) as $b
+                | ( if ($b | startswith($dp)) then ($b[($dp|length):])
+                    elif ($b | startswith($sp)) then ($b[($sp|length):])
+                    else null end ) as $slug
+                | select($slug != null and ($slug | test("^[0-9]{3}")))
+                | {pr: $p.number, branch: $b, number: ($slug[0:3])}
+              ] | unique
+            ')"
+          else
+            sc_outcome="failed"
+          fi
+
+          dir_claimants="$(find specs -mindepth 1 -maxdepth 1 -type d -name '[0-9][0-9][0-9]-*' 2>/dev/null | jq -R -c '{dir: ., number: .[6:9]}' 2>/dev/null | jq -cs '.' 2>/dev/null || echo '[]')"
+
+          filter_input="$(jq -n --arg own "$own_number" --argjson prs "$pr_claimants" --argjson dirs "$dir_claimants" \
+            '{own_number:$own, pr_claimants:$prs, dir_claimants:$dirs}')"
+
+          entries="$(printf '%s' "$filter_input" | jq -c "$SPEC_COLLISION_FILTER")"
+          jq -c --argjson new "$entries" '. + $new' "$RUNNER_TEMP/signals.json" > "$RUNNER_TEMP/signals.json.tmp" && mv "$RUNNER_TEMP/signals.json.tmp" "$RUNNER_TEMP/signals.json"
+          jq -c --arg c "collect-spec-collision" --arg o "$sc_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
+
       # Stamps every signal with a content-derived id, which is what the
       # dedup fingerprint is ultimately built from (issue #118).
       #
@@ -1115,6 +1602,25 @@ jobs:
                elif ($src | startswith("annotations"))
                then {kind: "annotations",
                      ident: {message: ($fx.message // "" | ascii_downcase)}}
+               elif ($src | startswith("turn-budget-trend"))
+               then {kind: "turn-budget-trend",
+                     ident: {stage: ($fx.stage // "" | ascii_downcase), band: ($fx.band // "" | ascii_downcase)}}
+               elif ($src | startswith("turn-budget"))
+               then {kind: "turn-budget-observation",
+                     ident: {stage: ($fx.stage // "" | ascii_downcase), run: ($fx.run // "" | tostring)}}
+               elif ($src | startswith("cost-report"))
+               then {kind: "cost-line-claim",
+                     ident: {run: ($fx.run // "" | tostring), stage: ($fx.stage // "" | ascii_downcase),
+                             "claim-type": (if ($fx | has("lifecycle-comment-found")) then "missing" else "malformed" end)}}
+               elif ($src | startswith("final-pr-claims"))
+               then {kind: "narrative-claim",
+                     ident: {pr: ($fx.pr // "" | tostring), "claim-type": ($fx["claim-type"] // "" | ascii_downcase)}}
+               elif ($src | startswith("spec-collision"))
+               then {kind: "spec-number-claim",
+                     ident: {number: ($fx.number // "" | tostring),
+                             "sorted-claimants": ($fx.claimants // [] | map(
+                               if .kind == "open-pr" then "open-pr:" + (.pr // "" | tostring)
+                               else "main-directory:" + (.dir // "") end) | sort)}}
                else {kind: ($src | split(" ") | .[0]),
                      ident: ($fx | with_entries(select(.value | type == "string")) | map_values(ascii_downcase)),
                      unmapped: true}
@@ -2127,6 +2633,11 @@ jobs:
               missing-spec-artifact) keys='["branch"]' ;;
               missing-spec-metadata) keys='["branch"]' ;;
               token-budget-warning)  keys='["job"]' ;;
+              turn-budget-trend)     keys='["stage","expected","actual"]' ;;
+              cost-line-missing)     keys='["stage","expected","actual"]' ;;
+              cost-line-malformed)   keys='["stage","expected","actual"]' ;;
+              narrative-drift)       keys='["stage","expected","actual"]' ;;
+              spec-number-collision) keys='["spec","expected","actual"]' ;;
               *)                     keys='null' ;;
             esac
             if [ "$keys" = 'null' ]; then

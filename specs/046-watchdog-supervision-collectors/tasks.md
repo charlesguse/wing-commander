@@ -24,9 +24,9 @@ Single project, no `src`/`tests` split — this is a GitHub Actions pipeline. Al
 
 **Purpose**: Confirm the exact insertion points this feature's edits depend on before any collector is written — every subsequent task cites one of these anchors.
 
-- [ ] T001 Re-read the current `.github/workflows/watchdog.yml` `collect` job end-to-end (the five existing `collect-*` steps at lines 529, 669, 815, 871, 1008) and confirm the exact `id:`, `continue-on-error: true`, `shell: bash`, and `$RUNNER_TEMP/signals.json`/`collector-outcomes.json`-append shape each one uses, so the four new steps this feature adds are byte-shape-identical per `contracts/collector-signals.md`'s shared-obligations list.
-- [ ] T002 Confirm the current line numbers (drifted since plan.md was written) of `Stamp signal ids` (~1082), `Aggregate signals` (~1149), `Coexistence suppression check` (~1991), `Compute fingerprint` (~2115), `Dedup search` (~2148), `Ensure pipeline-defect issue` (~2561), and `Report finding to lifecycle issue` (~2641) in `.github/workflows/watchdog.yml`, and note them for the tasks below that edit near each anchor.
-- [ ] T003 [P] Confirm the current gate count and next free gate number by reading `.github/workflows/lint-workflows.yml`'s gate registry and running `python .github/scripts/run-local-gates.py --list` (or equivalent local enumeration), per research.md R12's "gate numbers assigned sequentially at implementation time."
+- [X] T001 Re-read the current `.github/workflows/watchdog.yml` `collect` job end-to-end (the five existing `collect-*` steps at lines 529, 669, 815, 871, 1008) and confirm the exact `id:`, `continue-on-error: true`, `shell: bash`, and `$RUNNER_TEMP/signals.json`/`collector-outcomes.json`-append shape each one uses, so the four new steps this feature adds are byte-shape-identical per `contracts/collector-signals.md`'s shared-obligations list.
+- [X] T002 Confirm the current line numbers (drifted since plan.md was written) of `Stamp signal ids` (~1082), `Aggregate signals` (~1149), `Coexistence suppression check` (~1991), `Compute fingerprint` (~2115), `Dedup search` (~2148), `Ensure pipeline-defect issue` (~2561), and `Report finding to lifecycle issue` (~2641) in `.github/workflows/watchdog.yml`, and note them for the tasks below that edit near each anchor.
+- [X] T003 [P] Confirm the current gate count and next free gate number by reading `.github/workflows/lint-workflows.yml`'s gate registry and running `python .github/scripts/run-local-gates.py --list` (or equivalent local enumeration), per research.md R12's "gate numbers assigned sequentially at implementation time."
 
 **Checkpoint**: Insertion points and next gate numbers confirmed — collector implementation can begin.
 
@@ -38,20 +38,21 @@ Single project, no `src`/`tests` split — this is a GitHub Actions pipeline. Al
 
 **⚠️ CRITICAL**: Phases 3–6 (the four stories) each depend on this phase's rows existing, because a signal whose `source` is unmapped falls into the existing `"unmapped"` + warning failure path (contracts/collector-signals.md) rather than becoming a Finding.
 
-- [ ] T004 Add four additive rows to `Stamp signal ids`' existing hard-coded source→kind map in `.github/workflows/watchdog.yml` (~line 1082), per research.md R11 / data-model.md, with no existing row changed:
+- [X] T004 Add four additive rows to `Stamp signal ids`' existing hard-coded source→kind map in `.github/workflows/watchdog.yml` (~line 1082), per research.md R11 / data-model.md, with no existing row changed:
   - `source: "turn-budget"` → `kind: "turn-budget-observation"`, `ident: {stage, run}`
   - `source: "turn-budget-trend"` → `kind: "turn-budget-trend"`, `ident: {stage, band}`
   - `source: "cost-report"` → `kind: "cost-line-claim"`, `ident: {run, stage, claim-type}`
   - `source: "final-pr-claims"` → `kind: "narrative-claim"`, `ident: {pr, claim-type}`
   - `source: "spec-collision"` → `kind: "spec-number-claim"`, `ident: {number, sorted-claimants}`
-- [ ] T005 Add five additive rows to the evidence-validity gate's per-class required-`normalizedFacts`-key table in `.github/workflows/watchdog.yml` (the `diagnose`-output validation step), per data-model.md's mapping table, with no existing row changed:
+  (research.md R11's own table lists all five of these despite its heading saying "four rows" — implemented all five, since data-model.md's per-entity identity notes require both `turn-budget` and `turn-budget-trend` rows to exist independently.)
+- [X] T005 Add five additive rows to the evidence-validity gate's per-class required-`normalizedFacts`-key table in `.github/workflows/watchdog.yml` (the `diagnose`-output validation step), per data-model.md's mapping table, with no existing row changed:
   - `turn-budget-trend` → requires `stage`, `expected`, `actual`
   - `cost-line-missing` → requires `stage`, `expected`, `actual`
   - `cost-line-malformed` → requires `stage`, `expected`, `actual`
   - `narrative-drift` → requires `stage`, `expected`, `actual`
   - `spec-number-collision` → requires `spec`, `expected`, `actual`
-- [ ] T006 Register five new self-registering labels in whatever existing `__new__`-escape-hatch label list `watchdog.yml`'s issue-filing path reads (the same mechanism the five existing collector classes already use, per plan.md's Scale/Scope): `🐕 · turn-budget-trend`, `🐕 · cost-line-missing`, `🐕 · cost-line-malformed`, `🐕 · narrative-drift`, `🐕 · spec-number-collision`.
-- [ ] T007 Update `specs/015-pipeline-watchdog/contracts/watchdog-workflow.md`'s "five deterministic collector steps" line to state nine, per plan.md's Summary flagging this as an implementation-stage follow-up (plan-stage edits were scoped only to `specs/046-watchdog-supervision-collectors/`; this task is the deferred edit, now in scope).
+- [X] T006 No watchdog.yml change needed: the `__new__`-escape-hatch label list is not a static file-based list — `Resolve finding-class vocabulary` queries `gh label list` live, and `Register new finding class` (triage) / `Ensure pipeline-defect issue` (act) already create any `🐕 · <class>` label on first occurrence via `gh label create --force`. The five new classes self-register through that existing, unmodified mechanism the first time each fires, exactly as plan.md's Scale/Scope states ("needing no repository setup step") — confirmed by reading both steps rather than by an edit.
+- [X] T007 Update `specs/015-pipeline-watchdog/contracts/watchdog-workflow.md`'s "five deterministic collector steps" line to state nine, per plan.md's Summary flagging this as an implementation-stage follow-up (plan-stage edits were scoped only to `specs/046-watchdog-supervision-collectors/`; this task is the deferred edit, now in scope).
 
 **Checkpoint**: Signal-id map, evidence-validity table, and labels are ready — each user story's collector can now emit signals that reach a Finding.
 
