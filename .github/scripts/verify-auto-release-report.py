@@ -16,14 +16,21 @@ dispatch and pointed at the same non-existent run.
 
 This harness EXECUTES the shipped step (read out of auto-release.yml at run
 time, so there is no second copy to drift) against synthetic `needs.*`
-values -- each job's `result` and outputs -- with `gh` stubbed to record
-what would have been filed, commented, or closed. Every attribution path
-the step has is a scenario: the two quiet days, each verdict class, each
-job-result crash, the collision, the tip-unresolved read, released, the
-stale head, and both shapes of a real release failure (with and without an
-observed release.yml run).
+values -- each job's `result` and outputs -- with `gh`/`git` stubbed to
+record what would have been filed, commented, or closed. Every attribution
+path the step has is a scenario: the two quiet days, each verdict class,
+each job-result crash, the collision, released (correlated and
+uncorrelated), branch-advanced, and a real release failure (with and
+without a correlated run).
 
-It ends with MUTATION checks that put each #325 defect back and assert the
+specs/048-correlated-release-dispatch (FR-007/FR-007a/FR-013) replaced the
+step's `RELEASE_OUTCOME`/`RELEASE_RUN_ID` reads (a run's own conclusion)
+with `TAG_MATCHES`/`CORRELATION`/`CORRELATED_RUN_ID`/`CORRELATED_RUN_URL`
+(tag state, decided independently of any run) -- this harness's scenarios
+and mutations were updated alongside that rewrite so the release-time
+answer and this self-test cannot drift apart.
+
+It ends with MUTATION checks that put each defect back and assert the
 suite then fails. A test that cannot fail is not a test.
 
 Usage: python3 .github/scripts/verify-auto-release-report.py
@@ -63,8 +70,22 @@ echo "unexpected gh invocation: $*" >&2
 exit 1
 '''
 
+# The report step's only `git` call is the branch-advanced/release-failed
+# classifier's `git ls-remote ... refs/heads/main` (T012) -- a live read
+# this harness answers with a scripted tip rather than the network.
+STUB_GIT = r'''#!/usr/bin/env bash
+if [ "$1" = "ls-remote" ]; then
+  printf '%s\trefs/heads/main\n' "${GIT_STUB_CURRENT_TIP:-0000000000000000000000000000000000000000}"
+  exit 0
+fi
+echo "unexpected git invocation: $*" >&2
+exit 1
+'''
+
 RUN_URL = "https://github.com/charlesguse/wing-commander/actions/runs/777"
+CORRELATED_RUN_URL = "https://github.com/charlesguse/wing-commander/actions/runs/4242"
 HEAD = "0123456789abcdef0123456789abcdef01234567"
+OTHER_SHA = "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
 PASS = json.dumps({"outcome": "pass", "verified_head": HEAD})
 WRONG_OUTPUT = json.dumps({"outcome": "fail-wrong-output", "verified_head": HEAD,
                            "failing_check": "spec.md content",
@@ -75,12 +96,14 @@ WRONG_OUTPUT = json.dumps({"outcome": "fail-wrong-output", "verified_head": HEAD
 # Every scenario starts from a run where nothing has happened yet -- every
 # result `skipped`, every output empty -- and overrides what its situation
 # sets. `filed` is what the step did with the failure issue: "create",
-# "comment" (dedup onto the existing one), or None.
+# "comment" (dedup onto the existing one), or None. `current_tip` feeds the
+# git ls-remote stub (defaults to HEAD -- the branch has not advanced).
 BASE = dict(DETECT_RESULT="skipped", VERIFY_RESULT="skipped",
             DECIDE_RESULT="skipped", DISPATCH_RESULT="skipped",
             HEAD_SHA="", HAS_NEW_WORK="", TAG_EXISTS="", LATEST_TAG="",
             VERDICT_JSON="", NEXT_VERSION="", COLLISION="",
-            RELEASE_OUTCOME="", RELEASE_RUN_ID="")
+            TAG_MATCHES="", CORRELATION="", CORRELATED_RUN_ID="",
+            CORRELATED_RUN_URL="")
 
 SCENARIOS = [
     dict(
@@ -184,40 +207,44 @@ SCENARIOS = [
         summary_contains="version collision",
     ),
     dict(
-        name="released: the open failure issue is closed, nothing filed",
+        name="released, own run correlated (FR-007): the open failure "
+             "issue is closed, nothing filed, the correlated run linked",
         env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
                  LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
                  VERDICT_JSON=PASS, DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
                  COLLISION="false", DISPATCH_RESULT="success",
-                 RELEASE_OUTCOME="released", RELEASE_RUN_ID="4242"),
+                 TAG_MATCHES="true", CORRELATION="found",
+                 CORRELATED_RUN_ID="4242", CORRELATED_RUN_URL=CORRELATED_RUN_URL),
         existing_issue="42",
         filed=None,
         closed="42",
-        summary_contains="released v2.8.0",
+        summary_contains=f"released v2.8.0 -- [correlated run]({CORRELATED_RUN_URL})",
     ),
     dict(
-        name="stale head: expected behaviour, nothing filed",
+        name="released, own run never correlated (Edge Case: the release "
+             "happened but was never correlated) -- still reports released, "
+             "the standing issue still closes (FR-007a)",
         env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
                  LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
                  VERDICT_JSON=PASS, DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
                  COLLISION="false", DISPATCH_RESULT="success",
-                 RELEASE_OUTCOME="stale-head"),
+                 TAG_MATCHES="true", CORRELATION="not-observed"),
+        existing_issue="42",
         filed=None,
-        summary_contains="main advanced past the verified head",
+        closed="42",
+        summary_contains="released v2.8.0 -- own run not correlated",
     ),
     dict(
-        name="the stale-head guard's own tip read failed: infrastructure, "
-             "nothing was dispatched -- not 'see release.yml's own run' "
-             "(#325 case 3)",
+        name="branch-advanced (FR-013): expected behaviour, nothing filed, "
+             "names both the verified head and the observed tip",
         env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
                  LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
                  VERDICT_JSON=PASS, DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
                  COLLISION="false", DISPATCH_RESULT="success",
-                 RELEASE_OUTCOME="tip-unresolved"),
-        filed="create",
-        body_contains=["infrastructure", "current tip", RUN_URL],
-        body_excludes=["release failure", "release.yml was dispatched"],
-        summary_excludes="release dispatch failed",
+                 TAG_MATCHES="false", CORRELATION="not-observed"),
+        current_tip=OTHER_SHA,
+        filed=None,
+        summary_contains=f"the branch advanced past the verified head ({HEAD})",
     ),
     dict(
         name="dispatch-release crashed with no outcome: infrastructure "
@@ -241,29 +268,32 @@ SCENARIOS = [
         summary_contains="did not run",
     ),
     dict(
-        name="release.yml ran and failed: release failure linking that run",
+        name="release-failed, own run correlated: branch never moved, no "
+             "tag landed -- filed, linking the correlated run",
         env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
                  LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
                  VERDICT_JSON=PASS, DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
                  COLLISION="false", DISPATCH_RESULT="success",
-                 RELEASE_OUTCOME="failed", RELEASE_RUN_ID="9999"),
+                 TAG_MATCHES="false", CORRELATION="found",
+                 CORRELATED_RUN_ID="9999", CORRELATED_RUN_URL=CORRELATED_RUN_URL),
         filed="create",
-        body_contains=["release failure", "actions/runs/9999"],
-        body_excludes=["never observed"],
+        body_contains=["pipeline defect", CORRELATED_RUN_URL],
+        body_excludes=["not correlated (see tag state below)"],
         summary_contains="release dispatch failed for v2.8.0",
     ),
     dict(
-        name="release.yml was never observed running (dispatch rejected or "
-             "no run appeared): release failure saying so, not pointing at "
-             "a run that does not exist",
+        name="release-failed, own run not correlated (ambiguous): filed, "
+             "the diagnostic gap named honestly rather than pointing at a "
+             "run that was never identified (FR-005/FR-006)",
         env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
                  LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
                  VERDICT_JSON=PASS, DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
                  COLLISION="false", DISPATCH_RESULT="success",
-                 RELEASE_OUTCOME="failed"),
+                 TAG_MATCHES="false", CORRELATION="ambiguous"),
         filed="create",
-        body_contains=["release failure", "never observed", RUN_URL],
-        body_excludes=["see its run:"],
+        body_contains=["pipeline defect", "not correlated (see tag state below)",
+                       "could not be uniquely identified"],
+        summary_contains="release dispatch failed for v2.8.0",
     ),
     dict(
         name="a failure with an open report already filed: commented onto "
@@ -302,6 +332,11 @@ def run_scenario(script, env, sc, tmproot):
         fh.write(STUB_GH)
     os.chmod(gh_path, 0o755)
 
+    git_path = os.path.join(bindir, "git")
+    with open(git_path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(STUB_GIT)
+    os.chmod(git_path, 0o755)
+
     run_env = dict(env)
     run_env.update(BASE)
     run_env.update(sc["env"])
@@ -309,6 +344,7 @@ def run_scenario(script, env, sc, tmproot):
     run_env["GITHUB_SERVER_URL"] = "https://github.com"
     run_env["GITHUB_REPOSITORY"] = "charlesguse/wing-commander"
     run_env["GITHUB_RUN_ID"] = "777"
+    run_env["GIT_STUB_CURRENT_TIP"] = sc.get("current_tip") or run_env.get("HEAD_SHA") or HEAD
     gh_log = os.path.join(runner_temp, "gh-stub.log")
     run_env["GH_STUB_LOG"] = gh_log.replace("\\", "/")
     if sc.get("existing_issue"):
@@ -397,7 +433,12 @@ def mut_ignore_decide_result(script):
 
 
 def mut_ignore_dispatch_result(script):
-    return blind_case(script, "DISPATCH_RESULT")
+    old = 'if [ "$DISPATCH_RESULT" = "failure" ]; then'
+    if script.count(old) != 1:
+        sys.exit(f"::error::verify-auto-release-report: expected exactly one "
+                 f"{old!r} to mutate, found {script.count(old)} — the step text "
+                 f"may have changed shape; update this harness alongside it.")
+    return script.replace(old, 'if [ "mutated-$DISPATCH_RESULT" = "failure" ]; then', 1)
 
 
 def mut_no_verdict_always_stopped(script):
@@ -409,22 +450,27 @@ def mut_no_verdict_always_stopped(script):
     return script.replace(old, 'if false; then', 1)
 
 
-def mut_tip_unresolved_is_a_release_failure(script):
-    old = 'if [ "$RELEASE_OUTCOME" = "tip-unresolved" ]; then'
+def mut_branch_advanced_reported_as_failure(script):
+    """specs/048 FR-013: the branch-advanced/release-failed split must be
+    live, not skipped -- put back "the tip never moved" as the only answer."""
+    old = 'if [ "$current_tip" != "$HEAD_SHA" ]; then'
     if script.count(old) != 1:
         sys.exit("::error::verify-auto-release-report: could not locate the "
-                 "tip-unresolved arm to mutate — the step text may have "
-                 "changed shape; update this harness alongside it.")
-    return script.replace(old, 'if [ "$RELEASE_OUTCOME" = "tip-unresolved-never" ]; then', 1)
+                 "branch-advanced classifier to mutate — the step text may "
+                 "have changed shape; update this harness alongside it.")
+    return script.replace(old, 'if false; then', 1)
 
 
-def mut_always_point_at_release_run(script):
-    old = 'if [ -n "$RELEASE_RUN_ID" ]; then'
+def mut_released_ignores_tag_matches(script):
+    """specs/048 FR-007/FR-007a: `released` must come from TAG_MATCHES
+    alone -- put back a correlation-only decision (the pre-048 defect this
+    feature exists to close, reworded onto the new variable names)."""
+    old = 'if [ "$TAG_MATCHES" = "true" ]; then'
     if script.count(old) != 1:
         sys.exit("::error::verify-auto-release-report: could not locate the "
-                 "release-run-id branch to mutate — the step text may have "
-                 "changed shape; update this harness alongside it.")
-    return script.replace(old, 'if true; then', 1)
+                 "TAG_MATCHES released branch to mutate — the step text may "
+                 "have changed shape; update this harness alongside it.")
+    return script.replace(old, 'if [ "$CORRELATION" = "found" ]; then', 1)
 
 
 MUTATIONS = [
@@ -434,10 +480,10 @@ MUTATIONS = [
      mut_no_verdict_always_stopped),
     ("report ignoring decide-version's job result (#325 case 2)", mut_ignore_decide_result),
     ("report ignoring dispatch-release's job result", mut_ignore_dispatch_result),
-    ("tip-unresolved reported as a release failure (#325 case 3)",
-     mut_tip_unresolved_is_a_release_failure),
-    ("a release failure always pointing at a release.yml run",
-     mut_always_point_at_release_run),
+    ("branch-advanced always reported as a release failure (FR-013)",
+     mut_branch_advanced_reported_as_failure),
+    ("`released` decided from correlation instead of tag state (FR-007/FR-007a)",
+     mut_released_ignores_tag_matches),
 ]
 
 

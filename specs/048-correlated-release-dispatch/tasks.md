@@ -218,6 +218,20 @@ that the refusal names both the requested commit and the observed tip.
 
 ### Implementation for User Story 2
 
+**⚠️ Check-2 ordering note (discovered during implement)**: research.md D7,
+contracts/regression-gate.md, and data-model.md all describe Gate 53's
+check 2 as requiring the tag-time `git ls-remote` comparison's line number
+to be *after* the "Create tags" step marker. Taken literally that would
+require the refusal to run once tags already exist, which contradicts
+FR-010/FR-011/FR-014 ("refuses -- creating no exact tag") and this very
+task's own placement (the step sits between "Validate version and plan
+tags" and "Create tags", so it runs, and appears in the file, *before*
+"Create tags"). T016's gate script implements the invariant that is
+actually correct and actually true of the shipped code — the comparison
+runs after full validation and before any tag mutation — documented in
+the script's own docstring, rather than the literal "after Create tags"
+wording. Flagging here for whoever reviews this PR.
+
 - [X] T011 [US2] In `.github/workflows/release.yml`, insert a new step
       immediately before "Create tags" (after "Validate version and plan
       tags" has already run, so a stale-head request still gets full
@@ -290,7 +304,7 @@ today.
 
 ### Implementation for User Story 3
 
-- [ ] T015 [US3] Work through `specs/048-correlated-release-dispatch/quickstart.md`
+- [X] T015 [US3] Work through `specs/048-correlated-release-dispatch/quickstart.md`
       Scenario 3 against the shipped `.github/workflows/release.yml`
       (real dispatch on a fork/test repository if available, otherwise a
       careful read-through of the merged YAML against each of Story 3's
@@ -315,7 +329,7 @@ today.
 end-to-end validation the individual stories' checkpoints above don't
 cover on their own.
 
-- [ ] T016 [P] Create `.github/scripts/verify-correlated-release-dispatch.py`
+- [X] T016 [P] Create `.github/scripts/verify-correlated-release-dispatch.py`
       following Gate 50/51's shape (a `scan()` function returning
       `(checked_count, failures)`, a `main()` printing `::error::` lines
       and summarizing, plain-text/regex checks over the raw YAML text —
@@ -342,7 +356,7 @@ cover on their own.
       `.github/workflows/auto-release.yml` directly (not the derived
       published-stage set — research.md D6).
 
-- [ ] T017 Add a `--self-test` mode to
+- [X] T017 Add a `--self-test` mode to
       `.github/scripts/verify-correlated-release-dispatch.py` (T016),
       matching Gate 50/51's `check()`/`fixture()` helper shape: one
       in-memory "clean" fixture pair (a `run-name:` with the token, a
@@ -356,7 +370,7 @@ cover on their own.
       and the offending line — per contracts/regression-gate.md's
       Self-test fixture shape and Constitution VIII.
 
-- [ ] T018 Register the new gate in `.github/workflows/lint-workflows.yml`
+- [X] T018 Register the new gate in `.github/workflows/lint-workflows.yml`
       as two steps immediately after Gate 51's self-test step (using the
       gate number confirmed in T001 — 53 unless T001's re-check found a
       collision), matching every existing gate's two-step pattern: a
@@ -367,12 +381,12 @@ cover on their own.
       and a step running it again with `--self-test`, both gated
       `if: "!cancelled()"`.
 
-- [ ] T019 Run `python .github/scripts/run-local-gates.py` and confirm
+- [X] T019 Run `python .github/scripts/run-local-gates.py` and confirm
       the new gate (T016–T018) is picked up automatically with no
       separate registration in that script (it derives its list from
       `lint-workflows.yml`), per FR-018 and contracts/regression-gate.md.
 
-- [ ] T020 [P] Add code comments at each remaining new mechanism this
+- [X] T020 [P] Add code comments at each remaining new mechanism this
       feature introduces — the correlation poll and tag-state check in
       `.github/workflows/auto-release.yml`'s `dispatch-release` job
       (T005–T008), and the outcome computation in its `report` job
@@ -394,7 +408,14 @@ cover on their own.
       (Scenario 2, step 5). Record the outcome (pass/fail per step) for
       the PR description.
 
-- [ ] T022 Run `python .github/scripts/run-local-gates.py` (the full
+      **Not run this cycle**: this implementation run's tooling has no
+      `gh workflow run`/dispatch access (or a fork/test repository), so
+      Scenarios 1 and 2 could not be driven for real. T015's manual-path
+      scenario was instead validated by a read-through against the
+      shipped YAML (see its own note). A maintainer with dispatch access
+      should run this task for real before merge.
+
+- [X] T022 Run `python .github/scripts/run-local-gates.py` (the full
       PR-time gate suite) and confirm it passes end to end, per
       CLAUDE.md's "Before pushing" instruction and SC-006 (no existing
       release behaviour — lint gates, tag-collision refusal, breaking-
