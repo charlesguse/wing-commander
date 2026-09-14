@@ -27,6 +27,13 @@ pipeline to read that evidence and report the outcome as what it is — the
 usage window ran out, retry after the reset time — rather than as a pipeline
 defect that needs a human.
 
+## Clarifications
+
+### Session 2026-09-14
+
+- Q: When a run goes uninspected because the usage window was exhausted, where should that fact be recorded — and should the stage-8b verifier job still turn red? → A: On an issue carrying a distinct `usage-limit` label — never `pipeline-defect` — that the watchdog's existing dedup machinery folds subsequent rate-limited runs into, so the board gains one item per exhausted window rather than one per run. The stage-8b job stays green: a usage outage is not a defect, and a red run in the workflow history is the same noise this feature removes one level up. The accepted cost is that the issue board still grows by one item per window; the label is what keeps those items filterable out of defect triage. (FR-012, FR-013)
+- Q: Outside the watchdog, should the `rate-limited` verdict behave as a failure? → A: It is exempted only where a stage would otherwise file or comment on an issue; everywhere else it stays red exactly as any other non-healthy verdict does today. A stage that was rejected did not do its work, so control flow should say so and every `needs`-gate downstream keeps its current meaning unexamined. The accepted cost is that the exemption is per-call-site rather than one fleet-wide rule, so the gate covering it has to enumerate the issue-writing call sites. (FR-014, FR-015)
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - The maintainer is not paged for a usage-window outage (Priority: P1)
@@ -35,7 +42,8 @@ A watchdog run starts while the usage window is exhausted. Its diagnose agent
 is rejected on its first call. Instead of a `pipeline-defect` issue titled
 "stage 8 run failed deterministic verification", the maintainer sees a report
 that says the usage window was exhausted and names the time it resets. No
-issue is filed for this class, and the maintainer's triage queue stays empty.
+`pipeline-defect` issue is filed, the stage-8b job stays green, and the
+maintainer's triage queue stays empty.
 
 **Why this priority**: This is the entire cost the issue is paying to remove.
 Every other story is refinement on top of it. Delivered alone it already
@@ -59,7 +67,8 @@ window and its reset time, and that no `pipeline-defect` issue is created.
    as having failed or crashed.
 3. **Given** a stage-8 run whose only verification failures are caused by that
    rate-limited diagnose step, **When** the stage-8b verifier runs, **Then** it
-   does not create or append to a `pipeline-defect` issue.
+   does not create or append to a `pipeline-defect` issue, and the job finishes
+   green.
 4. **Given** a stage-8 run that is rate-limited AND also breaches an unrelated
    check (for example its duration band), **When** the stage-8b verifier runs,
    **Then** the unrelated failure is still reported and still files as it does
@@ -78,18 +87,22 @@ blind spot — the explicit trade-off the issue asks the owner to decide. It is
 P2 rather than P1 because the recording surface is the smaller half of the
 work and is useless without P1's classification.
 
-**Independent Test**: Drive two rate-limited runs and confirm both are
-discoverable from a single durable place, each naming the run and its reset
-time, without either creating a new triage-bearing issue.
+**Independent Test**: Drive two rate-limited runs inside one window and confirm
+both appear on a single `usage-limit`-labelled issue, each naming the run and
+its reset time, with no second issue opened and nothing carrying the
+`pipeline-defect` label.
 
 **Acceptance Scenarios**:
 
 1. **Given** a run classified `rate-limited`, **When** reporting completes,
-   **Then** the fact that this run went uninspected is recorded durably, with a
-   link to the run and the window's reset time.
+   **Then** the fact that this run went uninspected is recorded on an issue
+   labelled `usage-limit`, with a link to the run and the window's reset time.
 2. **Given** several rate-limited runs inside one usage window, **When** they
-   are recorded, **Then** they accumulate in one place rather than producing
-   one new artefact per run.
+   are recorded, **Then** the watchdog's dedup appends them to the one open
+   `usage-limit` issue rather than opening another.
+3. **Given** the `usage-limit` issue exists, **When** a maintainer filters the
+   issue board for `pipeline-defect`, **Then** it does not appear — a usage
+   outage never enters defect triage.
 
 ---
 
@@ -114,8 +127,13 @@ rate-limited rather than degrading it to an unclassified or failed outcome.
    stage summarises the run, **Then** the summary names the rate-limited
    outcome and the reset time, and the durable metrics record carries the same
    outcome value.
-2. **Given** a rate-limited transcript, **When** the stage's cost accounting
-   runs, **Then** the run is not counted as a pipeline failure.
+2. **Given** a rate-limited transcript at a non-watchdog stage, **When** that
+   stage's "fail loud on non-healthy agent verdict" step runs, **Then** the step
+   is still red, exactly as it is today for any other non-healthy verdict.
+3. **Given** that same stage would, on a failure, file an issue or post a
+   failure comment, **When** the verdict is `rate-limited`, **Then** it files
+   and comments nothing — the `usage-limit` record is the only issue-facing
+   output for the outage.
 
 ---
 
@@ -194,25 +212,41 @@ rate-limited rather than degrading it to an unclassified or failed outcome.
   produces).
 - **FR-011**: The verifier MUST continue to file for any verification reason
   that rate-limiting does not explain, in the same run.
-- **FR-012**: [NEEDS CLARIFICATION: Where does the "this run went uninspected"
-  fact land, and does the stage-8b job go red? Options: (a) a comment on one
-  rolling tracking issue, job green; (b) an issue carrying a distinct
-  `usage-limit` label that the watchdog dedups on, job green; (c) run summary
-  only, job green; (d) any of the above but the job still turns red.]
-- **FR-013**: Whatever surface FR-012 selects, the record MUST name the
-  inspected run, the reset time, and the fact that no inspection took place,
-  and MUST accumulate rather than multiply across runs inside one window.
+- **FR-012**: The "this run went uninspected" fact MUST be recorded on an issue
+  carrying a distinct `usage-limit` label, never the `pipeline-defect` label, and
+  the watchdog's existing dedup MUST fold later rate-limited runs into the open
+  `usage-limit` issue for the same window rather than opening a second one.
+- **FR-012a**: The stage-8b verifier job MUST stay green for a run whose only
+  verification failures are the ones rate-limiting explains. A rate-limited run
+  is not a defect and MUST NOT show as a red run in the workflow history for that
+  reason alone.
+- **FR-013**: The `usage-limit` record MUST name the inspected run, the reset
+  time (or "unknown"), and the fact that no inspection took place, and MUST
+  accumulate — each further rate-limited run inside one window appends to the
+  same issue rather than creating another.
 
 **Fleet-wide consistency**
 
 - **FR-014**: Every stage's run summary and durable metrics record MUST carry
   the `rate-limited` outcome for a rate-limited transcript, rather than
   degrading it to an unclassified or failed outcome.
-- **FR-015**: [NEEDS CLARIFICATION: Outside the watchdog, does `rate-limited`
-  behave as a failure? Options: (a) every stage's loud-failure step stays red
-  as it is today for any non-healthy verdict; (b) `rate-limited` is exempted
-  fleet-wide, staying loud in the log but not red; (c) `rate-limited` is
-  exempted only where a stage would otherwise file or comment on an issue.]
+- **FR-015**: Outside the watchdog, `rate-limited` MUST keep behaving as a
+  failure for control flow: every stage's "fail loud on non-healthy agent
+  verdict" step MUST stay red for it exactly as it does for any other non-healthy
+  verdict today, and no `needs`-gate may start reading a rate-limited stage as a
+  completed one.
+- **FR-015a**: The exemption MUST apply only where a stage would otherwise file
+  an issue or post a comment about the outcome. At those call sites a
+  `rate-limited` verdict MUST NOT produce a defect filing or a
+  failure-describing comment. The only issue-facing outputs permitted for this
+  class are the `usage-limit` record of FR-012 and the watchdog's own
+  rate-limited report of FR-007, which replaces the failure report rather than
+  adding to it.
+- **FR-015b**: Because FR-015a's exemption is per-call-site, the set of
+  issue-writing call sites that carry it MUST be enumerated in one place, and a
+  deterministic gate MUST fail when a stage writes an issue or comment on a
+  verdict without being in that set — so a new agent-bearing stage cannot
+  silently reintroduce the filing.
 - **FR-016**: The new verdict MUST be covered by the existing deterministic gate
   that exercises the classifier against synthetic transcripts, with at least the
   positive case (terminal 429 rejection), the recovered-429 negative case, and
@@ -233,22 +267,24 @@ rate-limited rather than degrading it to an unclassified or failed outcome.
   produced once per agent step and consumed by every reporter, summary, and
   durable record downstream. Gains one new value.
 - **Uninspected-run record**: The durable statement that a particular pipeline
-  run went uninspected because the usage window was out. Surface to be decided
-  (FR-012).
+  run went uninspected because the usage window was out. It lives on an issue
+  labelled `usage-limit`, one per window, appended to by every further
+  rate-limited run in that window (FR-012, FR-013).
 
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes
 
-- **SC-001**: Zero triage-bearing defect reports are produced for usage-window
-  exhaustion — down from three over the ~2 weeks the issue documents.
+- **SC-001**: Zero `pipeline-defect` issues are produced for usage-window
+  exhaustion — down from three over the ~2 weeks the issue documents — and zero
+  red stage-8b runs are produced for it.
 - **SC-002**: A maintainer can tell "usage window was out" from "the pipeline
   broke" by reading a single report, without opening run logs or downloading an
   artifact; the time to reach "not a defect" drops from a log dive to under one
   minute.
 - **SC-003**: Every run that goes uninspected because of the usage window is
-  discoverable from one place, with its reset time, within one navigation step
-  of the pipeline's issue board.
+  discoverable, with its reset time, from a single `usage-limit` label filter on
+  the pipeline's issue board — one issue per exhausted window, not per run.
 - **SC-004**: 100% of the runs named in the issue's evidence (three 2026-09-12
   runs, one 2026-08-28 run) classify as rate-limited when their transcripts are
   replayed, and the 2026-09-08 binary-not-found runs continue to classify as
@@ -278,5 +314,14 @@ rate-limited rather than degrading it to an unclassified or failed outcome.
 - The verdict string is consumed by machinery inside this repository only; no
   external consumer depends on the closed set of four values. Adding a fifth is
   additive, not a breaking change.
-- The watchdog pause switch, dedup logic, and finding-classification vocabulary
-  are untouched by this feature.
+- The watchdog pause switch and finding-classification vocabulary are untouched
+  by this feature. The dedup logic is reused as-is for the `usage-limit` issue
+  (FR-012); this feature assumes it can key on a label other than
+  `pipeline-defect` without changing how it dedups defects.
+- The `usage-limit` label is created if it does not already exist, and is
+  understood as "not triage-bearing" — the issue board's defect queries filter
+  on `pipeline-defect`, so a `usage-limit` issue stays out of them without any
+  query being rewritten.
+- One `usage-limit` issue per exhausted window means the board grows slowly over
+  time. Closing or sweeping those issues stays a human action, as re-driving a
+  rate-limited run does; no automatic closure is in scope.
