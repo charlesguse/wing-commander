@@ -33,6 +33,22 @@ on:
         required: false
         default: ""
         type: string
+      # attempt-token/commit's contract (title correlation, the tag-time
+      # refusal, the manual-path defaults) is written once in
+      # specs/048-correlated-release-dispatch/contracts/release-handover-contract.md;
+      # this comment points at it rather than restating it (FR-019).
+      attempt-token:
+        description: "Correlation token for an automatic dispatch (internal use; leave blank for a manual release)"
+        required: false
+        default: ""
+        type: string
+      commit:
+        description: "Exact commit to release (internal use; leave blank to tag the branch tip, as today)"
+        required: false
+        default: ""
+        type: string
+
+run-name: "release ${{ inputs.version }} [attempt:${{ inputs.attempt-token }}]"
 
 permissions: {}
 
@@ -49,6 +65,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
         with:
+          ref: ${{ inputs.commit || github.event.repository.default_branch }}
           fetch-depth: 0
 
       # Gate 1a: the workflow lint, in two passes — both of them scripts
@@ -203,6 +220,30 @@ jobs:
             echo "major-exists=$major_exists"
           } >> "$GITHUB_OUTPUT"
           echo "Planned: exact tag $tag; floating tag $major ($([ "$major_exists" = "true" ] && echo force-move || echo create))." >> "$GITHUB_STEP_SUMMARY"
+
+      # Gate 3: the tag-time refusal (FR-009-FR-011, FR-014). An automatic
+      # dispatch names the exact commit its verification passed; re-read
+      # refs/heads/main live, here, at the last possible moment before any
+      # tag is created — not against anything read at request or checkout
+      # time (FR-010a), so a request that queued behind another release.yml
+      # run under this workflow's own concurrency group is still covered.
+      # A manual dispatch leaves `commit` blank and skips this entirely
+      # (FR-015). One equality check, no ancestry walk (FR-014): the
+      # contract for exactly what this promises and what auto-release.yml
+      # does with a refusal is
+      # specs/048-correlated-release-dispatch/contracts/release-handover-contract.md
+      # (FR-019).
+      - name: Refuse to tag unless the requested commit is still the branch tip
+        if: inputs.commit != ''
+        env:
+          COMMIT_INPUT: ${{ inputs.commit }}
+        run: |
+          set -uo pipefail
+          current_tip="$(git ls-remote origin refs/heads/main | cut -f1)"
+          if [ "$current_tip" != "$COMMIT_INPUT" ]; then
+            echo "::error::release requested commit ${COMMIT_INPUT}, but refs/heads/main is now at ${current_tip} -- refusing to tag (the branch moved on)."
+            exit 1
+          fi
 
       # Gates passed — create the immutable exact tag, then create-or-advance
       # the release's own floating major tag.

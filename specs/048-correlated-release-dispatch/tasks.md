@@ -41,7 +41,7 @@ into a file.
 
 ## Phase 1: Setup
 
-- [ ] T001 Confirm the next available gate number in
+- [X] T001 Confirm the next available gate number in
       `.github/workflows/lint-workflows.yml` by finding the highest
       `# Gate N —` marker before the "Gate 10 — the gates themselves are
       wired up" section. As of this writing that is Gate 52
@@ -61,7 +61,7 @@ in place first.
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T002 In `.github/workflows/release.yml`, add two new optional
+- [X] T002 In `.github/workflows/release.yml`, add two new optional
       `workflow_dispatch` inputs immediately after the existing
       `breaking-notes` input: `attempt-token` (`required: false`,
       `default: ""`, `type: string`, description noting internal use by
@@ -75,7 +75,7 @@ in place first.
       as the one place their contract is written (FR-019), matching the
       existing Gate 50/51 pointer-comment style already in this file.
 
-- [ ] T003 In `.github/workflows/release.yml`, add a top-level
+- [X] T003 In `.github/workflows/release.yml`, add a top-level
       `run-name:` key (placed after the `name:` key, before `on:`):
       `run-name: "release ${{ inputs.version }} [attempt:${{ inputs.attempt-token }}]"`
       — per research.md D2 and data-model.md's Release run title table.
@@ -84,7 +84,7 @@ in place first.
       (FR-016): no real, non-empty token can ever equal the empty string
       inside the closing bracket.
 
-- [ ] T004 In `.github/workflows/release.yml`'s `Checkout` step, change
+- [X] T004 In `.github/workflows/release.yml`'s `Checkout` step, change
       `with:` from `fetch-depth: 0` alone to add
       `ref: ${{ inputs.commit || github.event.repository.default_branch }}`
       alongside `fetch-depth: 0` — per research.md D4 (empty `commit`
@@ -92,7 +92,7 @@ in place first.
       FR-015; a non-empty `commit` checks out that exact commit instead
       of the branch tip).
 
-- [ ] T005 [P] In `.github/workflows/auto-release.yml`'s
+- [X] T005 [P] In `.github/workflows/auto-release.yml`'s
       `dispatch-release` job, at the top of the "Dispatch release.yml and
       wait for its conclusion" step (rename it to reflect its new role,
       e.g. "Dispatch release.yml and correlate its run"), mint
@@ -107,7 +107,7 @@ in place first.
       distinguishes a manual re-run of the same `auto-release.yml` run,
       so no counter or random value is needed to satisfy FR-002a.
 
-- [ ] T006 In `.github/workflows/auto-release.yml`'s `dispatch-release`
+- [X] T006 In `.github/workflows/auto-release.yml`'s `dispatch-release`
       job, add an `actions/checkout` step (this job has none today;
       `fetch-depth: 0`, `persist-credentials: false`, matching the style
       of the `detect` and `decide-version` jobs' own checkout steps) so
@@ -145,7 +145,7 @@ adopted.
 
 ### Implementation for User Story 1
 
-- [ ] T007 [US1] In `.github/workflows/auto-release.yml`'s
+- [X] T007 [US1] In `.github/workflows/auto-release.yml`'s
       `dispatch-release` step (T005/T006), replace the existing
       run-discovery loop —
       `gh run list --workflow=release.yml -b main --json databaseId,status,conclusion -L 1 --jq '.[0].databaseId // empty'`
@@ -158,7 +158,7 @@ adopted.
       `date -u -d "$createdAt" +%s`) is strictly greater than
       `$request_time` (captured in T005).
 
-- [ ] T008 [US1] From T007's filtered rows, set a `correlation` job
+- [X] T008 [US1] From T007's filtered rows, set a `correlation` job
       output to exactly one of `found` (exactly one match — also set
       `correlated-run-id`/`correlated-run-url` outputs from that row's
       `databaseId`/`url`), `ambiguous` (two or more matches — FR-004), or
@@ -170,7 +170,7 @@ adopted.
       explicitly rejects a run's `conclusion` as the source of the
       release verdict.
 
-- [ ] T009 [US1] Rewrite `.github/workflows/auto-release.yml`'s `report`
+- [X] T009 [US1] Rewrite `.github/workflows/auto-release.yml`'s `report`
       job to read `needs.dispatch-release.outputs.tag-matches` (T006)
       as the *only* input to the `released` decision, regardless of
       `needs.dispatch-release.outputs.correlation` (T008) — per FR-007
@@ -185,7 +185,7 @@ adopted.
       US2 below covers the `false` branch's `branch-advanced`/
       `release-failed` split).
 
-- [ ] T010 [US1] In the `report` job's `released` branch (T009), link the
+- [X] T010 [US1] In the `report` job's `released` branch (T009), link the
       correlated run only when `CORRELATION == found` (using
       `CORRELATED_RUN_ID`/`CORRELATED_RUN_URL` from T008) and otherwise
       state "released ${NEXT_VERSION} — own run not correlated"; when
@@ -218,7 +218,7 @@ that the refusal names both the requested commit and the observed tip.
 
 ### Implementation for User Story 2
 
-- [ ] T011 [US2] In `.github/workflows/release.yml`, insert a new step
+- [X] T011 [US2] In `.github/workflows/release.yml`, insert a new step
       immediately before "Create tags" (after "Validate version and plan
       tags" has already run, so a stale-head request still gets full
       linting first), gated `if: inputs.commit != ''`: read
@@ -236,7 +236,7 @@ that the refusal names both the requested commit and the observed tip.
       `specs/048-correlated-release-dispatch/contracts/release-handover-contract.md`
       (FR-019).
 
-- [ ] T012 [US2] In `.github/workflows/auto-release.yml`'s `report` job,
+- [X] T012 [US2] In `.github/workflows/auto-release.yml`'s `report` job,
       when T009's `TAG_MATCHES` is `false`, add the second independent
       read from research.md D5: `git ls-remote origin refs/heads/main`
       (report has no checkout — use the explicit-URL form,
@@ -248,7 +248,7 @@ that the refusal names both the requested commit and the observed tip.
       report `release-failed` (file/update the issue, classified
       "pipeline defect") when they still match.
 
-- [ ] T013 [US2] In `.github/workflows/auto-release.yml`'s
+- [X] T013 [US2] In `.github/workflows/auto-release.yml`'s
       `dispatch-release` step, remove the pre-dispatch short-circuit that
       reads `gh api "repos/${GITHUB_REPOSITORY}/commits/main"` and exits
       early with `release-outcome=tip-unresolved` or
@@ -265,7 +265,7 @@ that the refusal names both the requested commit and the observed tip.
       T012 reports `branch-advanced` exactly as if the move had happened
       after dispatch instead.
 
-- [ ] T014 [US2] In the `report` job's `branch-advanced` output line
+- [X] T014 [US2] In the `report` job's `branch-advanced` output line
       (T012), name both the verified head that was requested and the
       tip observed at report time (mirroring T011's refusal wording,
       FR-012) instead of the current generic "main advanced past the
