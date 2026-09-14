@@ -484,11 +484,11 @@ jobs:
           # download failure, or a record with no spec identity all leave
           # the slug empty exactly as before.
           #
-          # Gate 12: artifact download needs Actions:read, which the App
-          # token does not have (docs/setup.md) — route through the job's
-          # default token, as the execution-output collector does. This
-          # step is `shell: bash` (errexit on), so every read below is
-          # guarded — a failed download must not kill the collect job.
+          # The download runs under the job's default token, not the App
+          # token -- Gate 12, see "Collect: execution-output artifacts"
+          # below for why. This step is `shell: bash` (errexit on), so every
+          # read below is guarded: a failed download must not kill the
+          # collect job.
           #
           # Only for the six stages whose every run advances exactly ONE
           # spec, so the record's identity IS the run's. Everywhere else the
