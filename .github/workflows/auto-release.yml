@@ -102,7 +102,7 @@ jobs:
     timeout-minutes: 150
     permissions: {}
     outputs:
-      verdict: ${{ steps.config.outputs.verdict || steps.reachable.outputs.verdict || steps.reset.outputs.verdict || steps.scaffold.outputs.verdict || steps.kickoff.outputs.verdict || steps.poll.outputs.verdict }}
+      verdict: ${{ steps.config.outputs.verdict || steps.reachable.outputs.verdict || steps.reset.outputs.verdict || steps.speckit-version.outputs.verdict || steps.scaffold.outputs.verdict || steps.kickoff.outputs.verdict || steps.poll.outputs.verdict }}
     steps:
       - name: Resolve and validate the end-to-end test repository configuration
         id: config
@@ -137,6 +137,25 @@ jobs:
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
             echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_REPO is '$E2E_REPO', which is not an OWNER/NAME pair."
+            exit 0
+          fi
+          # The reset step below orphan-recreates and force-pushes the test
+          # repository's default branch. Pointed at THIS repository (the App
+          # is installed here, so every check after this one would pass) it
+          # would do that to main. Refuse the value outright; no verification
+          # is worth that, and the variable's doc says "a dedicated test
+          # repository" for exactly this reason.
+          e2e_lc="$(printf '%s' "$E2E_REPO" | tr '[:upper:]' '[:lower:]')"
+          self_lc="$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          if [ "$e2e_lc" = "$self_lc" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" \
+                '{outcome:"fail-infra", verified_head:$head, failing_check:"WING_COMMANDER_AUTO_RELEASE_E2E_REPO names this repository", expected:"a separate, dedicated, pre-onboarded test repository", observed:$repo, evidence_url:"WING_COMMANDER_AUTO_RELEASE_E2E_REPO"}'
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_REPO is '$E2E_REPO', which is this repository itself. The end-to-end run resets the test repository's default branch; refusing."
             exit 0
           fi
           echo "ready=true" >> "$GITHUB_OUTPUT"
@@ -286,17 +305,35 @@ jobs:
         id: speckit-version
         if: steps.reset.outputs.ok == 'true'
         shell: bash
+        env:
+          HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
         run: |
           set -uo pipefail
           v="$(sed -n 's/.*SPECKIT_SUPPORTED_VERSION: "\([^"]*\)".*/\1/p' e2e-source/.github/actions/wing-commander-preflight/action.yml | head -1)"
           if [ -z "$v" ]; then
+            # A verdict, not `exit 1`: this job's contract (see the comment
+            # above verify-e2e) is that every step degrades to a verdict the
+            # report job can name. A hard exit here left `verdict` empty and
+            # the failure issue blank.
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              jq -n --arg head "$HEAD_SHA" \
+                '{outcome:"fail-infra", verified_head:$head, failing_check:"resolving SPECKIT_SUPPORTED_VERSION", expected:"a SPECKIT_SUPPORTED_VERSION line in .github/actions/wing-commander-preflight/action.yml at the verified head", observed:"no such line matched", evidence_url:$head}'
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
             echo "::error::wing-commander auto-release verify-e2e: could not resolve SPECKIT_SUPPORTED_VERSION from wing-commander-preflight/action.yml."
-            exit 1
+            exit 0
           fi
+          echo "ok=true" >> "$GITHUB_OUTPUT"
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
+      # continue-on-error: the scaffold step's own `command -v uvx` check
+      # turns a failed install into a fail-infra verdict the report job can
+      # name, where a hard failure here would leave `verdict` empty.
       - name: Install uv (provides uvx for the Spec Kit CLI)
-        if: steps.reset.outputs.ok == 'true'
+        if: steps.speckit-version.outputs.ok == 'true'
+        continue-on-error: true
         uses: astral-sh/setup-uv@v10.0.0
 
       # Scaffolds `specify init` output at this repository's own pinned
@@ -309,7 +346,7 @@ jobs:
       # that content -- there is no second copy to drift from docs/adoption.md.
       - name: Scaffold the fixture and push it to the test repository
         id: scaffold
-        if: steps.reset.outputs.ok == 'true'
+        if: steps.speckit-version.outputs.ok == 'true'
         shell: bash
         working-directory: e2e-test-repo
         env:
@@ -567,9 +604,14 @@ jobs:
         run: |
           set -euo pipefail
           bump="patch"
-          while IFS= read -r merge_sha; do
-            [ -n "$merge_sha" ] || continue
-            subject="$(git log -1 --format=%s "$merge_sha")"
+          # Every commit in range, NOT `--merges`: this repository squash-
+          # merges, so a PR lands as one single-parent commit whose subject
+          # ends in "(#N)", and `--merges` saw none of them -- 15 PRs since
+          # v2.7.2, zero iterations, the minor arm below unreachable. A true
+          # merge commit's "Merge pull request #N" is still recognised.
+          while IFS= read -r commit_sha; do
+            [ -n "$commit_sha" ] || continue
+            subject="$(git log -1 --format=%s "$commit_sha")"
             pr_number=""
             case "$subject" in
               *"Merge pull request #"*)
@@ -586,7 +628,7 @@ jobs:
             case ",$labels," in
               *,release:minor,*) bump="minor" ;;
             esac
-          done < <(git log "${LATEST_TAG}..${HEAD_SHA}" --merges --format=%H)
+          done < <(git log "${LATEST_TAG}..${HEAD_SHA}" --format=%H)
 
           version="${LATEST_TAG#v}"
           IFS='.' read -r major minor patch <<< "$version"
@@ -616,7 +658,15 @@ jobs:
   # dispatched run to its own conclusion before reporting `released`.
   dispatch-release:
     needs: [detect, decide-version]
-    if: needs.decide-version.outputs.collision == 'false' && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'
+    # `!cancelled() && result == 'success'` rather than the bare implicit
+    # success(): an `if` that compares a need's output against 'false' with
+    # no status-check function is the shape Gate 15 rejects, because GitHub
+    # never evaluates it when the need was skipped -- the arm reads like a
+    # guard and gates nothing. Spelled out, it runs exactly when
+    # decide-version succeeded AND reported no collision, and skips (never
+    # dispatches) when verify-e2e did not pass, decide-version failed, or
+    # the run was cancelled.
+    if: ${{ !cancelled() && needs.decide-version.result == 'success' && needs.decide-version.outputs.collision == 'false' && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true' }}
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -745,6 +795,16 @@ jobs:
             fi
           }
 
+          # verify-e2e's contract is a verdict on every path, but a job that
+          # dies before any step writes one (a runner failure, an action
+          # that cannot download) hands this job an empty string; jq on
+          # empty input prints nothing and exits 0, so every field below
+          # would render blank rather than "unknown". Substitute a verdict
+          # that says exactly that and points at this run.
+          if ! printf '%s' "$VERDICT_JSON" | jq -e 'type == "object"' >/dev/null 2>&1; then
+            VERDICT_JSON="$(jq -n --arg head "$HEAD_SHA" --arg url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+              '{outcome:"fail-infra", verified_head:$head, failing_check:"verify-e2e produced no verdict", expected:"a JSON verdict from verify-e2e on every path", observed:"the job stopped before any step wrote one", evidence_url:$url}')"
+          fi
           outcome="$(printf '%s' "$VERDICT_JSON" | jq -r '.outcome // empty' 2>/dev/null || true)"
 
           if [ "$outcome" != "pass" ]; then
