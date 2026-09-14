@@ -69,7 +69,21 @@ only place this feature writes anything maintainer-facing:
   updated across consecutive failures for the same unreleased head
   (FR-028), body naming the verified head, the failing check, and
   expected-vs-observed (FR-026), classified as infrastructure
-  (`fail-infra`) or pipeline defect (every other outcome).
+  (`fail-infra`) or pipeline defect (every other outcome). A
+  `release-outcome: failed` body links the release.yml run when one was
+  observed, and says so when none was (dispatch rejected, or no run
+  appeared).
+- **A `detect`, `decide-version`, or `dispatch-release` job whose result
+  is `failure`** (it crashed before writing its outputs), or a
+  `release-outcome: tip-unresolved` (the stale-head guard could not read
+  the default branch's tip, so nothing was dispatched): the same issue,
+  classified as infrastructure, naming the job or read and linking this
+  run. The job results are read before the outputs, so a crash is never
+  reported as a quiet day or as a release failure. A `cancelled` result
+  from any of the four jobs, `verify-e2e` included, is the run being
+  stopped: summarised, never filed (#325). A `verify-e2e` that ended
+  `success` and still produced no JSON verdict is filed as infrastructure
+  with a body that says the contract broke, not that the job stopped.
 - **`release-outcome: released`**: close any open `auto-release:failed`
   issue with a comment naming the version that shipped.
 

@@ -673,6 +673,10 @@ jobs:
       contents: read
     outputs:
       release-outcome: ${{ steps.watch.outputs.release-outcome }}
+      # Empty on every path where release.yml was never observed running
+      # (dispatch rejected, no run appeared, tip unresolved, stale head);
+      # report links it when present and says so when it is not (#325).
+      release-run-id: ${{ steps.watch.outputs.release-run-id }}
     steps:
       - name: Dispatch release.yml and wait for its conclusion
         id: watch
@@ -693,8 +697,12 @@ jobs:
           # ever saw, so skip the dispatch entirely when main has moved.
           current_tip="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha 2>/dev/null || true)"
           if [ -z "$current_tip" ]; then
+            # Its own outcome, not `failed` (#325): `failed` means release.yml
+            # ran and did not conclude successfully, and report says "see
+            # its own run" -- but nothing was dispatched here, so there is
+            # no such run. Report files this as infrastructure instead.
             echo "::error::wing-commander auto-release dispatch-release: could not resolve main's current tip; not dispatching against an unconfirmed head."
-            echo "release-outcome=failed" >> "$GITHUB_OUTPUT"
+            echo "release-outcome=tip-unresolved" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [ "$current_tip" != "$VERIFIED_HEAD" ]; then
@@ -752,8 +760,100 @@ jobs:
           NEXT_VERSION: ${{ needs.decide-version.outputs.next-version }}
           COLLISION: ${{ needs.decide-version.outputs.collision }}
           RELEASE_OUTCOME: ${{ needs.dispatch-release.outputs.release-outcome }}
+          RELEASE_RUN_ID: ${{ needs.dispatch-release.outputs.release-run-id }}
+          # #325: each need's RESULT alongside its outputs. A job that
+          # crashed before writing its outputs hands this job empty strings,
+          # and every branch below was written for a different situation --
+          # a detect crash read as "no release tag exists yet", a
+          # decide-version crash as "release dispatch failed", both filing
+          # nothing useful or pointing at a run that never existed.
+          DETECT_RESULT: ${{ needs.detect.result }}
+          VERIFY_RESULT: ${{ needs.verify-e2e.result }}
+          DECIDE_RESULT: ${{ needs.decide-version.result }}
+          DISPATCH_RESULT: ${{ needs.dispatch-release.result }}
         run: |
           set -uo pipefail
+
+          FAILED_LABEL="auto-release:failed"
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          # Dedup by label (research.md D13): update the one open report
+          # rather than filing a second, and rebuild its body from the
+          # LATEST attempt's detail on every recurrence (data-model.md
+          # "Failure report" -- only the newest attempt is actionable).
+          file_or_update_failure() {
+            local body_file="$1"
+            local existing head_short
+            existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label "$FAILED_LABEL" --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+            if [ -n "$existing" ]; then
+              gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body-file "$body_file"
+            else
+              # detect may have crashed before reporting a head (#325); the
+              # title must still name something.
+              head_short="${HEAD_SHA:0:7}"
+              [ -n "$head_short" ] || head_short="an unresolved head"
+              gh label create "$FAILED_LABEL" --color B60205 --description "wing-commander auto-release: a scheduled verification/release attempt failed" --force
+              gh issue create --repo "$GITHUB_REPOSITORY" --title "Auto-release verification failed at ${head_short}" --label "$FAILED_LABEL" --body-file "$body_file"
+            fi
+          }
+
+          close_failure_on_success() {
+            local existing
+            existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label "$FAILED_LABEL" --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+            if [ -n "$existing" ]; then
+              gh issue close "$existing" --repo "$GITHUB_REPOSITORY" --comment "Resolved: ${NEXT_VERSION} released."
+            fi
+          }
+
+          # #325: a need whose job ended `failure` wrote no outputs, so
+          # nothing below can be read off them. File it as infrastructure,
+          # naming the job and this run, under the same label -- the
+          # maintainer sees one issue for "auto-release is not working"
+          # whatever the layer. `cancelled` is the run being stopped, not
+          # a failure: summarised, never filed. `skipped` and `success`
+          # fall through to the outputs, which then mean what they say.
+          # The one home of the failure body's shape (data-model.md "Failure
+          # report": classification, verified head, failing check, expected,
+          # observed, evidence). Every filing path below calls this; none
+          # spells the fields out itself.
+          write_failure_body() {
+            local classification="$1" failing_check="$2" expected="$3" observed="$4" evidence="$5"
+            {
+              echo "**Classification**: ${classification}"
+              echo ""
+              echo "**Verified head**: ${HEAD_SHA:-unknown (detect did not report one)}"
+              echo ""
+              echo "**Failing check**: ${failing_check}"
+              echo ""
+              echo "**Expected**: ${expected}"
+              echo ""
+              echo "**Observed**: ${observed}"
+              echo ""
+              echo "**Evidence**: ${evidence}"
+            } > "$RUNNER_TEMP/auto-release-failure-body.md"
+          }
+
+          file_job_failure() {
+            local job="$1" role="$2"
+            echo "infrastructure failure: the ${job} job did not succeed" >> "$GITHUB_STEP_SUMMARY"
+            write_failure_body "infrastructure (job failure)" \
+              "the \`${job}\` job (${role}) ended with result \`failure\` before writing its outputs" \
+              "the job to succeed, or to degrade to a verdict this report could name" \
+              "no outputs from \`${job}\`; nothing downstream of it ran, and nothing was cut" \
+              "${RUN_URL}"
+            file_or_update_failure "$RUNNER_TEMP/auto-release-failure-body.md"
+          }
+
+          case "$DETECT_RESULT" in
+            failure)
+              file_job_failure detect "resolving the latest release tag and the unreleased head"
+              exit 0
+              ;;
+            cancelled)
+              echo "run cancelled during detect -- nothing verified, nothing cut" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+          esac
 
           # No new work: verify-e2e never ran, so VERDICT_JSON is empty --
           # that must never be misread as a verification failure. Two
@@ -769,41 +869,34 @@ jobs:
             exit 0
           fi
 
-          FAILED_LABEL="auto-release:failed"
-
-          # Dedup by label (research.md D13): update the one open report
-          # rather than filing a second, and rebuild its body from the
-          # LATEST attempt's detail on every recurrence (data-model.md
-          # "Failure report" -- only the newest attempt is actionable).
-          file_or_update_failure() {
-            local body_file="$1"
-            local existing
-            existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label "$FAILED_LABEL" --json number --jq '.[0].number // empty' 2>/dev/null || true)"
-            if [ -n "$existing" ]; then
-              gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body-file "$body_file"
-            else
-              gh label create "$FAILED_LABEL" --color B60205 --description "wing-commander auto-release: a scheduled verification/release attempt failed" --force
-              gh issue create --repo "$GITHUB_REPOSITORY" --title "Auto-release verification failed at ${HEAD_SHA:0:7}" --label "$FAILED_LABEL" --body-file "$body_file"
-            fi
-          }
-
-          close_failure_on_success() {
-            local existing
-            existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label "$FAILED_LABEL" --json number --jq '.[0].number // empty' 2>/dev/null || true)"
-            if [ -n "$existing" ]; then
-              gh issue close "$existing" --repo "$GITHUB_REPOSITORY" --comment "Resolved: ${NEXT_VERSION} released."
-            fi
-          }
+          # A cancelled verify-e2e wrote no verdict either, and is the run
+          # being stopped (a hung poll cancelled by hand), not a failure:
+          # summarised, never filed -- the same rule as the other three
+          # jobs (#325).
+          case "$VERIFY_RESULT" in
+            cancelled)
+              echo "run cancelled during verify-e2e -- nothing verified, nothing cut" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+          esac
 
           # verify-e2e's contract is a verdict on every path, but a job that
           # dies before any step writes one (a runner failure, an action
           # that cannot download) hands this job an empty string; jq on
           # empty input prints nothing and exits 0, so every field below
           # would render blank rather than "unknown". Substitute a verdict
-          # that says exactly that and points at this run.
+          # that says exactly that and points at this run. The observed
+          # text follows the job's own result: a job that succeeded and
+          # still handed over no JSON object did not "stop", it broke its
+          # contract, and the body must not claim otherwise.
           if ! printf '%s' "$VERDICT_JSON" | jq -e 'type == "object"' >/dev/null 2>&1; then
-            VERDICT_JSON="$(jq -n --arg head "$HEAD_SHA" --arg url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-              '{outcome:"fail-infra", verified_head:$head, failing_check:"verify-e2e produced no verdict", expected:"a JSON verdict from verify-e2e on every path", observed:"the job stopped before any step wrote one", evidence_url:$url}')"
+            if [ "$VERIFY_RESULT" = "success" ]; then
+              no_verdict_observed="the job succeeded but its verdict output is not a JSON object (contract broken; the verdict chain in verify-e2e's outputs: block dropped it)"
+            else
+              no_verdict_observed="the job stopped before any step wrote one (job result: ${VERIFY_RESULT:-unknown})"
+            fi
+            VERDICT_JSON="$(jq -n --arg head "$HEAD_SHA" --arg url "$RUN_URL" --arg observed "$no_verdict_observed" \
+              '{outcome:"fail-infra", verified_head:$head, failing_check:"verify-e2e produced no verdict", expected:"a JSON verdict from verify-e2e on every path", observed:$observed, evidence_url:$url}')"
           fi
           outcome="$(printf '%s' "$VERDICT_JSON" | jq -r '.outcome // empty' 2>/dev/null || true)"
 
@@ -815,22 +908,25 @@ jobs:
             classification="pipeline defect"
             [ "$outcome" = "fail-infra" ] && classification="infrastructure"
             echo "verification failed: ${failing_check}" >> "$GITHUB_STEP_SUMMARY"
-            {
-              echo "**Classification**: ${classification} (${outcome:-unknown})"
-              echo ""
-              echo "**Verified head**: ${HEAD_SHA}"
-              echo ""
-              echo "**Failing check**: ${failing_check}"
-              echo ""
-              echo "**Expected**: ${expected}"
-              echo ""
-              echo "**Observed**: ${observed}"
-              echo ""
-              echo "**Evidence**: ${evidence_url}"
-            } > "$RUNNER_TEMP/auto-release-failure-body.md"
+            write_failure_body "${classification} (${outcome:-unknown})" "$failing_check" "$expected" "$observed" "$evidence_url"
             file_or_update_failure "$RUNNER_TEMP/auto-release-failure-body.md"
             exit 0
           fi
+
+          # Verification passed, so decide-version ran (#325): a crash there
+          # left COLLISION and RELEASE_OUTCOME empty, which used to fall
+          # through to "release dispatch failed" for a release that was
+          # never dispatched.
+          case "$DECIDE_RESULT" in
+            failure)
+              file_job_failure decide-version "computing the next version from the merged pull requests' labels"
+              exit 0
+              ;;
+            cancelled)
+              echo "run cancelled during decide-version -- verification passed, nothing cut" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+          esac
 
           if [ "$COLLISION" = "true" ]; then
             echo "version collision: ${NEXT_VERSION} already tagged" >> "$GITHUB_STEP_SUMMARY"
@@ -860,10 +956,47 @@ jobs:
             exit 0
           fi
 
+          # #325: the stale-head guard's own read of main's tip failed, so
+          # nothing was dispatched -- infrastructure, not a release failure,
+          # and there is no release.yml run to point at.
+          if [ "$RELEASE_OUTCOME" = "tip-unresolved" ]; then
+            echo "infrastructure failure: could not resolve main's current tip before dispatch" >> "$GITHUB_STEP_SUMMARY"
+            write_failure_body "infrastructure (tip unresolved)" \
+              "reading main's current tip (repos/${GITHUB_REPOSITORY}/commits/main) before dispatching release.yml" \
+              "a SHA to compare against the verified head" \
+              "the read returned nothing, so release.yml was not dispatched" \
+              "${RUN_URL}"
+            file_or_update_failure "$RUNNER_TEMP/auto-release-failure-body.md"
+            exit 0
+          fi
+
+          # #325: no outcome at all means dispatch-release never wrote one --
+          # the job crashed (infrastructure) or never ran.
+          if [ -z "$RELEASE_OUTCOME" ]; then
+            case "$DISPATCH_RESULT" in
+              failure)
+                file_job_failure dispatch-release "dispatching release.yml and watching its run"
+                exit 0
+                ;;
+              *)
+                echo "dispatch-release did not run (result: ${DISPATCH_RESULT:-unknown}) -- nothing cut" >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+                ;;
+            esac
+          fi
+
           # Anything else here means dispatch-release ran and did not
           # report `released` -- a release failure, distinct from a
-          # verification failure or a collision (FR-029).
+          # verification failure or a collision (FR-029). Link the
+          # release.yml run when one was observed; say so when none was
+          # (dispatch rejected, or no run appeared within 60s) rather than
+          # sending the maintainer to look for a run that does not exist.
           echo "release dispatch failed for ${NEXT_VERSION}" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$RELEASE_RUN_ID" ]; then
+            release_detail="release.yml was dispatched but did not conclude successfully -- see its run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${RELEASE_RUN_ID}"
+          else
+            release_detail="release.yml was never observed running (the dispatch was rejected, or no run appeared within 60s) -- see this run's dispatch-release job: ${RUN_URL}"
+          fi
           {
             echo "**Classification**: release failure"
             echo ""
@@ -871,6 +1004,6 @@ jobs:
             echo ""
             echo "**Computed next version**: ${NEXT_VERSION}"
             echo ""
-            echo "release.yml was dispatched but did not conclude successfully -- see its own run for detail."
+            echo "${release_detail}"
           } > "$RUNNER_TEMP/auto-release-failure-body.md"
           file_or_update_failure "$RUNNER_TEMP/auto-release-failure-body.md"

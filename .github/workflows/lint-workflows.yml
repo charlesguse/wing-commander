@@ -3164,6 +3164,20 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-rate-limited-exemption.py --self-test
 
+      # Gate 52 — auto-release.yml's report job says what actually happened
+      # (#325). It runs under always() and reads every earlier job's
+      # outputs; a job that crashed before writing them hands it empty
+      # strings, and each branch of the step was written for a different
+      # situation — a detect crash read as a quiet day, a decide-version
+      # crash as "release dispatch failed" for a release never dispatched,
+      # the stale-head guard's own failed read pointing at a release.yml run
+      # that does not exist. Executes the shipped step against every
+      # combination of job results and outputs it can meet, with gh stubbed
+      # to record what would have been filed, and mutates each defect back.
+      - name: Gate 52 — auto-release's report job attributes a crashed job to infrastructure, not to a quiet day or a phantom release run
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-auto-release-report.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when
