@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,19 +31,26 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain, at the allowed maximum: FR-021
-  (how this lands relative to the unmerged #317, where the `auto-release.yml`
-  half of the subject currently lives), FR-022 (whether the shared definitions
-  join the published, adopter-pinned `.github/actions/**` surface or stay
-  internal helpers), and FR-023 (whether the new gate is a structural re-paste
-  scan or a two-consumer assertion). Intake runs headless and does not block on
-  answers; the questions are posted to lifecycle issue #326 and resolved by the
-  clarify stage.
+- All three clarifications were answered on lifecycle issue #326 and folded in
+  on 2026-09-14. FR-021: this lands as a follow-up PR against `main` — #317
+  merged on 2026-09-14, so the whole subject is on `main` and nothing is folded
+  into #317. FR-022: the shared definitions are composite actions in an
+  underscore-prefixed internal location under `.github/actions/`, outside the
+  adopter-pinned surface; composite shape is required because the token mint
+  wraps a `uses:` step. FR-023: the gate is a structural re-paste scan over
+  `.github/workflows/` and `.github/actions/`, not a two-consumer assertion.
+  Three requirements follow from the answers: FR-024 (amend Constitution VII so
+  the internal namespace is a stated rule), FR-025 (the gate fails a published
+  stage or composite that resolves an internal helper), and FR-026 (a
+  gate-read waiver file is the only form of exception).
 - "No implementation details" is read as this repository reads it elsewhere:
   the spec names existing artifacts it must interoperate with (workflow files,
   gate registry, constitution principles) because they are the subject of the
   feature, but prescribes no mechanism for the shared definitions themselves —
   that choice is FR-022's, and the rest is the plan's.
-- FR-021 also records a real blocker rather than a preference: FR-001..FR-009
-  and FR-017..FR-019 name files that are not on `main`. Planning should not
-  assume they are present.
+- The blocker FR-021 recorded at intake has cleared: FR-001..FR-009 and
+  FR-017..FR-019 name files that are now on `main`. Work branched before #317
+  merged rebases onto it before those requirements can be checked.
+- FR-024 puts a constitution amendment inside this feature's scope. Planning
+  should treat `.specify/memory/constitution.md` (and its Sync Impact Report)
+  as an artifact this feature edits.

@@ -128,9 +128,10 @@ home; remove the fixture and confirm the suite passes.
 **Acceptance Scenarios**:
 
 1. **Given** the gate suite passes on the consolidated tree, **When** a copy of
-   any of the three idioms is reintroduced into any workflow, **Then** the gate
-   suite fails and its message names both the offending site and the shared
-   home to call instead.
+   any of the three idioms is reintroduced anywhere under `.github/workflows/`
+   or `.github/actions/` — including in a workflow that is neither of the two
+   known consumers — **Then** the gate suite fails and its message names both
+   the offending site and the shared home to call instead.
 2. **Given** the gate ships a failure branch, **When** the gate suite runs,
    **Then** that branch is exercised by a checked-in fixture rather than by a
    manual demonstration (constitution VIII).
@@ -140,6 +141,14 @@ home; remove the fixture and confirm the suite passes.
 4. **Given** the gate cannot reach its subject — no workflows found, an
    unresolvable shared home — **Then** it fails loudly rather than reporting a
    pass it did not earn.
+5. **Given** a third site that genuinely cannot call a shared definition,
+   **When** its reason is recorded as a waiver in the gate's waiver file,
+   **Then** the gate passes for that site; **When** the same reason is written
+   only as a code comment, **Then** the gate still fails.
+6. **Given** a `workflow_call` stage workflow or a published composite action,
+   **When** it resolves an underscore-prefixed internal helper, **Then** the
+   gate fails, so an internal definition cannot enter the adopter-pinned
+   surface without a deliberate promotion.
 
 ---
 
@@ -206,11 +215,21 @@ against the merged tree.
 
 ### Edge Cases
 
-- **The subject does not exist on `main` yet.** `auto-release.yml`, spec 045's
-  `tasks.md`, and the finalize narrative all live on the unmerged
-  implementation branch for #317. Every requirement naming `auto-release.yml`
-  is unsatisfiable until that branch merges. See the Dependencies section and
-  FR-021.
+- **The subject arrived on `main` while this spec was being drafted.** #317
+  merged on 2026-09-14, so `auto-release.yml`, spec 045's `tasks.md`, and the
+  finalize narrative are all on `main` now, with the duplicated copies present
+  there today. This feature is a follow-up against `main`, not a change folded
+  into #317; work branched before that merge must rebase onto it before any
+  requirement naming `auto-release.yml` can be checked. See FR-021.
+- **An internal helper is one promotion away from being a published
+  contract.** The three shared definitions live outside the adopter-pinned
+  surface, so nothing stops a future `workflow_call` stage or a published
+  composite from resolving one and silently making it pinnable. That has to
+  fail a check rather than rely on a reviewer noticing. See FR-022 and FR-025.
+- **A genuinely new third use of an idiom.** The structural scan sends it to
+  the shared definition; where a call site truly cannot use it, the escape is a
+  registered waiver in the gate's own waiver file naming the reason — never a
+  code comment, and never silence. See FR-023 and FR-026.
 - **`auto-update-spec-kit.yml`'s copies are the proven ones.** They have run in
   production; `auto-release.yml`'s have not. Consolidation must not silently
   regress the proven behaviour to match the newer copy where the two differ —
@@ -273,15 +292,16 @@ against the merged tree.
 **Enforcement**
 
 - **FR-010**: The gate suite MUST fail when any of the three idioms, or the
-  fail-infra verdict construction, reappears as a second copy in any workflow
-  under `.github/workflows/`.
+  fail-infra verdict construction, reappears as a second copy anywhere under
+  `.github/workflows/` or `.github/actions/`, whether or not the copying site
+  is one of the two known consumers.
 - **FR-011**: That gate's failure message MUST name both the offending site and
   the shared definition the author should call instead.
 - **FR-012**: The gate MUST be registered in the gate registry and MUST run the
   same subject with the same arguments through `run-local-gates.py` as it does
   in CI (constitution VIII).
-- **FR-013**: The gate MUST be triggered by changes to the workflows and shared
-  definitions it checks.
+- **FR-013**: The gate MUST be triggered by changes to the workflows, shared
+  definitions, and waiver file it checks.
 - **FR-014**: The gate MUST fail loudly — never report a pass — when it cannot
   reach its subject (no workflows discovered, shared definition missing,
   invoked outside the repository root).
@@ -307,29 +327,40 @@ against the merged tree.
   private downstream consumer; all shared definitions and their documentation
   stay generic to any adopting repository.
 
-**Open questions**
+**Sequencing, placement, and surface**
 
-- **FR-021**: This feature MUST land in a way that is compatible with the state
-  of `auto-release.yml` [NEEDS CLARIFICATION: `auto-release.yml`, spec 045's
-  tasks.md, and its finalize narrative are on the unmerged branch for #317, not
-  on `main`. Should this feature wait for #317 to merge and then land as a
-  follow-up PR; be folded into #317 before it merges; or land the parts that
-  are satisfiable against `main` today — extracting the shared definitions from
-  `auto-update-spec-kit.yml` alone and gating them — leaving auto-release's
-  adoption to #317?]
-- **FR-022**: The shared definitions' placement MUST respect this repository's
-  two-interface split [NEEDS CLARIFICATION: `.github/actions/**` is the
-  published, adopter-pinned contract surface (constitution VII), where "widening
-  the surface is a deliberate act". Should these three definitions be published
-  composite actions under `.github/actions/`, as the issue proposes — permanently
-  widening what adopters can pin and this repository must not break — or
-  internal helpers outside the pinned surface (the `.github/actions/_shared/`
-  convention), given that neither consuming workflow is a published stage?]
-- **FR-023**: The gate's breadth [NEEDS CLARIFICATION: should the gate be a
-  structural scan that fails on any future re-paste of these shapes anywhere
-  under `.github/workflows/` — stronger, but with a false-positive cost for a
-  genuinely new use — or an assertion that the two known consumers call the
-  shared definitions, which is cheaper but cannot fail for a third workflow?]
+- **FR-021**: This feature MUST land as a follow-up PR against `main`, after
+  #317 (merged 2026-09-14), and MUST NOT be folded into #317. Every
+  requirement naming `auto-release.yml`, spec 045's `tasks.md`, or spec 045's
+  finalize narrative is satisfiable against `main` as it stands, and the record
+  corrections of FR-018 and FR-019 land in this feature's own PR.
+- **FR-022**: The three shared definitions MUST be composite actions placed in
+  an underscore-prefixed internal location under `.github/actions/` — the
+  `_shared/` convention, extended from scripts to composite shape — and MUST
+  NOT join the adopter-pinned published surface. Composite shape is required
+  rather than plain scripts because at least the token mint wraps a `uses:`
+  step, which a script cannot express.
+- **FR-023**: The single-home gate MUST be a structural scan that fails on a
+  re-paste of any of the three idioms, or of the fail-infra verdict
+  construction, anywhere under `.github/workflows/` or `.github/actions/` —
+  not merely an assertion that the two known consumers call the shared
+  definitions, which could not have failed for the case that produced this
+  issue.
+- **FR-024**: Constitution VII MUST be amended in this feature to state that
+  underscore-prefixed directories under `.github/actions/` are internal to this
+  repository and are not part of the published, adopter-pinned surface. The
+  amendment is a clarification bump carrying the repository's usual Sync Impact
+  Report, so the carve-out is a stated rule rather than a remembered one, and
+  promoting an internal helper to the published surface later is a deliberate
+  minor release rather than a rename.
+- **FR-025**: The gate MUST fail when a `workflow_call` stage workflow or a
+  published composite action resolves an internal, underscore-prefixed helper,
+  so an internal definition cannot become part of the pinned surface by
+  accident.
+- **FR-026**: A genuinely new third use that cannot call a shared definition
+  MUST be expressible as a waiver in a registered waiver file that the gate
+  reads, with each waiver naming its reason; the gate MUST NOT honour a waiver
+  expressed as a code comment or any other form it does not read.
 
 ### Key Entities
 
@@ -344,7 +375,11 @@ against the merged tree.
 - **Durable failure issue**: at most one open issue per configured label,
   reused by comment while the failure persists and closed when it clears.
 - **Single-home gate**: the deterministic check that no second copy of a
-  consolidated idiom exists, with its registry entry and its failure fixtures.
+  consolidated idiom exists and that no published surface resolves an internal
+  helper, with its registry entry and its failure fixtures.
+- **Waiver**: a registered entry in the gate's waiver file exempting one named
+  site from the single-home rule and stating the reason. Read by the gate, so
+  an unlisted exception cannot pass.
 
 ## Success Criteria *(mandatory)*
 
@@ -355,10 +390,11 @@ against the merged tree.
   exactly one file to take effect in both workflows.
 - **SC-002**: The fail-infra verdict is constructed in exactly one place, down
   from eleven, and adding a field to it changes exactly one file.
-- **SC-003**: Reintroducing a copy of any consolidated idiom into a workflow
-  causes the local gate suite and CI to fail, with the message naming the
-  shared definition to call instead; this is demonstrated by a checked-in
-  fixture rather than a manual run.
+- **SC-003**: Reintroducing a copy of any consolidated idiom anywhere under
+  `.github/workflows/` or `.github/actions/` — including at a site that is
+  neither known consumer — causes the local gate suite and CI to fail, with the
+  message naming the shared definition to call instead; this is demonstrated by
+  a checked-in fixture rather than a manual run.
 - **SC-004**: `run-local-gates.py` passes on the consolidated tree, and every
   gate it runs is reachable from the gate registry.
 - **SC-005**: Both workflows behave the same before and after consolidation for
@@ -369,14 +405,23 @@ against the merged tree.
 - **SC-007**: Every completion claim in spec 045's tasks.md and finalize
   narrative is checkable against the merged tree, with zero claims of changes
   that are not in the diff and zero claims of a CI outcome that did not occur.
+- **SC-008**: The adopter-pinned surface is unchanged by this feature: the set
+  of published composite actions an adopter can pin is the same before and
+  after, the three shared definitions sit outside it, and a stage or published
+  composite that resolves one fails the gate.
+- **SC-009**: Every exception to the single-home rule is discoverable in one
+  place — the gate's waiver file — with a reason attached, and no exception is
+  carried by a code comment.
 
 ## Dependencies
 
-- **Blocking**: `auto-release.yml` does not exist on `main`. It, spec 045's
-  `tasks.md`, and the finalize narrative are all on the unmerged implementation
-  branch for #317. FR-001 through FR-009 and FR-017 through FR-019 cannot be
-  satisfied until that branch merges, or unless this work is folded into it.
-  See FR-021.
+- **Cleared**: #317 merged on 2026-09-14, putting `auto-release.yml`, spec
+  045's `tasks.md`, and the finalize narrative on `main`. FR-001 through FR-009
+  and FR-017 through FR-019 are satisfiable against `main` today; this feature
+  is a follow-up PR, not a change folded into #317 (FR-021). Work branched
+  before that merge rebases onto it first.
+- Constitution VII is amended by this feature (FR-024), so the change carries a
+  Sync Impact Report in `.specify/memory/constitution.md`.
 - `auto-update-spec-kit.yml`'s copies of all three idioms are the production-proven
   ones and are the reference behaviour for FR-007.
 - The existing gate registry, `run-local-gates.py`, and `lint-workflows.yml`
@@ -400,6 +445,13 @@ against the merged tree.
   their own issues rather than widening this change.
 - The verdict helper stays internal to `auto-release.yml`'s needs. No other
   workflow emits this verdict today, so it is not generalised speculatively.
+- The Constitution VII amendment (FR-024) is a clarification of the existing
+  two-interface split rather than a new principle: it names where the boundary
+  already sits for underscore-prefixed directories, so it is a clarification
+  bump and does not retire or redefine any other principle.
+- No adopter pins an underscore-prefixed path under `.github/actions/` today,
+  so declaring that namespace internal removes nothing from the published
+  surface.
 - The `auto-update-spec-kit.yml` sites that already reuse
   `wing-commander-callout` for the failure comment keep doing so; FR-003 covers
   the label/lookup/create/close machinery, not the comment rendering.
