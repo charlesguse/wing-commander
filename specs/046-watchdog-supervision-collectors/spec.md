@@ -16,15 +16,17 @@ An agent stage's turn usage creeps up run after run as the repository it works o
 
 **Why this priority**: This is the only observed class where the cost of learning late is real work destroyed rather than a cosmetic blemish, and the data needed to see it is already durable in the metrics record. It is also the class the existing per-run collectors are structurally unable to see: every input is fine in isolation, and only the sequence is alarming.
 
-**Independent Test**: Seed a history of metrics records for one stage whose counted turns climb across consecutive runs against a fixed budget and ceiling, run the watchdog against the last of those runs, and confirm one finding is reported that names the stage, the climb, and the remaining headroom to the enforced ceiling — and that a second, later run in the same climb attaches its evidence to that same finding rather than opening another.
+**Independent Test**: Seed a history of metrics records for one stage whose counted turns climb across consecutive runs against a fixed budget and ceiling, run the watchdog against the last of those runs, and confirm one finding is reported that names the stage, the climb, and the remaining headroom to the enforced ceiling — that a second, later run in the same climb attaches its evidence to that same finding rather than opening another, and that once the finding is closed a third run in the same severity band opens nothing at all.
 
 **Acceptance Scenarios**:
 
-1. **Given** a run whose counted turns reached or exceeded its intended budget, **When** the watchdog inspects it, **Then** a signal is emitted carrying the counted turns, the intended budget, the enforced ceiling, and the consumed fraction of that ceiling.
-2. **Given** the recent history for a stage shows consecutive runs at or over budget, **When** the watchdog inspects the latest of them, **Then** a cross-run signal is emitted describing the trend, not just the latest run.
-3. **Given** a trend has already produced a filed finding, **When** a later run extends the same trend within the same severity band, **Then** the new evidence is attached to the existing finding and no second finding is opened.
-4. **Given** a run that finished comfortably under its intended budget, **When** the watchdog inspects it, **Then** no turn-budget signal of any kind is emitted.
-5. **Given** a stage whose metrics record marks turn data unavailable, **When** the watchdog inspects it, **Then** no turn-budget signal is emitted and the collector still reports a successful outcome.
+1. **Given** a run whose counted turns reached or exceeded its intended budget, **When** the watchdog inspects it, **Then** a signal is emitted carrying the counted turns, the intended budget, the enforced ceiling, and the consumed fraction of that ceiling — and, with no cross-run trend behind it, that signal alone files no finding, because the stage already posted its own note for that run.
+2. **Given** the recent history for a stage shows consecutive runs at or over budget, **When** the watchdog inspects the latest of them, **Then** a cross-run signal is emitted describing the trend, not just the latest run, and it is the trend that files the finding.
+3. **Given** a trend has already produced a filed finding that is still open, **When** a later run extends the same trend within the same severity band, **Then** the new evidence is attached to the existing finding and no second finding is opened.
+4. **Given** a maintainer has closed a filed trend finding, **When** a later run extends that same trend within the same severity band, **Then** the closed finding is not reopened and no new finding is opened — the closure stands as an acceptance.
+5. **Given** a maintainer has closed a filed trend finding, **When** a later run pushes the same stage's trend into a higher severity band, **Then** a new finding is filed for the escalated band.
+6. **Given** a run that finished comfortably under its intended budget, **When** the watchdog inspects it, **Then** no turn-budget signal of any kind is emitted.
+7. **Given** a stage whose metrics record marks turn data unavailable, **When** the watchdog inspects it, **Then** no turn-budget signal is emitted and the collector still reports a successful outcome.
 
 ---
 
@@ -51,15 +53,16 @@ The final pull request is the artifact a reviewer reads instead of re-deriving t
 
 **Why this priority**: Every observed instance was cosmetic, so it ranks below the classes that cost work or money — but it erodes the trust the whole final-review gate rests on, and each of the three claim shapes has a deterministic ground truth already sitting in the branch.
 
-**Independent Test**: Finalize a feature whose PR body states a task count, a commit count, and a test count that each disagree with the branch's checked task boxes, its commit range, and its test-run summary, and confirm the watchdog reports one finding per mismatched claim carrying the claimed value, the actual value, and where the actual value came from.
+**Independent Test**: Finalize a feature whose PR body states a task count, a commit count, and a test count that each disagree with the branch's checked task boxes, its commit range, and its test-run summary, and confirm the watchdog reports one mismatch per claim on the lifecycle issue — each carrying the claimed value, the actual value, and where the actual value came from — and that no pipeline-defect issue is opened for any of them.
 
 **Acceptance Scenarios**:
 
 1. **Given** a final PR body claiming a number of completed tasks, **When** that number disagrees with the checked task boxes on the branch, **Then** a narrative-drift signal is emitted carrying the claimed value, the actual value, and the source of the actual value.
 2. **Given** a final PR body claiming a commit count, **When** that number disagrees with the commits between the PR's base and head, **Then** a narrative-drift signal is emitted for that claim.
 3. **Given** a final PR body claiming a test count, **When** that number disagrees with the test-run summary the run itself produced, **Then** a narrative-drift signal is emitted for that claim.
-4. **Given** a final PR body that states a claim in a shape the check cannot parse, **When** the watchdog inspects the run, **Then** no signal is emitted for that claim — an unparseable claim is an absence of evidence, never a finding.
-5. **Given** a final PR body whose three claims all match ground truth, **When** the watchdog inspects the run, **Then** no narrative-drift signal is emitted.
+4. **Given** a narrative-drift signal for any claim shape, **When** it is reported, **Then** it reaches the lifecycle issue only and opens no pipeline-defect issue, and it is excluded from the watchdog's precision measurement window.
+5. **Given** a final PR body that states a claim in a shape the check cannot parse, **When** the watchdog inspects the run, **Then** no signal is emitted for that claim — an unparseable claim is an absence of evidence, never a finding.
+6. **Given** a final PR body whose three claims all match ground truth, **When** the watchdog inspects the run, **Then** no narrative-drift signal is emitted.
 
 ---
 
@@ -87,6 +90,7 @@ Spec numbers are minted by looking at what already exists on the main branch, so
 - What happens when the inspected run was skipped or cancelled, or when the artifact a check reads belongs to a different run? No signal is emitted — the existing attribution invariant applies to these checks exactly as it does to the existing ones.
 - What happens when a final PR body contains text that looks like an instruction to an agent? It is treated as untrusted data to be compared against ground truth, never as an instruction; the same framing already applied to every inspected artifact applies here.
 - What happens when the maintainer raises a stage's intended budget after a trend finding was filed? The trend's severity band is computed from the run's own budget and ceiling, so the new runs are classified against the new numbers.
+- What happens when a maintainer closes a trend finding and the trend simply continues? Nothing is filed or reopened: the closure is an acceptance of that severity band, and only a climb into a higher band files again.
 - What happens when two collision claimants are the same pull request observed twice (a re-inspection of one run)? A pull request never collides with itself; only distinct claimants on the same number constitute a collision.
 - What happens when a collector encounters a condition another part of the pipeline has already reported for this run? The existing coexistence rule applies — the watchdog must not double-report it.
 
@@ -106,12 +110,12 @@ Spec numbers are minted by looking at what already exists on the main branch, so
 
 ### Turn-budget trend detection
 
-- **FR-010**: The turn-budget check MUST emit a per-run signal when a run's counted turns reached or exceeded that run's intended turn budget, carrying the counted turns, the intended budget, the enforced ceiling, and the fraction of the enforced ceiling consumed. [NEEDS CLARIFICATION: each stage already posts its own "used its full intended turn budget" observability note for exactly this condition, and the watchdog is required not to double-report a condition existing automation has already reported — should a per-run over-budget signal be able to produce a filed finding on its own, or should it serve only as evidence attached to a cross-run trend finding?]
+- **FR-010**: The turn-budget check MUST emit a per-run signal when a run's counted turns reached or exceeded that run's intended turn budget, carrying the counted turns, the intended budget, the enforced ceiling, and the fraction of the enforced ceiling consumed. That per-run signal MUST serve only as evidence attached to a cross-run trend finding and MUST NOT produce a filed finding on its own: each stage already posts its own "used its full intended turn budget" observability note for exactly that condition, and the watchdog must not double-report a condition existing automation has already reported. Only a cross-run trend signal (FR-011) may open a finding.
 - **FR-011**: The turn-budget check MUST emit a cross-run signal when the recent history for the same stage shows either a run of consecutive at-or-over-budget runs, or a climb in consumed turns that crosses a configured fraction of the enforced ceiling. Both the history window and the two thresholds MUST be configurable without a code change.
-- **FR-012**: A cross-run trend signal MUST be identified such that successive runs extending the same trend at the same severity band map to a single accumulating finding rather than one finding per run, and a trend that escalates into a different severity band MUST be distinguishable from the one below it.
+- **FR-012**: A cross-run trend signal MUST be identified such that successive runs extending the same trend at the same severity band map to a single accumulating finding rather than one finding per run, and a trend that escalates into a different severity band MUST be distinguishable from the one below it — the escalation being the only event that files again for a stage whose trend finding a maintainer has already closed (FR-015).
 - **FR-013**: The turn-budget check MUST express the relationship between the advisory intended budget and the enforced ceiling as a monitored, reported quantity — the remaining headroom — rather than leaving the gap between them implicit.
 - **FR-014**: The turn-budget check MUST read its per-run values from the inspected run's own durable metrics record where one exists, falling back to the run's execution-output artifact, and MUST emit no turn-budget signal when neither source yields turn values marked available.
-- **FR-015**: The specification MUST state what happens when a maintainer has closed a filed turn-budget trend finding and a later run extends that same trend. [NEEDS CLARIFICATION: should the existing dedup behavior apply unchanged — reopen the closed finding and attach the fresh evidence, which for a persistent trend means reopening on every subsequent run — or should a maintainer's closure be treated as an acceptance that suppresses that stage's trend findings until the trend crosses into a higher severity band?]
+- **FR-015**: A maintainer's closure of a filed turn-budget trend finding MUST be treated as an acceptance of that trend: while later runs extend the same trend within the same severity band, the check MUST NOT reopen the closed finding and MUST NOT open a new one for that stage. A new finding MUST be filed only when the trend crosses into a higher severity band than the one that was accepted. A trend is a persistent state rather than a recurring event, so reopening on every subsequent run would convert a deliberate "seen, accepted for now" into churn, while the severity-band step keeps a real escalation visible.
 
 ### Cost-report completeness
 
@@ -127,7 +131,7 @@ Spec numbers are minted by looking at what already exists on the main branch, so
 - **FR-022**: Each mismatch MUST produce its own signal carrying the claimed value, the actual value, and the source the actual value was derived from.
 - **FR-023**: A claim the check cannot parse MUST produce no signal — a claim shape that does not match is an absence of evidence, never a finding — and the check MUST NOT treat an unparseable body as a mismatch.
 - **FR-024**: A claim that matches its ground truth MUST produce no signal, and a pull request whose three claims all match MUST produce no output from this check.
-- **FR-025**: Findings derived from claim mismatches MUST be reported at a severity that reflects their observed cosmetic nature. [NEEDS CLARIFICATION: should a claim mismatch open a pipeline-defect issue on the same path as every other finding — where it counts against the watchdog's ≥70% precision window and competes for maintainer attention with work-destroying defects — or be reported only on the lifecycle issue, or filed but excluded from the precision measurement?]
+- **FR-025**: Findings derived from claim mismatches MUST be reported at a severity that reflects their observed cosmetic nature: a claim mismatch MUST be reported on the lifecycle issue only and MUST NOT open a pipeline-defect issue. The correction therefore reaches the person reading the final pull request at the moment they read it, at no tracker cost, and such a report MUST NOT enter the watchdog's precision measurement window.
 
 ### Spec-number collision detection
 
@@ -158,10 +162,10 @@ Spec numbers are minted by looking at what already exists on the main branch, so
 - **SC-001**: For each of the four new detection classes, a labeled corpus entry exists describing a run known to exhibit that condition, and the watchdog produces the expected finding for every entry and no finding for the paired negative entry.
 - **SC-002**: Every failure branch each new collector ships — condition detected, condition absent, input unavailable, input unparseable, run unattributable — is exercised by a checked-in fixture, so no branch is proven only by a manual demonstration.
 - **SC-003**: Adding the four collectors changes the number of agent invocations per watchdog run by zero; the marginal cost of the feature is measured in runner seconds, not in agent turns.
-- **SC-004**: A turn-budget trend spanning multiple consecutive runs produces exactly one filed finding that accumulates evidence, not one finding per run — verifiable by running the watchdog against each run of a seeded climb and counting filed findings.
+- **SC-004**: A turn-budget trend spanning multiple consecutive runs produces exactly one filed finding that accumulates evidence, not one finding per run — verifiable by running the watchdog against each run of a seeded climb and counting filed findings. After that finding is closed, further runs in the same severity band produce zero additional findings, and the first run that escalates the band produces exactly one.
 - **SC-005**: A maintainer reading a filed finding from any of the four classes can state the observed value, the expected value, and where the expected value came from without opening any artifact the watchdog read.
 - **SC-006**: Across the corpus of runs that exhibit none of the four conditions, the new collectors emit zero signals — they add no findings to runs that were healthy before this feature existed.
-- **SC-007**: The watchdog's existing precision target over its most recent distinct filed findings is still met after the new classes begin filing, measured over the same window definition in use today.
+- **SC-007**: The watchdog's existing precision target over its most recent distinct filed findings is still met after the new classes begin filing, measured over the same window definition in use today. Final-PR claim mismatches, which report on the lifecycle issue and file no pipeline-defect issue, never enter that window.
 
 ## Assumptions
 

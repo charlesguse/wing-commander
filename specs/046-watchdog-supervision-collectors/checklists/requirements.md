@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,24 +31,23 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain by design, carried to the
-  clarification stage rather than guessed:
-  - **FR-010** — whether a per-run over-budget signal may file a finding on
-    its own, given every stage already posts its own over-budget
-    observability note and the watchdog is required not to double-report a
-    condition existing automation has reported.
-  - **FR-015** — whether a maintainer closing a turn-budget trend finding is
-    an acceptance that suppresses recurrence, or whether the existing
-    reopen-on-recurrence dedup behavior applies unchanged.
-  - **FR-025** — whether cosmetic claim-mismatch findings file
-    pipeline-defect issues on the same path as work-destroying defects, and
-    whether they count against the watchdog's precision window.
-  Each has multiple reasonable answers with materially different noise and
-  precision consequences, and no default that is obviously right.
+- All three [NEEDS CLARIFICATION] markers were resolved at the clarification
+  stage from the answers on issue #274:
+  - **FR-010** — a per-run over-budget signal is evidence only; it files no
+    finding on its own, because each stage already posts its own over-budget
+    note and the watchdog must not double-report it. Only a cross-run trend
+    signal opens a finding. User Story 1 scenarios 1–2 updated.
+  - **FR-015** — a maintainer's closure of a trend finding is an acceptance:
+    the finding is neither reopened nor re-filed while the trend stays in the
+    same severity band, and only a climb into a higher band files again.
+    User Story 1 scenarios 4–5, the edge-case list, FR-012 and SC-004
+    updated.
+  - **FR-025** — a claim mismatch is reported on the lifecycle issue only,
+    opens no pipeline-defect issue, and does not enter the precision
+    measurement window. User Story 3 scenario 4 and SC-007 updated.
 - Domain-specific nouns used in the requirements (signals, collectors,
   the metrics record, the lifecycle issue, dedup, fingerprints) are this
   repository's existing product vocabulary, established by specs 015, 024,
   and 043 — they name contracts, not implementations, and were kept in
   preference to invented synonyms a reader would have to translate back.
-- Items marked incomplete require spec updates before `/speckit-clarify` or
-  `/speckit-plan`.
+- No items remain incomplete; the spec is ready for `/speckit-plan`.
