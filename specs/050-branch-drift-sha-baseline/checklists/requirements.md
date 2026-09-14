@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,17 +31,16 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain by design (FR-018, FR-019,
-  FR-020), at the skill's maximum of three. Each is a decision the issue
-  itself frames as the owner's, and none has a default that is obviously
-  right:
-  - FR-018 — fallback baseline when a run carries no branch points:
-    detection rate versus measurement purity.
-  - FR-019 — whether the signal keeps a numeric commit count, which is not
-    always derivable after a force-push has orphaned the recorded commits.
-  - FR-020 — whether stages other than implement record the pair, which
-    would require the record to carry the resolved push target too.
-- The three markers are posted to the lifecycle issue as questions rather
-  than resolved here; the clarify stage encodes the answers back into
-  spec.md.
-- Items marked incomplete require spec updates before `/speckit-plan`.
+- All three [NEEDS CLARIFICATION] markers are resolved from the owner's
+  answer on lifecycle issue #331:
+  - FR-018 — fall back to today's since-created timestamp baseline for a
+    run whose record lacks the branch points, naming that arm in the step
+    summary. Detection never drops below today's; both arms keep fixtures.
+  - FR-019 — the implement stage records the commit count alongside the
+    two points, so both the verdict and the count are exact and survive a
+    force-push, and the watchdog performs no inspection-time walk.
+  - FR-020 — implement only for now, with the fields shaped
+    stage-neutrally (the pushed branch recorded explicitly, never derived
+    from a prefix or a review mode) so plan and tasks can adopt them
+    later without a contract change; that gap becomes a follow-up issue.
+- No items remain incomplete; the spec is ready for `/speckit-plan`.
