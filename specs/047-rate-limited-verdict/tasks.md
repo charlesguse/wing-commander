@@ -128,7 +128,7 @@ reset time, and that no `pipeline-defect` issue is created.
 
 ### Implementation for User Story 1
 
-- [ ] T004 [US1] In `.github/workflows/watchdog.yml`'s `diagnose` job,
+- [X] T004 [US1] In `.github/workflows/watchdog.yml`'s `diagnose` job,
   give the existing "Read back diagnose outcome" step (`id:
   diagnose-outcome`, the `if [ "${{ steps.diagnose.outcome }}" !=
   "success" ] || [ "$agent_ok" != "true" ]` chain, roughly lines
@@ -155,7 +155,7 @@ reset time, and that no `pipeline-defect` issue is created.
   diagnose *step* red while the job and run stay green via the existing
   `continue-on-error: true`.
 
-- [ ] T005 [US1] In `.github/scripts/verify-watchdog-run.sh`, add one new
+- [X] T005 [US1] In `.github/scripts/verify-watchdog-run.sh`, add one new
   evidence read alongside the existing checks 3/4 block (the `step()`
   calls near lines 100-139): `c="$(step diagnose 'Report "rate-limited"
   to lifecycle issue')"; rate_limited=false; [ -n "$c" ] && [ "$c" !=
@@ -180,7 +180,7 @@ reset time, and that no `pipeline-defect` issue is created.
   evidence read must never silently suppress a real reason). Depends on
   T004 (reads that step's exact name).
 
-- [ ] T006 [US1] Extend Gate 36
+- [X] T006 [US1] Extend Gate 36
   (`.github/scripts/verify-watchdog-run-failure-paths.sh`) with the four
   fixtures contracts/verifier-suppression.md requires, built from T001's
   real field shapes where applicable: (1) rate-limited diagnose, nothing
