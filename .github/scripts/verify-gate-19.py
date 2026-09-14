@@ -1264,15 +1264,18 @@ def suite_spec_slug(script, env, tmproot):
 # --------------------------------------------------------------------------
 # #330 single-home check. CLAUDE.md: when shared logic is consolidated, the
 # nearest gate gets the "single home" check, or the rule lasts until the
-# next session. The derivation's distinctive fragments are the impl-branch
-# iteration strip (`slug%-iter`) and the default expansions of the four
-# prefixes only the derivation needs (`SPEC_DRAFT_PREFIX:-` ...; the spec
-# prefix alone is legitimately defaulted elsewhere, by branch-drift, to
-# name the branch it measures); none may reappear in watchdog.yml, and both
-# jobs that need the answer must `uses:` the composite.
+# next session. The derivation's distinctive fragments are its branch-prefix
+# case ARMS (`"${SPEC_DRAFT_PREFIX}"*)` ...) and the impl-branch iteration
+# strip (`slug%-iter`). Not the prefix default expansions themselves
+# (`SPEC_PREFIX:-spec/`): a collector legitimately defaults a prefix to
+# name a branch it measures (branch-drift) or to map many branches to spec
+# numbers (spec-collision, specs/046) — that is prefix USE, not a second
+# copy of "which spec did this run advance". Neither fragment may reappear
+# in watchdog.yml, and both jobs that need the answer must `uses:` the
+# composite.
 # --------------------------------------------------------------------------
-DERIVATION_FRAGMENTS = ("slug%-iter", "SPEC_DRAFT_PREFIX:-", "PLAN_PREFIX:-",
-                        "TASKS_PREFIX:-", "IMPL_PREFIX:-")
+DERIVATION_FRAGMENTS = ("slug%-iter", '"${SPEC_DRAFT_PREFIX}"*)', '"${SPEC_PREFIX}"*)',
+                        '"${PLAN_PREFIX}"*)', '"${TASKS_PREFIX}"*)', '"${IMPL_PREFIX}"*)')
 
 
 def single_home_failures(watchdog_text):
