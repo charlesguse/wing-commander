@@ -1,0 +1,249 @@
+# Like every shared composite, this action is resolved from the pipeline
+# repository's own checkout at github.job_workflow_sha (see the header of
+# .github/actions/wing-commander-context/action.yml for the verified
+# snippet). It is the ONE home of "which spec did the inspected run
+# advance, and which lifecycle issue does that spec route to" (#330):
+# watchdog.yml's collect job asks so every collector and the diagnose
+# verdict can be filed against the spec's lifecycle issue, and its
+# report-unhandled-failure job asks again, independently, because collect
+# may be the very job that failed before publishing its answer. Before this
+# composite the derivation was pasted into both jobs, and #322's
+# metrics-record fallback landed in one copy only — the divergent-fix
+# shape CLAUDE.md's "Shared logic has exactly one home" rule names.
+#
+# Best-effort and read-only throughout — never a refusal gate, unlike every
+# write-capable stage's identity check. A run that cannot be tied to a spec
+# (a main-based cleanup sweep, a rebase run, the watchdog's own runs) is
+# still inspected and reported against its own run URL; this composite just
+# records that no lifecycle issue destination exists rather than failing
+# the calling job. Every external read below is guarded for that reason.
+#
+# How the slug is found, in order:
+#
+#   1. The inspected run's head branch, by pipeline prefix (spec-draft/,
+#      spec/, plan/, tasks/, impl/<slug>-iterN). The caller hands the head
+#      in when it already has it (collect's run-meta step); when it does
+#      not, the composite reads it itself with `gh run view`.
+#   2. #322: a workflow_dispatch-triggered stage reports the DEFAULT branch
+#      as its head, and the dispatch inputs that name the spec are not in
+#      the run's metadata — so step 1 derives nothing for every tasks and
+#      implement run (both are only ever dispatched). What such a run does
+#      leave behind is its wing-commander-metrics-record artifact(s), whose
+#      spec.spec_dir names the spec for every agent-bearing stage
+#      (specs/043). The slug is read from there when the head gave none —
+#      but only for the six stages whose every run advances exactly ONE
+#      spec, so the record's identity IS the run's. Everywhere else the
+#      record names a spec the run did not advance: the watchdog's own
+#      diagnose record borrows the spec of the run THAT watchdog inspected,
+#      a rebase run writes one record per matrix slug, and a cleanup sweep
+#      can touch several specs. "First record wins" would tie those runs
+#      to an arbitrary spec and route findings about them onto its
+#      lifecycle issue; they stay reported against their own run URL.
+#      A missing/expired artifact, a download failure, or a record with no
+#      spec identity all leave the slug empty exactly as step 1 left it.
+#
+# With a slug in hand, spec-meta.json on the spec branch names the
+# lifecycle issue and the recorded stage; without one, or when the branch
+# has no record yet, the issue stays empty and the caller reports against
+# the run URL.
+#
+# Tokens (docs/setup.md): `gh run view` and `gh run download` need
+# Actions:read, which the App token does not have, so both run under the
+# caller's default token (`actions-token`). `gh issue view` for the
+# stage:stalled coexistence check runs under the App token (`token`),
+# which may be empty when the caller's context step failed — the read then
+# fails closed to "false". Gate 12 checks this routing for gh calls made
+# directly in workflows and does not walk composite actions (#339), so
+# Gate 19 asserts it for this step: every `gh run` here must be prefixed
+# GH_TOKEN="$ACTIONS_TOKEN", and `gh issue view` must not be.
+name: wing-commander-inspected-run-identity
+description: >
+  Best-effort, read-only: resolve which spec an inspected workflow run
+  advanced (from its head branch, else from its metrics-record artifact)
+  and which lifecycle issue that spec routes to. Never fails the calling
+  job; an unresolvable run yields empty outputs.
+
+inputs:
+  token:
+    description: >
+      App-installation token for `gh issue view` (the stage:stalled label
+      read). May be empty — the stalled-label output then reads "false".
+    required: false
+    default: ""
+  actions-token:
+    description: >
+      Token with Actions:read for `gh run view` / `gh run download` — the
+      calling job's default token, since the App token has no Actions
+      permission.
+    required: true
+  run-id:
+    description: The inspected run's id.
+    required: true
+  run-name:
+    description: >
+      The inspected run's workflow name, e.g. "Wing Commander · 5
+      implement". Decides whether the metrics-record fallback applies (the
+      six single-spec stages only). Empty disables the fallback.
+    required: false
+    default: ""
+  head-branch:
+    description: >
+      The inspected run's head branch when the caller already has it.
+      Empty means "read it with `gh run view`".
+    required: false
+    default: ""
+  spec-draft-prefix:
+    description: Branch prefix of spec drafts. Empty means the pipeline default, `spec-draft/`.
+    required: false
+    default: ""
+  spec-prefix:
+    description: Branch prefix of spec branches. Empty means the pipeline default, `spec/`.
+    required: false
+    default: ""
+  plan-prefix:
+    description: Branch prefix of plan branches. Empty means the pipeline default, `plan/`.
+    required: false
+    default: ""
+  tasks-prefix:
+    description: Branch prefix of tasks branches. Empty means the pipeline default, `tasks/`.
+    required: false
+    default: ""
+  impl-prefix:
+    description: Branch prefix of implement branches (`impl/<slug>-iterN`). Empty means the pipeline default, `impl/`.
+    required: false
+    default: ""
+
+outputs:
+  slug:
+    description: The spec slug (NNN-name), or empty when none resolved.
+    value: ${{ steps.resolve.outputs.slug }}
+  slug-source:
+    description: Where the slug came from — `head-branch`, `metrics-record`, or empty when none resolved.
+    value: ${{ steps.resolve.outputs.slug-source }}
+  spec-dir:
+    description: specs/<slug>, or empty.
+    value: ${{ steps.resolve.outputs.spec-dir }}
+  lifecycle-issue:
+    description: The lifecycle issue number from the spec branch's spec-meta.json, or empty.
+    value: ${{ steps.resolve.outputs.lifecycle-issue }}
+  meta-stage:
+    description: The `stage` recorded in spec-meta.json, or empty.
+    value: ${{ steps.resolve.outputs.meta-stage }}
+  stalled-label:
+    description: "`true` when the lifecycle issue already carries stage:stalled; otherwise `false`."
+    value: ${{ steps.resolve.outputs.stalled-label }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve inspected run's spec slug and lifecycle issue
+      id: resolve
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        ACTIONS_TOKEN: ${{ inputs.actions-token }}
+        RUN_ID: ${{ inputs.run-id }}
+        RUN_NAME: ${{ inputs.run-name }}
+        HEAD_BRANCH: ${{ inputs.head-branch }}
+        SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
+        SPEC_PREFIX: ${{ inputs.spec-prefix }}
+        PLAN_PREFIX: ${{ inputs.plan-prefix }}
+        TASKS_PREFIX: ${{ inputs.tasks-prefix }}
+        IMPL_PREFIX: ${{ inputs.impl-prefix }}
+      run: |
+        set -uo pipefail
+        SPEC_DRAFT_PREFIX="${SPEC_DRAFT_PREFIX:-spec-draft/}"
+        SPEC_PREFIX="${SPEC_PREFIX:-spec/}"
+        PLAN_PREFIX="${PLAN_PREFIX:-plan/}"
+        TASKS_PREFIX="${TASKS_PREFIX:-tasks/}"
+        IMPL_PREFIX="${IMPL_PREFIX:-impl/}"
+
+        # A caller without a run-meta step of its own (report-unhandled-
+        # failure) hands in no head; read it here, under the default token
+        # (Actions:read -- header), best-effort like everything below.
+        if [ -z "$HEAD_BRANCH" ] && [ -n "$RUN_ID" ]; then
+          HEAD_BRANCH="$(GH_TOKEN="$ACTIONS_TOKEN" gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json headBranch --jq '.headBranch // empty' 2>/dev/null || true)"
+        fi
+
+        slug=""
+        case "$HEAD_BRANCH" in
+          "${SPEC_DRAFT_PREFIX}"*) slug="${HEAD_BRANCH#"$SPEC_DRAFT_PREFIX"}" ;;
+          "${SPEC_PREFIX}"*)       slug="${HEAD_BRANCH#"$SPEC_PREFIX"}" ;;
+          "${PLAN_PREFIX}"*)       slug="${HEAD_BRANCH#"$PLAN_PREFIX"}" ;;
+          "${TASKS_PREFIX}"*)      slug="${HEAD_BRANCH#"$TASKS_PREFIX"}" ;;
+          "${IMPL_PREFIX}"*)       slug="${HEAD_BRANCH#"$IMPL_PREFIX"}"; slug="${slug%-iter*}" ;;
+        esac
+        slug_source=""
+        [ -z "$slug" ] || slug_source="head-branch"
+
+        # #322 metrics-record fallback, six single-spec stages only -- the
+        # header explains both the fallback and the allowlist. This step is
+        # `shell: bash` (errexit on), so every read is guarded: a failed
+        # download must not kill the calling job.
+        record_fallback=false
+        case "$RUN_NAME" in
+          "Wing Commander · 1 intake"|"Wing Commander · 2 clarify"|"Wing Commander · 3 plan"|"Wing Commander · 4 tasks"|"Wing Commander · 5 implement"|"Wing Commander · 6 finalize")
+            record_fallback=true ;;
+        esac
+        if [ -z "$slug" ] && [ -n "$RUN_ID" ] && [ "$record_fallback" = "true" ]; then
+          mr_dir="$RUNNER_TEMP/spec-slug-metrics-record"
+          mkdir -p "$mr_dir" 2>/dev/null || true
+          if GH_TOKEN="$ACTIONS_TOKEN" gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -p 'metrics-record*' -D "$mr_dir" >"$RUNNER_TEMP/spec-slug-mr-dl.log" 2>&1; then
+            # First record that carries a spec_dir under specs/. A run
+            # with several records (implement's cycle + progress) names
+            # the same spec in each, so the first is as good as any.
+            record_dir=""
+            while IFS= read -r rec; do
+              d="$(jq -r '.spec.spec_dir // empty' "$rec" 2>/dev/null || true)"
+              case "$d" in
+                specs/?*) record_dir="$d"; break ;;
+              esac
+            done < <(find "$mr_dir" -type f -name '*.json' 2>/dev/null | sort)
+            if [ -n "$record_dir" ]; then
+              slug="${record_dir#specs/}"
+              slug_source="metrics-record"
+            fi
+          fi
+          if [ -z "$slug" ]; then
+            echo "spec-slug: head branch '$HEAD_BRANCH' is not a pipeline branch and no metrics record of run $RUN_ID names a spec — no slug resolved." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "spec-slug: head branch '$HEAD_BRANCH' is not a pipeline branch (a dispatched run reports the default branch); slug '$slug' read from the run's metrics record." >> "$GITHUB_STEP_SUMMARY"
+          fi
+        fi
+
+        issue=""
+        spec_dir=""
+        meta_stage=""
+        if [ -n "$slug" ]; then
+          spec_dir="specs/$slug"
+          git fetch --no-tags --quiet origin "refs/heads/${SPEC_PREFIX}$slug:refs/remotes/origin/${SPEC_PREFIX}$slug" 2>/dev/null || true
+          if meta="$(git show "refs/remotes/origin/${SPEC_PREFIX}$slug:$spec_dir/spec-meta.json" 2>/dev/null)"; then
+            meta_dir="$(printf '%s' "$meta" | jq -r '.spec_dir // empty' 2>/dev/null || true)"
+            if [ "$meta_dir" = "$spec_dir" ]; then
+              issue="$(printf '%s' "$meta" | jq -r '.issue // empty' 2>/dev/null || true)"
+              meta_stage="$(printf '%s' "$meta" | jq -r '.stage // empty' 2>/dev/null || true)"
+            fi
+          fi
+        fi
+
+        if [ -z "$issue" ]; then
+          echo "No lifecycle issue destination could be resolved for head branch '$HEAD_BRANCH' — this run will be reported against its own run URL only." >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+        # Coexistence check (specs/024 research.md, FR-024): whether a
+        # stage:stalled label is already on the lifecycle issue, read now --
+        # always at or after the inspected run started, satisfying the "as
+        # of a time at or before this watchdog run started" bound.
+        stalled_label=false
+        if [ -n "$issue" ]; then
+          stalled_label="$(gh issue view "$issue" --json labels --jq '[.labels[].name] | index("stage:stalled") != null' 2>/dev/null || echo false)"
+        fi
+
+        {
+          echo "slug=$slug"
+          echo "slug-source=$slug_source"
+          echo "spec-dir=$spec_dir"
+          echo "lifecycle-issue=$issue"
+          echo "meta-stage=$meta_stage"
+          echo "stalled-label=$stalled_label"
+        } >> "$GITHUB_OUTPUT"
