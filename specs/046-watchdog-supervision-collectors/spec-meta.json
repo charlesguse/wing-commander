@@ -2,7 +2,8 @@
   "issue": 274,
   "spec_dir": "specs/046-watchdog-supervision-collectors",
   "feature_num": "046",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 5,
-  "spec_branch": "spec/046-watchdog-supervision-collectors"
+  "spec_branch": "spec/046-watchdog-supervision-collectors",
+  "pending_re_review_from": []
 }
