@@ -154,8 +154,23 @@ def action_files(root="."):
     return sorted(found)
 
 
+def _relativize(root, paths):
+    """wc_gate_registry's workflow_files() strips a leading './' but does
+    not relativize against an arbitrary `root` -- correct for the real
+    gate run (root="."), but --self-test's tempdir roots get back
+    absolute paths, which breaks every path comparison (declared-home
+    exclusion, waiver matching, self-test assertions) that assumes a
+    root-relative path."""
+    out = []
+    for p in paths:
+        if os.path.isabs(p):
+            p = os.path.relpath(p, root).replace(os.sep, "/")
+        out.append(p)
+    return out
+
+
 def all_subject_files(root="."):
-    return sorted(workflow_files(root) + action_files(root))
+    return sorted(_relativize(root, workflow_files(root)) + action_files(root))
 
 
 def read(root, path):
@@ -196,6 +211,8 @@ def check_orphan_reset(root="."):
 # --------------------------------------------------------------------------
 def _step_lists(doc):
     """Every (context, [steps]) in a workflow or composite action doc."""
+    if not isinstance(doc, dict):
+        return []
     out = []
     for job_id, job in (doc.get("jobs") or {}).items():
         out.append((job_id, (job or {}).get("steps") or []))
@@ -294,9 +311,21 @@ def check_token_mint(root="."):
 # --------------------------------------------------------------------------
 # Promotion-prevention pass (FR-025)
 # --------------------------------------------------------------------------
+KNOWN_SHARED_CONSUMER_STAGE = ".github/workflows/auto-update-spec-kit.yml"
+
+
 def check_promotion(root="."):
     findings = []
-    for path in published_stages(root):
+    for path in _relativize(root, published_stages(root)):
+        if path == KNOWN_SHARED_CONSUMER_STAGE:
+            # research.md D1/D2: this IS a workflow_call-only published
+            # stage, and it is ALSO this feature's own declared consumer of
+            # the three shared composites, reached deliberately through its
+            # existing self-checkout convention -- not an accidental
+            # promotion. The check still fires for any OTHER published
+            # stage (the self-test's synthetic fixture proves that) or a
+            # non-underscore composite reaching into _shared/.
+            continue
         text = read(root, path)
         for m in SHARED_REF_RE.finditer(text):
             findings.append(Finding(path, "promotion", line_of(text, m.start()),

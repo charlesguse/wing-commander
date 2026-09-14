@@ -1749,7 +1749,8 @@ jobs:
       # specs/049-single-home-release-idioms: the mint-then-verify idiom
       # this pair of steps used to re-type is now the shared
       # _shared/scoped-app-token composite -- see
-      # contracts/scoped-app-token.md. `id: scratch-token` is kept (not
+      # specs/049-single-home-release-idioms/contracts/scoped-app-token.md.
+      # `id: scratch-token` is kept (not
       # renamed) so steps.scratch-token.outputs.token below and at the
       # scaffold/agent-push steps still resolves the same way it always has.
       - name: Mint a scratch-repository App token
@@ -1814,7 +1815,8 @@ jobs:
       # specs/049-single-home-release-idioms: the detach-through-push
       # portion of this step (through the first empty commit) is now the
       # shared _shared/orphan-branch-reset composite -- see
-      # contracts/orphan-branch-reset.md. This leaves e2e-scratch cloned,
+      # specs/049-single-home-release-idioms/contracts/orphan-branch-reset.md.
+      # This leaves e2e-scratch cloned,
       # reset, and pushed with one placeholder commit; the follow-up step
       # scaffolds real content onto it and pushes a SECOND time -- two
       # pushes to the same branch in sequence, per the composite's own
@@ -2612,7 +2614,9 @@ jobs:
 
       # specs/049-single-home-release-idioms: the label/lookup/create-or-
       # comment mechanics above are now the shared _shared/durable-failure-
-      # issue composite -- see contracts/durable-failure-issue.md. The
+      # issue composite -- see
+      # specs/049-single-home-release-idioms/contracts/durable-failure-issue.md.
+      # The
       # other three auto-update:failed sites in this workflow ("Label the
       # issue as failed", "Label the issue as failed (prepare failed)",
       # "Post closing summary (revert)") are deliberately NOT rewired here:

@@ -275,9 +275,26 @@ def render_step(step):
     return script, env
 
 
+VERDICT_SCRIPT_REL = os.path.join(".github", "actions", "_shared", "auto-release-verdict.sh")
+
+
+def _stage_verdict_script(workdir):
+    """Copy the real verdict helper into workdir at its shipped relative
+    path. The step under test resolves it as `.github/actions/_shared/
+    auto-release-verdict.sh` -- correct when the real workflow runs from a
+    repository checkout, but this harness's workdir is a bare tempdir, so
+    the same relative path has to be staged there for each scenario."""
+    src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                       "actions", "_shared", "auto-release-verdict.sh")
+    dst = os.path.join(workdir, VERDICT_SCRIPT_REL)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.copyfile(src, dst)
+
+
 def run_scenario(script, env, sc, tmproot):
     workdir = tempfile.mkdtemp(dir=tmproot)
     runner_temp = tempfile.mkdtemp(dir=tmproot)
+    _stage_verdict_script(workdir)
 
     run_env = dict(env)
     run_env.update(BASE)

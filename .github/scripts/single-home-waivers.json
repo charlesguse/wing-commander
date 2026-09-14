@@ -16,9 +16,31 @@
     "matches fails the gate, so a waived deviation can neither grow nor",
     "quietly widen.",
     "",
-    "No waivers are expected to exist at merge time for this feature",
-    "(SC-009) -- the file exists so a genuinely new, deliberate exception",
-    "always has exactly one place to be registered."
+    "No waivers were expected to exist at merge time for this feature's own",
+    "consolidation (SC-009) -- the two below are PRE-EXISTING patterns Gate",
+    "53's structural scan surfaced on its first run against the real tree,",
+    "each already reasoned through in its own file's comments, not new debt",
+    "this feature introduced. The gate doing exactly this -- finding a",
+    "structurally similar but conceptually distinct piece of shell -- is it",
+    "working as designed; a human decision belongs here, in the open, not",
+    "silently in the gate's own pattern-matching."
   ],
-  "waivers": []
+  "waivers": [
+    {
+      "file": ".github/workflows/auto-update-spec-kit-scratch-preflight.yml",
+      "check": "token-mint",
+      "pattern": "scratch-token",
+      "count": 1,
+      "issue": "#326",
+      "reason": "This workflow's own header comment documents the duplication as deliberate: it exists to test the raw actions/create-github-app-token@v3 call independently of e2e-stage, so a regression in the shared scoped-app-token composite cannot silently pass both the diagnostic and the real stage the same way. Routing it through the composite would defeat that independence -- the composite's own bug would then read as 'reachable' in both places at once."
+    },
+    {
+      "file": ".github/workflows/watchdog.yml",
+      "check": "failure-issue",
+      "pattern": "gh label create \\.\\.\\. --force \\+ gh issue list \\.\\.\\. --jq",
+      "count": 1,
+      "issue": "#326",
+      "reason": "watchdog.yml's usage-limit tracking (create the usage-limit label if absent, look up the one open issue carrying it) is a conceptually different feature from this repository's auto-release:failed/auto-update:failed durable-failure-issue idiom -- a different label, a different lifecycle, no create-or-comment/close split -- that happens to share the same two generic gh-CLI fragments this structural check keys on. Out of scope for specs/049's consolidation; folding it into durable-failure-issue is a separate, future decision."
+    }
+  ]
 }

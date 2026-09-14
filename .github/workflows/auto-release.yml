@@ -163,7 +163,8 @@ jobs:
       # specs/049-single-home-release-idioms: the mint-then-verify idiom
       # this step used to re-type is now the shared
       # _shared/scoped-app-token composite -- see
-      # contracts/scoped-app-token.md. `id: token` is kept (not renamed) so
+      # specs/049-single-home-release-idioms/contracts/scoped-app-token.md.
+      # `id: token` is kept (not renamed) so
       # steps.token.outputs.token below still resolves the same way it
       # always has.
       - name: Mint a scoped App token for the test repository
@@ -242,7 +243,9 @@ jobs:
 
       # specs/049-single-home-release-idioms: the detach-through-push
       # portion of the reset is now the shared _shared/orphan-branch-reset
-      # composite -- see contracts/orphan-branch-reset.md. `id: reset` is
+      # composite -- see
+      # specs/049-single-home-release-idioms/contracts/orphan-branch-reset.md.
+      # `id: reset` is
       # kept on the follow-up verdict-reporting step (not the composite
       # step itself) so steps.reset.outputs.ok and the job's own `verdict`
       # output wiring below are unchanged.
