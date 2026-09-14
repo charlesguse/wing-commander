@@ -420,7 +420,7 @@ gains four rows (data-model.md has the full ident shape per row):
 
 | `source` | `kind` | Identity (`ident`) fields |
 |---|---|---|
-| `"turn-budget"` (per-run, `class-hint: null`) | `turn-budget-observation` | `{stage, run}` — distinct per run, never expected to be cited alone into a Finding (R5) |
+| `"turn-budget"` (per-run, `class-hint: null`) | `turn-budget-observation` | `{stage, band}` — **not** the run, per T041's correction; always cited alongside the trend signal into one Finding, never alone (R5) |
 | `"turn-budget-trend"` | `turn-budget-trend` | `{stage, band}` — **not** the run, per R4 |
 | `"cost-report"` | `cost-line-claim` | `{run, stage, claim-type}` (`claim-type` ∈ `missing`\|`malformed`) |
 | `"final-pr-claims"` | `narrative-claim` | `{pr, claim-type}` (`claim-type` ∈ `tasks`\|`commits`\|`tests`) |

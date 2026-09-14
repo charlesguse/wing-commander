@@ -60,6 +60,7 @@ FILTER='
      elif $meets_consecutive then "watch"
      elif $meets_climb then "elevated"
      else null end) as $band
+  | (if $per_run == null then null else ($per_run + {facts: ($per_run.facts + {band: $band})}) end) as $per_run
   | {
       "per-run": $per_run,
       "trend": (if $band == null then null else {
@@ -97,6 +98,16 @@ per_run_frac="$(jq -r '."per-run".facts."consumed-ceiling-fraction"' <<<"$out")"
 if [ "$per_run_frac" != "0.889" ]; then
   reason "per-run consumed-ceiling-fraction expected 0.889 for 400/450, got '$per_run_frac'"
 fi
+# T041: the per-run signal's own facts.band must match this window's band —
+# it is what Stamp signal ids now keys the per-run signal's identity on
+# ({stage, band}, not {stage, run}), so the two signals a Finding cites
+# together must agree on the same value.
+per_run_band="$(jq -r '."per-run".facts.band // "null"' <<<"$out")"
+if [ "$per_run_band" != "critical" ]; then
+  reason "per-run signal's facts.band expected 'critical' to match the trend band, got '$per_run_band'"
+else
+  note "per-run signal's facts.band correctly matches the trend band 'critical'"
+fi
 
 # ── Fixture 2 (positive, watch): three consecutive at-or-over-budget runs
 #    but a high ceiling keeps the consumed fraction low — consecutive
@@ -109,6 +120,12 @@ if [ "$band" != "watch" ]; then
   reason "three consecutive at-or-over-budget runs under a high ceiling expected band 'watch', got '$band'"
 else
   note "consecutive-only history correctly produced band 'watch'"
+fi
+per_run_band="$(jq -r '."per-run".facts.band // "null"' <<<"$out")"
+if [ "$per_run_band" != "watch" ]; then
+  reason "per-run signal's facts.band expected 'watch' to match the trend band, got '$per_run_band'"
+else
+  note "per-run signal's facts.band correctly matches the trend band 'watch'"
 fi
 
 # ── Fixture 3 (positive, elevated): the climb-fraction trigger alone met

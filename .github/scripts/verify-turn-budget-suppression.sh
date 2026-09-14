@@ -156,6 +156,49 @@ else
   reason "cannot find $WATCHDOG_YML to diff the suppression formula against — run this from the repository root"
 fi
 
+# ── T041: a Finding citing BOTH the per-run (turn-budget-observation) and
+# cross-run (turn-budget-trend) signals together must fingerprint the SAME
+# way across two different runs extending the same trend at the same band —
+# otherwise every run would reopen its own "finding," exactly the failure
+# FR-012/FR-015 forbid. Stamp signal ids now keys turn-budget-observation by
+# {stage, band}, not {stage, run}, so this must hold even though the two
+# runs below carry different run ids and turn counts.
+compute_signal_id() {
+  local kind="$1" stage="$2" band="$3"
+  python3 - "$kind" "$stage" "$band" <<'PY'
+import hashlib, json, sys
+kind, stage, band = sys.argv[1], sys.argv[2].lower(), sys.argv[3].lower()
+basis = kind + "|" + json.dumps({"stage": stage, "band": band}, sort_keys=True, separators=(",", ":"))
+print(hashlib.sha256(basis.encode()).hexdigest()[:16])
+PY
+}
+
+compute_finding_fingerprint() {
+  local class="$1"; shift
+  local basis
+  basis="$(printf '%s\n' "$@" | sort | paste -sd, -)"
+  printf '%s|signals:%s' "$class" "$basis" | sha256sum | cut -d' ' -f1
+}
+
+obs_id_run_a="$(compute_signal_id "turn-budget-observation" "implement" "critical")"
+trend_id_run_a="$(compute_signal_id "turn-budget-trend" "implement" "critical")"
+obs_id_run_b="$(compute_signal_id "turn-budget-observation" "implement" "critical")"
+trend_id_run_b="$(compute_signal_id "turn-budget-trend" "implement" "critical")"
+
+if [ "$obs_id_run_a" != "$obs_id_run_b" ]; then
+  reason "turn-budget-observation's id varied across two runs in the same band ($obs_id_run_a vs $obs_id_run_b) — {stage, band} identity must not depend on the run"
+else
+  note "turn-budget-observation's id is stable across two runs in the same band ($obs_id_run_a)"
+fi
+
+fp_run_a="$(compute_finding_fingerprint "turn-budget-trend" "$obs_id_run_a" "$trend_id_run_a")"
+fp_run_b="$(compute_finding_fingerprint "turn-budget-trend" "$obs_id_run_b" "$trend_id_run_b")"
+if [ "$fp_run_a" != "$fp_run_b" ]; then
+  reason "a Finding citing both the per-run and trend signals fingerprinted differently across two runs in the same band ($fp_run_a vs $fp_run_b) — this would reopen a new finding every single run"
+else
+  note "a Finding citing both signals together fingerprints identically across two runs in the same band ($fp_run_a)"
+fi
+
 if [ "${#fail_reasons[@]}" -eq 0 ]; then
   echo "✅ verify-turn-budget-suppression: all assertions passed."
   exit 0

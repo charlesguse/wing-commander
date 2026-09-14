@@ -23,7 +23,8 @@ FR-014).
     "counted-turns": 226,
     "intended-budget": 180,
     "enforced-ceiling": 450,
-    "consumed-ceiling-fraction": 0.502
+    "consumed-ceiling-fraction": 0.502,
+    "band": "critical"
   }
 }
 ```
@@ -33,10 +34,21 @@ FR-014).
   at all (Acceptance Scenario 6).
 - `class-hint: null` (research.md R5) — this signal alone never files; it
   exists only as evidence a cross-run Finding may cite.
-- Signal-id identity (research.md R11): `kind: "turn-budget-observation"`,
-  `ident: {stage, run}` — distinct per run by design, since this signal's
-  only job is to be cited as supporting evidence alongside the trend
-  signal below, never to be the sole basis of a Finding's fingerprint.
+- `band` is the same severity band the collector computes for the
+  cross-run signal below from this same window, stamped onto the per-run
+  signal too (`null` when neither trigger is met this window).
+- Signal-id identity (research.md R11, corrected by T041):
+  `kind: "turn-budget-observation"`, `ident: {stage, band}` — **not**
+  `{stage, run}`. This signal is always cited alongside the trend signal
+  in one Finding (its only job, per R5), so its id must be as stable
+  run-to-run as the trend signal's own `{stage, band}` identity: keying it
+  by the run-unique `run` field instead would make the Finding's
+  fingerprint (which hashes every cited signal id) change on every run
+  even while the trend signal's own id stayed the same, silently
+  reopening a "new" finding every run and defeating FR-012/FR-015 exactly
+  as if the trend signal itself had been keyed by magnitude. See
+  `contracts/turn-budget-trend.md`'s "Why band, not magnitude, is the
+  identity" section — the same reasoning applies here.
 
 ## Budget trend (cross-run signal)
 

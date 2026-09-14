@@ -1138,6 +1138,14 @@ jobs:
                elif $meets_consecutive then "watch"
                elif $meets_climb then "elevated"
                else null end) as $band
+            # The per-run signal identity is {stage, band} (T041), not
+            # {stage, run}: it is always cited alongside the trend signal in
+            # one Finding, so its id must stay stable across every run
+            # extending the same trend, or the Finding fingerprint would
+            # change every run and break FR-012/FR-015. Stamping the SAME
+            # $band this window already computed for the trend signal keeps
+            # both signal identities in lockstep by construction.
+            | (if $per_run == null then null else ($per_run + {facts: ($per_run.facts + {band: $band})}) end) as $per_run
             | {
                 "per-run": $per_run,
                 "trend": (if $band == null then null else {
@@ -1626,7 +1634,7 @@ jobs:
                      ident: {stage: ($fx.stage // "" | ascii_downcase), band: ($fx.band // "" | ascii_downcase)}}
                elif ($src | startswith("turn-budget"))
                then {kind: "turn-budget-observation",
-                     ident: {stage: ($fx.stage // "" | ascii_downcase), run: ($fx.run // "" | tostring)}}
+                     ident: {stage: ($fx.stage // "" | ascii_downcase), band: ($fx.band // "" | ascii_downcase)}}
                elif ($src | startswith("cost-report"))
                then {kind: "cost-line-claim",
                      ident: {run: ($fx.run // "" | tostring), stage: ($fx.stage // "" | ascii_downcase),
