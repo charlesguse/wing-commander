@@ -2,9 +2,11 @@
 """Behavioral tests for watchdog.yml's "Collect: annotations" step (Gate 19),
 plus failure-injection coverage (T021, T031) for the not-found-vs-other-
 failure branches of two neighboring collectors ("Collect: execution-output
-artifacts", "Collect: branch drift") and the "Aggregate signals" step
+artifacts", "Collect: branch drift"), the "Aggregate signals" step
 (T022, T030) that folds every collector's read outcome into
-untrusted-collectors.
+untrusted-collectors, and (#322) the "Resolve inspected run's spec slug and
+lifecycle issue" step's metrics-record fallback that branch-drift's
+dispatched-implement measurement depends on.
 
 WHY THIS EXISTS
 ---------------
@@ -460,6 +462,21 @@ def reintroduce_slug_hole(script):
     return script.replace(fixed, broken, 1)
 
 
+def reintroduce_implement_skip(script):
+    """Put back the pre-#322 blind spot: a dispatched implement run (head is
+    the default branch, slug recovered from the metrics record) was skipped
+    instead of measured on spec/<slug>. The fixed step selects the
+    since-created arm where the old one exited; this mutation exits there
+    again, so the scenarios that expect spec/<slug> to be fetched and a
+    lost-progress signal on zero commits must fail."""
+    pattern = re.compile(r'^([ \t]*)baseline="since-created"\n', re.MULTILINE)
+    if len(pattern.findall(script)) != 1:
+        sys.exit("::error::verify-gate-19: could not locate branch-drift's "
+                 "since-created arm (#322) to mutate — the step text may "
+                 "have changed shape; update this harness alongside it.")
+    return pattern.sub(lambda m: m.group(1) + "exit 0\n", script, count=1)
+
+
 def run_script_mutation(label, suite_fn, mutated, env, tmproot):
     """Rerun `suite_fn` on an already-mutated script and confirm at least one
     scenario breaks. run_attribution_mutation below is the case/esac-guard
@@ -526,7 +543,19 @@ exit 1
 '''
 
 STUB_GIT_TEMPLATE = r'''#!/usr/bin/env bash
+# Every invocation is appended to $GIT_STUB_LOG (when set) so a scenario can
+# assert WHICH ref was fetched and WHICH baseline rev-list was given — the
+# #322 arm is distinguishable from the exact-SHA arm only by its arguments.
+if [ -n "${GIT_STUB_LOG:-}" ]; then printf '%s\n' "$*" >> "$GIT_STUB_LOG"; fi
 case "$1" in
+  show)
+    if [ -n "${GIT_STUB_SHOW_JSON:-}" ]; then
+      printf '%s\n' "$GIT_STUB_SHOW_JSON"
+      exit 0
+    fi
+    echo "fatal: path not in tree (stub)" >&2
+    exit 128
+    ;;
   fetch)
     if [ -n "${GIT_STUB_FETCH_FAIL:-}" ]; then
       printf '%s\n' __MSG__ >&2
@@ -692,7 +721,8 @@ BD_SCENARIOS = [
     ),
     dict(
         name="slug resolved but the head is not the branch this stage pushes "
-             "to (draft-branch head): nothing fetched (#112)",
+             "to (draft-branch head, plan run): nothing fetched (#112)",
+        run_name="Wing Commander · 3 plan",
         head_branch="spec-draft/999-torn-down",
         slug="999-torn-down",
         fetch_fail=False,
@@ -700,6 +730,77 @@ BD_SCENARIOS = [
         revparse_fail=False,
         revlist_fail=False,
         expect_outcome=None,
+    ),
+    # #322: a dispatched IMPLEMENT run reports the default branch as its
+    # head, but spec-slug now recovers the slug from the run's metrics
+    # record, and implement pushes unconditionally to spec/<slug> — so
+    # that branch is measured, with the run's creation time as the
+    # baseline (HEAD_SHA is main's tip and would count the spec branch's
+    # whole history). Zero commits since is lost-progress on spec/<slug>.
+    dict(
+        name="dispatched implement run (head is the default branch, slug "
+             "from the metrics record): spec/<slug> is measured since the "
+             "run was created; zero commits is lost-progress (#322)",
+        head_branch="main",
+        slug="999-torn-down",
+        fetch_fail=False,
+        fetch_msg="",
+        revparse_fail=False,
+        revlist_fail=False,
+        revlist_count="0",
+        expect_outcome="ok",
+        expect_fetch_ref="refs/heads/spec/999-torn-down",
+        expect_since=True,
+        expect_signal=dict(branch="spec/999-torn-down", since="2026-09-12T17:42:27Z",
+                           **{"before-sha": None}),
+    ),
+    dict(
+        name="dispatched implement run with commits on spec/<slug> since it "
+             "was created: measured, no signal (#322)",
+        head_branch="main",
+        slug="999-torn-down",
+        fetch_fail=False,
+        fetch_msg="",
+        revparse_fail=False,
+        revlist_fail=False,
+        revlist_count="16",
+        expect_outcome="ok",
+        expect_fetch_ref="refs/heads/spec/999-torn-down",
+        expect_since=True,
+        expect_signal=None,
+    ),
+    # Tasks is dispatched too, but pushes to spec/<slug> only in `auto`
+    # review mode (pr mode goes to tasks/<slug>), and the record does not
+    # say which — so the #322 arm is implement-only and tasks still skips.
+    dict(
+        name="dispatched tasks run with a recovered slug: the push target "
+             "depends on review mode, so nothing is fetched (#322 scope)",
+        run_name="Wing Commander · 4 tasks",
+        head_branch="main",
+        slug="999-torn-down",
+        fetch_fail=False,
+        fetch_msg="",
+        revparse_fail=False,
+        revlist_fail=False,
+        expect_outcome=None,
+    ),
+    # The exact-SHA arm is untouched: when the head IS the spec branch the
+    # baseline is HEAD_SHA, not the creation time.
+    dict(
+        name="head is the spec branch: measured against HEAD_SHA, not the "
+             "creation time (exact-baseline arm unchanged by #322)",
+        head_branch="spec/999-torn-down",
+        slug="999-torn-down",
+        fetch_fail=False,
+        fetch_msg="",
+        revparse_fail=False,
+        revlist_fail=False,
+        revlist_count="0",
+        expect_outcome="ok",
+        expect_fetch_ref="refs/heads/spec/999-torn-down",
+        expect_since=False,
+        expect_signal=dict(branch="spec/999-torn-down", since=None,
+                           **{"before-sha": "0000000000000000000000000000000000000000"}),
     ),
 ]
 
@@ -769,37 +870,50 @@ def run_bd_one(script, env, sc, tmproot):
 
     run_env = with_actions_defaults(env)
     run_env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
-    run_env["RUN_NAME"] = "Wing Commander · 5 implement"
+    run_env["RUN_NAME"] = sc.get("run_name", "Wing Commander · 5 implement")
     run_env["RUN_CONCLUSION"] = sc.get("run_conclusion", "success")
     # The head IS the branch the stage pushes to unless a scenario says
     # otherwise: before #318 the harness ran with SLUG empty, a shape the
     # collector now (correctly) declines to measure at all.
     run_env["HEAD_BRANCH"] = sc.get("head_branch", "spec/999-torn-down")
     run_env["HEAD_SHA"] = "0000000000000000000000000000000000000000"
+    # Implement run 34709026525's creation time (#318/#322) — the baseline
+    # the since-created arm hands to rev-list.
+    run_env["RUN_CREATED_AT"] = "2026-09-12T17:42:27Z"
     run_env["SLUG"] = sc.get("slug", "999-torn-down")
     run_env["META_STAGE"] = ""
     run_env["STALLED_LABEL"] = "false"
     run_env["SPEC_PREFIX"] = "spec/"
+    git_log = os.path.join(runner_temp, "git-stub.log")
+    run_env["GIT_STUB_LOG"] = git_log.replace("\\", "/")
     if sc["fetch_fail"]:
         run_env["GIT_STUB_FETCH_FAIL"] = "1"
     if sc["revparse_fail"]:
         run_env["GIT_STUB_REVPARSE_FAIL"] = "1"
     if sc["revlist_fail"]:
         run_env["GIT_STUB_REVLIST_FAIL"] = "1"
+    if "revlist_count" in sc:
+        run_env["GIT_STUB_REVLIST_COUNT"] = sc["revlist_count"]
 
     rc, out, _, _ = run_step(BASH, script, workdir, run_env, runner_temp)
     with open(os.path.join(runner_temp, "collector-outcomes.json"), encoding="utf-8") as fh:
         outcomes = json.load(fh)
+    with open(os.path.join(runner_temp, "signals.json"), encoding="utf-8") as fh:
+        signals = json.load(fh)
+    git_calls = []
+    if os.path.exists(git_log):
+        with open(git_log, encoding="utf-8") as fh:
+            git_calls = [ln.rstrip("\r\n") for ln in fh if ln.strip()]
     for d in (workdir, runner_temp, bindir):
         shutil.rmtree(d, ignore_errors=True)
-    return rc, out, outcomes
+    return rc, out, outcomes, signals, git_calls
 
 
 def suite_bd(script, env, tmproot):
     failures = []
     for sc in BD_SCENARIOS:
         tag = f"[branch-drift: {sc['name']}]"
-        rc, out, outcomes = run_bd_one(script, env, sc, tmproot)
+        rc, out, outcomes, signals, git_calls = run_bd_one(script, env, sc, tmproot)
         if rc != 0:
             failures.append(f"{tag} the collector exited {rc}:\n{out}")
             continue
@@ -809,7 +923,251 @@ def suite_bd(script, env, tmproot):
                 f"{tag} collector-outcomes.json for collect-branch-drift "
                 f"reads {got!r}, expected {sc['expect_outcome']!r} (FR-010). "
                 f"outcomes: {outcomes}")
+        # #322: which ref was measured, and against which baseline. Only
+        # asserted where a scenario says; the failure-injection scenarios
+        # above care about the outcome record alone.
+        if "expect_fetch_ref" in sc:
+            fetches = [c for c in git_calls if c.startswith("fetch ")]
+            if not any(sc["expect_fetch_ref"] + ":" in c for c in fetches):
+                failures.append(
+                    f"{tag} expected a fetch of {sc['expect_fetch_ref']!r}; "
+                    f"git was invoked as: {git_calls or '(never)'}")
+        if "expect_since" in sc:
+            revlists = [c for c in git_calls if c.startswith("rev-list ")]
+            used_since = any("--since=" in c for c in revlists)
+            if used_since != sc["expect_since"]:
+                failures.append(
+                    f"{tag} rev-list baseline: expected "
+                    f"{'--since=<createdAt>' if sc['expect_since'] else 'HEAD_SHA..after'}"
+                    f", got: {revlists or '(no rev-list)'}")
+        if "expect_signal" in sc:
+            bd = [x for x in signals
+                  if isinstance(x, dict) and x.get("source") == "branch-drift"]
+            want = sc["expect_signal"]
+            if want is None:
+                if bd:
+                    failures.append(f"{tag} expected no branch-drift signal, got {bd}")
+            else:
+                if len(bd) != 1:
+                    failures.append(f"{tag} expected exactly one branch-drift "
+                                    f"signal, got {bd}")
+                else:
+                    facts = bd[0].get("facts") or {}
+                    for k, v in want.items():
+                        if facts.get(k) != v:
+                            failures.append(
+                                f"{tag} signal fact {k!r} reads {facts.get(k)!r}, "
+                                f"expected {v!r}; facts: {facts}")
+                    if bd[0].get("class-hint") != "lost-progress":
+                        failures.append(
+                            f"{tag} class-hint reads {bd[0].get('class-hint')!r}, "
+                            f"expected 'lost-progress'")
     return failures
+
+
+# --------------------------------------------------------------------------
+# #322: the "Resolve inspected run's spec slug and lifecycle issue" step's
+# metrics-record fallback. A dispatched run reports the default branch as
+# its head, so the head-branch case derives nothing; the step then reads
+# spec.spec_dir from the run's metrics-record* artifact(s). Nothing executed
+# this step before #322 — it was desk-read only, the "a verifier nothing
+# runs is not a verifier" shape Gate 5/9 exist to prevent — and the
+# dispatched-implement branch-drift scenarios above are only as good as the
+# slug this step hands them.
+#
+# `gh` is stubbed for `run download` (lays the fixture record out the way
+# gh does: <dest>/<artifact-name>/wing-commander-metrics-record.json) and
+# `issue view`; `git` for `fetch` (no-op) and `show` (answers from a
+# fixture spec-meta.json, or fails as it would for a branch with none).
+# --------------------------------------------------------------------------
+SPEC_SLUG_STEP = "Resolve inspected run's spec slug and lifecycle issue"
+
+STUB_GH_SPECSLUG_TEMPLATE = r'''#!/usr/bin/env bash
+if [ -n "${GH_STUB_LOG:-}" ]; then printf '%s\n' "$*" >> "$GH_STUB_LOG"; fi
+if [ "$1" = "run" ] && [ "$2" = "download" ]; then
+  if [ -n "${GH_STUB_DOWNLOAD_FAIL:-}" ]; then
+    printf '%s\n' "$GH_STUB_DOWNLOAD_FAIL" >&2
+    exit 1
+  fi
+  dest=""
+  prev=""
+  for arg in "$@"; do
+    if [ "$prev" = "-D" ]; then dest="$arg"; fi
+    prev="$arg"
+  done
+  [ -n "$dest" ] || { echo "stub gh: no -D given" >&2; exit 1; }
+  i=0
+  while IFS= read -r rec; do
+    [ -n "$rec" ] || continue
+    i=$((i + 1))
+    mkdir -p "$dest/metrics-record-fixture-$i"
+    printf '%s\n' "$rec" > "$dest/metrics-record-fixture-$i/wing-commander-metrics-record.json"
+  done <<< "${GH_STUB_RECORDS:-}"
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
+  echo "${GH_STUB_STALLED_LABEL:-false}"
+  exit 0
+fi
+echo "unexpected gh invocation: $*" >&2
+exit 1
+'''
+
+SPEC_META_FIXTURE = json.dumps({"spec_dir": "specs/045-auto-release-verified-head",
+                                "issue": 296, "stage": "implement"})
+RECORD_045 = json.dumps({"schema_version": 1, "stage": "implement",
+                         "spec": {"spec_dir": "specs/045-auto-release-verified-head",
+                                  "issue": 296, "identity_available": True}})
+RECORD_NO_IDENTITY = json.dumps({"schema_version": 1, "stage": "implement",
+                                 "spec": {"spec_dir": None, "issue": None,
+                                          "identity_available": False}})
+
+SPEC_SLUG_SCENARIOS = [
+    dict(
+        name="head is a spec branch: slug from the head, no artifact read",
+        head_branch="spec/045-auto-release-verified-head",
+        records=[RECORD_045],
+        show_json=SPEC_META_FIXTURE,
+        expect=dict(slug="045-auto-release-verified-head", **{"slug-source": "head-branch"},
+                    **{"spec-dir": "specs/045-auto-release-verified-head",
+                       "lifecycle-issue": "296", "meta-stage": "implement"}),
+        expect_download=False,
+    ),
+    dict(
+        name="head is the default branch and the run's metrics record names "
+             "a spec: slug read from the record (#322)",
+        head_branch="main",
+        records=[RECORD_045],
+        show_json=SPEC_META_FIXTURE,
+        expect=dict(slug="045-auto-release-verified-head", **{"slug-source": "metrics-record"},
+                    **{"spec-dir": "specs/045-auto-release-verified-head",
+                       "lifecycle-issue": "296", "meta-stage": "implement"}),
+        expect_download=True,
+    ),
+    dict(
+        name="head is the default branch and a first record carries no spec "
+             "identity: the next record that does is used (#322)",
+        head_branch="main",
+        records=[RECORD_NO_IDENTITY, RECORD_045],
+        show_json=SPEC_META_FIXTURE,
+        expect=dict(slug="045-auto-release-verified-head", **{"slug-source": "metrics-record"}),
+        expect_download=True,
+    ),
+    dict(
+        name="head is the default branch and no record names a spec: no "
+             "slug, no issue, step still succeeds",
+        head_branch="main",
+        records=[RECORD_NO_IDENTITY],
+        show_json="",
+        expect=dict(slug="", **{"slug-source": "", "spec-dir": "", "lifecycle-issue": "",
+                                "meta-stage": ""}),
+        expect_download=True,
+    ),
+    dict(
+        name="head is the default branch and the artifact download fails "
+             "(expired, or Actions:read missing): no slug, step still "
+             "succeeds — best-effort, never a refusal gate",
+        head_branch="main",
+        records=[],
+        download_fail="gh: HTTP 403: Resource not accessible by integration",
+        show_json="",
+        expect=dict(slug="", **{"slug-source": "", "lifecycle-issue": ""}),
+        expect_download=True,
+    ),
+    # The watchdog's own diagnose record borrows the INSPECTED run's spec
+    # identity, so a watchdog run (inspected by the 8b wrapper) must not be
+    # tied to that spec through it: no download, no slug.
+    dict(
+        name="a watchdog run with the default-branch head: its record names "
+             "the spec it inspected, not one it advanced — no artifact read, "
+             "no slug",
+        run_name="Wing Commander · 8 watchdog",
+        head_branch="main",
+        records=[RECORD_045],
+        show_json=SPEC_META_FIXTURE,
+        expect=dict(slug="", **{"slug-source": "", "lifecycle-issue": ""}),
+        expect_download=False,
+    ),
+    dict(
+        name="slug from the record but the spec branch has no spec-meta.json: "
+             "slug and spec-dir resolve, issue does not",
+        head_branch="main",
+        records=[RECORD_045],
+        show_json="",
+        expect=dict(slug="045-auto-release-verified-head", **{"slug-source": "metrics-record"},
+                    **{"spec-dir": "specs/045-auto-release-verified-head",
+                       "lifecycle-issue": "", "meta-stage": ""}),
+        expect_download=True,
+    ),
+]
+
+
+def run_spec_slug_one(script, env, sc, tmproot):
+    workdir = tempfile.mkdtemp(dir=tmproot)
+    runner_temp = tempfile.mkdtemp(dir=tmproot)
+    bindir = tempfile.mkdtemp(dir=tmproot)
+
+    gh_path = os.path.join(bindir, "gh")
+    with open(gh_path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(STUB_GH_SPECSLUG_TEMPLATE)
+    os.chmod(gh_path, 0o755)
+    stub_bin(bindir, "git", STUB_GIT_TEMPLATE, "")
+    stub_jq(bindir)
+
+    run_env = with_actions_defaults(env)
+    run_env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
+    run_env["HEAD_BRANCH"] = sc["head_branch"]
+    run_env["RUN_NAME"] = sc.get("run_name", "Wing Commander · 5 implement")
+    run_env["GH_STUB_RECORDS"] = "\n".join(sc["records"])
+    if sc.get("download_fail"):
+        run_env["GH_STUB_DOWNLOAD_FAIL"] = sc["download_fail"]
+    if sc.get("show_json"):
+        run_env["GIT_STUB_SHOW_JSON"] = sc["show_json"]
+    gh_log = os.path.join(runner_temp, "gh-stub.log")
+    run_env["GH_STUB_LOG"] = gh_log.replace("\\", "/")
+
+    rc, out, outputs, summary = run_step(BASH, script, workdir, run_env, runner_temp)
+    gh_calls = []
+    if os.path.exists(gh_log):
+        with open(gh_log, encoding="utf-8") as fh:
+            gh_calls = [ln.rstrip("\r\n") for ln in fh if ln.strip()]
+    for d in (workdir, runner_temp, bindir):
+        shutil.rmtree(d, ignore_errors=True)
+    return rc, out, outputs, summary, gh_calls
+
+
+def suite_spec_slug(script, env, tmproot):
+    failures = []
+    for sc in SPEC_SLUG_SCENARIOS:
+        tag = f"[spec-slug: {sc['name']}]"
+        rc, out, outputs, summary, gh_calls = run_spec_slug_one(script, env, sc, tmproot)
+        if rc != 0:
+            failures.append(f"{tag} the step exited {rc} — it is best-effort and "
+                            f"must never fail the collect job:\n{out}")
+            continue
+        for k, v in sc["expect"].items():
+            if outputs.get(k, "") != v:
+                failures.append(f"{tag} output {k!r} reads {outputs.get(k)!r}, "
+                                f"expected {v!r}. outputs: {outputs}")
+        downloaded = any(c.startswith("run download ") for c in gh_calls)
+        if downloaded != sc["expect_download"]:
+            failures.append(
+                f"{tag} expected the metrics-record artifact "
+                f"{'to be' if sc['expect_download'] else 'NOT to be'} downloaded; "
+                f"gh was invoked as: {gh_calls or '(never)'}")
+    return failures
+
+
+def remove_record_fallback(script):
+    """Mutation: the pre-#322 step, which derived the slug from the head
+    branch and nothing else. Disabling the fallback's entry condition must
+    break every scenario that expects a slug from the record."""
+    fixed = 'if [ -z "$slug" ] && [ -n "$RUN_ID" ] && [ "$record_fallback" = "true" ]; then'
+    if script.count(fixed) != 1:
+        sys.exit("::error::verify-gate-19: could not locate spec-slug's "
+                 "metrics-record fallback (#322) to mutate — the step text "
+                 "may have changed shape; update this harness alongside it.")
+    return script.replace(fixed, "if false; then", 1)
 
 
 # --------------------------------------------------------------------------
@@ -1231,11 +1589,29 @@ def main():
         bd_failures.extend(run_script_mutation(
             "branch-drift's unresolved-slug guard (#318)",
             suite_bd, reintroduce_slug_hole(bd_script), bd_env, bd_tmproot))
+        bd_failures.extend(run_script_mutation(
+            "branch-drift's dispatched-implement measurement (#322)",
+            suite_bd, reintroduce_implement_skip(bd_script), bd_env, bd_tmproot))
     finally:
         shutil.rmtree(bd_tmproot, ignore_errors=True)
     for f in bd_failures:
         print(f"::error::{f}")
     failures.extend(bd_failures)
+
+    spec_slug_step = find_step(WATCHDOG, SPEC_SLUG_STEP)
+    spec_slug_script, spec_slug_env = render_step(spec_slug_step)
+    spec_slug_tmproot = tempfile.mkdtemp()
+    try:
+        spec_slug_failures = suite_spec_slug(spec_slug_script, spec_slug_env, spec_slug_tmproot)
+        spec_slug_failures.extend(run_script_mutation(
+            "spec-slug's metrics-record fallback (#322)",
+            suite_spec_slug, remove_record_fallback(spec_slug_script),
+            spec_slug_env, spec_slug_tmproot))
+    finally:
+        shutil.rmtree(spec_slug_tmproot, ignore_errors=True)
+    for f in spec_slug_failures:
+        print(f"::error::{f}")
+    failures.extend(spec_slug_failures)
 
     spec_meta_step = find_step(WATCHDOG, SPEC_META_STEP)
     spec_meta_script, spec_meta_env = render_step(spec_meta_step)
@@ -1275,6 +1651,7 @@ def main():
     print(f"annotation collector: {len(SCENARIOS)} scenario(s); "
           f"execution-output collector: {len(EXEC_SCENARIOS)} scenario(s); "
           f"branch-drift collector: {len(BD_SCENARIOS)} scenario(s); "
+          f"spec-slug step: {len(SPEC_SLUG_SCENARIOS)} scenario(s); "
           f"spec-meta collector: {len(SPEC_META_SCENARIOS)} scenario(s); "
           f"step-summary collector: {len(STEPSUM_SCENARIOS)} scenario(s); "
           f"aggregate: {len(AGGREGATE_CASES)} case(s); "

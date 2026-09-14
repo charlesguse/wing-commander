@@ -445,6 +445,9 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ACTIONS_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run-id }}
+          RUN_NAME: ${{ inputs.run-name }}
           HEAD_BRANCH: ${{ steps.run-meta.outputs.head-branch }}
           SPEC_DRAFT_PREFIX: ${{ vars.WING_COMMANDER_SPEC_DRAFT_PREFIX }}
           SPEC_PREFIX: ${{ vars.WING_COMMANDER_SPEC_PREFIX }}
@@ -466,6 +469,62 @@ jobs:
             "${TASKS_PREFIX}"*)      slug="${HEAD_BRANCH#"$TASKS_PREFIX"}" ;;
             "${IMPL_PREFIX}"*)       slug="${HEAD_BRANCH#"$IMPL_PREFIX"}"; slug="${slug%-iter*}" ;;
           esac
+          slug_source=""
+          [ -z "$slug" ] || slug_source="head-branch"
+
+          # #322: a workflow_dispatch-triggered stage reports the DEFAULT
+          # branch as its head, and the dispatch inputs that name the spec
+          # are not in the run's metadata — so the case above derives
+          # nothing for every tasks and implement run (both are only ever
+          # dispatched). What such a run does leave behind is its
+          # wing-commander-metrics-record artifact(s), whose spec.spec_dir
+          # names the spec for every agent-bearing stage (specs/043). Read
+          # the slug from there when the head gave none. Best-effort like
+          # everything else in this step: a missing/expired artifact, a
+          # download failure, or a record with no spec identity all leave
+          # the slug empty exactly as before.
+          #
+          # Gate 12: artifact download needs Actions:read, which the App
+          # token does not have (docs/setup.md) — route through the job's
+          # default token, as the execution-output collector does. This
+          # step is `shell: bash` (errexit on), so every read below is
+          # guarded — a failed download must not kill the collect job.
+          #
+          # Not for the watchdog's own runs (inspected by the 8b wrapper):
+          # the diagnose job's metrics record carries the spec of the run
+          # THAT watchdog inspected (needs.collect.outputs.spec-dir), not a
+          # spec the watchdog run itself advanced, so tying a watchdog run
+          # to it would route findings about the watchdog onto some spec's
+          # lifecycle issue. Those runs stay reported against their own URL.
+          record_fallback=true
+          case "$RUN_NAME" in
+            "Wing Commander · 8 watchdog") record_fallback=false ;;
+          esac
+          if [ -z "$slug" ] && [ -n "$RUN_ID" ] && [ "$record_fallback" = "true" ]; then
+            mr_dir="$RUNNER_TEMP/spec-slug-metrics-record"
+            mkdir -p "$mr_dir"
+            if GH_TOKEN="$ACTIONS_TOKEN" gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -p 'metrics-record*' -D "$mr_dir" >"$RUNNER_TEMP/spec-slug-mr-dl.log" 2>&1; then
+              # First record that carries a spec_dir under specs/. A run
+              # with several records (implement's cycle + progress) names
+              # the same spec in each, so the first is as good as any.
+              record_dir=""
+              while IFS= read -r rec; do
+                d="$(jq -r '.spec.spec_dir // empty' "$rec" 2>/dev/null || true)"
+                case "$d" in
+                  specs/?*) record_dir="$d"; break ;;
+                esac
+              done < <(find "$mr_dir" -type f -name '*.json' 2>/dev/null | sort)
+              if [ -n "$record_dir" ]; then
+                slug="${record_dir#specs/}"
+                slug_source="metrics-record"
+              fi
+            fi
+            if [ -z "$slug" ]; then
+              echo "spec-slug: head branch '$HEAD_BRANCH' is not a pipeline branch and no metrics record of run $RUN_ID names a spec — no slug resolved." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "spec-slug: head branch '$HEAD_BRANCH' is not a pipeline branch (a dispatched run reports the default branch); slug '$slug' read from the run's metrics record." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
 
           issue=""
           spec_dir=""
@@ -497,6 +556,7 @@ jobs:
 
           {
             echo "slug=$slug"
+            echo "slug-source=$slug_source"
             echo "spec-dir=$spec_dir"
             echo "lifecycle-issue=$issue"
             echo "meta-stage=$meta_stage"
@@ -673,6 +733,7 @@ jobs:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           HEAD_BRANCH: ${{ steps.run-meta.outputs.head-branch }}
           HEAD_SHA: ${{ steps.run-meta.outputs.head-sha }}
+          RUN_CREATED_AT: ${{ steps.run-meta.outputs.created-at }}
           RUN_NAME: ${{ inputs.run-name }}
           RUN_CONCLUSION: ${{ steps.run-meta.outputs.conclusion }}
           META_STAGE: ${{ steps.spec-slug.outputs.meta-stage }}
@@ -717,31 +778,54 @@ jobs:
           # #318: the same rule when no slug resolved at all. A
           # workflow_dispatch-triggered stage reports the DEFAULT branch as
           # its head (the dispatch inputs that name the spec are not in the
-          # run's metadata), so spec-slug derives nothing. The guard used to
-          # read `[ -n "$SLUG" ] && ...`, so an empty slug skipped the GUARD
-          # rather than the measurement: the collector measured `main`
-          # across implement run 34709026525, found the zero commits main
-          # correctly had, and filed lost-progress while the run's sixteen
-          # commits sat on spec/045-auto-release-verified-head. No stage
-          # pushes to a branch that is not one of the pipeline's own, so an
-          # unresolved slug means the head branch owes no commits either.
+          # run's metadata), so spec-slug derives nothing from it. The guard
+          # used to read `[ -n "$SLUG" ] && ...`, so an empty slug skipped
+          # the GUARD rather than the measurement: the collector measured
+          # `main` across implement run 34709026525, found the zero commits
+          # main correctly had, and filed lost-progress while the run's
+          # sixteen commits sat on spec/045-auto-release-verified-head. No
+          # stage pushes to a branch that is not one of the pipeline's own,
+          # so an unresolved slug means the head branch owes no commits.
           #
-          # Known blind spot, stated rather than hidden: every implement run
-          # is dispatched (the stage has no other trigger) and lands here, so
-          # this collector never measures implement at all. An implement run
-          # that reports success but pushed nothing is not caught by it, nor
-          # by implement.yml's stalled job (which fires on failure, not on
-          # silent success). Closing that needs spec-slug to learn the spec
-          # from something a dispatched run does leave behind (its metrics
-          # record carries spec.spec_dir) - tracked separately.
+          # #322: with spec-slug now reading the slug from a dispatched
+          # run's metrics record, an IMPLEMENT run with a non-spec head is
+          # measured on the branch it actually pushes to. Implement is the
+          # one stage whose target is unconditional — implement.yml pushes
+          # every cycle to spec/<slug>, including a deterministic spec-meta
+          # advance commit, so a converged cycle never legitimately pushes
+          # nothing. Plan and tasks push to spec/<slug> only in `auto`
+          # review mode (pr mode goes to plan/ and tasks/ branches, and the
+          # record does not carry the mode), so with a non-spec head they
+          # still skip. Until this arm existed the collector measured
+          # nothing at all: plan is pull_request-triggered (draft head),
+          # tasks and implement are only ever dispatched (default-branch
+          # head), so no run's head was ever the spec branch.
+          #
+          # The baseline for that arm is the run's start time, not
+          # HEAD_SHA: HEAD_SHA is the DEFAULT branch's tip, and
+          # `HEAD_SHA..spec/<slug>` would count the spec branch's whole
+          # history since it diverged — never zero, a measurement that can
+          # never fire. `--since=<createdAt>` counts commits whose committer
+          # date is at or after the run was created; the runner commits
+          # after that instant. A rebase.yml force-push in between rewrites
+          # committer dates and inflates the count (implement run
+          # 34709026525 reads 22 after a rebase, 16 before) — a missed
+          # detection, never a false one.
           _spec_prefix="${SPEC_PREFIX:-spec/}"
+          measure_branch="$HEAD_BRANCH"
+          baseline="head-sha"
           if [ -z "$SLUG" ] || [ "$HEAD_BRANCH" != "${_spec_prefix}${SLUG}" ]; then
             if [ -z "$SLUG" ]; then
-              echo "branch-drift: no spec slug resolved for run head '$HEAD_BRANCH' (a dispatched run reports the default branch) — this stage pushes to a spec branch, so the head branch owes no commits. Skipping." >> "$GITHUB_STEP_SUMMARY"
-            else
-              echo "branch-drift: run head is '$HEAD_BRANCH' but this stage pushes to '${_spec_prefix}${SLUG}' — the head branch owes no commits. Skipping." >> "$GITHUB_STEP_SUMMARY"
+              echo "branch-drift: no spec slug resolved for run head '$HEAD_BRANCH' (not a pipeline branch, and no metrics record named a spec) — the head branch owes no commits. Skipping." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
             fi
-            exit 0
+            if [ "$RUN_NAME" != "Wing Commander · 5 implement" ] || [ -z "$RUN_CREATED_AT" ]; then
+              echo "branch-drift: run head is '$HEAD_BRANCH' but this stage pushes to '${_spec_prefix}${SLUG}' (or to a review branch, depending on its review mode) — the head branch owes no commits. Skipping." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            measure_branch="${_spec_prefix}${SLUG}"
+            baseline="since-created"
+            echo "branch-drift: run head is '$HEAD_BRANCH' (a dispatched implement run reports the default branch); measuring '$measure_branch' for commits since the run was created at $RUN_CREATED_AT (#322)." >> "$GITHUB_STEP_SUMMARY"
           fi
 
           # Captured through `|| fetch_rc=$?` rather than a bare `$?` on the
@@ -757,7 +841,7 @@ jobs:
           # collapsed into a silent "nothing to see" by the `2>/dev/null`
           # fallbacks those reads use.
           fetch_rc=0
-          fetch_log="$(git fetch --no-tags --quiet origin "refs/heads/$HEAD_BRANCH:refs/remotes/origin/$HEAD_BRANCH" 2>&1)" || fetch_rc=$?
+          fetch_log="$(git fetch --no-tags --quiet origin "refs/heads/$measure_branch:refs/remotes/origin/$measure_branch" 2>&1)" || fetch_rc=$?
           # A fetch failure caused by the ref genuinely no longer existing
           # (branch already torn down) is expected and does not make this
           # collector's read untrusted; any other fetch failure does
@@ -773,7 +857,7 @@ jobs:
           fi
 
           rev_parse_rc=0
-          after_sha="$(git rev-parse "refs/remotes/origin/$HEAD_BRANCH" 2>/dev/null)" || rev_parse_rc=$?
+          after_sha="$(git rev-parse "refs/remotes/origin/$measure_branch" 2>/dev/null)" || rev_parse_rc=$?
           if [ -z "$after_sha" ] || [ "$rev_parse_rc" != "0" ]; then
             # An empty/failed rev-parse is only a legitimate "branch already
             # torn down" outcome when the fetch above already diagnosed
@@ -783,12 +867,16 @@ jobs:
               bd_outcome="failed"
             fi
             jq -c --arg c "collect-branch-drift" --arg o "$bd_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
-            echo "branch-drift: '$HEAD_BRANCH' no longer exists (already torn down) — skipping." >> "$GITHUB_STEP_SUMMARY"
+            echo "branch-drift: '$measure_branch' no longer exists (already torn down) — skipping." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
           commits_rc=0
-          commits="$(git rev-list --count "$HEAD_SHA..$after_sha" 2>/dev/null)" || commits_rc=$?
+          if [ "$baseline" = "since-created" ]; then
+            commits="$(git rev-list --count --since="$RUN_CREATED_AT" "$after_sha" 2>/dev/null)" || commits_rc=$?
+          else
+            commits="$(git rev-list --count "$HEAD_SHA..$after_sha" 2>/dev/null)" || commits_rc=$?
+          fi
           if [ "$commits_rc" != "0" ] || [ -z "$commits" ]; then
             bd_outcome="failed"
           fi
@@ -797,12 +885,19 @@ jobs:
             exit 0
           fi
 
+          # `before-sha` is the exact-baseline case's before SHA and null
+          # for the since-created arm (HEAD_SHA is main's tip there, not a
+          # point on the measured branch); `since` is the converse. The
+          # fingerprint projects only `branch` for lost-progress, so both
+          # shapes dedup the same way.
+          before_sha="$HEAD_SHA"; since=""
+          if [ "$baseline" = "since-created" ]; then before_sha=""; since="$RUN_CREATED_AT"; fi
           if [ "$META_STAGE" = "stalled" ] || [ "$STALLED_LABEL" = "true" ]; then
-            entry=$(jq -n --arg branch "$HEAD_BRANCH" --arg before "$HEAD_SHA" --arg after "$after_sha" \
-              '[{source:"branch-drift","class-hint":null,facts:{branch:$branch,"before-sha":$before,"after-sha":$after,commits:0},alreadyHandledBy:"existing stalled automation (implement.yml stalled job / cleanup.yml mark-stalled job)"}]')
+            entry=$(jq -n --arg branch "$measure_branch" --arg before "$before_sha" --arg since "$since" --arg after "$after_sha" \
+              '[{source:"branch-drift","class-hint":null,facts:{branch:$branch,"before-sha":(if $before == "" then null else $before end),since:(if $since == "" then null else $since end),"after-sha":$after,commits:0},alreadyHandledBy:"existing stalled automation (implement.yml stalled job / cleanup.yml mark-stalled job)"}]')
           else
-            entry=$(jq -n --arg branch "$HEAD_BRANCH" --arg before "$HEAD_SHA" --arg after "$after_sha" \
-              '[{source:"branch-drift","class-hint":"lost-progress",facts:{branch:$branch,"before-sha":$before,"after-sha":$after,commits:0}}]')
+            entry=$(jq -n --arg branch "$measure_branch" --arg before "$before_sha" --arg since "$since" --arg after "$after_sha" \
+              '[{source:"branch-drift","class-hint":"lost-progress",facts:{branch:$branch,"before-sha":(if $before == "" then null else $before end),since:(if $since == "" then null else $since end),"after-sha":$after,commits:0}}]')
           fi
           jq -c --argjson new "$entry" '. + $new' "$RUNNER_TEMP/signals.json" > "$RUNNER_TEMP/signals.json.tmp" && mv "$RUNNER_TEMP/signals.json.tmp" "$RUNNER_TEMP/signals.json"
 

@@ -621,15 +621,30 @@ Two constraints the wrappers must hold, both enforced by
     the correct answer. Issue #112: a run was filed as `lost-progress`
     against `spec-draft/022-…` while that same run pushed `e97b9b6` to
     `spec/022-…` inside its own measurement window.
-  - `branch-drift` likewise emits nothing when no spec slug resolves from
-    the head branch at all. A `workflow_dispatch`-triggered run reports the
-    default branch as its head, and the dispatch inputs that name the spec
-    are not in the run's metadata, so the head is not a pipeline branch and
-    owes no commits. Issue #318: implement run 34709026525 was filed as
+  - `branch-drift` likewise emits nothing when no spec slug resolves at
+    all. A `workflow_dispatch`-triggered run reports the default branch as
+    its head, and the dispatch inputs that name the spec are not in the
+    run's metadata, so the head is not a pipeline branch and owes no
+    commits. Issue #318: implement run 34709026525 was filed as
     `lost-progress` against `main` while its sixteen commits sat on
-    `spec/045-…`. Every implement run is dispatched, so this collector does
-    not measure implement at all today; that blind spot is tracked
-    separately.
+    `spec/045-…`.
+  - When the head resolves no slug, the spec-slug step reads it from the
+    run's `metrics-record*` artifact instead (`spec.spec_dir`, present for
+    every agent-bearing stage), and `branch-drift` then measures a
+    dispatched **implement** run on `spec/<slug>` — the one branch that
+    stage pushes to unconditionally, every cycle — counting commits whose
+    committer date is at or after the run was created, since the run's own
+    head SHA is `main`'s tip and not a point on that branch. Plan and tasks
+    push to the spec branch only in `auto` review mode, so with a non-spec
+    head they still skip. Issue #322: until this arm existed the collector
+    measured nothing at all — plan runs report the draft branch, tasks and
+    implement are only ever dispatched — so no run's head was ever the spec
+    branch. A `rebase.yml` force-push between the run and its inspection
+    rewrites committer dates and inflates the count: a missed detection,
+    never a false one. The watchdog's own runs are exempt from the record
+    fallback: their diagnose record carries the spec of the run *they*
+    inspected, so tying one to it would route findings about the watchdog
+    onto that spec's lifecycle issue.
 
   Best-effort spec-slug/lifecycle-issue
   resolution: a run that can't be tied to a spec (e.g. a `main`-based
