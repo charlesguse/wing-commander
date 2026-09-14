@@ -235,4 +235,4 @@ With multiple implementers:
 
 ## Phase 8: Convergence
 
-- [ ] T040 Document `vars.WING_COMMANDER_TURN_BUDGET_HISTORY_WINDOW`, `vars.WING_COMMANDER_TURN_BUDGET_CONSECUTIVE_TRIGGER`, and `vars.WING_COMMANDER_TURN_BUDGET_CLIMB_FRACTION` (name, default, one-line purpose) as new rows in `docs/setup.md`'s central `vars.WING_COMMANDER_*` table, matching the format of the table's existing watchdog-internal entries (e.g. `WING_COMMANDER_DIAGNOSE_MODEL`, `WING_COMMANDER_WATCHDOG_SELF_DISPATCH_CAP`) per FR-011 (partial)
+- [X] T040 Document `vars.WING_COMMANDER_TURN_BUDGET_HISTORY_WINDOW`, `vars.WING_COMMANDER_TURN_BUDGET_CONSECUTIVE_TRIGGER`, and `vars.WING_COMMANDER_TURN_BUDGET_CLIMB_FRACTION` (name, default, one-line purpose) as new rows in `docs/setup.md`'s central `vars.WING_COMMANDER_*` table, matching the format of the table's existing watchdog-internal entries (e.g. `WING_COMMANDER_DIAGNOSE_MODEL`, `WING_COMMANDER_WATCHDOG_SELF_DISPATCH_CAP`) per FR-011 (partial)
