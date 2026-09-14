@@ -16,12 +16,25 @@ dispatch and pointed at the same non-existent run.
 
 This harness EXECUTES the shipped step (read out of auto-release.yml at run
 time, so there is no second copy to drift) against synthetic `needs.*`
-values -- each job's `result` and outputs -- with `gh` stubbed to record
-what would have been filed, commented, or closed. Every attribution path
-the step has is a scenario: the two quiet days, each verdict class, each
-job-result crash, the collision, the tip-unresolved read, released, the
-stale head, and both shapes of a real release failure (with and without an
-observed release.yml run).
+values -- each job's `result` and outputs. Every attribution path the step
+has is a scenario: the two quiet days, each verdict class, each job-result
+crash, the collision, the tip-unresolved read, released, the stale head,
+and both shapes of a real release failure (with and without an observed
+release.yml run).
+
+specs/049-single-home-release-idioms moved the dedup-by-label
+lookup/create/comment/close mechanics that used to live inline in this step
+(shared, byte-for-byte, with auto-update-spec-kit.yml's four report sites)
+into `.github/actions/_shared/durable-failure-issue`, a `uses:` step this
+step's own script can no longer perform (a `run:` block cannot invoke a
+composite action). The step under test here -- renamed "Determine this
+run's outcome" -- now only DECIDES what happened and writes that decision
+to `$GITHUB_OUTPUT` (`action`: report | close | empty, plus `title`) and to
+the failure-body file; the two follow-up `uses:` steps in the real workflow
+read those outputs and call the composite. This harness therefore asserts
+on the decision (action/title/body/summary), not on `gh` calls -- the
+composite's own report/close/dedup mechanics are its own concern, not
+re-tested here.
 
 It ends with MUTATION checks that put each #325 defect back and assert the
 suite then fails. A test that cannot fail is not a test.
@@ -29,39 +42,20 @@ suite then fails. A test that cannot fail is not a test.
 Usage: python3 .github/scripts/verify-auto-release-report.py
 Requires: bash, jq. See wc_shell_harness.py for running this on Windows.
 """
-import json
 import os
 import shutil
 import sys
 import tempfile
+import json
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import (  # noqa: E402
     ensure_jq, find_step, resolve_bash, run_step, use_utf8_stdout)
 
 WORKFLOW = ".github/workflows/auto-release.yml"
-STEP = "Report this run's outcome"
+STEP = "Determine this run's outcome"
 
 BASH = None
-
-# A `gh` stand-in that records every invocation and answers the four calls
-# the step makes: `issue list` (the open auto-release:failed issue, if the
-# scenario says one exists), `issue create`, `issue comment`, `issue close`
-# and `label create` (all no-ops beyond the log).
-STUB_GH = r'''#!/usr/bin/env bash
-if [ -n "${GH_STUB_LOG:-}" ]; then printf '%s\n' "$*" >> "$GH_STUB_LOG"; fi
-case "$1 $2" in
-  "issue list")
-    printf '%s\n' "${GH_STUB_EXISTING_ISSUE:-}"
-    exit 0
-    ;;
-  "issue create"|"issue comment"|"issue close"|"label create")
-    exit 0
-    ;;
-esac
-echo "unexpected gh invocation: $*" >&2
-exit 1
-'''
 
 RUN_URL = "https://github.com/charlesguse/wing-commander/actions/runs/777"
 HEAD = "0123456789abcdef0123456789abcdef01234567"
@@ -74,8 +68,7 @@ WRONG_OUTPUT = json.dumps({"outcome": "fail-wrong-output", "verified_head": HEAD
 
 # Every scenario starts from a run where nothing has happened yet -- every
 # result `skipped`, every output empty -- and overrides what its situation
-# sets. `filed` is what the step did with the failure issue: "create",
-# "comment" (dedup onto the existing one), or None.
+# sets. `action` is what the step decided: "report", "close", or None.
 BASE = dict(DETECT_RESULT="skipped", VERIFY_RESULT="skipped",
             DECIDE_RESULT="skipped", DISPATCH_RESULT="skipped",
             HEAD_SHA="", HAS_NEW_WORK="", TAG_EXISTS="", LATEST_TAG="",
@@ -87,7 +80,7 @@ SCENARIOS = [
         name="detect crashed before writing outputs: infrastructure, filed, "
              "naming detect and this run -- not a quiet day (#325 case 1)",
         env=dict(DETECT_RESULT="failure"),
-        filed="create",
+        action="report",
         body_contains=["infrastructure", "`detect`", RUN_URL, "unknown"],
         body_excludes=["release.yml was dispatched"],
         summary_contains="infrastructure failure",
@@ -96,21 +89,21 @@ SCENARIOS = [
     dict(
         name="run cancelled during detect: summarised, nothing filed",
         env=dict(DETECT_RESULT="cancelled"),
-        filed=None,
+        action=None,
         summary_contains="cancelled",
     ),
     dict(
         name="quiet day with a baseline tag (FR-003): nothing filed",
         env=dict(DETECT_RESULT="success", HAS_NEW_WORK="false", TAG_EXISTS="true",
                  LATEST_TAG="v2.7.2", HEAD_SHA=HEAD),
-        filed=None,
+        action=None,
         summary_contains="no new work since v2.7.2",
     ),
     dict(
         name="no baseline tag yet (FR-004): nothing filed",
         env=dict(DETECT_RESULT="success", HAS_NEW_WORK="false", TAG_EXISTS="false",
                  HEAD_SHA=HEAD),
-        filed=None,
+        action=None,
         summary_contains="no release tag exists yet",
     ),
     dict(
@@ -118,7 +111,7 @@ SCENARIOS = [
              "naming the missing verdict and the job result",
         env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
                  LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="failure"),
-        filed="create",
+        action="report",
         body_contains=["infrastructure", "verify-e2e produced no verdict",
                        "job result: failure", RUN_URL],
         summary_contains="verification failed",
@@ -128,7 +121,7 @@ SCENARIOS = [
              "summarised, nothing filed -- not an infrastructure failure",
         env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
                  LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="cancelled"),
-        filed=None,
+        action=None,
         summary_contains="cancelled",
         summary_excludes="verification failed",
     ),
@@ -139,7 +132,7 @@ SCENARIOS = [
         env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
                  LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
                  VERDICT_JSON="pass"),
-        filed="create",
+        action="report",
         body_contains=["infrastructure", "verify-e2e produced no verdict", "contract broken"],
         body_excludes=["the job stopped"],
     ),
@@ -149,7 +142,7 @@ SCENARIOS = [
         env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
                  LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
                  VERDICT_JSON=WRONG_OUTPUT),
-        filed="create",
+        action="report",
         body_contains=["pipeline defect", "spec.md content", "https://example.invalid/e2e"],
         body_excludes=["infrastructure"],
     ),
@@ -160,7 +153,7 @@ SCENARIOS = [
         env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
                  LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
                  VERDICT_JSON=PASS, DECIDE_RESULT="failure"),
-        filed="create",
+        action="report",
         body_contains=["infrastructure", "`decide-version`", RUN_URL],
         body_excludes=["release.yml was dispatched", "release failure"],
         summary_excludes="release dispatch failed",
@@ -170,7 +163,7 @@ SCENARIOS = [
         env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
                  LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
                  VERDICT_JSON=PASS, DECIDE_RESULT="cancelled"),
-        filed=None,
+        action=None,
         summary_contains="cancelled",
     ),
     dict(
@@ -179,7 +172,7 @@ SCENARIOS = [
                  LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
                  VERDICT_JSON=PASS, DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
                  COLLISION="true"),
-        filed="create",
+        action="report",
         body_contains=["version collision", "v2.8.0"],
         summary_contains="version collision",
     ),
@@ -190,9 +183,7 @@ SCENARIOS = [
                  VERDICT_JSON=PASS, DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
                  COLLISION="false", DISPATCH_RESULT="success",
                  RELEASE_OUTCOME="released", RELEASE_RUN_ID="4242"),
-        existing_issue="42",
-        filed=None,
-        closed="42",
+        action="close",
         summary_contains="released v2.8.0",
     ),
     dict(
@@ -202,7 +193,7 @@ SCENARIOS = [
                  VERDICT_JSON=PASS, DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
                  COLLISION="false", DISPATCH_RESULT="success",
                  RELEASE_OUTCOME="stale-head"),
-        filed=None,
+        action=None,
         summary_contains="main advanced past the verified head",
     ),
     dict(
@@ -214,7 +205,7 @@ SCENARIOS = [
                  VERDICT_JSON=PASS, DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
                  COLLISION="false", DISPATCH_RESULT="success",
                  RELEASE_OUTCOME="tip-unresolved"),
-        filed="create",
+        action="report",
         body_contains=["infrastructure", "current tip", RUN_URL],
         body_excludes=["release failure", "release.yml was dispatched"],
         summary_excludes="release dispatch failed",
@@ -226,7 +217,7 @@ SCENARIOS = [
                  LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
                  VERDICT_JSON=PASS, DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
                  COLLISION="false", DISPATCH_RESULT="failure"),
-        filed="create",
+        action="report",
         body_contains=["infrastructure", "`dispatch-release`", RUN_URL],
         body_excludes=["release failure"],
     ),
@@ -237,7 +228,7 @@ SCENARIOS = [
                  LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
                  VERDICT_JSON=PASS, DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
                  COLLISION="false", DISPATCH_RESULT="skipped"),
-        filed=None,
+        action=None,
         summary_contains="did not run",
     ),
     dict(
@@ -247,7 +238,7 @@ SCENARIOS = [
                  VERDICT_JSON=PASS, DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
                  COLLISION="false", DISPATCH_RESULT="success",
                  RELEASE_OUTCOME="failed", RELEASE_RUN_ID="9999"),
-        filed="create",
+        action="report",
         body_contains=["release failure", "actions/runs/9999"],
         body_excludes=["never observed"],
         summary_contains="release dispatch failed for v2.8.0",
@@ -261,30 +252,22 @@ SCENARIOS = [
                  VERDICT_JSON=PASS, DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
                  COLLISION="false", DISPATCH_RESULT="success",
                  RELEASE_OUTCOME="failed"),
-        filed="create",
+        action="report",
         body_contains=["release failure", "never observed", RUN_URL],
         body_excludes=["see its run:"],
-    ),
-    dict(
-        name="a failure with an open report already filed: commented onto "
-             "it, not filed twice (research.md D13)",
-        env=dict(DETECT_RESULT="failure"),
-        existing_issue="42",
-        filed="comment",
-        body_contains=["infrastructure", "`detect`"],
     ),
 ]
 
 
 def render_step(step):
     """The step's run: block; its `${{ }}` env values become fixture
-    values (GH_TOKEN a dummy, everything else empty for BASE to fill)."""
+    values (BASE fills everything the harness varies)."""
     script = str(step["run"])
     env = {}
     for k, v in (step.get("env") or {}).items():
         v = str(v)
         if "${{" in v:
-            v = "dummy-token" if k == "GH_TOKEN" else ""
+            v = ""
         env[k] = v
     if "${{" in script:
         sys.exit(f"::error file={WORKFLOW}::the extracted run: block contains a "
@@ -295,62 +278,39 @@ def render_step(step):
 def run_scenario(script, env, sc, tmproot):
     workdir = tempfile.mkdtemp(dir=tmproot)
     runner_temp = tempfile.mkdtemp(dir=tmproot)
-    bindir = tempfile.mkdtemp(dir=tmproot)
-
-    gh_path = os.path.join(bindir, "gh")
-    with open(gh_path, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(STUB_GH)
-    os.chmod(gh_path, 0o755)
 
     run_env = dict(env)
     run_env.update(BASE)
     run_env.update(sc["env"])
-    run_env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
     run_env["GITHUB_SERVER_URL"] = "https://github.com"
     run_env["GITHUB_REPOSITORY"] = "charlesguse/wing-commander"
     run_env["GITHUB_RUN_ID"] = "777"
-    gh_log = os.path.join(runner_temp, "gh-stub.log")
-    run_env["GH_STUB_LOG"] = gh_log.replace("\\", "/")
-    if sc.get("existing_issue"):
-        run_env["GH_STUB_EXISTING_ISSUE"] = sc["existing_issue"]
 
-    rc, out, _, summary = run_step(BASH, script, workdir, run_env, runner_temp)
-    gh_calls = []
-    if os.path.exists(gh_log):
-        with open(gh_log, encoding="utf-8") as fh:
-            gh_calls = [ln.rstrip("\r\n") for ln in fh if ln.strip()]
+    rc, out, outputs, summary = run_step(BASH, script, workdir, run_env, runner_temp)
     body = ""
     body_path = os.path.join(runner_temp, "auto-release-failure-body.md")
     if os.path.exists(body_path):
         with open(body_path, encoding="utf-8") as fh:
             body = fh.read()
-    for d in (workdir, runner_temp, bindir):
+    for d in (workdir, runner_temp):
         shutil.rmtree(d, ignore_errors=True)
-    return rc, out, summary, gh_calls, body
+    return rc, out, outputs, summary, body
 
 
 def suite(script, env, tmproot):
     failures = []
     for sc in SCENARIOS:
         tag = f"[{sc['name']}]"
-        rc, out, summary, gh_calls, body = run_scenario(script, env, sc, tmproot)
+        rc, out, outputs, summary, body = run_scenario(script, env, sc, tmproot)
         if rc != 0:
             failures.append(f"{tag} the step exited {rc}:\n{out}")
             continue
-        created = any(c.startswith("issue create ") for c in gh_calls)
-        commented = any(c.startswith("issue comment ") for c in gh_calls)
-        closed = [c for c in gh_calls if c.startswith("issue close ")]
-        filed = "create" if created else ("comment" if commented else None)
-        if filed != sc["filed"]:
-            failures.append(f"{tag} expected filed={sc['filed']!r}, got {filed!r}; "
-                            f"gh calls: {gh_calls or '(none)'}")
-        want_closed = sc.get("closed")
-        if want_closed:
-            if not any(c.startswith(f"issue close {want_closed} ") for c in closed):
-                failures.append(f"{tag} expected `gh issue close {want_closed}`; "
-                                f"gh calls: {gh_calls or '(none)'}")
-        elif closed:
-            failures.append(f"{tag} closed an issue it should not have: {closed}")
+        action = outputs.get("action") or None
+        if action != sc["action"]:
+            failures.append(f"{tag} expected action={sc['action']!r}, got "
+                            f"{action!r}; outputs: {outputs}")
+        if sc["action"] == "report" and not outputs.get("title"):
+            failures.append(f"{tag} action=report but no title output was set")
         for needle in sc.get("body_contains", []):
             if needle not in body:
                 failures.append(f"{tag} failure body lacks {needle!r}:\n{body}")
