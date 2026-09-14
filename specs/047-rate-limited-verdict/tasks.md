@@ -38,7 +38,7 @@ repository-root-relative, matching plan.md's Project Structure.
 **Purpose**: Obtain the ground-truth transcript shapes this feature's
 gate fixtures must be built from, before any synthetic case is authored.
 
-- [ ] T001 Pull the real `execution-output` artifacts named in issue
+- [X] T001 Pull the real `execution-output` artifacts named in issue
   #306/#300 (the three 2026-09-12 rate-limited runs and the one
   2026-08-28 rate-limited run) and the 2026-09-08 binary-not-found runs
   from #278, and record each one's exact `rate_limit_event` /
@@ -62,7 +62,7 @@ task can start until this phase is complete.
 `rate-limit-reset` from this composite's output — none of their steps
 can be written, let alone tested, before it exists.
 
-- [ ] T002 In `.github/actions/wing-commander-agent-verdict/action.yml`'s
+- [X] T002 In `.github/actions/wing-commander-agent-verdict/action.yml`'s
   "Classify agent run verdict" step (the `run:` block containing the
   existing `if [ "$subtype" = "error_max_turns" ]` / `elif [ "$is_error" =
   "true" ]` chain, roughly lines 80-151), add the new `rate-limited`
@@ -90,7 +90,7 @@ can be written, let alone tested, before it exists.
   byte-for-byte unchanged for every transcript shape that does not meet
   this new condition (FR-001, FR-002, FR-003, FR-004, FR-005, FR-006).
 
-- [ ] T003 Extend Gate 22 (`.github/scripts/verify-agent-verdict.py`,
+- [X] T003 Extend Gate 22 (`.github/scripts/verify-agent-verdict.py`,
   the `CASES` list and its mutation phase) with the three cases FR-016
   requires, built from T001's real field shapes: (1) a terminal 429
   rejection → `verdict: rate-limited`, `reason` names the window and

@@ -87,6 +87,12 @@ def result(**kw):
     return [base]
 
 
+def rate_limit_event(**kw):
+    base = {"type": "rate_limit_event", "status": "rejected"}
+    base.update(kw)
+    return [base]
+
+
 def transcript(main=0, sub=0, chunks=1, **result_kw):
     recs = []
     for i in range(main):
@@ -284,6 +290,65 @@ def case_never_fails():
          "exit 0 (the never-fail-the-step contract)")
 
 
+def case_rate_limited_terminal_429():
+    """Mirrors the real evidence in #300/#278 (2026-09-12 x3, 2026-08-28):
+    a rate_limit_event (status=rejected) plus a terminal result whose
+    is_error=true, terminal_reason=api_error, api_error_status=429."""
+    recs = rate_limit_event(resetsAt="2026-09-12T10:10:00Z",
+                            rateLimitType="five_hour") \
+        + result(is_error=True, subtype="success", terminal_reason="api_error",
+                 api_error_status=429, num_turns=0)
+    outputs = expect("rate-limited: terminal 429 rejection", recs,
+                     "rate-limited")
+    reason = outputs.get("reason") or ""
+    if "five_hour" not in reason:
+        fail("rate-limited: terminal 429 rejection",
+             f"expected reason to name the window, got {reason!r}")
+    if "2026-09-12T10:10:00Z" not in reason:
+        fail("rate-limited: terminal 429 rejection",
+             f"expected reason to name the reset time, got {reason!r}")
+    if outputs.get("rate-limit-reset") != "2026-09-12T10:10:00Z":
+        fail("rate-limited: terminal 429 rejection",
+             f"expected rate-limit-reset=2026-09-12T10:10:00Z verbatim, "
+             f"got {outputs.get('rate-limit-reset')!r}")
+    note("a terminal 429 rejection classifies rate-limited, names the "
+         "window and reset time, and carries the reset time verbatim in "
+         "the structured output")
+
+
+def case_rate_limited_recovered_mid_run_stays_healthy():
+    """spec.md edge case: a rate_limit_event anywhere in the transcript
+    must never demote an otherwise-successful run."""
+    recs = assistant("msg_main_0") \
+        + rate_limit_event(resetsAt="2026-09-12T10:10:00Z") \
+        + assistant("msg_main_1") \
+        + result(is_error=False, subtype="success", num_turns=2)
+    outputs = expect("rate-limited event mid-run, recovered -> healthy",
+                     recs, "healthy")
+    if outputs.get("rate-limit-reset") not in ("", None):
+        fail("rate-limited event mid-run, recovered -> healthy",
+             f"expected empty rate-limit-reset for a healthy verdict, got "
+             f"{outputs.get('rate-limit-reset')!r}")
+    note("a rate_limit_event followed by a successful terminal result "
+         "classifies healthy, never rate-limited")
+
+
+def case_non_429_api_error_stays_failed():
+    """429-specific corroboration must not widen to any API error, and a
+    non-429 failure with no rate_limit_event record anywhere keeps its
+    pre-existing reason text unchanged."""
+    recs = result(is_error=True, subtype="success", terminal_reason="api_error",
+                 api_error_status=500, num_turns=0)
+    outputs = expect("non-429 api error stays failed", recs, "failed",
+                     reason_contains="is_error=true")
+    if outputs.get("rate-limit-reset") not in ("", None):
+        fail("non-429 api error stays failed",
+             f"expected empty rate-limit-reset for a failed verdict, got "
+             f"{outputs.get('rate-limit-reset')!r}")
+    note("a non-429 api_error with no rate_limit_event record classifies "
+         "failed, unchanged reason text")
+
+
 def case_shared_counter_absent():
     """_shared/count-turns.sh is not in the checkout at all.
 
@@ -335,6 +400,9 @@ CASES = [
     case_under_budget_healthy,
     case_bad_subtype,
     case_only_the_last_result_record_is_authoritative,
+    case_rate_limited_terminal_429,
+    case_rate_limited_recovered_mid_run_stays_healthy,
+    case_non_429_api_error_stays_failed,
     case_shared_counter_absent,
     case_never_fails,
 ]
@@ -358,6 +426,11 @@ MUTATIONS = [
                          'printf \'%s\' "$reported_turns" | grep -Eq \'^[0-9]+$\'')
                 .replace('[ "$counted_turns" -ge "$INTENDED_TURNS" ]',
                         '[ "$reported_turns" -ge "$INTENDED_TURNS" ]')),
+    ("disables the rate-limited branch by comparing rate_limit_evidence "
+     "against an impossible value", "action",
+     lambda s: s.replace(
+         '[ "$rate_limit_evidence" = "true" ]; then\n      verdict="rate-limited"',
+         '[ "$rate_limit_evidence" = "bogus" ]; then\n      verdict="rate-limited"')),
 ]
 
 
