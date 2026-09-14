@@ -98,12 +98,15 @@ WRONG_OUTPUT = json.dumps({"outcome": "fail-wrong-output", "verified_head": HEAD
 # sets. `filed` is what the step did with the failure issue: "create",
 # "comment" (dedup onto the existing one), or None. `current_tip` feeds the
 # git ls-remote stub (defaults to HEAD -- the branch has not advanced).
+REQUEST_TIME = "2024-01-01T00:00:00Z"
+
 BASE = dict(DETECT_RESULT="skipped", VERIFY_RESULT="skipped",
             DECIDE_RESULT="skipped", DISPATCH_RESULT="skipped",
             HEAD_SHA="", HAS_NEW_WORK="", TAG_EXISTS="", LATEST_TAG="",
             VERDICT_JSON="", NEXT_VERSION="", COLLISION="",
             TAG_MATCHES="", CORRELATION="", CORRELATED_RUN_ID="",
-            CORRELATED_RUN_URL="")
+            CORRELATED_RUN_URL="", REQUEST_TIME=REQUEST_TIME,
+            DISPATCH_REJECTED="false")
 
 SCENARIOS = [
     dict(
@@ -247,6 +250,32 @@ SCENARIOS = [
         summary_contains=f"the branch advanced past the verified head ({HEAD})",
     ),
     dict(
+        name="not-observed correlation names the version and request time "
+             "(FR-006)",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
+                 VERDICT_JSON=PASS, DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
+                 COLLISION="false", DISPATCH_RESULT="success",
+                 TAG_MATCHES="false", CORRELATION="not-observed"),
+        current_tip=OTHER_SHA,
+        filed=None,
+        summary_contains=f"not observed within the correlation window for v2.8.0 requested at {REQUEST_TIME}",
+    ),
+    dict(
+        name="dispatch rejected outright: distinguished from both a run "
+             "failure and a run simply not being observed (FR-006/SC-004)",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
+                 VERDICT_JSON=PASS, DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
+                 COLLISION="false", DISPATCH_RESULT="success",
+                 TAG_MATCHES="false", CORRELATION="not-observed",
+                 DISPATCH_REJECTED="true"),
+        filed="create",
+        body_contains=[f"the dispatch of v2.8.0 requested at {REQUEST_TIME} was rejected outright"],
+        body_excludes=["own run was not observed within the correlation window"],
+        summary_contains="release dispatch failed for v2.8.0",
+    ),
+    dict(
         name="dispatch-release crashed with no outcome: infrastructure "
              "naming dispatch-release",
         env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
@@ -292,7 +321,8 @@ SCENARIOS = [
                  TAG_MATCHES="false", CORRELATION="ambiguous"),
         filed="create",
         body_contains=["pipeline defect", "not correlated (see tag state below)",
-                       "could not be uniquely identified"],
+                       f"could not be uniquely identified among the candidate runs "
+                       f"matched for v2.8.0 requested at {REQUEST_TIME}"],
         summary_contains="release dispatch failed for v2.8.0",
     ),
     dict(
@@ -461,6 +491,19 @@ def mut_branch_advanced_reported_as_failure(script):
     return script.replace(old, 'if false; then', 1)
 
 
+def mut_dispatch_rejected_collapsed_into_not_observed(script):
+    """specs/048 FR-006/SC-004: "the request was rejected" must read
+    distinctly from "own run was not observed" -- put back the pre-T024
+    shape where a rejected dispatch fell through to the same not-observed
+    wording."""
+    old = 'if [ "$DISPATCH_REJECTED" = "true" ]; then'
+    if script.count(old) != 1:
+        sys.exit("::error::verify-auto-release-report: could not locate the "
+                 "dispatch-rejected branch to mutate — the step text may "
+                 "have changed shape; update this harness alongside it.")
+    return script.replace(old, 'if false; then', 1)
+
+
 def mut_released_ignores_tag_matches(script):
     """specs/048 FR-007/FR-007a: `released` must come from TAG_MATCHES
     alone -- put back a correlation-only decision (the pre-048 defect this
@@ -484,6 +527,8 @@ MUTATIONS = [
      mut_branch_advanced_reported_as_failure),
     ("`released` decided from correlation instead of tag state (FR-007/FR-007a)",
      mut_released_ignores_tag_matches),
+    ("a rejected dispatch collapsed into 'not observed' wording (FR-006/SC-004)",
+     mut_dispatch_rejected_collapsed_into_not_observed),
 ]
 
 

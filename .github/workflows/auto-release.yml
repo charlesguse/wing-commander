@@ -686,6 +686,11 @@ jobs:
       # head, independent of `correlation` and of release.yml's own run
       # conclusion.
       tag-matches: ${{ steps.watch.outputs.tag-matches }}
+      # The report's diagnostic wording (FR-006/SC-004) is written once in
+      # specs/048-correlated-release-dispatch/contracts/release-handover-contract.md;
+      # request-time and dispatch-rejected feed it, not restated here.
+      request-time: ${{ steps.watch.outputs.request-time }}
+      dispatch-rejected: ${{ steps.watch.outputs.dispatch-rejected }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -711,12 +716,15 @@ jobs:
           # report.
           token="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           request_time="$(date -u +%s)"
+          request_time_iso="$(date -u -d "@$request_time" +"%Y-%m-%dT%H:%M:%SZ")"
 
           correlation="not-observed"
           correlated_run_id=""
           correlated_run_url=""
+          dispatch_rejected=false
 
           if ! gh workflow run release.yml -f "version=${VERSION}" -f breaking=false -f breaking-notes= -f "attempt-token=${token}" -f "commit=${VERIFIED_HEAD}"; then
+            dispatch_rejected=true
             echo "::error::wing-commander auto-release dispatch-release: gh workflow run release.yml was rejected."
           else
             # Correlate by evidence, never by recency (FR-001): a
@@ -778,6 +786,8 @@ jobs:
             echo "correlated-run-id=$correlated_run_id"
             echo "correlated-run-url=$correlated_run_url"
             echo "tag-matches=$tag_matches"
+            echo "request-time=$request_time_iso"
+            echo "dispatch-rejected=$dispatch_rejected"
           } >> "$GITHUB_OUTPUT"
 
   # The only place this feature writes anything maintainer-facing
@@ -807,6 +817,11 @@ jobs:
           CORRELATION: ${{ needs.dispatch-release.outputs.correlation }}
           CORRELATED_RUN_ID: ${{ needs.dispatch-release.outputs.correlated-run-id }}
           CORRELATED_RUN_URL: ${{ needs.dispatch-release.outputs.correlated-run-url }}
+          # The ambiguous/not-observed/rejected diagnostic wording (FR-006,
+          # SC-004) is written once -- see
+          # specs/048-correlated-release-dispatch/contracts/release-handover-contract.md.
+          REQUEST_TIME: ${{ needs.dispatch-release.outputs.request-time }}
+          DISPATCH_REJECTED: ${{ needs.dispatch-release.outputs.dispatch-rejected }}
           # #325: each need's RESULT alongside its outputs. A job that
           # crashed before writing its outputs hands this job empty strings,
           # and every branch below was written for a different situation --
@@ -1003,10 +1018,12 @@ jobs:
           # verdict, and never appended on its own when TAG_MATCHES is true
           # (data-model.md "Release outcome").
           correlation_note=""
-          if [ "$CORRELATION" = "ambiguous" ]; then
-            correlation_note=" (own run could not be uniquely identified among the candidate runs matched)"
+          if [ "$DISPATCH_REJECTED" = "true" ]; then
+            correlation_note=" (the dispatch of ${NEXT_VERSION} requested at ${REQUEST_TIME} was rejected outright)"
+          elif [ "$CORRELATION" = "ambiguous" ]; then
+            correlation_note=" (own run could not be uniquely identified among the candidate runs matched for ${NEXT_VERSION} requested at ${REQUEST_TIME})"
           elif [ "$CORRELATION" = "not-observed" ]; then
-            correlation_note=" (own run was not observed within the correlation window)"
+            correlation_note=" (own run was not observed within the correlation window for ${NEXT_VERSION} requested at ${REQUEST_TIME})"
           fi
 
           # "Released" is decided from tag state alone (FR-007, FR-007a),

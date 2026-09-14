@@ -547,7 +547,7 @@ Phase 3/4 tasks did not fully carry through into the shipped `report` job.
 Both are wording/plumbing additions to the same job; neither requires
 touching `release.yml` or Gate 53.
 
-- [ ] T023 Surface the request time in the report's ambiguous/not-observed
+- [X] T023 Surface the request time in the report's ambiguous/not-observed
       diagnostic wording per FR-006 (partial). `dispatch-release`'s "watch"
       step already computes `request_time` (an epoch second, T005) but
       never exposes it as a job output. Add a human-readable job output
@@ -562,7 +562,7 @@ touching `release.yml` or Gate 53.
       (`.github/scripts/verify-auto-release-report.py`) scenarios that
       exercise `ambiguous`/`not-observed` to assert the new wording.
 
-- [ ] T024 Distinguish "the dispatch was rejected outright" from "the
+- [X] T024 Distinguish "the dispatch was rejected outright" from "the
       dispatch succeeded but no run was found" per SC-004 (partial).
       `dispatch-release`'s "watch" step (T007) sets no distinct signal
       when the `gh workflow run release.yml` call itself fails, versus
