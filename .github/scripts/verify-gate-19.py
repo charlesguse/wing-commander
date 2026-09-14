@@ -1301,6 +1301,53 @@ def single_home_failures(watchdog_text):
     return failures
 
 
+# --------------------------------------------------------------------------
+# Token routing (#339). Gate 12 proves every gh call in a WORKFLOW runs under
+# a token permissioned for it, but it globs .github/workflows only; moving
+# the spec-slug step into a composite took its three gh reads out of that
+# scan. Until Gate 12 walks composites, this asserts the one routing rule
+# the step must keep: Actions reads (`gh run view`, `gh run download`) under
+# the default token, the issue read under the App token.
+# --------------------------------------------------------------------------
+ACTIONS_TOKEN_PREFIX = 'GH_TOKEN="$ACTIONS_TOKEN" gh run '
+
+
+def token_routing_failures(script):
+    failures = []
+    for n, line in enumerate(script.splitlines(), 1):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        if "gh run " in line and ACTIONS_TOKEN_PREFIX not in line:
+            failures.append(
+                f"[token-routing] {SPEC_SLUG_ACTION} step line {n}: a `gh run` "
+                f"read not routed under the default token — the App token has "
+                f"no Actions permission (docs/setup.md), so this 403s in "
+                f"production: {stripped}")
+        if "gh issue view" in line and 'GH_TOKEN="$ACTIONS_TOKEN"' in line:
+            failures.append(
+                f"[token-routing] {SPEC_SLUG_ACTION} step line {n}: `gh issue "
+                f"view` routed under the default token, whose issues "
+                f"permission the caller does not grant; it must run under the "
+                f"App token: {stripped}")
+    return failures
+
+
+def run_token_routing_check(script):
+    failures = token_routing_failures(script)
+    if ACTIONS_TOKEN_PREFIX not in script:
+        failures.append("[token-routing self-check] the step no longer contains "
+                        f"{ACTIONS_TOKEN_PREFIX!r} at all — update this harness "
+                        "alongside the composite.")
+    else:
+        misrouted = script.replace(ACTIONS_TOKEN_PREFIX, "gh run ", 1)
+        if not token_routing_failures(misrouted):
+            failures.append("[token-routing self-check] a `gh run` read stripped "
+                            "of its default-token routing was NOT detected — the "
+                            "check is broken.")
+    return failures
+
+
 def run_single_home_check():
     """The check against the shipped file, then against two fixtures built
     from it that must fail: a pasted-back copy of the derivation, and the
@@ -1790,6 +1837,7 @@ def main():
     finally:
         shutil.rmtree(spec_slug_tmproot, ignore_errors=True)
     spec_slug_failures.extend(run_single_home_check())
+    spec_slug_failures.extend(run_token_routing_check(spec_slug_script))
     for f in spec_slug_failures:
         print(f"::error::{f}")
     failures.extend(spec_slug_failures)
@@ -1832,7 +1880,8 @@ def main():
     print(f"annotation collector: {len(SCENARIOS)} scenario(s); "
           f"execution-output collector: {len(EXEC_SCENARIOS)} scenario(s); "
           f"branch-drift collector: {len(BD_SCENARIOS)} scenario(s); "
-          f"spec-slug step: {len(SPEC_SLUG_SCENARIOS)} scenario(s) + single-home check; "
+          f"spec-slug step: {len(SPEC_SLUG_SCENARIOS)} scenario(s) + single-home "
+          f"and token-routing checks; "
           f"spec-meta collector: {len(SPEC_META_SCENARIOS)} scenario(s); "
           f"step-summary collector: {len(STEPSUM_SCENARIOS)} scenario(s); "
           f"aggregate: {len(AGGREGATE_CASES)} case(s); "

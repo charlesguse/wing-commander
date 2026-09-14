@@ -664,9 +664,11 @@ Two constraints the wrappers must hold, both enforced by
   derivation has one home, the `wing-commander-inspected-run-identity`
   composite, which the `report-unhandled-failure` job calls again on its own
   (collect may be the job that failed), so a watchdog run whose own jobs
-  crash still posts its verdict to the spec's lifecycle issue, dispatched
-  tasks/implement runs included (#330: before the composite the derivation
-  was pasted into both jobs and #322's fallback landed in one). Only if
+  crash still posts its verdict to the spec's lifecycle issue whenever its
+  own context step minted an App token, dispatched tasks/implement runs
+  included; without that token the verdict goes to the run summary (#330:
+  before the composite the derivation was pasted into both jobs and #322's
+  fallback landed in one). Only if
   *every* collector errors outright does it flip `evidence-available: false`
   → "could not inspect this run" (FR-005); an empty-but-successful signal set
   still proceeds to `diagnose`.

@@ -3044,7 +3044,11 @@ jobs:
             [ -n "$url" ] && link=" [Job logs]($url)."
             body="${body}🐕 **Wing Commander · watchdog** — could not inspect this run: the \`$job\` job ended \`$result\` unexpectedly.${link} This is a pipeline defect, not a finding about the inspected run itself."$'\n'
           done
-          if [ -n "$ISSUE" ]; then
+          # The composite resolves the issue under the default token, so it
+          # can name one even when steps.ctx failed and no App token exists
+          # to comment with (#330 review); an unauthenticated comment would
+          # only fail here. Fall through to the summary in that case.
+          if [ -n "$ISSUE" ] && [ -n "$GH_TOKEN" ]; then
             printf '%s' "$body" | gh issue comment "$ISSUE" --body-file -
           else
             printf '%s' "$body" >> "$GITHUB_STEP_SUMMARY"
