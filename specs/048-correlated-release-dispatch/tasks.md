@@ -537,3 +537,48 @@ concurrent local agents at two):
    should wait for User Story 1's `report`-job rewrite (T009) to land
    first.
 3. Either person picks up Polish once both stories are in.
+
+---
+
+## Phase 7: Convergence
+
+**Purpose**: `/speckit-converge` found two spec clauses tasks.md's original
+Phase 3/4 tasks did not fully carry through into the shipped `report` job.
+Both are wording/plumbing additions to the same job; neither requires
+touching `release.yml` or Gate 53.
+
+- [ ] T023 Surface the request time in the report's ambiguous/not-observed
+      diagnostic wording per FR-006 (partial). `dispatch-release`'s "watch"
+      step already computes `request_time` (an epoch second, T005) but
+      never exposes it as a job output. Add a human-readable job output
+      (e.g. `request-time`, formatted with
+      `date -u -d "@$request_time" +"%Y-%m-%dT%H:%M:%SZ"`) alongside
+      `correlation`/`tag-matches`/`correlated-run-id`/`correlated-run-url`,
+      thread it into the `report` job's env, and include it in the
+      `correlation_note` wording whenever `CORRELATION` is `ambiguous` or
+      `not-observed` — FR-006 requires the report "name the version
+      requested and the time of the request", and today's wording names
+      only the version. Update Gate 52's self-test
+      (`.github/scripts/verify-auto-release-report.py`) scenarios that
+      exercise `ambiguous`/`not-observed` to assert the new wording.
+
+- [ ] T024 Distinguish "the dispatch was rejected outright" from "the
+      dispatch succeeded but no run was found" per SC-004 (partial).
+      `dispatch-release`'s "watch" step (T007) sets no distinct signal
+      when the `gh workflow run release.yml` call itself fails, versus
+      when it succeeds but the correlation poll times out with zero
+      matches — both currently collapse to `correlation=not-observed`
+      with identical report wording, but SC-004 lists "release failed",
+      "request rejected", and "run not observed" as three separately
+      distinguishable outcomes. Add a `dispatch-rejected` job output
+      (`true`/`false`, set before attempting correlation at all) and have
+      the `report` job word that case distinctly (e.g. "the dispatch was
+      rejected outright" rather than "own run was not observed within the
+      correlation window") whenever `DISPATCH_REJECTED` is `true`. Update
+      Gate 52's self-test with a scenario covering the rejected-dispatch
+      case and confirm it fails on a mutation that drops the new
+      distinction.
+
+**Checkpoint**: Run `python .github/scripts/run-local-gates.py` again
+after T023/T024 land — Gate 52's self-test must still pass 83/83 alongside
+everything else.
