@@ -15,9 +15,10 @@
 # cleanup) and after it (a caller's own scaffolding, commit, and push) is
 # the call site's own step, never re-implemented here.
 #
-# Internal to this repository (constitution VII's underscore-prefixed-
-# directory clarification, specs/049): never resolved by a workflow_call
-# stage or a published composite; Gate 53 enforces that.
+# Internal to this repository, never resolved by a workflow_call stage or
+# a published composite -- see scoped-app-token/action.yml's header
+# comment for the constitution VII / Gate 53 rationale, canonical across
+# the three _shared/ composites.
 name: orphan-branch-reset
 description: >
   Clones a target repository, force-resets one branch to an empty tree via

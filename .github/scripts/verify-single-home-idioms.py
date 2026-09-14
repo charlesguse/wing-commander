@@ -311,21 +311,18 @@ def check_token_mint(root="."):
 # --------------------------------------------------------------------------
 # Promotion-prevention pass (FR-025)
 # --------------------------------------------------------------------------
-KNOWN_SHARED_CONSUMER_STAGE = ".github/workflows/auto-update-spec-kit.yml"
-
-
+# research.md D1/D2: auto-update-spec-kit.yml IS a workflow_call-only
+# published stage, and it is ALSO this feature's own declared consumer of
+# the three shared composites, reached deliberately through its existing
+# self-checkout convention -- not an accidental promotion. That is a real,
+# reasoned exception, so it goes through the SAME waiver file every other
+# exception in this gate does (single-home-waivers.json), stale-checked
+# like any other, rather than a bespoke unconditional skip with no count
+# to keep it honest if this file ever reaches into _shared/ a fourth,
+# unintended way.
 def check_promotion(root="."):
     findings = []
     for path in _relativize(root, published_stages(root)):
-        if path == KNOWN_SHARED_CONSUMER_STAGE:
-            # research.md D1/D2: this IS a workflow_call-only published
-            # stage, and it is ALSO this feature's own declared consumer of
-            # the three shared composites, reached deliberately through its
-            # existing self-checkout convention -- not an accidental
-            # promotion. The check still fires for any OTHER published
-            # stage (the self-test's synthetic fixture proves that) or a
-            # non-underscore composite reaching into _shared/.
-            continue
         text = read(root, path)
         for m in SHARED_REF_RE.finditer(text):
             findings.append(Finding(path, "promotion", line_of(text, m.start()),

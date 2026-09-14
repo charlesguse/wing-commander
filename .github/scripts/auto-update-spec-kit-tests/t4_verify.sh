@@ -413,6 +413,38 @@ echo "  NOTHING in this stage creates or deletes a repository (the whole reason 
 check "S7 no repo create call was ever made" "$(grep -c 'repo create' "$GH_CALLS")" "0"
 check "S7 no repo delete call was ever made" "$(grep -c 'repo delete' "$GH_CALLS")" "0"
 
+echo
+echo "  the shared scoped-app-token composite's own reachability step (specs/049-single-home-release-idioms)"
+# The OK/FAILURE_REASON-driven checks above exercise auto-update-spec-kit's
+# OWN "Resolve the scratch repository" step, which now trusts the composite
+# rather than re-deriving reachability itself. These three cover the
+# composite's own logic directly -- the coverage the review of specs/049
+# flagged as lost when Scenario 7's inline GH_TOKEN/TOKEN_OUTCOME checks
+# were rewritten around the composite's outputs instead of its internals.
+new_step_env
+export GH_TOKEN="" TOKEN_OUTCOME=failure OWNER=wing-commander REPO_NAME=wc-speckit-e2e CHECK_DEFAULT_BRANCH=false
+GHA_SUBST=()
+run_step 'actions__scoped-app-token__*' >/dev/null 2>&1
+check "composite: failed mint -> ok=false" "$(out ok)" "false"
+check "composite: failed mint -> failure-reason" "$(out failure-reason)" "token-mint-failed"
+check "composite: failed mint -> empty token" "$(out token)" ""
+
+new_step_env
+export GH_TOKEN=stub TOKEN_OUTCOME=success OWNER=wing-commander REPO_NAME=wc-speckit-e2e CHECK_DEFAULT_BRANCH=false GH_STUB_FAIL="repo view"
+GHA_SUBST=()
+run_step 'actions__scoped-app-token__*' >/dev/null 2>&1
+check "composite: mint ok but repo unreachable -> ok=false" "$(out ok)" "false"
+check "composite: mint ok but repo unreachable -> failure-reason" "$(out failure-reason)" "unreachable"
+unset GH_STUB_FAIL
+
+new_step_env
+export GH_TOKEN=stub TOKEN_OUTCOME=success OWNER=wing-commander REPO_NAME=wc-speckit-e2e CHECK_DEFAULT_BRANCH=true
+GHA_SUBST=()
+run_step 'actions__scoped-app-token__*' >/dev/null 2>&1
+check "composite: success with check-default-branch -> ok=true" "$(out ok)" "true"
+check "composite: success with check-default-branch -> default-branch" "$(out default-branch)" "main"
+check "composite: success -> empty failure-reason" "$(out failure-reason)" ""
+
 # Run 31679204393: the shared wing-commander-context token is scoped to the
 # repository the stage runs in, so it 404s on the scratch repository however
 # the App is installed. The scratch-scoped mint is continue-on-error so this

@@ -41,6 +41,14 @@
       "count": 1,
       "issue": "#326",
       "reason": "watchdog.yml's usage-limit tracking (create the usage-limit label if absent, look up the one open issue carrying it) is a conceptually different feature from this repository's auto-release:failed/auto-update:failed durable-failure-issue idiom -- a different label, a different lifecycle, no create-or-comment/close split -- that happens to share the same two generic gh-CLI fragments this structural check keys on. Out of scope for specs/049's consolidation; folding it into durable-failure-issue is a separate, future decision."
+    },
+    {
+      "file": ".github/workflows/auto-update-spec-kit.yml",
+      "check": "promotion",
+      "pattern": "\\.github/actions/_shared/",
+      "count": 3,
+      "issue": "#326",
+      "reason": "research.md D1/D2 of specs/049-single-home-release-idioms: auto-update-spec-kit.yml IS a workflow_call-only published stage, and it is ALSO this feature's own declared consumer of all three shared composites (scoped-app-token, orphan-branch-reset, durable-failure-issue), reached deliberately through its existing self-checkout convention -- the exact wiring specs/049's own tasks (T011-T013) add. Not an accidental promotion; a fourth, unrelated _shared/ reference in this file would change this count and fail the gate."
     }
   ]
 }

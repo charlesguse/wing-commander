@@ -278,13 +278,13 @@ jobs:
             if [ "$FAILURE_STAGE" = "clone" ]; then
               {
                 echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "cloning the test repository" "a clone over the scoped App token succeeds" "clone failed" "$E2E_REPO"
+                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "cloning the test repository" "a clone over the scoped App token succeeds" "$(tail -c 500 "$RUNNER_TEMP/orphan-branch-reset-clone-err.txt" 2>/dev/null)" "$E2E_REPO"
                 echo 'AUTO_RELEASE_VERDICT_EOF'
               } >> "$GITHUB_OUTPUT"
             else
               {
                 echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "resetting the test repository default branch" "a force-push of the reset branch succeeds" "push failed" "$E2E_REPO"
+                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "resetting the test repository default branch" "a force-push of the reset branch succeeds" "$(tail -c 500 "$RUNNER_TEMP/orphan-branch-reset-push-err.txt" 2>/dev/null)" "$E2E_REPO"
                 echo 'AUTO_RELEASE_VERDICT_EOF'
               } >> "$GITHUB_OUTPUT"
             fi

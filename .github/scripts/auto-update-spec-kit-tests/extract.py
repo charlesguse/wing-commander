@@ -27,6 +27,7 @@ FILES = [
 # `actions__orphan-branch-reset__*` immediately before the workflow step
 # that now assumes the composite already ran.
 COMPOSITE_FILES = [
+    ".github/actions/_shared/scoped-app-token/action.yml",
     ".github/actions/_shared/orphan-branch-reset/action.yml",
     ".github/actions/_shared/durable-failure-issue/action.yml",
 ]

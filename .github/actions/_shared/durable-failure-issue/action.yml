@@ -14,9 +14,10 @@
 # one via wing-commander-callout keep doing so and simply hand this
 # composite the resulting `body-file`.
 #
-# Internal to this repository (constitution VII's underscore-prefixed-
-# directory clarification, specs/049): never resolved by a workflow_call
-# stage or a published composite; Gate 53 enforces that.
+# Internal to this repository, never resolved by a workflow_call stage or
+# a published composite -- see scoped-app-token/action.yml's header
+# comment for the constitution VII / Gate 53 rationale, canonical across
+# the three _shared/ composites.
 name: durable-failure-issue
 description: >
   Looks up an open issue by label; on operation "report", comments on it
