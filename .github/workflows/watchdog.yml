@@ -1928,6 +1928,37 @@ jobs:
             echo "$body" >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      # FR-012/FR-013: the durable record that a run went uninspected —
+      # distinct from, and never touching, the pipeline-defect filing
+      # machinery in triage/act (contracts/watchdog-reporting.md,
+      # specs/047-rate-limited-verdict). Dedup key is deliberately loose:
+      # "does any OPEN usage-limit issue currently exist," no fingerprint
+      # (research.md R5) — this accumulates one issue per exhausted window
+      # rather than one per run.
+      - name: Ensure usage-limit issue
+        shell: bash
+        if: steps.diagnose-outcome.outputs.outcome == 'rate-limited'
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          RUN_URL: ${{ needs.collect.outputs.run-url }}
+          RESET_AT: ${{ steps.diagnose-verdict.outputs.rate-limit-reset }}
+        run: |
+          set -uo pipefail
+          gh label create "usage-limit" --color C5DEF5 --description "Watchdog: a run went uninspected because the usage window was exhausted" --force
+          bullet="- [run]($RUN_URL), usage window resets at \`$RESET_AT\` — went uninspected"
+          # A failed search is not evidence of absence (#167/#169) — skip
+          # filing rather than risk a duplicate; the "rate-limited" report
+          # step above still posted the fact regardless.
+          if existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --label usage-limit --state open --json number --jq '.[0].number // empty')"; then
+            if [ -n "$existing" ]; then
+              gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body "$bullet"
+            else
+              gh issue create --repo "$GITHUB_REPOSITORY" --title "watchdog: usage window exhausted" --label "usage-limit" --body "$bullet"
+            fi
+          else
+            echo "::error::the usage-limit issue search FAILED - not filing, to avoid creating a duplicate of an issue the search could not see (#167). The rate-limited report above still stands."
+          fi
+
       # FR-004: zero Findings ⇒ record "passed inspection," file nothing.
       - name: Report "passed inspection" to lifecycle issue
         shell: bash

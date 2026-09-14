@@ -215,7 +215,7 @@ carrying the `pipeline-defect` label.
 
 ### Implementation for User Story 2
 
-- [ ] T007 [US2] In `.github/workflows/watchdog.yml`'s `diagnose` job, add
+- [X] T007 [US2] In `.github/workflows/watchdog.yml`'s `diagnose` job, add
   a new "Ensure usage-limit issue" step, sibling of T004's "Report
   'rate-limited'..." step and gated on the same `if:
   steps.diagnose-outcome.outputs.outcome == 'rate-limited'` condition
