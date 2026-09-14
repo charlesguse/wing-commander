@@ -44,22 +44,29 @@ a one-line edit:
    Claude Code matches each command in a pipeline or `;`/`&&` chain
    separately, so `grep … | sort` is denied whenever `sort` is unlisted, and
    any `> file` redirect or `cd … &&` prefix is denied regardless of what the
-   list contains. Chasing this with more primitives is unbounded; the
-   alternative is telling the agent, in the one place that already describes
-   its tooling, to use the built-in Read/Grep/Glob tools and single commands.
+   list contains. Chasing this with more primitives is unbounded; so the
+   decision (#338) is to do both — standardise the primitive set every
+   read-capable stage carries, *and* tell the agent, in the one place that
+   already describes its tooling, to use the built-in Read/Grep/Glob tools and
+   single commands for anything multi-step.
 2. **`gh api` reads.** Agents reach for `gh api` when no `gh <noun> view`
    exposes the field they need — a single comment body, a PR's raw JSON.
    `Bash(gh api:*)` cannot be narrowed to GET (`--method POST` and `-f` live
    under the same prefix), and the App token in clarify and intake can write
-   issues. This is a per-stage permission decision, not a typo.
+   issues. The decision (#338) is that no stage gains `gh api`: clarify's
+   comment bodies are staged deterministically by the workflow the way intake
+   already stages them, and plan's PR read is met by the `gh pr view --json`
+   grant it already holds.
 3. **Running the repository's own gate suite.** `CLAUDE.md` tells every agent
    that reads it to run `python .github/scripts/run-local-gates.py` before
    pushing. Intake tried three times and was denied three times; implement
-   will do the same. Whether the suite belongs in a pipeline agent's turn
-   budget at all — 81 gates, roughly three and a half minutes locally, with
-   pyyaml/jq/actionlint needed in the container — is the owner's call, and
-   whichever way it goes, `CLAUDE.md`'s instruction has to be scoped so that
-   no stage agent is told to do what its own allowlist forbids.
+   will do the same. The decision (#338) is that the suite runs in implement
+   only — one more read-only self-check at roughly three and a half minutes
+   against a cycle that runs far longer, turning a CI round trip into an
+   in-cycle fix — under an explicit timeout, with a preflight for its
+   container prerequisites, and with `CLAUDE.md`'s instruction scoped by
+   audience so no spec-writing agent is told to do what its own allowlist
+   forbids.
 
 This feature replaces nine reactive patches with one policy, expressed in the
 places that already own this material: the per-stage default tool-list table
@@ -86,9 +93,10 @@ discovering a denial.
 
 **Why this priority**: This is the shape behind the majority of the recorded
 denials (the 23-denial plan run is almost entirely this), and it is the one
-that recurs every time a prompt gains an instruction. Fixing it alone stops
-the bleeding even if the `gh api` and gate-suite questions are answered
-"no change".
+that recurs every time a prompt gains an instruction. It is also the shape
+whose fix has two halves that must ship together: standardising the primitive
+set closes the per-stage drift, and the tooling statement's shape rule closes
+the compound/piped/redirected family that no list can close.
 
 **Independent Test**: Replay the recorded denied commands of this shape
 (`cd .github/workflows && for …`, `grep … | sort | tail`, `ls … | grep`,
@@ -121,10 +129,11 @@ alternative.
 
 An agent needs a field GitHub's `gh <noun> view` verbs do not surface — the
 body of one specific issue comment (clarify), the raw JSON of a pull request
-(plan). Instead of typing `gh api` and being denied, it has a route that this
-repository has decided on: either `gh api` is granted to that stage with its
-write risk bounded, or the field is delivered to the agent another way and the
-prompt says so.
+(plan). Instead of typing `gh api` and being denied, it has the route this
+repository has decided on: no stage gains `gh api`, so the field is delivered
+to the agent another way — staged into the checkout by the workflow for
+clarify, read through the `gh pr view --json` grant plan already holds — and
+the prompt says so.
 
 **Why this priority**: Two of the four stages hit this, and one of them
 (clarify) hits it while holding an App token that can write issues — so the
@@ -144,10 +153,10 @@ recorded in the Gate 27 table and the security-policy record.
 2. **Given** a stage that is not granted `gh api`, **When** its rendered
    tooling statement is read, **Then** `gh api` is absent from the permitted
    commands and the agent is not left guessing.
-3. **Given** a stage that *is* granted `gh api` (if any), **Then** the grant's
-   write exposure under that stage's token is stated in the same change, in
-   the per-stage table and in the security record, rather than being implied
-   by the prefix.
+3. **Given** `watchdog.diagnose`, which reaches `gh api` through its
+   pre-existing wider `Bash(gh:*)` grant, **When** the per-stage table is
+   read, **Then** that grant is recorded as pre-existing and untouched by this
+   change, and no other stage's row shows a `gh api`-equivalent grant.
 
 ---
 
@@ -155,8 +164,9 @@ recorded in the Gate 27 table and the security-policy record.
 
 `CLAUDE.md`'s "Before pushing" section is read by every agent that works in
 this checkout, including the intake agent that only ever writes a spec
-directory. Either the agent that is told to run the gate suite can run it, or
-the instruction is scoped so that agent is never told to.
+directory. After this change the agent that is told to run the gate suite —
+implement — can run it, and the spec-writing agents are no longer addressed by
+the instruction at all.
 
 **Why this priority**: One recorded occurrence (three denials in one intake
 run), but it is the clearest instance of the underlying defect — a repository
@@ -172,11 +182,12 @@ instruction/permission mismatch remains.
 
 1. **Given** the intake, clarify, plan or tasks agent reads repository
    guidance, **When** it reaches the "before pushing" material, **Then** that
-   material either does not apply to it or names a command it is permitted to
-   run.
+   material is scoped so it does not address that agent, and the agent spends
+   no turn attempting the gate suite.
 2. **Given** the implement agent, **When** it is told to verify its change
-   before pushing, **Then** the verification named is one it can actually
-   perform within its run's time and turn budget.
+   before pushing, **Then** it is permitted to run the gate suite, the run is
+   bounded by an explicit timeout, and a missing container prerequisite leaves
+   a note in the stage summary instead of a denial or a failed stage.
 3. **Given** repository guidance later gains a new mandated command, **When**
    CI runs, **Then** a gate fails if that command is not permitted in the
    stages whose agents are told to run it.
@@ -194,10 +205,13 @@ instruction/permission mismatch remains.
   (`implement.post-progress-comment`, `finalize`, `cleanup`, `rebase`,
   `watchdog.diagnose`, `pr-conversation.classify`). The policy must say
   whether "read-capable" means "does file inspection as part of its job" or
-  "has any Bash grant at all", so these rows are not widened by accident.
+  "has any Bash grant at all", so these rows are not widened by accident when
+  the inspection set is standardised (FR-003, FR-005).
 - `watchdog.diagnose` already carries the broad `Bash(gh:*)` grant, which
-  covers `gh api` today. Any policy sentence about `gh api` has to account for
-  a stage that already has it via a wider prefix.
+  covers `gh api` today. The policy's "no stage gains `gh api`" sentence
+  (FR-006) is about grants this change makes; `watchdog.diagnose`'s wider
+  prefix is recorded as pre-existing rather than removed or re-granted here
+  (FR-008).
 - `intake`'s prompt states "the variable is already exported for you" about
   `SPECIFY_FEATURE_DIRECTORY`, but `intake.yml` sets no such variable for the
   agent step — so granting `Bash(printenv SPECIFY_FEATURE_DIRECTORY)` alone
@@ -227,54 +241,68 @@ instruction/permission mismatch remains.
   pipeline or `;`/`&&` chain is matched separately, and that output redirects
   and `cd … &&` prefixes are denied regardless of list contents — so the
   reason a shape fails is recorded once, not rediscovered per stage.
-- **FR-003**: The policy MUST name the set of shell inspection primitives
-  every read-capable stage carries, and each stage's default allowed list MUST
-  either contain that whole set or record in its table row why it does not.
-  [NEEDS CLARIFICATION: Does the policy standardise the primitive set across
-  read-capable stages (today only `plan.*`/`tasks.*` carry
-  `grep/head/tail/sort/uniq/wc/cut`; intake, clarify and implement do not), or
-  does it instead hold the lists where they are and direct agents to the
-  built-in Read/Grep/Glob tools for multi-step inspection?]
+- **FR-003**: The policy MUST standardise the shell inspection primitives:
+  it names one inspection set — the set `plan.*`/`tasks.*` carry today
+  (`grep`, `head`, `tail`, `sort`, `uniq`, `wc`, `cut`) — and every
+  read-capable stage's default allowed list MUST either contain that whole set
+  or record in its table row why it does not. `intake`, `clarify` and
+  `implement` therefore gain the primitives `plan` already had, with the set
+  named in the Gate 27 table so a stage cannot silently miss one a peer has.
 - **FR-004**: The rendered tooling statement (the `shell-commands` output of
   `wing-commander-tool-args`, which every stage prompt embeds) MUST convey the
-  policy's guidance on inspection shape, so the guidance reaches the agent
-  from the same single home as the permitted-command list and cannot drift per
-  workflow.
+  policy's guidance on inspection shape — both FR-002's rule that chains,
+  pipes into an unlisted primitive, redirects and `cd … &&` prefixes are
+  denied whole, and the expectation that multi-step inspection uses the
+  built-in Read/Grep/Glob tools and single shell commands. Standardising the
+  primitive set (FR-003) does not close the compound/piped/redirected family,
+  so both halves ship together. The guidance reaches the agent from the same
+  single home as the permitted-command list and cannot drift per workflow.
 - **FR-005**: The policy MUST define "read-capable stage" precisely enough
   that the deliberately-minimal read-only steps
   (`implement.post-progress-comment`, `finalize`, `cleanup`, `rebase`,
   `pr-conversation.classify`) are not widened as a side effect of applying it.
+  FR-003's standardisation makes this definition load-bearing: it is what
+  decides which table rows gain the inspection set.
 
 **`gh api` and the reads behind it**
 
-- **FR-006**: Each stage's row MUST record a decision on `gh api`: granted, or
-  not granted with the sanctioned route for the reads that drove agents to it
-  (the body of one issue comment in clarify; a pull request's raw JSON in
-  plan).
-  [NEEDS CLARIFICATION: Is `gh api` granted to any stage? If yes, which
-  stages, and how is the write exposure bounded given `Bash(gh api:*)` cannot
-  be restricted to GET and clarify/intake hold an App token that can write
-  issues? If no, is the clarify comment-body read met by deterministically
-  staging comments for the agent (as intake already does) and the plan PR read
-  by the `gh pr view --json` grant it already holds?]
-- **FR-007**: Where the answer to FR-006 is "not granted", the affected stage
-  prompt MUST name the sanctioned route in the same sentence that tells the
-  agent what it needs, so the agent never reaches the `gh api` attempt.
-- **FR-008**: Any stage that gains or retains a `gh api`-equivalent grant MUST
-  have that grant's write exposure under that stage's token recorded in the
-  same change, in the per-stage table and in the repository's security-policy
-  record.
+- **FR-006**: No stage gains `gh api`. Each stage's row MUST record that
+  decision together with the sanctioned route for the reads that drove agents
+  to it: clarify's issue-comment body MUST be staged for the agent
+  deterministically by the workflow, the way `specs/029-intake-issue-comments`
+  already stages comments for intake, and plan's pull-request read MUST be met
+  by the `gh pr view --json` grant plan already holds. `Bash(gh api:*)` cannot
+  be bounded to GET and clarify's and intake's App token can write issues, so
+  granting it would widen a write surface for reads that already have a
+  documented path (Constitution V).
+- **FR-007**: Because FR-006's answer is "not granted", the affected stage
+  prompts (clarify, plan) MUST name the sanctioned route in the same sentence
+  that tells the agent what it needs, so the agent never reaches the `gh api`
+  attempt.
+- **FR-008**: No stage's write surface widens in this change.
+  `watchdog.diagnose` continues to reach `gh api` through its pre-existing,
+  wider `Bash(gh:*)` grant; the change MUST record in the per-stage table that
+  this is pre-existing and untouched, not a grant made here. Should a later
+  change add a `gh api`-equivalent grant anywhere, that grant's write exposure
+  under that stage's token MUST be recorded in the same change, in the
+  per-stage table and in the repository's security-policy record.
 
 **The gate suite instruction**
 
-- **FR-009**: The repository MUST resolve whether a pipeline agent runs the
-  local gate suite, and scope repository guidance accordingly so that no
-  stage agent is instructed to run a command its own allowed list denies.
-  [NEEDS CLARIFICATION: Is `python .github/scripts/run-local-gates.py`
-  runnable by the implement agent (and with what timeout and container
-  prerequisites), by no stage agent at all, or by implement only in a
-  designated verification step? And is `CLAUDE.md`'s "Before pushing" section
-  scoped by audience, or is the scoping carried in the stage prompts?]
+- **FR-009**: The implement agent — and only the implement agent — MUST be
+  permitted to run `python .github/scripts/run-local-gates.py`, under an
+  explicit timeout, as a pre-push self-check alongside the
+  actionlint/yamllint/shellcheck checks it already runs. No other stage agent
+  is granted it.
+- **FR-009a**: The gate-suite run MUST be preceded by a preflight that
+  confirms its prerequisites (pyyaml, jq, actionlint) are present in the
+  implement container. When a prerequisite is missing the run MUST degrade to
+  a note in the stage's summary — never a denial and never a stage failure —
+  so a container that has drifted costs a line of output rather than a cycle.
+- **FR-009b**: `CLAUDE.md`'s "Before pushing" section MUST be scoped by
+  audience so that the spec-writing agents (intake, clarify, plan, tasks) are
+  not addressed by it, and the implement agent and human/local sessions are.
+  The scoping lives in `CLAUDE.md` itself, not restated per stage prompt.
 - **FR-010**: Repository guidance that instructs an agent to run a command
   MUST be reconcilable against that agent's composed allowed list — every
   command repository guidance mandates for a stage agent is permitted for
@@ -362,6 +390,10 @@ instruction/permission mismatch remains.
   every call site byte-for-byte.
 - **SC-007**: #266 can be closed with the evidence of SC-001 quoted on it, and
   the closing comment names the policy's home for the next reader.
+- **SC-008**: The implement stage's gate-suite self-check either completes
+  within its stated timeout or leaves a summary note naming the missing
+  prerequisite; in neither case does it produce a denied-tool occurrence or
+  fail the stage. Demonstrated with the prerequisite absent and present.
 
 ## Assumptions
 
@@ -379,10 +411,10 @@ instruction/permission mismatch remains.
   in-scope material for this feature to the extent the policy changes what it
   says; whether those four copies are consolidated is a design question for
   the plan stage, not a requirement here.
-- No stage gains a write capability it does not have today. Every question in
-  this spec is about read-only inspection; a decision that would widen a write
-  surface (e.g. granting `Bash(gh api:*)` under a writable token) is called
-  out as such by FR-008 rather than assumed acceptable.
+- No stage gains a write capability it does not have today. Everything this
+  spec grants is read-only inspection; the one decision that could have
+  widened a write surface — `gh api` under a writable token — was answered
+  "no stage gains it" on #338 and is held to that by FR-006 and FR-008.
 - The recorded run IDs and denial counts come from #266's thread and are taken
   as given; this feature does not re-derive them from Actions logs.
 - `#266` stays open as the fingerprint sink until this change ships, then is
@@ -393,8 +425,8 @@ instruction/permission mismatch remains.
 - Changing the watchdog's `denied-tool` detection, its fingerprinting, or its
   false-positive filters. This feature reduces the denials; it does not touch
   the collector.
-- The turn-ceiling and cost behaviour of any stage, except where FR-009's
-  answer requires a timeout for the gate suite.
+- The turn-ceiling and cost behaviour of any stage, except the explicit
+  timeout FR-009 puts around implement's gate-suite run.
 - Consumer-facing configuration surface: no new `extra-*`/`*-override` inputs
   are introduced.
 - Any allowlist change motivated by something other than the recorded

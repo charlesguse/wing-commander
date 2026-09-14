@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,15 +31,33 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain, on FR-003, FR-006 and FR-009.
-  They are the three decisions the lifecycle issue itself names as the owner's
-  to make, and each is genuinely open — no default is obviously right, and the
-  answers change scope (FR-003 decides whether the tool lists are standardised
-  or the prompts redirect to the built-in tools; FR-006 decides whether a
-  writable-token stage gains a grant that cannot be restricted to reads;
-  FR-009 decides whether a three-and-a-half-minute gate suite enters a stage
-  agent's budget). The intake run does not block on them: they are posted to
-  the lifecycle issue for the owner and are the clarify stage's subject.
+- The three [NEEDS CLARIFICATION] markers that intake left on FR-003, FR-006
+  and FR-009 were answered by the owner on #338 and are now folded in; none
+  remain:
+  - **FR-003/FR-004 (option C)** — standardise the inspection primitive set
+    across every read-capable stage (the `plan`/`tasks` set, named in the
+    Gate 27 table) *and* have the rendered tooling statement state the
+    chaining/redirect rule and the Read/Grep/Glob preference. Both halves
+    ship together, because no list closes the compound/piped/redirected
+    family.
+  - **FR-006/FR-007/FR-008 (option A)** — no stage gains `gh api`. Clarify's
+    comment bodies are staged deterministically by the workflow (the
+    specs/029 pattern) and plan's PR read uses its existing
+    `gh pr view --json` grant; `watchdog.diagnose`'s pre-existing
+    `Bash(gh:*)` is recorded as untouched rather than re-granted.
+  - **FR-009 (option A, with a preflight)** — implement only, under an
+    explicit timeout, with `CLAUDE.md`'s "Before pushing" section scoped by
+    audience. The owner added a requirement the options did not carry: a
+    preflight for pyyaml/jq/actionlint in the implement container that
+    degrades to a summary note rather than a denial or a stage failure. That
+    is recorded as FR-009a, with the `CLAUDE.md` scoping as FR-009b and a new
+    SC-008 covering both outcomes.
+- The answers changed scope in three places beyond the markers themselves:
+  User Story 2's third acceptance scenario now asserts the *absence* of a
+  `gh api` grant rather than describing one, User Story 3's second scenario
+  now names the timeout and the degradation, and the Out of Scope carve-out
+  for turn-ceiling behaviour now names the timeout as the one exception that
+  is in scope.
 - Every other gap the issue raised was resolved with an informed default and
   recorded as a requirement rather than a question: the deterministic leftovers
   (FR-011..FR-013) and the keep-it-true requirements (FR-014..FR-017).
