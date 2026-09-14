@@ -1633,7 +1633,15 @@ jobs:
                then {kind: "turn-budget-trend",
                      ident: {stage: ($fx.stage // "" | ascii_downcase), band: ($fx.band // "" | ascii_downcase)}}
                elif ($src | startswith("turn-budget"))
-               then {kind: "turn-budget-observation",
+               # Same kind string (hence, for a given {stage, band}, the same
+               # hashed id) as the turn-budget-trend branch above (T042). A
+               # Finding may cite this signal alone, the trend signal alone,
+               # or both, and Compute fingerprint dedups cited ids before
+               # hashing them, so all three citation subsets must collapse to
+               # one basis — otherwise the fingerprint, and therefore FR-012s
+               # one accumulating finding, would depend on which subset
+               # diagnose happened to cite this run.
+               then {kind: "turn-budget-trend",
                      ident: {stage: ($fx.stage // "" | ascii_downcase), band: ($fx.band // "" | ascii_downcase)}}
                elif ($src | startswith("cost-report"))
                then {kind: "cost-line-claim",

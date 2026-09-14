@@ -124,12 +124,27 @@ def norm(s):
 
 heredoc = re.search(r"<<'PY'\n(.*?)\n\s*PY\n", text, re.S)
 fp_line = re.search(r"printf 'turn-budget-trend\|signals:%s' \"\$would_id\" \| sha256sum \| cut -d' ' -f1", text)
+# T042: Stamp signal ids must assign the turn-budget (per-run) branch the
+# SAME kind string as the turn-budget-trend branch, or the two signals'
+# ids diverge and citing a different subset changes the fingerprint.
+obs_branch = re.search(
+    r'elif \(\$src \| startswith\("turn-budget"\)\)\s*\n(?:\s*#[^\n]*\n)*\s*then \{kind: "([^"]+)"',
+    text,
+)
 
 failures = []
 if not heredoc:
     failures.append("could not find the collect-turn-budget suppression's python heredoc (<<'PY' ... PY) in watchdog.yml")
 if not fp_line:
     failures.append("could not find the collect-turn-budget suppression's fingerprint printf|sha256sum|cut line in watchdog.yml")
+if not obs_branch:
+    failures.append("could not find Stamp signal ids' turn-budget (per-run) branch in watchdog.yml")
+elif obs_branch.group(1) != "turn-budget-trend":
+    failures.append(
+        f"Stamp signal ids' turn-budget (per-run) branch assigns kind '{obs_branch.group(1)}', "
+        "expected 'turn-budget-trend' (T042 — the two signals must share a kind so a Finding "
+        "citing either or both collapses to one fingerprint basis)"
+    )
 
 expected_heredoc = norm('''
 import hashlib, json, sys
@@ -173,22 +188,30 @@ print(hashlib.sha256(basis.encode()).hexdigest()[:16])
 PY
 }
 
+# Mirrors Compute fingerprint's own `unique` over cited signal ids before
+# sorting and joining (T042) — without the dedup, citing the same id twice
+# would (wrongly) produce a different basis than citing it once.
 compute_finding_fingerprint() {
   local class="$1"; shift
   local basis
-  basis="$(printf '%s\n' "$@" | sort | paste -sd, -)"
+  basis="$(printf '%s\n' "$@" | sort -u | paste -sd, -)"
   printf '%s|signals:%s' "$class" "$basis" | sha256sum | cut -d' ' -f1
 }
 
-obs_id_run_a="$(compute_signal_id "turn-budget-observation" "implement" "critical")"
+# T042: Stamp signal ids gives turn-budget-observation the SAME kind string
+# ("turn-budget-trend") as the cross-run signal, not its own
+# "turn-budget-observation" kind — this is what makes the two signals'
+# ids literally equal for the same {stage, band}, not merely each
+# independently stable.
+obs_id_run_a="$(compute_signal_id "turn-budget-trend" "implement" "critical")"
 trend_id_run_a="$(compute_signal_id "turn-budget-trend" "implement" "critical")"
-obs_id_run_b="$(compute_signal_id "turn-budget-observation" "implement" "critical")"
+obs_id_run_b="$(compute_signal_id "turn-budget-trend" "implement" "critical")"
 trend_id_run_b="$(compute_signal_id "turn-budget-trend" "implement" "critical")"
 
-if [ "$obs_id_run_a" != "$obs_id_run_b" ]; then
-  reason "turn-budget-observation's id varied across two runs in the same band ($obs_id_run_a vs $obs_id_run_b) — {stage, band} identity must not depend on the run"
+if [ "$obs_id_run_a" != "$trend_id_run_a" ]; then
+  reason "turn-budget-observation's id ($obs_id_run_a) does not equal turn-budget-trend's id ($trend_id_run_a) for the same {stage, band} — they must share a kind string or citing a different subset changes the fingerprint"
 else
-  note "turn-budget-observation's id is stable across two runs in the same band ($obs_id_run_a)"
+  note "turn-budget-observation and turn-budget-trend share the same id for the same {stage, band} ($obs_id_run_a)"
 fi
 
 fp_run_a="$(compute_finding_fingerprint "turn-budget-trend" "$obs_id_run_a" "$trend_id_run_a")"
@@ -197,6 +220,20 @@ if [ "$fp_run_a" != "$fp_run_b" ]; then
   reason "a Finding citing both the per-run and trend signals fingerprinted differently across two runs in the same band ($fp_run_a vs $fp_run_b) — this would reopen a new finding every single run"
 else
   note "a Finding citing both signals together fingerprints identically across two runs in the same band ($fp_run_a)"
+fi
+
+# ── T042's core regression: which SUBSET of {trend, observation} ids gets
+# cited must not matter. A run whose own turns are under budget (so no
+# per-run signal exists to cite) cites [trend] alone; a run whose own turns
+# are also over budget in the same trend cites [trend, observation] too —
+# both must fingerprint identically, or the second run opens a second issue
+# for the same trend (Dedup search's exact-string match against the first).
+fp_trend_only="$(compute_finding_fingerprint "turn-budget-trend" "$trend_id_run_a")"
+fp_trend_and_obs="$(compute_finding_fingerprint "turn-budget-trend" "$trend_id_run_a" "$obs_id_run_a")"
+if [ "$fp_trend_only" != "$fp_trend_and_obs" ]; then
+  reason "citing [trend] alone ($fp_trend_only) fingerprinted differently than citing [trend, observation] together ($fp_trend_and_obs) — a run citing both would open a SECOND issue for a trend a prior run already filed by citing only one"
+else
+  note "citing [trend] alone and citing [trend, observation] together fingerprint identically ($fp_trend_only)"
 fi
 
 if [ "${#fail_reasons[@]}" -eq 0 ]; then

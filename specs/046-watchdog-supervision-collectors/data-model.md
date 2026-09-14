@@ -37,18 +37,24 @@ FR-014).
 - `band` is the same severity band the collector computes for the
   cross-run signal below from this same window, stamped onto the per-run
   signal too (`null` when neither trigger is met this window).
-- Signal-id identity (research.md R11, corrected by T041):
-  `kind: "turn-budget-observation"`, `ident: {stage, band}` — **not**
-  `{stage, run}`. This signal is always cited alongside the trend signal
-  in one Finding (its only job, per R5), so its id must be as stable
-  run-to-run as the trend signal's own `{stage, band}` identity: keying it
-  by the run-unique `run` field instead would make the Finding's
-  fingerprint (which hashes every cited signal id) change on every run
-  even while the trend signal's own id stayed the same, silently
-  reopening a "new" finding every run and defeating FR-012/FR-015 exactly
-  as if the trend signal itself had been keyed by magnitude. See
-  `contracts/turn-budget-trend.md`'s "Why band, not magnitude, is the
-  identity" section — the same reasoning applies here.
+- Signal-id identity (research.md R11, corrected by T041 and T042):
+  `kind: "turn-budget-trend"` (the SAME kind string as the cross-run
+  signal below, not its own `"turn-budget-observation"` kind — T042),
+  `ident: {stage, band}` — **not** `{stage, run}`. This signal is always
+  cited alongside the trend signal in one Finding (its only job, per R5),
+  so its id must not just be stable run-to-run (T041) but IDENTICAL to
+  the trend signal's own id for the same `{stage, band}` (T042): a
+  Finding may cite the trend signal alone, this signal alone (when the
+  latest run in the window is itself under budget, so no per-run signal
+  exists to cite), or both, and `Compute fingerprint`'s `unique` over
+  cited ids only collapses those three citation subsets to one basis
+  when the two signals' ids are literally equal — sharing `{stage, band}`
+  but differing kind strings still hashes to two different ids and
+  reopens FR-012's "one accumulating finding" depending on which subset
+  diagnose happened to cite that run. See `contracts/turn-budget-trend.md`'s
+  "Why band, not magnitude, is the identity" section for the base
+  reasoning, and T042 in tasks.md for the citation-subset failure this
+  shared-kind fix closes.
 
 ## Budget trend (cross-run signal)
 
