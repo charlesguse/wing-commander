@@ -2,7 +2,7 @@
   "issue": 274,
   "spec_dir": "specs/046-watchdog-supervision-collectors",
   "feature_num": "046",
-  "stage": "spec",
+  "stage": "plan",
   "iteration": 0,
-  "spec_branch": null
+  "spec_branch": "spec/046-watchdog-supervision-collectors"
 }
