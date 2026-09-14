@@ -6,7 +6,12 @@ artifacts", "Collect: branch drift"), the "Aggregate signals" step
 (T022, T030) that folds every collector's read outcome into
 untrusted-collectors, and (#322) the "Resolve inspected run's spec slug and
 lifecycle issue" step's metrics-record fallback that branch-drift's
-dispatched-implement measurement depends on.
+dispatched-implement measurement depends on. Since #330 that step is the
+single step of the wing-commander-inspected-run-identity composite, which
+watchdog.yml's collect AND report-unhandled-failure jobs both call; this
+harness runs the composite's step, and a SINGLE-HOME check fails if a copy
+of the derivation (the branch-prefix case statement) reappears in
+watchdog.yml or either job stops calling the composite.
 
 WHY THIS EXISTS
 ---------------
@@ -51,6 +56,10 @@ from wc_shell_harness import (  # noqa: E402
 
 WATCHDOG = ".github/workflows/watchdog.yml"
 STEP = "Collect: annotations"
+# #330: the spec-slug step's one home. Both watchdog jobs `uses:` it.
+SPEC_SLUG_ACTION = ".github/actions/wing-commander-inspected-run-identity/action.yml"
+SPEC_SLUG_ACTION_USES = "/.github/actions/wing-commander-inspected-run-identity"
+SPEC_SLUG_CALLERS = ("collect", "report-unhandled-failure")
 
 BASH = None
 
@@ -183,8 +192,12 @@ def stub_jq(bindir):
         fh.write(content)
     os.chmod(path, 0o755)
 
-def render_step(step):
-    """The step's run: block with its `${{ }}` env wired to fixture values."""
+def render_step(step, path=WATCHDOG):
+    """The step's run: block with its `${{ }}` env wired to fixture values.
+
+    `path` names the file the step came from, for the error below — a
+    composite's step (SPEC_SLUG_ACTION) is rendered the same way, its
+    `${{ inputs.* }}` env entries mapped by key like a workflow's."""
     script = str(step["run"])
     env = {}
     for k, v in (step.get("env") or {}).items():
@@ -194,7 +207,7 @@ def render_step(step):
                  "RUN_ID": "12345"}.get(k, "")
         env[k] = v
     if "${{" in script:
-        sys.exit(f"::error file={WATCHDOG}::the extracted run: block contains a "
+        sys.exit(f"::error file={path}::the extracted run: block contains a "
                  f"${{{{ }}}} expression this harness does not resolve.")
     return script, env
 
@@ -975,8 +988,14 @@ def suite_bd(script, env, tmproot):
 # dispatched-implement branch-drift scenarios above are only as good as the
 # slug this step hands them.
 #
-# `gh` is stubbed for `run download` (lays the fixture record out the way
-# gh does: <dest>/<artifact-name>/wing-commander-metrics-record.json) and
+# Since #330 the step lives in the wing-commander-inspected-run-identity
+# composite (SPEC_SLUG_ACTION), called by collect with run-meta's head
+# branch and by report-unhandled-failure with none — the composite then
+# reads the head itself with `gh run view`, so that read is stubbed too.
+#
+# `gh` is stubbed for `run view` (answers a fixture head branch, or fails),
+# `run download` (lays the fixture record out the way gh does:
+# <dest>/<artifact-name>/wing-commander-metrics-record.json) and
 # `issue view`; `git` for `fetch` (no-op) and `show` (answers from a
 # fixture spec-meta.json, or fails as it would for a branch with none).
 # --------------------------------------------------------------------------
@@ -984,6 +1003,14 @@ SPEC_SLUG_STEP = "Resolve inspected run's spec slug and lifecycle issue"
 
 STUB_GH_SPECSLUG_TEMPLATE = r'''#!/usr/bin/env bash
 if [ -n "${GH_STUB_LOG:-}" ]; then printf '%s\n' "$*" >> "$GH_STUB_LOG"; fi
+if [ "$1" = "run" ] && [ "$2" = "view" ]; then
+  if [ -n "${GH_STUB_RUN_VIEW_FAIL:-}" ]; then
+    printf '%s\n' "$GH_STUB_RUN_VIEW_FAIL" >&2
+    exit 1
+  fi
+  printf '%s\n' "${GH_STUB_RUN_VIEW_BRANCH:-}"
+  exit 0
+fi
 if [ "$1" = "run" ] && [ "$2" = "download" ]; then
   if [ -n "${GH_STUB_DOWNLOAD_FAIL:-}" ]; then
     printf '%s\n' "$GH_STUB_DOWNLOAD_FAIL" >&2
@@ -1124,6 +1151,46 @@ SPEC_SLUG_SCENARIOS = [
                        "lifecycle-issue": "", "meta-stage": ""}),
         expect_download=True,
     ),
+    # #330: the report-unhandled-failure job hands in no head branch (it has
+    # no run-meta step of its own), so the composite reads it with `gh run
+    # view` and the rest of the derivation runs unchanged.
+    dict(
+        name="no head branch handed in (report job): read with gh run view, "
+             "slug from the head it answers",
+        head_branch="",
+        run_view_branch="impl/045-auto-release-verified-head-iter2",
+        records=[RECORD_045],
+        show_json=SPEC_META_FIXTURE,
+        expect=dict(slug="045-auto-release-verified-head", **{"slug-source": "head-branch"},
+                    **{"lifecycle-issue": "296", "meta-stage": "implement"}),
+        expect_download=False,
+        expect_run_view=True,
+    ),
+    dict(
+        name="no head branch handed in and gh run view fails (no token, or "
+             "Actions:read missing): the record fallback still runs, step "
+             "still succeeds",
+        head_branch="",
+        run_view_fail="gh: HTTP 403: Resource not accessible by integration",
+        records=[RECORD_045],
+        show_json=SPEC_META_FIXTURE,
+        expect=dict(slug="045-auto-release-verified-head", **{"slug-source": "metrics-record"},
+                    **{"lifecycle-issue": "296"}),
+        expect_download=True,
+        expect_run_view=True,
+    ),
+    dict(
+        name="no head branch handed in, gh run view fails and the stage is not "
+             "a single-spec one: nothing resolves, step still succeeds",
+        head_branch="",
+        run_name="Wing Commander · 8 watchdog",
+        run_view_fail="gh: HTTP 403: Resource not accessible by integration",
+        records=[RECORD_045],
+        show_json=SPEC_META_FIXTURE,
+        expect=dict(slug="", **{"slug-source": "", "lifecycle-issue": ""}),
+        expect_download=False,
+        expect_run_view=True,
+    ),
 ]
 
 
@@ -1146,6 +1213,10 @@ def run_spec_slug_one(script, env, sc, tmproot):
     run_env["GH_STUB_RECORDS"] = "\n".join(sc["records"])
     if sc.get("download_fail"):
         run_env["GH_STUB_DOWNLOAD_FAIL"] = sc["download_fail"]
+    if sc.get("run_view_branch"):
+        run_env["GH_STUB_RUN_VIEW_BRANCH"] = sc["run_view_branch"]
+    if sc.get("run_view_fail"):
+        run_env["GH_STUB_RUN_VIEW_FAIL"] = sc["run_view_fail"]
     if sc.get("show_json"):
         run_env["GIT_STUB_SHOW_JSON"] = sc["show_json"]
     gh_log = os.path.join(runner_temp, "gh-stub.log")
@@ -1180,6 +1251,90 @@ def suite_spec_slug(script, env, tmproot):
                 f"{tag} expected the metrics-record artifact "
                 f"{'to be' if sc['expect_download'] else 'NOT to be'} downloaded; "
                 f"gh was invoked as: {gh_calls or '(never)'}")
+        viewed = any(c.startswith("run view ") for c in gh_calls)
+        if viewed != sc.get("expect_run_view", False):
+            failures.append(
+                f"{tag} expected the head branch "
+                f"{'to be' if sc.get('expect_run_view') else 'NOT to be'} read with "
+                f"gh run view (a handed-in head must be used as-is); "
+                f"gh was invoked as: {gh_calls or '(never)'}")
+    return failures
+
+
+# --------------------------------------------------------------------------
+# #330 single-home check. CLAUDE.md: when shared logic is consolidated, the
+# nearest gate gets the "single home" check, or the rule lasts until the
+# next session. The derivation's distinctive fragments are the impl-branch
+# iteration strip (`slug%-iter`) and the default expansions of the four
+# prefixes only the derivation needs (`SPEC_DRAFT_PREFIX:-` ...; the spec
+# prefix alone is legitimately defaulted elsewhere, by branch-drift, to
+# name the branch it measures); none may reappear in watchdog.yml, and both
+# jobs that need the answer must `uses:` the composite.
+# --------------------------------------------------------------------------
+DERIVATION_FRAGMENTS = ("slug%-iter", "SPEC_DRAFT_PREFIX:-", "PLAN_PREFIX:-",
+                        "TASKS_PREFIX:-", "IMPL_PREFIX:-")
+
+
+def single_home_failures(watchdog_text):
+    """Failures for a watchdog.yml text that has grown a second copy of the
+    spec-slug derivation, or dropped a caller of the composite."""
+    import yaml
+    failures = []
+    for n, line in enumerate(watchdog_text.splitlines(), 1):
+        for frag in DERIVATION_FRAGMENTS:
+            if frag in line:
+                failures.append(
+                    f"[single-home] {WATCHDOG}:{n} carries {frag!r}, a fragment "
+                    f"of the spec-slug derivation that lives ONLY in "
+                    f"{SPEC_SLUG_ACTION} since #330 — call the composite "
+                    f"instead of pasting the case statement back.")
+    doc = yaml.safe_load(watchdog_text) or {}
+    for job_id in SPEC_SLUG_CALLERS:
+        steps = ((doc.get("jobs") or {}).get(job_id) or {}).get("steps") or []
+        if not any(str((s or {}).get("uses", "")).endswith(SPEC_SLUG_ACTION_USES)
+                   for s in steps):
+            failures.append(
+                f"[single-home] {WATCHDOG} job {job_id!r} no longer calls "
+                f"{SPEC_SLUG_ACTION_USES.lstrip('/')} — both collect and "
+                f"report-unhandled-failure must resolve the inspected run's "
+                f"lifecycle issue through the one composite (#330).")
+    return failures
+
+
+def run_single_home_check():
+    """The check against the shipped file, then against two fixtures built
+    from it that must fail: a pasted-back copy of the derivation, and the
+    report job with its composite call removed (constitution VIII — a check
+    that cannot fail is not a check)."""
+    with open(WATCHDOG, encoding="utf-8") as fh:
+        text = fh.read()
+    failures = single_home_failures(text)
+
+    pasted = text.replace(
+        "      - name: Initialize signals file\n",
+        "      - name: Derive slug again\n"
+        "        run: |\n"
+        "          slug=\"${HEAD_BRANCH#impl/}\"; slug=\"${slug%-iter*}\"\n"
+        "      - name: Initialize signals file\n", 1)
+    if pasted == text:
+        failures.append("[single-home self-check] could not build the pasted-copy "
+                        "fixture — the 'Initialize signals file' anchor moved; "
+                        "update this harness alongside watchdog.yml.")
+    elif not any("slug%-iter" in f for f in single_home_failures(pasted)):
+        failures.append("[single-home self-check] a pasted copy of the derivation "
+                        "was NOT detected — the check is broken.")
+
+    uses_line = f"        uses: ./.wing-commander-pipeline{SPEC_SLUG_ACTION_USES}\n"
+    if text.count(uses_line) != len(SPEC_SLUG_CALLERS):
+        failures.append(f"[single-home self-check] expected exactly "
+                        f"{len(SPEC_SLUG_CALLERS)} `uses:` lines for the composite "
+                        f"in {WATCHDOG}, found {text.count(uses_line)}.")
+    else:
+        head, _, tail = text.rpartition(uses_line)
+        dropped = head + "        run: echo dropped\n" + tail
+        if not any("report-unhandled-failure" in f for f in single_home_failures(dropped)):
+            failures.append("[single-home self-check] the report job losing its "
+                            "composite call was NOT detected — the check is broken.")
     return failures
 
 
@@ -1623,8 +1778,8 @@ def main():
         print(f"::error::{f}")
     failures.extend(bd_failures)
 
-    spec_slug_step = find_step(WATCHDOG, SPEC_SLUG_STEP)
-    spec_slug_script, spec_slug_env = render_step(spec_slug_step)
+    spec_slug_step = find_step(SPEC_SLUG_ACTION, SPEC_SLUG_STEP)
+    spec_slug_script, spec_slug_env = render_step(spec_slug_step, SPEC_SLUG_ACTION)
     spec_slug_tmproot = tempfile.mkdtemp()
     try:
         spec_slug_failures = suite_spec_slug(spec_slug_script, spec_slug_env, spec_slug_tmproot)
@@ -1634,6 +1789,7 @@ def main():
             spec_slug_env, spec_slug_tmproot))
     finally:
         shutil.rmtree(spec_slug_tmproot, ignore_errors=True)
+    spec_slug_failures.extend(run_single_home_check())
     for f in spec_slug_failures:
         print(f"::error::{f}")
     failures.extend(spec_slug_failures)
@@ -1676,7 +1832,7 @@ def main():
     print(f"annotation collector: {len(SCENARIOS)} scenario(s); "
           f"execution-output collector: {len(EXEC_SCENARIOS)} scenario(s); "
           f"branch-drift collector: {len(BD_SCENARIOS)} scenario(s); "
-          f"spec-slug step: {len(SPEC_SLUG_SCENARIOS)} scenario(s); "
+          f"spec-slug step: {len(SPEC_SLUG_SCENARIOS)} scenario(s) + single-home check; "
           f"spec-meta collector: {len(SPEC_META_SCENARIOS)} scenario(s); "
           f"step-summary collector: {len(STEPSUM_SCENARIOS)} scenario(s); "
           f"aggregate: {len(AGGREGATE_CASES)} case(s); "

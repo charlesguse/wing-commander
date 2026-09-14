@@ -636,7 +636,8 @@ Two constraints the wrappers must hold, both enforced by
     commits. Issue #318: implement run 34709026525 was filed as
     `lost-progress` against `main` while its sixteen commits sat on
     `spec/045-…`.
-  - When the head resolves no slug, the spec-slug step reads it from the
+  - When the head resolves no slug, the spec-slug step (the
+    `wing-commander-inspected-run-identity` composite, #330) reads it from the
     run's `metrics-record*` artifact instead (`spec.spec_dir`, present for
     every agent-bearing stage), and `branch-drift` then measures a
     dispatched **implement** run on `spec/<slug>` — the one branch that
@@ -659,7 +660,13 @@ Two constraints the wrappers must hold, both enforced by
 
   Best-effort spec-slug/lifecycle-issue
   resolution: a run that can't be tied to a spec (e.g. a `main`-based
-  cleanup) is still inspected and reported against its own run URL. Only if
+  cleanup) is still inspected and reported against its own run URL. The
+  derivation has one home, the `wing-commander-inspected-run-identity`
+  composite, which the `report-unhandled-failure` job calls again on its own
+  (collect may be the job that failed), so a watchdog run whose own jobs
+  crash still posts its verdict to the spec's lifecycle issue, dispatched
+  tasks/implement runs included (#330: before the composite the derivation
+  was pasted into both jobs and #322's fallback landed in one). Only if
   *every* collector errors outright does it flip `evidence-available: false`
   → "could not inspect this run" (FR-005); an empty-but-successful signal set
   still proceeds to `diagnose`.
