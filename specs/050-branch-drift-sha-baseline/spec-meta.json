@@ -2,7 +2,7 @@
   "issue": 331,
   "spec_dir": "specs/050-branch-drift-sha-baseline",
   "feature_num": "050",
-  "stage": "tasks",
-  "iteration": 0,
+  "stage": "implement",
+  "iteration": 1,
   "spec_branch": "spec/050-branch-drift-sha-baseline"
 }
