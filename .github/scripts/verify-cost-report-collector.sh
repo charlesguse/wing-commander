@@ -3,11 +3,14 @@
 # (id: collect-cost-report) — specs/046-watchdog-supervision-collectors,
 # contracts/gate-coverage-046.md's verify-cost-report-collector.sh row.
 #
-# FILTER below is a copy of watchdog.yml's COST_REPORT_FILTER. No live
-# watchdog run, gh api call, or lifecycle-issue comment listing is needed:
-# this feeds the exact missing/malformed decision fixture inputs describing
-# what the surrounding bash would have already resolved (cost_available,
-# whether an attributable comment was found, and any extracted cost token).
+# FILTER below is EXTRACTED from watchdog.yml's live COST_REPORT_FILTER at
+# run time (wc_shell_harness.extract_quoted_var), not a hand-typed copy —
+# mutation testing found a hand copy here stayed green through a shipped
+# cost-validity break (constitution VIII). No live watchdog run, gh api
+# call, or lifecycle-issue comment listing is needed: this feeds the exact
+# missing/malformed decision fixture inputs describing what the surrounding
+# bash would have already resolved (cost_available, whether an attributable
+# comment was found, and any extracted cost token).
 #
 # Usage: .github/scripts/verify-cost-report-collector.sh
 # Exit code: 0 = all assertions passed; 1 = an assertion failed.
@@ -18,28 +21,18 @@ fail_reasons=()
 note() { echo "::notice::verify-cost-report-collector: $1"; }
 reason() { fail_reasons+=("$1"); echo "::error::verify-cost-report-collector: $1"; }
 
-if ! command -v jq >/dev/null 2>&1; then
-  echo "::error::verify-cost-report-collector: jq is not on PATH."
+if ! command -v jq >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+  echo "::error::verify-cost-report-collector: jq and python3 are both required."
   exit 1
 fi
 
-# shellcheck disable=SC2016 # this is a jq program — its $vars must NOT be
-# shell-expanded.
-FILTER='
-  . as $in
-  | if ($in.cost_available // false) != true then []
-    elif ($in.comment_found // false) != true then
-      [{source:"cost-report","class-hint":"cost-line-missing",facts:{stage:$in.stage,run:$in.run,"cost-available":true,"lifecycle-comment-found":false}}]
-    elif ($in.cost_token // null) == null then
-      [{source:"cost-report","class-hint":"cost-line-missing",facts:{stage:$in.stage,run:$in.run,"cost-available":true,"lifecycle-comment-found":true}}]
-    else
-      ($in.cost_token) as $tok
-      | ((($tok | test("^\\$[1-9][0-9]*\\.[0-9]{2}$")) or ($tok | test("^\\$0\\.[0-9]{4}$")))) as $valid
-      | if $valid then []
-        else [{source:"cost-report","class-hint":"cost-line-malformed",facts:{stage:$in.stage,run:$in.run,"observed-text":$in.observed_text,"expected-pattern":"currency amount, 2dp if >= $1 else 4dp (research.md R8)"}}]
-        end
-    end
-'
+FILTER="$(python3 - <<'PY'
+import sys
+sys.path.insert(0, ".github/scripts")
+from wc_shell_harness import extract_quoted_var
+print(extract_quoted_var(".github/workflows/watchdog.yml", "COST_REPORT_FILTER"))
+PY
+)"
 
 run_filter() { jq -c "$FILTER" <<<"$1"; }
 
@@ -98,6 +91,19 @@ if [ "$out" != "[]" ]; then
   reason "a well-formed sub-\$1 figure (\$0.0042, 4dp) must produce no signal under the magnitude-aware pattern, got $out"
 else
   note "well-formed sub-\$1 figure (4dp) correctly produced no signal"
+fi
+
+# ── Negative (boundary): exactly \$1.00 — the magnitude crossover
+#    research.md R8 names between the 2dp (>= \$1) and 4dp (< \$1) patterns.
+#    The 2dp pattern's leading digit class is [1-9], which \$1.00 satisfies
+#    exactly at the boundary, so this must still validate rather than fall
+#    through to "malformed" the way a naive off-by-one on the crossover would.
+# shellcheck disable=SC2016 # single-quoted JSON literal, not a shell expansion
+out="$(run_filter '{"stage":"implement","run":"r6","cost_available":true,"comment_found":true,"cost_token":"$1.00","observed_text":"Cost: $1.00 · 12/60 turns"}')"
+if [ "$out" != "[]" ]; then
+  reason "the exact \$1.00 magnitude-crossover figure (2dp) must produce no signal, got $out"
+else
+  note "the exact \$1.00 magnitude crossover correctly produced no signal"
 fi
 
 if [ "${#fail_reasons[@]}" -eq 0 ]; then

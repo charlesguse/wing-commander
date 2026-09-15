@@ -347,6 +347,7 @@ jobs:
       evidence-available: ${{ steps.aggregate.outputs.evidence-available }}
       signals: ${{ steps.aggregate.outputs.signals }}
       collectors-failed: ${{ steps.aggregate.outputs.collectors-failed }}
+      collectors-total: ${{ steps.aggregate.outputs.collectors-total }}
       untrusted-collectors: ${{ steps.aggregate.outputs.untrusted-collectors }}
       spec-dir: ${{ steps.spec-slug.outputs.spec-dir }}
       lifecycle-issue: ${{ steps.spec-slug.outputs.lifecycle-issue }}
@@ -1462,12 +1463,19 @@ jobs:
             compare_json="$(gh api "repos/$GITHUB_REPOSITORY/compare/$base_sha...$head_sha" --jq '{total_commits, added: [.files[]? | select(.status=="added") | .filename]}' 2>"$RUNNER_TEMP/fp-compare-err.txt")" || { compare_json='{}'; fp_outcome="failed"; }
           fi
           commits_actual="$(printf '%s' "$compare_json" | jq -r '.total_commits // 0')"
-          tests_actual="$(printf '%s' "$compare_json" | jq -r '[.added[]? | select(test("/fixtures/"))] | length' 2>/dev/null || echo 0)"
+          tests_actual="$(printf '%s' "$compare_json" | jq -r '[.added[]? | select(test("/fixtures/"))] | length' 2>/dev/null)" || true
 
           tasks_actual="0"
           if [ -n "$SPEC_DIR" ]; then
-            tasks_actual="$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/tasks.md" -F ref="${_spec_prefix}${SLUG}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | grep -c '^- \[[xX]\]' || echo 0)"
+            tasks_actual="$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/tasks.md" -F ref="${_spec_prefix}${SLUG}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | grep -c '^- \[[xX]\]')" || true
           fi
+
+          # grep -c/jq can leave a non-digit or empty capture on a read
+          # failure under pipefail (e.g. two lines from an old `|| echo 0`
+          # idiom); never hand --argjson anything but a bare integer.
+          case "$commits_actual" in '' | *[!0-9]*) commits_actual=0 ;; esac
+          case "$tests_actual" in '' | *[!0-9]*) tests_actual=0 ;; esac
+          case "$tasks_actual" in '' | *[!0-9]*) tasks_actual=0 ;; esac
 
           # Best-effort natural-language extraction (research.md R6): a
           # number immediately before OR after the claim word. No match is
@@ -1680,7 +1688,7 @@ jobs:
           fi
           jq -c 'map(del(.unmapped))' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
 
-      # Only when every one of the five collector steps outright errored
+      # Only when every one of the nine collector steps outright errored
       # (not merely "produced nothing") does evidence-available flip to
       # false — an empty signals.json with every collector succeeding is a
       # valid "no signal" result that still proceeds to diagnose normally
@@ -1691,18 +1699,25 @@ jobs:
         run: |
           set -uo pipefail
           failed=0
+          total=0
           for outcome in \
             "${{ steps.collect-execution-output.outcome }}" \
             "${{ steps.collect-branch-drift.outcome }}" \
             "${{ steps.collect-spec-meta.outcome }}" \
             "${{ steps.collect-step-summary.outcome }}" \
-            "${{ steps.collect-annotations.outcome }}"; do
+            "${{ steps.collect-annotations.outcome }}" \
+            "${{ steps.collect-turn-budget.outcome }}" \
+            "${{ steps.collect-cost-report.outcome }}" \
+            "${{ steps.collect-final-pr-claims.outcome }}" \
+            "${{ steps.collect-spec-collision.outcome }}"; do
+            total=$((total + 1))
             [ "$outcome" = "failure" ] && failed=$((failed + 1))
           done
           # Exported even when evidence-available stays true: "passed
-          # inspection on 3 of 5 collectors" is a weaker claim than a full
+          # inspection on 3 of 9 collectors" is a weaker claim than a full
           # pass, and the verdict wording downstream must be able to say so.
           echo "collectors-failed=$failed" >> "$GITHUB_OUTPUT"
+          echo "collectors-total=$total" >> "$GITHUB_OUTPUT"
           # Additive to collectors-failed above (FR-010/FR-016): a
           # collector's OWN read-outcome tracking, deduplicated, naming
           # every collector whose underlying gh/git read failed outright
@@ -1712,7 +1727,7 @@ jobs:
           # to fail on a single bad read (contracts/watchdog-read-outcome.md).
           untrusted="$(jq -c '[.[] | select(.outcome=="failed") | .collector] | unique' "$RUNNER_TEMP/collector-outcomes.json" 2>/dev/null || echo '[]')"
           echo "untrusted-collectors=$untrusted" >> "$GITHUB_OUTPUT"
-          if [ "$failed" -ge 5 ]; then
+          if [ "$failed" -ge "$total" ]; then
             echo "evidence-available=false" >> "$GITHUB_OUTPUT"
             echo "signals=[]" >> "$GITHUB_OUTPUT"
             echo "Every evidence collector failed outright — reporting 'could not inspect this run' rather than fabricating a finding." >> "$GITHUB_STEP_SUMMARY"
@@ -2405,14 +2420,16 @@ jobs:
           ISSUE: ${{ needs.collect.outputs.lifecycle-issue }}
           RUN_URL: ${{ needs.collect.outputs.run-url }}
           COLLECTORS_FAILED: ${{ needs.collect.outputs.collectors-failed }}
+          COLLECTORS_TOTAL: ${{ needs.collect.outputs.collectors-total }}
         run: |
           set -uo pipefail
           # A pass reached with fewer collectors is a weaker claim and must
           # say so — evidence classes that were never gathered were never
           # examined.
           failed="${COLLECTORS_FAILED:-0}"
+          total="${COLLECTORS_TOTAL:-9}"
           if [ "$failed" -gt 0 ]; then
-            body="🐕 **Wing Commander · watchdog** — run passed inspection on $((5 - failed)) of 5 evidence collectors ($failed collector(s) errored; their evidence classes were not examined). _[Inspected run]($RUN_URL)_"
+            body="🐕 **Wing Commander · watchdog** — run passed inspection on $((total - failed)) of $total evidence collectors ($failed collector(s) errored; their evidence classes were not examined). _[Inspected run]($RUN_URL)_"
           else
             body="🐕 **Wing Commander · watchdog** — run passed inspection. No problems detected. _[Inspected run]($RUN_URL)_"
           fi

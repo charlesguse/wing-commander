@@ -131,12 +131,29 @@ obs_branch = re.search(
     r'elif \(\$src \| startswith\("turn-budget"\)\)\s*\n(?:\s*#[^\n]*\n)*\s*then \{kind: "([^"]+)"',
     text,
 )
+# specs/046-watchdog-supervision-collectors leg-2: mutation testing found
+# this gate never looks at the suppression precheck's OWN `gh issue list`
+# call, so mutating its --state flag from closed to open (a defect that
+# would suppress on any OPEN issue, not just an accepted one) stayed green.
+state_flag = re.search(
+    r'gh issue list --repo "\$GITHUB_REPOSITORY" --label "pipeline-defect" '
+    r'--label "🐕 · turn-budget-trend" --state (\S+) --limit 200 --json body',
+    text,
+)
 
 failures = []
 if not heredoc:
     failures.append("could not find the collect-turn-budget suppression's python heredoc (<<'PY' ... PY) in watchdog.yml")
 if not fp_line:
     failures.append("could not find the collect-turn-budget suppression's fingerprint printf|sha256sum|cut line in watchdog.yml")
+if not state_flag:
+    failures.append("could not find the collect-turn-budget suppression's `gh issue list ... --state` call in watchdog.yml")
+elif state_flag.group(1) != "closed":
+    failures.append(
+        f"collect-turn-budget's suppression precheck queries `gh issue list` with "
+        f"--state {state_flag.group(1)!r}, expected 'closed' — suppression must only "
+        f"ever match a CLOSED (maintainer-accepted) issue, never an open one"
+    )
 if not obs_branch:
     failures.append("could not find Stamp signal ids' turn-budget (per-run) branch in watchdog.yml")
 elif obs_branch.group(1) != "turn-budget-trend":

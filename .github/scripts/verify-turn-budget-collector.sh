@@ -3,7 +3,10 @@
 # (id: collect-turn-budget) — specs/046-watchdog-supervision-collectors,
 # contracts/gate-coverage-046.md's verify-turn-budget-collector.sh row.
 #
-# FILTER below is a copy of watchdog.yml's TURN_BUDGET_FILTER — the
+# FILTER below is EXTRACTED from watchdog.yml's live TURN_BUDGET_FILTER at
+# run time (wc_shell_harness.extract_quoted_var), not a hand-typed copy —
+# mutation testing found a hand copy here stayed green through a shipped
+# critical-band-condition break (constitution VIII). This is the
 # self-contained function of (this run's own metrics record, the stage's
 # recent history, the two thresholds) the live collect-turn-budget step
 # evaluates. No live watchdog run or gh/git call is needed: this feeds
@@ -19,59 +22,18 @@ fail_reasons=()
 note() { echo "::notice::verify-turn-budget-collector: $1"; }
 reason() { fail_reasons+=("$1"); echo "::error::verify-turn-budget-collector: $1"; }
 
-if ! command -v jq >/dev/null 2>&1; then
-  echo "::error::verify-turn-budget-collector: jq is not on PATH."
+if ! command -v jq >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+  echo "::error::verify-turn-budget-collector: jq and python3 are both required."
   exit 1
 fi
 
-# shellcheck disable=SC2016 # this is a jq program — its $vars must NOT be
-# shell-expanded.
-FILTER='
-  . as $in
-  | ($in.own // {}) as $own
-  | (($own.available // false) == true) as $own_available
-  | (if $own_available and $own.counted != null and $own.intended != null and ($own.counted >= $own.intended)
-     then {
-       source:"turn-budget","class-hint":null,
-       facts:{
-         stage:$in.stage, run:$in.run,
-         "counted-turns":$own.counted, "intended-budget":$own.intended,
-         "enforced-ceiling":$own.ceiling,
-         "consumed-ceiling-fraction": (if ($own.ceiling // 0) > 0 then (($own.counted / $own.ceiling * 1000 | round) / 1000) else 0 end)
-       }
-     }
-     else null end) as $per_run
-  | ($in.history // []) as $hist0
-  | (if $own_available and $own.counted != null then
-       (if ($hist0|length) > 0 and ($hist0[-1].run == $in.run) then $hist0
-        else $hist0 + [{run:$in.run, counted:$own.counted, intended:$own.intended, ceiling:$own.ceiling}] end)
-     else $hist0 end) as $hist1
-  | ($in.history_window // 10) as $n
-  | ($hist1[-$n:]) as $window
-  | ([$window[] | (.counted != null and .intended != null and .counted >= .intended)] | reverse
-      | reduce .[] as $b ({n:0,stop:false}; if .stop then . elif $b then {n:(.n+1),stop:false} else {n:.n,stop:true} end) | .n
-    ) as $consecutive
-  | ([$window[] | select((.ceiling // 0) > 0) | (.counted / .ceiling)] | if length>0 then max else 0 end) as $max_frac_raw
-  | (($max_frac_raw*1000|round)/1000) as $max_frac
-  | ((((1-$max_frac)*1000)|round)/1000) as $headroom
-  | ($consecutive >= ($in.consecutive_trigger // 3)) as $meets_consecutive
-  | ($max_frac >= ($in.climb_fraction // 0.6)) as $meets_climb
-  | (if $meets_consecutive and $meets_climb then "critical"
-     elif $meets_consecutive then "watch"
-     elif $meets_climb then "elevated"
-     else null end) as $band
-  | (if $per_run == null then null else ($per_run + {facts: ($per_run.facts + {band: $band})}) end) as $per_run
-  | {
-      "per-run": $per_run,
-      "trend": (if $band == null then null else {
-         stage: $in.stage, band: $band, "window-size": ($window|length),
-         "consecutive-at-or-over-budget": $consecutive,
-         "max-consumed-ceiling-fraction": $max_frac,
-         "headroom-remaining-fraction": $headroom,
-         history: [$window[] | {run: .run, "counted-turns": .counted, "intended-budget": .intended}]
-      } end)
-    }
-'
+FILTER="$(python3 - <<'PY'
+import sys
+sys.path.insert(0, ".github/scripts")
+from wc_shell_harness import extract_quoted_var
+print(extract_quoted_var(".github/workflows/watchdog.yml", "TURN_BUDGET_FILTER"))
+PY
+)"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -179,6 +141,37 @@ if [ "$per_run" != "null" ]; then
   reason "turns.available: false must produce no per-run signal even when counted >= intended, got $per_run"
 else
   note "turns.available: false correctly produced no per-run signal"
+fi
+
+# ── Fixture 6 (boundary): counted-turns EQUALS intended-budget exactly
+#    (180 == 180, no prior history) — the per-run gate is `counted >=
+#    intended`, so the boundary itself, not just strictly-over, must emit.
+boundary_counted_in='{"stage":"implement","run":"r3","own":{"available":true,"counted":180,"intended":180,"ceiling":450},"history":[],"history_window":10,"consecutive_trigger":3,"climb_fraction":0.6}'
+out="$(run_filter "$boundary_counted_in")"
+note "counted==intended boundary fixture output: $out"
+per_run="$(jq -c '."per-run"' <<<"$out")"
+if [ "$per_run" = "null" ]; then
+  reason "counted-turns exactly equal to intended-budget (180 == 180) must still emit a per-run signal ('>=', not '>'), got null"
+else
+  note "counted-turns exactly equal to intended-budget correctly emitted a per-run signal"
+fi
+
+# ── Fixture 7 (boundary): the window's max consumed-ceiling-fraction lands
+#    on EXACTLY climb_fraction (0.6), isolated from the consecutive trigger
+#    (both contributing runs are individually under their own budget, so
+#    consecutive stays 0) — the climb gate is `max_frac >= climb_fraction`,
+#    so the boundary itself must still produce band "elevated".
+boundary_climb_in='{"stage":"implement","run":"r3","own":{"available":true,"counted":100,"intended":500,"ceiling":1000},"history":[{"run":"r1","counted":300,"intended":500,"ceiling":500}],"history_window":10,"consecutive_trigger":3,"climb_fraction":0.6}'
+out="$(run_filter "$boundary_climb_in")"
+note "climb_fraction==0.6 boundary fixture output: $out"
+band="$(jq -r '.trend.band // "null"' <<<"$out")"
+max_frac="$(jq -r '.trend."max-consumed-ceiling-fraction" // "null"' <<<"$out")"
+if [ "$max_frac" != "0.6" ]; then
+  reason "boundary fixture expected max-consumed-ceiling-fraction exactly 0.6, got '$max_frac' (fixture no longer isolates the climb boundary)"
+elif [ "$band" != "elevated" ]; then
+  reason "a window whose max consumed-ceiling-fraction lands exactly on climb_fraction (0.6 >= 0.6) must produce band 'elevated' ('>=', not '>'), got '$band'"
+else
+  note "max-consumed-ceiling-fraction exactly at climb_fraction correctly produced band 'elevated'"
 fi
 
 # ── Note on the skipped/cancelled fixture (attribution invariant, FR-004):

@@ -4,10 +4,13 @@
 # collectors, contracts/gate-coverage-046.md's
 # verify-spec-collision-collector.sh row.
 #
-# FILTER below is a copy of watchdog.yml's SPEC_COLLISION_FILTER. No live
-# gh pr list call is needed: this feeds the exact claimant-enumeration
-# fixture inputs the surrounding bash would have already derived from
-# `gh pr list` and the checked-out `specs/` directory listing.
+# FILTER below is EXTRACTED from watchdog.yml's live SPEC_COLLISION_FILTER
+# at run time (wc_shell_harness.extract_quoted_var), not a hand-typed copy —
+# mutation testing found a hand copy here stayed green through a shipped
+# collision-threshold break (constitution VIII). No live gh pr list call is
+# needed: this feeds the exact claimant-enumeration fixture inputs the
+# surrounding bash would have already derived from `gh pr list` and the
+# checked-out `specs/` directory listing.
 #
 # Usage: .github/scripts/verify-spec-collision-collector.sh
 # Exit code: 0 = all assertions passed; 1 = an assertion failed.
@@ -18,22 +21,18 @@ fail_reasons=()
 note() { echo "::notice::verify-spec-collision-collector: $1"; }
 reason() { fail_reasons+=("$1"); echo "::error::verify-spec-collision-collector: $1"; }
 
-if ! command -v jq >/dev/null 2>&1; then
-  echo "::error::verify-spec-collision-collector: jq is not on PATH."
+if ! command -v jq >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+  echo "::error::verify-spec-collision-collector: jq and python3 are both required."
   exit 1
 fi
 
-# shellcheck disable=SC2016 # this is a jq program — its $vars must NOT be
-# shell-expanded.
-FILTER='
-  . as $in
-  | (($in.pr_claimants // []) | map(select(.number == $in.own_number)) | map({kind:"open-pr", pr, branch})) as $own_prs
-  | (($in.dir_claimants // []) | map(select(.number == $in.own_number)) | map({kind:"main-directory", dir})) as $own_dirs
-  | (($own_prs + $own_dirs) | unique) as $claimants
-  | if ($claimants | length) >= 2 then
-      [{source:"spec-collision","class-hint":"spec-number-collision",facts:{number:$in.own_number, claimants: ($claimants | sort_by([.kind, (.pr // 0), (.dir // "")]))}}]
-    else [] end
-'
+FILTER="$(python3 - <<'PY'
+import sys
+sys.path.insert(0, ".github/scripts")
+from wc_shell_harness import extract_quoted_var
+print(extract_quoted_var(".github/workflows/watchdog.yml", "SPEC_COLLISION_FILTER"))
+PY
+)"
 
 run_filter() { jq -c "$FILTER" <<<"$1"; }
 

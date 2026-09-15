@@ -298,6 +298,28 @@ def run_step(bash, script, workdir, env_extra, runner_temp, path_prepend=None):
     return proc.returncode, proc.stdout + proc.stderr, outputs, summary
 
 
+def extract_quoted_var(path, varname):
+    """The single-quoted bash string assigned to `varname='...'` in `path`.
+
+    specs/046-watchdog-supervision-collectors leg-2: several gates fixture a
+    workflow step's jq filter by retyping it as a second `FILTER='...'`
+    literal in the gate script itself, which is exactly the copy constitution
+    VIII forbids — mutation testing showed each one stayed green through a
+    shipped-line break because the gate never looked at the shipped text at
+    all. This extracts the live single-quoted assignment instead, so the
+    caller can feed jq the text watchdog.yml actually ships.
+    """
+    import re
+    text = open(path, encoding="utf-8").read()
+    m = re.search(re.escape(varname) + r"='\n(.*?)\n[ \t]*'\n", text, re.S)
+    if not m:
+        sys.exit(f"::error file={path}::could not find a bash single-quoted "
+                 f"assignment to {varname!r} in {path}. If it was renamed or "
+                 f"reshaped, update the workflow and its harness together — "
+                 f"do not let the harness fall back to a hand-typed copy.")
+    return m.group(1)
+
+
 def find_step(path, name):
     """The step dict named `name` in workflow OR composite action `path`.
 

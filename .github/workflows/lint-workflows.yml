@@ -3396,11 +3396,14 @@ jobs:
 
       # Gates 53-58 — specs/046-watchdog-supervision-collectors' four new
       # watchdog collectors and the narrative-drift issue-exemption routing.
-      # Each gate feeds the exact jq/bash the live collect-* step (or, for
-      # gate 54, the collect-turn-budget suppression pre-check and its
-      # dependency on Stamp signal ids/Compute fingerprint) evaluates, the
-      # same "same subject, same arguments, locally and in CI" shape every
-      # gate above already uses (constitution VIII).
+      # Each gate EXTRACTS the exact jq/bash the live collect-* step ships
+      # (wc_shell_harness.extract_quoted_var/find_step+run_step) rather than
+      # retyping a copy, and either executes it directly (53, 55-58) or, for
+      # 54, the collect-turn-budget suppression pre-check's own formula and
+      # `gh issue list --state` flag, diffs the extracted text against the
+      # gate's cross-check — the same "same subject, same arguments, locally
+      # and in CI" shape every gate above already uses (constitution VIII;
+      # specs/046-watchdog-supervision-collectors leg-2).
       - name: Gate 53 — the turn-budget collector's band computation and per-run signal gating
         if: "!cancelled()"
         run: bash .github/scripts/verify-turn-budget-collector.sh
