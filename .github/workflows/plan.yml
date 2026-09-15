@@ -1042,6 +1042,17 @@ jobs:
           echo "Plan PR #$pr opened; issue #$ISSUE moved to stage:plan." >> "$GITHUB_STEP_SUMMARY"
 
       # Deterministic verification — no agent turns spent checking facts.
+      # The spec-meta.json read has one home, the wing-commander-spec-meta
+      # composite (#340, Gate 61); the verify step compares its outputs.
+      - name: Read spec-meta.json from the spec branch (auto)
+        id: meta-auto
+        if: steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-spec-meta
+        with:
+          spec-prefix: ${{ inputs.spec-prefix }}
+          slug: ${{ needs.resolve-spec.outputs.slug }}
+          spec-dir: ${{ needs.resolve-spec.outputs.spec-dir }}
+
       # Auto mode: plan.md and the stage flip must be on the spec branch.
       - name: Verify plan committed (auto)
         if: steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto'
@@ -1049,6 +1060,8 @@ jobs:
           SLUG: ${{ needs.resolve-spec.outputs.slug }}
           SPEC_DIR: ${{ needs.resolve-spec.outputs.spec-dir }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          META_IDENTITY_OK: ${{ steps.meta-auto.outputs.identity-ok }}
+          META_STAGE: ${{ steps.meta-auto.outputs.stage }}
         run: |
           git fetch origin "+refs/heads/$SPEC_PREFIX$SLUG:refs/remotes/origin/$SPEC_PREFIX$SLUG"
           if ! git cat-file -e "origin/$SPEC_PREFIX$SLUG:$SPEC_DIR/plan.md" 2>/dev/null; then
@@ -1059,7 +1072,11 @@ jobs:
             echo "::error::Plan run finished but $SPEC_DIR/plan.md on $SPEC_PREFIX$SLUG is empty."
             exit 1
           fi
-          stage=$(git show "origin/$SPEC_PREFIX$SLUG:$SPEC_DIR/spec-meta.json" | jq -r '.stage')
+          if [ "$META_IDENTITY_OK" != "true" ]; then
+            echo "::error::Plan run finished but $SPEC_DIR/spec-meta.json on $SPEC_PREFIX$SLUG is missing or does not identify $SPEC_DIR."
+            exit 1
+          fi
+          stage="$META_STAGE"
           if [ "$stage" != "plan" ]; then
             echo "::error::Plan run finished but spec-meta.json stage is '$stage', expected 'plan'."
             exit 1

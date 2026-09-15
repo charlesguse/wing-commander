@@ -963,6 +963,17 @@ jobs:
       # inferred from a converge commit's absence for a run that was cut
       # off). Exhausted with no progress, or exhausted without the lifecycle
       # record advancing, takes today's failed path unchanged.
+      # The spec-meta.json read has one home, the wing-commander-spec-meta
+      # composite (#340, Gate 61); the read-back compares its outputs.
+      - name: Read spec-meta.json from the spec branch (cycle)
+        id: meta-cycle
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-spec-meta
+        with:
+          spec-prefix: ${{ inputs.spec-prefix }}
+          slug: ${{ steps.spec.outputs.slug }}
+          spec-dir: ${{ steps.spec.outputs.spec-dir }}
+
       - name: Read back cycle outcome
         id: outcome
         shell: bash
@@ -974,6 +985,9 @@ jobs:
           BASE_SHA: ${{ steps.base.outputs.base-sha }}
           DEFAULT_BRANCH: ${{ inputs.default-branch }}
           CYCLE_RESULT: ${{ steps.cycle.outcome }}
+          META_IDENTITY_OK: ${{ steps.meta-cycle.outputs.identity-ok }}
+          META_STAGE: ${{ steps.meta-cycle.outputs.stage }}
+          META_ITERATION: ${{ steps.meta-cycle.outputs.iteration }}
           VERDICT: ${{ steps.cycle-verdict.outputs.verdict }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
           # The second alternative rides only on a RESOLVED slug: with an
@@ -1006,8 +1020,12 @@ jobs:
           stage=""
           iter=""
           if [ "$CYCLE_RESULT" = "success" ] || [ "$VERDICT" = "exhausted" ]; then
-            stage=$(git show "origin/${SPEC_PREFIX}$SLUG:$SPEC_DIR/spec-meta.json" | jq -r '.stage // empty')
-            iter=$(git show "origin/${SPEC_PREFIX}$SLUG:$SPEC_DIR/spec-meta.json" | jq -r '.iteration // 0')
+            # Fields only from a record that identifies $SPEC_DIR; anything
+            # else reads as "the record did not advance" (#340).
+            if [ "$META_IDENTITY_OK" = "true" ]; then
+              stage="$META_STAGE"
+              iter="${META_ITERATION:-0}"
+            fi
             if [ "$stage" = "implement" ] && [ "$iter" = "$ITERATION" ]; then
               advanced=true
             fi
@@ -1391,6 +1409,16 @@ jobs:
       # primary attempt's own push left the branch), not the original
       # pre-primary-cycle base: a retry that made no progress of its own must
       # not inherit the primary attempt's partial work as evidence.
+      # -- see the cycle's read step above (#340).
+      - name: Read spec-meta.json from the spec branch (retry)
+        id: meta-retry
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && (steps.retry.outcome == 'success' || steps.retry.outcome == 'failure')
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-spec-meta
+        with:
+          spec-prefix: ${{ inputs.spec-prefix }}
+          slug: ${{ steps.spec.outputs.slug }}
+          spec-dir: ${{ steps.spec.outputs.spec-dir }}
+
       - name: Read back retry outcome
         id: retry-outcome
         shell: bash
@@ -1402,6 +1430,9 @@ jobs:
           BASE_SHA: ${{ steps.retry-base.outputs.base-sha }}
           DEFAULT_BRANCH: ${{ inputs.default-branch }}
           RETRY_RESULT: ${{ steps.retry.outcome }}
+          META_IDENTITY_OK: ${{ steps.meta-retry.outputs.identity-ok }}
+          META_STAGE: ${{ steps.meta-retry.outputs.stage }}
+          META_ITERATION: ${{ steps.meta-retry.outputs.iteration }}
           # the second alternative rides only on a resolved slug; an empty one would match any bot.
           AGENT_AUTHOR_RE: claude\[bot\]${{ steps.ctx.outputs.bot-slug && format('|{0}\[bot\]', steps.ctx.outputs.bot-slug) || '' }}
           VERDICT: ${{ steps.retry-verdict.outputs.verdict }}
@@ -1432,8 +1463,12 @@ jobs:
           stage=""
           iter=""
           if [ "$RETRY_RESULT" = "success" ] || [ "$VERDICT" = "exhausted" ]; then
-            stage=$(git show "origin/${SPEC_PREFIX}$SLUG:$SPEC_DIR/spec-meta.json" | jq -r '.stage // empty')
-            iter=$(git show "origin/${SPEC_PREFIX}$SLUG:$SPEC_DIR/spec-meta.json" | jq -r '.iteration // 0')
+            # Fields only from a record that identifies $SPEC_DIR; anything
+            # else reads as "the record did not advance" (#340).
+            if [ "$META_IDENTITY_OK" = "true" ]; then
+              stage="$META_STAGE"
+              iter="${META_ITERATION:-0}"
+            fi
             if [ "$stage" = "implement" ] && [ "$iter" = "$ITERATION" ]; then
               advanced=true
             fi
