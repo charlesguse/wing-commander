@@ -293,7 +293,7 @@ no live two-run drive required for this to hold.)
 
 ### Implementation for User Story 2
 
-- [ ] T021 [US2] Extend `.github/scripts/verify-branch-drift-sha-baseline.py`
+- [X] T021 [US2] Extend `.github/scripts/verify-branch-drift-sha-baseline.py`
   with a scenario asserting that when `baseline = "exact-sha"` fires (T013),
   the collector issues no `git fetch`/`rev-parse`/`rev-list` against the
   measured branch's *current* state at all — only the `since-created`
@@ -304,7 +304,7 @@ no live two-run drive required for this to hold.)
   AS1-AS2, spec.md: "the collector never reads the branch's current state
   for this arm at all").
 
-- [ ] T022 [US2] Re-read `specs/024-watchdog-precision-hardening/data-model.md`'s
+- [X] T022 [US2] Re-read `specs/024-watchdog-precision-hardening/data-model.md`'s
   fingerprint definition (`sha256(class + "|signals:" +
   sorted-joined(signal ids))`) and confirm no code change is needed: the
   fingerprint projects only `branch` and signal identity, never `facts`
