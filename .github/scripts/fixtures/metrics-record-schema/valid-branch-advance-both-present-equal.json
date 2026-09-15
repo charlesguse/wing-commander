@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "record_available": false,
+  "run": {
+    "workflow_run_id": "1234567890",
+    "job_key": "cycle",
+    "job_id": null,
+    "step_index": 3,
+    "record_key": "1234567890:cycle:3"
+  },
+  "stage": "implement",
+  "stage_available": true,
+  "run_label": "branch advance",
+  "spec": {
+    "spec_dir": "specs/050-branch-drift-sha-baseline",
+    "issue": 331,
+    "identity_available": true
+  },
+  "model": "claude-sonnet-5",
+  "model_available": true,
+  "turns": {
+    "counted": null,
+    "reported": null,
+    "intended_budget": null,
+    "enforced_ceiling": null,
+    "available": false
+  },
+  "tokens": {
+    "input": null,
+    "output": null,
+    "cache_read": null,
+    "cache_creation": null,
+    "available": false
+  },
+  "cost_usd": null,
+  "cost_available": false,
+  "duration_ms": null,
+  "duration_available": false,
+  "outcome": "unavailable",
+  "per_model": [],
+  "per_model_available": false,
+  "emitted_at": "2026-09-15T14:03:11Z",
+  "branch_advance": {
+    "available": true,
+    "branch": "spec/050-branch-drift-sha-baseline",
+    "before_sha": "5f2a1c9000000000000000000000000000000a",
+    "before_available": true,
+    "after_sha": "5f2a1c9000000000000000000000000000000a",
+    "after_available": true,
+    "commits": 0,
+    "commits_available": true
+  }
+}

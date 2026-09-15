@@ -122,6 +122,56 @@ inputs:
       single-agent-step, non-matrix job.
     required: false
     default: '0'
+  branch:
+    description: >
+      The branch this invocation's before/after SHA pair describes (e.g.
+      spec/050-branch-drift-sha-baseline), recorded literally by the
+      caller — never derived here from a prefix or slug default. Absent
+      -> the record's `branch_advance` group is `available: false`
+      (specs/050-branch-drift-sha-baseline).
+    required: false
+    default: ''
+  before-sha:
+    description: >
+      The branch's tip as the caller observed it at the start of the
+      unit of work this record describes. Ignored unless
+      before-sha-available is 'true'.
+    required: false
+    default: ''
+  before-sha-available:
+    description: >
+      'true' when before-sha was actually resolved by the caller;
+      'false' degrades `branch_advance.before_sha` to null and
+      `.before_available` to false without affecting the rest of the
+      group.
+    required: false
+    default: 'false'
+  after-sha:
+    description: >
+      The branch's tip as the caller observed it after every push the
+      unit of work could make. Ignored unless after-sha-available is
+      'true'.
+    required: false
+    default: ''
+  after-sha-available:
+    description: >
+      'true' when after-sha was actually resolved by the caller; see
+      before-sha-available.
+    required: false
+    default: 'false'
+  commits:
+    description: >
+      `git rev-list --count before-sha..after-sha`, computed once by the
+      caller while it still holds both SHAs locally — never recomputed
+      by a reader. Ignored unless commits-available is 'true'.
+    required: false
+    default: ''
+  commits-available:
+    description: >
+      'true' when commits was actually resolved by the caller; see
+      before-sha-available.
+    required: false
+    default: 'false'
 
 outputs:
   record-json:
@@ -164,6 +214,13 @@ runs:
         STEP_INDEX: ${{ inputs.step-index }}
         RUN_ID: ${{ github.run_id }}
         JOB_KEY: ${{ github.job }}
+        BRANCH: ${{ inputs.branch }}
+        BEFORE_SHA: ${{ inputs.before-sha }}
+        BEFORE_SHA_AVAILABLE: ${{ inputs.before-sha-available }}
+        AFTER_SHA: ${{ inputs.after-sha }}
+        AFTER_SHA_AVAILABLE: ${{ inputs.after-sha-available }}
+        COMMITS: ${{ inputs.commits }}
+        COMMITS_AVAILABLE: ${{ inputs.commits-available }}
       run: |
         set -uo pipefail
 
@@ -187,6 +244,17 @@ runs:
         JOB_KEY="${JOB_KEY:-}"
         RECORD_KEY="${RUN_ID}:${JOB_KEY}:${STEP_INDEX}"
         EMITTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        BRANCH="${BRANCH:-}"
+        BEFORE_SHA="${BEFORE_SHA:-}"
+        BEFORE_SHA_AVAILABLE="${BEFORE_SHA_AVAILABLE:-false}"
+        AFTER_SHA="${AFTER_SHA:-}"
+        AFTER_SHA_AVAILABLE="${AFTER_SHA_AVAILABLE:-false}"
+        COMMITS="${COMMITS:-}"
+        COMMITS_AVAILABLE="${COMMITS_AVAILABLE:-false}"
+        branch_advance_available=false
+        if [ -n "$BRANCH" ] && { [ "$BEFORE_SHA_AVAILABLE" = "true" ] || [ "$AFTER_SHA_AVAILABLE" = "true" ]; }; then
+          branch_advance_available=true
+        fi
 
         stage_available=false
         [ -n "$STAGE" ] && stage_available=true
@@ -239,6 +307,14 @@ runs:
             --argjson per_model "${per_model_json:-[]}" \
             --argjson per_model_available "${per_model_available:-false}" \
             --arg emitted_at "$EMITTED_AT" \
+            --argjson branch_advance_available "$branch_advance_available" \
+            --arg branch "$BRANCH" \
+            --arg before_sha "$BEFORE_SHA" \
+            --argjson before_available "$([ "$BEFORE_SHA_AVAILABLE" = "true" ] && echo true || echo false)" \
+            --arg after_sha "$AFTER_SHA" \
+            --argjson after_available "$([ "$AFTER_SHA_AVAILABLE" = "true" ] && echo true || echo false)" \
+            --arg commits "$COMMITS" \
+            --argjson commits_available "$([ "$COMMITS_AVAILABLE" = "true" ] && echo true || echo false)" \
             '
             def numOrNull($s): if $s == "" then null else ($s | tonumber) end;
             def strOrNull($s): if $s == "" then null else $s end;
@@ -283,7 +359,17 @@ runs:
               outcome: $outcome,
               per_model: $per_model,
               per_model_available: $per_model_available,
-              emitted_at: $emitted_at
+              emitted_at: $emitted_at,
+              branch_advance: {
+                available: $branch_advance_available,
+                branch: (if $branch_advance_available then strOrNull($branch) else null end),
+                before_sha: (if $before_available then strOrNull($before_sha) else null end),
+                before_available: $before_available,
+                after_sha: (if $after_available then strOrNull($after_sha) else null end),
+                after_available: $after_available,
+                commits: (if $commits_available then numOrNull($commits) else null end),
+                commits_available: $commits_available
+              }
             }' > "$RECORD_PATH" 2>/dev/null || printf '{}' > "$RECORD_PATH"
 
           # The cost-line output (see the outputs block above). Runs in BOTH
