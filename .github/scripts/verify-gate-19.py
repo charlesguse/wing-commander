@@ -1208,6 +1208,11 @@ def run_spec_slug_one(script, env, sc, tmproot):
 
     run_env = with_actions_defaults(env)
     run_env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
+    # The step sources $GITHUB_ACTION_PATH/../_shared/read-spec-meta.sh
+    # (#340): point it at the real action directory so the real shared
+    # script runs, against the stubbed git and gh on PATH.
+    run_env["GITHUB_ACTION_PATH"] = os.path.abspath(
+        os.path.dirname(SPEC_SLUG_ACTION)).replace("\\", "/")
     run_env["HEAD_BRANCH"] = sc["head_branch"]
     run_env["RUN_NAME"] = sc.get("run_name", "Wing Commander · 5 implement")
     run_env["GH_STUB_RECORDS"] = "\n".join(sc["records"])

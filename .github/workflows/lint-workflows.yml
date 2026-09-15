@@ -3443,6 +3443,23 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-correlated-release-dispatch.py --self-test
 
+      # Gate 61 — a spec branch's spec-meta.json is read in one place (#340).
+      # The fetch-then-`git show`-then-jq read was pasted into implement.yml
+      # (both read-backs), plan.yml, tasks.yml and the watchdog's identity
+      # composite, and only that last copy checked the file identifies the
+      # directory it was read from. The one home is
+      # .github/actions/_shared/read-spec-meta.sh, reached by workflows
+      # through wing-commander-spec-meta; this fails on any other `git show`
+      # of a branch's spec-meta.json and on either consumer dropping its
+      # call to the script. Numbered 61: 53-58 landed with spec 046, 59 with
+      # spec 048, and spec 049's open final PR holds 60.
+      - name: Gate 61 — a spec branch's spec-meta.json is read in one place
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-spec-meta-single-home.py
+      - name: Gate 61 self-test — a pasted copy and a dropped call each fail
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-spec-meta-single-home.py --self-test
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

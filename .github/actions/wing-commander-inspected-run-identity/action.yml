@@ -219,13 +219,14 @@ runs:
         meta_stage=""
         if [ -n "$slug" ]; then
           spec_dir="specs/$slug"
-          git fetch --no-tags --quiet origin "refs/heads/${SPEC_PREFIX}$slug:refs/remotes/origin/${SPEC_PREFIX}$slug" 2>/dev/null || true
-          if meta="$(git show "refs/remotes/origin/${SPEC_PREFIX}$slug:$spec_dir/spec-meta.json" 2>/dev/null)"; then
-            meta_dir="$(printf '%s' "$meta" | jq -r '.spec_dir // empty' 2>/dev/null || true)"
-            if [ "$meta_dir" = "$spec_dir" ]; then
-              issue="$(printf '%s' "$meta" | jq -r '.issue // empty' 2>/dev/null || true)"
-              meta_stage="$(printf '%s' "$meta" | jq -r '.stage // empty' 2>/dev/null || true)"
-            fi
+          # One home for this read (#340, Gate 61): _shared/read-spec-meta.sh
+          # fetches the branch, reads the file and applies the self-identity
+          # check; its values are sanitised, so eval is safe.
+          eval "$(bash "$GITHUB_ACTION_PATH/../_shared/read-spec-meta.sh" "$SPEC_PREFIX" "$slug" "$spec_dir")"
+          if [ "$meta_identity_ok" = "true" ]; then
+            issue="$meta_issue"
+          else
+            meta_stage=""
           fi
         fi
 
