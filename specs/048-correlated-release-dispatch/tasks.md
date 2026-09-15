@@ -609,7 +609,7 @@ behavior. None of these require further workflow-code changes; each is a
 documentation-only correction so FR-019's "one place" contract and
 research.md's decision record stay true to what actually shipped.
 
-- [ ] T031 Update `research.md` D4 (~lines 152-198), D5 (~lines 200-254)
+- [X] T031 Update `research.md` D4 (~lines 152-198), D5 (~lines 200-254)
       and D6 (~lines 256-278) per FR-019 (contradicts). D6 explicitly
       decided to keep `refs/heads/main` a literal in both new checks and
       explicitly rejected "resolving the default branch dynamically" as
@@ -629,8 +629,17 @@ research.md's decision record stay true to what actually shipped.
       `refs/heads/main` mentions this same drift left in
       `contracts/release-handover-contract.md` (~lines 41, 95, 128) and
       `contracts/regression-gate.md`'s check-2 description (~line 38).
+      Done: rewrote D6 to record the reversal (T027's fix is a
+      correctness bug the original "scope creep" framing missed, not a
+      published-stage concern), updated D4/D5's snippets to the shipped
+      `DEFAULT_BRANCH`/`gh repo view` reads, and replaced the three
+      `refs/heads/main` mentions in `release-handover-contract.md`
+      (the tag-time-refusal line, the branch-advanced-classification
+      line, and the D6 cross-reference) with the dynamic-default-branch
+      wording. `regression-gate.md`'s check-2 row now names
+      `refs/heads/${DEFAULT_BRANCH}` instead of the literal.
 
-- [ ] T032 Document T025's bounded-wait mechanism in
+- [X] T032 Document T025's bounded-wait mechanism in
       `contracts/release-handover-contract.md`'s "What `auto-release.yml`
       promises" section (item 2, ~lines 80-90) per FR-019 (missing). The
       shipped `dispatch-release` step now polls the correlated run's
@@ -642,8 +651,12 @@ research.md's decision record stay true to what actually shipped.
       failed" report. FR-019 requires this contract document to be the
       one place this mechanism is written down; today it is only in the
       workflow's own inline comments.
+      Done: added the wait mechanism to the contract's item 2 (the
+      60-attempt/10s status poll when `correlation = found`, the fixed
+      90s wait otherwise, both reading only `status` and never
+      `conclusion`, both running before the tag fetch).
 
-- [ ] T033 Update `contracts/regression-gate.md`'s "## The four checks"
+- [X] T033 Update `contracts/regression-gate.md`'s "## The four checks"
       section (~line 29) to "## The five checks" per FR-018/SC-005
       (partial). `verify-correlated-release-dispatch.py` now enforces a
       fifth check (added this cycle for T025: the pre-tag-fetch wait for
@@ -651,6 +664,11 @@ research.md's decision record stay true to what actually shipped.
       mutation) that this contract document — normative for the gate,
       per its own "Subject" section — does not describe, undercounting
       what the shipped gate actually protects.
+      Done: renamed the section, added check 5's row to the table
+      (naming Check 5's `wait_before_tag_read_errors` behavior and its
+      FR-018 clause), and updated the self-test fixture-shape paragraph's
+      "clean" fixture description and "not the other three" wording to
+      cover all five checks.
 
 **Checkpoint**: These are documentation-only tasks; no gate re-run is
 required, but `python .github/scripts/run-local-gates.py` should still

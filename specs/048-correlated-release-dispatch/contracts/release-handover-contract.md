@@ -38,7 +38,8 @@ manual path" below.
    - The workflow checks out `commit` (not the branch tip) and builds
      the release from it.
    - Immediately before creating any tag, the workflow re-reads
-     `refs/heads/main` live from `origin` and refuses — creating no
+     `refs/heads/${{ github.event.repository.default_branch }}` live from
+     `origin` and refuses — creating no
      exact tag, no floating major tag, and publishing no release — unless
      that live read still equals `commit` exactly. This is evaluated at
      tag time, not at the moment the request was accepted or the
@@ -79,20 +80,33 @@ manual path" below.
 
 2. **A release is reported on tag state alone** (FR-007, FR-007a).
    After the correlation search concludes (regardless of its outcome),
-   the workflow independently fetches `refs/tags/<next_version>` and
-   compares the commit it points at to the verified head *this attempt*
-   requested — never against the branch tip at report time. That
-   comparison, and only that comparison, decides whether the outcome is
-   `released`. The correlated run (if any) supplies only the report's
-   log link and, when the outcome is not `released`, diagnostic detail —
-   it is never itself the proof a release happened (Edge Case: "the
-   release actually happened but was never correlated" still reports
-   `released`).
+   the workflow waits for that outcome's own run to reach a terminal
+   state before ever reading tag state: when `correlation` is `found`,
+   it polls `gh run view <correlated-run-id> --json status --jq
+   .status` (never `.conclusion`, which plays no part in the verdict)
+   until that run's `status` is `completed`, bounded at 60 attempts 10
+   seconds apart; when no single run was found to wait on, it waits a
+   fixed 90 seconds instead. This closes a timing race a correlated run
+   can still be mid-flight (checkout, lint, tag creation) the instant
+   the correlation search concludes, and reading tag state immediately
+   would file a false "release dispatch failed" report moments before
+   the release actually lands. Only after that wait does the workflow
+   independently fetch `refs/tags/<next_version>` and compare the commit
+   it points at to the verified head *this attempt* requested — never
+   against the branch tip at report time. That comparison, and only that
+   comparison, decides whether the outcome is `released`. The correlated
+   run (if any) supplies only the report's log link and, when the
+   outcome is not `released`, diagnostic detail — it is never itself the
+   proof a release happened (Edge Case: "the release actually happened
+   but was never correlated" still reports `released`).
 
 3. **A refusal at the branch-moved-on case is reported as expected, not
    as a failure** (FR-013). When the tag comparison in (2) is false, the
    workflow performs one more independent read — the current tip of
-   `refs/heads/main` — and reports `branch-advanced` (not filed against
+   the repository's default branch, resolved live via `gh repo view`
+   (falling back to `main` only if that read fails; `report` runs off a
+   `schedule` trigger with no `repository` event payload to read the
+   default branch from directly) — and reports `branch-advanced` (not filed against
    the standing failure issue) when that tip no longer equals the
    verified head, or `release-failed` (filed) when it still does. This
    reclassification needs no signal out of `release.yml`'s own run
@@ -125,8 +139,8 @@ default to `""`, which means:
 
 - Attempt-token generation and the exact-substring matching rule:
   research.md D1–D3.
-- The tag-time refusal mechanism and why `main` stays a literal here:
-  research.md D4, D6.
+- The tag-time refusal mechanism and why the default branch is resolved
+  dynamically rather than a literal `main`: research.md D4, D6.
 - Why `released` is computed from tag state instead of run conclusion,
   including the cancelled-run case (FR-008): research.md D5.
 - The deterministic regression gate enforcing all of the above:

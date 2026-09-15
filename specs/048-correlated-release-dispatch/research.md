@@ -160,12 +160,16 @@ stale-head request still gets full linting first — cheap and harmless
 since nothing was written yet), runs only `if: inputs.commit != ''`:
 
 ```
-current_tip="$(git ls-remote origin refs/heads/main | cut -f1)"
+current_tip="$(git ls-remote origin "refs/heads/${DEFAULT_BRANCH}" | cut -f1)"
 if [ "$current_tip" != "$COMMIT_INPUT" ]; then
-  echo "::error::release requested commit ${COMMIT_INPUT}, but refs/heads/main is now at ${current_tip} -- refusing to tag (the branch moved on)."
+  echo "::error::release requested commit ${COMMIT_INPUT}, but refs/heads/${DEFAULT_BRANCH} is now at ${current_tip} -- refusing to tag (the branch moved on)."
   exit 1
 fi
 ```
+
+where `DEFAULT_BRANCH` is `${{ github.event.repository.default_branch }}`
+— see D6 on why this reads dynamically rather than the literal `main`
+this decision originally proposed.
 
 `git ls-remote` is a live read against `origin` at the moment this step
 runs, not a re-use of anything captured at checkout or at request time —
@@ -175,17 +179,16 @@ concurrency group only reaches this step after that run has finished,
 and re-reads the tip *then*.
 
 A commit that is an ancestor of the tip, was force-pushed away, or was
-never on `main` at all are all refused by the same single string
-comparison (FR-014) — no ancestry walk is needed because the check is
-"is it still the exact tip", not "is it still reachable".
+never on the default branch at all are all refused by the same single
+string comparison (FR-014) — no ancestry walk is needed because the
+check is "is it still the exact tip", not "is it still reachable".
 
 **Rationale**: doing the comparison at the last possible moment, against
 a live remote read, is the only placement that satisfies FR-010a's
 explicit "not against anything read when the request was accepted or
-when the checkout was made". A literal `main` is used here deliberately
-(see D6) rather than a `default-branch` input, consistent with how
-`refs/heads/main`/`commits/main` are already spelled in both these
-workflows today.
+when the checkout was made". This decision originally proposed a literal
+`main` here (see D6); the shipped code reads the default branch
+dynamically instead — D6 records why.
 
 **Alternatives considered**:
 - Comparing against the local checkout's `HEAD` (already fetched at job
@@ -218,13 +221,21 @@ independent of whether the correlated run was found at all (Edge Case
 `tag_matches` is false, a second, independent check classifies *why*:
 
 ```
-current_tip="$(git ls-remote origin refs/heads/main | cut -f1)"
+default_branch="$(gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef --jq '.defaultBranchRef.name // empty' 2>/dev/null || true)"
+[ -n "$default_branch" ] || default_branch="main"
+current_tip="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" "refs/heads/${default_branch}" | cut -f1)"
 if [ "$current_tip" != "$VERIFIED_HEAD" ]; then
   outcome=branch-advanced   # FR-013: expected, same class as today's stale-head skip
 else
   outcome=release-failed    # branch never moved and no tag landed -- a real defect
 fi
 ```
+
+(the `report` job runs off a `schedule` trigger, whose event payload
+carries no `repository` key, so `github.event.repository.default_branch`
+is not available here the way it is in `release.yml`'s `workflow_dispatch`
+job — the live `gh repo view` read, with a `main` fallback if that read
+fails, is this job's equivalent; see D6.)
 
 **Rationale**: this is the direct implementation of FR-007 ("the report
 MUST record a release as having happened on the tag state alone") and
@@ -253,29 +264,58 @@ plain git state either workflow can read on its own.
   computed, using primitives already present in this job, with no new
   cross-workflow channel to build, secure, or keep in sync.
 
-## D6: Why `main` stays a literal here
+## D6: Why `main` does not stay a literal here (reversed)
 
-**Decision**: keep spelling the default branch as the literal `main` in
-both new checks (D3's `refs/heads/main`, D4's `refs/heads/main`),
+**Original decision (superseded)**: this plan originally proposed
+keeping the default branch spelled as the literal `main` in both new
+checks (D4's tag-time refusal, D5's branch-advanced classification),
 matching the literal already present in `auto-release.yml`'s existing
-`dispatch-release` job (`gh api repos/${{ GITHUB_REPOSITORY }}/commits/main`).
+`dispatch-release` job (`gh api repos/${{ GITHUB_REPOSITORY }}/commits/main`),
+on the grounds that neither workflow is a published stage under
+Constitution VII (Gate 50's "no literal `main`" rule, scoped to
+`wc_published_stages()`, does not reach either file) and that a
+`default-branch` input would be unneeded configuration surface.
 
-**Rationale**: `release.yml` and `auto-release.yml` are both
-`workflow_dispatch`/`schedule`-only with no `workflow_call` trigger —
-neither is a published stage under Constitution VII, so Gate 50's
-"no literal `main`" rule (`.github/scripts/verify-release-contract.py`,
-scoped to `wc_published_stages()`) does not apply to either file, and
-does not start applying because of this feature. These two workflows
-release *this* repository specifically; they are not reusable, and
-introducing a `default-branch` input here would be new configuration
-surface the spec's own Assumptions section declines to add.
+**Reversal**: the maintainer's code review of PR #342 (T027, folded
+into this feature's own shipped code before merge) identified that this
+framing missed a real defect: `release.yml`'s own `Checkout` step
+already resolves the default branch dynamically via
+`github.event.repository.default_branch` (D4) — a literal `main` in the
+*refusal* step two steps later would compare the checked-out commit
+against the wrong ref on any repository whose default branch is not
+literally `main`, refusing (or worse, wrongly permitting) a tag for a
+reason that has nothing to do with FR-010a. This is not the
+reusable/published-stage concern Gate 50 polices — it is a plain
+correctness bug in this repository's own workflows, which the original
+"scope creep" framing did not anticipate because it was evaluating the
+question as "should we add configuration surface", not "does the
+literal already disagree with a value the same job computes two steps
+earlier."
 
-**Alternatives considered**:
-- Resolving the default branch dynamically (`gh repo view --json
-  defaultBranchRef`): rejected as unneeded generality — these workflows
-  already hardcode `main` today in the code this feature touches, and
-  a plan that quietly widened that would be scope creep on a
-  correlation/atomicity feature.
+**Shipped decision**: `release.yml`'s refusal step (D4) reads
+`DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}` — safe
+there because this job only runs on `workflow_dispatch`, the same event
+its `Checkout` step already relies on for the same value.
+`auto-release.yml`'s `report` job (D5) cannot reuse that expression — it
+runs off a `schedule` trigger, whose event payload carries no
+`repository` key — so its classification step instead reads the default
+branch live via `gh repo view "$GITHUB_REPOSITORY" --json
+defaultBranchRef --jq '.defaultBranchRef.name // empty'` (the same
+pattern the `detect` job already uses for the E2E test repository),
+falling back to the literal `main` only if that read itself fails.
+`auto-release.yml`'s pre-existing `dispatch-release` short-circuit that
+also hardcoded `commits/main` was removed entirely by T013, for the
+unrelated reason of being fully superseded by D4/D5's checks — so it
+carries no remaining literal to reverse.
+
+**Alternatives considered (at the time of the reversal)**:
+- Leaving the literal in place: rejected — it is not hypothetical
+  scope creep once a concrete second value (the checkout's own resolved
+  ref) exists in the same job to disagree with it.
+- Adding a `default-branch` workflow input: rejected — the value is
+  already available for free from the triggering event
+  (`workflow_dispatch`) or a live API read (`schedule`); a new input
+  would just be a third, redundant place this could drift.
 
 ## D7: The deterministic regression gate (FR-018, SC-005, Constitution VIII)
 
