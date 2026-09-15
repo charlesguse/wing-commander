@@ -159,6 +159,7 @@ def load_step():
 def base_env(bindir, extra=None):
     env = {
         "GH_TOKEN": "x",
+        "ACTIONS_TOKEN": "x",
         "GITHUB_REPOSITORY": REPO,
         "RUN_ID": RUN_ID,
         "RUN_NAME": "Wing Commander · 5 implement",

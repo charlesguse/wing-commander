@@ -378,12 +378,17 @@ excludes, and confirm the success criteria that span every story.
   that until it lands, `plan`/`tasks` records carry `branch_advance` as
   `available: false` and the watchdog's behavior for those stages is
   unchanged (FR-012, Out of Scope).
+  **BLOCKED this cycle**: this implement run's own tool surface also has
+  no `gh issue create` (only `gh issue view`/`gh issue comment`) — noted
+  on issue #331 (comment) with the exact title/body a maintainer or a
+  future run with issue-creation tooling should use. Left unchecked
+  deliberately rather than silently skipped.
 
-- [ ] T028 [P] Run `python .github/scripts/run-local-gates.py` (the full
+- [X] T028 [P] Run `python .github/scripts/run-local-gates.py` (the full
   PR-time gate suite, CLAUDE.md's "Before pushing" rule) and confirm
   Gates 39, 41, 43, and 53 all pass.
 
-- [ ] T029 [P] Confirm SC-006/FR-016 (no new agent invocation anywhere in
+- [X] T029 [P] Confirm SC-006/FR-016 (no new agent invocation anywhere in
   this feature): `grep -c "uses: anthropics/claude-code-action"
   .github/workflows/implement.yml` reports the same count (three) before
   and after this feature's diff, and
@@ -392,11 +397,22 @@ excludes, and confirm the success criteria that span every story.
   `.github/actions/wing-commander-metrics-summary/action.yml`
   (quickstart.md Scenario 7).
 
-- [ ] T030 Run the `review-step-gating` skill against the full diff
+- [X] T030 Run the `review-step-gating` skill against the full diff
   (CLAUDE.md: any change touching an `if:`, `continue-on-error:`, or a
   failing step in a workflow gets a pass from this skill) — T009 and
   T013-T015/T023 all touch `if:`/step-ordering in
   `.github/workflows/implement.yml` and `.github/workflows/watchdog.yml`.
+  Gate 24 (`verify-gate-24.py`) passes. The skill's own enumeration
+  script (`stranded-steps.py`) is outside this run's permitted tool
+  surface; manual review against its criteria found no stranded
+  teardown/degradation/report step: the new implement.yml steps
+  (`Record branch advance (cycle)`, its metrics-summary call, its
+  upload) are each `continue-on-error: true` (or gate identically to
+  their neighbors) with nothing downstream depending on their success;
+  the new watchdog.yml logic is added entirely INSIDE the pre-existing
+  `continue-on-error: true` collect-branch-drift step via internal
+  `if`/`exit 0` branches, matching that step's own established pattern,
+  with no new step boundary and no new hard exit.
 
 ---
 
