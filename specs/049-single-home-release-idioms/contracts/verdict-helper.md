@@ -22,7 +22,7 @@ standalone, `bash`-invoked script (matching the `_shared/count-turns.sh`
 invocation idiom: `bash .github/actions/_shared/auto-release-verdict.sh
 ... `, never sourced, never relying on its executable bit).
 
-## Call sites (14, all in `auto-release.yml`)
+## Call sites (15, all in `auto-release.yml`)
 
 Every site listed in `data-model.md`'s internal-helper table keeps its own
 `GITHUB_OUTPUT` heredoc framing
@@ -41,18 +41,18 @@ line moves out.
 
 ## Byte-identity test (FR-009)
 
-A test captures each of the 14 sites' current literal inputs (extracted
+A test captures each of the 15 sites' current literal inputs (extracted
 once, before the refactor lands, from the current `jq -n` arguments at
 each site) and asserts the new script's stdout for those same inputs is
 byte-identical to what the old inline `jq -n` produced for them today.
-This lives alongside Gate 52's self-test (contracts/single-home-gate.md)
+This lives alongside Gate 60's self-test (contracts/single-home-gate.md)
 since both need the same "run the shipped script for real" harness
 (`wc_shell_harness.run_step()`, the pattern `verify-metrics-summary-record-emission.py`
 already uses).
 
 ## Gate coverage
 
-Gate 52 fails on any `jq` program, anywhere under `.github/workflows/` or
+Gate 60 fails on any `jq` program, anywhere under `.github/workflows/` or
 `.github/actions/` outside this script's own file, whose text contains all
 six field names (`outcome`, `verified_head`, `failing_check`, `expected`,
 `observed`, `evidence_url`) together.

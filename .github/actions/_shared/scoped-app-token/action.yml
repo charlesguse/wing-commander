@@ -13,7 +13,7 @@
 # This composite is internal to this repository, per constitution VII's
 # underscore-prefixed-directory clarification (specs/049): it is never
 # resolved by a workflow_call-only stage or a published (non-underscore)
-# composite action, and Gate 53's promotion-prevention check enforces that.
+# composite action, and Gate 60's promotion-prevention check enforces that.
 #
 # Builds no remediation message or verdict itself (FR-005): the two call
 # sites' failure handling differs (auto-release.yml emits a fail-infra

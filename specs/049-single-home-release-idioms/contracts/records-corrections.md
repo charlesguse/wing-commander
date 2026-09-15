@@ -76,7 +76,7 @@ cause.
 ## FR-020 — no private downstream consumer named anywhere
 
 Every artifact this feature adds or edits (the four `_shared/` files,
-Gate 52, its waiver file, the `docs/architecture.md` section, the tasks.md
+Gate 60, its waiver file, the `docs/architecture.md` section, the tasks.md
 correction, the PR #317 body edit) stays generic to any adopting
 repository — no repository name, org, or customer beyond this public
 repository's own. This is a constraint checked by review, not a

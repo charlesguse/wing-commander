@@ -1,4 +1,4 @@
-# Contract: FR-010 through FR-016, FR-023, FR-025, FR-026 — Gate 52 and its waiver file
+# Contract: FR-010 through FR-016, FR-023, FR-025, FR-026 — Gate 60 and its waiver file
 
 `research.md` D7/D8/D9 explain the detection strategy per idiom, the
 waiver-file reuse, and the promotion-prevention scan. This is the one
@@ -7,7 +7,7 @@ genuinely new gate script this feature adds — modeled directly on
 `verify-stage-invariants.py` (waiver loading/stale-checking), both already
 reviewed and merged.
 
-## `.github/scripts/verify-single-home-idioms.py` (NEW — Gate 52)
+## `.github/scripts/verify-single-home-idioms.py` (NEW — Gate 60)
 
 **What it scans**: every `.github/workflows/*.yml` and everything under
 `.github/actions/**` (FR-010's stated subject — "whether or not the
@@ -74,11 +74,11 @@ composite resolving `_shared/` fails the promotion check.
 
 ## Wiring (FR-012, FR-013, FR-016)
 
-Added to `lint-workflows.yml`'s existing sequential gate job as "Gate 52 —
+Added to `lint-workflows.yml`'s existing sequential gate job as "Gate 60 —
 each of the three cross-workflow idioms and the fail-infra verdict shape
 has exactly one home, and no published surface resolves an internal
 helper," `if: "!cancelled()"` (not suppressible by an unrelated gate
-sharing the job, per constitution VIII), plus a second "Gate 52 self-test"
+sharing the job, per constitution VIII), plus a second "Gate 60 self-test"
 step running `--self-test`. `run-local-gates.py` picks both up automatically
 via its existing derivation from `lint-workflows.yml` (no separate
 registration needed — see research.md D7's registry note). The job's

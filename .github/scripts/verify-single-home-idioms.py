@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 53 -- each cross-workflow idiom this feature consolidated has
+"""Gate 60 -- each cross-workflow idiom this feature consolidated has
 exactly one home, and no published surface resolves an internal helper
 (specs/049-single-home-release-idioms).
 
@@ -20,10 +20,13 @@ catch a THIRD, unknown site pasting the idiom anywhere under
 NOTE ON GATE NUMBERING: research.md/tasks.md for this feature call this
 "Gate 52," the highest gate number on `main` at plan time. By the time
 this feature's own branch was rebased past #317-and-later, Gate 52 had
-already been taken by verify-auto-release-report.py (#325/#335). This
-gate is Gate 53 -- the next number actually free in the current tree, per
-T001's rule of verifying baseline facts against the real tree rather than
-a claim about it.
+already been taken by verify-auto-release-report.py (#325/#335), so this
+gate first became Gate 53 -- the next number free in this branch's own
+tree, per T001's rule of verifying baseline facts against the real tree
+rather than a claim about it. By the time of the maintainer's review of
+PR #347, spec 046's PR #341 had registered Gates 53-58 on `main` and
+spec 048's PR #342 had taken 59, so this gate moved again, to Gate 60 --
+the next number actually free.
 
 FOUR CHECKS, per contracts/single-home-gate.md
 -----------------------------------------------
@@ -333,7 +336,7 @@ def check_promotion(root="."):
             if name.startswith("_"):
                 continue
             for fname in ("action.yml", "action.yaml"):
-                candidate = os.path.join(ACTIONS_DIR, name, fname)
+                candidate = os.path.join(ACTIONS_DIR, name, fname).replace(os.sep, "/")
                 if not os.path.isfile(os.path.join(root, candidate)):
                     continue
                 text = read(root, candidate)

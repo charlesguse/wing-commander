@@ -82,7 +82,7 @@ site) — no new fallback branch needed.
 
 ## Gate coverage
 
-Gate 52 fails on any occurrence, anywhere under `.github/workflows/` or
+Gate 60 fails on any occurrence, anywhere under `.github/workflows/` or
 `.github/actions/` outside this composite's own `action.yml`, of the
 co-occurrence of a `gh label create ... --force` call and a
 `gh issue list ... --label "..." --state open --json number --jq

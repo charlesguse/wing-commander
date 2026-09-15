@@ -1,6 +1,6 @@
 {
   "$comment": [
-    "Registered exceptions to Gate 53's single-home rule, enforced by",
+    "Registered exceptions to Gate 60's single-home rule, enforced by",
     ".github/scripts/verify-single-home-idioms.py at pull-request time --",
     "see specs/049-single-home-release-idioms/contracts/single-home-gate.md.",
     "",
@@ -18,7 +18,7 @@
     "",
     "No waivers were expected to exist at merge time for this feature's own",
     "consolidation (SC-009) -- the two below are PRE-EXISTING patterns Gate",
-    "53's structural scan surfaced on its first run against the real tree,",
+    "60's structural scan surfaced on its first run against the real tree,",
     "each already reasoned through in its own file's comments, not new debt",
     "this feature introduced. The gate doing exactly this -- finding a",
     "structurally similar but conceptually distinct piece of shell -- is it",

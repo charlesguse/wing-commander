@@ -80,7 +80,7 @@ downstream failure path already covers this with no new code.
 
 ## Gate coverage
 
-Gate 52 fails on any occurrence, anywhere under `.github/workflows/` or
+Gate 60 fails on any occurrence, anywhere under `.github/workflows/` or
 `.github/actions/` outside this composite's own `action.yml`, of the
 three-fragment co-occurrence: `checkout --quiet --orphan`,
 `git rm -rq --cached`, and the `find . -mindepth 1 -maxdepth 1 ! -name

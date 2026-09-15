@@ -17,7 +17,7 @@
 #
 # Internal to this repository, never resolved by a workflow_call stage or
 # a published composite -- see scoped-app-token/action.yml's header
-# comment for the constitution VII / Gate 53 rationale, canonical across
+# comment for the constitution VII / Gate 60 rationale, canonical across
 # the three _shared/ composites.
 name: orphan-branch-reset
 description: >

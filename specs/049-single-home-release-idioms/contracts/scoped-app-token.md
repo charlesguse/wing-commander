@@ -73,7 +73,7 @@ sites' existing `if [ "$OK" != "true" ]` checks already treat as failure.
 
 ## Gate coverage
 
-Gate 52 (contracts/single-home-gate.md) fails if a job anywhere outside
+Gate 60 (contracts/single-home-gate.md) fails if a job anywhere outside
 this composite contains both a `continue-on-error: true` step invoking
 `actions/create-github-app-token@*` and a later step in the same job
 reading that step's `.outcome` — the two-clause structural signature of
