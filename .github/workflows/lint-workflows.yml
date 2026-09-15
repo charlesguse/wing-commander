@@ -900,6 +900,12 @@ jobs:
               # "Contents" permission's surface in GitHub's fine-grained
               # permission reference, same as .../contents/... itself.
               "commits": "contents",
+              # specs/046-watchdog-supervision-collectors' collect-final-pr-claims
+              # reads GET .../compare/{basehead} for ground-truth commit/file
+              # counts — the REST reference lists this under the same
+              # "Contents" repository permission as .../commits/... and
+              # .../contents/... above.
+              "compare": "contents",
           }
 
           GH_INVOKE_RE = re.compile(
@@ -3387,6 +3393,35 @@ jobs:
       - name: Gate 52 — auto-release's report job attributes a crashed job to infrastructure, not to a quiet day or a phantom release run
         if: "!cancelled()"
         run: python3 .github/scripts/verify-auto-release-report.py
+
+      # Gates 53-58 — specs/046-watchdog-supervision-collectors' four new
+      # watchdog collectors and the narrative-drift issue-exemption routing.
+      # Each gate EXTRACTS the exact jq/bash the live collect-* step ships
+      # (wc_shell_harness.extract_quoted_var/find_step+run_step) rather than
+      # retyping a copy, and either executes it directly (53, 55-58) or, for
+      # 54, the collect-turn-budget suppression pre-check's own formula and
+      # `gh issue list --state` flag, diffs the extracted text against the
+      # gate's cross-check — the same "same subject, same arguments, locally
+      # and in CI" shape every gate above already uses (constitution VIII;
+      # specs/046-watchdog-supervision-collectors leg-2).
+      - name: Gate 53 — the turn-budget collector's band computation and per-run signal gating
+        if: "!cancelled()"
+        run: bash .github/scripts/verify-turn-budget-collector.sh
+      - name: Gate 54 — the turn-budget trend's closed-fingerprint suppression pre-check
+        if: "!cancelled()"
+        run: bash .github/scripts/verify-turn-budget-suppression.sh
+      - name: Gate 55 — the cost-report collector's missing/malformed detection
+        if: "!cancelled()"
+        run: bash .github/scripts/verify-cost-report-collector.sh
+      - name: Gate 56 — the final-PR-claims collector's claim-shape parsers and ground-truth comparison
+        if: "!cancelled()"
+        run: bash .github/scripts/verify-final-pr-claims-collector.sh
+      - name: Gate 57 — narrative-drift findings are diagnosed and reported but never tracked as an issue
+        if: "!cancelled()"
+        run: bash .github/scripts/verify-narrative-drift-routing.sh
+      - name: Gate 58 — the spec-collision collector's claimant enumeration and dedup-by-identity
+        if: "!cancelled()"
+        run: bash .github/scripts/verify-spec-collision-collector.sh
 
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
