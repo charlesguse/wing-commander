@@ -494,3 +494,19 @@ on. User Stories 2 and 3 add proof of properties the same mechanism
 already has by construction (research.md R7) and reporting polish,
 respectively — valuable, but not required to close the detection gap
 issue #331 names.
+
+---
+
+## Phase 7: Convergence
+
+- [ ] T031 Add a positive Gate 39 fixture under
+  `.github/scripts/fixtures/metrics-record-schema/` for `branch_advance`'s
+  "both points unavailable" state (`available: false`, `before_available:
+  false`, `after_available: false` — the shape
+  `contracts/metrics-record-schema.md`'s degraded-record example already
+  documents, with the `branch_advance` key present rather than absent)
+  and update `verify-metrics-record-schema.py`'s `_fixture_files()` pinned
+  count to match. SC-004 lists six new-field states requiring a
+  checked-in fixture; the seven fixtures added in T006 each mark only one
+  of `before_available`/`after_available` false at a time (or both
+  true/available), so this state has no fixture of its own yet (missing).
