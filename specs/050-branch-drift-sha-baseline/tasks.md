@@ -331,7 +331,7 @@ still reports a successful outcome rather than an untrusted read.
 
 ### Implementation for User Story 3
 
-- [ ] T023 [US3] In `.github/workflows/watchdog.yml`'s
+- [X] T023 [US3] In `.github/workflows/watchdog.yml`'s
   `collect-branch-drift` step, when no downloaded record carries
   `branch_advance.available: true`, keep the existing `baseline =
   "since-created"` computation exactly as-is (FR-018) and append a
@@ -342,20 +342,20 @@ still reports a successful outcome rather than an untrusted read.
   branch-advance evidence on this run)" otherwise (FR-013; data-model.md's
   "Step summary addition").
 
-- [ ] T024 [US3] Extend `.github/scripts/verify-branch-drift-sha-baseline.py`
+- [X] T024 [US3] Extend `.github/scripts/verify-branch-drift-sha-baseline.py`
   with a scenario: a downloaded `metrics-record*` artifact set containing
   no record with `branch_advance.available: true` → the since-created
   fallback fires unchanged and the step summary names it as the fallback
   (US3, FR-013, FR-017, FR-018).
 
-- [ ] T025 [US3] Extend `verify-branch-drift-sha-baseline.py` with a
+- [X] T025 [US3] Extend `verify-branch-drift-sha-baseline.py` with a
   regression scenario: a spec-branch-head run (`plan`/`tasks`,
   `baseline = "head-sha"`), a non-push-expected stage (a `RUN_NAME` not
   in the push-expected list ~656), and a skipped/cancelled run
   (`RUN_CONCLUSION` in `skipped|cancelled`) are all unaffected by
   T013-T015's new arm (FR-012).
 
-- [ ] T026 [US3] Extend `verify-branch-drift-sha-baseline.py` with a
+- [X] T026 [US3] Extend `verify-branch-drift-sha-baseline.py` with a
   regression scenario: a run whose `RUN_CREATED_AT`/slug cannot be
   resolved still exits quietly, unchanged from today's behavior
   (contracts/gate-coverage-050.md assertion 6).
