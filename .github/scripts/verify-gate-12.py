@@ -213,6 +213,79 @@ def mkcase_c(grant, with_agent=True, called="./.github/workflows/stage.yml"):
     return files
 
 
+# --- category D fixtures (#339) -------------------------------------------
+# Category D walks composite actions under .github/actions/**, resolving each
+# composite's `inputs.*` token through what the workflow call site passes in
+# `with:` (or the input's declared default) and checking the call in THAT
+# caller's job. The fixtures build one tiny composite, `wing-commander-probe`,
+# and vary the call site around it.
+
+ISSUES_READ = "      issues: read\n"
+APP_TOKEN_WITH = 'token: ${{ steps.ctx.outputs.token }}'
+DEFAULT_TOKEN_WITH = 'token: ${{ github.token }}'
+PROBE_USES = "./.github/actions/wing-commander-probe"
+PIPELINE_USES = "./.wing-commander-pipeline/.github/actions/wing-commander-probe"
+
+
+def composite_action(run_lines, env_lines=(), inputs=("token",),
+                     token_default=None, mint_step_id=None,
+                     token_env="${{ inputs.token }}"):
+    """A composite with one bash step, `Render`, whose env carries
+    GH_TOKEN: `token_env` (inputs.token by default) plus `env_lines`,
+    running `run_lines`. Every name in `inputs` is declared optional;
+    `token` gets `token_default` when one is given. `mint_step_id` adds a
+    preceding actions/create-github-app-token step under that id — the
+    composite's OWN App mint, in its own step-id namespace."""
+    out = "name: probe" + _N + "description: fixture" + _N + "inputs:" + _N
+    for name in inputs:
+        out += "  " + name + ":" + _N + "    description: t" + _N + "    required: false" + _N
+        if name == "token" and token_default is not None:
+            out += "    default: " + token_default + _N
+    out += "runs:" + _N + "  using: composite" + _N + "  steps:" + _N
+    if mint_step_id:
+        out += ("    - name: mint" + _N + "      id: " + mint_step_id + _N +
+                "      uses: actions/create-github-app-token@v3" + _N)
+    out += ("    - name: Render" + _N + "      shell: bash" + _N +
+            "      env:" + _N +
+            "        GH_TOKEN: " + token_env + _N)
+    for l in env_lines:
+        out += "        " + l + _N
+    out += "      run: |" + _N
+    for l in run_lines:
+        out += "        " + l + _N
+    return out
+
+
+def composite_caller_job(jname, with_lines, uses_path=PROBE_USES, job_perms=""):
+    perms = ("    permissions:" + _N + job_perms) if job_perms else ""
+    out = ("  " + jname + ":" + _N + "    runs-on: ubuntu-latest" + _N + perms +
+           "    steps:" + _N +
+           "      - name: Probe" + _N +
+           "        uses: " + uses_path + _N)
+    if with_lines:
+        out += "        with:" + _N
+        for l in with_lines:
+            out += "          " + l + _N
+    return out
+
+
+def composite_caller_wf(with_lines, uses_path=PROBE_USES, job_perms=""):
+    return ("name: w" + _N + "on:" + _N + "  workflow_dispatch: {}" + _N +
+            "jobs:" + _N +
+            composite_caller_job("work", with_lines, uses_path, job_perms))
+
+
+def mkcase_d(with_lines, run_lines, env_lines=(), inputs=("token",),
+             token_default=None, job_perms="", uses_path=PROBE_USES):
+    return {
+        ".github/actions/wing-commander-probe/action.yml":
+            composite_action(run_lines, env_lines, inputs, token_default),
+        ".github/workflows/w.yml":
+            composite_caller_wf(with_lines, uses_path, job_perms),
+        "docs/setup.md": DOCS_OK,
+    }
+
+
 CASES = [
     # name, files, expect_fail, must_mention
 
@@ -503,6 +576,226 @@ CASES = [
       "docs/setup.md": DOCS_OK},
      True, ("restricted / agent on the App token", "run list", "App token",
             "actions")),
+
+    # --- category D: composite actions (#339) -----------------------------
+    ("category D: the #337 shape - a composite's `gh run view` under an "
+     "`inputs.token` the caller binds to the App token fails, naming both the "
+     "composite and the call site",
+     mkcase_d([APP_TOKEN_WITH], ['gh run view "$RUN_ID" --json headBranch']),
+     True, ("wing-commander-probe", "Render", "w.yml :: work / Probe",
+            "run view", "App token", "actions")),
+
+    ("category D: the same composite bound to github.token in a job granting "
+     "actions:read passes",
+     mkcase_d([DEFAULT_TOKEN_WITH], ['gh run view "$RUN_ID" --json headBranch'],
+              job_perms=ACTIONS_READ),
+     False, ()),
+
+    ("category D: the same call site through the published-stage path "
+     "(./.wing-commander-pipeline/.github/actions/...) resolves to the same "
+     "composite",
+     mkcase_d([APP_TOKEN_WITH], ['gh run view "$RUN_ID" --json headBranch'],
+              uses_path=PIPELINE_USES),
+     True, ("wing-commander-probe", "run view", "App token", "actions")),
+
+    ("category D: the inspected-run-identity split - a per-command "
+     'GH_TOKEN="$ACTIONS_TOKEN" prefix bound to github.token (actions:read) '
+     "for the Actions read, the step's App token for the issue read - passes",
+     mkcase_d([APP_TOKEN_WITH, 'actions-token: ${{ github.token }}'],
+              ['GH_TOKEN="$ACTIONS_TOKEN" gh run download "$RUN_ID" -p rec',
+               'gh issue view "$N" --json labels'],
+              env_lines=['ACTIONS_TOKEN: ${{ inputs.actions-token }}'],
+              inputs=("token", "actions-token"), job_perms=ACTIONS_READ),
+     False, ()),
+
+    ("category D: ... and the split is what saves it: the same two reads with "
+     "the prefix dropped fail on the Actions read only",
+     mkcase_d([APP_TOKEN_WITH, 'actions-token: ${{ github.token }}'],
+              ['gh run download "$RUN_ID" -p rec',
+               'gh issue view "$N" --json labels'],
+              env_lines=['ACTIONS_TOKEN: ${{ inputs.actions-token }}'],
+              inputs=("token", "actions-token"), job_perms=ACTIONS_READ),
+     True, ("run download", "App token", "actions")),
+
+    ("category D: a token input the caller never passes and that has no "
+     "default is unresolved - the call would run under an empty token",
+     mkcase_d([], ['gh issue view "$N"']),
+     True, ("could not resolve", "not passed at this call site")),
+
+    ("category D: a token input the caller never passes falls back to its "
+     "declared default (the metrics-persist shape: github.token, checked "
+     "against the caller's job permissions)",
+     mkcase_d([], ['gh run download "$RUN_ID" -p rec'],
+              token_default="${{ github.token }}", job_perms=ACTIONS_READ),
+     False, ()),
+
+    ("category D: ... and that default is held to the caller's grant - the "
+     "same composite in a job without actions:read fails",
+     mkcase_d([], ['gh run download "$RUN_ID" -p rec'],
+              token_default="${{ github.token }}", job_perms=ISSUES_WRITE),
+     True, ("run download", "actions")),
+
+    ("category D: a composite is checked once per call site - fine under the "
+     "App token in one job, a failure under an under-granted github.token in "
+     "another, and the failure names the second job",
+     {".github/actions/wing-commander-probe/action.yml":
+          composite_action(['gh issue comment "$N" --body hi']),
+      ".github/workflows/w.yml":
+          composite_caller_wf([APP_TOKEN_WITH])
+          + composite_caller_job("second", [DEFAULT_TOKEN_WITH],
+                                 job_perms="      issues: read\n"),
+      "docs/setup.md": DOCS_OK},
+     True, ("w.yml :: second / Probe", "issue comment", "issues")),
+
+    ("category D: a composite that calls gh but no workflow uses fails "
+     "loudly - no call site, no token to check",
+     {".github/actions/wing-commander-orphan/action.yml":
+          composite_action(['gh issue view "$N"']),
+      ".github/workflows/w.yml": wf(step([APP_ENV], ['gh issue view "$N"'])),
+      "docs/setup.md": DOCS_OK},
+     True, ("wing-commander-orphan", "no workflow")),
+
+    ("category D: a composite that makes no gh call needs no call site",
+     {".github/actions/wing-commander-quiet/action.yml":
+          composite_action(['echo "nothing to see"']),
+      ".github/workflows/w.yml": wf(step([APP_ENV], ['gh issue view "$N"'])),
+      "docs/setup.md": DOCS_OK},
+     False, ()),
+
+    ("category D: a gh call inside a _shared script fails - shared scripts "
+     "run under whatever the sourcing composite exported",
+     {".github/actions/_shared/helper.sh":
+          '#!/usr/bin/env bash\ngh issue view "$N"\n',
+      ".github/workflows/w.yml": wf(step([APP_ENV], ['gh issue view "$N"'])),
+      "docs/setup.md": DOCS_OK},
+     True, ("_shared/helper.sh", "shared script")),
+
+    # --- gh api level: --method (#339) --------------------------------------
+    # The composite walk brought metrics-persist's `gh api --method PATCH`
+    # into scope, which the -X-only parser read as a PATH named `--method`
+    # and silently dropped as out of scope. (An implicit POST — a body field
+    # with no method — is Gate 28's subject, so there is no fixture for it
+    # here: Gate 28 scans this file too and would reject the fixture text.)
+    ("gh api --method PATCH is a write: under github.token with only "
+     "issues:read it fails, naming issues",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api --method PATCH "repos/$REPO/issues/comments/$ID" -F body=@f']),
+     True, ("issues", "write")),
+
+    ("gh api -X GET with a body field (a query parameter) stays a read",
+     mkcase(CONTENTS_READ, "", [DEFAULT_ENV],
+            ['gh api -X GET "repos/$REPO/contents/$P" -f ref="$BRANCH" --jq .content']),
+     False, ()),
+
+    ("gh api --method GET --paginate stays a read and its path is still "
+     "parsed (not mistaken for `--method`)",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ['gh api --method GET "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate']),
+     False, ()),
+
+    ("... and under the App token that same --method GET Actions read fails, "
+     "proving the path was seen",
+     mkcase("", "", [APP_ENV],
+            ['gh api --method GET "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate']),
+     True, ("actions", "App token")),
+
+    # The method is read from THIS call's own executable arguments only
+    # (review of #348): a `--method POST` in a trailing comment, inside a
+    # quoted value, or in the next command on the same line is not this
+    # call's method. Each of these is a read under a read-only grant and
+    # must pass.
+    ("gh api level: a `--method POST` in a trailing comment does not make "
+     "the read a write",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api "repos/$REPO/issues/$N" --jq .id   # writes use --method POST']),
+     False, ()),
+
+    ("gh api level: a `--method POST` inside a quoted argument does not make "
+     "the read a write",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api "repos/$REPO/issues/$N" --jq \'"--method POST"\'']),
+     False, ()),
+
+    ("gh api level: a `--method POST` in the NEXT command on the line does "
+     "not make the read a write",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api "repos/$REPO/issues/$N" --jq .id && echo "--method POST"']),
+     False, ()),
+
+    ("gh api level: ... while a write chained after the read is still "
+     "checked as a write in its own right",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api "repos/$REPO/issues/$N" --jq .id && gh api --method POST '
+             '"repos/$REPO/issues" --input body.json']),
+     True, ("issues", "write")),
+
+    # Step-id namespaces (review of #348): `steps.<id>.outputs.token` names a
+    # different step on the caller's side and on the composite's side. A
+    # composite's own App mint must never vouch for a caller's unrelated
+    # token that happens to share the id, and vice versa.
+    ("category D: the composite mints its own App token under id `setup`; "
+     "the caller passes ITS `steps.setup.outputs.token` from a non-App "
+     "action - unverified, never classified App by the shared id",
+     {".github/actions/wing-commander-probe/action.yml":
+          composite_action(['gh issue comment "$N" --body hi'], mint_step_id="setup"),
+      ".github/workflows/w.yml": (
+          "name: w" + _N + "on:" + _N + "  workflow_dispatch: {}" + _N +
+          "jobs:" + _N + "  work:" + _N + "    runs-on: ubuntu-latest" + _N +
+          "    permissions:" + _N + "      issues: read" + _N +
+          "    steps:" + _N +
+          "      - name: not a mint" + _N + "        id: setup" + _N +
+          "        uses: some-org/mint-a-different-token@v1" + _N +
+          "      - name: Probe" + _N +
+          "        uses: ./.github/actions/wing-commander-probe" + _N +
+          "        with:" + _N +
+          "          token: ${{ steps.setup.outputs.token }}" + _N),
+      "docs/setup.md": DOCS_OK},
+     False, ("unrecognised token", "Unverified")),
+
+    ("category D: a composite's own App mint IS the App token for the "
+     "composite's own env - held to the documented grant",
+     {".github/actions/wing-commander-probe/action.yml":
+          composite_action(['gh issue create --title t --body b'],
+                           mint_step_id="mint",
+                           token_env="${{ steps.mint.outputs.token }}"),
+      ".github/workflows/w.yml": composite_caller_wf([]),
+      "docs/setup.md": DOCS_ISSUES_READONLY},
+     True, ("issue create", "App token", "issues")),
+
+    ("category D: a token the CALLER mints in its own job and passes in is "
+     "the App token on the caller's side - held to the documented grant",
+     {".github/actions/wing-commander-probe/action.yml":
+          composite_action(['gh issue create --title t --body b']),
+      ".github/workflows/w.yml": (
+          "name: w" + _N + "on:" + _N + "  workflow_dispatch: {}" + _N +
+          "jobs:" + _N + "  work:" + _N + "    runs-on: ubuntu-latest" + _N +
+          "    steps:" + _N +
+          "      - name: mint" + _N + "        id: ctx2" + _N +
+          "        uses: actions/create-github-app-token@v3" + _N +
+          "      - name: Probe" + _N +
+          "        uses: ./.github/actions/wing-commander-probe" + _N +
+          "        with:" + _N +
+          "          token: ${{ steps.ctx2.outputs.token }}" + _N),
+      "docs/setup.md": DOCS_ISSUES_READONLY},
+     True, ("issue create", "App token", "issues")),
+
+    ("category D: ... and the caller's job env is the caller's namespace "
+     "too - a composite step with no env of its own falls back to the "
+     "caller job's GH_TOKEN, an App token minted in that job",
+     {".github/actions/wing-commander-probe/action.yml":
+          composite_action(['gh issue create --title t --body b']).replace(
+              "      env:" + _N + "        GH_TOKEN: ${{ inputs.token }}" + _N, ""),
+      ".github/workflows/w.yml": (
+          "name: w" + _N + "on:" + _N + "  workflow_dispatch: {}" + _N +
+          "jobs:" + _N + "  work:" + _N + "    runs-on: ubuntu-latest" + _N +
+          "    env:" + _N + "      GH_TOKEN: ${{ steps.ctx2.outputs.token }}" + _N +
+          "    steps:" + _N +
+          "      - name: mint" + _N + "        id: ctx2" + _N +
+          "        uses: actions/create-github-app-token@v3" + _N +
+          "      - name: Probe" + _N +
+          "        uses: ./.github/actions/wing-commander-probe" + _N),
+      "docs/setup.md": DOCS_ISSUES_READONLY},
+     True, ("issue create", "App token", "issues")),
 ]
 
 
