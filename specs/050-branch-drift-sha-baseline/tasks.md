@@ -499,7 +499,7 @@ issue #331 names.
 
 ## Phase 7: Convergence
 
-- [ ] T031 Add a positive Gate 39 fixture under
+- [X] T031 Add a positive Gate 39 fixture under
   `.github/scripts/fixtures/metrics-record-schema/` for `branch_advance`'s
   "both points unavailable" state (`available: false`, `before_available:
   false`, `after_available: false` — the shape
