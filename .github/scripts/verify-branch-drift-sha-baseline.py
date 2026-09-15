@@ -484,6 +484,56 @@ def scenario_non_push_expected_stage_unaffected(step_text, root):
     return failures
 
 
+def scenario_skipped_run_unaffected(step_text, root):
+    """FR-012 regression: a skipped/cancelled run executed nothing, so the
+    pre-existing early exit fires before any of this feature's new code —
+    unaffected by T013-T015's new arm."""
+    failures = []
+    work = tempfile.mkdtemp(dir=root)
+    bindir = new_stub_dir(work)
+    env = base_env(bindir, {"RUN_CONCLUSION": "cancelled"})
+    runner_temp = os.path.join(work, "runner_temp")
+    rc, out, signals, outcomes, summary = run_collector(
+        step_text, work, runner_temp, env)
+    if rc != 0:
+        failures.append(f"skipped-run: exited {rc}: {out.strip()[:300]}")
+        return failures
+    if signals:
+        failures.append(f"skipped-run: expected no signal, got {signals!r}")
+    if outcomes:
+        failures.append(f"skipped-run: expected no collector outcome "
+                        f"recorded, got {outcomes!r}")
+    if "nothing executed" not in summary:
+        failures.append(f"skipped-run: step summary does not explain the "
+                        f"skip: {summary!r}")
+    return failures
+
+
+def scenario_unresolved_created_at_exits_quietly(step_text, root):
+    """Regression (contracts/gate-coverage-050.md assertion 6): a
+    dispatched implement run whose RUN_CREATED_AT cannot be resolved still
+    exits quietly, unaffected by this feature — the pre-existing guard
+    fires before the new artifact-download attempt is ever reached."""
+    failures = []
+    work = tempfile.mkdtemp(dir=root)
+    bindir = new_stub_dir(work)
+    env = base_env(bindir, {"RUN_CREATED_AT": ""})
+    runner_temp = os.path.join(work, "runner_temp")
+    rc, out, signals, outcomes, _summary = run_collector(
+        step_text, work, runner_temp, env)
+    if rc != 0:
+        failures.append(f"unresolved-created-at: exited {rc}: "
+                        f"{out.strip()[:300]}")
+        return failures
+    if signals:
+        failures.append(f"unresolved-created-at: expected no signal, got "
+                        f"{signals!r}")
+    if outcomes:
+        failures.append(f"unresolved-created-at: expected no collector "
+                        f"outcome recorded, got {outcomes!r}")
+    return failures
+
+
 def scenario_unresolved_slug_exits_quietly(step_text, root):
     """Regression: an unresolved slug (a run whose head is not a pipeline
     branch and whose metrics record names no spec) still exits quietly,
@@ -519,6 +569,8 @@ SCENARIOS = [
     scenario_no_branch_advance_falls_back_to_since_created,
     scenario_head_sha_arm_unaffected,
     scenario_non_push_expected_stage_unaffected,
+    scenario_skipped_run_unaffected,
+    scenario_unresolved_created_at_exits_quietly,
     scenario_unresolved_slug_exits_quietly,
 ]
 
