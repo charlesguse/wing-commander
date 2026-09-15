@@ -263,3 +263,7 @@ With multiple implementers:
   - [ ] Capture the grep count without the `||` idiom, e.g. `tasks_actual="$(... | grep -c '^- \[[xX]\]')" || true; tasks_actual="${tasks_actual:-0}"`.
   - [ ] Validate every `*_actual` value is digits-only before the `--argjson` call.
   - [ ] Add a gate fixture to `verify-final-pr-claims-collector.sh` that runs the shipped shell path (not just injects `tasks_actual` into the jq filter) against a `tasks.md` with zero checked boxes.
+
+## Maintainer Feedback
+
+- [ ] Extend `Aggregate signals`'s `collectors-failed` loop in `.github/workflows/watchdog.yml` (~lines 1694-1701) to include all nine `collect-*` step ids, not just the five pre-existing ones (`collect-turn-budget`, `collect-cost-report`, `collect-final-pr-claims`, and `collect-spec-collision` are currently omitted, so any of them can error silently without being counted). Derive the total in the pass-wording at ~line 2415 (currently hard-coded `"$((5 - failed)) of 5 evidence collectors"`) from the loop's list length rather than a literal `5`, so the lifecycle issue's 'passed inspection' wording is accurate for all nine collectors, matching `specs/015-pipeline-watchdog/contracts/watchdog-workflow.md` ('Nine deterministic collector steps ... All nine MUST check') and `contracts/collector-signals.md`'s promise that each new collector is indistinguishable from the five pre-existing ones from `Aggregate signals` onward.
