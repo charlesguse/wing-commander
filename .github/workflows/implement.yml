@@ -669,6 +669,42 @@ jobs:
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/bin/actionlint" -version
 
+      # FR-009a: check the gate suite's prerequisites without (re)installing
+      # them — actionlint is already installed unconditionally above, so this
+      # leg only confirms it. A missing prerequisite degrades to a step-
+      # summary note; it never fails this step or denies the agent.
+      - name: "Preflight: gate-suite prerequisites (cycle)"
+        id: gate-suite-preflight-cycle
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
+        run: |
+          ready=true
+          missing=""
+          if ! python3 -c "import yaml" >/dev/null 2>&1; then
+            ready=false
+            missing="$missing pyyaml"
+          fi
+          if ! command -v jq >/dev/null 2>&1; then
+            ready=false
+            missing="$missing jq"
+          fi
+          if ! command -v actionlint >/dev/null 2>&1; then
+            ready=false
+            missing="$missing actionlint"
+          fi
+          echo "ready=$ready" >> "$GITHUB_OUTPUT"
+          if [ "$ready" != "true" ]; then
+            echo "⚠️ gate-suite preflight (cycle): missing prerequisites —$missing; skipping the local gate suite for this cycle." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # FR-009: the same suite CLAUDE.md's "Before pushing" section tells the
+      # implement agent to run, run deterministically ahead of the agent step
+      # so its pass/fail is known before the agent starts. Skipped, not
+      # failed, when the preflight above found a missing prerequisite.
+      - name: Run local gate suite (cycle)
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.gate-suite-preflight-cycle.outputs.ready == 'true'
+        timeout-minutes: 10
+        run: python3 .github/scripts/run-local-gates.py
+
       # One agent pass runs /speckit-implement then /speckit-converge,
       # committing directly to the spec branch. continue-on-error so the
       # deterministic outcome step can inspect the result instead of the job
@@ -684,7 +720,7 @@ jobs:
           # reached for it. Dropped rather than re-tokened: every Actions
           # interaction this stage performs is already owned by the
           # deterministic dispatch steps further down this job.
-          default-allowed-tools: "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(git ls-tree:*),Bash(git branch:*),Bash(echo:*),Bash(git show:*),Bash(ls:*),Bash(cat:*),Bash(yamllint:*),Bash(actionlint:*),Bash(shellcheck:*),Bash(jq:*),Bash(mkdir:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(git rm:*)"
+          default-allowed-tools: "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(git ls-tree:*),Bash(git branch:*),Bash(echo:*),Bash(git show:*),Bash(ls:*),Bash(cat:*),Bash(grep:*),Bash(head:*),Bash(tail:*),Bash(sort:*),Bash(uniq:*),Bash(wc:*),Bash(cut:*),Bash(yamllint:*),Bash(actionlint:*),Bash(shellcheck:*),Bash(jq:*),Bash(mkdir:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(git rm:*),Bash(python .github/scripts/run-local-gates.py:*)"
           default-disallowed-tools: "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
           extra-allowed-tools: ${{ inputs.extra-allowed-tools }}
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
@@ -784,8 +820,6 @@ jobs:
 
             Shell constraints in this headless run. Each of these cost real
             turns in earlier runs, so read them before your first Bash call:
-            - Every part of a compound command must be separately allowed:
-              `cmd; echo done` is denied whole even when `cmd` alone is fine.
             - Never reference a shell variable. Any `$NAME` in a command is
               rejected outright ("Contains simple_expansion") before the
               allowlist is consulted — that is why `for f in ...; do ... "$f";
@@ -797,16 +831,8 @@ jobs:
               variable is already exported for you, so just run the script.
             - The .specify scripts are not executable in this checkout — always
               invoke them as `bash .specify/scripts/bash/<name>.sh ...`.
-            - Use bare git verbs from the repo root; `git -C <path> ...` and
-              `cd <path> && ...` are denied.
-            - To search or inspect many files at once use the Grep and Glob
-              tools (they take a path and a glob) — never a shell loop.
-            - No output redirection (`>`, `>>`) — use the Write tool instead.
-              The same goes for a flag that writes a file (`sort -o`,
-              `uniq IN OUT`): the Write tool is the only way to create one.
-              A long comment body goes in on stdin:
-              `gh issue comment <n> --body-file - <<'EOF' ... EOF` works;
-              `cat <<'EOF' > /tmp/body.md` does not.
+            - Use bare git verbs from the repo root; `git -C <path> ...` is
+              denied.
             - A denied `gh` call is the allowlist refusing it, never an
               authentication problem: `gh auth status`, `gh --version` and
               `gh workflow list` will not explain it. `gh api` is not granted
@@ -1123,6 +1149,37 @@ jobs:
             exit 1
           fi
 
+      # FR-009a: mirrors "Preflight: gate-suite prerequisites (cycle)" above
+      # — actionlint installed there is still on this job's PATH.
+      - name: "Preflight: gate-suite prerequisites (retry)"
+        id: gate-suite-preflight-retry
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
+        run: |
+          ready=true
+          missing=""
+          if ! python3 -c "import yaml" >/dev/null 2>&1; then
+            ready=false
+            missing="$missing pyyaml"
+          fi
+          if ! command -v jq >/dev/null 2>&1; then
+            ready=false
+            missing="$missing jq"
+          fi
+          if ! command -v actionlint >/dev/null 2>&1; then
+            ready=false
+            missing="$missing actionlint"
+          fi
+          echo "ready=$ready" >> "$GITHUB_OUTPUT"
+          if [ "$ready" != "true" ]; then
+            echo "⚠️ gate-suite preflight (retry): missing prerequisites —$missing; skipping the local gate suite for this retry." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # FR-009: mirrors "Run local gate suite (cycle)" above.
+      - name: Run local gate suite (retry)
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.gate-suite-preflight-retry.outputs.ready == 'true'
+        timeout-minutes: 10
+        run: python3 .github/scripts/run-local-gates.py
+
       # One automatic retry of the SAME iteration, one tier up
       # (→ inputs.escalation-model). Skipped when the failing attempt already
       # ran on the escalation tier — that goes straight to stalled.
@@ -1132,7 +1189,7 @@ jobs:
         with:
           # Gate 12 / T065 class — see "Compose tool args (implement.cycle)"
           # above: same dropped, never-referenced, wrong-token grant.
-          default-allowed-tools: "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git pull:*),Bash(git fetch:*),Bash(git reset:*),Bash(git log:*),Bash(git diff:*),Bash(git ls-tree:*),Bash(git branch:*),Bash(echo:*),Bash(git show:*),Bash(ls:*),Bash(cat:*),Bash(yamllint:*),Bash(actionlint:*),Bash(shellcheck:*),Bash(jq:*),Bash(mkdir:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(git rm:*)"
+          default-allowed-tools: "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git pull:*),Bash(git fetch:*),Bash(git reset:*),Bash(git log:*),Bash(git diff:*),Bash(git ls-tree:*),Bash(git branch:*),Bash(echo:*),Bash(git show:*),Bash(ls:*),Bash(cat:*),Bash(grep:*),Bash(head:*),Bash(tail:*),Bash(sort:*),Bash(uniq:*),Bash(wc:*),Bash(cut:*),Bash(yamllint:*),Bash(actionlint:*),Bash(shellcheck:*),Bash(jq:*),Bash(mkdir:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(git rm:*),Bash(python .github/scripts/run-local-gates.py:*)"
           default-disallowed-tools: "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
           extra-allowed-tools: ${{ inputs.extra-allowed-tools }}
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
@@ -1256,8 +1313,6 @@ jobs:
 
             Shell constraints in this headless run. Each of these cost real
             turns in earlier runs, so read them before your first Bash call:
-            - Every part of a compound command must be separately allowed:
-              `cmd; echo done` is denied whole even when `cmd` alone is fine.
             - Never reference a shell variable. Any `$NAME` in a command is
               rejected outright ("Contains simple_expansion") before the
               allowlist is consulted — that is why `for f in ...; do ... "$f";
@@ -1269,16 +1324,8 @@ jobs:
               variable is already exported for you, so just run the script.
             - The .specify scripts are not executable in this checkout — always
               invoke them as `bash .specify/scripts/bash/<name>.sh ...`.
-            - Use bare git verbs from the repo root; `git -C <path> ...` and
-              `cd <path> && ...` are denied.
-            - To search or inspect many files at once use the Grep and Glob
-              tools (they take a path and a glob) — never a shell loop.
-            - No output redirection (`>`, `>>`) — use the Write tool instead.
-              The same goes for a flag that writes a file (`sort -o`,
-              `uniq IN OUT`): the Write tool is the only way to create one.
-              A long comment body goes in on stdin:
-              `gh issue comment <n> --body-file - <<'EOF' ... EOF` works;
-              `cat <<'EOF' > /tmp/body.md` does not.
+            - Use bare git verbs from the repo root; `git -C <path> ...` is
+              denied.
             - A denied `gh` call is the allowlist refusing it, never an
               authentication problem: `gh auth status`, `gh --version` and
               `gh workflow list` will not explain it. `gh api` is not granted
