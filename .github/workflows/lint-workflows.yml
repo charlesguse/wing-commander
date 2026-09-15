@@ -918,7 +918,7 @@ jobs:
           # through its self-checkout). Group 1 is X, the directory under
           # .github/actions/ — `_shared/name` for a nested one.
           COMPOSITE_USES_RE = re.compile(
-              r'^\./(?:\.wing-commander-pipeline/)?\.github/actions/([^@\s]+?)/?$')
+              r'^\./(?:\.wing-commander-pipeline/)?\.github/actions/([^@\s]+?)/?(?:@\S+)?$')
           # `gh api` level: an explicit -X or --method decides (POST/PATCH/PUT/
           # DELETE write, anything else reads). Gate 28 separately requires
           # every `gh api` call that passes a field to name its method, so an
@@ -1078,29 +1078,48 @@ jobs:
               return (scope, rest[0]) if rest else (scope, None)
 
 
-          def resolve_token(tokexpr, step_env, job_env, app_exprs):
-              """-> (kind, detail). kind in app/default/other/unresolved.
-              app_exprs is app_token_exprs_for() of the job the call runs in."""
-              def classify(expr):
-                  if expr in app_exprs:
-                      return "app"
-                  if expr in DEFAULT_TOKEN_EXPRS:
-                      return "default"
-                  return "other"
+          def classify_token_expr(expr, app_exprs):
+              """-> (kind, detail) for a normalised token expression."""
+              if expr in app_exprs:
+                  return "app", expr
+              if expr in DEFAULT_TOKEN_EXPRS:
+                  return "default", expr
+              return "other", expr
 
+
+          def resolve_token(tokexpr, step_env, job_env, app_exprs, classify=None):
+              """-> (kind, detail). kind in app/default/other/unresolved.
+              The one lookup chain for both scans: a per-command `GH_TOKEN="$X"`
+              prefix names an env var resolved through step_env then job_env;
+              otherwise the step's GH_TOKEN, then the job's. `classify` maps the
+              expression found to (kind, detail); the default recognises the
+              caller job's App exprs and github.token, and the composite walk
+              passes one that first binds `inputs.*` through the call site."""
+              if classify is None:
+                  def classify(expr, origin):
+                      return classify_token_expr(expr, app_exprs)
+
+              # `origin` names the env the expression was read from ("step" or
+              # "job"), or "literal" for an expression written into the
+              # command itself: the composite walk classifies a job-env value
+              # in the CALLER's step-id namespace and a step-env value in the
+              # composite's own.
+              envs = (("step", step_env), ("job", job_env))
               if tokexpr is not None:
                   val = norm_expr(tokexpr)
                   if val.startswith("$") and not val.startswith(EXPR_OPEN):
                       varname = val[1:].strip("{}")
-                      for env in (step_env, job_env):
+                      for origin, env in envs:
                           if varname in env:
-                              return classify(norm_expr(str(env[varname]))), varname
+                              kind, detail = classify(norm_expr(str(env[varname])), origin)
+                              return kind, (varname if kind in ("app", "default") else detail)
                       return "unresolved", varname
-                  return classify(val), val
+                  return classify(val, "literal")
 
-              for env in (step_env, job_env):
+              for origin, env in envs:
                   if "GH_TOKEN" in env:
-                      return classify(norm_expr(str(env["GH_TOKEN"]))), None
+                      kind, detail = classify(norm_expr(str(env["GH_TOKEN"])), origin)
+                      return kind, (None if kind in ("app", "default") else detail)
               return "unresolved", None
 
 
@@ -1194,16 +1213,28 @@ jobs:
                            f"permission model. Unverified.")
 
 
-          def cmdline_of(text, m):
-              """The rest of the invocation's logical line (following `\\`
-              continuations), for flags that sit after the path."""
-              start = m.start()
-              end = text.find("\n", start)
-              end = len(text) if end < 0 else end
-              while text[start:end].rstrip().endswith("\\") and end < len(text):
-                  nxt = text.find("\n", end + 1)
-                  end = len(text) if nxt < 0 else nxt
-              return text[start:end]
+          def cmdline_of(text, flags, m):
+              """This invocation's own arguments: from the match to the end of
+              its logical line (following `\\` continuations) or the next
+              command separator (`;`, `&&`, `||`, `|`), with every
+              non-executable character blanked — so a `--method POST` inside
+              a quoted value, in a trailing comment, or in the NEXT command on
+              the same line never reads as this call's method."""
+              out = []
+              i, n = m.start(), len(text)
+              while i < n:
+                  c = text[i]
+                  if flags[i] and c == "\\" and i + 1 < n and text[i + 1] == "\n":
+                      out.append(" "); i += 2; continue
+                  if flags[i] and c == "\n":
+                      break
+                  if flags[i] and c in ";|":
+                      break
+                  if flags[i] and c == "&" and not (i > 0 and text[i - 1] == ">"):
+                      break
+                  out.append(c if flags[i] else " ")
+                  i += 1
+              return "".join(out)
 
 
           def api_level(cmdline):
@@ -1269,56 +1300,51 @@ jobs:
               text = strip_comments(strip_heredocs(run))
               flags = executable_flags(text)
               assigns = collect_assignments(text)
-              return [(m, cmdline_of(text, m), assigns)
+              return [(m, cmdline_of(text, flags, m), assigns)
                       for m in GH_INVOKE_RE.finditer(text) if flags[m.start()]]
 
 
           def bind_input_expr(expr, decl_inputs, cs_with):
               """`inputs.<name>` inside a composite -> the expression the caller
               passed for it in `with:`, else the input's declared default.
-              -> (expr, bound); bound=False means neither exists, so the
-              call would run under an empty token."""
+              -> (expr, bound, from_caller); bound=False means neither exists,
+              so the call would run under an empty token; from_caller=True
+              means the expression is the caller's and lives in the caller
+              job's step-id namespace."""
               im = re.fullmatch(r"inputs\.([\w-]+)", expr)
               if not im:
-                  return expr, True
+                  return expr, True, False
               name = im.group(1)
               if name in cs_with and cs_with[name] not in (None, ""):
-                  return norm_expr(str(cs_with[name])), True
+                  return norm_expr(str(cs_with[name])), True, True
               default = (decl_inputs.get(name) or {}).get("default")
               if default not in (None, ""):
-                  return norm_expr(str(default)), True
-              return expr, False
+                  return norm_expr(str(default)), True, False
+              return expr, False, False
 
 
           def resolve_composite_token(tokexpr, step_env, caller_job_env, decl_inputs,
-                                      cs_with, app_exprs):
-              """resolve_token() for a step INSIDE a composite: the lookup chain is
-              the composite step's env then the CALLER's job env (a composite's
-              steps run inside the calling job and see its env), and an
-              `inputs.*` value is bound through the call site first."""
-              def classify(expr):
-                  expr, bound = bind_input_expr(expr, decl_inputs, cs_with)
+                                      cs_with, caller_app_exprs, comp_app_exprs):
+              """resolve_token() for a step INSIDE a composite: the same lookup
+              chain over the composite step's env then the CALLER's job env (a
+              composite's steps run inside the calling job and see its env),
+              with each expression bound through the call site's `with:` (or
+              the input's default) before it is classified. `steps.<id>` means
+              different things on the two sides: an expression the caller
+              passed (or the caller's own job env) is read against the CALLER
+              job's minted tokens, one written inside the composite against the
+              composite's own — a step id that happens to exist on both sides
+              must never let one side's App token vouch for the other's."""
+              def classify(expr, origin):
+                  expr, bound, from_caller = bind_input_expr(expr, decl_inputs, cs_with)
                   if not bound:
                       return "unresolved", f"{expr}: not passed at this call site and no default"
-                  if expr in app_exprs:
-                      return "app", expr
-                  if expr in DEFAULT_TOKEN_EXPRS:
-                      return "default", expr
-                  return "other", expr
+                  caller_side = from_caller or origin == "job"
+                  return classify_token_expr(expr, caller_app_exprs if caller_side
+                                             else comp_app_exprs)
 
-              if tokexpr is not None:
-                  val = norm_expr(tokexpr)
-                  if val.startswith("$") and not val.startswith(EXPR_OPEN):
-                      varname = val[1:].strip("{}")
-                      for env in (step_env, caller_job_env):
-                          if varname in env:
-                              return classify(norm_expr(str(env[varname])))
-                      return "unresolved", varname
-                  return classify(val)
-              for env in (step_env, caller_job_env):
-                  if "GH_TOKEN" in env:
-                      return classify(norm_expr(str(env["GH_TOKEN"])))
-              return "unresolved", None
+              return resolve_token(tokexpr, step_env, caller_job_env, caller_app_exprs,
+                                   classify)
 
 
           app_perms = parse_app_permissions()
@@ -1477,12 +1503,11 @@ jobs:
                       f"failure for the same reason an unknown subcommand is.")
                   continue
               for cf, cj, cs_name, cs_with, cjob_env, cjob_perms, cjob_app in sites:
-                  app_exprs = set(cjob_app) | comp_app_exprs
                   for st_name, st_env, m, cmdline, assigns in comp_calls:
                       where = f"{afp} :: {st_name} <- {cf} :: {cj} / {cs_name}"
                       tok_kind, tok_detail = resolve_composite_token(
                           m.group("tokexpr"), st_env, cjob_env, decl_inputs, cs_with,
-                          app_exprs)
+                          cjob_app, comp_app_exprs)
                       check_gh_invocation(where, m, cmdline, assigns, tok_kind, tok_detail,
                                           cjob_perms, app_perms, failures, notes)
 

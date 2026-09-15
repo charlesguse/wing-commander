@@ -228,20 +228,26 @@ PIPELINE_USES = "./.wing-commander-pipeline/.github/actions/wing-commander-probe
 
 
 def composite_action(run_lines, env_lines=(), inputs=("token",),
-                     token_default=None):
+                     token_default=None, mint_step_id=None,
+                     token_env="${{ inputs.token }}"):
     """A composite with one bash step, `Render`, whose env carries
-    GH_TOKEN: inputs.token plus `env_lines`, running `run_lines`. Every
-    name in `inputs` is declared optional; `token` gets `token_default`
-    when one is given."""
+    GH_TOKEN: `token_env` (inputs.token by default) plus `env_lines`,
+    running `run_lines`. Every name in `inputs` is declared optional;
+    `token` gets `token_default` when one is given. `mint_step_id` adds a
+    preceding actions/create-github-app-token step under that id — the
+    composite's OWN App mint, in its own step-id namespace."""
     out = "name: probe" + _N + "description: fixture" + _N + "inputs:" + _N
     for name in inputs:
         out += "  " + name + ":" + _N + "    description: t" + _N + "    required: false" + _N
         if name == "token" and token_default is not None:
             out += "    default: " + token_default + _N
-    out += ("runs:" + _N + "  using: composite" + _N + "  steps:" + _N +
-            "    - name: Render" + _N + "      shell: bash" + _N +
+    out += "runs:" + _N + "  using: composite" + _N + "  steps:" + _N
+    if mint_step_id:
+        out += ("    - name: mint" + _N + "      id: " + mint_step_id + _N +
+                "      uses: actions/create-github-app-token@v3" + _N)
+    out += ("    - name: Render" + _N + "      shell: bash" + _N +
             "      env:" + _N +
-            "        GH_TOKEN: ${{ inputs.token }}" + _N)
+            "        GH_TOKEN: " + token_env + _N)
     for l in env_lines:
         out += "        " + l + _N
     out += "      run: |" + _N
@@ -692,6 +698,104 @@ CASES = [
      mkcase("", "", [APP_ENV],
             ['gh api --method GET "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate']),
      True, ("actions", "App token")),
+
+    # The method is read from THIS call's own executable arguments only
+    # (review of #348): a `--method POST` in a trailing comment, inside a
+    # quoted value, or in the next command on the same line is not this
+    # call's method. Each of these is a read under a read-only grant and
+    # must pass.
+    ("gh api level: a `--method POST` in a trailing comment does not make "
+     "the read a write",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api "repos/$REPO/issues/$N" --jq .id   # writes use --method POST']),
+     False, ()),
+
+    ("gh api level: a `--method POST` inside a quoted argument does not make "
+     "the read a write",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api "repos/$REPO/issues/$N" --jq \'"--method POST"\'']),
+     False, ()),
+
+    ("gh api level: a `--method POST` in the NEXT command on the line does "
+     "not make the read a write",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api "repos/$REPO/issues/$N" --jq .id && echo "--method POST"']),
+     False, ()),
+
+    ("gh api level: ... while a write chained after the read is still "
+     "checked as a write in its own right",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api "repos/$REPO/issues/$N" --jq .id && gh api --method POST '
+             '"repos/$REPO/issues" --input body.json']),
+     True, ("issues", "write")),
+
+    # Step-id namespaces (review of #348): `steps.<id>.outputs.token` names a
+    # different step on the caller's side and on the composite's side. A
+    # composite's own App mint must never vouch for a caller's unrelated
+    # token that happens to share the id, and vice versa.
+    ("category D: the composite mints its own App token under id `setup`; "
+     "the caller passes ITS `steps.setup.outputs.token` from a non-App "
+     "action - unverified, never classified App by the shared id",
+     {".github/actions/wing-commander-probe/action.yml":
+          composite_action(['gh issue comment "$N" --body hi'], mint_step_id="setup"),
+      ".github/workflows/w.yml": (
+          "name: w" + _N + "on:" + _N + "  workflow_dispatch: {}" + _N +
+          "jobs:" + _N + "  work:" + _N + "    runs-on: ubuntu-latest" + _N +
+          "    permissions:" + _N + "      issues: read" + _N +
+          "    steps:" + _N +
+          "      - name: not a mint" + _N + "        id: setup" + _N +
+          "        uses: some-org/mint-a-different-token@v1" + _N +
+          "      - name: Probe" + _N +
+          "        uses: ./.github/actions/wing-commander-probe" + _N +
+          "        with:" + _N +
+          "          token: ${{ steps.setup.outputs.token }}" + _N),
+      "docs/setup.md": DOCS_OK},
+     False, ("unrecognised token", "Unverified")),
+
+    ("category D: a composite's own App mint IS the App token for the "
+     "composite's own env - held to the documented grant",
+     {".github/actions/wing-commander-probe/action.yml":
+          composite_action(['gh issue create --title t --body b'],
+                           mint_step_id="mint",
+                           token_env="${{ steps.mint.outputs.token }}"),
+      ".github/workflows/w.yml": composite_caller_wf([]),
+      "docs/setup.md": DOCS_ISSUES_READONLY},
+     True, ("issue create", "App token", "issues")),
+
+    ("category D: a token the CALLER mints in its own job and passes in is "
+     "the App token on the caller's side - held to the documented grant",
+     {".github/actions/wing-commander-probe/action.yml":
+          composite_action(['gh issue create --title t --body b']),
+      ".github/workflows/w.yml": (
+          "name: w" + _N + "on:" + _N + "  workflow_dispatch: {}" + _N +
+          "jobs:" + _N + "  work:" + _N + "    runs-on: ubuntu-latest" + _N +
+          "    steps:" + _N +
+          "      - name: mint" + _N + "        id: ctx2" + _N +
+          "        uses: actions/create-github-app-token@v3" + _N +
+          "      - name: Probe" + _N +
+          "        uses: ./.github/actions/wing-commander-probe" + _N +
+          "        with:" + _N +
+          "          token: ${{ steps.ctx2.outputs.token }}" + _N),
+      "docs/setup.md": DOCS_ISSUES_READONLY},
+     True, ("issue create", "App token", "issues")),
+
+    ("category D: ... and the caller's job env is the caller's namespace "
+     "too - a composite step with no env of its own falls back to the "
+     "caller job's GH_TOKEN, an App token minted in that job",
+     {".github/actions/wing-commander-probe/action.yml":
+          composite_action(['gh issue create --title t --body b']).replace(
+              "      env:" + _N + "        GH_TOKEN: ${{ inputs.token }}" + _N, ""),
+      ".github/workflows/w.yml": (
+          "name: w" + _N + "on:" + _N + "  workflow_dispatch: {}" + _N +
+          "jobs:" + _N + "  work:" + _N + "    runs-on: ubuntu-latest" + _N +
+          "    env:" + _N + "      GH_TOKEN: ${{ steps.ctx2.outputs.token }}" + _N +
+          "    steps:" + _N +
+          "      - name: mint" + _N + "        id: ctx2" + _N +
+          "        uses: actions/create-github-app-token@v3" + _N +
+          "      - name: Probe" + _N +
+          "        uses: ./.github/actions/wing-commander-probe" + _N),
+      "docs/setup.md": DOCS_ISSUES_READONLY},
+     True, ("issue create", "App token", "issues")),
 ]
 
 

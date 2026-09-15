@@ -52,10 +52,13 @@
 # caller's default token (`actions-token`). `gh issue view` for the
 # stage:stalled coexistence check runs under the App token (`token`),
 # which may be empty when the caller's context step failed — the read then
-# fails closed to "false". Gate 12 (lint-workflows.yml) checks this routing
-# at every call site: it walks composite actions and resolves `inputs.token`
-# / `inputs.actions-token` to what watchdog.yml passes, so a `gh run` read
-# here that loses its GH_TOKEN="$ACTIONS_TOKEN" prefix fails CI (#339).
+# fails closed to "false". Gate 12 (lint-workflows.yml) walks composite
+# actions and resolves `inputs.token` / `inputs.actions-token` to what
+# watchdog.yml passes, so a `gh run` read here that loses its
+# GH_TOKEN="$ACTIONS_TOKEN" prefix fails CI (#339). The other direction —
+# `gh issue view` moved under the default token — is not a permission
+# failure (watchdog.yml grants it issues:write) and no gate asserts it;
+# it would only lose the fail-closed behaviour described above.
 name: wing-commander-inspected-run-identity
 description: >
   Best-effort, read-only: resolve which spec an inspected workflow run
