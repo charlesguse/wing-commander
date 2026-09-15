@@ -3423,6 +3423,26 @@ jobs:
         if: "!cancelled()"
         run: bash .github/scripts/verify-spec-collision-collector.sh
 
+      # Gate 59 — specs/048-correlated-release-dispatch (FR-018, SC-005):
+      # auto-release.yml identifies its own release.yml run by evidence
+      # (a title token + a time bound), never by recency, and decides
+      # whether a release happened from tag state alone, never from a
+      # run's conclusion — and release.yml never creates a tag without a
+      # live, tag-time re-read confirming the requested commit is still
+      # the branch tip. Each of the four checks, and why the ordering
+      # check verifies what it verifies, is in the script's docstring —
+      # the one home for both.
+      #
+      # Renumbered from 53 to 59 to clear the range PR #341
+      # (specs/046-watchdog-supervision-collectors) registers as Gates
+      # 53-58 on top of the same main (T030).
+      - name: Gate 59 — release dispatch stays correlated by evidence and the tag-time refusal is never bypassed
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-correlated-release-dispatch.py
+      - name: Gate 59 self-test — each of the four checks fails its own mutation
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-correlated-release-dispatch.py --self-test
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when
