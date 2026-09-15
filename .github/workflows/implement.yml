@@ -2126,6 +2126,95 @@ jobs:
             fi
           fi
 
+      # Exact-SHA branch-drift baseline (specs/050-branch-drift-sha-
+      # baseline): captures the branch/before/after/commits quadruple as
+      # step outputs for T010's metrics-summary call site to record.
+      # Placed after every push this cycle can make (the agent's own, the
+      # retry's, and "Record truncated-cycle count" above's own
+      # bookkeeping push) so "after" is the tip the cycle actually
+      # finished with, never an earlier push's tip (research.md R2, R4).
+      # Each of the three points degrades independently to
+      # "*-available: 'false'" on failure rather than failing the cycle
+      # (spec.md Assumption) — continue-on-error protects that from ever
+      # blocking "Flip stage label" below.
+      - name: Record branch advance (cycle)
+        id: branch-advance
+        shell: bash
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
+        continue-on-error: true
+        env:
+          SLUG: ${{ steps.spec.outputs.slug }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          BASE_SHA: ${{ steps.base.outputs.base-sha }}
+        run: |
+          set -uo pipefail
+          branch="${SPEC_PREFIX}${SLUG}"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+          before_sha="$BASE_SHA"
+          before_available=false
+          [ -n "$before_sha" ] && before_available=true
+          echo "before-sha=$before_sha" >> "$GITHUB_OUTPUT"
+          echo "before-sha-available=$before_available" >> "$GITHUB_OUTPUT"
+
+          after_sha=""
+          after_available=false
+          if git fetch origin "+refs/heads/$branch:refs/remotes/origin/$branch" 2>/dev/null; then
+            after_sha="$(git rev-parse "refs/remotes/origin/$branch" 2>/dev/null)" || after_sha=""
+            [ -n "$after_sha" ] && after_available=true
+          fi
+          echo "after-sha=$after_sha" >> "$GITHUB_OUTPUT"
+          echo "after-sha-available=$after_available" >> "$GITHUB_OUTPUT"
+
+          commits=""
+          commits_available=false
+          if [ "$before_available" = "true" ] && [ "$after_available" = "true" ]; then
+            commits="$(git rev-list --count "$before_sha..$after_sha" 2>/dev/null)" || commits=""
+            [ -n "$commits" ] && commits_available=true
+          fi
+          echo "commits=$commits" >> "$GITHUB_OUTPUT"
+          echo "commits-available=$commits_available" >> "$GITHUB_OUTPUT"
+
+      # Durable record of the same quadruple (specs/050-branch-drift-sha-
+      # baseline) — a transcript-less fourth wing-commander-metrics-summary
+      # invocation, deliberately pointed at a transcript path that does not
+      # exist so it drives the composite's own already-gate-covered
+      # degraded-record path for every transcript-derived field; the new
+      # branch_advance group is populated independently of that (research.md
+      # R2, R3).
+      - name: Agent run metrics summary (branch advance)
+        id: metrics-summary-branch-advance
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
+        with:
+          transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
+          model: ${{ steps.effective-model.outputs.model }}
+          stage: implement
+          spec-dir: ${{ inputs.spec-dir }}
+          spec-issue: ${{ inputs.issue-number }}
+          run-label: branch advance
+          step-index: '3'
+          record-path: ${{ runner.temp }}/wing-commander-metrics-record-branch-advance.json
+          branch: ${{ steps.branch-advance.outputs.branch }}
+          before-sha: ${{ steps.branch-advance.outputs.before-sha }}
+          before-sha-available: ${{ steps.branch-advance.outputs.before-sha-available }}
+          after-sha: ${{ steps.branch-advance.outputs.after-sha }}
+          after-sha-available: ${{ steps.branch-advance.outputs.after-sha-available }}
+          commits: ${{ steps.branch-advance.outputs.commits }}
+          commits-available: ${{ steps.branch-advance.outputs.commits-available }}
+
+      # Durable record (specs/043-durable-metrics-record) — the artifact this
+      # feature persists past the transcript's own retention window.
+      - name: Upload metrics record (branch advance)
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-branch-advance
+          path: ${{ runner.temp }}/wing-commander-metrics-record-branch-advance.json
+          if-no-files-found: ignore
+          retention-days: 90
+
       # The loop announces itself on the lifecycle issue from the first
       # completed cycle onward; later cycles change nothing.
       - name: Flip stage label (first cycle)

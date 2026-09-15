@@ -633,6 +633,7 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          RUN_ID: ${{ inputs.run-id }}
           HEAD_BRANCH: ${{ steps.run-meta.outputs.head-branch }}
           HEAD_SHA: ${{ steps.run-meta.outputs.head-sha }}
           RUN_CREATED_AT: ${{ steps.run-meta.outputs.created-at }}
@@ -703,19 +704,37 @@ jobs:
           # tasks and implement are only ever dispatched (default-branch
           # head), so no run's head was ever the spec branch.
           #
-          # The baseline for that arm is the run's start time, not
-          # HEAD_SHA: HEAD_SHA is the DEFAULT branch's tip, and
-          # `HEAD_SHA..spec/<slug>` would count the spec branch's whole
-          # history since it diverged — never zero, a measurement that can
-          # never fire. `--since=<createdAt>` counts commits whose committer
-          # date is at or after the run was created; the runner commits
-          # after that instant. Anything else that lands on the branch
-          # inside the window inflates the count: a rebase.yml force-push
-          # rewrites committer dates (implement run 34709026525 reads 22
-          # after a rebase, 16 before), and a later run on the same branch
-          # (a retry, the next cycle) that has already pushed by the time
-          # this one is inspected adds its own commits. Both are missed
-          # detections, never false ones.
+          # The baseline for that arm is measured two ways now
+          # (specs/050-branch-drift-sha-baseline). HEAD_SHA cannot be used
+          # directly for a dispatched run either way: it is the DEFAULT
+          # branch's tip, and `HEAD_SHA..spec/<slug>` would count the spec
+          # branch's whole history since it diverged — never zero, a
+          # measurement that can never fire.
+          #
+          # Primary (`baseline="exact-sha"`): a dispatched implement run's
+          # own cycle now records the exact branch/before-sha/after-sha/
+          # commits quadruple it observed (implement.yml's "Record branch
+          # advance (cycle)" step, after every push the cycle could make).
+          # When the inspected run's metrics record carries that evidence,
+          # the verdict is a pure comparison of the two recorded SHAs —
+          # invariant to anything that happens to the branch afterward,
+          # closing both the rebase-force-push miss and the second-run-
+          # masking miss described below.
+          #
+          # Fallback (`baseline="since-created"`): `--since=<createdAt>`
+          # counts commits whose committer date is at or after the run was
+          # created; the runner commits after that instant. This arm
+          # survives only for a record that predates this feature or never
+          # reached the recording point (an older pipeline version, an
+          # expired 90-day artifact retention window, a cycle whose push
+          # step never ran). Anything that lands on the branch inside its
+          # open-ended window still inflates the count the same way it
+          # always has: a rebase.yml force-push rewrites committer dates
+          # (implement run 34709026525 reads 22 after a rebase, 16 before),
+          # and a later run on the same branch (a retry, the next cycle)
+          # that has already pushed by the time this one is inspected adds
+          # its own commits. Both are missed detections, never false ones,
+          # for a run whose record lacks the new evidence (FR-018).
           _spec_prefix="${SPEC_PREFIX:-spec/}"
           measure_branch="$HEAD_BRANCH"
           baseline="head-sha"
@@ -730,79 +749,134 @@ jobs:
             fi
             measure_branch="${_spec_prefix}${SLUG}"
             baseline="since-created"
-            echo "branch-drift: run head is '$HEAD_BRANCH' (a dispatched implement run reports the default branch); measuring '$measure_branch' for commits since the run was created at $RUN_CREATED_AT (#322)." >> "$GITHUB_STEP_SUMMARY"
-          fi
 
-          # Captured through `|| fetch_rc=$?` rather than a bare `$?` on the
-          # next line: a `run:` block's default shell is `bash -e {0}`, and
-          # `set -uo pipefail` above does not turn errexit back off — so a
-          # bare failing command aborts the whole step before it can record
-          # WHY it failed, which is the one thing FR-010 needs it to do.
-          # The left side of a `||` is exempt from errexit, so this captures
-          # the code instead of dying on it. The outcome record is appended
-          # once, after every read below has had a chance to run (T032) —
-          # not immediately here — so a rev-parse/rev-list failure that
-          # follows is folded into the same record instead of being
-          # collapsed into a silent "nothing to see" by the `2>/dev/null`
-          # fallbacks those reads use.
-          fetch_rc=0
-          fetch_log="$(git fetch --no-tags --quiet origin "refs/heads/$measure_branch:refs/remotes/origin/$measure_branch" 2>&1)" || fetch_rc=$?
-          # A fetch failure caused by the ref genuinely no longer existing
-          # (branch already torn down) is expected and does not make this
-          # collector's read untrusted; any other fetch failure does
-          # (FR-010).
-          bd_outcome="ok"
-          branch_torn_down=false
-          if [ "$fetch_rc" != "0" ]; then
-            if printf '%s' "$fetch_log" | grep -qi "couldn't find remote ref\|couldn't find remote branch"; then
-              branch_torn_down=true
+            # R7: look for a downloaded metrics-record* artifact off the
+            # inspected run carrying branch_advance evidence before falling
+            # through to the since-created fallback. Same download pattern
+            # wing-commander-inspected-run-identity's record_fallback
+            # already uses. Filtered on the group's own `available` flag,
+            # not on step-index/run-label, since FR-020 makes the group
+            # stage-neutral — a future non-implement populator must be
+            # picked up here with no collector change.
+            exact_before_sha=""
+            exact_after_sha=""
+            exact_commits=""
+            mr_dir="$RUNNER_TEMP/branch-drift-metrics-record"
+            mkdir -p "$mr_dir" 2>/dev/null || true
+            if [ -n "$RUN_ID" ] && gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -p 'metrics-record*' -D "$mr_dir" >/dev/null 2>&1; then
+              while IFS= read -r rec; do
+                avail="$(jq -r '.branch_advance.available // false' "$rec" 2>/dev/null || true)"
+                if [ "$avail" = "true" ]; then
+                  exact_before_sha="$(jq -r '.branch_advance.before_sha // empty' "$rec" 2>/dev/null || true)"
+                  exact_after_sha="$(jq -r '.branch_advance.after_sha // empty' "$rec" 2>/dev/null || true)"
+                  exact_commits="$(jq -r '.branch_advance.commits // empty' "$rec" 2>/dev/null || true)"
+                  break
+                fi
+              done < <(find "$mr_dir" -type f -name '*.json' 2>/dev/null | sort)
+            fi
+
+            if [ -n "$exact_before_sha" ] && [ -n "$exact_after_sha" ]; then
+              baseline="exact-sha"
+              echo "branch-drift: run head is '$HEAD_BRANCH' (a dispatched implement run reports the default branch); measuring '$measure_branch' via the implement run's own recorded before/after SHAs (specs/050-branch-drift-sha-baseline)." >> "$GITHUB_STEP_SUMMARY"
             else
-              bd_outcome="failed"
+              echo "branch-drift: run head is '$HEAD_BRANCH' (a dispatched implement run reports the default branch); measuring '$measure_branch' for commits since the run was created at $RUN_CREATED_AT (no recorded branch-advance evidence on this run)." >> "$GITHUB_STEP_SUMMARY"
             fi
           fi
 
-          rev_parse_rc=0
-          after_sha="$(git rev-parse "refs/remotes/origin/$measure_branch" 2>/dev/null)" || rev_parse_rc=$?
-          if [ -z "$after_sha" ] || [ "$rev_parse_rc" != "0" ]; then
-            # An empty/failed rev-parse is only a legitimate "branch already
-            # torn down" outcome when the fetch above already diagnosed
-            # that condition — otherwise the ref should have resolved, and a
-            # failure here is a genuine untrusted read (T032).
-            if [ "$branch_torn_down" != "true" ]; then
+          if [ "$baseline" = "exact-sha" ]; then
+            # research.md R7 / FR-019: the verdict is a pure comparison of
+            # the two points implement.yml's own cycle recorded, at the
+            # moment it held them — no fetch/rev-list against the measured
+            # branch's CURRENT state at all, so neither an intervening
+            # force-push nor an intervening later run's push can change it
+            # (SC-003; US2 T021 — this arm never reads the branch's
+            # current state).
+            after_sha="$exact_after_sha"
+            commits="$exact_commits"
+            bd_outcome="ok"
+            jq -c --arg c "collect-branch-drift" --arg o "$bd_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
+            if [ "$exact_before_sha" != "$exact_after_sha" ]; then
+              exit 0
+            fi
+          else
+            # Captured through `|| fetch_rc=$?` rather than a bare `$?` on the
+            # next line: a `run:` block's default shell is `bash -e {0}`, and
+            # `set -uo pipefail` above does not turn errexit back off — so a
+            # bare failing command aborts the whole step before it can record
+            # WHY it failed, which is the one thing FR-010 needs it to do.
+            # The left side of a `||` is exempt from errexit, so this captures
+            # the code instead of dying on it. The outcome record is appended
+            # once, after every read below has had a chance to run (T032) —
+            # not immediately here — so a rev-parse/rev-list failure that
+            # follows is folded into the same record instead of being
+            # collapsed into a silent "nothing to see" by the `2>/dev/null`
+            # fallbacks those reads use.
+            fetch_rc=0
+            fetch_log="$(git fetch --no-tags --quiet origin "refs/heads/$measure_branch:refs/remotes/origin/$measure_branch" 2>&1)" || fetch_rc=$?
+            # A fetch failure caused by the ref genuinely no longer existing
+            # (branch already torn down) is expected and does not make this
+            # collector's read untrusted; any other fetch failure does
+            # (FR-010).
+            bd_outcome="ok"
+            branch_torn_down=false
+            if [ "$fetch_rc" != "0" ]; then
+              if printf '%s' "$fetch_log" | grep -qi "couldn't find remote ref\|couldn't find remote branch"; then
+                branch_torn_down=true
+              else
+                bd_outcome="failed"
+              fi
+            fi
+
+            rev_parse_rc=0
+            after_sha="$(git rev-parse "refs/remotes/origin/$measure_branch" 2>/dev/null)" || rev_parse_rc=$?
+            if [ -z "$after_sha" ] || [ "$rev_parse_rc" != "0" ]; then
+              # An empty/failed rev-parse is only a legitimate "branch already
+              # torn down" outcome when the fetch above already diagnosed
+              # that condition — otherwise the ref should have resolved, and a
+              # failure here is a genuine untrusted read (T032).
+              if [ "$branch_torn_down" != "true" ]; then
+                bd_outcome="failed"
+              fi
+              jq -c --arg c "collect-branch-drift" --arg o "$bd_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
+              echo "branch-drift: '$measure_branch' no longer exists (already torn down) — skipping." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+
+            commits_rc=0
+            if [ "$baseline" = "since-created" ]; then
+              commits="$(git rev-list --count --since="$RUN_CREATED_AT" "$after_sha" 2>/dev/null)" || commits_rc=$?
+            else
+              commits="$(git rev-list --count "$HEAD_SHA..$after_sha" 2>/dev/null)" || commits_rc=$?
+            fi
+            if [ "$commits_rc" != "0" ] || [ -z "$commits" ]; then
               bd_outcome="failed"
             fi
             jq -c --arg c "collect-branch-drift" --arg o "$bd_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
-            echo "branch-drift: '$measure_branch' no longer exists (already torn down) — skipping." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            if [ -z "$commits" ] || [ "$commits" != "0" ]; then
+              exit 0
+            fi
           fi
 
-          commits_rc=0
-          if [ "$baseline" = "since-created" ]; then
-            commits="$(git rev-list --count --since="$RUN_CREATED_AT" "$after_sha" 2>/dev/null)" || commits_rc=$?
-          else
-            commits="$(git rev-list --count "$HEAD_SHA..$after_sha" 2>/dev/null)" || commits_rc=$?
-          fi
-          if [ "$commits_rc" != "0" ] || [ -z "$commits" ]; then
-            bd_outcome="failed"
-          fi
-          jq -c --arg c "collect-branch-drift" --arg o "$bd_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
-          if [ -z "$commits" ] || [ "$commits" != "0" ]; then
-            exit 0
-          fi
-
-          # `before-sha` is the exact-baseline case's before SHA and null
-          # for the since-created arm (HEAD_SHA is main's tip there, not a
-          # point on the measured branch); `since` is the converse. The
-          # fingerprint projects only `branch` for lost-progress, so both
-          # shapes dedup the same way.
-          before_sha="$HEAD_SHA"; since=""
+          # `before-sha` is populated for the exact-sha arm (the recorded
+          # before point) and the head-sha arm (HEAD_SHA); null for the
+          # since-created arm (HEAD_SHA is main's tip there, not a point on
+          # the measured branch). `since` is the converse — populated only
+          # for since-created. `commits` in the signal is the value the
+          # implement stage itself recorded, read verbatim, for the
+          # exact-sha arm (FR-019 — never recomputed here); the head-sha
+          # and since-created arms keep today's fixed `0` placeholder,
+          # since both only ever fire on a zero count. The fingerprint
+          # projects only `branch` for lost-progress, so every shape dedups
+          # the same way (research.md R11).
+          before_sha="$HEAD_SHA"; since=""; commits_out="0"
           if [ "$baseline" = "since-created" ]; then before_sha=""; since="$RUN_CREATED_AT"; fi
+          if [ "$baseline" = "exact-sha" ]; then before_sha="$exact_before_sha"; since=""; commits_out="$commits"; fi
           if [ "$META_STAGE" = "stalled" ] || [ "$STALLED_LABEL" = "true" ]; then
-            entry=$(jq -n --arg branch "$measure_branch" --arg before "$before_sha" --arg since "$since" --arg after "$after_sha" \
-              '[{source:"branch-drift","class-hint":null,facts:{branch:$branch,"before-sha":(if $before == "" then null else $before end),since:(if $since == "" then null else $since end),"after-sha":$after,commits:0},alreadyHandledBy:"existing stalled automation (implement.yml stalled job / cleanup.yml mark-stalled job)"}]')
+            entry=$(jq -n --arg branch "$measure_branch" --arg before "$before_sha" --arg since "$since" --arg after "$after_sha" --arg commits "$commits_out" \
+              '[{source:"branch-drift","class-hint":null,facts:{branch:$branch,"before-sha":(if $before == "" then null else $before end),since:(if $since == "" then null else $since end),"after-sha":$after,commits:(if $commits == "" then null else ($commits|tonumber) end)},alreadyHandledBy:"existing stalled automation (implement.yml stalled job / cleanup.yml mark-stalled job)"}]')
           else
-            entry=$(jq -n --arg branch "$measure_branch" --arg before "$before_sha" --arg since "$since" --arg after "$after_sha" \
-              '[{source:"branch-drift","class-hint":"lost-progress",facts:{branch:$branch,"before-sha":(if $before == "" then null else $before end),since:(if $since == "" then null else $since end),"after-sha":$after,commits:0}}]')
+            entry=$(jq -n --arg branch "$measure_branch" --arg before "$before_sha" --arg since "$since" --arg after "$after_sha" --arg commits "$commits_out" \
+              '[{source:"branch-drift","class-hint":"lost-progress",facts:{branch:$branch,"before-sha":(if $before == "" then null else $before end),since:(if $since == "" then null else $since end),"after-sha":$after,commits:(if $commits == "" then null else ($commits|tonumber) end)}}]')
           fi
           jq -c --argjson new "$entry" '. + $new' "$RUNNER_TEMP/signals.json" > "$RUNNER_TEMP/signals.json.tmp" && mv "$RUNNER_TEMP/signals.json.tmp" "$RUNNER_TEMP/signals.json"
 

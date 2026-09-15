@@ -32,7 +32,7 @@ implementation and testing of each story.
 provisional gate number still hold before editing anything (research.md
 flags both as "confirmed at implementation time").
 
-- [ ] T001 Re-grep the current state of `.github/workflows/implement.yml`
+- [X] T001 Re-grep the current state of `.github/workflows/implement.yml`
   (`Record base SHA` ~647, `Agent run metrics summary (cycle)` ~894,
   `Read back cycle outcome` ~966, `Consolidate final outcome` ~1532,
   `Record truncated-cycle count` ~1900-1958, `Flip stage label (first
@@ -51,7 +51,7 @@ before any call site populates it or any watchdog logic reads it.
 
 **⚠️ CRITICAL**: No user story task may start until this phase is complete.
 
-- [ ] T002 [P] In `specs/043-durable-metrics-record/contracts/metrics-record-schema.md`,
+- [X] T002 [P] In `specs/043-durable-metrics-record/contracts/metrics-record-schema.md`,
   add the `branch_advance` clause per `contracts/metrics-record-schema-delta.md`:
   insert the 8-field `branch_advance` object (`available`, `branch`,
   `before_sha`, `before_available`, `after_sha`, `after_available`,
@@ -61,7 +61,7 @@ before any call site populates it or any watchdog logic reads it.
   that its absence on a pre-feature record must be treated identically to
   `available: false` (never a validation failure).
 
-- [ ] T003 In `.github/actions/wing-commander-metrics-summary/action.yml`,
+- [X] T003 In `.github/actions/wing-commander-metrics-summary/action.yml`,
   add seven optional inputs to the `inputs:` block — `branch` (default
   `''`), `before-sha` (default `''`), `before-sha-available` (default
   `'false'`), `after-sha` (default `''`), `after-sha-available` (default
@@ -77,7 +77,7 @@ before any call site populates it or any watchdog logic reads it.
   degraded state (data-model.md's "New composite inputs" table;
   research.md R3).
 
-- [ ] T004 In `.github/scripts/verify-metrics-record-schema.py`, add a
+- [X] T004 In `.github/scripts/verify-metrics-record-schema.py`, add a
   `REQUIRED_BRANCH_ADVANCE` field-type map (`available: bool`, `branch:
   (str, type(None))`, `before_sha: (str, type(None))`, `before_available:
   bool`, `after_sha: (str, type(None))`, `after_available: bool`,
@@ -88,7 +88,7 @@ before any call site populates it or any watchdog logic reads it.
   failure (a pre-feature record has no such key at all; data-model.md's
   Compatibility note).
 
-- [ ] T005 In the same file, extend `check_fields_match_contract()`'s
+- [X] T005 In the same file, extend `check_fields_match_contract()`'s
   `levels` list with a `("record.branch_advance", REQUIRED_BRANCH_ADVANCE,
   shape.get("branch_advance", {}))` entry, and adjust the existing
   `("record", REQUIRED_TOP, shape)` comparison so `branch_advance` being
@@ -96,7 +96,7 @@ before any call site populates it or any watchdog logic reads it.
   not itself reported as drift (it is the one field this gate treats as
   optional-at-top; contracts/gate-coverage-050.md).
 
-- [ ] T006 [P] Add 7 new fixture files under
+- [X] T006 [P] Add 7 new fixture files under
   `.github/scripts/fixtures/metrics-record-schema/` (data-model.md's Gate
   fixtures table / FR-008): `branch_advance` with both points
   present+different+`commits>0`; both present+equal+`commits:0`;
@@ -107,13 +107,13 @@ before any call site populates it or any watchdog logic reads it.
   `verify-metrics-record-schema.py`'s `_fixture_files()` pinned count from
   `8` to `15` to match.
 
-- [ ] T007 Confirm an existing fixture with no `branch_advance` key at all
+- [X] T007 Confirm an existing fixture with no `branch_advance` key at all
   (e.g. `.github/scripts/fixtures/metrics-record-schema/valid-single-model.json`)
   still validates under T004/T005's special-casing — this is the
   "record predating this feature" positive fixture data-model.md requires
   (FR-008, SC-005); no new file needed for it.
 
-- [ ] T008 [P] In `.github/scripts/verify-metrics-persist-retry.py`, add a
+- [X] T008 [P] In `.github/scripts/verify-metrics-persist-retry.py`, add a
   `branch_advance`-populated record (a literal alongside `batch`/
   `_reusable_workflow_record()`-style fixtures already in the file) to one
   existing case function's fixture batch — e.g.
@@ -143,7 +143,7 @@ Gate 53's fixture harness, not a live rebase — quickstart.md Scenario 1.)
 
 ### Implementation for User Story 1
 
-- [ ] T009 [US1] In `.github/workflows/implement.yml`'s `cycle` job, add a
+- [X] T009 [US1] In `.github/workflows/implement.yml`'s `cycle` job, add a
   new step named `Record branch advance (cycle)` between `Record
   truncated-cycle count` (~1900-1958) and `Flip stage label (first cycle)`
   (~1962), guarded by the same `if: steps.lifecycle-gate.outputs.is-open
@@ -162,7 +162,7 @@ Gate 53's fixture harness, not a live rebase — quickstart.md Scenario 1.)
   independently to `*-available: 'false'` on failure rather than failing
   the cycle (spec.md Assumption).
 
-- [ ] T010 [US1] Immediately after T009's step, add a step that invokes
+- [X] T010 [US1] Immediately after T009's step, add a step that invokes
   `uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary`
   with: `transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json`
   (a path that does not exist — deliberately drives the existing
@@ -175,7 +175,7 @@ Gate 53's fixture harness, not a live rebase — quickstart.md Scenario 1.)
   `after-sha-available`/`commits`/`commits-available` inputs from T009's
   outputs (data-model.md's "fourth implement.yml call site" table).
 
-- [ ] T011 [US1] Immediately after T010, add a step `Upload metrics record
+- [X] T011 [US1] Immediately after T010, add a step `Upload metrics record
   (branch advance)` mirroring the three existing `Upload metrics record
   (...)` steps (e.g. `.github/workflows/implement.yml` ~914): `uses:
   actions/upload-artifact@v6`, `with: { name:
@@ -183,7 +183,7 @@ Gate 53's fixture harness, not a live rebase — quickstart.md Scenario 1.)
   }}/wing-commander-metrics-record-branch-advance.json, if-no-files-found:
   ignore, retention-days: 90 }`.
 
-- [ ] T012 [US1] In `.github/scripts/verify-metrics-summary-record-emission.py`,
+- [X] T012 [US1] In `.github/scripts/verify-metrics-summary-record-emission.py`,
   add a fourth-invocation case (extending
   `case_repeated_invocation_in_one_job_gets_distinct_record_keys()`'s
   three-invocation harness to four, and adding a dedicated assertion
@@ -193,7 +193,7 @@ Gate 53's fixture harness, not a live rebase — quickstart.md Scenario 1.)
   `record_available: false` AND `branch_advance.available: true` with the
   exact values passed in (contracts/gate-coverage-050.md).
 
-- [ ] T013 [US1] In `.github/workflows/watchdog.yml`'s
+- [X] T013 [US1] In `.github/workflows/watchdog.yml`'s
   `collect-branch-drift` step, before the existing `baseline` selection
   falls through to `"since-created"` (~717-732), add: download the
   inspected run's `metrics-record*` artifact via `gh run download "$RUN_ID"
@@ -205,7 +205,7 @@ Gate 53's fixture harness, not a live rebase — quickstart.md Scenario 1.)
   "exact-sha"` and read `before_sha`/`after_sha` directly from that
   record's `branch_advance.before_sha`/`.after_sha` (research.md R7).
 
-- [ ] T014 [US1] In the same step, when `baseline = "exact-sha"`: skip the
+- [X] T014 [US1] In the same step, when `baseline = "exact-sha"`: skip the
   existing `git fetch`/`rev-parse`/`rev-list` block (~734-789) entirely —
   the verdict is `before_sha == after_sha` (lost-progress when equal), and
   `commits` for the signal is `branch_advance.commits` read verbatim,
@@ -213,7 +213,7 @@ Gate 53's fixture harness, not a live rebase — quickstart.md Scenario 1.)
   exit 0 with no signal (mirroring the existing `[ "$commits" != "0" ]`
   early exit at ~787, adapted to compare SHAs).
 
-- [ ] T015 [US1] Update the signal-emission jq blocks (~791-805) so the
+- [X] T015 [US1] Update the signal-emission jq blocks (~791-805) so the
   `exact-sha` arm emits `facts: {branch, "before-sha": <before_sha>,
   since: null, "after-sha": <after_sha>, commits: <recorded commits>}`
   (data-model.md's "Branch-drift signal" table), while the
@@ -222,7 +222,7 @@ Gate 53's fixture harness, not a live rebase — quickstart.md Scenario 1.)
   STALLED_LABEL == "true"` → `alreadyHandledBy`) applies identically to
   both arms, unchanged (FR-014).
 
-- [ ] T016 [US1] Replace the comment block at
+- [X] T016 [US1] Replace the comment block at
   `.github/workflows/watchdog.yml` ~704-716 (the "Both err toward a
   missed detection, never a false one, but they are baked in" comment
   quoted in spec.md's Input) with a comment stating: (a) why
@@ -234,7 +234,7 @@ Gate 53's fixture harness, not a live rebase — quickstart.md Scenario 1.)
   record that predates this feature or never reached the recording point
   (FR-015, research.md R8).
 
-- [ ] T017 [US1] Create `.github/scripts/verify-branch-drift-sha-baseline.py`
+- [X] T017 [US1] Create `.github/scripts/verify-branch-drift-sha-baseline.py`
   (new, provisional Gate 53): a `wc_shell_harness.py`-style harness
   following `verify-finalize-refresh.py`'s pattern (`extract_between()` to
   pull `collect-branch-drift`'s real shipped bash out of
@@ -248,13 +248,13 @@ Gate 53's fixture harness, not a live rebase — quickstart.md Scenario 1.)
   intervening rebase and an intervening later-cycle push) and assert the
   verdict is byte-for-byte unchanged (US1 AS2, SC-001, SC-003).
 
-- [ ] T018 [US1] Extend `verify-branch-drift-sha-baseline.py` with
+- [X] T018 [US1] Extend `verify-branch-drift-sha-baseline.py` with
   scenario 3: identical inputs to T017's scenario 1, but the inspected
   spec's lifecycle already reads `stalled` (`META_STAGE=stalled` or
   `STALLED_LABEL=true`) → assert the `alreadyHandledBy` shape fires
   instead of a bare `lost-progress` class-hint (US1 AS4, FR-014).
 
-- [ ] T019 [US1] Extend `verify-branch-drift-sha-baseline.py` with a
+- [X] T019 [US1] Extend `verify-branch-drift-sha-baseline.py` with a
   negative mutation fixture (mirroring `verify-finalize-refresh.py`'s
   `_mut_*` functions): mutate the extracted collector text so it
   re-derives `commits` via `git rev-list` instead of reading
@@ -264,7 +264,7 @@ Gate 53's fixture harness, not a live rebase — quickstart.md Scenario 1.)
   proving the "never re-walk the recorded range" invariant (FR-019) is
   load-bearing, not just documentation.
 
-- [ ] T020 [US1] Wire the new script into `.github/workflows/lint-workflows.yml`
+- [X] T020 [US1] Wire the new script into `.github/workflows/lint-workflows.yml`
   as `Gate 53 — <short description of the exact-SHA branch-drift
   baseline>` (confirm the number against T001's re-check), placed after
   Gate 52's step (~3179) and before Gate 10 (~3197), `if: "!cancelled()"`,

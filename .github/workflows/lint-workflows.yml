@@ -3546,6 +3546,24 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-auto-release-mode.py
 
+      # Gate 65 — specs/050-branch-drift-sha-baseline (issue #331): the
+      # watchdog's branch-drift collector, for a dispatched implement run,
+      # now compares the exact before/after SHA pair that run's own metrics
+      # record carries instead of counting commits in an open-ended
+      # `--since=<createdAt>` window. That old window could never catch a
+      # rebase force-push between the run finishing and the watchdog
+      # inspecting it, or a later run on the same branch that had already
+      # pushed by inspection time — both permanent misses this closes.
+      # Drives the real, shipped `collect-branch-drift` step text against a
+      # `gh` stub and a local git repository. Renumbered from 63 (T020's
+      # number was provisional) to 65 to clear the collision with Gate 63
+      # (plan/tasks cost line, #377) and Gate 64 (auto-release mode,
+      # specs/054-e2e-container-coverage), both landed in parallel on the
+      # same base — the same reasoning as Gate 63's renumbering above.
+      - name: Gate 65 — the branch-drift collector compares the implement run's own recorded SHAs, not a commits-since-run-created window
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-branch-drift-sha-baseline.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when
