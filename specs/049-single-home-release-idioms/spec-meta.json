@@ -3,6 +3,6 @@
   "spec_dir": "specs/049-single-home-release-idioms",
   "feature_num": "049",
   "stage": "implement",
-  "iteration": 1,
+  "iteration": 2,
   "spec_branch": "spec/049-single-home-release-idioms"
 }
