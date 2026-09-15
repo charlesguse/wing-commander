@@ -1746,38 +1746,38 @@ jobs:
           echo "owner=${SCRATCH_REPO%%/*}" >> "$GITHUB_OUTPUT"
           echo "name=${SCRATCH_REPO#*/}" >> "$GITHUB_OUTPUT"
 
-      # continue-on-error, then re-checked below: when the App is not installed
-      # on the scratch repository this step fails with the action's own generic
-      # "Not Found", which tells a maintainer nothing about what to go and fix.
-      # The next step converts that into the actionable message. It is never
-      # allowed to pass silently — `outcome` and the token itself are both
-      # asserted there.
+      # specs/049-single-home-release-idioms: the mint-then-verify idiom
+      # this pair of steps used to re-type is now the shared
+      # _shared/scoped-app-token composite -- see
+      # specs/049-single-home-release-idioms/contracts/scoped-app-token.md.
+      # `id: scratch-token` is kept (not
+      # renamed) so steps.scratch-token.outputs.token below and at the
+      # scaffold/agent-push steps still resolves the same way it always has.
       - name: Mint a scratch-repository App token
         id: scratch-token
-        continue-on-error: true
-        uses: actions/create-github-app-token@v3
+        uses: ./.wing-commander-pipeline/.github/actions/_shared/scoped-app-token
         with:
-          client-id: ${{ secrets.speckit-app-id }}
+          app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
           owner: ${{ steps.scratch-parts.outputs.owner }}
-          repositories: ${{ steps.scratch-parts.outputs.name }}
+          repo-name: ${{ steps.scratch-parts.outputs.name }}
 
       - name: Resolve the scratch repository
         id: scratch-repo
         shell: bash
         env:
-          GH_TOKEN: ${{ steps.scratch-token.outputs.token }}
-          TOKEN_OUTCOME: ${{ steps.scratch-token.outcome }}
+          OK: ${{ steps.scratch-token.outputs.ok }}
+          FAILURE_REASON: ${{ steps.scratch-token.outputs.failure-reason }}
           SCRATCH_REPO: ${{ inputs.e2e-scratch-repo }}
           ISSUE: ${{ needs.prepare.outputs.issue-number }}
         run: |
           set -uo pipefail
-          if [ "$TOKEN_OUTCOME" != "success" ] || [ -z "$GH_TOKEN" ]; then
-            echo "::error::wing-commander auto-update-spec-kit e2e-stage: the wing-commander App could not mint a token for the configured scratch repository $SCRATCH_REPO. Install the App on that repository (Contents: read and write is all it needs) — if it lives under a different owner than this repository, the App needs its own installation there — then re-dispatch."
-            exit 1
-          fi
-          if ! gh repo view "$SCRATCH_REPO" >/dev/null 2>&1; then
-            echo "::error::wing-commander auto-update-spec-kit e2e-stage: the configured scratch repository $SCRATCH_REPO is not visible to the wing-commander App token. Create it, or install the App on it (Contents: read and write is all it needs), then re-dispatch."
+          if [ "$OK" != "true" ]; then
+            if [ "$FAILURE_REASON" = "token-mint-failed" ]; then
+              echo "::error::wing-commander auto-update-spec-kit e2e-stage: the wing-commander App could not mint a token for the configured scratch repository $SCRATCH_REPO. Install the App on that repository (Contents: read and write is all it needs) — if it lives under a different owner than this repository, the App needs its own installation there — then re-dispatch."
+            else
+              echo "::error::wing-commander auto-update-spec-kit e2e-stage: the configured scratch repository $SCRATCH_REPO is not visible to the wing-commander App token. Create it, or install the App on it (Contents: read and write is all it needs), then re-dispatch."
+            fi
             exit 1
           fi
           echo "full-name=$SCRATCH_REPO" >> "$GITHUB_OUTPUT"
@@ -1812,6 +1812,30 @@ jobs:
       - name: Install uv (provides uvx for the Spec Kit CLI)
         uses: astral-sh/setup-uv@v10.0.0
 
+      # specs/049-single-home-release-idioms: the detach-through-push
+      # portion of this step (through the first empty commit) is now the
+      # shared _shared/orphan-branch-reset composite -- see
+      # specs/049-single-home-release-idioms/contracts/orphan-branch-reset.md.
+      # This leaves e2e-scratch cloned,
+      # reset, and pushed with one placeholder commit; the follow-up step
+      # scaffolds real content onto it and pushes a SECOND time -- two
+      # pushes to the same branch in sequence, per the composite's own
+      # contract, in place of today's single combined clone-reset-scaffold-
+      # push. The empty-tree-first-then-real-content-then-unborn-branch
+      # detach/orphan reasoning that used to live inline here now lives at
+      # the composite's own definition, the one home for it.
+      - name: Reset the scratch repository branch to an empty tree
+        id: scaffold-reset
+        uses: ./.wing-commander-pipeline/.github/actions/_shared/orphan-branch-reset
+        with:
+          token: ${{ steps.scratch-token.outputs.token }}
+          repo: ${{ steps.scratch-repo.outputs.full-name }}
+          branch: ${{ steps.scratch-repo.outputs.branch }}
+          bot-name: "${{ steps.ctx.outputs.bot-slug }}[bot]"
+          bot-email: "${{ steps.ctx.outputs.bot-slug }}[bot]@users.noreply.github.com"
+          workdir: e2e-scratch
+          commit-message: "chore: reset for a fresh end-to-end scaffold attempt"
+
       - name: Scaffold and force-push the candidate into the scratch repository
         id: scaffold
         shell: bash
@@ -1821,42 +1845,17 @@ jobs:
           FULL_NAME: ${{ steps.scratch-repo.outputs.full-name }}
           BRANCH: ${{ steps.scratch-repo.outputs.branch }}
           CANDIDATE: ${{ needs.prepare.outputs.candidate-version }}
-          BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
+          RESET_OK: ${{ steps.scaffold-reset.outputs.ok }}
+          RESET_FAILURE_STAGE: ${{ steps.scaffold-reset.outputs.failure-stage }}
         run: |
           set -euo pipefail
-          rm -rf e2e-scratch
+          if [ "$RESET_OK" != "true" ]; then
+            echo "::error::wing-commander auto-update-spec-kit e2e-stage: resetting the scratch repository branch to an empty tree failed (stage: $RESET_FAILURE_STAGE)."
+            exit 1
+          fi
           auth_url="https://x-access-token:${GH_TOKEN}@github.com/${FULL_NAME}.git"
-          git clone --quiet "$auth_url" e2e-scratch
           (
             cd e2e-scratch
-            git remote set-url origin "https://github.com/${FULL_NAME}.git"
-            git config user.name "${BOT_SLUG}[bot]"
-            git config user.email "${BOT_SLUG}[bot]@users.noreply.github.com"
-
-            # Empty tree on a fresh branch. `--orphan` needs a commit to
-            # detach from; a scratch repository with no commits at all is
-            # already on an unborn branch, so only rename it there.
-            #
-            # The detach-and-delete is what makes this step repeatable. The
-            # first scaffold pushes "$BRANCH" into a scratch repository that
-            # has no commits yet, and GitHub adopts the first branch pushed to
-            # an empty repository as its default. From the next run on, `git
-            # clone` checks that branch out, so `--orphan "$BRANCH"` aborts
-            # with "a branch named ... already exists" (exit 128, and this
-            # shell is `-e`) — which is exactly how run 31905247552 failed,
-            # one run after the scaffold first succeeded. Detaching frees the
-            # name so it can be deleted; the local branch is disposable either
-            # way, since the push below is `--force HEAD:refs/heads/$BRANCH`
-            # and carries no local history with it.
-            if git rev-parse --verify HEAD >/dev/null 2>&1; then
-              git checkout --quiet --detach
-              git branch -D "$BRANCH" >/dev/null 2>&1 || true
-              git checkout --quiet --orphan "$BRANCH"
-              git rm -rq --cached . >/dev/null 2>&1 || true
-              find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
-            else
-              git checkout --quiet -b "$BRANCH"
-            fi
 
             if ! command -v uvx >/dev/null 2>&1; then
               echo "::error::wing-commander auto-update-spec-kit e2e-stage: 'uvx' is not available on this runner — cannot scaffold Spec Kit v$CANDIDATE."
@@ -2540,6 +2539,7 @@ jobs:
       # outcome FR-010 wants visible, not something that auto-closes
       # anything) plus a flagged, reused-if-open issue.
       - name: Rollback (health-check failed)
+        id: rollback
         shell: bash
         if: needs.health-check.outputs.pinned-ok == 'false'
         env:
@@ -2551,9 +2551,6 @@ jobs:
           BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
         run: |
           set -euo pipefail
-          gh label create "auto-update:failed" --color E99695 --description "Spec Kit upgrade blocked or rolled back; needs maintainer attention" --force
-
-          existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --label "auto-update:failed" --state open --json number --jq '.[0].number // empty' 2>/dev/null || true)"
 
           if [ -z "$ROLLBACK_TARGET" ]; then
             echo "::error::wing-commander auto-update-spec-kit: pinned version v$PINNED_VERSION failed its health check, but no prior pinned version could be determined from git history — a maintainer must intervene manually."
@@ -2564,11 +2561,8 @@ jobs:
               echo ""
               echo "$FAILURE_DETAIL"
             } > "$RUNNER_TEMP/rollback-issue-body.md"
-            if [ -n "$existing" ]; then
-              gh issue comment "$existing" --body-file "$RUNNER_TEMP/rollback-issue-body.md"
-            else
-              gh issue create --repo "$GITHUB_REPOSITORY" --title "Spec Kit auto-update: v$PINNED_VERSION is broken, no rollback target found" --body-file "$RUNNER_TEMP/rollback-issue-body.md" --label "auto-update:failed"
-            fi
+            echo "title=Spec Kit auto-update: v$PINNED_VERSION is broken, no rollback target found" >> "$GITHUB_OUTPUT"
+            echo "action=report" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -2614,12 +2608,37 @@ jobs:
             echo ""
             echo "**Proposed:** restore v$ROLLBACK_TARGET via $pr_url (this feature never merges its own PR)."
           } > "$RUNNER_TEMP/rollback-issue-body.md"
-          if [ -n "$existing" ]; then
-            gh issue comment "$existing" --body-file "$RUNNER_TEMP/rollback-issue-body.md"
-          else
-            gh issue create --repo "$GITHUB_REPOSITORY" --title "Spec Kit auto-update: v$PINNED_VERSION regression" --body-file "$RUNNER_TEMP/rollback-issue-body.md" --label "auto-update:failed"
-          fi
+          echo "title=Spec Kit auto-update: v$PINNED_VERSION regression" >> "$GITHUB_OUTPUT"
+          echo "action=report" >> "$GITHUB_OUTPUT"
           echo "act: opened rollback PR $pr_url restoring v$ROLLBACK_TARGET." >> "$GITHUB_STEP_SUMMARY"
+
+      # specs/049-single-home-release-idioms: the label/lookup/create-or-
+      # comment mechanics above are now the shared _shared/durable-failure-
+      # issue composite -- see
+      # specs/049-single-home-release-idioms/contracts/durable-failure-issue.md.
+      # The
+      # other three auto-update:failed sites in this workflow ("Label the
+      # issue as failed", "Label the issue as failed (prepare failed)",
+      # "Post closing summary (revert)") are deliberately NOT rewired here:
+      # the first two label a SPECIFIC, already-known issue
+      # (`gh issue edit --add-label`), never searching for or creating one,
+      # and the third comments on a found issue but must never create one
+      # if none is open -- neither matches this composite's report
+      # contract (lookup by label, comment-if-found, otherwise create).
+      # Forcing them through it would either redirect a comment onto the
+      # wrong issue or start creating issues a site's own design says never
+      # to create (FR-007's no-regression rule).
+      - name: File or update the auto-update:failed issue (rollback)
+        if: steps.rollback.outputs.action == 'report'
+        uses: ./.wing-commander-pipeline/.github/actions/_shared/durable-failure-issue
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          operation: report
+          label: auto-update:failed
+          label-color: E99695
+          label-description: "Spec Kit upgrade blocked or rolled back; needs maintainer attention"
+          title: ${{ steps.rollback.outputs.title }}
+          body-file: ${{ runner.temp }}/rollback-issue-body.md
 
       # Every step from here to the end of the job consumes prepare's bundle
       # or its outputs, so each one carries `prepare.result == 'success'`

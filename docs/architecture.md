@@ -1111,6 +1111,30 @@ wrapper's `dogfood` job is gated on the image variable being non-empty, so a
 repository that hasn't built and pushed the dogfood image yet gets a clean
 scheduled no-op instead of a permanently failing run.
 
+## Auto-Release (`auto-release.yml`)
+
+**Trigger**: daily `schedule` (`cron: "9 9 * * *"`) + manual
+`workflow_dispatch`, gated on the `WING_COMMANDER_AUTO_RELEASE_PAUSED`
+kill switch (see [docs/setup.md](setup.md)).
+
+Unnumbered and outside the intake→cleanup chain, like Rebase, Auto-Update
+Spec Kit, and Private-image dogfood above — this file releases *this*
+repository, not an adopter's, so it carries no `workflow_call` trigger and
+is never derived as a published stage. It verifies the latest unreleased
+work on `main` end to end against a maintainer-onboarded test repository
+before computing the next non-breaking version and dispatching
+`release.yml` to cut it: detect unreleased commits, reset the test
+repository to a known-empty state, scaffold the published pipeline stages
+at the commit under verification, kick off a trivial feature through the
+full intake→cleanup chain, and poll the result to a pass/fail verdict.
+Three idioms this workflow shares with `auto-update-spec-kit.yml` — minting
+a scoped App token and confirming reachability, force-resetting a branch to
+an empty tree, and filing or updating a durable failure issue — are each
+defined once, under `.github/actions/_shared/`, and consumed by both
+workflows rather than re-typed (specs/049-single-home-release-idioms); this
+section describes `auto-release.yml`'s own shape, not those composites'
+mechanics, which are documented at their own `action.yml` headers.
+
 ## Reusability (current state — `specs/010-reusable-pipeline/`)
 
 Extraction is done: every stage is a published `workflow_call` workflow, and
