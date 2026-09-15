@@ -340,7 +340,8 @@ published-stage set — these two are not published stages, see D6):
    text, the same "grep, not a YAML-semantic diff" style Gate 50 uses) —
    catches "dropped the attempt token from the release run's title".
 2. `release.yml` contains a tag-time tip comparison — a line matching
-   `git ls-remote origin refs/heads/main` appearing textually *after*
+   `git ls-remote origin "refs/heads/${DEFAULT_BRANCH}"` (the dynamic
+   default branch, T027) appearing textually *after*
    the "Create tags" step's own marker in the file — catches "removes
    the tag-time tip refusal" (ordering, not just presence, since a
    comparison placed before checkout would be the request-time check
@@ -356,9 +357,15 @@ published-stage set — these two are not published stages, see D6):
    `refs/tags/` ref) rather than from a run's `conclusion`/`status`
    field — catches "lets a release be reported from a run conclusion
    instead of the tag state".
+5. `auto-release.yml` waits for the correlated run's own `status` (a
+   `gh run view ... --json status` poll, never `.conclusion`) to reach
+   a terminal state before the tag fetch that decides `released` —
+   catches "reads tag state immediately after correlation, which can
+   observe a correlated run still mid-flight and file a false
+   dispatch-failed report" (added for T025).
 
 **Rationale**: Constitution VIII requires every gate be able to fail its
-own subject; each of the four checks above is a direct, line-addressable
+own subject; each of the five checks above is a direct, line-addressable
 mutation away from the regression FR-018 names for it, so the script's
 `--self-test` can assert each one fails on the one mutation it exists to
 catch (exactly Gate 50's self-test shape) and passes on a fixture

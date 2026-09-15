@@ -741,7 +741,7 @@ Check table — still carry the pre-T025/T027 "four checks"/literal-`main`
 description. Both are documentation-only corrections; neither requires a
 workflow-code or gate-script change.
 
-- [ ] T036 Update `research.md` D7 (~lines 334-361) per FR-018 (contradicts).
+- [x] T036 Update `research.md` D7 (~lines 334-361) per FR-018 (contradicts).
       The numbered list of what `verify-correlated-release-dispatch.py`
       asserts stops at 4 checks and item 2 still reads "a line matching
       `git ls-remote origin refs/heads/main`"; the shipped gate has a fifth
@@ -754,7 +754,7 @@ workflow-code or gate-script change.
       Rationale paragraph's "each of the four checks above" to "each of
       the five checks above".
 
-- [ ] T037 Update `plan.md` line 63 (Constitution Check table, Principle
+- [x] T037 Update `plan.md` line 63 (Constitution Check table, Principle
       VIII row) per FR-018 (contradicts). It says "each of its four checks
       has a named mutation it must fail on" — the shipped gate has five
       checks (Check 5, added for T025). Update the count to five.
