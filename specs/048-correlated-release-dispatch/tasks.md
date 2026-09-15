@@ -674,3 +674,46 @@ research.md's decision record stay true to what actually shipped.
 required, but `python .github/scripts/run-local-gates.py` should still
 pass 83/83 unchanged once they land, since none of them touch code the
 gates check.
+
+## Phase 9: Convergence
+
+**Purpose**: `/speckit-converge` found that Phase 8's T031-T033 reconciled
+`research.md` and the two `contracts/` documents with T025/T027's shipped
+fixes, but left `data-model.md` and `quickstart.md` — Phase 1 design
+artifacts describing the same mechanisms — carrying the same stale
+`refs/heads/main` literal and the same four-checks/four-mutations count.
+Both are documentation-only corrections; neither requires a workflow-code
+or gate-script change.
+
+- [ ] T034 Update `data-model.md` per FR-018/FR-019 (contradicts/partial).
+      The "Branch-tip state (report-time)" table's `current_tip` row
+      (~line 85) still shows `git ls-remote origin refs/heads/main | cut -f1`,
+      contradicting the shipped `report` job (T027), which resolves the
+      default branch dynamically via `gh repo view "$GITHUB_REPOSITORY"
+      --json defaultBranchRef --jq '.defaultBranchRef.name // empty'`
+      (falling back to `main` only if that read fails). Update the row to
+      match. The "Regression gate fixture surface" table (~lines 125-135)
+      lists only 4 checked properties and still names literal
+      `refs/heads/main` in its `release.yml` row — the shipped
+      `verify-correlated-release-dispatch.py` has 5 checks (Check 5, added
+      this cycle for T025: the pre-tag-fetch wait for the correlated run's
+      terminal status). Add Check 5's row and fix the literal-branch
+      wording in the existing rows. Also add the `request-time` and
+      `dispatch-rejected` job outputs (T023/T024) to the "Correlated run"
+      table's Field list, and a line in "Release outcome" or "Correlated
+      run" documenting the bounded pre-tag-fetch wait (T025: a 60-attempt/
+      10s status poll when `correlation == found`, a fixed 90s wait
+      otherwise) — none of these shipped mechanisms currently have an
+      entity/field in this document.
+
+- [ ] T035 Update `quickstart.md` Scenario 4 (~lines 109-111) per
+      FR-018/SC-005 (partial). It says "every self-test fixture passes,
+      including the four mutation fixtures (recency-based selection,
+      dropped token, dropped tag-time refusal, run-conclusion-based
+      reporting)"; the gate's self-test now exercises 5 mutations (Check
+      5, added this cycle for T025: removing the pre-tag-fetch status
+      wait). Update the count to five and name Check 5's mutation
+      alongside the other four.
+
+**Checkpoint**: Documentation-only; `python .github/scripts/run-local-gates.py`
+should still pass 83/83 unchanged once these land.
