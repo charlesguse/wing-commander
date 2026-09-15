@@ -211,3 +211,15 @@ With two contributors (CLAUDE.md's own stated cap on concurrent local agents dur
 ## Phase 8: Convergence
 
 - [X] T032 Correct `research.md` D4 and D5, and `contracts/durable-failure-issue.md`'s "Call sites: report, auto-update-spec-kit.yml (4 sites)" section, to describe the tree that actually shipped: only the rollback site ("File or update the auto-update:failed issue (rollback)", auto-update-spec-kit.yml) resolves through `_shared/durable-failure-issue` with `operation: report`. The other three `auto-update:failed` sites — "Label the issue as failed", "Label the issue as failed (prepare failed)" (each labels a specific, already-known issue via `gh issue edit --add-label`, with no lookup-by-label search), and "Post closing summary (revert)" (looks up by label but must never create when none is open) — do not implement the shared idiom's full lookup-then-create-or-comment shape and are deliberately left calling their own narrower logic, per FR-007's no-regression rule. State this as the resolved finding, not as a TODO, matching this feature's own User Story 4 standard applied to its own design artifacts (FR-004, research.md D4/D5, contradicts).
+
+---
+
+## Maintainer Feedback (code review of PR #347)
+
+- [ ] T033 In `.github/scripts/verify-single-home-idioms.py`'s `check_promotion` (~lines 330-342), the composite-promotion loop builds `candidate = os.path.join(ACTIONS_DIR, name, fname)` and passes it straight to `Finding(candidate, ...)` without the `.replace(os.sep, "/")` that `action_files()` (line 152) and `_relativize()` (line 167) both already apply. On Windows this yields a mixed-separator path that neither `--self-test`'s expected path nor a `single-home-waivers.json` entry can match, so `python .github/scripts/verify-single-home-idioms.py --self-test` fails there and `python .github/scripts/run-local-gates.py` reports 82/83 rather than the clean pass the PR narrative claims. Normalise the separator on `candidate` the same way the other path builders in this file do.
+- [ ] T034 This PR's Gate 53 collides with gate numbers already registered on `main`: spec 046's PR #341 registered Gates 53-58 and spec 048's PR #342 has moved to 59. Renumber this PR's Gate 53 to 60 in `.github/workflows/lint-workflows.yml`, `.github/scripts/verify-single-home-idioms.py`'s own docstring/messages, and the spec's `contracts/` gate references.
+- [ ] T035 Correct the narrative slips the code review found: the PR body says "Gate 52" twice where the shipped code registers Gate 53 (renumbered to 60 per T034), and says "all 14 sites" call `auto-release-verdict.sh` where `specs/049-single-home-release-idioms/verdict-fixtures.md` and the gate's own docstring enumerate 15. Update the PR body and any doc text so the numbers agree with what actually shipped.
+
+The manual item T028 (edit PR #317's body) stays open on #326 and is out of scope for this feedback round.
+
+Lifecycle issue: #326.
