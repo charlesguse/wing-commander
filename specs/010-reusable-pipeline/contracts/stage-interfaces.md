@@ -247,6 +247,63 @@ event-triggered.
 | Behavior | `classify-and-announce → act → dispatch-once + report-fold-outcomes`: PR-identity + authorized-actor gates; stage the untrusted request; a read-only agent step classifies each distinguishable request into one of nine categories (`in-scope-change`, `question`, `needs-info`, `push-back`, `new-functionality`, `small-unrelated-change`, `manual-step-permission`, `stop`, `no-action`) and drafts its route's content; a deterministic (never agent-decided) gate computes per-classification confirmation requirements against `confirm-categories`; one `IntentAnnouncement` posted per classification before `act`'s `environment:` binding can begin evaluating. `act` runs one matrix leg per classification (`max-parallel: 1`): `in-scope-change`/`new-functionality current-spec` fold into `tasks.md` + `spec-meta.json` and reply confirming the fold-in — dispatch itself is no longer a per-leg effect (specs/042-post-review-fold-loop D1: a per-leg dispatch could contend for the same serialization slot as the implementation cycle it started, cancelling one against the other); `new-functionality new-spec` opens a `spec-request`-labeled issue; `small-unrelated-change` opens a PR within a deterministic size backstop (≤3 files, ≤40 lines) or re-routes to a new-spec issue otherwise; `manual-step-permission` performs/explains/opens a `permission-request`-labeled PR (deduped via a conservative-bias search); `needs-info`/`push-back`/`question` reply with no mutation; `stop` cancels the run named in the most recent bot-posted `IntentAnnouncement`, plus any in-progress `implement-workflow` run on the same branch. Once every leg of `act` has finished (`if: always()`), `dispatch-once` checks the branch tip against the pre-fold `base-sha`: unchanged means nothing folded and it no-ops; changed means it issues **at most one** `gh workflow run` for the consumer's `implement-workflow` (empty = no dispatch), joining the same concurrency group `act` used only after `act` has released it — never contending with it. Alongside it, `report-fold-outcomes` (also `if: always()`) cross-references this run's own job conclusions against git-history fold evidence to post one PR comment naming any fold-route item that died without folding cleanly ("not folded" vs. "partly folded"), posting nothing when every item folded cleanly. Every out-of-PR artifact is cross-linked from the lifecycle issue as one `OutstandingTaskItem` line |
 | Outputs | none (side effects only) — `qualifies`/`spec-dir`/`slug`/`base-sha`/`concurrency-group` exist as *job*-level outputs of `classify-and-announce` for `act`/`dispatch-once`/`report-fold-outcomes`'s own use, and are deliberately not re-exported as `workflow_call` outputs a caller could read |
 
+## Read-only inspection policy
+
+Nine `denied-tool` occurrences on #266 shared one cause: no owner-level
+statement of what a read-only inspection is allowed to look like, so every
+new prompt instruction shipped a denial first and an allowlist patch second.
+This section is that statement. Everything else — a stage prompt, a gate's
+error message, a future spec — points here rather than restating it.
+
+**The inspection primitive set.** Every read-capable stage's default
+allowed list carries `Bash(grep:*)`, `Bash(head:*)`, `Bash(tail:*)`,
+`Bash(sort:*)`, `Bash(uniq:*)`, `Bash(wc:*)`, `Bash(cut:*)` — the set
+`plan.*`/`tasks.*` shipped first. A read-capable row that omits one records
+why in its own table row rather than silently drifting from its peers.
+
+**Compound, piped, and redirected commands.** Claude Code matches each
+command in a `|`, `;`, or `&&` chain separately, so a pipe into an unlisted
+primitive is denied even when every other command in the chain is allowed.
+An output redirect (`>`, `>>`) or a `cd … &&` prefix is denied regardless of
+list contents — these are their own shape, not the primitive that follows
+them. No allowlist addition closes this family; the fix is telling the agent
+to use the built-in Read/Grep/Glob tools, or a single command, for anything
+multi-step. This guidance reaches every stage prompt as one appended
+sentence in `wing-commander-tool-args`'s `shell-commands` output
+(specs/037-rendered-tooling-list) — the same single home the permitted-
+command list itself renders from, so it cannot drift per workflow.
+
+**Read-capable stage, defined.** A stage's internal agent step is
+read-capable if its job is open-ended repository exploration in service of
+authoring or modifying an artifact: `intake`, `clarify`,
+`plan.direct-commit`, `plan.pr`, `tasks.direct-commit`, `tasks.pr`,
+`implement.cycle`, `implement.retry`. A step whose allowed list is a fixed,
+narrow replay of a small command set regardless of run content is not
+read-capable and is not widened by this policy:
+`implement.post-progress-comment`, `finalize`, `cleanup`, `rebase`,
+`watchdog.diagnose`, `pr-conversation.classify`.
+
+**`gh api`.** No stage is granted `gh api` — it cannot be scoped to GET, and
+clarify's and intake's token can write issues. Every read that once reached
+for it has a sanctioned route named in that stage's own prompt: clarify's
+issue-comment body is staged into the checkout by a deterministic workflow
+step before the agent runs (matching specs/029-intake-issue-comments' existing
+pattern for intake); plan's pull-request reads use its own `gh pr view --json`
+grant. `watchdog.diagnose` reaches `gh api` today only through its
+pre-existing, wider `Bash(gh:*)` grant — recorded here as pre-existing and
+untouched by this policy, not a grant this policy makes.
+
+**The gate suite.** `python .github/scripts/run-local-gates.py` is permitted
+only for `implement.cycle`/`implement.retry`, run by a deterministic step
+ahead of the agent step under an explicit timeout, preceded by a preflight
+for its prerequisites (pyyaml, jq, actionlint) that degrades to a step-
+summary note rather than a denial or a stage failure when one is missing.
+`CLAUDE.md`'s "Before pushing" instruction to run it is scoped to that
+audience plus human/local sessions.
+
+Occurrence-by-occurrence disposition:
+[specs/051-read-only-inspection-policy/contracts/inspection-policy.md](../../051-read-only-inspection-policy/contracts/inspection-policy.md).
+
 ## Per-stage default tool lists
 
 The `--allowedTools`/`--disallowedTools` values each agent-running stage ships
