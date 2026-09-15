@@ -274,3 +274,10 @@ With multiple implementers:
   - [ ] Rewrite each of the six gates to extract and execute the shipped step from `watchdog.yml`, the way `verify-gate-19.py` does (`wc_shell_harness.find_step` / `run_step`, with `gh`/`git` stubbed) — or at minimum diff the copied program against the shipped block byte-for-byte so a drift fails the gate.
   - [ ] Give each of the six gates a self-check that mutates the shipped block and asserts the gate fails.
   - [ ] Correct `lint-workflows.yml:3192-3193` and `specs/046-watchdog-supervision-collectors/contracts/gate-coverage-046.md:3`, both of which currently claim these gates test the 'same subject, same arguments, locally and in CI.'
+
+## Maintainer Feedback
+
+- [ ] While rewriting gates 53-58 (see the companion Maintainer Feedback item on gate fidelity), add the following missing boundary-condition fixtures:
+  - [ ] `verify-cost-report-collector.sh`: a fixture at exactly `$1.00`, the magnitude crossover research.md R8 names between the 2dp and 4dp cost-line patterns.
+  - [ ] `verify-turn-budget-collector.sh`: fixtures sitting exactly at `climb_fraction` 0.6 and exactly at `counted-turns == intended-budget`.
+  - [ ] `verify-final-pr-claims-collector.sh`: a fixture feeding an empty PR body.
