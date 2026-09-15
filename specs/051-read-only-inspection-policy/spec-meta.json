@@ -2,8 +2,8 @@
   "issue": 338,
   "spec_dir": "specs/051-read-only-inspection-policy",
   "feature_num": "051",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 3,
   "spec_branch": "spec/051-read-only-inspection-policy",
-  "pending_re_review_from": ["charlesguse"]
+  "pending_re_review_from": []
 }
