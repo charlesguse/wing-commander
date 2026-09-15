@@ -205,3 +205,9 @@ With two contributors (CLAUDE.md's own stated cap on concurrent local agents dur
 1. Both complete Setup + Foundational together (small, sequential-dependency-heavy phase).
 2. Once Foundational is done: Contributor A takes User Story 1 (the MVP, and the prerequisite for User Story 2's declared-home files); Contributor B takes User Story 4 (no code dependency on A's work, per Dependencies above) in parallel, then joins A for User Story 2 once User Story 1's composites land, then either takes User Story 3.
 3. Phase 7 runs once both have merged their stories' work.
+
+---
+
+## Phase 8: Convergence
+
+- [ ] T032 Correct `research.md` D4 and D5, and `contracts/durable-failure-issue.md`'s "Call sites: report, auto-update-spec-kit.yml (4 sites)" section, to describe the tree that actually shipped: only the rollback site ("File or update the auto-update:failed issue (rollback)", auto-update-spec-kit.yml) resolves through `_shared/durable-failure-issue` with `operation: report`. The other three `auto-update:failed` sites — "Label the issue as failed", "Label the issue as failed (prepare failed)" (each labels a specific, already-known issue via `gh issue edit --add-label`, with no lookup-by-label search), and "Post closing summary (revert)" (looks up by label but must never create when none is open) — do not implement the shared idiom's full lookup-then-create-or-comment shape and are deliberately left calling their own narrower logic, per FR-007's no-regression rule. State this as the resolved finding, not as a TODO, matching this feature's own User Story 4 standard applied to its own design artifacts (FR-004, research.md D4/D5, contradicts).
