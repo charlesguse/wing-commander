@@ -632,6 +632,7 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ACTIONS_TOKEN: ${{ github.token }}
           RUN_ID: ${{ inputs.run-id }}
           HEAD_BRANCH: ${{ steps.run-meta.outputs.head-branch }}
           HEAD_SHA: ${{ steps.run-meta.outputs.head-sha }}
@@ -762,7 +763,7 @@ jobs:
             exact_commits=""
             mr_dir="$RUNNER_TEMP/branch-drift-metrics-record"
             mkdir -p "$mr_dir" 2>/dev/null || true
-            if [ -n "$RUN_ID" ] && gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -p 'metrics-record*' -D "$mr_dir" >/dev/null 2>&1; then
+            if [ -n "$RUN_ID" ] && GH_TOKEN="$ACTIONS_TOKEN" gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -p 'metrics-record*' -D "$mr_dir" >/dev/null 2>&1; then
               while IFS= read -r rec; do
                 avail="$(jq -r '.branch_advance.available // false' "$rec" 2>/dev/null || true)"
                 if [ "$avail" = "true" ]; then
