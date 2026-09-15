@@ -111,8 +111,12 @@ found, no-ops if not.
 workflows need both halves and splitting them would leave half the idiom
 duplicated" — i.e. FR-003 wants one entity, not two composites that happen
 to share a lookup. `auto-release.yml`'s three report sites and one close
-site, and `auto-update-spec-kit.yml`'s four report sites (none of which
-close — see D5), all resolve through this one action.yml.
+site all resolve through this one action.yml. Of `auto-update-spec-kit.yml`'s
+four `auto-update:failed` sites, only one — the rollback site, "File or
+update the auto-update:failed issue (rollback)" — matches the composite's
+report contract (lookup by label, comment-if-found, create-if-not) and
+resolves through it; the other three do not implement that shape and are
+deliberately left calling their own narrower logic — see D5.
 
 **Alternatives considered**: Two composites (`_shared/durable-failure-issue-report`,
 `_shared/durable-failure-issue-close`) were considered and rejected per the
@@ -121,13 +125,31 @@ style preference.
 
 ## D5. Resolving the divergence: does the shared close-on-success apply to `auto-update-spec-kit.yml`?
 
-**Decision**: No behaviour change. `auto-update-spec-kit.yml`'s four
-`auto-update:failed` sites keep calling the composite with
-`operation: report` only; none of them is changed to call
-`operation: close`. The composite's `close` operation exists because
-`auto-release.yml` uses it, and is available to any future caller, but
-FR-007 ("MUST NOT regress the behaviour that has run in production")
-forbids retrofitting a close call `auto-update-spec-kit.yml` never had.
+**Decision**: No behaviour change, and only a partial resolution through
+the shared composite. Of `auto-update-spec-kit.yml`'s four
+`auto-update:failed` sites, only the rollback site ("File or update the
+auto-update:failed issue (rollback)") resolves through
+`_shared/durable-failure-issue` with `operation: report` — its shape
+(lookup by label, comment-if-found, create-if-not) matches the composite's
+report contract exactly. The other three do not implement that shape and
+are deliberately left calling their own narrower logic, per FR-007's
+no-regression rule:
+- "Label the issue as failed" and "Label the issue as failed (prepare
+  failed)" each label a specific, already-known issue via
+  `gh issue edit --add-label`, with no lookup-by-label search — there is
+  no "find or create" decision for the composite to make on their behalf.
+- "Post closing summary (revert)" looks up by label (matching the
+  composite's own lookup) but must never create an issue when none is
+  open — the opposite of the report operation's create-if-not-found
+  behaviour, and not what the `close` operation does either (`close`
+  closes the found issue; this site instead posts a comment and leaves it
+  open).
+
+None of the four is changed to call `operation: close` — the composite's
+`close` operation exists because `auto-release.yml` uses it, and is
+available to any future caller, but FR-007 ("MUST NOT regress the
+behaviour that has run in production") forbids retrofitting a close call
+`auto-update-spec-kit.yml` never had.
 
 **Rationale**: Current behaviour (confirmed by reading the workflow) is
 deliberate: `auto-update:failed` is closed only by a human, because a
@@ -135,7 +157,8 @@ revert having happened is itself the durable signal the label exists to
 preserve (`auto-update-spec-kit.yml:2970-2971`, in-repo comment: "This
 issue stays open and flagged — a rollback is itself the failure this
 feature wants visible"). Consolidating the *mechanism* must not average
-away this deliberate difference in *policy*.
+away this deliberate difference in *policy*, and must not force a site
+into the shared shape when its own logic is narrower by design.
 
 **Alternatives considered**: none — the spec's Edge Cases section
 ("`auto-update-spec-kit.yml`'s copies are the proven ones... every

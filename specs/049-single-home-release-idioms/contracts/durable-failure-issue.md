@@ -44,21 +44,34 @@ release-dispatch-failed — the three distinct bodies today), then calls
 `operation: close`, `close-comment: "Resolved: ${NEXT_VERSION} released."`
 — unchanged text from today's `close_failure_on_success`.
 
-## Call sites: `report`, `auto-update-spec-kit.yml` (4 sites)
+## Call site: `report`, `auto-update-spec-kit.yml` (1 site)
 
-Label (`auto-update:failed`), color (`E99695`), description stay
-identical across all four (already identical today). Each site keeps
-composing its own title/body (two of the four already build that body via
-`wing-commander-callout`, per D6 — unaffected by this change; the other
-two keep writing their own temp-file body) and calls
+Of `auto-update-spec-kit.yml`'s four `auto-update:failed` sites, only the
+rollback site — "File or update the auto-update:failed issue (rollback)"
+— matches this composite's report contract (lookup by label,
+comment-if-found, create-if-not) and calls
 `uses: ./.wing-commander-pipeline/.github/actions/_shared/durable-failure-issue`
-with `operation: report`. **No site calls `operation: close`** — D5 is the
-explicit, recorded decision this contract exists to prevent a well-meaning
-consolidation from silently correcting: `auto-update-spec-kit.yml`'s
-`auto-update:failed` issues are only ever closed by a human, because a
-rollback having happened is itself durable signal worth keeping visible
-(`auto-update-spec-kit.yml`'s own comment at the pr-merged job, today's
-lines 2970-2971).
+with `operation: report`, label `auto-update:failed`, color `E99695`,
+composing its own title and writing its own body to a temp file.
+
+The other three `auto-update:failed` sites do not implement the shared
+idiom's full lookup-then-create-or-comment shape and are deliberately left
+calling their own narrower logic (FR-007's no-regression rule):
+- "Label the issue as failed" and "Label the issue as failed (prepare
+  failed)" each label a specific, already-known issue via
+  `gh issue edit --add-label`, with no lookup-by-label search.
+- "Post closing summary (revert)" looks up by label but must never create
+  an issue when none is open — it comments on a found issue and leaves it
+  open, which is neither this composite's `report` operation (which
+  creates when nothing is found) nor its `close` operation (which closes
+  the found issue).
+
+**No site calls `operation: close`** — D5 is the explicit, recorded
+decision this contract exists to prevent a well-meaning consolidation from
+silently correcting: `auto-update-spec-kit.yml`'s `auto-update:failed`
+issues are only ever closed by a human, because a rollback having happened
+is itself durable signal worth keeping visible (`auto-update-spec-kit.yml`'s
+own comment at the pr-merged job, today's lines 2970-2971).
 
 ## Fallback (FR-006)
 
