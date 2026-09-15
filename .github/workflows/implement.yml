@@ -669,41 +669,15 @@ jobs:
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/bin/actionlint" -version
 
-      # FR-009a: check the gate suite's prerequisites without (re)installing
-      # them — actionlint is already installed unconditionally above, so this
-      # leg only confirms it. A missing prerequisite degrades to a step-
-      # summary note; it never fails this step or denies the agent.
-      - name: "Preflight: gate-suite prerequisites (cycle)"
-        id: gate-suite-preflight-cycle
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
-        run: |
-          ready=true
-          missing=""
-          if ! python3 -c "import yaml" >/dev/null 2>&1; then
-            ready=false
-            missing="$missing pyyaml"
-          fi
-          if ! command -v jq >/dev/null 2>&1; then
-            ready=false
-            missing="$missing jq"
-          fi
-          if ! command -v actionlint >/dev/null 2>&1; then
-            ready=false
-            missing="$missing actionlint"
-          fi
-          echo "ready=$ready" >> "$GITHUB_OUTPUT"
-          if [ "$ready" != "true" ]; then
-            echo "⚠️ gate-suite preflight (cycle): missing prerequisites —$missing; skipping the local gate suite for this cycle." >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      # FR-009: the same suite CLAUDE.md's "Before pushing" section tells the
-      # implement agent to run, run deterministically ahead of the agent step
-      # so its pass/fail is known before the agent starts. Skipped, not
-      # failed, when the preflight above found a missing prerequisite.
-      - name: Run local gate suite (cycle)
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.gate-suite-preflight-cycle.outputs.ready == 'true'
-        timeout-minutes: 10
-        run: python3 .github/scripts/run-local-gates.py
+      # FR-009a: no pre-agent gate-suite run here. CLAUDE.md's "Before
+      # pushing" section already tells the implement agent to run
+      # `python .github/scripts/run-local-gates.py` itself (the tool-args
+      # grant below carries it), and the agent's own run is the one that
+      # matters — a spec branch is routinely red at cycle start (making it
+      # green is the cycle's job), so a deterministic pre-agent run here
+      # would die before the agent ever started, never degrading to a
+      # summary note the way FR-009a requires (the #345 misdiagnosis
+      # pattern: "failed before it could run its own steps").
 
       # One agent pass runs /speckit-implement then /speckit-converge,
       # committing directly to the spec branch. continue-on-error so the
@@ -1149,36 +1123,9 @@ jobs:
             exit 1
           fi
 
-      # FR-009a: mirrors "Preflight: gate-suite prerequisites (cycle)" above
-      # — actionlint installed there is still on this job's PATH.
-      - name: "Preflight: gate-suite prerequisites (retry)"
-        id: gate-suite-preflight-retry
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
-        run: |
-          ready=true
-          missing=""
-          if ! python3 -c "import yaml" >/dev/null 2>&1; then
-            ready=false
-            missing="$missing pyyaml"
-          fi
-          if ! command -v jq >/dev/null 2>&1; then
-            ready=false
-            missing="$missing jq"
-          fi
-          if ! command -v actionlint >/dev/null 2>&1; then
-            ready=false
-            missing="$missing actionlint"
-          fi
-          echo "ready=$ready" >> "$GITHUB_OUTPUT"
-          if [ "$ready" != "true" ]; then
-            echo "⚠️ gate-suite preflight (retry): missing prerequisites —$missing; skipping the local gate suite for this retry." >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      # FR-009: mirrors "Run local gate suite (cycle)" above.
-      - name: Run local gate suite (retry)
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.gate-suite-preflight-retry.outputs.ready == 'true'
-        timeout-minutes: 10
-        run: python3 .github/scripts/run-local-gates.py
+      # FR-009a: mirrors the cycle leg above — see "Compose tool args
+      # (implement.cycle)"'s neighboring comment; no pre-agent gate-suite run
+      # here either, for the same reason.
 
       # One automatic retry of the SAME iteration, one tier up
       # (→ inputs.escalation-model). Skipped when the failing attempt already
