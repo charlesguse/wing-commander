@@ -237,11 +237,16 @@ jobs:
         if: inputs.commit != ''
         env:
           COMMIT_INPUT: ${{ inputs.commit }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -uo pipefail
-          current_tip="$(git ls-remote origin refs/heads/main | cut -f1)"
+          if ! printf '%s' "$COMMIT_INPUT" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::release requested commit '${COMMIT_INPUT}' is not a 40-character hex commit SHA -- refusing to tag."
+            exit 1
+          fi
+          current_tip="$(git ls-remote origin "refs/heads/${DEFAULT_BRANCH}" | cut -f1)"
           if [ "$current_tip" != "$COMMIT_INPUT" ]; then
-            echo "::error::release requested commit ${COMMIT_INPUT}, but refs/heads/main is now at ${current_tip} -- refusing to tag (the branch moved on)."
+            echo "::error::release requested commit ${COMMIT_INPUT}, but refs/heads/${DEFAULT_BRANCH} is now at ${current_tip} -- refusing to tag (the branch moved on)."
             exit 1
           fi
 

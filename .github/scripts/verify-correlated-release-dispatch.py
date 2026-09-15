@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 53 -- correlated, atomic release dispatch stays correlated and atomic.
+"""Gate 59 -- correlated, atomic release dispatch stays correlated and atomic.
 
 specs/048-correlated-release-dispatch (FR-018, SC-005, Constitution VIII).
 Following Gate 50/51's shape: a small, textual, line-based checker over the
@@ -8,16 +8,16 @@ raw YAML text of exactly two files -- not the derived published-stage set
 outside that set by construction; research.md D6) -- with its own
 --self-test exercising each failure branch against an in-memory fixture.
 
-THE FOUR CHECKS (contracts/regression-gate.md)
+THE FIVE CHECKS (contracts/regression-gate.md)
 -----------------------------------------------
 1. release.yml's run-name: references both inputs.version and
    inputs.attempt-token -- catches dropping the attempt token from the
    release run's title (FR-002).
 2. release.yml's tag-time tip comparison (`git ls-remote origin
-   refs/heads/main`) sits strictly between the "Validate version and plan
-   tags" and "Create tags" step markers -- catches the comparison being
-   removed, or moved earlier into a request/checkout-time check instead of
-   a tag-time one (FR-010a).
+   "refs/heads/${DEFAULT_BRANCH}"`) sits strictly between the "Validate
+   version and plan tags" and "Create tags" step markers -- catches the
+   comparison being removed, or moved earlier into a request/checkout-time
+   check instead of a tag-time one (FR-010a).
 3. auto-release.yml's correlation step references a createdAt (or
    equivalent time-bound) comparison *and* an attempt-token match in the
    same step -- catches reintroducing recency-based or token-only
@@ -26,6 +26,12 @@ THE FOUR CHECKS (contracts/regression-gate.md)
    to decide `released`, never a run's `conclusion`/`status`/`gh run
    watch` -- catches letting a release be reported from a run conclusion
    instead of the tag state (FR-007, FR-007a).
+5. auto-release.yml waits for the correlated run's own status (`gh run
+   view ... --json status`) before ever fetching tag state -- catches
+   reading tag state immediately after correlation, which can observe a
+   correlated run still mid-flight (not yet tagged) and file a false
+   "release dispatch failed" report moments before the release actually
+   lands (T025, FR-018).
 
 A NOTE ON CHECK 2's ORDERING
 -----------------------------
@@ -58,10 +64,13 @@ AUTO_RELEASE_FILE = ".github/workflows/auto-release.yml"
 
 VALIDATE_MARKER = "name: Validate version and plan tags"
 CREATE_TAGS_MARKER = "name: Create tags"
-LS_REMOTE = "git ls-remote origin refs/heads/main"
+LS_REMOTE = "git ls-remote origin \"refs/heads/${DEFAULT_BRANCH}\""
 RUN_LIST_MARKER = "gh run list --workflow=release.yml"
 TOKEN_MATCH_MARKER = "[attempt:"
 TAG_REV_PARSE = 'rev-parse -q --verify "refs/tags/'
+TAG_FETCH_MARKER = 'git fetch origin "refs/tags/'
+RUN_VIEW_MARKER = "gh run view"
+STATUS_JSON_MARKER = "--json status"
 
 
 def _find(lines, needle):
@@ -143,11 +152,33 @@ def tag_state_outcome_errors(auto_lines, path):
     return out
 
 
+def wait_before_tag_read_errors(auto_lines, path):
+    """Check 5 -> [hit line, ::error] or []."""
+    idx = _find(auto_lines, TAG_FETCH_MARKER)
+    if idx is None:
+        return [f"::error::{path} no longer contains a "
+                f"'{TAG_FETCH_MARKER}...' tag fetch -- update this gate "
+                "alongside any rename."]
+    window = auto_lines[:idx]
+    has_run_view = any(RUN_VIEW_MARKER in l for l in window)
+    has_status_json = any(STATUS_JSON_MARKER in l for l in window)
+    if has_run_view and has_status_json:
+        return []
+    return [f"{path}:{idx + 1}:{auto_lines[idx]}",
+            "::error::auto-release.yml must wait for the correlated run's "
+            "status to reach a terminal state (a `gh run view ... --json "
+            "status` poll) before this tag fetch -- reading tag state "
+            "immediately after correlation can observe a correlated run "
+            "still mid-flight and file a false dispatch-failed report "
+            "(FR-018)."]
+
+
 def contract_errors(release_lines, auto_lines, release_path, auto_path):
     return (run_name_errors(release_lines, release_path)
             + tag_time_check_errors(release_lines, release_path)
             + correlation_step_errors(auto_lines, auto_path)
-            + tag_state_outcome_errors(auto_lines, auto_path))
+            + tag_state_outcome_errors(auto_lines, auto_path)
+            + wait_before_tag_read_errors(auto_lines, auto_path))
 
 
 def _lines(path):
@@ -165,7 +196,7 @@ def run_gate():
     out = contract_errors(release_lines, auto_lines, RELEASE_FILE, AUTO_RELEASE_FILE)
     for line in out:
         print(line)
-    print(f"Gate 53: {RELEASE_FILE} and {AUTO_RELEASE_FILE} checked.")
+    print(f"Gate 59: {RELEASE_FILE} and {AUTO_RELEASE_FILE} checked.")
     return 1 if out else 0
 
 
@@ -190,7 +221,7 @@ CLEAN_RELEASE = (
     "      - name: Refuse to tag unless the requested commit is still the branch tip\n"
     "        if: inputs.commit != ''\n"
     "        run: |\n"
-    '          current_tip="$(git ls-remote origin refs/heads/main | cut -f1)"\n'
+    '          current_tip="$(git ls-remote origin "refs/heads/${DEFAULT_BRANCH}" | cut -f1)"\n'
     "      - name: Create tags\n"
     "        run: |\n"
     '          git tag -a "$TAG"\n')
@@ -207,6 +238,7 @@ CLEAN_AUTO = (
     '            *"[attempt:${token}]"*) ;;\n'
     "          esac\n"
     '          created_epoch="$(date -u -d "$row_created" +%s)"\n'
+    '          run_status="$(gh run view "$correlated_run_id" --json status --jq .status)"\n'
     '          git fetch origin "refs/tags/${VERSION}:refs/tags/${VERSION}"\n'
     '          if git rev-parse -q --verify "refs/tags/${VERSION}^{commit}" >/dev/null; then\n'
     "            tag_matches=true\n"
@@ -250,12 +282,12 @@ def self_test():
         "      - name: Refuse to tag unless the requested commit is still the branch tip\n"
         "        if: inputs.commit != ''\n"
         "        run: |\n"
-        '          current_tip="$(git ls-remote origin refs/heads/main | cut -f1)"\n'
+        '          current_tip="$(git ls-remote origin "refs/heads/${DEFAULT_BRANCH}" | cut -f1)"\n'
         "      - name: Create tags\n",
         "      - name: Refuse to tag unless the requested commit is still the branch tip\n"
         "        if: inputs.commit != ''\n"
         "        run: |\n"
-        '          current_tip="$(git ls-remote origin refs/heads/main | cut -f1)"\n'
+        '          current_tip="$(git ls-remote origin "refs/heads/${DEFAULT_BRANCH}" | cut -f1)"\n'
         "      - name: Validate version and plan tags\n"
         "        run: echo plan\n"
         "      - name: Create tags\n")
@@ -300,6 +332,21 @@ def self_test():
           and not any("drops the attempt token" in l
                       or "tag-time tip refusal" in l
                       or "recency-based" in l for l in out),
+          f"got {out!r}")
+
+    mutated = CLEAN_AUTO.replace(
+        '          run_status="$(gh run view "$correlated_run_id" --json status --jq .status)"\n',
+        "")
+    check("check 5's mutation actually removes the pre-tag-fetch status wait",
+          mutated != CLEAN_AUTO)
+    out = errors_for(CLEAN_RELEASE, mutated)
+    check("check 5: reading tag state with no prior status wait (a "
+          "not-yet-tagged read) fails, naming only its own clause",
+          any("still mid-flight" in l for l in out)
+          and not any("drops the attempt token" in l
+                      or "tag-time tip refusal" in l
+                      or "recency-based" in l
+                      or "run conclusion instead" in l for l in out),
           f"got {out!r}")
 
     print(f"{failures} failure(s).")

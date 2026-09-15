@@ -746,7 +746,7 @@ jobs:
                   *) continue ;;
                 esac
                 created_epoch="$(date -u -d "$row_created" +%s 2>/dev/null || echo 0)"
-                if [ "$created_epoch" -gt "$request_time" ]; then
+                if [ "$created_epoch" -ge "$request_time" ]; then
                   count=$((count + 1))
                   match_id="$row_id"
                   match_url="$row_url"
@@ -768,11 +768,32 @@ jobs:
             done
           fi
 
+          # A correlated run may still be mid-flight (checkout, lint, tag
+          # creation) the instant the loop above exits; reading tag state
+          # before it reaches a terminal status would file a false
+          # "release dispatch failed" report while the release succeeds
+          # moments later. Wait for that run's status alone -- never its
+          # conclusion, which plays no part in the verdict below -- to go
+          # terminal before ever reading tag state. When no single run was
+          # found to wait on, wait a fixed bounded interval instead.
+          if [ "$correlation" = "found" ]; then
+            wait_attempt=0
+            while [ "$wait_attempt" -lt 60 ]; do
+              run_status="$(gh run view "$correlated_run_id" --json status --jq .status 2>/dev/null || echo "")"
+              [ "$run_status" = "completed" ] && break
+              wait_attempt=$((wait_attempt + 1))
+              sleep 10
+            done
+          else
+            sleep 90
+          fi
+
           # "Released" is decided from tag state alone (FR-007, FR-007a,
-          # research.md D5) -- after the correlation search concludes,
-          # regardless of its outcome, and independent of whether the
-          # dispatch itself was rejected. A fresh, post-dispatch fetch,
-          # never a value read before the dispatch.
+          # research.md D5) -- after the correlation search concludes and
+          # the wait above, regardless of either's outcome, and
+          # independent of whether the dispatch itself was rejected. A
+          # fresh, post-dispatch fetch, never a value read before the
+          # dispatch.
           git fetch origin "refs/tags/${VERSION}:refs/tags/${VERSION}" --quiet 2>/dev/null || true
           tag_matches=false
           if git rev-parse -q --verify "refs/tags/${VERSION}^{commit}" >/dev/null 2>&1; then
@@ -859,10 +880,10 @@ jobs:
           }
 
           close_failure_on_success() {
-            local existing
+            local resolved_note="${1:-${NEXT_VERSION} released.}" existing
             existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label "$FAILED_LABEL" --json number --jq '.[0].number // empty' 2>/dev/null || true)"
             if [ -n "$existing" ]; then
-              gh issue close "$existing" --repo "$GITHUB_REPOSITORY" --comment "Resolved: ${NEXT_VERSION} released."
+              gh issue close "$existing" --repo "$GITHUB_REPOSITORY" --comment "Resolved: ${resolved_note}"
             fi
           }
 
@@ -924,6 +945,12 @@ jobs:
           if [ "$HAS_NEW_WORK" != "true" ]; then
             if [ "$TAG_EXISTS" = "true" ]; then
               echo "no new work since ${LATEST_TAG}" >> "$GITHUB_STEP_SUMMARY"
+              # The latest tag already points at HEAD, so a standing
+              # failure issue from an earlier attempt is stale -- close it
+              # here too, not only on the TAG_MATCHES branch below, or a
+              # run that tagged successfully once never has another chance
+              # to self-heal (every later run takes this same early exit).
+              close_failure_on_success "${LATEST_TAG} already released."
             else
               echo "no release tag exists yet -- nothing to compare against, nothing cut" >> "$GITHUB_STEP_SUMMARY"
             fi
@@ -1047,7 +1074,15 @@ jobs:
           # (FR-013, research.md D5) -- a live read at report time, not
           # detect's stale head-sha, and needing no signal out of
           # release.yml's own run beyond what git itself already records.
-          current_tip="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/main | cut -f1)"
+          # This job can run off a `schedule` trigger, whose event payload
+          # carries no `repository` (unlike release.yml's own
+          # workflow_dispatch-only Checkout, which reads
+          # github.event.repository.default_branch directly) -- so the
+          # default branch is read live here, the same way detect already
+          # reads a target repository's default branch above.
+          default_branch="$(gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef --jq '.defaultBranchRef.name // empty' 2>/dev/null || true)"
+          [ -n "$default_branch" ] || default_branch="main"
+          current_tip="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" "refs/heads/${default_branch}" | cut -f1)"
           if [ "$current_tip" != "$HEAD_SHA" ]; then
             # Expected behavior (the next scheduled check verifies the new
             # head), not a defect -- does not file/update the
