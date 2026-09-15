@@ -22,10 +22,14 @@
 # same reason).
 #
 # Fetches refs/heads/<spec-prefix><slug> into refs/remotes/origin/<same>
-# (forced, so a branch the rebase stage rewrote is re-read at its new tip;
-# a fetch failure is tolerated — the ref may already be present, or the
-# branch may be gone), then reads <spec-dir>/spec-meta.json (default
-# specs/<slug>) from that ref. Prints `key=value` lines on stdout:
+# (forced, so a branch the rebase stage rewrote is re-read at its new tip).
+# A fetch failure never fails the script, but it is not read through
+# either: the local tracking ref is dropped first, so a branch that is
+# gone (or a fetch that did not happen) reads as "no record", never as
+# whatever an earlier step left under that ref. Then reads
+# <spec-dir>/spec-meta.json (default specs/<slug>) from the ref. Prints
+# `key=value` lines on stdout:
+#   meta_fetch_ok=true|false     the forced fetch of the branch succeeded
 #   meta_found=true|false        the file exists on the branch and parses as JSON
 #   meta_identity_ok=true|false  its .spec_dir names exactly <spec-dir> — the
 #                                self-identity check every reader must apply
@@ -46,6 +50,7 @@ SLUG="${2:-}"
 SPEC_DIR="${3:-}"
 [ -n "$SPEC_DIR" ] || SPEC_DIR="specs/$SLUG"
 
+meta_fetch_ok=false
 meta_found=false
 meta_identity_ok=false
 meta_spec_dir=""
@@ -60,7 +65,11 @@ only() { printf '%s' "$1" | grep -E "$2" || true; }
 
 if [ -n "$SLUG" ]; then
   branch="${SPEC_PREFIX}${SLUG}"
-  git fetch --no-tags --quiet origin "+refs/heads/${branch}:refs/remotes/origin/${branch}" 2>/dev/null || true
+  if git fetch --no-tags --quiet origin "+refs/heads/${branch}:refs/remotes/origin/${branch}" 2>/dev/null; then
+    meta_fetch_ok=true
+  else
+    git update-ref -d "refs/remotes/origin/${branch}" 2>/dev/null || true
+  fi
   if meta="$(git show "refs/remotes/origin/${branch}:${SPEC_DIR}/spec-meta.json" 2>/dev/null)" \
      && printf '%s' "$meta" | jq -e . >/dev/null 2>&1; then
     meta_found=true
@@ -74,6 +83,7 @@ if [ -n "$SLUG" ]; then
   fi
 fi
 
+printf 'meta_fetch_ok=%s\n' "$meta_fetch_ok"
 printf 'meta_found=%s\n' "$meta_found"
 printf 'meta_identity_ok=%s\n' "$meta_identity_ok"
 printf 'meta_spec_dir=%s\n' "$meta_spec_dir"

@@ -3451,8 +3451,8 @@ jobs:
       # .github/actions/_shared/read-spec-meta.sh, reached by workflows
       # through wing-commander-spec-meta; this fails on any other `git show`
       # of a branch's spec-meta.json and on either consumer dropping its
-      # call to the script. Numbered 61: 53-58 landed with spec 046, and the
-      # open final PRs for specs 048 and 049 hold 59 and 60.
+      # call to the script. Numbered 61: 53-58 landed with spec 046, 59 with
+      # spec 048, and spec 049's open final PR holds 60.
       - name: Gate 61 — a spec branch's spec-meta.json is read in one place
         if: "!cancelled()"
         run: python3 .github/scripts/verify-spec-meta-single-home.py

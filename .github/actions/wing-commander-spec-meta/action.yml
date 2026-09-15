@@ -42,6 +42,9 @@ inputs:
     required: false
     default: ""
 outputs:
+  fetch-ok:
+    description: "true when the forced fetch of the spec branch succeeded; false means the branch is gone or unreachable, and found is false."
+    value: ${{ steps.read.outputs.fetch-ok }}
   found:
     description: "true when spec-meta.json exists on the branch and parses as JSON."
     value: ${{ steps.read.outputs.found }}
@@ -76,6 +79,7 @@ runs:
         set -uo pipefail
         eval "$(bash "$GITHUB_ACTION_PATH/../_shared/read-spec-meta.sh" "$SPEC_PREFIX" "$SLUG" "$SPEC_DIR")"
         {
+          echo "fetch-ok=$meta_fetch_ok"
           echo "found=$meta_found"
           echo "identity-ok=$meta_identity_ok"
           echo "spec-dir=$meta_spec_dir"
@@ -84,7 +88,9 @@ runs:
           echo "iteration=$meta_iteration"
         } >> "$GITHUB_OUTPUT"
         where="${SPEC_DIR:-specs/$SLUG}/spec-meta.json on ${SPEC_PREFIX}${SLUG}"
-        if [ "$meta_found" != "true" ]; then
+        if [ "$meta_fetch_ok" != "true" ]; then
+          echo "spec-meta: could not fetch ${SPEC_PREFIX}${SLUG} from origin — no fields read (a stale local ref is never read through)." >> "$GITHUB_STEP_SUMMARY"
+        elif [ "$meta_found" != "true" ]; then
           echo "spec-meta: $where is missing or not JSON — no fields read." >> "$GITHUB_STEP_SUMMARY"
         elif [ "$meta_identity_ok" != "true" ]; then
           echo "spec-meta: $where records spec_dir='${meta_spec_dir:-<invalid>}', not the directory it was read from — its fields are reported but are not this specification's record." >> "$GITHUB_STEP_SUMMARY"
