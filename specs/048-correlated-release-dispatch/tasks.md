@@ -599,3 +599,60 @@ everything else.
       Done: re-checked against `origin/main` (still tops out at Gate 52) and `origin/spec/046-watchdog-supervision-collectors` (PR #341), which registers Gates 53-58. This feature's gate is renumbered to **59** in `lint-workflows.yml` and in `verify-correlated-release-dispatch.py`'s own docstring/print-line references. `contracts/regression-gate.md` already stated its gate number as "next available gate number at implementation time" with no hardcoded digit, so it needed no edit.
 
 Lifecycle issue: #324.
+
+## Phase 8: Convergence
+
+**Purpose**: `/speckit-converge` found that T025/T027's code fixes (this
+cycle, folding the maintainer's PR #342 review) left three design/contract
+documents out of sync with the shipped `release.yml`/`auto-release.yml`
+behavior. None of these require further workflow-code changes; each is a
+documentation-only correction so FR-019's "one place" contract and
+research.md's decision record stay true to what actually shipped.
+
+- [ ] T031 Update `research.md` D4 (~lines 152-198), D5 (~lines 200-254)
+      and D6 (~lines 256-278) per FR-019 (contradicts). D6 explicitly
+      decided to keep `refs/heads/main` a literal in both new checks and
+      explicitly rejected "resolving the default branch dynamically" as
+      "unneeded generality" / "scope creep"; D4 and D5's code snippets
+      both still show the literal. T027 (this cycle, folding the
+      maintainer's PR #342 review) reversed that decision in the shipped
+      code — `release.yml`'s refusal step now reads
+      `github.event.repository.default_branch` and
+      `auto-release.yml`'s report-job classification now reads the
+      default branch live via `gh repo view` — because a repository whose
+      default branch is not literally `main` would otherwise compare
+      against the wrong ref. Rewrite D6 to record the reversal and why
+      (a real defect the original "scope creep" framing did not
+      anticipate: this is not a reusable/published-stage concern, but a
+      correctness one for this repository's own workflows), and update
+      D4/D5's snippets to match the shipped code. Also correct the
+      `refs/heads/main` mentions this same drift left in
+      `contracts/release-handover-contract.md` (~lines 41, 95, 128) and
+      `contracts/regression-gate.md`'s check-2 description (~line 38).
+
+- [ ] T032 Document T025's bounded-wait mechanism in
+      `contracts/release-handover-contract.md`'s "What `auto-release.yml`
+      promises" section (item 2, ~lines 80-90) per FR-019 (missing). The
+      shipped `dispatch-release` step now polls the correlated run's
+      status (`gh run view "$correlated_run_id" --json status --jq
+      .status`, never `.conclusion`) to a terminal state — or waits a
+      fixed interval when no single run was found — before ever fetching
+      tag state, closing the timing race where a not-yet-tagged read of a
+      still-running correlated run produced a false "release dispatch
+      failed" report. FR-019 requires this contract document to be the
+      one place this mechanism is written down; today it is only in the
+      workflow's own inline comments.
+
+- [ ] T033 Update `contracts/regression-gate.md`'s "## The four checks"
+      section (~line 29) to "## The five checks" per FR-018/SC-005
+      (partial). `verify-correlated-release-dispatch.py` now enforces a
+      fifth check (added this cycle for T025: the pre-tag-fetch wait for
+      the correlated run's terminal status, with its own self-test
+      mutation) that this contract document — normative for the gate,
+      per its own "Subject" section — does not describe, undercounting
+      what the shipped gate actually protects.
+
+**Checkpoint**: These are documentation-only tasks; no gate re-run is
+required, but `python .github/scripts/run-local-gates.py` should still
+pass 83/83 unchanged once they land, since none of them touch code the
+gates check.
