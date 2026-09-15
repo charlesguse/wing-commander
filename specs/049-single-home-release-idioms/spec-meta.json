@@ -2,8 +2,8 @@
   "issue": 326,
   "spec_dir": "specs/049-single-home-release-idioms",
   "feature_num": "049",
-  "stage": "stalled",
-  "iteration": 2,
+  "stage": "implement",
+  "iteration": 3,
   "spec_branch": "spec/049-single-home-release-idioms",
   "pending_re_review_from": [
     "charlesguse"
