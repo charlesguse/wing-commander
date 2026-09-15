@@ -685,7 +685,7 @@ artifacts describing the same mechanisms — carrying the same stale
 Both are documentation-only corrections; neither requires a workflow-code
 or gate-script change.
 
-- [ ] T034 Update `data-model.md` per FR-018/FR-019 (contradicts/partial).
+- [X] T034 Update `data-model.md` per FR-018/FR-019 (contradicts/partial).
       The "Branch-tip state (report-time)" table's `current_tip` row
       (~line 85) still shows `git ls-remote origin refs/heads/main | cut -f1`,
       contradicting the shipped `report` job (T027), which resolves the
@@ -705,8 +705,18 @@ or gate-script change.
       10s status poll when `correlation == found`, a fixed 90s wait
       otherwise) — none of these shipped mechanisms currently have an
       entity/field in this document.
+      Done: updated the `current_tip` row to the shipped
+      `gh repo view`/`git ls-remote https://github.com/${GITHUB_REPOSITORY}.git`
+      default-branch read (falling back to `main` only if that read
+      fails), added `request-time` and `dispatch-rejected` to the
+      "Correlated run" table's Field list, added a paragraph documenting
+      the bounded pre-tag-fetch wait (60-attempt/10s status poll when
+      `correlation == found`, fixed 90s wait otherwise, reading only
+      `status`), and added Check 5's row to the "Regression gate fixture
+      surface" table while fixing its `release.yml` row's literal
+      `refs/heads/main` to `refs/heads/${DEFAULT_BRANCH}`.
 
-- [ ] T035 Update `quickstart.md` Scenario 4 (~lines 109-111) per
+- [X] T035 Update `quickstart.md` Scenario 4 (~lines 109-111) per
       FR-018/SC-005 (partial). It says "every self-test fixture passes,
       including the four mutation fixtures (recency-based selection,
       dropped token, dropped tag-time refusal, run-conclusion-based
@@ -714,6 +724,9 @@ or gate-script change.
       5, added this cycle for T025: removing the pre-tag-fetch status
       wait). Update the count to five and name Check 5's mutation
       alongside the other four.
+      Done: Scenario 4's expected output now says "five mutation
+      fixtures" and lists the dropped pre-tag-fetch status wait for the
+      correlated run alongside the other four.
 
 **Checkpoint**: Documentation-only; `python .github/scripts/run-local-gates.py`
 should still pass 83/83 unchanged once these land.

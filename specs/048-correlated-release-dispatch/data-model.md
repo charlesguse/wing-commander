@@ -61,9 +61,21 @@ which is what `auto-release.yml` read before this feature.
 | `databaseId` | `gh run list --workflow=release.yml --json databaseId,displayTitle,createdAt,url` |
 | `url` | Same call; used only for the report's log link (never as proof a release happened — see "Release outcome" below). |
 | `correlation` | `found` \| `ambiguous` \| `not-observed` — see research.md D3 for the selection algorithm. |
+| `request-time` | `request_time` (the epoch second captured at dispatch, T005), formatted `date -u -d "@$request_time" +"%Y-%m-%dT%H:%M:%SZ"` | New (FR-006). Surfaced as a job output so the report can name "the time of the request" in `ambiguous`/`not-observed` wording, not just the version. |
+| `dispatch-rejected` | `true`/`false`, set before the correlation poll begins, from whether the `gh workflow run release.yml` call itself failed | New (SC-004). Distinguishes "the dispatch was rejected outright" from "the dispatch succeeded but no run was found" — both previously collapsed into `correlation=not-observed` with identical wording. |
 
 `correlation` is reported (FR-006) but never itself gates whether a
 release is recorded — that is "Tag state", below.
+
+Once the correlation search concludes, `dispatch-release` waits for the
+correlated run's status alone — never its conclusion — to reach a
+terminal state before ever reading tag state: a 60-attempt/10s poll of
+`gh run view "$correlated_run_id" --json status --jq .status` when
+`correlation == found`, or a fixed 90s wait otherwise. This closes a
+timing race where a correlated run still mid-flight (checkout, lint, tag
+creation) produced a false `release-failed` report moments before the
+release actually succeeded. The verdict itself is still decided from tag
+state alone (FR-007) — the wait only decides *when* that state is read.
 
 ## Tag state
 
@@ -82,7 +94,7 @@ was false — it never contributes to a `true` "released" determination.
 
 | Field | Source | Notes |
 |---|---|---|
-| `current_tip` | `git ls-remote origin refs/heads/main \| cut -f1` | A live read at report time, not the `detect` job's stale `head-sha`. |
+| `current_tip` | `git ls-remote https://github.com/${GITHUB_REPOSITORY}.git refs/heads/${default_branch} \| cut -f1`, where `default_branch` is read live via `gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef --jq '.defaultBranchRef.name // empty'` (falling back to `main` only if that read fails) | A live read at report time, not the `detect` job's stale `head-sha`. The `report` job runs off a `schedule` trigger, whose event payload carries no `repository` key, so it cannot reuse `github.event.repository.default_branch` the way `release.yml`'s tag-time refusal does. |
 | `branch_advanced` | `current_tip != verified_head` | When true and `tag_matches` is false, the outcome is `branch-advanced` (FR-013), not a failure. |
 
 ## Release outcome
@@ -130,6 +142,7 @@ Not a runtime entity, but the concrete subject `verify-correlated-release-dispat
 | Checked file | Checked property |
 |---|---|
 | `.github/workflows/release.yml` | `run-name:` references `inputs.version` and `inputs.attempt-token` |
-| `.github/workflows/release.yml` | a `git ls-remote origin refs/heads/main` comparison appears after the "Create tags" step marker |
+| `.github/workflows/release.yml` | a `git ls-remote origin refs/heads/${DEFAULT_BRANCH}` comparison appears after the "Create tags" step marker |
 | `.github/workflows/auto-release.yml` | the correlation step reads a time field (`createdAt`) alongside the token match |
 | `.github/workflows/auto-release.yml` | the outcome computation reads a `refs/tags/` comparison, not a run `conclusion`/`status` field |
+| `.github/workflows/auto-release.yml` | a `gh run view ... --json status` poll of the correlated run appears before the tag fetch (Check 5, added for T025's timing-race fix) |

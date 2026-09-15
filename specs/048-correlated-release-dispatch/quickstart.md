@@ -106,10 +106,11 @@ Proves FR-009–FR-014: the tag-time refusal, evaluated live.
 python3 .github/scripts/verify-correlated-release-dispatch.py --self-test
 ```
 
-**Expected**: every self-test fixture passes, including the four
+**Expected**: every self-test fixture passes, including the five
 mutation fixtures (recency-based selection, dropped token, dropped
-tag-time refusal, run-conclusion-based reporting) each failing with a
-message naming only its own FR-018 clause. Then:
+tag-time refusal, run-conclusion-based reporting, dropped pre-tag-fetch
+status wait for the correlated run) each failing with a message naming
+only its own FR-018 clause. Then:
 
 ```
 python3 .github/scripts/verify-correlated-release-dispatch.py
