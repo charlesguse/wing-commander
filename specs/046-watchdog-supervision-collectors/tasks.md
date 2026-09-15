@@ -254,3 +254,12 @@ With multiple implementers:
 ## Phase 11: Convergence
 
 - [X] T043 Update `research.md`'s R11 signal-id source→kind map table (the `"turn-budget"` row, ~line 423) so its `kind` column reads `turn-budget-trend` instead of `turn-budget-observation`, and its note reflects T042's shared-kind fix (both the per-run and cross-run signals hash to the same id for a given `{stage, band}`, not merely each independently stable per T041) — the row currently still documents the pre-T042 identity scheme and would mislead a future reader of this design record into reintroducing the two-kind split T042 removed. per research.md R11 (partial)
+
+---
+
+## Maintainer Feedback
+
+- [ ] Fix `collect-final-pr-claims`'s task-count ground-truth extraction in `.github/workflows/watchdog.yml` (~line 1469): `grep -c '^- \[[xX]\]' ... || echo 0` prints `0` AND exits 1 on no match, and under the step's `pipefail` this trips the `|| echo 0` fallback too, leaving `tasks_actual` holding two lines (`0\n0`). That reaches `jq -n --argjson tasks_actual "${tasks_actual:-0}"` (~line 1489) as invalid JSON, jq exits 2, and the step (running under `bash -e -o pipefail`) dies before appending this collector's outcome to `collector-outcomes.json` — losing the FR-010 'read failed' vs 'produced nothing' distinction for the exact run class (a fetch that 404s, or a `tasks.md` with no checked boxes yet) this collector exists to handle.
+  - [ ] Capture the grep count without the `||` idiom, e.g. `tasks_actual="$(... | grep -c '^- \[[xX]\]')" || true; tasks_actual="${tasks_actual:-0}"`.
+  - [ ] Validate every `*_actual` value is digits-only before the `--argjson` call.
+  - [ ] Add a gate fixture to `verify-final-pr-claims-collector.sh` that runs the shipped shell path (not just injects `tasks_actual` into the jq filter) against a `tasks.md` with zero checked boxes.
