@@ -120,6 +120,21 @@ PER_MODEL_FIELD_TYPES = {
     "cache_creation_tokens": (int, float),
     "cost_usd": (int, float),
 }
+# Unlike every other entry in REQUIRED_TOP, branch_advance's own absence
+# from a record is not a failure: a record from a pipeline version
+# predating specs/050-branch-drift-sha-baseline has no such key at all,
+# and a reader must treat that identically to `available: false`
+# (contracts/metrics-record-schema.md's Compatibility note).
+REQUIRED_BRANCH_ADVANCE = {
+    "available": bool,
+    "branch": (str, type(None)),
+    "before_sha": (str, type(None)),
+    "before_available": bool,
+    "after_sha": (str, type(None)),
+    "after_available": bool,
+    "commits": (int, type(None)),
+    "commits_available": bool,
+}
 
 
 def _check_fields(obj, spec, where, failures):
@@ -168,6 +183,9 @@ def validate_record(record):
         _check_fields(record["turns"], REQUIRED_TURNS, "record.turns", failures)
     if isinstance(record.get("tokens"), dict):
         _check_fields(record["tokens"], REQUIRED_TOKENS, "record.tokens", failures)
+    if "branch_advance" in record:
+        _check_fields(record["branch_advance"], REQUIRED_BRANCH_ADVANCE,
+                      "record.branch_advance", failures)
 
     per_model = record.get("per_model")
     if isinstance(per_model, list):
@@ -245,6 +263,7 @@ def check_fields_match_contract():
         ("record.spec", REQUIRED_SPEC, shape.get("spec", {})),
         ("record.turns", REQUIRED_TURNS, shape.get("turns", {})),
         ("record.tokens", REQUIRED_TOKENS, shape.get("tokens", {})),
+        ("record.branch_advance", REQUIRED_BRANCH_ADVANCE, shape.get("branch_advance", {})),
     ]
     per_model_shape = shape.get("per_model") or [{}]
     levels.append(("record.per_model[]", PER_MODEL_FIELD_TYPES, per_model_shape[0]))
@@ -255,6 +274,13 @@ def check_fields_match_contract():
         gate_fields = set(required.keys())
         missing_from_gate = doc_fields - gate_fields
         missing_from_doc = gate_fields - doc_fields
+        # branch_advance is the one field this gate treats as optional at
+        # record's own top level (REQUIRED_TOP deliberately omits it — its
+        # absence from a record is not a failure, see REQUIRED_BRANCH_ADVANCE's
+        # comment) — so its presence in the doc's top-level Shape example
+        # but absence from REQUIRED_TOP is not itself drift.
+        if where == "record":
+            missing_from_gate.discard("branch_advance")
         if missing_from_gate:
             failures.append(
                 "{0}: {1}'s '## Shape' example has field(s) this gate "
@@ -278,8 +304,8 @@ def _fixture_files():
     found = sorted(glob.glob(os.path.join(FIXTURES_DIR, "*.json")))
     # Pinned count: a bare glob makes a deleted fixture read as a smaller
     # clean pass (PR #267 re-review). Update deliberately with the set.
-    if len(found) != 8:
-        sys.exit("::error::metrics-record-schema: expected exactly 8 "
+    if len(found) != 15:
+        sys.exit("::error::metrics-record-schema: expected exactly 15 "
                  "fixtures under {0}, found {1} - a fixture was added or "
                  "removed without updating this pin.".format(
                      FIXTURES_DIR, len(found)))

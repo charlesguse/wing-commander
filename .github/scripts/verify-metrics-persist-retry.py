@@ -395,7 +395,19 @@ def case_idempotent_repeat_persistence_is_byte_for_byte_unchanged():
     tmp = tempfile.mkdtemp(prefix="wc-metrics-retry-")
     try:
         origin = new_bare_repo(tmp, "origin.git")
-        batch = '{"run":{"record_key":"run-idem:cycle:0"},"cost_usd":7}\n'
+        # specs/050-branch-drift-sha-baseline FR-009: a record carrying a
+        # populated branch_advance group persists/dedups/retries identically
+        # to one without it - dedup keys only on run.record_key.
+        branch_advance_record = (
+            '{"run":{"record_key":"run-idem:cycle:3"},"cost_usd":0,'
+            '"branch_advance":{"available":true,'
+            '"branch":"spec/050-branch-drift-sha-baseline",'
+            '"before_sha":"5f2a1c9","before_available":true,'
+            '"after_sha":"9b7e004","after_available":true,'
+            '"commits":3,"commits_available":true}}\n'
+        )
+        batch = ('{"run":{"record_key":"run-idem:cycle:0"},"cost_usd":7}\n'
+                  + branch_advance_record)
 
         rc1, out1, outputs1, work1 = run_append(tmp, origin, "metrics", batch, "5000", "a")
         if rc1 != 0:
