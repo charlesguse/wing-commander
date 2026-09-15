@@ -3,7 +3,7 @@
   "spec_dir": "specs/051-read-only-inspection-policy",
   "feature_num": "051",
   "stage": "implement",
-  "iteration": 1,
+  "iteration": 2,
   "spec_branch": "spec/051-read-only-inspection-policy",
   "pending_re_review_from": ["charlesguse"]
 }
