@@ -730,3 +730,34 @@ or gate-script change.
 
 **Checkpoint**: Documentation-only; `python .github/scripts/run-local-gates.py`
 should still pass 83/83 unchanged once these land.
+
+## Phase 10: Convergence
+
+**Purpose**: `/speckit-converge` found that Phase 8's T031/T033 reconciled
+`contracts/regression-gate.md` and `data-model.md` with T025's shipped Check
+5 and T027's dynamic-default-branch fix, but two more documents describing
+the same gate — `research.md`'s own D7 section and `plan.md`'s Constitution
+Check table — still carry the pre-T025/T027 "four checks"/literal-`main`
+description. Both are documentation-only corrections; neither requires a
+workflow-code or gate-script change.
+
+- [ ] T036 Update `research.md` D7 (~lines 334-361) per FR-018 (contradicts).
+      The numbered list of what `verify-correlated-release-dispatch.py`
+      asserts stops at 4 checks and item 2 still reads "a line matching
+      `git ls-remote origin refs/heads/main`"; the shipped gate has a fifth
+      check (Check 5, added for T025: the pre-tag-fetch wait for the
+      correlated run's terminal status) and item 2's actual pattern is
+      `git ls-remote origin "refs/heads/${DEFAULT_BRANCH}"` (T027). Add
+      Check 5 to the numbered list (matching the wording already used for
+      it in `contracts/regression-gate.md` and `data-model.md`), fix item
+      2's literal to the dynamic-default-branch form, and update the
+      Rationale paragraph's "each of the four checks above" to "each of
+      the five checks above".
+
+- [ ] T037 Update `plan.md` line 63 (Constitution Check table, Principle
+      VIII row) per FR-018 (contradicts). It says "each of its four checks
+      has a named mutation it must fail on" — the shipped gate has five
+      checks (Check 5, added for T025). Update the count to five.
+
+**Checkpoint**: Documentation-only; `python .github/scripts/run-local-gates.py`
+should still pass 83/83 unchanged once these land.
