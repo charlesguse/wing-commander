@@ -351,6 +351,9 @@ runs:
           fi
         fi
 
+        STATIC_SUFFIX=" Each command in a pipeline or \`;\`/\`&&\` chain is checked separately, and a \`>\`/\`>>\` redirect or a \`cd … &&\` prefix is denied regardless of this list — use the Read/Grep/Glob tools, or a single command, for anything multi-step."
+        shell_commands="$shell_commands$STATIC_SUFFIX"
+
         # 5. Emit (only reached once validation in step 1 passes).
         echo "allowed-tools=$effective_allowed" >> "$GITHUB_OUTPUT"
         echo "disallowed-tools=$effective_disallowed" >> "$GITHUB_OUTPUT"
