@@ -3389,8 +3389,8 @@ jobs:
       # the stale-head guard's own failed read pointing at a release.yml run
       # that does not exist. Executes the shipped "Determine this run's
       # outcome" step against every combination of job results and outputs
-      # it can meet, checking the action/title/body/summary it decides on
-      # -- specs/049-single-home-release-idioms moved the actual
+      # it can meet, checking the action/title/close-comment/body/summary it
+      # decides on -- specs/049-single-home-release-idioms moved the actual
       # gh-issue-report/-close mechanics this step used to perform inline
       # into the shared durable-failure-issue composite, which the two
       # `uses:` steps immediately after this one call based on that

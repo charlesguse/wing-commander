@@ -39,10 +39,20 @@ release-dispatch-failed — the three distinct bodies today), then calls
 `uses: ./.github/actions/_shared/durable-failure-issue` with
 `operation: report`.
 
-## Call site: `close`, `auto-release.yml`'s `report` job (1 site)
+## Call site: `close`, `auto-release.yml`'s `report` job (2 sites, 1 step)
 
-`operation: close`, `close-comment: "Resolved: ${NEXT_VERSION} released."`
-— unchanged text from today's `close_failure_on_success`.
+`operation: close`, `close-comment` read from the deciding step's own
+`close-comment` output rather than templated into the `with:` block.
+
+Two paths close a standing report, and they name different versions:
+this attempt's own release (`"Resolved: ${NEXT_VERSION} released."`, the
+unchanged text from today's `close_failure_on_success`) and the quiet day
+whose latest tag already points at HEAD (`"Resolved: ${LATEST_TAG}
+already released."`, the self-heal path specs/048 added — decide-version
+never runs there, so `NEXT_VERSION` is empty). Both reach the one
+`operation: close` step through that output, so the "Resolved: …" wording
+still has exactly one home: `close_failure_on_success` in the deciding
+step, whose body now only writes the decision.
 
 ## Call site: `report`, `auto-update-spec-kit.yml` (1 site)
 
