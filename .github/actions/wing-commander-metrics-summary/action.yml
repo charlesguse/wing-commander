@@ -252,7 +252,7 @@ runs:
         COMMITS="${COMMITS:-}"
         COMMITS_AVAILABLE="${COMMITS_AVAILABLE:-false}"
         branch_advance_available=false
-        if [ -n "$BRANCH" ] && { [ "$BEFORE_SHA_AVAILABLE" = "true" ] || [ "$AFTER_SHA_AVAILABLE" = "true" ]; }; then
+        if [ -n "$BRANCH" ] && [ "$BEFORE_SHA_AVAILABLE" = "true" ] && [ "$AFTER_SHA_AVAILABLE" = "true" ]; then
           branch_advance_available=true
         fi
 
@@ -314,7 +314,7 @@ runs:
             --arg after_sha "$AFTER_SHA" \
             --argjson after_available "$([ "$AFTER_SHA_AVAILABLE" = "true" ] && echo true || echo false)" \
             --arg commits "$COMMITS" \
-            --argjson commits_available "$([ "$COMMITS_AVAILABLE" = "true" ] && echo true || echo false)" \
+            --argjson commits_available "$([ "$COMMITS_AVAILABLE" = "true" ] && [ -n "$COMMITS" ] && echo true || echo false)" \
             '
             def numOrNull($s): if $s == "" then null else ($s | tonumber) end;
             def strOrNull($s): if $s == "" then null else $s end;

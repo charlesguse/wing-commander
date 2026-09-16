@@ -387,7 +387,11 @@ runs:
           fi
 
           recs="$dir/rollup-recs.jsonl"
-          jq -c --arg d "$spec_dir" 'select(.schema_version==1 and .spec.spec_dir==$d)' "$DEST_PATH" 2>/dev/null > "$recs"
+          # specs/050-branch-drift-sha-baseline: the transcript-less "branch
+          # advance" record exists only to carry before/after SHAs for the
+          # watchdog's branch-drift collector -- no agent ran, so it must
+          # not count as an (incomplete) run in the human-facing rollup.
+          jq -c --arg d "$spec_dir" 'select(.schema_version==1 and .spec.spec_dir==$d and (.run_label // "") != "branch advance")' "$DEST_PATH" 2>/dev/null > "$recs"
 
           totals="$(jq -s '
             {

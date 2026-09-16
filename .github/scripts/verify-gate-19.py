@@ -790,6 +790,55 @@ BD_SCENARIOS = [
         expect_since=True,
         expect_signal=None,
     ),
+    # specs/050-branch-drift-sha-baseline: a run's own metrics record
+    # already carries the exact before/after/commits it observed — the
+    # primary arm, exercised here instead of falling through to
+    # since-created. No live branch read backs this baseline (research.md
+    # R7/FR-019), so no `expect_fetch_ref`/`expect_since` assertion applies.
+    dict(
+        name="exact-sha evidence on the run's own metrics record shows "
+             "forward progress: baseline is exact-sha, no signal",
+        head_branch="main",
+        slug="999-exact-sha",
+        fetch_fail=False,
+        fetch_msg="",
+        revparse_fail=False,
+        revlist_fail=False,
+        gh_records=json.dumps({"branch_advance": {
+            "available": True,
+            "before_sha": "1111111111111111111111111111111111111a",
+            "after_sha": "2222222222222222222222222222222222222b",
+            "commits": 5}}),
+        expect_outcome="ok",
+        expect_signal=None,
+    ),
+    # The bug specs/050-branch-drift-sha-baseline's spec.md Edge Cases
+    # section names directly: a force-push/reset leaves the two recorded
+    # points different while the branch went backward, so the recorded
+    # commits count is zero. SHA identity alone would call this healthy;
+    # the collector must use the recorded count instead (mirrors the
+    # since-created arm's own "commits == 0 is lost-progress" rule above).
+    dict(
+        name="exact-sha evidence shows a backward reset (SHAs differ, "
+             "recorded commits is zero): lost-progress, not healthy",
+        head_branch="main",
+        slug="999-exact-sha",
+        fetch_fail=False,
+        fetch_msg="",
+        revparse_fail=False,
+        revlist_fail=False,
+        gh_records=json.dumps({"branch_advance": {
+            "available": True,
+            "before_sha": "2222222222222222222222222222222222222b",
+            "after_sha": "1111111111111111111111111111111111111a",
+            "commits": 0}}),
+        expect_outcome="ok",
+        expect_signal=dict(
+            branch="spec/999-exact-sha",
+            **{"before-sha": "2222222222222222222222222222222222222b",
+               "after-sha": "1111111111111111111111111111111111111a",
+               "commits": 0}),
+    ),
     # Tasks is dispatched too, but pushes to spec/<slug> only in `auto`
     # review mode (pr mode goes to tasks/<slug>), and the record does not
     # say which — so the #322 arm is implement-only and tasks still skips.
@@ -887,10 +936,17 @@ def run_bd_one(script, env, sc, tmproot):
     with open(os.path.join(runner_temp, "signals.json"), "w", encoding="utf-8") as fh:
         fh.write("[]")
     stub_bin(bindir, "git", STUB_GIT_TEMPLATE, sc["fetch_msg"])
+    # specs/050-branch-drift-sha-baseline: the exact-sha arm's `gh run
+    # download` needs a stub too, or it makes a real, unstubbed network
+    # call (reusing the spec-slug step's existing fixture-laying template
+    # rather than adding a new one — same `-D`-directory/one-JSON-per-line
+    # shape `gh run download` itself produces).
+    stub_bin(bindir, "gh", STUB_GH_SPECSLUG_TEMPLATE, "")
     stub_jq(bindir)
 
     run_env = with_actions_defaults(env)
     run_env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
+    run_env["GH_STUB_RECORDS"] = sc.get("gh_records", "")
     run_env["RUN_NAME"] = sc.get("run_name", "Wing Commander · 5 implement")
     run_env["RUN_CONCLUSION"] = sc.get("run_conclusion", "success")
     # The head IS the branch the stage pushes to unless a scenario says

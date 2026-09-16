@@ -506,7 +506,9 @@ issue #331 names.
   `contracts/metrics-record-schema.md`'s degraded-record example already
   documents, with the `branch_advance` key present rather than absent)
   and update `verify-metrics-record-schema.py`'s `_fixture_files()` pinned
-  count to match. SC-004 lists six new-field states requiring a
-  checked-in fixture; the seven fixtures added in T006 each mark only one
-  of `before_available`/`after_available` false at a time (or both
-  true/available), so this state has no fixture of its own yet (missing).
+  count from `15` to `16` to match (8 `branch_advance` fixtures in total:
+  the seven from T006 plus this one). SC-004 lists six new-field states
+  requiring a checked-in fixture; the seven fixtures added in T006 each
+  mark only one of `before_available`/`after_available` false at a time
+  (or both true/available), so this state has no fixture of its own yet
+  (missing).

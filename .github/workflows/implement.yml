@@ -2140,7 +2140,7 @@ jobs:
       - name: Record branch advance (cycle)
         id: branch-advance
         shell: bash
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.cycle.outcome != 'skipped'
         continue-on-error: true
         env:
           SLUG: ${{ steps.spec.outputs.slug }}
