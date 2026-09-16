@@ -100,10 +100,21 @@ jobs:
     if: needs.detect.outputs.has-new-work == 'true' && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 150
-    permissions: {}
+    permissions:
+      contents: read
     outputs:
       verdict: ${{ steps.config.outputs.verdict || steps.reachable.outputs.verdict || steps.reset.outputs.verdict || steps.speckit-version.outputs.verdict || steps.scaffold.outputs.verdict || steps.kickoff.outputs.verdict || steps.poll.outputs.verdict }}
     steps:
+      # Every step below reads a local composite (`uses: ./...`) or shell
+      # helper (`.github/actions/_shared/*.sh`), which needs this
+      # repository on disk -- this job had no checkout at all, so its
+      # first scheduled run (this job is schedule/dispatch-only; PR CI
+      # never exercises it) would fail with "can't find action.yml".
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
       - name: Resolve and validate the end-to-end test repository configuration
         id: config
         shell: bash
@@ -806,8 +817,18 @@ jobs:
     needs: [detect, verify-e2e, decide-version, dispatch-release]
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       issues: write
     steps:
+      # Same reason as verify-e2e's checkout above: this job calls a local
+      # shell helper and a local composite (`_shared/auto-release-
+      # verdict.sh`, `uses: ./_shared/durable-failure-issue`) and had no
+      # checkout at all.
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
       - name: Determine this run's outcome
         id: outcome
         shell: bash
