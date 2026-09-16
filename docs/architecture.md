@@ -436,7 +436,8 @@ vars.WING_COMMANDER_MAX_ITERATIONS`).
    report to the lifecycle issue and dispatch finalize with `converged=false`.
 4. Post a brief progress comment (`claude-haiku-4-5` summary) each iteration.
 5. **Failure ≠ non-convergence** (FR-013): an outright pass failure (step
-   fails, or `spec-meta.json` didn't advance as instructed) auto-retries the
+   fails, or `spec-meta.json` didn't advance as instructed — read through the
+   `wing-commander-spec-meta` composite, #340) auto-retries the
    same iteration once, one model tier up (`claude-sonnet-5` →
    `claude-opus-5`). A failed retry — or a failure already on the top
    tier — marks the spec `stalled` (label, `spec-meta.json`, issue comment);
@@ -662,7 +663,9 @@ Two constraints the wrappers must hold, both enforced by
   resolution: a run that can't be tied to a spec (e.g. a `main`-based
   cleanup) is still inspected and reported against its own run URL. The
   derivation has one home, the `wing-commander-inspected-run-identity`
-  composite, which the `report-unhandled-failure` job calls again on its own
+  composite (whose spec-meta.json read is `_shared/read-spec-meta.sh`, the
+  script the `wing-commander-spec-meta` composite wraps for plan, tasks and
+  implement — #340, Gate 61), which the `report-unhandled-failure` job calls again on its own
   (collect may be the job that failed), so a watchdog run whose own jobs
   crash still posts its verdict to the spec's lifecycle issue whenever its
   own context step minted an App token, dispatched tasks/implement runs

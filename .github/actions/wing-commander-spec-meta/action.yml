@@ -1,0 +1,97 @@
+# wing-commander-spec-meta — read a specification's spec-meta.json off the
+# tip of its spec branch, with the self-identity check applied (#340).
+#
+# The stage workflows' front door to `_shared/read-spec-meta.sh`, which is
+# the one home of that read. plan.yml and tasks.yml verify the stage flip
+# through this composite; implement.yml's two read-back steps read the stage
+# and iteration the agent was told to record; the watchdog's
+# wing-commander-inspected-run-identity composite sources the script
+# directly, as composites may. Before #340 each of those sites carried its
+# own fetch + `git show` + jq, and only the watchdog's copy checked that the
+# file identifies the directory it was read from.
+#
+# Outputs are strings a caller can compare without further parsing: `issue`
+# and `iteration` are digits or empty, `stage` a single word or empty,
+# `spec-dir` a `specs/...` path or empty. Anything in the file that does not
+# match those shapes is dropped, never passed through (constitution V). This
+# step never fails: a missing branch, missing file, or unparseable JSON
+# yields found=false and empty fields, and the caller decides what that
+# means for its own stage (a verify step refuses; a read-back treats it as
+# "the record did not advance").
+#
+# Constitution VII: this composite is part of the published surface;
+# adding it is a minor-version change at the next release.
+name: wing-commander-spec-meta
+description: >-
+  Reads a specification's spec-meta.json from the tip of its spec branch
+  and returns its issue, stage, iteration and spec_dir fields, with the
+  self-identity check applied. The one home of that read for stage
+  workflows.
+inputs:
+  spec-prefix:
+    description: >-
+      Spec-branch prefix, the stage's own spec-prefix input (e.g. spec/).
+    required: true
+  slug:
+    description: Spec slug, NNN-name.
+    required: true
+  spec-dir:
+    description: >-
+      Spec directory to read spec-meta.json from and to check the file's
+      spec_dir against. Empty means specs/<slug>.
+    required: false
+    default: ""
+outputs:
+  fetch-ok:
+    description: "true when the forced fetch of the spec branch succeeded; false means the branch is gone or unreachable, and found is false."
+    value: ${{ steps.read.outputs.fetch-ok }}
+  found:
+    description: "true when spec-meta.json exists on the branch and parses as JSON."
+    value: ${{ steps.read.outputs.found }}
+  identity-ok:
+    description: >-
+      "true when the file's spec_dir names exactly the directory it was read
+      from. Fields from a file that fails this check must not be trusted.
+    value: ${{ steps.read.outputs.identity-ok }}
+  spec-dir:
+    description: The spec_dir the file records (specs/... or empty).
+    value: ${{ steps.read.outputs.spec-dir }}
+  issue:
+    description: The lifecycle issue number the file records (digits or empty).
+    value: ${{ steps.read.outputs.issue }}
+  stage:
+    description: The stage the file records (one word or empty).
+    value: ${{ steps.read.outputs.stage }}
+  iteration:
+    description: The iteration the file records (digits or empty).
+    value: ${{ steps.read.outputs.iteration }}
+runs:
+  using: composite
+  steps:
+    - name: Read spec-meta.json from the spec branch
+      id: read
+      shell: bash
+      env:
+        SPEC_PREFIX: ${{ inputs.spec-prefix }}
+        SLUG: ${{ inputs.slug }}
+        SPEC_DIR: ${{ inputs.spec-dir }}
+      run: |
+        set -uo pipefail
+        eval "$(bash "$GITHUB_ACTION_PATH/../_shared/read-spec-meta.sh" "$SPEC_PREFIX" "$SLUG" "$SPEC_DIR")"
+        {
+          echo "fetch-ok=$meta_fetch_ok"
+          echo "found=$meta_found"
+          echo "identity-ok=$meta_identity_ok"
+          echo "spec-dir=$meta_spec_dir"
+          echo "issue=$meta_issue"
+          echo "stage=$meta_stage"
+          echo "iteration=$meta_iteration"
+        } >> "$GITHUB_OUTPUT"
+        where="${SPEC_DIR:-specs/$SLUG}/spec-meta.json on ${SPEC_PREFIX}${SLUG}"
+        if [ "$meta_fetch_ok" != "true" ]; then
+          echo "spec-meta: could not fetch ${SPEC_PREFIX}${SLUG} from origin — no fields read (a stale local ref is never read through)." >> "$GITHUB_STEP_SUMMARY"
+        elif [ "$meta_found" != "true" ]; then
+          echo "spec-meta: $where is missing or not JSON — no fields read." >> "$GITHUB_STEP_SUMMARY"
+        elif [ "$meta_identity_ok" != "true" ]; then
+          echo "spec-meta: $where records spec_dir='${meta_spec_dir:-<invalid>}', not the directory it was read from — its fields are reported but are not this specification's record." >> "$GITHUB_STEP_SUMMARY"
+        fi

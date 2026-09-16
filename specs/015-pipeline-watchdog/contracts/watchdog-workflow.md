@@ -54,10 +54,13 @@ proceed in parallel:
    a lifecycle issue to post to (in which case the run's job summary
    carries the report instead, and the job records that no lifecycle
    issue destination exists).
-3. Five deterministic collector steps (one per FR-006 source, research.md
-   table), each tolerating "this source produced nothing for this run"
-   as success, never as a failure — a source being empty is data, not an
-   error. All five MUST check, before emitting any signal, the
+3. Nine deterministic collector steps (one per FR-006 source, research.md
+   table, plus the four supervision-gap collectors specs/046-watchdog-
+   supervision-collectors added — collect-turn-budget, collect-cost-report,
+   collect-final-pr-claims, collect-spec-collision), each tolerating "this
+   source produced nothing for this run" as success, never as a failure —
+   a source being empty is data, not an error. All nine MUST check, before
+   emitting any signal, the
    attribution invariant (FR-026): (a) the inspected run's relevant
    scope (the whole run, or the specific job/artifact the collector
    reads) did not conclude `skipped`/`cancelled`, and (b) the evidence

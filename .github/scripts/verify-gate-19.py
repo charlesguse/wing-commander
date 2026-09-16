@@ -1208,6 +1208,11 @@ def run_spec_slug_one(script, env, sc, tmproot):
 
     run_env = with_actions_defaults(env)
     run_env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
+    # The step sources $GITHUB_ACTION_PATH/../_shared/read-spec-meta.sh
+    # (#340): point it at the real action directory so the real shared
+    # script runs, against the stubbed git and gh on PATH.
+    run_env["GITHUB_ACTION_PATH"] = os.path.abspath(
+        os.path.dirname(SPEC_SLUG_ACTION)).replace("\\", "/")
     run_env["HEAD_BRANCH"] = sc["head_branch"]
     run_env["RUN_NAME"] = sc.get("run_name", "Wing Commander · 5 implement")
     run_env["GH_STUB_RECORDS"] = "\n".join(sc["records"])
@@ -1586,7 +1591,9 @@ def suite_stepsum(script, env, tmproot):
 AGGREGATE_STEP = "Aggregate signals"
 COLLECTOR_IDS = ["collect-execution-output", "collect-branch-drift",
                  "collect-spec-meta", "collect-step-summary",
-                 "collect-annotations"]
+                 "collect-annotations", "collect-turn-budget",
+                 "collect-cost-report", "collect-final-pr-claims",
+                 "collect-spec-collision"]
 
 # Acceptance Scenario 3 requires more than "evidence-available stays true"
 # — the successful collectors' own contributions to signals.json must
@@ -1616,7 +1623,7 @@ AGGREGATE_CASES = [
         expect_signals=SIGNALS_FIXTURE,
     ),
     dict(
-        name="one collector's read failed, the other four succeeded",
+        name="one collector's read failed, the other eight succeeded",
         why="Acceptance Scenario 3 — untrusted-collectors names exactly the "
             "failed collector, evidence-available stays true (a partial "
             "failure still reaches a verdict), and this is true even though "
@@ -1631,6 +1638,21 @@ AGGREGATE_CASES = [
         expect_untrusted=["collect-annotations"],
         expect_evidence_available="true",
         expect_signals=SIGNALS_FIXTURE,
+    ),
+    dict(
+        name="all nine collector STEPS outright error: evidence-available "
+             "flips to false",
+        why="specs/046-watchdog-supervision-collectors leg-1 — the "
+            "collectors-failed >= collectors-total comparison must track "
+            "the loop's own length, not a stale literal, or a run where "
+            "every one of this feature's four new collectors (in addition "
+            "to the five pre-existing ones) errors would be miscounted as "
+            "a partial pass instead of 'could not inspect this run.'",
+        outcomes=[{"collector": c, "outcome": "ok"} for c in COLLECTOR_IDS],
+        step_outcomes={c: "failure" for c in COLLECTOR_IDS},
+        expect_untrusted=[],
+        expect_evidence_available="false",
+        expect_signals=[],
     ),
 ]
 

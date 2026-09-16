@@ -640,9 +640,13 @@ jobs:
   # `release.yml` is workflow_dispatch-only and cannot be `uses:`-invoked, so
   # `gh workflow run` is the only mechanism (research.md D12) -- run with
   # `github.token`, never the wing-commander App token (that token has no
-  # `actions` permission; a documented 403, issue/spec 005). A successful
-  # dispatch only means GitHub accepted the request, so this polls the
-  # dispatched run to its own conclusion before reporting `released`.
+  # `actions` permission; a documented 403, issue/spec 005). This job
+  # neither waits for nor trusts release.yml's own run conclusion (FR-007,
+  # FR-007a) -- it identifies its own run by evidence (title token + time
+  # bound) and decides whether a release happened from tag state alone. The
+  # full contract for both is
+  # specs/048-correlated-release-dispatch/contracts/release-handover-contract.md
+  # (FR-019).
   dispatch-release:
     needs: [detect, decide-version]
     # `!cancelled() && result == 'success'` rather than the bare implicit
@@ -659,13 +663,29 @@ jobs:
       actions: write
       contents: read
     outputs:
-      release-outcome: ${{ steps.watch.outputs.release-outcome }}
-      # Empty on every path where release.yml was never observed running
-      # (dispatch rejected, no run appeared, tip unresolved, stale head);
-      # report links it when present and says so when it is not (#325).
-      release-run-id: ${{ steps.watch.outputs.release-run-id }}
+      # `found` | `ambiguous` | `not-observed` -- diagnostic only, never
+      # itself the release verdict (see `tag-matches` below, FR-007a).
+      correlation: ${{ steps.watch.outputs.correlation }}
+      correlated-run-id: ${{ steps.watch.outputs.correlated-run-id }}
+      correlated-run-url: ${{ steps.watch.outputs.correlated-run-url }}
+      # The sole authority for "did this attempt's release happen"
+      # (FR-007): the exact version tag exists and points at the verified
+      # head, independent of `correlation` and of release.yml's own run
+      # conclusion.
+      tag-matches: ${{ steps.watch.outputs.tag-matches }}
+      # The report's diagnostic wording (FR-006/SC-004) is written once in
+      # specs/048-correlated-release-dispatch/contracts/release-handover-contract.md;
+      # request-time and dispatch-rejected feed it, not restated here.
+      request-time: ${{ steps.watch.outputs.request-time }}
+      dispatch-rejected: ${{ steps.watch.outputs.dispatch-rejected }}
     steps:
-      - name: Dispatch release.yml and wait for its conclusion
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Dispatch release.yml and correlate its run
         id: watch
         shell: bash
         env:
@@ -675,55 +695,108 @@ jobs:
         run: |
           set -uo pipefail
 
-          # release.yml's own checkout carries no ref: override, so
-          # `gh workflow run` tags whatever main's tip is at dispatch time,
-          # not the commit verify-e2e actually verified (FR-016) -- and
-          # verify-e2e can run for up to this workflow's own
-          # timeout-minutes before this job starts, during which main can
-          # advance. A tag must never land on a commit no end-to-end run
-          # ever saw, so skip the dispatch entirely when main has moved.
-          current_tip="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha 2>/dev/null || true)"
-          if [ -z "$current_tip" ]; then
-            # Its own outcome, not `failed` (#325): `failed` means release.yml
-            # ran and did not conclude successfully, and report says "see
-            # its own run" -- but nothing was dispatched here, so there is
-            # no such run. Report files this as infrastructure instead.
-            echo "::error::wing-commander auto-release dispatch-release: could not resolve main's current tip; not dispatching against an unconfirmed head."
-            echo "release-outcome=tip-unresolved" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [ "$current_tip" != "$VERIFIED_HEAD" ]; then
-            echo "::notice::wing-commander auto-release dispatch-release: main advanced from the verified head (${VERIFIED_HEAD}) to ${current_tip} before dispatch; skipping this attempt."
-            echo "release-outcome=stale-head" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+          # The dispatching run's own id+attempt is unique across this
+          # repository's entire run history (GitHub's own guarantee), so
+          # two attempts can never mint the same token by construction
+          # (FR-002a) -- no counter or random value is needed. Minted once,
+          # reused for the dispatch call, the correlation search, and the
+          # report.
+          token="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          request_time="$(date -u +%s)"
+          request_time_iso="$(date -u -d "@$request_time" +"%Y-%m-%dT%H:%M:%SZ")"
 
-          if ! gh workflow run release.yml -f "version=${VERSION}" -f breaking=false -f breaking-notes=; then
+          correlation="not-observed"
+          correlated_run_id=""
+          correlated_run_url=""
+          dispatch_rejected=false
+
+          if ! gh workflow run release.yml -f "version=${VERSION}" -f breaking=false -f breaking-notes= -f "attempt-token=${token}" -f "commit=${VERIFIED_HEAD}"; then
+            dispatch_rejected=true
             echo "::error::wing-commander auto-release dispatch-release: gh workflow run release.yml was rejected."
-            echo "release-outcome=failed" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          run_id=""
-          attempt=0
-          while [ "$attempt" -lt 12 ] && [ -z "$run_id" ]; do
-            run_id="$(gh run list --workflow=release.yml -b main --json databaseId,status,conclusion -L 1 --jq '.[0].databaseId // empty' 2>/dev/null || true)"
-            [ -n "$run_id" ] || sleep 5
-            attempt=$((attempt + 1))
-          done
-
-          if [ -z "$run_id" ]; then
-            echo "::error::wing-commander auto-release dispatch-release: gh workflow run release.yml was accepted but no run appeared within 60s."
-            echo "release-outcome=failed" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if gh run watch "$run_id" --exit-status >/dev/null 2>&1; then
-            echo "release-outcome=released" >> "$GITHUB_OUTPUT"
           else
-            echo "release-outcome=failed" >> "$GITHUB_OUTPUT"
+            # Correlate by evidence, never by recency (FR-001): a
+            # release.yml run whose title carries this attempt's own
+            # token, started after this attempt's own request (FR-002,
+            # FR-002a, FR-003). Zero, one, or more than one match are three
+            # distinct outcomes (FR-004, FR-005), never collapsed by
+            # picking "the newest" among them.
+            attempt=0
+            while [ "$attempt" -lt 12 ]; do
+              rows="$(gh run list --workflow=release.yml --json databaseId,displayTitle,createdAt,url -L 20 2>/dev/null || true)"
+              count=0
+              match_id=""
+              match_url=""
+              while IFS=$'\t' read -r row_id row_title row_created row_url; do
+                [ -n "$row_id" ] || continue
+                case "$row_title" in
+                  *"[attempt:${token}]"*) ;;
+                  *) continue ;;
+                esac
+                created_epoch="$(date -u -d "$row_created" +%s 2>/dev/null || echo 0)"
+                if [ "$created_epoch" -ge "$request_time" ]; then
+                  count=$((count + 1))
+                  match_id="$row_id"
+                  match_url="$row_url"
+                fi
+              done < <(printf '%s' "$rows" | jq -r '.[] | [.databaseId, .displayTitle, .createdAt, .url] | @tsv')
+
+              if [ "$count" -eq 1 ]; then
+                correlation="found"
+                correlated_run_id="$match_id"
+                correlated_run_url="$match_url"
+                break
+              elif [ "$count" -ge 2 ]; then
+                correlation="ambiguous"
+                break
+              fi
+
+              attempt=$((attempt + 1))
+              [ "$attempt" -lt 12 ] && sleep 5
+            done
           fi
-          echo "release-run-id=$run_id" >> "$GITHUB_OUTPUT"
+
+          # A correlated run may still be mid-flight (checkout, lint, tag
+          # creation) the instant the loop above exits; reading tag state
+          # before it reaches a terminal status would file a false
+          # "release dispatch failed" report while the release succeeds
+          # moments later. Wait for that run's status alone -- never its
+          # conclusion, which plays no part in the verdict below -- to go
+          # terminal before ever reading tag state. When no single run was
+          # found to wait on, wait a fixed bounded interval instead.
+          if [ "$correlation" = "found" ]; then
+            wait_attempt=0
+            while [ "$wait_attempt" -lt 60 ]; do
+              run_status="$(gh run view "$correlated_run_id" --json status --jq .status 2>/dev/null || echo "")"
+              [ "$run_status" = "completed" ] && break
+              wait_attempt=$((wait_attempt + 1))
+              sleep 10
+            done
+          else
+            sleep 90
+          fi
+
+          # "Released" is decided from tag state alone (FR-007, FR-007a,
+          # research.md D5) -- after the correlation search concludes and
+          # the wait above, regardless of either's outcome, and
+          # independent of whether the dispatch itself was rejected. A
+          # fresh, post-dispatch fetch, never a value read before the
+          # dispatch.
+          git fetch origin "refs/tags/${VERSION}:refs/tags/${VERSION}" --quiet 2>/dev/null || true
+          tag_matches=false
+          if git rev-parse -q --verify "refs/tags/${VERSION}^{commit}" >/dev/null 2>&1; then
+            if [ "$(git rev-parse "${VERSION}^{commit}")" = "$VERIFIED_HEAD" ]; then
+              tag_matches=true
+            fi
+          fi
+
+          {
+            echo "correlation=$correlation"
+            echo "correlated-run-id=$correlated_run_id"
+            echo "correlated-run-url=$correlated_run_url"
+            echo "tag-matches=$tag_matches"
+            echo "request-time=$request_time_iso"
+            echo "dispatch-rejected=$dispatch_rejected"
+          } >> "$GITHUB_OUTPUT"
 
   # The only place this feature writes anything maintainer-facing
   # (contracts/release-dispatch.md Reporting). Reads whichever prior jobs
@@ -739,6 +812,11 @@ jobs:
         id: outcome
         shell: bash
         env:
+          # Still needed after specs/049 moved the issue mechanics into the
+          # durable-failure-issue composite: the branch-advanced/
+          # release-failed classifier below reads this repository's default
+          # branch with `gh repo view` (specs/048 FR-013).
+          GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
           HAS_NEW_WORK: ${{ needs.detect.outputs.has-new-work }}
           TAG_EXISTS: ${{ needs.detect.outputs.tag-exists }}
@@ -746,8 +824,17 @@ jobs:
           VERDICT_JSON: ${{ needs.verify-e2e.outputs.verdict }}
           NEXT_VERSION: ${{ needs.decide-version.outputs.next-version }}
           COLLISION: ${{ needs.decide-version.outputs.collision }}
-          RELEASE_OUTCOME: ${{ needs.dispatch-release.outputs.release-outcome }}
-          RELEASE_RUN_ID: ${{ needs.dispatch-release.outputs.release-run-id }}
+          # The sole authority for "released" (FR-007, FR-007a) -- see
+          # specs/048-correlated-release-dispatch/contracts/release-handover-contract.md.
+          TAG_MATCHES: ${{ needs.dispatch-release.outputs.tag-matches }}
+          CORRELATION: ${{ needs.dispatch-release.outputs.correlation }}
+          CORRELATED_RUN_ID: ${{ needs.dispatch-release.outputs.correlated-run-id }}
+          CORRELATED_RUN_URL: ${{ needs.dispatch-release.outputs.correlated-run-url }}
+          # The ambiguous/not-observed/rejected diagnostic wording (FR-006,
+          # SC-004) is written once -- see
+          # specs/048-correlated-release-dispatch/contracts/release-handover-contract.md.
+          REQUEST_TIME: ${{ needs.dispatch-release.outputs.request-time }}
+          DISPATCH_REJECTED: ${{ needs.dispatch-release.outputs.dispatch-rejected }}
           # #325: each need's RESULT alongside its outputs. A job that
           # crashed before writing its outputs hands this job empty strings,
           # and every branch below was written for a different situation --
@@ -772,6 +859,21 @@ jobs:
           head_short="${HEAD_SHA:0:7}"
           [ -n "$head_short" ] || head_short="an unresolved head"
           echo "title=Auto-release verification failed at ${head_short}" >> "$GITHUB_OUTPUT"
+
+          # The close decision carries its own closing note, which the
+          # composite step below posts verbatim. Two paths close a standing
+          # report -- the quiet day whose latest tag already points at HEAD,
+          # and this attempt's own release -- and they name different
+          # versions (NEXT_VERSION is empty on the quiet-day path, where
+          # decide-version never ran), so the note is decided here rather
+          # than templated into the `with:` block.
+          close_failure_on_success() {
+            local resolved_note="${1:-${NEXT_VERSION} released.}"
+            {
+              echo "action=close"
+              echo "close-comment=Resolved: ${resolved_note}"
+            } >> "$GITHUB_OUTPUT"
+          }
 
           # #325: a need whose job ended `failure` wrote no outputs, so
           # nothing below can be read off them. File it as infrastructure,
@@ -831,6 +933,12 @@ jobs:
           if [ "$HAS_NEW_WORK" != "true" ]; then
             if [ "$TAG_EXISTS" = "true" ]; then
               echo "no new work since ${LATEST_TAG}" >> "$GITHUB_STEP_SUMMARY"
+              # The latest tag already points at HEAD, so a standing
+              # failure issue from an earlier attempt is stale -- close it
+              # here too, not only on the TAG_MATCHES branch below, or a
+              # run that tagged successfully once never has another chance
+              # to self-heal (every later run takes this same early exit).
+              close_failure_on_success "${LATEST_TAG} already released."
             else
               echo "no release tag exists yet -- nothing to compare against, nothing cut" >> "$GITHUB_STEP_SUMMARY"
             fi
@@ -881,7 +989,7 @@ jobs:
           fi
 
           # Verification passed, so decide-version ran (#325): a crash there
-          # left COLLISION and RELEASE_OUTCOME empty, which used to fall
+          # left COLLISION and TAG_MATCHES empty, which used to fall
           # through to "release dispatch failed" for a release that was
           # never dispatched.
           case "$DECIDE_RESULT" in
@@ -908,70 +1016,82 @@ jobs:
             exit 0
           fi
 
-          if [ "$RELEASE_OUTCOME" = "released" ]; then
-            echo "released ${NEXT_VERSION}" >> "$GITHUB_STEP_SUMMARY"
-            echo "action=close" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # main advanced past the verified head before dispatch-release
-          # ran -- expected behavior (the next scheduled check verifies the
-          # new head), not a defect, so this does not file/update the
-          # auto-release:failed issue.
-          if [ "$RELEASE_OUTCOME" = "stale-head" ]; then
-            echo "no release: main advanced past the verified head (${HEAD_SHA}) before dispatch" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          # #325: the stale-head guard's own read of main's tip failed, so
-          # nothing was dispatched -- infrastructure, not a release failure,
-          # and there is no release.yml run to point at.
-          if [ "$RELEASE_OUTCOME" = "tip-unresolved" ]; then
-            echo "infrastructure failure: could not resolve main's current tip before dispatch" >> "$GITHUB_STEP_SUMMARY"
-            write_failure_body "infrastructure (tip unresolved)" \
-              "reading main's current tip (repos/${GITHUB_REPOSITORY}/commits/main) before dispatching release.yml" \
-              "a SHA to compare against the verified head" \
-              "the read returned nothing, so release.yml was not dispatched" \
-              "${RUN_URL}"
-            echo "action=report" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
           # #325: no outcome at all means dispatch-release never wrote one --
           # the job crashed (infrastructure) or never ran.
-          if [ -z "$RELEASE_OUTCOME" ]; then
-            case "$DISPATCH_RESULT" in
-              failure)
-                file_job_failure dispatch-release "dispatching release.yml and watching its run"
-                exit 0
-                ;;
-              *)
-                echo "dispatch-release did not run (result: ${DISPATCH_RESULT:-unknown}) -- nothing cut" >> "$GITHUB_STEP_SUMMARY"
-                exit 0
-                ;;
-            esac
+          if [ "$DISPATCH_RESULT" = "failure" ]; then
+            file_job_failure dispatch-release "dispatching release.yml and correlating its run"
+            exit 0
+          fi
+          if [ -z "$TAG_MATCHES" ]; then
+            echo "dispatch-release did not run (result: ${DISPATCH_RESULT:-unknown}) -- nothing cut" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
 
-          # Anything else here means dispatch-release ran and did not
-          # report `released` -- a release failure, distinct from a
-          # verification failure or a collision (FR-029). Link the
-          # release.yml run when one was observed; say so when none was
-          # (dispatch rejected, or no run appeared within 60s) rather than
-          # sending the maintainer to look for a run that does not exist.
-          echo "release dispatch failed for ${NEXT_VERSION}" >> "$GITHUB_STEP_SUMMARY"
-          if [ -n "$RELEASE_RUN_ID" ]; then
-            release_detail="release.yml was dispatched but did not conclude successfully -- see its run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${RELEASE_RUN_ID}"
-          else
-            release_detail="release.yml was never observed running (the dispatch was rejected, or no run appeared within 60s) -- see this run's dispatch-release job: ${RUN_URL}"
+          # `correlation` is diagnostic-only context (FR-006), folded onto
+          # whichever primary outcome below applies -- never a competing
+          # verdict, and never appended on its own when TAG_MATCHES is true
+          # (data-model.md "Release outcome").
+          correlation_note=""
+          if [ "$DISPATCH_REJECTED" = "true" ]; then
+            correlation_note=" (the dispatch of ${NEXT_VERSION} requested at ${REQUEST_TIME} was rejected outright)"
+          elif [ "$CORRELATION" = "ambiguous" ]; then
+            correlation_note=" (own run could not be uniquely identified among the candidate runs matched for ${NEXT_VERSION} requested at ${REQUEST_TIME})"
+          elif [ "$CORRELATION" = "not-observed" ]; then
+            correlation_note=" (own run was not observed within the correlation window for ${NEXT_VERSION} requested at ${REQUEST_TIME})"
           fi
+
+          # "Released" is decided from tag state alone (FR-007, FR-007a),
+          # independent of `CORRELATION` and of release.yml's own run
+          # conclusion (research.md D5) -- a release that happened but was
+          # never correlated is still reported as a release.
+          if [ "$TAG_MATCHES" = "true" ]; then
+            if [ "$CORRELATION" = "found" ]; then
+              echo "released ${NEXT_VERSION} -- [correlated run](${CORRELATED_RUN_URL})" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "released ${NEXT_VERSION} -- own run not correlated" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            close_failure_on_success
+            exit 0
+          fi
+
+          correlated_line="not correlated (see tag state below)"
+          [ "$CORRELATION" = "found" ] && correlated_line="${CORRELATED_RUN_URL}"
+
+          # tag_matches is false: one more independent read classifies why
+          # (FR-013, research.md D5) -- a live read at report time, not
+          # detect's stale head-sha, and needing no signal out of
+          # release.yml's own run beyond what git itself already records.
+          # This job can run off a `schedule` trigger, whose event payload
+          # carries no `repository` (unlike release.yml's own
+          # workflow_dispatch-only Checkout, which reads
+          # github.event.repository.default_branch directly) -- so the
+          # default branch is read live here, the same way detect already
+          # reads a target repository's default branch above.
+          default_branch="$(gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef --jq '.defaultBranchRef.name // empty' 2>/dev/null || true)"
+          [ -n "$default_branch" ] || default_branch="main"
+          current_tip="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" "refs/heads/${default_branch}" | cut -f1)"
+          if [ "$current_tip" != "$HEAD_SHA" ]; then
+            # Expected behavior (the next scheduled check verifies the new
+            # head), not a defect -- does not file/update the
+            # auto-release:failed issue (same class as specs/045's
+            # stale-head skip).
+            echo "no release: the branch advanced past the verified head (${HEAD_SHA}) before the tag was created -- observed tip is now ${current_tip}${correlation_note}" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # The branch never moved and no tag landed -- a real defect,
+          # distinct from a verification failure or a collision (FR-029).
+          echo "release dispatch failed for ${NEXT_VERSION}${correlation_note}" >> "$GITHUB_STEP_SUMMARY"
           {
-            echo "**Classification**: release failure"
+            echo "**Classification**: pipeline defect (release failure)"
             echo ""
             echo "**Verified head**: ${HEAD_SHA}"
             echo ""
             echo "**Computed next version**: ${NEXT_VERSION}"
             echo ""
-            echo "${release_detail}"
+            echo "release.yml was dispatched, but no ${NEXT_VERSION} tag landed on the verified head${correlation_note}."
+            echo ""
+            echo "**Correlated run**: ${correlated_line}"
           } > "$RUNNER_TEMP/auto-release-failure-body.md"
           echo "action=report" >> "$GITHUB_OUTPUT"
 
@@ -996,4 +1116,8 @@ jobs:
           label: auto-release:failed
           label-color: B60205
           label-description: "wing-commander auto-release: a scheduled verification/release attempt failed"
-          close-comment: "Resolved: ${{ needs.decide-version.outputs.next-version }} released."
+          # Decided by the step above, not templated here: the quiet-day
+          # close names the latest tag (decide-version never ran, so
+          # next-version is empty there), this attempt's own release names
+          # the version it cut.
+          close-comment: ${{ steps.outcome.outputs.close-comment }}

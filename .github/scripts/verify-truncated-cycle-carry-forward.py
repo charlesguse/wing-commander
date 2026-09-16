@@ -159,6 +159,33 @@ def rev_parse(repo, rev="HEAD"):
     return sh(f"cd '{repo}' && git rev-parse {rev}", repo).stdout.strip()
 
 
+READ_SPEC_META = ".github/actions/_shared/read-spec-meta.sh"
+
+
+def read_spec_meta_env(repo):
+    """Stand in for the `Read spec-meta.json from the spec branch` composite
+    step that precedes each read-back (#340): run the REAL shared script
+    against the workspace's remote, exactly as wing-commander-spec-meta
+    does, and hand the read-back the env it now reads instead of its own
+    `git show`. The read-back's classification is still exercised against a
+    real branch; only the read moved."""
+    script = os.path.abspath(READ_SPEC_META).replace("\\", "/")
+    proc = sh(f"cd '{repo}' && bash '{script}' '{SPEC_PREFIX}' '{SLUG}' '{SPEC_DIR}'", repo)
+    kv = dict(line.split("=", 1) for line in proc.stdout.splitlines() if "=" in line)
+    return {"META_IDENTITY_OK": kv.get("meta_identity_ok", ""),
+            "META_STAGE": kv.get("meta_stage", ""),
+            "META_ITERATION": kv.get("meta_iteration", "")}
+
+
+def _meta(iteration, **extra):
+    """A spec-meta.json body the shared read accepts: it must identify the
+    directory it is read from (the self-identity check every reader now
+    applies, #340)."""
+    meta = {"stage": "implement", "iteration": int(iteration), "spec_dir": SPEC_DIR}
+    meta.update(extra)
+    return json.dumps(meta) + "\n"
+
+
 def make_workspace(root, base_checked=0, base_unchecked=3,
                     prior_iteration=PRIOR_ITERATION):
     """A git repo + bare remote, seeded with one commit on the spec branch.
@@ -183,8 +210,7 @@ git config user.name 'claude[bot]'
         sys.exit(f"::error::harness could not build a git workspace: "
                  f"{proc.stdout}{proc.stderr}")
     write_file(repo, f"{SPEC_DIR}/tasks.md", _tasks_md(base_checked, base_unchecked))
-    write_file(repo, f"{SPEC_DIR}/spec-meta.json",
-               json.dumps({"stage": "implement", "iteration": int(prior_iteration)}) + "\n")
+    write_file(repo, f"{SPEC_DIR}/spec-meta.json", _meta(prior_iteration))
     write_file(repo, "README.md", "unrelated\n")
     git_commit(repo, "seed")
     git_push(repo, "main")
@@ -220,8 +246,7 @@ def build_scenario(root, *, tick_task=False, outside_file=False, advance=True,
         sh(f"cd '{repo}' && git rm -q src/feature.py", repo)
         git_commit(repo, "implement: revert feature file")
     if advance:
-        write_file(repo, f"{SPEC_DIR}/spec-meta.json",
-                   json.dumps({"stage": "implement", "iteration": int(iteration)}) + "\n")
+        write_file(repo, f"{SPEC_DIR}/spec-meta.json", _meta(iteration))
         git_commit(repo, "implement: advance lifecycle record")
     if converge:
         content = _tasks_md(checked, unchecked) + "\n## Convergence Phase\n- [ ] C001 leftover item\n"
@@ -259,6 +284,7 @@ def run_cycle_step(steps, repo, base_sha, *, verdict, cycle_result,
            "VERDICT": verdict, "SPEC_PREFIX": SPEC_PREFIX,
            "AGENT_AUTHOR_RE": AGENT_AUTHOR_RE,
            "DEFAULT_BRANCH": "main"}
+    env.update(read_spec_meta_env(repo))
     return run_step(BASH, steps[CYCLE_STEP], repo, env, runner_temp)
 
 
@@ -271,6 +297,7 @@ def run_retry_step(steps, repo, base_sha, *, verdict, retry_result,
            "SPEC_PREFIX": SPEC_PREFIX,
            "AGENT_AUTHOR_RE": AGENT_AUTHOR_RE,
            "DEFAULT_BRANCH": "main"}
+    env.update(read_spec_meta_env(repo))
     return run_step(BASH, steps[RETRY_STEP], repo, env, runner_temp)
 
 
@@ -523,8 +550,7 @@ def build_retry_scenario(root, *, retry_tick_task, retry_outside_file,
         git_commit(repo, "implement: retry adds feature file",
                    author=retry_outside_author)
     if retry_advance:
-        write_file(repo, f"{SPEC_DIR}/spec-meta.json",
-                   json.dumps({"stage": "implement", "iteration": int(ITERATION)}) + "\n")
+        write_file(repo, f"{SPEC_DIR}/spec-meta.json", _meta(ITERATION))
         git_commit(repo, "implement: retry advances lifecycle record")
     git_push(repo, branch)
     return work, repo, base_sha, retry_base_sha, branch
