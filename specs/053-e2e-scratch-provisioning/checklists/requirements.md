@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [ ] No [NEEDS CLARIFICATION] markers remain (one added: FR-017)
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,16 +31,24 @@
 
 ## Notes
 
-- Three `[NEEDS CLARIFICATION]` markers remain by design (FR-014, FR-015,
-  FR-016) — they are the issue's own open questions, each one a decision the
-  requester explicitly declined to make at intake time, and each one changes
-  the feature's scope or its security posture rather than a detail. They are
-  carried forward to the clarify stage rather than guessed:
-  - FR-014 — which credential performs the privileged half (security).
-  - FR-015 — whether "immediately testable" includes the App-install step
-    (scope).
-  - FR-016 — whether and how disposable targets are torn down (scope and
-    the symmetric `Administration: write` concern).
+- The three intake-time `[NEEDS CLARIFICATION]` markers (FR-014, FR-015,
+  FR-016) were answered on issue #362 and folded in on 2026-09-16; the
+  answers and their consequences are recorded in spec.md's `Clarifications`
+  section:
+  - FR-014 — the privileged half runs under a maintainer's own local
+    `repo`-scoped GitHub authentication; no second App, and no Actions
+    secret in this repository can create a repository.
+  - FR-015 — "immediately testable" is one non-interactive command with
+    installing the App as the single declared manual step; FR-013, SC-001
+    and SC-004 were tightened to match, and User Story 1 gained the
+    converge-after-the-manual-step scenario.
+  - FR-016 — targets are never deleted by this feature; they are reset and
+    reused indefinitely, which rewrote User Story 3 from teardown to reuse
+    and added SC-008.
+- One new marker is open: **FR-017**, raised by the same reply's free-text
+  line "Fold in the container-image scope", which does not say which
+  container-image scope is meant. The three readings differ in what gets
+  built, so it is carried back as a question rather than guessed.
 - The issue's fourth open question — whether the two verification points
   share one provisioning home — was resolved by informed default in
   Assumptions rather than spent as a fourth marker, because `CLAUDE.md`'s
