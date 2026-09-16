@@ -537,9 +537,18 @@ jobs:
             exit 0
           fi
 
-          timeline="$(gh api "repos/${E2E_REPO}/issues/${ISSUE}/timeline" --paginate --jq '.[] | select(.event=="labeled") | .label.name' 2>/dev/null | jq -s '.' 2>/dev/null)" || timeline='[]'
+          # gh api --jq prints raw (unquoted) strings, one per line -- `jq -s
+          # '.'` expects each chunk to already be valid JSON and errors on a
+          # bareword like `spec-request`, so it must slurp as raw input
+          # instead (#358: the mismatch silently produced timeline=[] on a
+          # real, fully-successful run, via the `|| timeline='[]'` fallback).
+          timeline="$(gh api "repos/${E2E_REPO}/issues/${ISSUE}/timeline" --paginate --jq '.[] | select(.event=="labeled") | .label.name' 2>/dev/null | jq -R -s -c 'split("\n") | map(select(length > 0))' 2>/dev/null)" || timeline='[]'
           missing_stage=""
-          for s in stage:spec stage:clarify stage:plan stage:tasks stage:implement stage:review; do
+          # stage:clarify is never applied as an issue label by any stage
+          # workflow (clarify.yml's only reference is stall-notice prose,
+          # and wing-commander-chain-stop-notice always adds stage:stalled
+          # instead) -- requiring it here made a genuine pass impossible.
+          for s in stage:spec stage:plan stage:tasks stage:implement stage:review; do
             if ! printf '%s' "$timeline" | jq -e --arg s "$s" 'index($s) != null' >/dev/null 2>&1; then
               missing_stage="$s"
               break
