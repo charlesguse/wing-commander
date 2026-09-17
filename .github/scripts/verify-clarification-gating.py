@@ -646,6 +646,26 @@ CLARIFY_SCENARIOS = [
 # --------------------------------------------------------------------------
 # The suite
 # --------------------------------------------------------------------------
+def carries_cost_line(steps, step):
+    """Whether a wing-commander-callout step posts the cost line: its `body`
+    is the cost-line output, or its `body-file` is a file some other step
+    appends the cost line to (the questionnaire path). A configured
+    body-file path proves nothing on its own — the append step is what puts
+    the line there, and it is the step a refactor would drop."""
+    with_ = step.get("with") or {}
+    if "steps.cost-line.outputs.line" in str(with_.get("body", "")):
+        return True
+    target = str(with_.get("body-file", "")).replace("${{ runner.temp }}", "<T>")
+    if not target:
+        return False
+    for other in steps.values():
+        env = " ".join(str(v) for v in (other.get("env") or {}).values())
+        run = str(other.get("run", "")).replace("${{ runner.temp }}", "<T>")
+        if "steps.cost-line.outputs.line" in env and target in run:
+            return True
+    return False
+
+
 def run_scenario(stage, steps, sc, tmproot):
     failures = []
     workdir = tempfile.mkdtemp(dir=tmproot)
@@ -780,22 +800,17 @@ def run_scenario(stage, steps, sc, tmproot):
                         f"({sorted(both)}). They are the arms of one decision "
                         f"and can never be simultaneously correct (#159).")
 
-    # #366: every posting step that fires must hand the cost line to the
-    # callout. Read off the shipped step, so a callout that loses its body
-    # (or grows a hand-built cost string) fails here.
-    for key in fired:
-        name = by_key[key]
-        if name not in stage.posting_steps:
-            continue
-        step = steps[name]
-        with_ = step.get("with") or {}
-        carries = ("steps.cost-line.outputs.line" in str(with_.get("body", ""))
-                   or bool(with_.get("body-file")))
-        if not carries:
-            failures.append(f"{tag} {name!r} fired without the cost line: its "
-                            f"`body` is not steps.cost-line.outputs.line and it "
-                            f"has no body-file. A run that spent money must "
-                            f"report it on every path that posts (#366).")
+    # #366: every posting step must hand the cost line to the callout —
+    # statically, whether or not this scenario fires it, so a fourth arm no
+    # scenario exercises is still held to it. Checked here rather than in
+    # structural_checks() because the mutations rerun only the scenarios.
+    for name in stage.posting_steps:
+        if not carries_cost_line(steps, steps[name]):
+            failures.append(f"{tag} {name!r} posts without the cost line: its "
+                            f"`body` is not steps.cost-line.outputs.line and no "
+                            f"step appends $COST_LINE to its body-file. A run "
+                            f"that spent money must report it on every path "
+                            f"that posts (#366).")
 
     # --- does the run actually go red? -----------------------------------
     # Asserted separately from the callouts because the two can disagree in
@@ -992,10 +1007,14 @@ def structural_checks(loaded):
 # --------------------------------------------------------------------------
 def _strip_conjunct(steps, stage, needle):
     for name in stage.callout_steps:
-        cond = steps[name].get("if")
-        if cond:
-            steps[name]["if"] = " && ".join(
-                t for t in str(cond).split("&&") if needle not in t).strip()
+        _strip_conjunct_one(steps[name], needle)
+
+
+def _strip_conjunct_one(step, needle):
+    cond = step.get("if")
+    if cond:
+        step["if"] = " && ".join(
+            t for t in str(cond).split("&&") if needle not in t).strip()
 
 
 def mut_drop_specified(loaded):
@@ -1111,16 +1130,22 @@ def mut_cost_report_on_every_path(loaded):
             _strip_conjunct_one(steps[stage.report_cost], "outputs.outcome")
 
 
+def mut_questionnaire_without_cost(loaded):
+    """The questionnaire's cost line is appended by a separate step; a
+    refactor that drops that step's env leaves the callout's body-file
+    configured and the line gone."""
+    for stage, steps, _ in loaded:
+        for step in steps.values():
+            env = step.get("env") or {}
+            if "COST_LINE" in env and ">>" in str(step.get("run", "")):
+                env["COST_LINE"] = "dropped"
+
+
 def mut_cost_report_without_cost(loaded):
     """#366's fix hollowed out: the callout posts, without the cost line."""
     for stage, steps, _ in loaded:
         if stage.report_cost:
             steps[stage.report_cost]["with"]["body"] = ""
-
-
-def _strip_conjunct_one(step, needle):
-    step["if"] = " && ".join(
-        t for t in str(step.get("if")).split("&&") if needle not in t).strip()
 
 
 def mut_no_cell_escape(loaded):
@@ -1157,6 +1182,8 @@ MUTATIONS = [
      "cost line (#366)", mut_cost_report_on_every_path),
     ("the cost-only callout posting without the cost line (#366)",
      mut_cost_report_without_cost),
+    ("the questionnaire posting without the cost line its append step "
+     "supplies (#366)", mut_questionnaire_without_cost),
     ("agent text reaching a markdown table cell unescaped", mut_no_cell_escape),
     ("options past Z rendering their label as null", mut_no_ordinal_fallback),
 ]

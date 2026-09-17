@@ -725,8 +725,8 @@ jobs:
       # Deterministic kind decision (contracts/callout-points.md rows 3/4).
       # outcome=none covers the agent's early-STOP path (step 2: the reply
       # didn't answer any open question) — the agent's own gh issue comment
-      # already covered that case, so `answered` is `false` and no callout is
-      # posted here.
+      # already covered that case, so `answered` is `false` and neither of
+      # those two callouts is posted; only the cost line is (row 12, #366).
       - name: Determine clarification follow-up outcome
         id: clarification
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent-verdict.outputs.verdict == 'healthy'
@@ -922,7 +922,7 @@ jobs:
           token: ${{ steps.ctx.outputs.token }}
           issue-number: ${{ inputs.issue-number }}
           kind: info
-          summary: "That reply did not answer an open clarification question, so the spec is unchanged — the comment above says what is still needed."
+          summary: "That reply did not answer an open clarification question, so the spec is unchanged."
           body: ${{ steps.cost-line.outputs.line }}
 
       # (canonical copy; do not condense)
