@@ -425,7 +425,7 @@ jobs:
           # top-level permissions: block grants it). This step has no
           # fallback: under `set -e` a 403 here used to kill the whole
           # collect job before any evidence was gathered.
-          json=$(GH_TOKEN="$ACTIONS_TOKEN" gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json headBranch,headSha,conclusion,url,event,createdAt,databaseId)
+          json=$(GH_TOKEN="$ACTIONS_TOKEN" gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json headBranch,headSha,conclusion,url,event,createdAt,updatedAt,databaseId)
           {
             echo "head-branch=$(printf '%s' "$json" | jq -r '.headBranch // empty')"
             echo "head-sha=$(printf '%s' "$json" | jq -r '.headSha // empty')"
@@ -433,6 +433,7 @@ jobs:
             echo "url=$(printf '%s' "$json" | jq -r '.url // empty')"
             echo "event=$(printf '%s' "$json" | jq -r '.event // empty')"
             echo "created-at=$(printf '%s' "$json" | jq -r '.createdAt // empty')"
+            echo "updated-at=$(printf '%s' "$json" | jq -r '.updatedAt // empty')"
           } >> "$GITHUB_OUTPUT"
 
       # Best-effort, read-only spec identity resolution (contract's collect
@@ -1267,7 +1268,22 @@ jobs:
       # specs/046-watchdog-supervision-collectors: every cost-bearing stage
       # run's spend must actually reach the lifecycle issue, correctly
       # formatted. COST_REPORT_FILTER is self-contained (research.md R8's
-      # magnitude-aware pattern) so the gate can fixture it directly.
+      # magnitude-aware pattern) so the gate can fixture it directly, and so
+      # is COST_ATTRIBUTION_FILTER, which decides WHICH comments are this
+      # run's own (#376).
+      #
+      # "Not checked" is never "checked and absent" (#376): with no lifecycle
+      # issue resolved (a cleanup sweep, a rebase run), or when the comment
+      # read itself failed, comments_checked stays false and the filter emits
+      # nothing. Eight false cost-line-missing issues were filed before this,
+      # every one over a run whose cost line had been posted.
+      #
+      # errexit is ON in this step: `shell: bash` starts it under `-e -o
+      # pipefail` and the script's own `set -uo pipefail` does not clear -e.
+      # So no `grep` that may legitimately match nothing runs here -- the
+      # cost line is matched inside jq. The grep pipeline this replaced
+      # exited 1 on any comment with no cost line, which under errexit killed
+      # the step for every run whose issue DID resolve (#376).
       - name: "Collect: cost report"
         id: collect-cost-report
         shell: bash
@@ -1278,6 +1294,7 @@ jobs:
           RUN_ID: ${{ inputs.run-id }}
           RUN_CONCLUSION: ${{ steps.run-meta.outputs.conclusion }}
           CREATED_AT: ${{ steps.run-meta.outputs.created-at }}
+          UPDATED_AT: ${{ steps.run-meta.outputs.updated-at }}
           ISSUE: ${{ steps.spec-slug.outputs.lifecycle-issue }}
         run: |
           set -uo pipefail
@@ -1293,6 +1310,7 @@ jobs:
           COST_REPORT_FILTER='
             . as $in
             | if ($in.cost_available // false) != true then []
+              elif ($in.comments_checked // false) != true then []
               elif ($in.comment_found // false) != true then
                 [{source:"cost-report","class-hint":"cost-line-missing",facts:{stage:$in.stage,run:$in.run,"cost-available":true,"lifecycle-comment-found":false}}]
               elif ($in.cost_token // null) == null then
@@ -1304,6 +1322,33 @@ jobs:
                   else [{source:"cost-report","class-hint":"cost-line-malformed",facts:{stage:$in.stage,run:$in.run,"observed-text":$in.observed_text,"expected-pattern":"currency amount, 2dp if >= $1 else 4dp (research.md R8)"}}]
                   end
               end
+          '
+
+          # Attribution (spec.md edge case): this run's own comments are the
+          # ones a pipeline identity (a Bot -- the App, or github-actions)
+          # posted on the lifecycle issue between the run's start and its
+          # end. The cost line is looked for across ALL of them, because the
+          # earliest is normally the stage's "started" announcement, which
+          # never carries one -- and a comment by a person is never the
+          # run's: a clarify run is triggered by the owner's reply, and a
+          # second reply seconds later used to be taken for the run's own
+          # comment. Known limit: two runs overlapping on one issue can each
+          # be credited with the other's line; nothing in a comment names
+          # the run that posted it.
+          # shellcheck disable=SC2016 # this is a jq program — its $vars must
+          # NOT be shell-expanded.
+          COST_ATTRIBUTION_FILTER='
+            . as $in
+            | [ ($in.comments // [])[]
+                | select((.userType // "") == "Bot")
+                | select(($in.since // "") == "" or .createdAt >= $in.since)
+                | select(($in.until // "") == "" or .createdAt <= $in.until) ]
+            | sort_by(.createdAt) as $own
+            | ([ $own[] | [(.body // "") | match("\\*{0,2}Cost\\*{0,2}:[^\\r\\n]*").string] | .[0] // empty ] | .[0] // null) as $raw
+            | (if $raw == null then null else ($raw | gsub("\\*"; "") | sub("^ +"; "")) end) as $observed
+            | { comment_found: (($own | length) > 0),
+                observed_text: $observed,
+                cost_token: (if $observed == null then null else ([$observed | match("\\$[^ ]*").string] | .[0] // null) end) }
           '
 
           cr_outcome="ok"
@@ -1334,15 +1379,11 @@ jobs:
             exit 0
           fi
 
-          # Attribution (spec.md edge case): the earliest lifecycle-issue
-          # comment created at or after this run's own start is the one this
-          # run itself is expected to have posted — the same "the comment
-          # closest to this run" reasoning the rest of this file uses when
-          # attributing artifacts to a run.
-          comment_found="false"
-          cost_token="null"
-          observed_text="null"
-          if [ -n "$ISSUE" ]; then
+          comments_checked="false"
+          attribution='{"comment_found":false,"observed_text":null,"cost_token":null}'
+          if [ -z "$ISSUE" ]; then
+            echo "cost-report: no lifecycle issue resolved for this run, so there is no comment list to check — no cost-line signal either way." >> "$GITHUB_STEP_SUMMARY"
+          else
             # Gate 18: --paginate emits one comment object per line across
             # every page; the wrapping array is built AFTER paginating
             # (jq -s), never inside the --jq filter itself, or a
@@ -1352,27 +1393,22 @@ jobs:
             # -cs` on an empty stream still exits 0, which would otherwise
             # silently read a failed `gh api` call as "zero comments."
             comments_rc=0
-            gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments" --paginate --jq '.[] | {body, createdAt: .created_at}' 2>"$RUNNER_TEMP/cr-comments-err.txt" | jq -cs '.' > "$RUNNER_TEMP/cr-comments.json" || comments_rc="${PIPESTATUS[0]}"
+            gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments" --paginate --jq '.[] | {body, createdAt: .created_at, userType: .user.type}' 2>"$RUNNER_TEMP/cr-comments-err.txt" | jq -cs '.' > "$RUNNER_TEMP/cr-comments.json" || comments_rc="${PIPESTATUS[0]}"
+            computed=""
             if [ "$comments_rc" = "0" ]; then
-              comments_json="$(cat "$RUNNER_TEMP/cr-comments.json")"
-              attributable="$(printf '%s' "$comments_json" | jq -c --arg since "$CREATED_AT" '[.[] | select($since == "" or .createdAt >= $since)] | sort_by(.createdAt) | .[0] // empty')"
-              if [ -n "$attributable" ]; then
-                comment_found="true"
-                body="$(printf '%s' "$attributable" | jq -r '.body')"
-                observed="$(printf '%s' "$body" | grep -oE '\*{0,2}Cost\*{0,2}:[^\n]*' | head -1 | sed 's/\*//g' | sed -E 's/^ +//')"
-                if [ -n "$observed" ]; then
-                  observed_text="$(jq -n --arg t "$observed" '$t')"
-                  token="$(printf '%s' "$observed" | grep -oE '\$[^ ]*' | head -1)"
-                  [ -n "$token" ] && cost_token="$(jq -n --arg t "$token" '$t')"
-                fi
-              fi
+              computed="$(jq -c --arg since "$CREATED_AT" --arg until "$UPDATED_AT" '{comments: ., since: $since, until: $until}' "$RUNNER_TEMP/cr-comments.json" | jq -c "$COST_ATTRIBUTION_FILTER")" || computed=""
+            fi
+            if [ -n "$computed" ]; then
+              comments_checked="true"
+              attribution="$computed"
             else
               cr_outcome="failed"
+              echo "cost-report: the comments of lifecycle issue #$ISSUE could not be read — no cost-line signal either way; the collector is recorded as untrusted for this run." >> "$GITHUB_STEP_SUMMARY"
             fi
           fi
 
-          filter_input="$(jq -n --arg stage "$stage" --arg run "$RUN_ID" --argjson cost_available true --arg comment_found "$comment_found" --argjson cost_token "$cost_token" --argjson observed_text "$observed_text" \
-            '{stage:$stage, run:$run, cost_available:$cost_available, comment_found:($comment_found=="true"), cost_token:$cost_token, observed_text:$observed_text}')"
+          filter_input="$(jq -n --arg stage "$stage" --arg run "$RUN_ID" --argjson comments_checked "$comments_checked" --argjson attribution "$attribution" \
+            '{stage:$stage, run:$run, cost_available:true, comments_checked:$comments_checked} + $attribution')"
 
           entries="$(printf '%s' "$filter_input" | jq -c "$COST_REPORT_FILTER")"
           jq -c --argjson new "$entries" '. + $new' "$RUNNER_TEMP/signals.json" > "$RUNNER_TEMP/signals.json.tmp" && mv "$RUNNER_TEMP/signals.json.tmp" "$RUNNER_TEMP/signals.json"
