@@ -373,7 +373,7 @@ wiring both into the PR-time gate suite.
   automatically by `run-local-gates.py`'s derivation from
   `wc_gate_registry.pr_time_invocations` (no separate registration
   needed).
-- [ ] T031 Run `python .github/scripts/run-local-gates.py` and fix any
+- [X] T031 Run `python .github/scripts/run-local-gates.py` and fix any
   failures this feature introduces, including
   `review-step-gating`/`container-shell-safety` skill passes if T021/T022
   touched an `if:`/`continue-on-error:` in a way either skill covers.
