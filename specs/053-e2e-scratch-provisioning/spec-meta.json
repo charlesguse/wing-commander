@@ -2,7 +2,7 @@
   "issue": 362,
   "spec_dir": "specs/053-e2e-scratch-provisioning",
   "feature_num": "053",
-  "stage": "plan",
+  "stage": "tasks",
   "iteration": 0,
   "spec_branch": "spec/053-e2e-scratch-provisioning"
 }
