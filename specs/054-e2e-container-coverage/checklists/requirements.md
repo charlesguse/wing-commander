@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,24 +31,31 @@
 
 ## Notes
 
-- Three `[NEEDS CLARIFICATION]` markers remain by design (FR-016, FR-017,
-  FR-018). Each is a trade-off the owner must decide, not a gap an
-  informed default could close: there is no existing canonical image to
-  point at, no established convention for configuring the test
-  repository's image reference, and no prior decision about whether
-  container coverage should gate every release. They are rendered as
-  Questions 1–3 in the spec and posted to the lifecycle issue; the
-  clarify stage encodes the answers back into the spec.
+- The three `[NEEDS CLARIFICATION]` markers (FR-016, FR-017, FR-018) were
+  answered by the owner on lifecycle issue #364 and resolved on
+  2026-09-17; the decisions are recorded in the spec's Clarifications
+  section. Folding them in: FR-016 names a project-owned image, FR-017 a
+  maintainer-set repository variable, FR-018 alternating modes; FR-019
+  (image/tool-list agreement gate) and FR-020 (the alternation cannot get
+  stuck) were added because the chosen options require them, and
+  SC-008/SC-009 measure those two.
+- The reference image's visibility (public or private) was not decided by
+  the answers and is deliberately left to the plan stage: FR-014 already
+  states the requirement for the private case and imposes none in the
+  public case, so no requirement is ambiguous either way. Recorded as an
+  assumption rather than a fourth question.
 - **Content Quality — "no implementation details"**: this repository's
   product *is* CI workflow behaviour, so the spec necessarily names
   execution modes, stages, verdicts, and the required-tool list. It names
-  no file, job, step, or variable, and states outcomes rather than
-  mechanisms. Where a mechanism choice exists it is deferred to a
-  clarification question rather than assumed.
+  no file, job, or step, and states outcomes rather than mechanisms. The
+  two mechanisms it does name — a maintainer-set repository variable
+  (FR-017) and a project-owned image in this org's registry (FR-016) —
+  are the owner's answers to Questions 2 and 1, which is a decision the
+  spec records rather than an implementation detail it leaks.
 - **Requirement Completeness — bounded scope**: the spec explicitly
   leaves the existing default-runner leg, the private-image prerequisite
   dogfood, and this repository's own no-container lifecycle stages
   unchanged (Assumptions), and states a constraint rather than a design
   where it overlaps with the in-flight scratch-repository provisioning
   work (FR-008).
-- Items marked incomplete require spec updates before `/speckit-plan`.
+- All items are complete; the spec is ready for `/speckit-plan`.

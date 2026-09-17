@@ -44,11 +44,12 @@ would first surface on an adopter's runner.
 
 ### User Story 1 - Container-mode regressions are caught before release (Priority: P1)
 
-As the maintainer of this repository, when the scheduled verification runs
-against unreleased work on the default branch, I want at least one full
-feature to be carried end to end with every stage job executing inside a
-container image, so that a defect in the containerized execution path
-fails the release gate instead of reaching an adopter who pinned the tag.
+As the maintainer of this repository, when a scheduled verification runs
+in container mode against unreleased work on the default branch, I want a
+full feature to be carried end to end with every stage job executing
+inside a container image, so that a defect in the containerized execution
+path fails that run's release gate instead of reaching an adopter who
+pinned the tag.
 
 **Why this priority**: This is the entire point of the feature. Without
 it, nothing else in this spec has value — the remaining stories make the
@@ -63,19 +64,19 @@ naming the container-mode failure.
 **Acceptance Scenarios**:
 
 1. **Given** unreleased work on the default branch and a healthy reference
-   image, **When** the scheduled verification runs, **Then** a feature is
-   carried from labelled issue through to a closed, done-labelled issue
-   with every stage job of that run having executed inside the reference
-   image, and the release proceeds.
+   image, **When** a scheduled verification runs in container mode,
+   **Then** a feature is carried from labelled issue through to a closed,
+   done-labelled issue with every stage job of that run having executed
+   inside the reference image, and the release proceeds.
 2. **Given** a head in which a stage's containerized execution is broken
    (for example a step that cannot resolve a shell inside the image, or a
    composite action that depends on a tool the image does not provide),
-   **When** the scheduled verification runs, **Then** the verification
-   returns a failing verdict and no release is dispatched.
+   **When** a scheduled verification runs in container mode, **Then** the
+   verification returns a failing verdict and no release is dispatched.
 3. **Given** the canonical required-tool list gains a new entry that the
-   reference image does not yet provide, **When** the verification runs,
-   **Then** the prerequisite check fails the run and the report names
-   every missing tool.
+   reference image does not yet provide, **When** a verification runs in
+   container mode, **Then** the prerequisite check fails the run and the
+   report names every missing tool.
 4. **Given** a passing verification, **When** the maintainer reads the
    run's report, **Then** the report states which execution mode(s) were
    exercised and which image reference was used.
@@ -115,10 +116,11 @@ failed inside the image".
 3. **Given** the container-mode leg did not run for any reason, **When**
    the verification's report is written, **Then** the report states that
    container mode was not exercised on that run.
-4. **Given** a run in which both execution modes were exercised, **When**
-   only one of them fails, **Then** the report identifies which mode
-   failed and at which stage, rather than reporting a single
-   mode-ambiguous failure.
+4. **Given** a run whose turn in the alternation was container mode,
+   **When** that run fails, **Then** the report identifies the failing
+   mode and the stage at which it failed, rather than reporting a single
+   mode-ambiguous failure — and the same holds for a default-runner run,
+   so consecutive runs are distinguishable by mode in the report.
 
 ---
 
@@ -130,35 +132,40 @@ flaky container leg degrades release cadence in a way I control rather
 than wedging auto-release entirely.
 
 **Why this priority**: The existing verification already occupies a
-substantial wall-clock budget. Adding a second full feature run roughly
-doubles it, which pushes against the job's own time bound and lengthens
-the window in which unreleased work sits unreleased. Valuable, but the
+substantial wall-clock budget. Alternating the modes run over run keeps
+per-run wall clock and agent spend at today's level rather than doubling
+them, but a container leg that is slow or flaky would still stall every
+second scheduled run — so the maintainer needs to be able to take that
+mode out of the rotation without pausing auto-release. Valuable, but the
 coverage in P1 is worth having even before this control exists.
 
-**Independent Test**: Set the container-mode pause control and confirm the
-scheduled run completes with the default-runner leg only, reports that
-container mode was not exercised, and still reaches a release decision.
+**Independent Test**: Set the container-mode pause control and confirm
+that scheduled runs whose turn would have been container mode instead run
+the default-runner leg, report that container mode was not exercised, and
+still reach a release decision.
 
 **Acceptance Scenarios**:
 
 1. **Given** the container-mode leg is paused by the maintainer, **When**
-   the scheduled verification runs, **Then** it completes the
-   default-runner leg, reports container mode as not exercised, and
-   proceeds to its release decision on that basis.
+   a scheduled verification whose turn is container mode runs, **Then** it
+   runs the default-runner leg instead, reports container mode as not
+   exercised, and proceeds to its release decision on that basis.
 2. **Given** the container-mode leg exceeds its time budget, **When** the
    budget is reached, **Then** the run produces a timeout-class verdict
    attributed to container mode rather than being killed without a
    verdict.
-3. **Given** the verification runs both legs, **When** the run completes,
-   **Then** total wall-clock stays within the verification job's declared
-   time bound.
+3. **Given** a scheduled verification running the container leg, **When**
+   the run completes, **Then** its wall clock stays within the
+   verification job's declared time bound, which the alternation leaves
+   unchanged from today's single-leg budget.
 
 ---
 
 ### User Story 4 - The reference image has a named owner and upkeep path (Priority: P2)
 
-As the maintainer, I want the image the verification pins to have a stated
-home, a stated maintenance trigger, and documented behaviour when it falls
+As the maintainer, I want the project-owned image the verification pins —
+built and published by this repository to its own registry namespace — to
+have a stated maintenance trigger and documented behaviour when it falls
 behind, so that container-mode coverage does not quietly rot into a
 permanently red or permanently skipped leg.
 
@@ -184,8 +191,9 @@ what the verification does in the interval.
 3. **Given** an adopter reads the published documentation, **When** they
    look up container-image guidance, **Then** the reference image is
    presented consistently with the project's existing bring-your-own
-   position — the documentation does not imply the project hosts a
-   supported image for adopter use unless that is what was decided.
+   position — the documentation states that the image exists for this
+   repository's own verification and does not imply it is a supported
+   image for adopter use.
 
 ---
 
@@ -193,29 +201,37 @@ what the verification does in the interval.
 
 - **Two legs, one scratch repository.** The verification resets the test
   repository's default branch and closes its open issues before each
-  attempt. Two legs therefore cannot share one test repository
-  concurrently; they must either run sequentially against the same
-  repository or use distinct repositories. Overlapping legs would have one
-  leg's reset destroy the other's in-flight run.
-- **A leftover run from the other leg.** If the first leg leaves an open
-  issue or branch behind, the second leg's reset must clear it — the same
-  way a leftover from a previous scheduled attempt is cleared today.
+  attempt. Alternation means only one leg runs per scheduled
+  verification, so the two legs never contend within a run; the
+  constraint survives across runs, where an overlapping or manually
+  dispatched verification must not reset a test repository another leg is
+  still using.
+- **A leftover run from the other leg.** If the previous run's leg — in
+  the other mode — leaves an open issue or branch behind, the next run's
+  reset must clear it, the same way a leftover from a previous scheduled
+  attempt is cleared today.
 - **Private image, unreachable secrets.** If the pinned image is private,
   the test repository needs registry credentials configured. A credential
   that is absent, wrong, or expired must surface as an
   infrastructure-class failure that names which credential was missing,
   not as a pipeline defect.
-- **Upstream image changes underneath the pin.** If the reference is a
-  moving tag rather than an immutable digest, an upstream rebuild can
-  change what is verified between runs, and can block releases for a
-  reason unrelated to this repository's own changes.
+- **The image changes underneath the pin.** The image is project-owned,
+  but if the test repository's variable names a moving tag rather than an
+  immutable digest, a republish can change what is verified between runs
+  and can block a release for a reason unrelated to the head under
+  verification.
 - **Registry rate limiting.** A pull refused for rate-limit reasons is an
   infrastructure condition, not evidence that the release candidate is
   broken, and must not be reported as one.
-- **Only one leg finishes within budget.** If the default-runner leg
-  passes and the container leg times out, the run must reach an explicit
-  decision about whether that is releasable, rather than inheriting
-  whichever verdict happened to be written last.
+- **The alternation loses its place.** The mode a run picks is derived
+  from prior runs; a cancelled, skipped, or manually dispatched run must
+  not leave the rotation stuck on one mode, or container coverage silently
+  stops happening while every run still reports a mode.
+- **A release gated by only one mode.** Under alternation, a release is
+  gated by the mode its run exercised, so a container-mode regression can
+  ship in a release that a default-runner run gated. The window is bounded
+  by one scheduled interval, and the next container-mode run must still
+  block the release after it.
 - **Agent-bearing steps inside a container.** The container leg runs real
   agent stages, so it consumes the same usage window as any other run; a
   rate-limited agent turn inside the container leg must be classified the
@@ -226,17 +242,18 @@ what the verification does in the interval.
 ### Functional Requirements
 
 - **FR-001**: The scheduled end-to-end verification MUST exercise the
-  containerized execution path by carrying a feature through the full
-  stage chain with every stage job of that feature executing inside a
-  container image.
+  containerized execution path, on the runs whose turn is container mode
+  (FR-018), by carrying a feature through the full stage chain with every
+  stage job of that feature executing inside a container image.
 - **FR-002**: The container-mode leg MUST exercise the same stage chain
   the existing leg does — intake through cleanup — not a reduced subset,
   and MUST assert the same per-stage evidence (stage labels observed in
   the issue timeline, expected spec artifacts present, terminal
   done-labelled closed issue).
 - **FR-003**: The verification MUST record, in its verdict and in its
-  report, which execution mode(s) were exercised on that run and the image
-  reference used for the container leg.
+  report, which execution mode the run exercised — stating explicitly when
+  container mode was not exercised — and, for a container-mode run, the
+  image reference used.
 - **FR-004**: The verification MUST NOT report an unqualified pass for a
   run in which the container-mode leg was configured to run but did not
   actually execute inside a container. Silent degradation to a hosted
@@ -254,52 +271,71 @@ what the verification does in the interval.
   container leg specifically.
 - **FR-008**: The two legs MUST NOT run concurrently against the same test
   repository; the design MUST guarantee that one leg's repository reset
-  cannot destroy another leg's in-flight run.
+  cannot destroy another leg's in-flight run, including when a manually
+  dispatched verification overlaps a scheduled one.
 - **FR-009**: The container leg MUST be independently pausable by the
-  maintainer without pausing auto-release as a whole, and a paused leg
-  MUST be reported as not exercised rather than as passed.
+  maintainer without pausing auto-release as a whole; while it is paused,
+  runs whose turn would have been container mode MUST run the
+  default-runner leg and MUST report container mode as not exercised
+  rather than as passed.
 - **FR-010**: The container leg MUST be bounded by its own time budget
   such that exhausting it yields a timeout-class verdict attributed to the
   container leg, rather than the job being killed before a verdict is
   written.
-- **FR-011**: The total wall-clock of a verification run that exercises
-  both legs MUST remain within the verification job's declared time bound.
+- **FR-011**: A scheduled verification MUST exercise exactly one leg, so
+  that its total wall clock remains within the verification job's declared
+  time bound without that bound being raised for this feature.
 - **FR-012**: The image reference used by the container leg MUST satisfy
   the project's canonical required-tool list, and drift between the list
   and the image MUST surface as a named failure of the verification.
-- **FR-013**: Documentation MUST state where the reference image lives,
-  who is responsible for updating it, what triggers an update, and whether
-  it is intended for adopter use or solely for this repository's own
-  verification.
-- **FR-014**: If the reference image is private, the credential path the
-  container leg uses MUST be the same published credential mechanism
-  adopters use, so that the leg exercises that mechanism rather than a
-  verification-only shortcut.
+- **FR-013**: Documentation MUST state that the reference image is built
+  and published by this repository to its own registry namespace, who is
+  responsible for updating it, that a change to the canonical
+  required-tool list is what triggers an update, and that the image exists
+  for this repository's own verification rather than as a supported image
+  for adopter use — the published bring-your-own position for
+  container images is unchanged.
+- **FR-014**: If the project-owned reference image is published private
+  rather than public, the credential path the container leg uses MUST be
+  the same published credential mechanism adopters use, so that the leg
+  exercises that mechanism rather than a verification-only shortcut.
 - **FR-015**: Reaching container-mode coverage MUST NOT require a manual
-  step per run. Any one-time maintainer setup that remains MUST be
-  documented and MUST produce a clear, named failure when absent rather
-  than a silent skip.
-- **FR-016**: The reference image for the container leg MUST be
-  [NEEDS CLARIFICATION: a project-owned image built and published by this
-  repository, or an existing third-party public image already satisfying
-  the required-tool list? See Question 1.]
-- **FR-017**: The image reference MUST reach the test repository by
-  [NEEDS CLARIFICATION: automatic scaffolding as part of the existing
-  fixture-scaffold step, or a maintainer-configured repository variable on
-  the test repository, set once? See Question 2.]
-- **FR-018**: The container leg MUST run at a cadence of
-  [NEEDS CLARIFICATION: every scheduled verification alongside the
-  default-runner leg (gating every release), alternating with it, or on a
-  separate lower-frequency schedule that does not gate the release
-  decision? See Question 3.]
+  step per run. The one-time maintainer setup that remains — configuring
+  the image reference on the test repository (FR-017) — MUST be documented
+  and MUST produce a clear, named failure when absent rather than a silent
+  skip.
+- **FR-016**: The reference image for the container leg MUST be a minimal
+  project-owned image built and published by this repository to this
+  org's container registry namespace.
+- **FR-017**: The image reference MUST reach the test repository as a
+  repository variable a maintainer sets once on that repository, the same
+  way the test repository's own identity is configured today. The
+  verification MUST NOT write that configuration itself, and MUST NOT
+  require any new permission on its token to obtain the reference.
+- **FR-018**: The container leg MUST alternate with the default-runner leg
+  across scheduled verifications — each scheduled run exercises exactly
+  one mode, the mode alternates run over run, and that run's release
+  decision is gated by the leg it ran, so a container-leg failure blocks
+  the release that run would otherwise have cut.
+- **FR-019**: The build definition for the reference image MUST live in
+  this repository, and a gate MUST fail when the image's tool set and the
+  canonical required-tool list disagree, so that adding an entry to the
+  list cannot silently leave the published image behind.
+- **FR-020**: The mode a scheduled run exercises MUST be derived so that
+  the alternation cannot become stuck on one mode after a cancelled,
+  skipped, failed, or manually dispatched run; the report MUST state which
+  mode the run selected and the runs MUST remain distinguishable by mode
+  after the fact.
 
 ### Key Entities
 
 - **Execution mode**: One of the two supported ways a stage's jobs run —
   directly on a runner, or inside a container image. The verification's
   unit of coverage.
-- **Reference image**: The container image the container-mode leg pins.
-  Has a home, an owner, an update trigger, and a visibility (public or
+- **Reference image**: The minimal container image the container-mode leg
+  pins, built and published by this repository to this org's registry
+  namespace. Owned by this repository's maintainer, updated when the
+  required-tool list changes, and carrying a visibility (public or
   private, determining whether credentials are needed).
 - **Verification leg**: One complete end-to-end feature run through the
   stage chain in a single execution mode, against a test repository, which
@@ -316,8 +352,8 @@ what the verification does in the interval.
 ### Measurable Outcomes
 
 - **SC-001**: Container-mode execution is exercised end to end, through
-  every stage of the chain, by the scheduled verification at its decided
-  cadence, with zero manual steps required per run.
+  every stage of the chain, by at least one of every two consecutive
+  scheduled verifications, with zero manual steps required per run.
 - **SC-002**: A deliberately introduced container-path defect is caught by
   the verification and blocks the release, demonstrated at least once
   against a real run before the feature is considered complete.
@@ -328,21 +364,31 @@ what the verification does in the interval.
   infrastructure-class (image could not be obtained or inspected) or
   pipeline-class (the pipeline failed inside the image), and name the
   stage at which they occurred.
-- **SC-005**: A verification run that exercises both legs completes within
-  the verification job's declared time bound, with no leg killed before it
-  can write a verdict.
+- **SC-005**: A verification run in either mode completes within the
+  verification job's declared time bound — unchanged from today's bound —
+  with no leg killed before it can write a verdict.
 - **SC-006**: A maintainer can suppress the container leg and restore it
   through a single configuration change, without editing or pausing
   auto-release itself.
 - **SC-007**: Drift between the canonical required-tool list and the
-  reference image is detected by the verification, with a report that
-  names every missing tool at once.
+  reference image is detected — by a gate at change time and by the
+  verification at run time — with a report that names every missing tool
+  at once.
+- **SC-008**: Adding an entry to the canonical required-tool list without
+  updating the reference image fails a gate before it can reach the
+  default branch.
+- **SC-009**: Over any window of consecutive scheduled verifications, no
+  mode is exercised twice in a row while the other is skipped, unless the
+  container leg is explicitly paused — and when it is paused, every run in
+  that window reports container mode as not exercised.
 
 ## Assumptions
 
 - The existing default-runner end-to-end leg continues to run and to gate
-  releases; this feature adds container-mode coverage rather than
-  replacing the coverage that exists today.
+  the releases it verifies; this feature adds container-mode coverage
+  rather than replacing the coverage that exists today. Under the decided
+  alternation it runs on every other scheduled verification instead of on
+  every one, which is an accepted reduction in default-runner cadence.
 - The test repository remains a dedicated, disposable repository whose
   default branch the verification is free to reset, and the existing
   refusal to point that verification at this repository itself continues
@@ -360,81 +406,68 @@ what the verification does in the interval.
 - Failure classes already defined by the verification (infrastructure,
   timeout, incomplete, wrong-output) are the vocabulary this feature
   extends, rather than a new taxonomy.
-- Agent usage consumed by a second full feature run is accepted as the
-  cost of the coverage; the cadence question below is where that cost is
-  traded off.
+- Alternating the modes keeps agent usage and wall clock per scheduled
+  run at today's level; the cost of the coverage is paid in cadence
+  instead — each mode gates half as many releases as the single leg does
+  today, and a regression in one mode can ship in a release the other
+  mode gated.
 - The related on-demand scratch-repository provisioning work (issue #362)
   may change how test repositories are obtained. This spec states a
   constraint on leg isolation (FR-008) rather than assuming either a
   single shared repository or per-leg repositories.
 - The project's published position that container images are
-  bring-your-own is assumed to hold unless Question 1 is answered in a way
-  that deliberately changes it.
+  bring-your-own continues to hold: the reference image decided in
+  Question 1 is this repository's own verification fixture, not a
+  supported image offered to adopters (FR-013).
+- The reference image's visibility (public or private in the org's
+  registry namespace) is left to the plan stage; FR-014 covers the private
+  case and adds no requirement in the public one.
 
-## Open Questions
+## Clarifications
 
-Three decisions carry trade-offs the owner should make; they are the
-`[NEEDS CLARIFICATION]` markers above.
+### Session 2026-09-17
 
-## Question 1: Reference image provenance and ownership
+All three open questions were answered by the repository owner on
+lifecycle issue [#364](https://github.com/charlesguse/wing-commander/issues/364).
+No `[NEEDS CLARIFICATION]` markers remain.
 
-**Context**: FR-016. The project publishes no Dockerfile and hosts no
-reference image; adoption documentation presents `container-image` as
-strictly bring-your-own. The container leg needs *some* image that
-satisfies the canonical required-tool list (`git`, `gh`, `jq`, `curl`,
-`python3`, `bash`, `node`, `timeout`).
+**Question 1 — Reference image provenance and ownership** (FR-016,
+FR-019, FR-013, User Story 4)
 
-**What we need to know**: Should the project build and publish its own
-minimal reference image, or pin an existing third-party public image that
-already satisfies the list?
+*Asked*: should the project build and publish its own minimal reference
+image, or pin an existing third-party public image that already satisfies
+the canonical required-tool list?
 
-**Suggested Answers**:
+*Answered*: **Option A** — build and publish a minimal project-owned
+image to this org's container registry namespace, kept in agreement with
+the canonical required-tool list by a gate. The project keeps full control
+of the image's contents and accepts the build/publish pipeline and the
+upkeep obligation; the published bring-your-own position for adopters is
+unchanged, and the documentation must say the image exists for this
+repository's verification rather than for adopter use.
 
-| Option | Answer | Implications |
-|--------|--------|--------------|
-| A      | Build and publish a minimal project-owned image to this org's container registry | Full control over contents; the required-tool list and the image can be kept in agreement by a check; adds an image build/publish pipeline and an ongoing upkeep obligation; risks being read by adopters as a supported image unless documented otherwise |
-| B      | Pin an existing third-party public image that already satisfies the list | No build pipeline, no hosting, no upkeep; verification now depends on an upstream the project does not control, which can change or disappear and block releases for reasons unrelated to this repository |
-| C      | Reuse the existing private dogfood image already referenced by this repository's own configuration | No new artifact; exercises the private-registry credential path for real (FR-014); ties release verification to a private package and to credentials configured on the test repository |
-| Custom | Provide your own answer | State the image, its home, and who maintains it |
+**Question 2 — How the image reference reaches the test repository**
+(FR-017, FR-015, User Story 2)
 
-## Question 2: How the image reference reaches the test repository
+*Asked*: should the verification configure the image reference on the test
+repository as part of scaffolding, or should it stay a repository variable
+a maintainer sets once?
 
-**Context**: FR-017. Every wrapper reads the container image from a
-repository variable on the consuming repository, which on the test
-repository is currently unset — which is exactly why container mode is
-never entered. The verification already rewrites parts of the fixture it
-scaffolds.
+*Answered*: **Option B** — a maintainer-set repository variable on the
+test repository, configured once, matching how the test repository's own
+identity is configured today. The verification's token gains no permission
+to write repository configuration. The variable's absence must produce a
+named infrastructure-class verdict, never a silent fallback to
+hosted-runner mode.
 
-**What we need to know**: Should the verification configure the image
-reference on the test repository itself as part of scaffolding, or should
-it stay a repository variable a maintainer sets once, the way the test
-repository's own identity is configured?
+**Question 3 — Cadence, and whether the container leg gates the release**
+(FR-018, FR-020, FR-011, User Story 3)
 
-**Suggested Answers**:
+*Asked*: should the container leg run on every scheduled verification and
+gate every release, or less often — and if less often, does a failure
+still block a release?
 
-| Option | Answer | Implications |
-|--------|--------|--------------|
-| A      | The verification scaffolds the image reference onto the test repository each run | Zero per-run manual steps and no drift between what the verification intends and what the test repository is configured with; requires the verification's token to carry permission to write repository configuration, widening what that token can do |
-| B      | The image reference stays a maintainer-set repository variable on the test repository | No new permission on the verification's token; matches how the test repository itself is configured today; introduces a one-time manual setup whose absence must fail loudly (FR-015) rather than silently skipping the leg |
-| C      | The verification bakes the reference into the scaffolded fixture files rather than into repository configuration | No new permissions and no manual setup; the scaffolded fixture then differs from the wrapper an adopter would actually write, weakening the claim that the leg exercises the adopter's own configuration path |
-| Custom | Provide your own answer | State the mechanism and what it requires of the verification's permissions |
-
-## Question 3: Cadence, and whether the container leg gates the release
-
-**Context**: FR-018, User Story 3. The existing verification occupies
-roughly one to two hours of wall clock. A second full feature run in
-container mode roughly doubles that, against a job that already carries a
-finite time bound.
-
-**What we need to know**: Should the container leg run on every scheduled
-verification and gate every release, or less often — and if less often,
-does a failure still block a release?
-
-**Suggested Answers**:
-
-| Option | Answer | Implications |
-|--------|--------|--------------|
-| A      | Every scheduled run, both legs, both gating | Strongest guarantee: no release ships without container-mode coverage; roughly doubles verification time and agent spend per release, and pushes against the job's time bound; a flaky container leg blocks releases |
-| B      | Alternate modes between scheduled runs — one leg per run, each gating the release it verifies | Constant per-run cost and time; every release is gated by one mode, and container mode is covered on a predictable cadence; a given release may be gated only by the mode it did not most need |
-| C      | Container leg on its own lower-frequency schedule, reporting independently and not gating releases | No effect on release cadence or per-release cost; regressions are detected within the leg's period rather than before the release that introduced them; needs its own reporting path so a failure is not merely a red run nobody reads |
-| Custom | Provide your own answer | State the cadence and whether a container-leg failure blocks a release |
+*Answered*: **Option B** — alternate the modes between scheduled runs.
+Each scheduled run exercises exactly one leg and its release decision is
+gated by the leg it ran, so per-run wall clock and agent spend stay at
+today's level while each mode gates half the releases.
