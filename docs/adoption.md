@@ -990,6 +990,20 @@ know before you set either:
   above for how a pending job holds that slot); pointing multiple specs at a
   small self-hosted pool can queue jobs behind each other the way GitHub's
   hosted runners never do.
+- **This repository's own reference image is not a supported image for
+  adopters.** `ghcr.io/charlesguse/wing-commander-e2e-image`, built from
+  `.github/docker/e2e-reference-image/Dockerfile` and published by
+  `.github/workflows/wing-commander-e2e-reference-image.yml`, installs
+  exactly the tools this document's prerequisite-check list names — nothing
+  more — and exists solely so wing-commander's own scheduled `auto-release.yml`
+  verification can dogfood the `container:` code path above end to end
+  (specs/054-e2e-container-coverage). This repository's maintainers own it:
+  a change to `.github/scripts/required-tools.txt` is what triggers rebuilding
+  it, enforced at PR time by Gate 62 (`.github/scripts/verify-gate-62.py`,
+  which builds the image and inspects it the same way the prerequisite check
+  above inspects yours) and, at run time, by the same prerequisite check
+  every adopter's own image already goes through. Bring your own image for
+  your own pipeline runs; this one is not maintained for that.
 
 ## Stage reference
 

@@ -1138,6 +1138,39 @@ workflows rather than re-typed (specs/049-single-home-release-idioms); this
 section describes `auto-release.yml`'s own shape, not those composites'
 mechanics, which are documented at their own `action.yml` headers.
 
+## Auto-release container-mode leg (`auto-release.yml`'s `verify-e2e` job — `specs/054-e2e-container-coverage/`)
+
+`auto-release.yml`'s scheduled end-to-end verification (`verify-e2e`)
+alternates between two execution legs on every run, so the `container:`
+code path every published stage carries is dogfooded end to end rather
+than only ever exercised on a bare runner:
+
+- **Mode derivation**: a `mode` step, first in the job, derives
+  `container` vs `default-runner` fresh every run from UTC day-of-year
+  parity (`date -u +%j`) — nothing is persisted, so a cancelled, skipped,
+  or manually dispatched run can never leave the rotation stuck on one
+  mode (research.md D1). On a `default-runner` turn, the `scaffold` step
+  blanks the container-image passthrough in every wrapper it copies into
+  the test repository, so a permanently-configured
+  `WING_COMMANDER_CONTAINER_IMAGE` there cannot leak container mode into
+  the wrong leg (research.md D2).
+- **Pause control**: `WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED`
+  (docs/setup.md), read immediately after the parity derivation, forces
+  `default-runner` regardless of parity when set — independent of the
+  global `WING_COMMANDER_AUTO_RELEASE_PAUSED` kill switch (research.md D3).
+- **Reference image**: the container leg's `WING_COMMANDER_CONTAINER_IMAGE`
+  (set on the end-to-end test repository) pins
+  `ghcr.io/charlesguse/wing-commander-e2e-image`, a minimal image this
+  repository builds and publishes itself via
+  `wing-commander-e2e-reference-image.yml` from
+  `.github/docker/e2e-reference-image/Dockerfile`, kept in agreement with
+  `.github/scripts/required-tools.txt` by Gate 62 (research.md D5, D6). See
+  [docs/adoption.md](adoption.md#runners-and-container-images) for why this
+  image is not a supported image for adopters.
+- **Reporting**: both the verdict and `report`'s failure/success output
+  always state which mode a run exercised, so a pass can never overstate
+  coverage (research.md D9).
+
 ## Reusability (current state — `specs/010-reusable-pipeline/`)
 
 Extraction is done: every stage is a published `workflow_call` workflow, and
