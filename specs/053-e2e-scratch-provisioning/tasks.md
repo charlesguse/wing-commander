@@ -483,3 +483,23 @@ two"):
 3. Once User Story 1 lands, User Story 2 and User Story 3 proceed in
    parallel (different files: workflow vs. shared library/entry point).
 4. Either agent finishes with Polish once all three stories are done.
+
+---
+
+## Phase 7: Convergence
+
+- [ ] T033 Add real test coverage for the `container_image_pin` onboarding
+  element per FR-017 / US1 Acceptance Scenario 1 (partial): extend
+  `.github/scripts/e2e-provisioning-tests/` (either a new `tN_*.sh` or an
+  addition to `t1_new_target.sh`) with a scenario that sets
+  `WC_SOURCE_CONTAINER_IMAGE` to a real, non-empty value and seeds a target
+  whose `WING_COMMANDER_CONTAINER_IMAGE` variable is absent or set to a
+  different value; assert `container_image_pin` starts `ready: false` with
+  a `remaining_action` naming the image, assert `provision-e2e-target.sh`
+  performs a `gh variable set WING_COMMANDER_CONTAINER_IMAGE` call (via
+  `$GH_CALLS`) to converge it, and assert a subsequent run reports
+  `ready: true` with zero further mutating calls. `t1_new_target.sh`'s
+  existing assertion that `container_image_pin` is `ready` never actually
+  exercises `act_container_image_pin` — both sides default to the empty
+  string, so it is vacuously ready without the privileged action ever
+  running.
