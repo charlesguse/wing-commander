@@ -38,11 +38,11 @@ Decision) — no new top-level directory, no new language.
 repository's existing script conventions, before any onboarding-element
 logic is written.
 
-- [ ] T001 Create `.github/scripts/e2e-provisioning/` with empty
+- [X] T001 Create `.github/scripts/e2e-provisioning/` with empty
   `profiles.sh` and `checks.sh` files, each starting with
   `#!/usr/bin/env bash` and `set -uo pipefail`, matching the shebang/strict
   -mode convention used by `.github/scripts/verify-watchdog-run.sh`.
-- [ ] T002 [P] Create `.github/scripts/e2e-provisioning-tests/` with
+- [X] T002 [P] Create `.github/scripts/e2e-provisioning-tests/` with
   `run-tests.sh` adapted from
   `.github/scripts/auto-update-spec-kit-tests/run-tests.sh` (same
   python-probe / suite-loop / `GITHUB_STEP_SUMMARY` shape), declaring
@@ -54,7 +54,7 @@ logic is written.
   `secret set`, `secret list`, `label create`, `label view`, `variable
   set`, `variable list`, `api .../installation`), recording every
   invocation to `$GH_CALLS` the way the existing `gh_stub.py` does.
-- [ ] T003 [P] Create `.github/scripts/provision-e2e-target.sh` with a
+- [X] T003 [P] Create `.github/scripts/provision-e2e-target.sh` with a
   shebang, `set -uo pipefail`, and argument parsing for `--repo OWNER/NAME`
   (required), `--profile auto-release|spec-kit-scratch` (required), and
   `--check-only` (optional flag), per contracts/cli.md's Invocation table
@@ -77,7 +77,7 @@ provisioning flow can produce a correct `ReadinessReport`.
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T004 [P] Define `TargetProfile` data in
+- [X] T004 [P] Define `TargetProfile` data in
   `.github/scripts/e2e-provisioning/profiles.sh`: `spec-kit-scratch`'s
   `required_elements` = `repository`, `app_installation`,
   `scratch_marker`; `auto-release`'s `required_elements` built by
@@ -87,7 +87,7 @@ provisioning flow can produce a correct `ReadinessReport`.
   second list — so "`auto-release`'s element set is a strict superset of
   `spec-kit-scratch`'s... enforced by construction" (data-model.md)
   holds structurally, not just by inspection.
-- [ ] T005 Implement the `repository` and `app_installation`
+- [X] T005 Implement the `repository` and `app_installation`
   onboarding-element check functions in
   `.github/scripts/e2e-provisioning/checks.sh`: `repository` is `ready`
   iff `gh repo view OWNER/NAME` succeeds; `app_installation` is `ready`
@@ -97,14 +97,14 @@ provisioning flow can produce a correct `ReadinessReport`.
   data-model.md's `OnboardingElement` row; for `app_installation`:
   `"Install the wing-commander App on <owner>/<name>:
   https://github.com/settings/installations"`.
-- [ ] T006 Implement the `claude_credential` and `spec_request_label`
+- [X] T006 Implement the `claude_credential` and `spec_request_label`
   check functions in `.github/scripts/e2e-provisioning/checks.sh`
   (depends on T005, same file): `claude_credential` is `ready` iff `gh
   secret list --repo OWNER/NAME` shows `CLAUDE_CODE_OAUTH_TOKEN` or
   `ANTHROPIC_API_KEY` present — "Never inspects a secret's value
   (FR-009)"; `spec_request_label` is `ready` iff `gh label view
   spec-request --repo OWNER/NAME` succeeds.
-- [ ] T007 Implement the `wrapper_set` and `container_image_pin` check
+- [X] T007 Implement the `wrapper_set` and `container_image_pin` check
   functions in `.github/scripts/e2e-provisioning/checks.sh` (depends on
   T006, same file): `wrapper_set` is `ready` iff all eight
   `wing-commander-{1-intake,2-clarify,3-plan,4-tasks,5-implement,6-finalize,7-cleanup,rebase}.yml`
@@ -115,7 +115,7 @@ provisioning flow can produce a correct `ReadinessReport`.
   from this repository "so the two cannot drift into a second literal"
   (research.md D4/Assumptions) — including the case where this repository
   pins no image (FR-017), which is itself a valid pinned value.
-- [ ] T008 Implement the `scratch_marker` check function in
+- [X] T008 Implement the `scratch_marker` check function in
   `.github/scripts/e2e-provisioning/checks.sh` (depends on T007, same
   file; research.md D3): `ready` iff the target repository has zero
   commits, or its description (`gh repo view OWNER/NAME --json
@@ -124,7 +124,7 @@ provisioning flow can produce a correct `ReadinessReport`.
   for real work"`; otherwise `not_ready` with a `remaining_action` naming
   that the repository "cannot be established as a reusable scratch
   verification target" and what was found instead (FR-007).
-- [ ] T009 Implement `assemble_report` in
+- [X] T009 Implement `assemble_report` in
   `.github/scripts/e2e-provisioning/checks.sh` (depends on T008, same
   file): iterate `TargetProfile.required_elements` in order, call each
   element's check, and build the object matching
@@ -158,28 +158,28 @@ infrastructure.
 
 ### Implementation for User Story 1
 
-- [ ] T010 [US1] Implement self-target refusal and flag validation in
+- [X] T010 [US1] Implement self-target refusal and flag validation in
   `.github/scripts/provision-e2e-target.sh` (depends on T003, T009): "Refuse
   and exit non-zero immediately if `--repo` names this repository, or is
   malformed (not `OWNER/NAME` shape) — FR-007" — before any `gh` call is
   made, naming which reason triggered the refusal.
-- [ ] T011 [US1] Implement the privileged `repository` action in
+- [X] T011 [US1] Implement the privileged `repository` action in
   `.github/scripts/provision-e2e-target.sh` (depends on T010, same file):
   when the `repository` element is `not_ready` and `--check-only` is
   absent, run `gh repo create OWNER/NAME --private` under the invoking
   shell's own `gh` authentication only — "never under
   `secrets.WING_COMMANDER_APP_ID`/`_PRIVATE_KEY`" (FR-003, FR-014).
-- [ ] T012 [US1] Implement the privileged `claude_credential` action
+- [X] T012 [US1] Implement the privileged `claude_credential` action
   (depends on T011, same file): read `CLAUDE_CODE_OAUTH_TOKEN` first, then
   `ANTHROPIC_API_KEY`, from the invoking shell's own environment
   (research.md D5) and `gh secret set <NAME> --repo OWNER/NAME` with its
   value; if neither is set, leave the element `not_ready` with an
   instruction to export one and re-run — never treated as the FR-015
   declared manual step.
-- [ ] T013 [US1] Implement the privileged `spec_request_label` action
+- [X] T013 [US1] Implement the privileged `spec_request_label` action
   (depends on T012, same file): `gh label create spec-request --repo
   OWNER/NAME` when not already present.
-- [ ] T014 [US1] Implement the privileged `wrapper_set` and
+- [X] T014 [US1] Implement the privileged `wrapper_set` and
   `container_image_pin` actions (depends on T013, same file): copy the
   eight wrapper files from this checkout's own `.github/workflows/`
   (research.md D6 — "the same files `auto-release.yml`'s `scaffold` step
@@ -191,10 +191,10 @@ infrastructure.
   target's actual default branch), commit and push to the target's
   default branch; then `gh variable set WING_COMMANDER_CONTAINER_IMAGE
   --repo OWNER/NAME` to this repository's own pinned value.
-- [ ] T015 [US1] Implement the privileged `scratch_marker`-write action
+- [X] T015 [US1] Implement the privileged `scratch_marker`-write action
   (depends on T014, same file): on first successful provisioning, `gh
   repo edit OWNER/NAME --description "<marker string from T008>"`.
-- [ ] T016 [US1] Wire the orchestration in `provision-e2e-target.sh`'s
+- [X] T016 [US1] Wire the orchestration in `provision-e2e-target.sh`'s
   main flow per contracts/cli.md Behavior (depends on T015, same file):
   unless `--check-only`, for each `required_elements` entry whose
   `remedy` is `privileged` and whose `check` currently returns
@@ -207,7 +207,7 @@ infrastructure.
 
 ### Tests for User Story 1
 
-- [ ] T017 [P] [US1] Write
+- [X] T017 [P] [US1] Write
   `.github/scripts/e2e-provisioning-tests/t1_new_target.sh` (depends on
   T016): seed `gh_stub.py` with no repository under the chosen name, run
   `provision-e2e-target.sh --repo OWNER/NAME --profile auto-release`,
@@ -215,14 +215,14 @@ infrastructure.
   `app_installation`, and its `remaining_action` names
   `https://github.com/settings/installations` (Acceptance Scenario 1,
   quickstart step 1).
-- [ ] T018 [P] [US1] Write
+- [X] T018 [P] [US1] Write
   `.github/scripts/e2e-provisioning-tests/t2_idempotent.sh` (depends on
   T016): run `provision-e2e-target.sh` twice against a `gh_stub.py` state
   that is already fully onboarded, and assert the second run performs
   zero privileged calls (via `$GH_CALLS`) and produces an identical
   `ReadinessReport` (FR-005, SC-003, Acceptance Scenario 3, quickstart
   step 4).
-- [ ] T019 [P] [US1] Write
+- [X] T019 [P] [US1] Write
   `.github/scripts/e2e-provisioning-tests/t3_converge_after_install.sh`
   (depends on T016): seed a state where every element except
   `app_installation` is ready, run once (assert `ready: false`, exit
@@ -230,7 +230,7 @@ infrastructure.
   the human installing the App), run again, and assert `ready: true`
   with none of the already-ready elements re-performed (Acceptance
   Scenario 5, quickstart step 3).
-- [ ] T020 [P] [US1] Write
+- [X] T020 [P] [US1] Write
   `.github/scripts/e2e-provisioning-tests/t4_refuse_self.sh` (depends on
   T010): run `provision-e2e-target.sh --repo <this-repository>
   --profile auto-release`, assert immediate non-zero exit, and assert
@@ -252,7 +252,7 @@ missing the label — it reports not-ready and names the label.
 
 ### Implementation for User Story 2
 
-- [ ] T021 [US2] Generalize
+- [X] T021 [US2] Generalize
   `.github/workflows/auto-update-spec-kit-scratch-preflight.yml` per
   contracts/readiness-workflow.md: add `target` (string, default `''`)
   and `profile` (choice `auto-release` | `spec-kit-scratch`, default
@@ -262,7 +262,7 @@ missing the label — it reports not-ready and names the label.
   `vars.WING_COMMANDER_AUTO_RELEASE_E2E_REPO` for `profile ==
   auto-release`, "failing loudly (constitution VIII), naming
   `docs/setup.md`, if the resolved value is unset or malformed".
-- [ ] T022 [US2] Replace the workflow's inline reachability/report steps
+- [X] T022 [US2] Replace the workflow's inline reachability/report steps
   (depends on T021, same file): keep minting the App-scoped token with
   `continue-on-error: true` as today, then source
   `.github/scripts/e2e-provisioning/checks.sh` and invoke
@@ -278,7 +278,7 @@ missing the label — it reports not-ready and names the label.
 
 ### Tests for User Story 2
 
-- [ ] T023 [P] [US2] Write
+- [X] T023 [P] [US2] Write
   `.github/scripts/e2e-provisioning-tests/t7_readiness_workflow.sh`
   (depends on T022): assert a no-input dispatch resolves the same target
   and profile as today's behaviour (compatibility contract), and assert
@@ -305,7 +305,7 @@ ready, creates no second repository, and deletes nothing.
 
 ### Implementation for User Story 3
 
-- [ ] T024 [P] [US3] Write
+- [X] T024 [P] [US3] Write
   `.github/scripts/e2e-provisioning-tests/t5_refuse_foreign.sh`: seed
   `gh_stub.py` with a pre-existing, non-empty repository under the chosen
   name whose description does not match the marker string, run
@@ -314,7 +314,7 @@ ready, creates no second repository, and deletes nothing.
   "cannot be established as a reusable scratch verification target" with
   no mutating call made (data-model.md D3, Acceptance Scenario 3,
   quickstart step 6's second command).
-- [ ] T025 [US3] Harden the `scratch_marker` refusal ordering (depends on
+- [X] T025 [US3] Harden the `scratch_marker` refusal ordering (depends on
   T024 exposing the gap; touches
   `.github/scripts/e2e-provisioning/checks.sh` and
   `.github/scripts/provision-e2e-target.sh`): refusal of a foreign
@@ -322,7 +322,7 @@ ready, creates no second repository, and deletes nothing.
   attempted against it, while an empty pre-existing repository (zero
   commits, no non-default description) is adopted rather than refused —
   making T024 pass.
-- [ ] T026 [P] [US3] Write
+- [X] T026 [P] [US3] Write
   `.github/scripts/e2e-provisioning-tests/t6_no_delete.sh`: statically
   assert no code path in `provision-e2e-target.sh` or
   `.github/scripts/e2e-provisioning/*.sh` issues `gh repo delete`, `gh
@@ -354,7 +354,7 @@ wiring both into the PR-time gate suite.
 - [ ] T028 [P] Update `docs/adoption.md`'s Prerequisites walkthrough to add
   a pointer to `.github/scripts/provision-e2e-target.sh` as the tool this
   repository uses to stand up its own E2E targets (FR-012).
-- [ ] T029 Write `.github/scripts/verify-e2e-provisioning-single-home.py`
+- [X] T029 Write `.github/scripts/verify-e2e-provisioning-single-home.py`
   (SC-007, Constitution VIII), following
   `.github/scripts/verify-spec-meta-single-home.py`'s shape: fails when
   any workflow or script outside
@@ -365,7 +365,7 @@ wiring both into the PR-time gate suite.
   workflow and expects a failure naming that line, (c) removes
   `auto-update-spec-kit-scratch-preflight.yml`'s call to `checks.sh` and
   expects a failure ("a gate that cannot fail proves nothing").
-- [ ] T030 Add a `run: python3
+- [X] T030 Add a `run: python3
   .github/scripts/verify-e2e-provisioning-single-home.py` step and a
   `run: bash .github/scripts/e2e-provisioning-tests/run-tests.sh` step to
   `.github/workflows/lint-workflows.yml`, mirroring the existing
