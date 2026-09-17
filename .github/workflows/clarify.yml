@@ -906,6 +906,25 @@ jobs:
           pr-label: "the spec PR"
           body: ${{ steps.cost-line.outputs.line }}
 
+      # #366: outcome=none is the agent's early STOP -- it judged the reply
+      # to answer no open question and said so in its own issue comment,
+      # which this workflow cannot append to. The cost line rides only on
+      # the two callouts above, and neither fires on this path, so a run
+      # that spent real money reported none of it (two such runs on one
+      # issue in one evening). It gets an info callout of its own here.
+      # The three posting steps are mutually exclusive on `outcome`;
+      # verify-clarification-gating.py asserts exactly one of them fires on
+      # every healthy, unblocked path.
+      - name: Report cost of a reply that answered nothing
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.outcome == 'none'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: info
+          summary: "That reply did not answer an open clarification question, so the spec is unchanged — the comment above says what is still needed."
+          body: ${{ steps.cost-line.outputs.line }}
+
       # (canonical copy; do not condense)
       # Observability, not failure (FR-017) — the intended budget was fully
       # used but the run finished healthy; the runaway ceiling above is the

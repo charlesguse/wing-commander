@@ -101,7 +101,7 @@ BASH = None          # set in main(), so importing this module probes nothing
 class Stage:
     def __init__(self, name, path, validate, decide, render, announce_q,
                  resolve_pr, announce_pr, out_prefix, spec_dir_ref,
-                 validate_exits_in_place, fail_steps):
+                 validate_exits_in_place, fail_steps, report_cost=None):
         self.name = name
         self.path = path
         self.validate = validate
@@ -126,14 +126,22 @@ class Stage:
         # two, because the requester then sees only the run-started comment
         # while a marker-carrying spec PR sits in the review queue.
         self.fail_steps = fail_steps
+        # #366, clarify only: the info callout that carries the cost line
+        # when the agent's own comment was the run's only output (outcome
+        # none). Both posting callouts carry the cost line and neither fires
+        # there, so without this step a run that spent money reported none
+        # of it. Intake has no such path and leaves this None.
+        self.report_cost = report_cost
 
     @property
     def callout_steps(self):
-        return [self.render, self.announce_q, self.resolve_pr, self.announce_pr]
+        steps = [self.render, self.announce_q, self.resolve_pr, self.announce_pr]
+        return steps + ([self.report_cost] if self.report_cost else [])
 
     @property
     def posting_steps(self):
-        return {self.announce_q, self.announce_pr}
+        posting = {self.announce_q, self.announce_pr}
+        return posting | ({self.report_cost} if self.report_cost else set())
 
 
 INTAKE_STAGE = Stage(
@@ -165,6 +173,7 @@ CLARIFY_STAGE = Stage(
     spec_dir_ref="${{ steps.ctx.outputs.spec-dir }}",
     validate_exits_in_place=True,
     fail_steps=["Fail on unresolved clarification markers"],
+    report_cost="Report cost of a reply that answered nothing",
 )
 
 
@@ -558,12 +567,14 @@ INTAKE_SCENARIOS = [
 CLARIFY_SCENARIOS = [
     dict(
         name="reply answered nothing (early STOP)",
-        why="answered=false is clarify's `none`: the agent's own comment is the "
-            "only issue-facing output, and no cross-check runs.",
+        why="answered=false is clarify's `none`: the agent's own comment says "
+            "what is still needed and no cross-check runs — but the run still "
+            "spent money, and the cost line rides only on the two callouts "
+            "that do not fire here, so it gets an info callout of its own "
+            "(#366).",
         result={"answered": False, "clarifications": []},
         spec_dir="specs/042-a-feature", expect_valid=True,
-        expect_outcome="none", expect_fires=set(), expect_run_red=False,
-        expect_silent_green=True,   # the agent's own issue comment is the output
+        expect_outcome="none", expect_fires={"report_cost"}, expect_run_red=False,
     ),
     dict(
         name="reply resolved some questions, others remain",
@@ -752,6 +763,8 @@ def run_scenario(stage, steps, sc, tmproot):
     # --- which callouts fire ---------------------------------------------
     by_key = {"render": stage.render, "announce_q": stage.announce_q,
               "resolve_pr": stage.resolve_pr, "announce_pr": stage.announce_pr}
+    if stage.report_cost:
+        by_key["report_cost"] = stage.report_cost
     fired = {k for k, n in by_key.items()
              if not job_failed
              and evaluate_if(steps[n].get("if"), ctx, n, stage.path)}
@@ -763,9 +776,26 @@ def run_scenario(stage, steps, sc, tmproot):
 
     both = {by_key[k] for k in fired} & stage.posting_steps
     if len(both) > 1:
-        failures.append(f"{tag} both posting callouts fired ({sorted(both)}). "
-                        f"They are the two arms of one decision and can never "
-                        f"be simultaneously correct (#159).")
+        failures.append(f"{tag} more than one posting callout fired "
+                        f"({sorted(both)}). They are the arms of one decision "
+                        f"and can never be simultaneously correct (#159).")
+
+    # #366: every posting step that fires must hand the cost line to the
+    # callout. Read off the shipped step, so a callout that loses its body
+    # (or grows a hand-built cost string) fails here.
+    for key in fired:
+        name = by_key[key]
+        if name not in stage.posting_steps:
+            continue
+        step = steps[name]
+        with_ = step.get("with") or {}
+        carries = ("steps.cost-line.outputs.line" in str(with_.get("body", ""))
+                   or bool(with_.get("body-file")))
+        if not carries:
+            failures.append(f"{tag} {name!r} fired without the cost line: its "
+                            f"`body` is not steps.cost-line.outputs.line and it "
+                            f"has no body-file. A run that spent money must "
+                            f"report it on every path that posts (#366).")
 
     # --- does the run actually go red? -----------------------------------
     # Asserted separately from the callouts because the two can disagree in
@@ -1063,6 +1093,36 @@ def mut_drop_unclaimed_sentinel(loaded):
             'if false; then')
 
 
+def mut_drop_cost_report(loaded):
+    """#366: clarify's `none` path posts nothing, so the run's cost is never
+    reported."""
+    for stage, steps, _ in loaded:
+        if stage.report_cost:
+            steps[stage.report_cost]["if"] = (
+                str(steps[stage.report_cost]["if"]).replace(
+                    "outputs.outcome == 'none'", "outputs.outcome == 'never'"))
+
+
+def mut_cost_report_on_every_path(loaded):
+    """#366's fix widened: the cost-only callout fires beside the callouts
+    that already carry the cost line."""
+    for stage, steps, _ in loaded:
+        if stage.report_cost:
+            _strip_conjunct_one(steps[stage.report_cost], "outputs.outcome")
+
+
+def mut_cost_report_without_cost(loaded):
+    """#366's fix hollowed out: the callout posts, without the cost line."""
+    for stage, steps, _ in loaded:
+        if stage.report_cost:
+            steps[stage.report_cost]["with"]["body"] = ""
+
+
+def _strip_conjunct_one(step, needle):
+    step["if"] = " && ".join(
+        t for t in str(step.get("if")).split("&&") if needle not in t).strip()
+
+
 def mut_no_cell_escape(loaded):
     """Agent text reaches the markdown table cell unescaped."""
     for stage, steps, _ in loaded:
@@ -1091,6 +1151,12 @@ MUTATIONS = [
     ("skipping the marker cross-check without saying so", mut_silent_skip),
     ("suppressing both callouts on specified=false without saying so",
      mut_drop_unclaimed_sentinel),
+    ("clarify's answered-nothing path never reporting the run's cost (#366)",
+     mut_drop_cost_report),
+    ("the cost-only callout firing beside a callout that already carries the "
+     "cost line (#366)", mut_cost_report_on_every_path),
+    ("the cost-only callout posting without the cost line (#366)",
+     mut_cost_report_without_cost),
     ("agent text reaching a markdown table cell unescaped", mut_no_cell_escape),
     ("options past Z rendering their label as null", mut_no_ordinal_fallback),
 ]
