@@ -1296,6 +1296,7 @@ jobs:
           CREATED_AT: ${{ steps.run-meta.outputs.created-at }}
           UPDATED_AT: ${{ steps.run-meta.outputs.updated-at }}
           ISSUE: ${{ steps.spec-slug.outputs.lifecycle-issue }}
+          BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
         run: |
           set -uo pipefail
           case "$RUN_CONCLUSION" in
@@ -1325,22 +1326,25 @@ jobs:
           '
 
           # Attribution (spec.md edge case): this run's own comments are the
-          # ones a pipeline identity (a Bot -- the App, or github-actions)
-          # posted on the lifecycle issue between the run's start and its
-          # end. The cost line is looked for across ALL of them, because the
-          # earliest is normally the stage's "started" announcement, which
-          # never carries one -- and a comment by a person is never the
-          # run's: a clarify run is triggered by the owner's reply, and a
-          # second reply seconds later used to be taken for the run's own
-          # comment. Known limit: two runs overlapping on one issue can each
-          # be credited with the other's line; nothing in a comment names
-          # the run that posted it.
+          # ones the pipeline's identities posted on the lifecycle issue
+          # between the run's start and its end -- matched by login (the App
+          # as <slug>[bot], and github-actions[bot]), the way pr-conversation
+          # and metrics-persist recognise their own comments; "any bot"
+          # would admit a dependency or scanning bot's comment as the run's
+          # (implement.yml, PR #258 review). The cost line is looked for
+          # across ALL of them, because the earliest is normally the stage's
+          # "started" announcement, which never carries one -- and a comment
+          # by a person is never the run's: a clarify run is triggered by
+          # the owner's reply, and a second reply seconds later used to be
+          # taken for the run's own comment. Known limit: two runs
+          # overlapping on one issue can each be credited with the other's
+          # line; nothing in a comment names the run that posted it.
           # shellcheck disable=SC2016 # this is a jq program — its $vars must
           # NOT be shell-expanded.
           COST_ATTRIBUTION_FILTER='
             . as $in
             | [ ($in.comments // [])[]
-                | select((.userType // "") == "Bot")
+                | select(.userLogin as $l | any(($in.logins // [])[]; . == $l))
                 | select(($in.since // "") == "" or .createdAt >= $in.since)
                 | select(($in.until // "") == "" or .createdAt <= $in.until) ]
             | sort_by(.createdAt) as $own
@@ -1383,6 +1387,12 @@ jobs:
           attribution='{"comment_found":false,"observed_text":null,"cost_token":null}'
           if [ -z "$ISSUE" ]; then
             echo "cost-report: no lifecycle issue resolved for this run, so there is no comment list to check — no cost-line signal either way." >> "$GITHUB_STEP_SUMMARY"
+          elif [ -z "$CREATED_AT" ] || [ -z "$UPDATED_AT" ] || [ -z "$BOT_SLUG" ]; then
+            # Without both bounds and the App's login, "the run's own
+            # comments" cannot be told apart from the next run's on the same
+            # issue -- an open-ended window would credit this run with a
+            # later run's line, or blame it for one. Not checked, not absent.
+            echo "cost-report: the run's window (created-at '$CREATED_AT', updated-at '$UPDATED_AT') or the App login (slug '$BOT_SLUG') is unknown, so this run's own comments cannot be identified — no cost-line signal either way." >> "$GITHUB_STEP_SUMMARY"
           else
             # Gate 18: --paginate emits one comment object per line across
             # every page; the wrapping array is built AFTER paginating
@@ -1393,10 +1403,10 @@ jobs:
             # -cs` on an empty stream still exits 0, which would otherwise
             # silently read a failed `gh api` call as "zero comments."
             comments_rc=0
-            gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments" --paginate --jq '.[] | {body, createdAt: .created_at, userType: .user.type}' 2>"$RUNNER_TEMP/cr-comments-err.txt" | jq -cs '.' > "$RUNNER_TEMP/cr-comments.json" || comments_rc="${PIPESTATUS[0]}"
+            gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments" --paginate --jq '.[] | {body, createdAt: .created_at, userLogin: .user.login}' 2>"$RUNNER_TEMP/cr-comments-err.txt" | jq -cs '.' > "$RUNNER_TEMP/cr-comments.json" || comments_rc="${PIPESTATUS[0]}"
             computed=""
             if [ "$comments_rc" = "0" ]; then
-              computed="$(jq -c --arg since "$CREATED_AT" --arg until "$UPDATED_AT" '{comments: ., since: $since, until: $until}' "$RUNNER_TEMP/cr-comments.json" | jq -c "$COST_ATTRIBUTION_FILTER")" || computed=""
+              computed="$(jq -c --arg since "$CREATED_AT" --arg until "$UPDATED_AT" --arg app "${BOT_SLUG}[bot]" '{comments: ., since: $since, until: $until, logins: [$app, "github-actions[bot]"]}' "$RUNNER_TEMP/cr-comments.json" | jq -c "$COST_ATTRIBUTION_FILTER")" || computed=""
             fi
             if [ -n "$computed" ]; then
               comments_checked="true"

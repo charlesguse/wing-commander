@@ -148,21 +148,24 @@ fi
 # ── Attribution (#376). A clarify run: the owner replies again five seconds
 #    after the run starts, the run announces itself, then posts its cost.
 # shellcheck disable=SC2016 # single-quoted JSON literal, not a shell expansion
+#    A dependency bot also comments inside the window, with a dollar figure:
+#    identity is a login match against the pipeline's own, never "any bot".
 COMMENTS='[
-  {"createdAt":"2026-09-16T23:35:22Z","userType":"Bot","body":"**Cost**: $1.53 · 19/50 turns"},
-  {"createdAt":"2026-09-16T23:46:27Z","userType":"User","body":"Q1: a\n\nCost: $99.00 is my guess"},
-  {"createdAt":"2026-09-16T23:46:40Z","userType":"Bot","body":"clarify started"},
-  {"createdAt":"2026-09-16T23:51:46Z","userType":"Bot","body":"> **Action needed**\r\n> **Cost**: $1.90 · 37/40 turns · claude-opus-5\r\n> more"},
-  {"createdAt":"2026-09-16T23:59:00Z","userType":"Bot","body":"**Cost**: $2.22 · 9/40 turns"}
+  {"createdAt":"2026-09-16T23:35:22Z","userLogin":"wing-commander-bot[bot]","body":"**Cost**: $1.53 · 19/50 turns"},
+  {"createdAt":"2026-09-16T23:46:27Z","userLogin":"charlesguse","body":"Q1: a\n\nCost: $99 is my guess"},
+  {"createdAt":"2026-09-16T23:46:40Z","userLogin":"wing-commander-bot[bot]","body":"clarify started"},
+  {"createdAt":"2026-09-16T23:49:00Z","userLogin":"dependabot[bot]","body":"Bumps foo. Cost: $12 (est.)"},
+  {"createdAt":"2026-09-16T23:51:46Z","userLogin":"wing-commander-bot[bot]","body":"> **Action needed**\r\n> **Cost**: $1.90 · 37/40 turns · claude-opus-5\r\n> more"},
+  {"createdAt":"2026-09-16T23:59:00Z","userLogin":"github-actions[bot]","body":"**Cost**: $2.22 · 9/40 turns"}
 ]'
-attribution_input() { jq -c --arg since "$1" --arg until "$2" '{comments: ., since: $since, until: $until}' <<<"$COMMENTS"; }
+attribution_input() { jq -c --arg since "$1" --arg until "$2" '{comments: ., since: $since, until: $until, logins: ["wing-commander-bot[bot]", "github-actions[bot]"]}' <<<"$COMMENTS"; }
 
 out="$(run_attribution "$(attribution_input 2026-09-16T23:46:22Z 2026-09-16T23:51:53Z)")"
 note "attribution fixture output: $out"
 # shellcheck disable=SC2016 # literal comparison text, not a shell expansion
 want='{"comment_found":true,"observed_text":"Cost: $1.90 · 37/40 turns · claude-opus-5","cost_token":"$1.90"}'
 if [ "$out" != "$want" ]; then
-  reason "attribution must skip the owner's reply and the cost-less 'started' comment, stay inside the run's window, strip the bold markers and keep the WHOLE line (the grep this replaced cut it at the first 'n'); expected $want, got $out"
+  reason "attribution must skip the owner's reply, another bot's comment and the cost-less 'started' comment, stay inside the run's window, strip the bold markers and keep the WHOLE line (the grep this replaced cut it at the first 'n'); expected $want, got $out"
 else
   note "attribution correctly read the run's own cost line"
 fi
@@ -175,6 +178,14 @@ else
   note "a person's comment correctly attributed nothing"
 fi
 
+# The window holds the dependency bot's comment only: not a pipeline login.
+out="$(run_attribution "$(attribution_input 2026-09-16T23:48:00Z 2026-09-16T23:49:30Z)")"
+if [ "$out" != '{"comment_found":false,"observed_text":null,"cost_token":null}' ]; then
+  reason "a window holding only another bot's comment must attribute nothing (login match, not any bot), got $out"
+else
+  note "another bot's comment correctly attributed nothing"
+fi
+
 # The window holds the 'started' announcement only: found, but no cost line.
 out="$(run_attribution "$(attribution_input 2026-09-16T23:46:22Z 2026-09-16T23:47:00Z)")"
 if [ "$out" != '{"comment_found":true,"observed_text":null,"cost_token":null}' ]; then
@@ -183,10 +194,12 @@ else
   note "a cost-less pipeline comment correctly read as found, no token"
 fi
 
-# No end bound known (run metadata lacked it): everything since the start counts.
+# No end bound given: the program itself leaves the window open-ended (the
+# step never calls it that way -- it records "not checked" instead).
 out="$(run_attribution "$(attribution_input 2026-09-16T23:52:00Z "")")"
-if [ "$(jq -r '.cost_token' <<<"$out")" != '$2.22' ]; then
-  reason "an empty 'until' must leave the window open-ended, got $out"
+# shellcheck disable=SC2016 # literal comparison text, not a shell expansion
+if [ "$out" != '{"comment_found":true,"observed_text":"Cost: $2.22 · 9/40 turns","cost_token":"$2.22"}' ]; then
+  reason "an empty 'until' must leave the window open-ended and github-actions[bot] must count as the pipeline's own, got $out"
 fi
 
 if [ "${#fail_reasons[@]}" -eq 0 ]; then

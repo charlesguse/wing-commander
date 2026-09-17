@@ -1497,18 +1497,30 @@ COST_SINCE = "2026-09-16T23:46:22Z"
 COST_UNTIL = "2026-09-16T23:51:53Z"
 
 
-def api_comment(created_at, user_type, body):
-    return {"created_at": created_at, "user": {"type": user_type}, "body": body}
+COST_BOT_SLUG = "wing-commander-bot"
+APP = COST_BOT_SLUG + "[bot]"
+ACTIONS = "github-actions[bot]"
+OTHER_BOT = "dependabot[bot]"
 
 
-STARTED = api_comment("2026-09-16T23:46:40Z", "Bot", "📝 **Wing Commander · intake** — started")
-OWNER_REPLY = api_comment("2026-09-16T23:46:27Z", "User", "Q1: a\nQ2: b\n\nCost: $99.00 is my guess")
-WITH_COST = api_comment("2026-09-16T23:51:46Z", "Bot",
+def api_comment(created_at, login, body):
+    return {"created_at": created_at, "user": {"login": login}, "body": body}
+
+
+STARTED = api_comment("2026-09-16T23:46:40Z", APP, "📝 **Wing Commander · intake** — started")
+# The owner's own cost guess is not currency-shaped on purpose: an attribution
+# that admitted a person's comment would read "$99" as malformed, so every
+# scenario holding this comment kills that mutation, not just the ones where
+# it is the only comment.
+OWNER_REPLY = api_comment("2026-09-16T23:46:27Z", "charlesguse", "Q1: a\nQ2: b\n\nCost: $99 is my guess")
+WITH_COST = api_comment("2026-09-16T23:51:46Z", APP,
                         "> **Action needed**\n>\n> **Cost**: $1.90 · 37/40 turns · claude-opus-5\n")
-NO_COST = api_comment("2026-09-16T23:50:00Z", "Bot", "Thanks — I could not map this reply.")
-LEAKED = api_comment("2026-09-16T23:51:46Z", "Bot", "**Cost**: $COST_LINE · 40 turns")
-BEFORE_RUN = api_comment("2026-09-16T23:35:22Z", "Bot", "**Cost**: $1.53 · 19/50 turns")
-AFTER_RUN = api_comment("2026-09-16T23:59:00Z", "Bot", "**Cost**: $2.22 · 9/40 turns")
+ACTIONS_COST = api_comment("2026-09-16T23:51:46Z", ACTIONS, "**Cost**: $0.0042 · 3/10 turns")
+NO_COST = api_comment("2026-09-16T23:50:00Z", APP, "Thanks — I could not map this reply.")
+LEAKED = api_comment("2026-09-16T23:51:46Z", APP, "**Cost**: $COST_LINE · 40 turns")
+BEFORE_RUN = api_comment("2026-09-16T23:35:22Z", APP, "**Cost**: $1.53 · 19/50 turns")
+AFTER_RUN = api_comment("2026-09-16T23:59:00Z", APP, "**Cost**: $2.22 · 9/40 turns")
+OTHER_BOT_COST = api_comment("2026-09-16T23:49:00Z", OTHER_BOT, "Bumps foo. Cost: $12 (est.)")
 
 COST_SCENARIOS = [
     dict(
@@ -1529,6 +1541,32 @@ COST_SCENARIOS = [
              "person's comment is never the run's own, even one that "
              "mentions a cost (#376)",
         issue="362", comments=[OWNER_REPLY, WITH_COST],
+        expect=[], expect_outcome="ok",
+    ),
+    dict(
+        name="github-actions[bot] posted the line (a default-token step): it "
+             "is the pipeline's own identity too",
+        issue="362", comments=[STARTED, ACTIONS_COST],
+        expect=[], expect_outcome="ok",
+    ),
+    dict(
+        name="another bot commented in the window with a dollar figure: not a "
+             "pipeline identity, so not the run's — cost-line-missing, none "
+             "found (a login match, not 'any bot')",
+        issue="362", comments=[OTHER_BOT_COST],
+        expect=[("cost-line-missing", False)], expect_outcome="ok",
+    ),
+    dict(
+        name="the run's end time is unknown: an open-ended window cannot tell "
+             "this run's comments from the next run's — not checked, no "
+             "signal (#376)",
+        issue="362", comments=[STARTED, NO_COST], updated_at="",
+        expect=[], expect_outcome="ok",
+    ),
+    dict(
+        name="the App slug is unknown: the run's own comments cannot be "
+             "identified — not checked, no signal (#376)",
+        issue="362", comments=[STARTED, NO_COST], bot_slug="",
         expect=[], expect_outcome="ok",
     ),
     dict(
@@ -1587,7 +1625,8 @@ def run_cost_one(script, env, sc, tmproot):
     run_env = with_actions_defaults(env)
     run_env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
     run_env.update({"RUN_CONCLUSION": sc.get("conclusion", "success"), "CREATED_AT": COST_SINCE,
-                    "UPDATED_AT": COST_UNTIL, "ISSUE": sc["issue"],
+                    "UPDATED_AT": sc.get("updated_at", COST_UNTIL), "ISSUE": sc["issue"],
+                    "BOT_SLUG": sc.get("bot_slug", COST_BOT_SLUG),
                     "GH_STUB_RECORD": COST_RECORD,
                     "GH_STUB_COMMENTS": json.dumps(sc["comments"])})
     if sc.get("comments_fail"):
@@ -1640,7 +1679,13 @@ COST_MUTATIONS = [
      'elif ($in.comments_checked // false) != true then []',
      'elif false then []'),
     ("cost-report's pipeline-identity filter on the run's own comments (#376)",
-     '| select((.userType // "") == "Bot")', ''),
+     '| select(.userLogin as $l | any(($in.logins // [])[]; . == $l))', ''),
+    ("cost-report taking any bot's comment for the run's own (#376)",
+     '| select(.userLogin as $l | any(($in.logins // [])[]; . == $l))',
+     '| select((.userLogin // "") | endswith("[bot]"))'),
+    ("cost-report checking with an open-ended window (#376)",
+     'elif [ -z "$CREATED_AT" ] || [ -z "$UPDATED_AT" ] || [ -z "$BOT_SLUG" ]; then',
+     'elif false; then'),
     ("cost-report's end-of-run bound on the run's own comments (#376)",
      '| select(($in.until // "") == "" or .createdAt <= $in.until) ]', ']'),
     ("cost-report searching every own comment, not only the earliest (#376)",
