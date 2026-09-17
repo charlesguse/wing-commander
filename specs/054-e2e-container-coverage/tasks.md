@@ -102,7 +102,13 @@ Single-project GitHub Actions pipeline (plan.md's Structure Decision) — no `sr
 - [X] T021 [P] [US4] Add a new subsection to `docs/adoption.md` under "Runners and container images" (after the private-registry-credentials guidance, around line 856) stating the reference image's provenance — built and published by this repository to `ghcr.io/charlesguse/wing-commander-e2e-image`, who is responsible for updating it, that a `.github/scripts/required-tools.txt` change is the update trigger, and that it exists for this repository's own verification rather than as a supported image for adopters (FR-013, Acceptance Scenario 3)
 - [X] T022 [P] [US4] Extend the existing `WING_COMMANDER_CONTAINER_IMAGE`/`WING_COMMANDER_CONTAINER_REGISTRY_USERNAME`/`_PASSWORD` rows in `docs/setup.md` (lines 57-58, 123) with a note that, when set on the end-to-end test repository, these now also configure the `auto-release.yml` container leg
 - [X] T023 [P] [US4] Add a short new subsection to `docs/architecture.md` (near "Private-image dogfood", line 1091) describing the alternating container/default-runner leg in `auto-release.yml`'s flow: how the mode is derived (research.md D1), the pause control (D3), and where the reference image comes from (D5)
-- [ ] T024 [US4] Validate quickstart.md Scenario E: locally add an entry to `.github/scripts/required-tools.txt` without updating `.github/docker/e2e-reference-image/Dockerfile`, run `python3 .github/scripts/run-local-gates.py`, and confirm Gate 62 fails naming the missing tool (SC-008) — depends on T020
+- [X] T024 [US4] Validate quickstart.md Scenario E: locally add an entry to `.github/scripts/required-tools.txt` without updating `.github/docker/e2e-reference-image/Dockerfile`, run `python3 .github/scripts/run-local-gates.py`, and confirm Gate 62 fails naming the missing tool (SC-008) — depends on T020
+
+  Validated 2026-09-17: added `gate62-t024-scratch-fixture-tool` to
+  required-tools.txt, ran `python3 .github/scripts/run-local-gates.py
+  verify-gate-62.py`, confirmed both the gate and its self-test failed
+  naming exactly that tool, then reverted the file (confirmed clean via
+  `git diff`).
 
 **Checkpoint**: Drift between the required-tool list and the reference image cannot reach the default branch unnoticed, and the image's ownership is documented.
 
@@ -112,10 +118,17 @@ Single-project GitHub Actions pipeline (plan.md's Structure Decision) — no `sr
 
 **Purpose**: Repository-wide checks this CLAUDE.md and the Constitution require before any PR from this feature is proposed for merge.
 
-- [ ] T025 Run `python3 .github/scripts/run-local-gates.py` across every file this feature touched and fix any failures — the PR-time gate suite CLAUDE.md requires before pushing — depends on T001-T024
+- [X] T025 Run `python3 .github/scripts/run-local-gates.py` across every file this feature touched and fix any failures — the PR-time gate suite CLAUDE.md requires before pushing — depends on T001-T024
+
+  Ran 2026-09-17: found `verify-auto-release-report.py` failing because
+  the new "(mode: ...)" text on the success-path summary line broke its
+  exact-string scenario assertions. Fixed by giving the `PASS`/
+  `WRONG_OUTPUT` fixtures a `mode` field, updating the two affected
+  `summary_contains` strings, and adding a new paused-turn scenario
+  covering T013's annotation. Full suite: 93/93 passed.
 - [ ] T026 Since this feature adds `if:` conditions to `.github/workflows/auto-release.yml` (T003's mode step, T004's off-turn rewrite, T012's pause override), get a pass from the `review-step-gating` skill on that file's diff (CLAUDE.md requirement) — depends on T003, T004, T012
 - [ ] T027 Validate quickstart.md Scenario F: cancel a scheduled `auto-release.yml` run mid-flight, then dispatch (or wait for) the next run, and confirm its `mode` step still resolves purely from that run's own calendar date, independent of the cancelled run's outcome (Edge Case: "the alternation loses its place") — depends on T003
-- [ ] T028 [P] Update `.github/scripts/required-tools.txt`'s header comment to name Gate 62 as a third consumer alongside the existing two (each stage's embedded `REQUIRED_TOOLS=` list, Gate 23's textual drift check), matching the file's own "must stay in agreement structurally, not by convention" framing (data-model.md "Required-tool list") — depends on T020
+- [X] T028 [P] Update `.github/scripts/required-tools.txt`'s header comment to name Gate 62 as a third consumer alongside the existing two (each stage's embedded `REQUIRED_TOOLS=` list, Gate 23's textual drift check), matching the file's own "must stay in agreement structurally, not by convention" framing (data-model.md "Required-tool list") — depends on T020
 
 ---
 
