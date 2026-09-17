@@ -1,6 +1,6 @@
 {
   "integration": "speckit",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "installed_at": "2026-07-04T23:00:19.668189+00:00",
   "files": {
     ".specify/scripts/bash/check-prerequisites.sh": "daa377146db4fb69912f42611a7b91c5d55873b3e3e27ed33bd8d67505826344",
