@@ -41,6 +41,10 @@ whether the target is ready to be dispatched against.
 - Q: Does "immediately testable" include the App-install step, which GitHub does not let an App grant to itself? → A: No. It means one non-interactive command, after which the target is ready, with installing the wing-commander App on the target as the single declared manual step a human performs in the GitHub UI. Provisioning performs and verifies every other element, reports the App installation as the named remaining action while it is absent, and converges on a re-run once the human has done it. (FR-002, FR-006, FR-015, SC-001, SC-004)
 - Q: Are provisioned targets deleted after use, and by whom? → A: They are not deleted at all. Targets are reset and reused indefinitely by the per-run reset behaviour `auto-release.yml` and `e2e-stage` already own, so no credential this feature uses — including the maintainer's local one — is ever exercised for repository deletion, and the `Administration: write` concern never arises on the teardown side. Retiring a target that has outlived its usefulness stays a manual maintainer action in the GitHub UI, outside this feature. (FR-005, FR-007, FR-016, User Story 3)
 
+### Session 2026-09-17
+
+- Q: Which container-image scope does "fold in the container-image scope" mean — pinning the image the provisioned target's wrapper workflows run the stages in, requiring the provisioning entry point itself to run inside that image, or making the image a per-invocation parameter of the target profile? → A: The first. Provisioning pins the container image the provisioned target's wrapper workflows run the stages in, defaulting to the image this repository pins today. The pinned image becomes one more onboarding element of the auto-release profile — provisioning sets it, the readiness report accounts for it, and a target whose wrapper set runs the stages on a different image than intended is reported not-ready rather than silently accepted. The other two readings are not adopted: the provisioning entry point is not required to run inside that image, and the image is not a dimension of the target profile. (FR-002, FR-004, FR-017, SC-002)
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Stand up a ready-to-target E2E repository on demand (Priority: P1)
@@ -72,10 +76,11 @@ dispatch reaches the agent stages rather than failing on infrastructure.
 1. **Given** a repository name that does not exist under the target owner,
    **When** provisioning runs for the auto-release target profile, **Then**
    the repository exists, carries the `spec-request` label, carries a Claude
-   credential its workflows can read, carries the wrapper workflow set, and
-   the final report states which onboarding elements are ready and names the
-   App installation as the remaining manual step if a human has not performed
-   it yet.
+   credential its workflows can read, carries the wrapper workflow set pinned
+   to the same container image this repository pins today, and the final
+   report states which onboarding elements are ready and names the App
+   installation as the remaining manual step if a human has not performed it
+   yet.
 2. **Given** provisioning has completed and reported the target ready,
    **When** `auto-release.yml`'s end-to-end verification is dispatched
    against it, **Then** the run gets past every infrastructure check
@@ -101,8 +106,8 @@ dispatch reaches the agent stages rather than failing on infrastructure.
 Before dispatching anything, a maintainer or agent asks "is this target
 actually ready?" and gets an itemised answer — repository reachable, App
 installation covering it, Claude credential present, `spec-request` label
-present, wrapper set installed — without burning a Claude turn or reading a
-failed run's log to find out.
+present, wrapper set installed and pinned to the intended container image —
+without burning a Claude turn or reading a failed run's log to find out.
 
 **Why this priority**: the repository already has this shape for one element
 (`auto-update-spec-kit-scratch-preflight.yml` answers "can the App mint a
@@ -188,6 +193,13 @@ creates no second repository, and deletes nothing.
   as a broken target.
 - What happens when a secret value would otherwise appear in a log, a job
   summary, or an issue comment?
+- What happens when the container image this repository pins (FR-017) lives
+  in a private registry, so the target needs a registry credential before its
+  wrapper set can pull it — is that a further onboarding element or a
+  refusal?
+- What happens when this repository later changes the image it pins and an
+  existing target still carries the old one — a re-run has to converge the
+  target onto the new image rather than report ready against the stale pin.
 
 ## Requirements *(mandatory)*
 
@@ -201,8 +213,9 @@ creates no second repository, and deletes nothing.
   needs for its profile — the repository itself, the wing-commander App
   installation covering it, a Claude credential its workflows can read, the
   `spec-request` label, and (for the auto-release profile) the wrapper
-  workflow set — either by performing the element or by verifying it is
-  already in place.
+  workflow set and the container image those wrappers run the stages in
+  (FR-017) — either by performing the element or by verifying it is already
+  in place.
 - **FR-003**: Provisioning MUST NOT widen what any pipeline stage's App
   installation token can do. No stage may gain repository creation or
   deletion permission, and no `Administration` grant may be added to the App
@@ -265,15 +278,17 @@ creates no second repository, and deletes nothing.
   including the maintainer's own — is exercised for repository deletion.
   Documentation MUST name retiring a target as a manual maintainer action
   taken in the GitHub UI, outside the automation.
-- **FR-017**: Provisioning MUST [NEEDS CLARIFICATION: the reply on issue #362
-  asked to "fold in the container-image scope" without naming which scope is
-  meant — should provisioning pin the container image the provisioned
+- **FR-017**: Provisioning MUST pin the container image the provisioned
   target's wrapper workflows run the stages in, defaulting to the image this
-  repository pins today; should the provisioning entry point itself be
-  required to run inside that image, so a maintainer run and an agent run use
-  identical tooling; or should the container image become a per-invocation
-  parameter of the target profile, so a target can be stood up against a
-  candidate image for verification?]
+  repository pins today — including the case where this repository pins no
+  image, which provisions a target whose stages run directly on the runner.
+  The pinned image is an onboarding element of the auto-release profile: a
+  target whose wrapper set would run the stages on something other than the
+  intended image is reported not-ready and names the image as the remaining
+  action, rather than being accepted as ready. This requirement does **not**
+  extend to the two readings the clarification did not choose — the
+  provisioning entry point is not required to run inside that image, and the
+  container image is not a dimension of the target profile.
 
 ### Key Entities
 
@@ -283,7 +298,8 @@ creates no second repository, and deletes nothing.
   (empty repository, App installed for Contents read/write only).
 - **Onboarding element**: one independently checkable precondition of a
   target — repository exists, App installation covers it, Claude credential
-  present, `spec-request` label present, wrapper set installed.
+  present, `spec-request` label present, wrapper set installed, wrapper set
+  pinned to the intended container image.
 - **Readiness report**: the per-element ready/not-ready verdict produced by
   provisioning and by the standalone readiness check, including the named
   remaining action for each not-ready element.
@@ -346,7 +362,12 @@ creates no second repository, and deletes nothing.
   not a goal of this feature.
 - Repository-level configuration a target needs beyond the listed onboarding
   elements (branch protections, environments, runner labels) is out of scope;
-  a verification target runs with defaults.
+  a verification target runs with defaults. The container image is the one
+  exception, pulled in scope by FR-017.
+- The image FR-017 pins is read from what this repository pins today rather
+  than being restated as a literal in the provisioning surface, so the two
+  cannot drift apart into a second home for the same value (`CLAUDE.md`'s
+  "shared logic has exactly one home").
 - `auto-release.yml` and `e2e-stage` keep owning their own per-run reset and
   scaffold behaviour. Provisioning stops at "ready to be targeted"; it does
   not scaffold a candidate or dispatch a run.
