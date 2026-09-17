@@ -46,6 +46,16 @@ path. When in doubt, read them — they are the living example.
    [Private pipeline repository](#private-pipeline-repository) apply; forks
    that republish under another name also set the `pipeline-repo` input.
 
+This repository stands up its own end-to-end test repositories (steps 2-4
+above, applied to a disposable target) with
+[`.github/scripts/provision-e2e-target.sh`](https://github.com/charlesguse/wing-commander/blob/main/.github/scripts/provision-e2e-target.sh)
+rather than by hand — see `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_SCRATCH_REPO`
+and `WING_COMMANDER_AUTO_RELEASE_E2E_REPO` in
+[docs/setup.md](setup.md#3-repository-variables). It is run locally,
+under your own `gh` authentication, never from a workflow; the one step it
+cannot perform for you is installing the wing-commander App, which it
+reports as the sole remaining step for as long as it is absent.
+
 ## Credentials
 
 Every agent-running stage declares two **optional** secrets; configure at

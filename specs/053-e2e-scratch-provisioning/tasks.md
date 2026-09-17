@@ -340,7 +340,7 @@ targets accumulate only when a maintainer deliberately names a new one.
 **Purpose**: Documentation (FR-012), the single-home gate (SC-007), and
 wiring both into the PR-time gate suite.
 
-- [ ] T027 [P] Update `docs/setup.md`'s
+- [X] T027 [P] Update `docs/setup.md`'s
   `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_SCRATCH_REPO` and
   `WING_COMMANDER_AUTO_RELEASE_E2E_REPO` rows to point at
   `.github/scripts/provision-e2e-target.sh` instead of "create one empty
@@ -351,7 +351,7 @@ wiring both into the PR-time gate suite.
   target is a manual maintainer action in the GitHub UI and that no
   entry point in this repository offers to delete or archive one
   (FR-016, Acceptance Scenario 2 of User Story 3).
-- [ ] T028 [P] Update `docs/adoption.md`'s Prerequisites walkthrough to add
+- [X] T028 [P] Update `docs/adoption.md`'s Prerequisites walkthrough to add
   a pointer to `.github/scripts/provision-e2e-target.sh` as the tool this
   repository uses to stand up its own E2E targets (FR-012).
 - [X] T029 Write `.github/scripts/verify-e2e-provisioning-single-home.py`
