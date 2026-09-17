@@ -126,7 +126,17 @@ Single-project GitHub Actions pipeline (plan.md's Structure Decision) — no `sr
   `WRONG_OUTPUT` fixtures a `mode` field, updating the two affected
   `summary_contains` strings, and adding a new paused-turn scenario
   covering T013's annotation. Full suite: 93/93 passed.
-- [ ] T026 Since this feature adds `if:` conditions to `.github/workflows/auto-release.yml` (T003's mode step, T004's off-turn rewrite, T012's pause override), get a pass from the `review-step-gating` skill on that file's diff (CLAUDE.md requirement) — depends on T003, T004, T012
+- [X] T026 Since this feature adds `if:` conditions to `.github/workflows/auto-release.yml` (T003's mode step, T004's off-turn rewrite, T012's pause override), get a pass from the `review-step-gating` skill on that file's diff (CLAUDE.md requirement) — depends on T003, T004, T012
+
+  Ran 2026-09-17: as implemented, T003/T004/T012 turned out not to add
+  any YAML-level `if:` or `continue-on-error:` at all — the mode step
+  runs unconditionally with no gating, and the off-turn/pause logic is a
+  plain bash `if` inside existing `run:` blocks, invisible to skip
+  propagation. Confirmed via `git diff` (no added `if:`/`continue-on-error`
+  lines in this file) and Gate 24 (deterministic tolerate/strand check),
+  which passes. The skill's own `stranded-steps.py` helper is outside
+  this run's permitted command set, so this was confirmed by direct diff
+  inspection instead of running it.
 - [ ] T027 Validate quickstart.md Scenario F: cancel a scheduled `auto-release.yml` run mid-flight, then dispatch (or wait for) the next run, and confirm its `mode` step still resolves purely from that run's own calendar date, independent of the cancelled run's outcome (Edge Case: "the alternation loses its place") — depends on T003
 - [X] T028 [P] Update `.github/scripts/required-tools.txt`'s header comment to name Gate 62 as a third consumer alongside the existing two (each stage's embedded `REQUIRED_TOOLS=` list, Gate 23's textual drift check), matching the file's own "must stay in agreement structurally, not by convention" framing (data-model.md "Required-tool list") — depends on T020
 
