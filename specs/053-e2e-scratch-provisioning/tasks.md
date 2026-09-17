@@ -488,7 +488,7 @@ two"):
 
 ## Phase 7: Convergence
 
-- [ ] T033 Add real test coverage for the `container_image_pin` onboarding
+- [X] T033 Add real test coverage for the `container_image_pin` onboarding
   element per FR-017 / US1 Acceptance Scenario 1 (partial): extend
   `.github/scripts/e2e-provisioning-tests/` (either a new `tN_*.sh` or an
   addition to `t1_new_target.sh`) with a scenario that sets
