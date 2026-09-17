@@ -20,6 +20,13 @@ on:
 permissions: {}
 
 concurrency:
+  # This group is also what guarantees the container/default-runner leg
+  # alternation's isolation (specs/054-e2e-container-coverage FR-008,
+  # research.md D2): a second run -- scheduled or manually dispatched --
+  # queues behind an in-flight one rather than running concurrently, so
+  # two resets of the same test repository can never race across legs.
+  # Never loosen this without re-establishing that guarantee some other
+  # way.
   group: wing-commander-auto-release
   cancel-in-progress: false
 
@@ -104,6 +111,11 @@ jobs:
       contents: read
     outputs:
       verdict: ${{ steps.config.outputs.verdict || steps.reachable.outputs.verdict || steps.reset.outputs.verdict || steps.speckit-version.outputs.verdict || steps.scaffold.outputs.verdict || steps.kickoff.outputs.verdict || steps.poll.outputs.verdict }}
+      # Carried separately from the verdict's `mode` field (data-model.md
+      # "Execution mode") -- true only when the container leg was due by
+      # date parity but the pause control (research.md D3) forced this run
+      # to default-runner instead.
+      paused: ${{ steps.mode.outputs.paused }}
     steps:
       # Every step below reads a local composite (`uses: ./...`) or shell
       # helper (`.github/actions/_shared/*.sh`), which needs this
@@ -125,6 +137,8 @@ jobs:
       - name: Derive this run's execution mode (container vs default-runner)
         id: mode
         shell: bash
+        env:
+          CONTAINER_PAUSED: ${{ vars.WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED }}
         run: |
           set -uo pipefail
           doy="$(date -u +%j)"
@@ -133,7 +147,17 @@ jobs:
           else
             mode=container
           fi
+          # Independent of WING_COMMANDER_AUTO_RELEASE_PAUSED (research.md
+          # D3): pausing the container leg does not pause auto-release as a
+          # whole, and vice versa. Never overrides an already-even-day
+          # (default-runner) result, since that leg was never paused.
+          paused=false
+          if [ "$CONTAINER_PAUSED" = "true" ] && [ "$mode" = "container" ]; then
+            mode=default-runner
+            paused=true
+          fi
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "paused=$paused" >> "$GITHUB_OUTPUT"
 
       - name: Resolve and validate the end-to-end test repository configuration
         id: config
@@ -181,7 +205,7 @@ jobs:
             echo "ready=false" >> "$GITHUB_OUTPUT"
             {
               echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "WING_COMMANDER_AUTO_RELEASE_E2E_REPO names this repository" "a separate, dedicated, pre-onboarded test repository" "$E2E_REPO" "WING_COMMANDER_AUTO_RELEASE_E2E_REPO"
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "WING_COMMANDER_AUTO_RELEASE_E2E_REPO names this repository" "a separate, dedicated, pre-onboarded test repository" "$E2E_REPO" "WING_COMMANDER_AUTO_RELEASE_E2E_REPO" | jq --arg mode "$MODE" '. + {mode:$mode} + (if $mode == "container" then {container_image_configured: true} else {} end)'
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
             echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_REPO is '$E2E_REPO', which is this repository itself. The end-to-end run resets the test repository's default branch; refusing."
@@ -886,6 +910,7 @@ jobs:
           TAG_EXISTS: ${{ needs.detect.outputs.tag-exists }}
           LATEST_TAG: ${{ needs.detect.outputs.latest-tag }}
           VERDICT_JSON: ${{ needs.verify-e2e.outputs.verdict }}
+          PAUSED: ${{ needs.verify-e2e.outputs.paused }}
           NEXT_VERSION: ${{ needs.decide-version.outputs.next-version }}
           COLLISION: ${{ needs.decide-version.outputs.collision }}
           # The sole authority for "released" (FR-007, FR-007a) -- see
@@ -1041,6 +1066,12 @@ jobs:
           fi
           outcome="$(printf '%s' "$VERDICT_JSON" | jq -r '.outcome // empty' 2>/dev/null || true)"
           mode="$(printf '%s' "$VERDICT_JSON" | jq -r '.mode // "unknown"' 2>/dev/null || echo unknown)"
+          # FR-009 Acceptance Scenario: a paused run must read as "container
+          # mode not exercised: paused", never a plain default-runner pass
+          # that looks the same as an unpaused rotation turn.
+          if [ "$PAUSED" = "true" ]; then
+            mode="${mode} (container mode not exercised: paused)"
+          fi
 
           if [ "$outcome" != "pass" ]; then
             failing_check="$(printf '%s' "$VERDICT_JSON" | jq -r '.failing_check // "unknown"' 2>/dev/null || echo unknown)"
