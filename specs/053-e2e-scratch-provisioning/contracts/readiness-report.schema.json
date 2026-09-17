@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ReadinessReport",
+  "description": "Emitted on stdout by provision-e2e-target.sh (with or without --check-only) and rendered into the GITHUB_STEP_SUMMARY of the generalized auto-update-spec-kit-scratch-preflight.yml workflow. See data-model.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["target", "profile", "elements", "ready", "generated_at"],
+  "properties": {
+    "target": {
+      "type": "string",
+      "pattern": "^[^/\\s]+/[^/\\s]+$",
+      "description": "OWNER/NAME of the repository evaluated."
+    },
+    "profile": {
+      "type": "string",
+      "enum": ["auto-release", "spec-kit-scratch"]
+    },
+    "elements": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "ready", "remaining_action"],
+        "properties": {
+          "key": {
+            "type": "string",
+            "enum": [
+              "repository",
+              "app_installation",
+              "scratch_marker",
+              "claude_credential",
+              "spec_request_label",
+              "wrapper_set",
+              "container_image_pin"
+            ]
+          },
+          "ready": { "type": "boolean" },
+          "remaining_action": {
+            "type": ["string", "null"],
+            "description": "Null iff ready is true. Never null when ready is false (FR-006)."
+          }
+        }
+      }
+    },
+    "ready": {
+      "type": "boolean",
+      "description": "True iff every entry in elements has ready == true. FR-004: never true otherwise."
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}
