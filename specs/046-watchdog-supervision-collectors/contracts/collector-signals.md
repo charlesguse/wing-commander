@@ -64,7 +64,11 @@ Every collector in this contract:
 - **Reads**: the inspected run's metrics record (`cost_available`); the
   lifecycle issue's comments attributable to this run (the same
   attribution convention `collect-branch-drift`'s coexistence check
-  already uses to find the lifecycle issue from `spec-meta.json`).
+  already uses to find the lifecycle issue from `spec-meta.json`). A
+  run's own comments are those a pipeline identity (a Bot) posted between
+  the run's start and its end; the cost line is looked for across all of
+  them. With no lifecycle issue resolved, or when the comment read fails,
+  nothing was checked and no signal is emitted (#376).
 - **Config**: none new — the expected-presentation pattern (research.md
   R8) is a literal in the collector, not a tunable, matching FR-018's
   "single explicit, machine-checkable form."

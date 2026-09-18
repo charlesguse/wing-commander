@@ -39,6 +39,16 @@ from wc_shell_harness import (  # noqa: E402
 ACTION = ".github/actions/wing-commander-tool-args/action.yml"
 STEP_NAME = "Compose tool args"
 
+# The read-only inspection policy's compound/pipe/redirect sentence
+# (stage-interfaces.md, spec 051 D3) — appended, unconditionally, to every
+# rendered shell-commands value the shipped step emits.
+STATIC_SUFFIX = (
+    " Each command in a pipeline or `;`/`&&` chain is checked separately, "
+    "and a `>`/`>>` redirect or a `cd … &&` prefix is denied regardless of "
+    "this list — use the Read/Grep/Glob tools, or a single command, for "
+    "anything multi-step."
+)
+
 failures = []
 MUTATING = False
 
@@ -114,7 +124,7 @@ def case_no_configuration():
     expect("no configuration",
            {},
            "This run permits these shell commands: `git status`, "
-           "`git add`.")
+           "`git add`." + STATIC_SUFFIX)
     note("no extra-*/*-override inputs renders exactly the step's "
          "hard-coded default shell commands")
 
@@ -125,7 +135,8 @@ def case_extra_disallowed_subtracts():
     baseline = run_case({})[2]
     outputs = expect("extra-disallowed-tools subtracts",
                       {"EXTRA_DISALLOWED": "Bash(git status:*)"},
-                      "This run permits these shell commands: `git add`.")
+                      "This run permits these shell commands: `git add`." +
+                      STATIC_SUFFIX)
     if outputs.get("allowed-tools") != baseline.get("allowed-tools"):
         fail("extra-disallowed-tools subtracts",
              "allowed-tools changed when only extra-disallowed-tools was "
@@ -140,7 +151,8 @@ def case_allowed_override_replaces():
     """Acceptance 1.4: a wholesale allow replacement is what is stated."""
     expect("allowed-tools-override replaces",
            {"ALLOWED_OVERRIDE": "Bash(git log:*)"},
-           "This run permits these shell commands: `git log`.")
+           "This run permits these shell commands: `git log`." +
+           STATIC_SUFFIX)
     note("allowed-tools-override replaces the defaults wholesale, and the "
          "statement is derived from the replacement")
 
@@ -151,7 +163,7 @@ def case_deny_then_reallow():
            {"EXTRA_DISALLOWED": "Bash(git status:*)",
             "EXTRA_ALLOWED": "Bash(git status:*)"},
            "This run permits these shell commands: `git status`, "
-           "`git add`.")
+           "`git add`." + STATIC_SUFFIX)
     note("a command denied via extra-disallowed-tools and separately "
          "re-allowed via extra-allowed-tools is stated as permitted, "
          "agreeing with the enforced outcome")
@@ -161,7 +173,7 @@ def case_unrestricted_no_exception():
     """Acceptance 2.1: bare Bash allow, no matching deny."""
     expect("unrestricted, no exception",
            {"ALLOWED_OVERRIDE": "Bash", "DISALLOWED_OVERRIDE": ""},
-           "This run permits any shell command.")
+           "This run permits any shell command." + STATIC_SUFFIX)
     note("a bare Bash allow with no deny states the unrestricted case "
          "plainly")
 
@@ -171,7 +183,8 @@ def case_unrestricted_with_exception():
     expect("unrestricted, with exception",
            {"ALLOWED_OVERRIDE": "Bash",
             "DISALLOWED_OVERRIDE": "Bash(git push:*)"},
-           "This run permits any shell command except: `git push`.")
+           "This run permits any shell command except: `git push`." +
+           STATIC_SUFFIX)
     note("a bare Bash allow under a partial deny names the denied command "
          "as an exception rather than staying silent about the narrowing")
 
@@ -180,7 +193,7 @@ def case_no_shell_entry_at_all():
     """Acceptance 2.2: no Bash/Bash(...) entry, other tools present."""
     expect("no shell grant at all",
            {"ALLOWED_OVERRIDE": "Read,Grep", "DISALLOWED_OVERRIDE": ""},
-           "This run permits no shell command.")
+           "This run permits no shell command." + STATIC_SUFFIX)
     note("an allowed list with other tools but no shell grant renders the "
          "empty case as a complete sentence, other tools untouched")
 
@@ -191,7 +204,7 @@ def case_exact_only():
            {"ALLOWED_OVERRIDE": "Bash(git status)",
             "DISALLOWED_OVERRIDE": ""},
            "This run permits these shell commands: `git status` (exact "
-           "command only).")
+           "command only)." + STATIC_SUFFIX)
     note("Bash(cmd) with no wildcard is distinguished from the "
          "any-arguments form")
 
@@ -201,7 +214,8 @@ def case_prefix_and_exact_together():
     expect("prefix and exact together",
            {"ALLOWED_OVERRIDE": "Bash(git status),Bash(git status:*)",
             "DISALLOWED_OVERRIDE": ""},
-           "This run permits these shell commands: `git status`.")
+           "This run permits these shell commands: `git status`." +
+           STATIC_SUFFIX)
     note("Bash(cmd) and Bash(cmd:*) both granted collapse to one entry, in "
          "the broader prefix form")
 
@@ -211,7 +225,8 @@ def case_partial_overlap_deny():
     expect("partial-overlap deny leaves it stated",
            {"ALLOWED_OVERRIDE": "Bash(git status:*)",
             "DISALLOWED_OVERRIDE": "Bash(git status)"},
-           "This run permits these shell commands: `git status`.")
+           "This run permits these shell commands: `git status`." +
+           STATIC_SUFFIX)
     note("a deny that only partially overlaps an allow (EXACT deny under a "
          "PREFIX allow) leaves the command stated")
 
@@ -222,7 +237,7 @@ def case_prefix_deny_covers_exact_allow():
     expect("prefix deny covers exact allow",
            {"ALLOWED_OVERRIDE": "Bash(git status)",
             "DISALLOWED_OVERRIDE": "Bash(git status:*)"},
-           "This run permits no shell command.")
+           "This run permits no shell command." + STATIC_SUFFIX)
     note("a PREFIX deny fully covers an EXACT allow for the same command, "
          "dropping it to the empty case")
 
@@ -239,7 +254,7 @@ def case_any_deny_covers_any_allow():
     """
     expect("any deny covers any allow",
            {"DEFAULT_ALLOWED": "Bash", "DEFAULT_DISALLOWED": "Bash"},
-           "This run permits no shell command.")
+           "This run permits no shell command." + STATIC_SUFFIX)
     note("a disallowed bare Bash covers an allowed bare Bash entirely, "
          "producing the empty case rather than silence")
 
@@ -278,6 +293,9 @@ MUTATIONS = [
     ("reverts the deduplication (D4)",
      lambda s: s.replace(
          '[ -n "${entry_seen[$cmd]+x}" ] && continue', 'true')),
+    ("reverts the appended compound-command guidance (D3)",
+     lambda s: s.replace(
+         'shell_commands="$shell_commands$STATIC_SUFFIX"\n', '')),
 ]
 
 

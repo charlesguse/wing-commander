@@ -12,6 +12,11 @@
 # bash would have already resolved (cost_available, whether an attributable
 # comment was found, and any extracted cost token).
 #
+# ATTRIBUTION is the step's second jq program, COST_ATTRIBUTION_FILTER, which
+# decides which lifecycle-issue comments are the run's own and reads the cost
+# line out of them (#376). verify-gate-19.py EXECUTES the whole step, bash
+# included; the fixtures here pin the two programs' own branches.
+#
 # Usage: .github/scripts/verify-cost-report-collector.sh
 # Exit code: 0 = all assertions passed; 1 = an assertion failed.
 
@@ -34,10 +39,44 @@ print(extract_quoted_var(".github/workflows/watchdog.yml", "COST_REPORT_FILTER")
 PY
 )"
 
+ATTRIBUTION="$(python3 - <<'PY'
+import sys
+sys.path.insert(0, ".github/scripts")
+from wc_shell_harness import extract_quoted_var
+print(extract_quoted_var(".github/workflows/watchdog.yml", "COST_ATTRIBUTION_FILTER"))
+PY
+)"
+
 run_filter() { jq -c "$FILTER" <<<"$1"; }
+run_attribution() { jq -c "$ATTRIBUTION" <<<"$1"; }
+
+# ── Negative (#376): the comments were never checked — no lifecycle issue
+#    resolved (a cleanup sweep, a rebase run), or the read failed. "Not
+#    checked" must not be reported as "checked and absent": eight false
+#    cost-line-missing issues were filed over exactly this input.
+out="$(run_filter '{"stage":"cleanup","run":"r0","cost_available":true,"comments_checked":false,"comment_found":false,"cost_token":null,"observed_text":null}')"
+if [ "$out" != "[]" ]; then
+  reason "comments_checked:false must never produce a signal (#376), got $out"
+else
+  note "comments_checked:false correctly produced no signal"
+fi
+out="$(run_filter '{"stage":"cleanup","run":"r0","cost_available":true,"comment_found":false}')"
+if [ "$out" != "[]" ]; then
+  reason "an input that does not say the comments were checked must produce no signal (#376), got $out"
+fi
+
+# ── Positive (#366's shape): the run commented, but no comment of its own
+#    carries a cost line.
+out="$(run_filter '{"stage":"clarify","run":"r7","cost_available":true,"comments_checked":true,"comment_found":true,"cost_token":null,"observed_text":null}')"
+if [ "$(jq -r '.[0]."class-hint" // "none"' <<<"$out")" != "cost-line-missing" ] \
+   || [ "$(jq -r '.[0].facts."lifecycle-comment-found"' <<<"$out")" != "true" ]; then
+  reason "a run that commented without a cost line expected cost-line-missing with lifecycle-comment-found:true, got $out"
+else
+  note "a comment with no cost line correctly produced cost-line-missing (comment found)"
+fi
 
 # ── Positive: cost_available true, no attributable comment at all.
-out="$(run_filter '{"stage":"plan","run":"r1","cost_available":true,"comment_found":false,"cost_token":null,"observed_text":null}')"
+out="$(run_filter '{"stage":"plan","run":"r1","cost_available":true,"comments_checked":true,"comment_found":false,"cost_token":null,"observed_text":null}')"
 note "no-comment fixture output: $out"
 if [ "$(jq -r '.[0]."class-hint" // "none"' <<<"$out")" != "cost-line-missing" ]; then
   reason "cost_available:true with no attributable comment expected 'cost-line-missing', got $out"
@@ -51,7 +90,7 @@ fi
 # ── Positive: the literal #272 $COST_LINE leak, comment found but the
 #    figure is not currency-shaped at all.
 # shellcheck disable=SC2016 # single-quoted JSON literal, not a shell expansion
-out="$(run_filter '{"stage":"implement","run":"r2","cost_available":true,"comment_found":true,"cost_token":"$COST_LINE","observed_text":"Cost: $COST_LINE · 40 turns"}')"
+out="$(run_filter '{"stage":"implement","run":"r2","cost_available":true,"comments_checked":true,"comment_found":true,"cost_token":"$COST_LINE","observed_text":"Cost: $COST_LINE · 40 turns"}')"
 note "COST_LINE leak fixture output: $out"
 if [ "$(jq -r '.[0]."class-hint" // "none"' <<<"$out")" != "cost-line-malformed" ]; then
   reason "a literal \$COST_LINE leak expected 'cost-line-malformed', got $out"
@@ -74,7 +113,7 @@ fi
 
 # ── Negative: well-formed >= \$1 figure (2dp) → no signal.
 # shellcheck disable=SC2016 # single-quoted JSON literal, not a shell expansion
-out="$(run_filter '{"stage":"implement","run":"r4","cost_available":true,"comment_found":true,"cost_token":"$1.42","observed_text":"Cost: $1.42 · 38/60 turns"}')"
+out="$(run_filter '{"stage":"implement","run":"r4","cost_available":true,"comments_checked":true,"comment_found":true,"cost_token":"$1.42","observed_text":"Cost: $1.42 · 38/60 turns"}')"
 if [ "$out" != "[]" ]; then
   reason "a well-formed >=\$1 figure (\$1.42, 2dp) must produce no signal, got $out"
 else
@@ -86,7 +125,7 @@ fi
 #    regress under a single-precision rewrite: a naive ^\$[0-9]+\.[0-9]{2}\$
 #    pattern would falsely flag this as malformed.
 # shellcheck disable=SC2016 # single-quoted JSON literal, not a shell expansion
-out="$(run_filter '{"stage":"implement","run":"r5","cost_available":true,"comment_found":true,"cost_token":"$0.0042","observed_text":"Cost: $0.0042 · 3/10 turns"}')"
+out="$(run_filter '{"stage":"implement","run":"r5","cost_available":true,"comments_checked":true,"comment_found":true,"cost_token":"$0.0042","observed_text":"Cost: $0.0042 · 3/10 turns"}')"
 if [ "$out" != "[]" ]; then
   reason "a well-formed sub-\$1 figure (\$0.0042, 4dp) must produce no signal under the magnitude-aware pattern, got $out"
 else
@@ -99,11 +138,68 @@ fi
 #    exactly at the boundary, so this must still validate rather than fall
 #    through to "malformed" the way a naive off-by-one on the crossover would.
 # shellcheck disable=SC2016 # single-quoted JSON literal, not a shell expansion
-out="$(run_filter '{"stage":"implement","run":"r6","cost_available":true,"comment_found":true,"cost_token":"$1.00","observed_text":"Cost: $1.00 · 12/60 turns"}')"
+out="$(run_filter '{"stage":"implement","run":"r6","cost_available":true,"comments_checked":true,"comment_found":true,"cost_token":"$1.00","observed_text":"Cost: $1.00 · 12/60 turns"}')"
 if [ "$out" != "[]" ]; then
   reason "the exact \$1.00 magnitude-crossover figure (2dp) must produce no signal, got $out"
 else
   note "the exact \$1.00 magnitude crossover correctly produced no signal"
+fi
+
+# ── Attribution (#376). A clarify run: the owner replies again five seconds
+#    after the run starts, the run announces itself, then posts its cost.
+# shellcheck disable=SC2016 # single-quoted JSON literal, not a shell expansion
+#    A dependency bot also comments inside the window, with a dollar figure:
+#    identity is a login match against the pipeline's own, never "any bot".
+COMMENTS='[
+  {"createdAt":"2026-09-16T23:35:22Z","userLogin":"wing-commander-bot[bot]","body":"**Cost**: $1.53 · 19/50 turns"},
+  {"createdAt":"2026-09-16T23:46:27Z","userLogin":"charlesguse","body":"Q1: a\n\nCost: $99 is my guess"},
+  {"createdAt":"2026-09-16T23:46:40Z","userLogin":"wing-commander-bot[bot]","body":"clarify started"},
+  {"createdAt":"2026-09-16T23:49:00Z","userLogin":"dependabot[bot]","body":"Bumps foo. Cost: $12 (est.)"},
+  {"createdAt":"2026-09-16T23:51:46Z","userLogin":"wing-commander-bot[bot]","body":"> **Action needed**\r\n> **Cost**: $1.90 · 37/40 turns · claude-opus-5\r\n> more"},
+  {"createdAt":"2026-09-16T23:59:00Z","userLogin":"github-actions[bot]","body":"**Cost**: $2.22 · 9/40 turns"}
+]'
+attribution_input() { jq -c --arg since "$1" --arg until "$2" '{comments: ., since: $since, until: $until, logins: ["wing-commander-bot[bot]", "github-actions[bot]"]}' <<<"$COMMENTS"; }
+
+out="$(run_attribution "$(attribution_input 2026-09-16T23:46:22Z 2026-09-16T23:51:53Z)")"
+note "attribution fixture output: $out"
+# shellcheck disable=SC2016 # literal comparison text, not a shell expansion
+want='{"comment_found":true,"observed_text":"Cost: $1.90 · 37/40 turns · claude-opus-5","cost_token":"$1.90"}'
+if [ "$out" != "$want" ]; then
+  reason "attribution must skip the owner's reply, another bot's comment and the cost-less 'started' comment, stay inside the run's window, strip the bold markers and keep the WHOLE line (the grep this replaced cut it at the first 'n'); expected $want, got $out"
+else
+  note "attribution correctly read the run's own cost line"
+fi
+
+# The window holds the owner's reply only: a person's comment is not the run's.
+out="$(run_attribution "$(attribution_input 2026-09-16T23:46:22Z 2026-09-16T23:46:30Z)")"
+if [ "$out" != '{"comment_found":false,"observed_text":null,"cost_token":null}' ]; then
+  reason "a window holding only a person's comment must attribute nothing, got $out"
+else
+  note "a person's comment correctly attributed nothing"
+fi
+
+# The window holds the dependency bot's comment only: not a pipeline login.
+out="$(run_attribution "$(attribution_input 2026-09-16T23:48:00Z 2026-09-16T23:49:30Z)")"
+if [ "$out" != '{"comment_found":false,"observed_text":null,"cost_token":null}' ]; then
+  reason "a window holding only another bot's comment must attribute nothing (login match, not any bot), got $out"
+else
+  note "another bot's comment correctly attributed nothing"
+fi
+
+# The window holds the 'started' announcement only: found, but no cost line.
+out="$(run_attribution "$(attribution_input 2026-09-16T23:46:22Z 2026-09-16T23:47:00Z)")"
+if [ "$out" != '{"comment_found":true,"observed_text":null,"cost_token":null}' ]; then
+  reason "a window holding only a cost-less pipeline comment must read comment_found:true with no token, got $out"
+else
+  note "a cost-less pipeline comment correctly read as found, no token"
+fi
+
+# No end bound given: the program itself leaves the window open-ended (the
+# step never calls it that way -- it records "not checked" instead).
+out="$(run_attribution "$(attribution_input 2026-09-16T23:52:00Z "")")"
+# shellcheck disable=SC2016 # literal comparison text, not a shell expansion
+if [ "$out" != '{"comment_found":true,"observed_text":"Cost: $2.22 · 9/40 turns","cost_token":"$2.22"}' ]; then
+  reason "an empty 'until' must leave the window open-ended and github-actions[bot] must count as the pipeline's own, got $out"
 fi
 
 if [ "${#fail_reasons[@]}" -eq 0 ]; then

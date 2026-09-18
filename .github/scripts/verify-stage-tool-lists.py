@@ -95,6 +95,30 @@ COMPOSITE = "wing-commander-tool-args"
 BACKTICKED = re.compile(r"`([^`]*)`")
 SAME_AS = re.compile(r"^\s*same as\b", re.IGNORECASE)
 
+# The read-only inspection policy (stage-interfaces.md, spec 051): every
+# read-capable stage's default allowed list carries this set.
+INSPECTION_SET = {
+    "Bash(grep:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(sort:*)",
+    "Bash(uniq:*)", "Bash(wc:*)", "Bash(cut:*)",
+}
+
+READ_CAPABLE_LABELS = {
+    "intake", "clarify",
+    "plan.direct-commit", "plan.pr",
+    "tasks.direct-commit", "tasks.pr",
+    "implement.cycle", "implement.retry",
+}
+
+# What repository guidance (CLAUDE.md's "Before pushing" section) mandates a
+# stage run - hand-maintained alongside CLAUDE.md edits, same as TABLE_DOC/
+# COMPOSITE above (research.md D7: this judgment belongs in reviewable code,
+# not a prose-parser).
+MANDATED_COMMANDS = {
+    "Bash(python .github/scripts/run-local-gates.py:*)": {
+        "implement.cycle", "implement.retry",
+    },
+}
+
 
 def split_tools(text):
     """A comma-separated tool list -> ordered list, blanks dropped."""
@@ -293,11 +317,54 @@ def compare(sites, table, relative=frozenset()):
     return failures
 
 
+def check_inspection_set(table):
+    """-> list of failure strings.
+
+    Every read-capable stage's default allowed list carries the seven-
+    primitive inspection set (stage-interfaces.md's "Read-only inspection
+    policy" section). A `READ_CAPABLE_LABELS` entry absent from `table` is
+    not a failure here - the `compare()` call already reports a missing row
+    as its own failure, so this only evaluates labels already confirmed to
+    exist.
+    """
+    failures = []
+    for label in sorted(READ_CAPABLE_LABELS & set(table)):
+        missing = INSPECTION_SET - set(table[label][0])
+        if missing:
+            failures.append(
+                "{0!r}'s default allowed list omits {1} from the read-only "
+                "inspection set ({2}'s policy section) and records no "
+                "exception.".format(
+                    label,
+                    ", ".join("`{0}`".format(m) for m in sorted(missing)),
+                    TABLE_DOC))
+    return failures
+
+
+def check_mandated_commands(table):
+    """-> list of failure strings.
+
+    FR-010's reconciliation made mechanical: a command repository guidance
+    mandates for a stage must appear in that stage's documented default
+    allowed list.
+    """
+    failures = []
+    for command, required_labels in MANDATED_COMMANDS.items():
+        for label in sorted(required_labels & set(table)):
+            if command not in table[label][0]:
+                failures.append(
+                    "{0!r} is told by CLAUDE.md/its own prompt to run "
+                    "{1!r} but its default allowed list does not permit it "
+                    "(FR-010).".format(label, command))
+    return failures
+
+
 def run(root="."):
     with io.open(os.path.join(root, TABLE_DOC), encoding="utf-8") as fh:
         table, errors, relative = parse_table(fh.read())
     sites, site_errors = collect_sites(root)
-    return site_errors + errors + compare(sites, table, relative)
+    return (site_errors + errors + compare(sites, table, relative) +
+            check_inspection_set(table) + check_mandated_commands(table))
 
 
 # --------------------------------------------------------------------------
@@ -440,6 +507,25 @@ def self_test(root="."):
         print("[ok] baseline: {0} call sites match {0} rows".format(
             len(sites)))
 
+    baseline_inspection = check_inspection_set(table)
+    if baseline_inspection:
+        print("[FAIL] baseline: the real table should carry the full "
+              "inspection set on every read-capable row, got: " +
+              " | ".join(baseline_inspection))
+        bad += 1
+    else:
+        print("[ok] baseline: every read-capable row carries the "
+              "inspection set")
+
+    baseline_mandated = check_mandated_commands(table)
+    if baseline_mandated:
+        print("[FAIL] baseline: the real table should already permit every "
+              "mandated command, got: " + " | ".join(baseline_mandated))
+        bad += 1
+    else:
+        print("[ok] baseline: every mandated command is permitted where "
+              "required")
+
     for name, m_sites, m_table, expect in _mutations(sites, table):
         found = compare(m_sites, m_table, relative)
         joined = " | ".join(found)
@@ -452,6 +538,48 @@ def self_test(root="."):
                   "expected {1!r}, got: {2}".format(name, expect, joined))
         else:
             print("[ok] mutation caught: {0}".format(name))
+
+    t = dict(table)
+    allowed, disallowed = t["plan.direct-commit"]
+    t["plan.direct-commit"] = (
+        [tool for tool in allowed if tool != "Bash(cut:*)"], disallowed)
+    found = " | ".join(check_inspection_set(t))
+    if "omits `Bash(cut:*)`" in found:
+        print("[ok] mutation caught: plan.direct-commit loses "
+              "Bash(cut:*) from the inspection set")
+    else:
+        bad += 1
+        print("[FAIL] mutation 'plan.direct-commit loses Bash(cut:*)' was "
+              "NOT caught for the right reason: {0}".format(found))
+
+    t = dict(table)
+    allowed, disallowed = t["finalize"]
+    t["finalize"] = ([], disallowed)
+    found = check_inspection_set(t)
+    if found:
+        bad += 1
+        print("[FAIL] a non-read-capable row (finalize) missing the whole "
+              "inspection set should not fail Check A, got: {0}".format(
+                  found))
+    else:
+        print("[ok] a non-read-capable row missing the whole inspection "
+              "set raises no Check A failure")
+
+    t = dict(table)
+    allowed, disallowed = t["implement.cycle"]
+    gate_suite = "Bash(python .github/scripts/run-local-gates.py:*)"
+    t["implement.cycle"] = (
+        [tool for tool in allowed if tool != gate_suite], disallowed)
+    found = " | ".join(check_mandated_commands(t))
+    if "is told by CLAUDE.md" in found and \
+            "does not permit it" in found:
+        print("[ok] mutation caught: implement.cycle loses the mandated "
+              "gate-suite command")
+    else:
+        bad += 1
+        print("[FAIL] mutation 'implement.cycle loses the gate-suite "
+              "command' was NOT caught for the right reason: {0}".format(
+                  found))
 
     for name, ok, detail in _collector_fixtures():
         if ok:
