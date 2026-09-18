@@ -725,8 +725,8 @@ jobs:
       # Deterministic kind decision (contracts/callout-points.md rows 3/4).
       # outcome=none covers the agent's early-STOP path (step 2: the reply
       # didn't answer any open question) — the agent's own gh issue comment
-      # already covered that case, so `answered` is `false` and no callout is
-      # posted here.
+      # already covered that case, so `answered` is `false` and neither of
+      # those two callouts is posted; only the cost line is (row 12, #366).
       - name: Determine clarification follow-up outcome
         id: clarification
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent-verdict.outputs.verdict == 'healthy'
@@ -904,6 +904,25 @@ jobs:
           summary: "Review the spec PR"
           pr-url: ${{ steps.spec-pr.outputs.url }}
           pr-label: "the spec PR"
+          body: ${{ steps.cost-line.outputs.line }}
+
+      # #366: outcome=none is the agent's early STOP -- it judged the reply
+      # to answer no open question and said so in its own issue comment,
+      # which this workflow cannot append to. The cost line rides only on
+      # the two callouts above, and neither fires on this path, so a run
+      # that spent real money reported none of it (two such runs on one
+      # issue in one evening). It gets an info callout of its own here.
+      # The three posting steps are mutually exclusive on `outcome`;
+      # verify-clarification-gating.py asserts exactly one of them fires on
+      # every healthy, unblocked path.
+      - name: Report cost of a reply that answered nothing
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.outcome == 'none'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: info
+          summary: "That reply did not answer an open clarification question, so the spec is unchanged."
           body: ${{ steps.cost-line.outputs.line }}
 
       # (canonical copy; do not condense)
