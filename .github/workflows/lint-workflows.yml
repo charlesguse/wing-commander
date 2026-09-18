@@ -3387,9 +3387,14 @@ jobs:
       # situation — a detect crash read as a quiet day, a decide-version
       # crash as "release dispatch failed" for a release never dispatched,
       # the stale-head guard's own failed read pointing at a release.yml run
-      # that does not exist. Executes the shipped step against every
-      # combination of job results and outputs it can meet, with gh stubbed
-      # to record what would have been filed, and mutates each defect back.
+      # that does not exist. Executes the shipped "Determine this run's
+      # outcome" step against every combination of job results and outputs
+      # it can meet, checking the action/title/close-comment/body/summary it
+      # decides on -- specs/049-single-home-release-idioms moved the actual
+      # gh-issue-report/-close mechanics this step used to perform inline
+      # into the shared durable-failure-issue composite, which the two
+      # `uses:` steps immediately after this one call based on that
+      # decision -- and mutates each #325 defect back.
       - name: Gate 52 — auto-release's report job attributes a crashed job to infrastructure, not to a quiet day or a phantom release run
         if: "!cancelled()"
         run: python3 .github/scripts/verify-auto-release-report.py
@@ -3442,6 +3447,39 @@ jobs:
       - name: Gate 59 self-test — each of the four checks fails its own mutation
         if: "!cancelled()"
         run: python3 .github/scripts/verify-correlated-release-dispatch.py --self-test
+
+      # Gate 60 — specs/049-single-home-release-idioms: each of the three
+      # cross-workflow idioms auto-release.yml and auto-update-spec-kit.yml
+      # share (scoped App-token mint + reachability, orphan-branch
+      # force-reset, durable failure issue) and the fail-infra verdict
+      # shape now has exactly one home under .github/actions/_shared/, and
+      # a structural scan -- not merely an assertion that the two known
+      # consumers call the shared definitions -- fails on a third,
+      # unknown site pasting any of them anywhere under
+      # .github/workflows/ or .github/actions/, naming both the offending
+      # site and the shared home to call instead. A separate pass fails if
+      # a workflow_call-only stage or a published (non-underscore)
+      # composite action ever resolves an internal _shared/ path (FR-025).
+      # Also runs the byte-identity check (FR-009): the shipped
+      # auto-release-verdict.sh against every real verdict-construction
+      # site's captured pre-refactor inputs, diffed against their
+      # pre-refactor jq -n output.
+      #
+      # Numbered 60, not 52 as research.md/tasks.md call it: Gate 52 was
+      # free when this feature's plan was written and was taken by
+      # verify-auto-release-report.py (#325) before this feature's branch
+      # was rebased past it. The branch then registered this gate as 53,
+      # the next number free in its own tree -- but by the time of the
+      # maintainer's review of PR #347, spec 046's PR #341 had registered
+      # Gates 53-58 on main and spec 048's PR #342 had taken 59, so this
+      # gate moved again, to 60 -- see verify-single-home-idioms.py's own
+      # module docstring.
+      - name: Gate 60 — each of the three cross-workflow idioms and the fail-infra verdict shape has exactly one home, and no published surface resolves an internal helper
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-single-home-idioms.py
+      - name: Gate 60 self-test — the structural scan detects a third paste, a waiver suppresses only what it names, and promotion into a published surface fails
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-single-home-idioms.py --self-test
 
       # Gate 61 — a spec branch's spec-meta.json is read in one place (#340).
       # The fetch-then-`git show`-then-jq read was pasted into implement.yml
