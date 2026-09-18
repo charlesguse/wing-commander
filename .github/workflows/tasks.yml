@@ -1038,6 +1038,7 @@ jobs:
       # verified commit. With next-workflow empty the stage stops cleanly
       # here: standalone adoption needs no sibling stage (FR-002).
       - name: Dispatch implement stage (auto)
+        id: dispatch-auto
         if: steps.guard.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1061,6 +1062,22 @@ jobs:
             -f issue="$ISSUE" \
             -f iteration=1
           echo "Dispatched $NEXT_WORKFLOW (spec_dir=specs/$SLUG, issue=$ISSUE, iteration=1)." >> "$GITHUB_STEP_SUMMARY"
+          echo "dispatched=true" >> "$GITHUB_OUTPUT"
+
+      # #377: same gap as plan.yml's -- the auto-mode hand-off above posts
+      # nothing to the lifecycle issue except on the NEXT_WORKFLOW-empty
+      # (standalone) branch, so a run that spent real money and handed off
+      # cleanly reported none of it. Mirrors #366's fix in clarify.yml
+      # (callout-points.md row 14).
+      - name: Report cost of an auto-mode hand-off
+        if: steps.guard.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto' && steps.dispatch-auto.outputs.dispatched == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ steps.meta.outputs.issue }}
+          kind: info
+          summary: "Task list committed; implementation was dispatched automatically."
+          body: ${{ steps.cost-line.outputs.line }}
 
       # The action writes its full execution transcript — every tool call,
       # including permission denials — to claude-execution-output.json in the

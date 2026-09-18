@@ -3460,6 +3460,19 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-spec-meta-single-home.py --self-test
 
+      # Gate 62 — plan.yml and tasks.yml report the run's cost on every
+      # auto-mode hand-off (#377). Both stages compute the cost line
+      # unconditionally but only ever posted it on the standalone
+      # (next-workflow empty) branch of their dispatch step; a run that
+      # spent money and handed off cleanly reported none of it. Mirrors
+      # #366's fix in clarify.yml for the analogous gap.
+      - name: Gate 62 — plan/tasks auto-mode hand-off reports the run's cost
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-plan-tasks-cost-line.py
+      - name: Gate 62 self-test — a dropped callout, gate or cost line each fail
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-plan-tasks-cost-line.py --self-test
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when
