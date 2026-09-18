@@ -562,6 +562,14 @@ STUB_GIT_TEMPLATE = r'''#!/usr/bin/env bash
 if [ -n "${GIT_STUB_LOG:-}" ]; then printf '%s\n' "$*" >> "$GIT_STUB_LOG"; fi
 case "$1" in
   show)
+    # GIT_STUB_SHOW_ONLY_REF (when set) is the one ref that has the file:
+    # any other ref answers as a branch with no record would (#376).
+    if [ -n "${GIT_STUB_SHOW_ONLY_REF:-}" ]; then
+      case "$2" in
+        "$GIT_STUB_SHOW_ONLY_REF":*) ;;
+        *) echo "fatal: invalid object name (stub)" >&2; exit 128 ;;
+      esac
+    fi
     if [ -n "${GIT_STUB_SHOW_JSON:-}" ]; then
       printf '%s\n' "$GIT_STUB_SHOW_JSON"
       exit 0
@@ -1048,6 +1056,11 @@ RECORD_045 = json.dumps({"schema_version": 1, "stage": "implement",
 RECORD_046 = json.dumps({"schema_version": 1, "stage": "rebase",
                          "spec": {"spec_dir": "specs/046-watchdog-supervision-collectors",
                                   "issue": 274, "identity_available": True}})
+SPEC_META_DRAFT_FIXTURE = json.dumps({"spec_dir": "specs/045-auto-release-verified-head",
+                                      "issue": 296, "stage": "spec"})
+SPEC_META_OTHER_DIR_FIXTURE = json.dumps({"spec_dir": "specs/001-some-other-spec",
+                                          "issue": 7, "stage": "implement"})
+DRAFT_REF_045 = "refs/remotes/origin/spec-draft/045-auto-release-verified-head"
 RECORD_NO_IDENTITY = json.dumps({"schema_version": 1, "stage": "implement",
                                  "spec": {"spec_dir": None, "issue": None,
                                           "identity_available": False}})
@@ -1151,6 +1164,49 @@ SPEC_SLUG_SCENARIOS = [
                        "lifecycle-issue": "", "meta-stage": ""}),
         expect_download=True,
     ),
+    # #376: a spec still in intake or clarify has no spec branch, only its
+    # spec-draft branch. Both stages run off the default branch, so the slug
+    # comes from the record and the issue from the DRAFT's spec-meta.json.
+    # Before this every intake and clarify run resolved a slug and no issue.
+    dict(
+        name="an intake run whose spec exists only as a draft: the spec "
+             "branch has no record, the spec-draft branch's is used (#376)",
+        run_name="Wing Commander · 1 intake",
+        head_branch="main",
+        records=[RECORD_045],
+        show_json=SPEC_META_DRAFT_FIXTURE,
+        show_only_ref=DRAFT_REF_045,
+        expect=dict(slug="045-auto-release-verified-head", **{"slug-source": "metrics-record"},
+                    **{"spec-dir": "specs/045-auto-release-verified-head",
+                       "lifecycle-issue": "296", "meta-stage": "spec"}),
+        expect_download=True,
+        expect_draft_read=True,
+    ),
+    dict(
+        name="a run on a spec-draft head: slug from the head, issue from the "
+             "draft's record (#376)",
+        run_name="Wing Commander · 2 clarify",
+        head_branch="spec-draft/045-auto-release-verified-head",
+        records=[RECORD_045],
+        show_json=SPEC_META_DRAFT_FIXTURE,
+        show_only_ref=DRAFT_REF_045,
+        expect=dict(slug="045-auto-release-verified-head", **{"slug-source": "head-branch"},
+                    **{"lifecycle-issue": "296", "meta-stage": "spec"}),
+        expect_download=False,
+        expect_draft_read=True,
+    ),
+    dict(
+        name="the spec branch HAS a record but it identifies another "
+             "directory: refused, and the draft is not consulted to paper "
+             "over it (#376)",
+        head_branch="main",
+        records=[RECORD_045],
+        show_json=SPEC_META_OTHER_DIR_FIXTURE,
+        expect=dict(slug="045-auto-release-verified-head",
+                    **{"lifecycle-issue": "", "meta-stage": ""}),
+        expect_download=True,
+        expect_draft_read=False,
+    ),
     # #330: the report-unhandled-failure job hands in no head branch (it has
     # no run-meta step of its own), so the composite reads it with `gh run
     # view` and the rest of the derivation runs unchanged.
@@ -1224,24 +1280,32 @@ def run_spec_slug_one(script, env, sc, tmproot):
         run_env["GH_STUB_RUN_VIEW_FAIL"] = sc["run_view_fail"]
     if sc.get("show_json"):
         run_env["GIT_STUB_SHOW_JSON"] = sc["show_json"]
+    if sc.get("show_only_ref"):
+        run_env["GIT_STUB_SHOW_ONLY_REF"] = sc["show_only_ref"]
     gh_log = os.path.join(runner_temp, "gh-stub.log")
     run_env["GH_STUB_LOG"] = gh_log.replace("\\", "/")
+    git_log = os.path.join(runner_temp, "git-stub.log")
+    run_env["GIT_STUB_LOG"] = git_log.replace("\\", "/")
 
     rc, out, outputs, summary = run_step(BASH, script, workdir, run_env, runner_temp)
     gh_calls = []
     if os.path.exists(gh_log):
         with open(gh_log, encoding="utf-8") as fh:
             gh_calls = [ln.rstrip("\r\n") for ln in fh if ln.strip()]
+    git_calls = []
+    if os.path.exists(git_log):
+        with open(git_log, encoding="utf-8") as fh:
+            git_calls = [ln.rstrip("\r\n") for ln in fh if ln.strip()]
     for d in (workdir, runner_temp, bindir):
         shutil.rmtree(d, ignore_errors=True)
-    return rc, out, outputs, summary, gh_calls
+    return rc, out, outputs, summary, gh_calls, git_calls
 
 
 def suite_spec_slug(script, env, tmproot):
     failures = []
     for sc in SPEC_SLUG_SCENARIOS:
         tag = f"[spec-slug: {sc['name']}]"
-        rc, out, outputs, summary, gh_calls = run_spec_slug_one(script, env, sc, tmproot)
+        rc, out, outputs, summary, gh_calls, git_calls = run_spec_slug_one(script, env, sc, tmproot)
         if rc != 0:
             failures.append(f"{tag} the step exited {rc} — it is best-effort and "
                             f"must never fail the collect job:\n{out}")
@@ -1263,6 +1327,14 @@ def suite_spec_slug(script, env, tmproot):
                 f"{'to be' if sc.get('expect_run_view') else 'NOT to be'} read with "
                 f"gh run view (a handed-in head must be used as-is); "
                 f"gh was invoked as: {gh_calls or '(never)'}")
+        if "expect_draft_read" in sc:
+            draft_read = any(c.startswith("show refs/remotes/origin/spec-draft/")
+                             for c in git_calls)
+            if draft_read != sc["expect_draft_read"]:
+                failures.append(
+                    f"{tag} expected the spec-draft branch's spec-meta.json "
+                    f"{'to be' if sc['expect_draft_read'] else 'NOT to be'} read; "
+                    f"git was invoked as: {git_calls or '(never)'}")
     return failures
 
 
@@ -1356,6 +1428,269 @@ def remove_record_fallback(script):
                  "metrics-record fallback (#322) to mutate — the step text "
                  "may have changed shape; update this harness alongside it.")
     return script.replace(fixed, "if false; then", 1)
+
+
+DRAFT_FALLBACK_GUARD = 'if [ "$meta_found" != "true" ]; then'
+
+
+def mutate_draft_fallback(script, replacement):
+    """Mutations of the #376 spec-draft fallback's entry condition: "if false"
+    is the pre-#376 step (a draft-only spec resolves no issue); "if true"
+    consults the draft even when the spec branch HAS a record, which lets the
+    draft's record stand in for one that failed its identity check."""
+    if script.count(DRAFT_FALLBACK_GUARD) != 1:
+        sys.exit("::error::verify-gate-19: could not locate spec-slug's "
+                 "spec-draft fallback (#376) to mutate — the step text may "
+                 "have changed shape; update this harness alongside it.")
+    return script.replace(DRAFT_FALLBACK_GUARD, replacement, 1)
+
+
+# --------------------------------------------------------------------------
+# #376: the "Collect: cost report" step, EXECUTED. verify-cost-report-
+# collector.sh fixtures the step's two jq programs, but nothing ran the bash
+# around them, and that is where all three #376 defects lived: an unresolved
+# lifecycle issue was reported as a missing cost line; the run's "own"
+# comment was the earliest one by ANY author; and a `grep` that matched
+# nothing killed the step under errexit for every run whose issue did
+# resolve. run_step runs the script as `bash -e`, and the script sets
+# pipefail itself, so this suite runs under the flags the runner uses.
+#
+# `gh` is stubbed for `run download` (lays out the fixture metrics record)
+# and `api .../comments` (applies the step's own --jq to the fixture page,
+# as the real --paginate --jq does, or fails).
+# --------------------------------------------------------------------------
+COST_REPORT_STEP = "Collect: cost report"
+
+STUB_GH_COST_TEMPLATE = r"""#!/usr/bin/env bash
+if [ "$1" = "run" ] && [ "$2" = "download" ]; then
+  dest=""
+  prev=""
+  for arg in "$@"; do
+    if [ "$prev" = "-D" ]; then dest="$arg"; fi
+    prev="$arg"
+  done
+  [ -n "$dest" ] || { echo "stub gh: no -D given" >&2; exit 1; }
+  mkdir -p "$dest/metrics-record"
+  printf '%s\n' "$GH_STUB_RECORD" > "$dest/metrics-record/wing-commander-metrics-record.json"
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  if [ -n "${GH_STUB_COMMENTS_FAIL:-}" ]; then
+    echo "gh: HTTP 502: injected failure (GH_STUB_COMMENTS_FAIL)" >&2
+    exit 1
+  fi
+  jqexpr=""
+  prev=""
+  for arg in "$@"; do
+    if [ "$prev" = "--jq" ]; then jqexpr="$arg"; fi
+    prev="$arg"
+  done
+  printf '%s' "$GH_STUB_COMMENTS" | jq -c "$jqexpr"
+  exit 0
+fi
+echo "unexpected gh invocation: $*" >&2
+exit 1
+"""
+
+COST_RECORD = json.dumps({"schema_version": 1, "stage": "clarify", "cost_available": True})
+COST_SINCE = "2026-09-16T23:46:22Z"
+COST_UNTIL = "2026-09-16T23:51:53Z"
+
+
+COST_BOT_SLUG = "wing-commander-bot"
+APP = COST_BOT_SLUG + "[bot]"
+ACTIONS = "github-actions[bot]"
+OTHER_BOT = "dependabot[bot]"
+
+
+def api_comment(created_at, login, body):
+    return {"created_at": created_at, "user": {"login": login}, "body": body}
+
+
+STARTED = api_comment("2026-09-16T23:46:40Z", APP, "📝 **Wing Commander · intake** — started")
+# The owner's own cost guess is not currency-shaped on purpose: an attribution
+# that admitted a person's comment would read "$99" as malformed, so every
+# scenario holding this comment kills that mutation, not just the ones where
+# it is the only comment.
+OWNER_REPLY = api_comment("2026-09-16T23:46:27Z", "charlesguse", "Q1: a\nQ2: b\n\nCost: $99 is my guess")
+WITH_COST = api_comment("2026-09-16T23:51:46Z", APP,
+                        "> **Action needed**\n>\n> **Cost**: $1.90 · 37/40 turns · claude-opus-5\n")
+ACTIONS_COST = api_comment("2026-09-16T23:51:46Z", ACTIONS, "**Cost**: $0.0042 · 3/10 turns")
+NO_COST = api_comment("2026-09-16T23:50:00Z", APP, "Thanks — I could not map this reply.")
+LEAKED = api_comment("2026-09-16T23:51:46Z", APP, "**Cost**: $COST_LINE · 40 turns")
+BEFORE_RUN = api_comment("2026-09-16T23:35:22Z", APP, "**Cost**: $1.53 · 19/50 turns")
+AFTER_RUN = api_comment("2026-09-16T23:59:00Z", APP, "**Cost**: $2.22 · 9/40 turns")
+OTHER_BOT_COST = api_comment("2026-09-16T23:49:00Z", OTHER_BOT, "Bumps foo. Cost: $12 (est.)")
+
+COST_SCENARIOS = [
+    dict(
+        name="no lifecycle issue resolved: nothing is searched, so nothing is "
+             "reported — not-checked is never checked-and-absent (#376)",
+        issue="", comments=[],
+        expect=[], expect_outcome="ok",
+    ),
+    dict(
+        name="the run's first comment is its 'started' announcement and a "
+             "later one carries the cost line: no signal, and the step "
+             "survives the cost-less comment under errexit (#376)",
+        issue="362", comments=[STARTED, WITH_COST],
+        expect=[], expect_outcome="ok",
+    ),
+    dict(
+        name="the owner replies again seconds after the run starts: a "
+             "person's comment is never the run's own, even one that "
+             "mentions a cost (#376)",
+        issue="362", comments=[OWNER_REPLY, WITH_COST],
+        expect=[], expect_outcome="ok",
+    ),
+    dict(
+        name="github-actions[bot] posted the line (a default-token step): it "
+             "is the pipeline's own identity too",
+        issue="362", comments=[STARTED, ACTIONS_COST],
+        expect=[], expect_outcome="ok",
+    ),
+    dict(
+        name="another bot commented in the window with a dollar figure: not a "
+             "pipeline identity, so not the run's — cost-line-missing, none "
+             "found (a login match, not 'any bot')",
+        issue="362", comments=[OTHER_BOT_COST],
+        expect=[("cost-line-missing", False)], expect_outcome="ok",
+    ),
+    dict(
+        name="the run's end time is unknown: an open-ended window cannot tell "
+             "this run's comments from the next run's — not checked, no "
+             "signal (#376)",
+        issue="362", comments=[STARTED, NO_COST], updated_at="",
+        expect=[], expect_outcome="ok",
+    ),
+    dict(
+        name="the App slug is unknown: the run's own comments cannot be "
+             "identified — not checked, no signal (#376)",
+        issue="362", comments=[STARTED, NO_COST], bot_slug="",
+        expect=[], expect_outcome="ok",
+    ),
+    dict(
+        name="the run commented but never posted a cost line (#366's shape): "
+             "cost-line-missing with lifecycle-comment-found true",
+        issue="362", comments=[OWNER_REPLY, NO_COST],
+        expect=[("cost-line-missing", True)], expect_outcome="ok",
+    ),
+    dict(
+        name="only a person commented during the run: cost-line-missing with "
+             "lifecycle-comment-found false",
+        issue="362", comments=[OWNER_REPLY],
+        expect=[("cost-line-missing", False)], expect_outcome="ok",
+    ),
+    dict(
+        name="cost lines posted before the run started and after it ended "
+             "belong to other runs: cost-line-missing, none found",
+        issue="362", comments=[BEFORE_RUN, AFTER_RUN],
+        expect=[("cost-line-missing", False)], expect_outcome="ok",
+    ),
+    dict(
+        name="the literal $COST_LINE leak (#272): cost-line-malformed carrying "
+             "the whole observed line",
+        issue="362", comments=[STARTED, LEAKED],
+        expect=[("cost-line-malformed", "Cost: $COST_LINE · 40 turns")],
+        expect_outcome="ok",
+    ),
+    dict(
+        name="a skipped run executed nothing, so it owes no cost line "
+             "(FR-026) — no signal, and no outcome record either",
+        issue="362", comments=[NO_COST], conclusion="skipped",
+        expect=[], expect_outcome=None,
+    ),
+    dict(
+        name="the comment read fails: no signal either way, and the collector "
+             "is recorded untrusted (#376)",
+        issue="362", comments=[], comments_fail=True,
+        expect=[], expect_outcome="failed",
+    ),
+]
+
+
+def run_cost_one(script, env, sc, tmproot):
+    workdir = tempfile.mkdtemp(dir=tmproot)
+    runner_temp = tempfile.mkdtemp(dir=tmproot)
+    bindir = tempfile.mkdtemp(dir=tmproot)
+    for name in ("signals.json", "collector-outcomes.json"):
+        with open(os.path.join(runner_temp, name), "w", encoding="utf-8") as fh:
+            fh.write("[]")
+    gh_path = os.path.join(bindir, "gh")
+    with open(gh_path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(STUB_GH_COST_TEMPLATE)
+    os.chmod(gh_path, 0o755)
+    stub_jq(bindir)
+
+    run_env = with_actions_defaults(env)
+    run_env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
+    run_env.update({"RUN_CONCLUSION": sc.get("conclusion", "success"), "CREATED_AT": COST_SINCE,
+                    "UPDATED_AT": sc.get("updated_at", COST_UNTIL), "ISSUE": sc["issue"],
+                    "BOT_SLUG": sc.get("bot_slug", COST_BOT_SLUG),
+                    "GH_STUB_RECORD": COST_RECORD,
+                    "GH_STUB_COMMENTS": json.dumps(sc["comments"])})
+    if sc.get("comments_fail"):
+        run_env["GH_STUB_COMMENTS_FAIL"] = "1"
+
+    rc, out, _, _ = run_step(BASH, script, workdir, run_env, runner_temp)
+    with open(os.path.join(runner_temp, "signals.json"), encoding="utf-8") as fh:
+        signals = json.load(fh)
+    with open(os.path.join(runner_temp, "collector-outcomes.json"), encoding="utf-8") as fh:
+        outcomes = json.load(fh)
+    for d in (workdir, runner_temp, bindir):
+        shutil.rmtree(d, ignore_errors=True)
+    return rc, out, signals, outcomes
+
+
+def suite_cost_report(script, env, tmproot):
+    failures = []
+    for sc in COST_SCENARIOS:
+        tag = f"[cost-report: {sc['name']}]"
+        rc, out, signals, outcomes = run_cost_one(script, env, sc, tmproot)
+        if rc != 0:
+            failures.append(f"{tag} the collector exited {rc}:\n{out}")
+            continue
+        got = []
+        for sig in signals:
+            facts = sig.get("facts") or {}
+            hint = sig.get("class-hint")
+            got.append((hint, facts.get("lifecycle-comment-found")
+                        if hint == "cost-line-missing" else facts.get("observed-text")))
+        if got != sc["expect"]:
+            failures.append(f"{tag} signals read {got}, expected {sc['expect']}. "
+                            f"signals.json: {signals}")
+        got_outcome = last_outcome(outcomes, "collect-cost-report")
+        if got_outcome != sc["expect_outcome"]:
+            failures.append(f"{tag} collector-outcomes.json for collect-cost-report "
+                            f"reads {got_outcome!r}, expected {sc['expect_outcome']!r}.")
+    return failures
+
+
+def mutate_cost_report(script, old, new, what):
+    if script.count(old) != 1:
+        sys.exit(f"::error::verify-gate-19: could not locate cost-report's {what} "
+                 f"(#376) to mutate — the step text may have changed shape; update "
+                 f"this harness alongside it.")
+    return script.replace(old, new, 1)
+
+
+COST_MUTATIONS = [
+    ("cost-report's not-checked guard (#376)",
+     'elif ($in.comments_checked // false) != true then []',
+     'elif false then []'),
+    ("cost-report's pipeline-identity filter on the run's own comments (#376)",
+     '| select(.userLogin as $l | any(($in.logins // [])[]; . == $l))', ''),
+    ("cost-report taking any bot's comment for the run's own (#376)",
+     '| select(.userLogin as $l | any(($in.logins // [])[]; . == $l))',
+     '| select((.userLogin // "") | endswith("[bot]"))'),
+    ("cost-report checking with an open-ended window (#376)",
+     'elif [ -z "$CREATED_AT" ] || [ -z "$UPDATED_AT" ] || [ -z "$BOT_SLUG" ]; then',
+     'elif false; then'),
+    ("cost-report's end-of-run bound on the run's own comments (#376)",
+     '| select(($in.until // "") == "" or .createdAt <= $in.until) ]', ']'),
+    ("cost-report searching every own comment, not only the earliest (#376)",
+     '| sort_by(.createdAt) as $own', '| (sort_by(.createdAt) | .[0:1]) as $own'),
+]
 
 
 # --------------------------------------------------------------------------
@@ -1812,6 +2147,15 @@ def main():
             "spec-slug's metrics-record fallback (#322)",
             suite_spec_slug, remove_record_fallback(spec_slug_script),
             spec_slug_env, spec_slug_tmproot))
+        spec_slug_failures.extend(run_script_mutation(
+            "spec-slug's spec-draft fallback (#376)",
+            suite_spec_slug, mutate_draft_fallback(spec_slug_script, "if false; then"),
+            spec_slug_env, spec_slug_tmproot))
+        spec_slug_failures.extend(run_script_mutation(
+            "spec-slug's spec-draft fallback being limited to a spec branch "
+            "with no record (#376)",
+            suite_spec_slug, mutate_draft_fallback(spec_slug_script, "if true; then"),
+            spec_slug_env, spec_slug_tmproot))
     finally:
         shutil.rmtree(spec_slug_tmproot, ignore_errors=True)
     spec_slug_failures.extend(run_single_home_check())
@@ -1849,6 +2193,26 @@ def main():
         print(f"::error::{f}")
     failures.extend(stepsum_failures)
 
+    cost_step = find_step(WATCHDOG, COST_REPORT_STEP)
+    cost_script, cost_env = render_step(cost_step)
+    cost_tmproot = tempfile.mkdtemp()
+    try:
+        cost_failures = suite_cost_report(cost_script, cost_env, cost_tmproot)
+        cost_failures.extend(run_attribution_mutation(
+            "cost-report's RUN_CONCLUSION attribution guard (FR-026)",
+            suite_cost_report, cost_script, cost_env, cost_tmproot,
+            "RUN_CONCLUSION"))
+        for label, old, new in COST_MUTATIONS:
+            cost_failures.extend(run_script_mutation(
+                label, suite_cost_report,
+                mutate_cost_report(cost_script, old, new, label),
+                cost_env, cost_tmproot))
+    finally:
+        shutil.rmtree(cost_tmproot, ignore_errors=True)
+    for f in cost_failures:
+        print(f"::error::{f}")
+    failures.extend(cost_failures)
+
     aggregate_failures = run_aggregate_suite()
     for f in aggregate_failures:
         print(f"::error::{f}")
@@ -1860,6 +2224,7 @@ def main():
           f"spec-slug step: {len(SPEC_SLUG_SCENARIOS)} scenario(s) + single-home check; "
           f"spec-meta collector: {len(SPEC_META_SCENARIOS)} scenario(s); "
           f"step-summary collector: {len(STEPSUM_SCENARIOS)} scenario(s); "
+          f"cost-report collector: {len(COST_SCENARIOS)} scenario(s); "
           f"aggregate: {len(AGGREGATE_CASES)} case(s); "
           f"{len(failures)} failure(s).")
     sys.exit(1 if failures else 0)
