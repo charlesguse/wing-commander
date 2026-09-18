@@ -1080,6 +1080,7 @@ jobs:
       # verified commit. With next-workflow empty the stage stops cleanly
       # here: standalone adoption needs no sibling stage (FR-002).
       - name: Dispatch tasks stage (auto)
+        id: dispatch-auto
         if: steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1102,6 +1103,23 @@ jobs:
           fi
           gh workflow run "$NEXT_WORKFLOW" -f slug="$SLUG"
           echo "Dispatched $NEXT_WORKFLOW (slug=$SLUG)." >> "$GITHUB_STEP_SUMMARY"
+          echo "dispatched=true" >> "$GITHUB_OUTPUT"
+
+      # #377: the auto-mode hand-off above posts nothing to the lifecycle
+      # issue -- only the NEXT_WORKFLOW-empty branch above it does, in the
+      # standalone-mode comment. So a run that spent real money and handed
+      # off cleanly reported none of it. Same shape as #366's fix in
+      # clarify.yml: a cost-only info callout on the arm that would
+      # otherwise stay silent (callout-points.md row 13).
+      - name: Report cost of an auto-mode hand-off
+        if: steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto' && steps.dispatch-auto.outputs.dispatched == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ steps.meta.outputs.issue || steps.newissue.outputs.issue }}
+          kind: info
+          summary: "Plan committed; task generation was dispatched automatically."
+          body: ${{ steps.cost-line.outputs.line }}
 
       # over-budget is observability, not failure (FR-017) -- see clarify.yml.
       - name: Report over-budget agent run (auto)
