@@ -3,7 +3,7 @@
   "spec_dir": "specs/050-branch-drift-sha-baseline",
   "feature_num": "050",
   "stage": "implement",
-  "iteration": 2,
+  "iteration": 3,
   "spec_branch": "spec/050-branch-drift-sha-baseline",
   "pending_re_review_from": ["charlesguse"]
 }
