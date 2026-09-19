@@ -1139,6 +1139,7 @@ jobs:
       # over-budget is observability, not failure (FR-017) -- see clarify.yml.
       - name: Report over-budget agent run (auto)
         if: steps.guard.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto' && steps.agent-auto-verdict.outputs.verdict == 'healthy' && steps.agent-auto-verdict.outputs.over-budget == 'true'
+        continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ env.WC_BOT_TOKEN }}
@@ -1159,6 +1160,7 @@ jobs:
           steps.dupe.outputs.skip != 'true' &&
           steps.agent-pr-verdict.outputs.verdict == 'healthy' &&
           steps.agent-pr-verdict.outputs.over-budget == 'true'
+        continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ env.WC_BOT_TOKEN }}

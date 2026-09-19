@@ -1056,6 +1056,7 @@ jobs:
       # over-budget is observability, not failure (FR-017) -- see clarify.yml.
       - name: Report over-budget agent run (cycle)
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.cycle.outcome != 'skipped' && steps.cycle-verdict.outputs.verdict == 'healthy' && steps.cycle-verdict.outputs.over-budget == 'true'
+        continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ env.WC_BOT_TOKEN }}
@@ -1592,6 +1593,7 @@ jobs:
       # run (cycle)" above.
       - name: Report over-budget agent run (retry)
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.retry.outcome != 'skipped' && steps.retry-verdict.outputs.verdict == 'healthy' && steps.retry-verdict.outputs.over-budget == 'true'
+        continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ env.WC_BOT_TOKEN }}
@@ -2135,6 +2137,7 @@ jobs:
       # run (cycle)" above.
       - name: Report over-budget agent run (progress comment)
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.progress.outcome != 'skipped' && steps.progress-verdict.outputs.verdict == 'healthy' && steps.progress-verdict.outputs.over-budget == 'true'
+        continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ env.WC_BOT_TOKEN }}
