@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,24 +31,26 @@
 
 ## Notes
 
-- **Three `[NEEDS CLARIFICATION]` markers remain open**, at FR-002, FR-003,
-  and FR-007. They are the three decisions lifecycle issue #386 says the
-  owner must make, and none has a defensible default:
-  - **FR-003 (identity)** — security and scope. Who plays the maintainer in
-    the fixture repository, and whether an unattended actor may hold that
-    ability at all when the gates exist to keep a human in the loop. The
-    published clarify gate rejects bot comments, so the answer determines
-    whether the feature is even reachable without widening a published
-    compatibility surface.
-  - **FR-002 (which gates are driven vs. removed)** — scope. Each of the
-    four gates falls one way or the other, and each removal subtracts a
-    stage from what spec 045 FR-008 claims the run exercises. Guessing here
-    would silently redefine what a release is cut on.
-  - **FR-007 (unanticipated clarification questions)** — scope and
-    determinism. Two independent runs asked the same two questions, which is
-    evidence but not a guarantee; the three plausible strategies differ in
-    whether an unexpected question is a normal event or a verification
-    failure.
+- **All three `[NEEDS CLARIFICATION]` markers are resolved** by the owner's
+  answers on lifecycle issue #386, recorded in the spec's Clarifications
+  section (Session 2026-09-19):
+  - **FR-003 / FR-003a (identity)** — a dedicated machine user account, not
+    a bot, holding a credential scoped to the test repository alone and held
+    as a secret in this repository. Provisioning it is a maintainer
+    prerequisite outside the pipeline; an unset secret produces the
+    infrastructure verdict FR-014 describes. The published clarify gate is
+    satisfied as it stands, with no compatibility surface widened.
+  - **FR-002 (which gates are driven vs. removed)** — all four are driven:
+    the harness answers the clarification questions and merges the spec,
+    plan, and finalize pull requests. Nothing is removed by fixture
+    configuration, so spec 045 FR-008's full-lifecycle claim stands
+    unamended and this feature adds no accepted gap (FR-019, FR-020,
+    SC-005).
+  - **FR-007 (unanticipated clarification questions)** — one fixed,
+    pre-authored reply answering the two known questions and delegating
+    anything else to the stage's judgment, posted once per round within
+    FR-006's bound. An unexpected question is a normal event; exhausting the
+    bound is a gate stall.
 - The issue's fourth decision point — poll budget and per-attempt cost — is
   **not** a fourth marker. It has a defensible default: re-derive both from
   one observed complete unattended run, keep the budget a reviewed
@@ -63,16 +65,16 @@
   product is CI workflow behaviour, so the spec necessarily names lifecycle
   stages, gates, labels, and verdicts. It names no job, step, or file, and
   states outcomes rather than mechanisms. The one repository variable it
-  names (`WING_COMMANDER_PLAN_REVIEW`, in Assumptions) is cited as existing
-  prior art for why one gate needs no new mechanism, explicitly without
-  settling whether that gate should be removed.
+  names (`WING_COMMANDER_PLAN_REVIEW`, in Assumptions) is cited only to
+  record that the gate is left on rather than switched off. The clarified
+  identity (a machine user account reached through a credential secret) is
+  the owner's decision from #386, stated as the actor and the prerequisite
+  rather than as a mechanism for obtaining or wiring it.
 - **Requirement Completeness — bounded scope**: the spec leaves spec 045's
   detection, versioning, dispatch, and release mechanics unchanged, states
   that `specs/054-e2e-container-coverage` is orthogonal, and states that
   `specs/053-e2e-scratch-provisioning` remains the path by which the fixture
   repository comes into existence. FR-012 bounds the blast radius of the
   change on the published surface.
-- Every other checklist item passes. The spec is ready for
-  `/speckit-clarify`; the three open markers are posted to lifecycle issue
-  #386 as questions rather than waiting on an interactive answer.
-</content>
+- Every other checklist item passes. With the three markers resolved, the
+  spec is ready for planning; no clarification remains open.

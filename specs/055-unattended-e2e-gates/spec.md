@@ -79,13 +79,17 @@ the harness, not from a person.
 2. **Given** an attempt whose spec pull request is open, **When** the
    harness merges it, **Then** the plan stage starts exactly as it does for
    a maintainer-merged spec pull request.
-3. **Given** an attempt whose final implementation pull request is open,
+3. **Given** an attempt whose plan pull request is open with the plan
+   review gate left on as an adopter would have it, **When** the harness
+   merges it, **Then** task generation starts exactly as it does for a
+   maintainer-merged plan pull request.
+4. **Given** an attempt whose final implementation pull request is open,
    **When** the harness merges it, **Then** cleanup runs and the lifecycle
    issue closes with `stage:done`.
-4. **Given** a complete unattended attempt, **When** the verdict is
+5. **Given** a complete unattended attempt, **When** the verdict is
    computed, **Then** it is `pass` and the release decision proceeds on it
    under the rules spec 045 already sets.
-5. **Given** an unattended attempt, **When** a maintainer inspects the test
+6. **Given** an unattended attempt, **When** a maintainer inspects the test
    repository afterwards, **Then** the number of human acts required for
    that attempt is zero.
 
@@ -95,10 +99,11 @@ the harness, not from a person.
 
 Every gate the harness drives is asserted positively — the question was
 posted *and* answered *and* the stage that consumes the answer ran; the
-pull request existed *and* was merged. Every gate removed by configuring
-the fixture repository rather than driving it is named in a written,
-accepted-gap statement, the same way spec 045's FR-008a states the
-single-iteration convergence gap, and the run's own report names it too.
+pull request existed *and* was merged. All four gates are driven, so the
+written record states that and adds no gap to spec 045's FR-008a; were a
+gate ever removed by configuring the fixture repository instead, it would
+be named there with what goes unverified, and the run's own report would
+name it too.
 
 **Why this priority**: The whole point of the end-to-end run is that a
 release is cut on evidence rather than on lint. A run that reaches
@@ -119,9 +124,10 @@ reading the workflow.
 1. **Given** a passing unattended run, **When** its verdict is read,
    **Then** each driven gate carries machine-observable evidence that it
    was satisfied, not merely that the lifecycle moved on.
-2. **Given** a gate that the fixture configuration removes rather than
-   drives, **When** the accepted-gap statement is read, **Then** that gate
-   is named there along with what goes unverified because of it.
+2. **Given** the accepted-gap statement and the run's report, **When** they
+   are read, **Then** they record that all four human gates were driven and
+   name no gate as removed — and any gate that ever is removed is named in
+   both, along with what goes unverified because of it.
 3. **Given** a run in which a gate the harness was supposed to drive was
    never reached, **When** the verdict is computed, **Then** it is not
    `pass`, regardless of whether the lifecycle reached a terminal state by
@@ -171,24 +177,25 @@ stall rather than a pipeline defect — readable without opening the run.
 
 ### User Story 4 - The harness's ability to act stops at the test repository (Priority: P1)
 
-Whatever identity and credential lets the harness answer and merge in the
-test repository cannot comment on, approve, or merge anything in this
-repository or in any adopter's. The published stages' own actor and merge
-gates are unchanged: nothing this feature ships gives an adopter a way to
-have a bot merge into their default branch.
+The dedicated machine user account that answers and merges in the test
+repository cannot comment on, approve, or merge anything in this repository
+or in any adopter's. The published stages' own actor and merge gates are
+unchanged: nothing this feature ships gives an adopter a way to have a bot
+merge into their default branch.
 
 **Why this priority**: Constitution Principle V says humans merge every
 pull request into `main` and the bot never approves or merges to `main`.
 That rule governs the product and this repository. Granting an unattended
 actor merge rights is defensible only for a disposable fixture repository
 whose entire contents are force-reset before every attempt — and only if
-the grant provably cannot reach anywhere else. It is P1 because it ships
-inseparably from US1: the credential exists the moment US1 works.
+the grant provably cannot reach anywhere else, which is the condition on
+which FR-003 accepts it. It is P1 because it ships inseparably from US1:
+the credential exists the moment US1 works.
 
-**Independent Test**: Enumerate what the harness's credential can reach and
-confirm the set is exactly the configured test repository; then confirm
-that this repository's own gates, and the published stage workflows' actor
-and merge conditions, are unchanged by this feature.
+**Independent Test**: Enumerate what the machine account and its credential
+can reach and confirm the set is exactly the configured test repository;
+then confirm that this repository's own gates, and the published stage
+workflows' actor and merge conditions, are unchanged by this feature.
 
 **Acceptance Scenarios**:
 
@@ -202,10 +209,10 @@ and merge conditions, are unchanged by this feature.
 3. **Given** this feature shipped, **When** the published stage workflows
    are compared against their previous release, **Then** no actor gate,
    merge gate, or human-gate condition has been weakened.
-4. **Given** the harness's credential is unset or invalid, **When** an
-   attempt starts, **Then** it produces the infrastructure-failure outcome
-   naming what to set, cuts no release, and does not begin a lifecycle it
-   cannot finish.
+4. **Given** the machine account's credential secret is unset or invalid,
+   **When** an attempt starts, **Then** it produces the
+   infrastructure-failure outcome naming what to set, cuts no release, and
+   does not begin a lifecycle it cannot finish.
 
 ---
 
@@ -242,7 +249,9 @@ in the same change that records the evidence — not before.
 - **The pipeline asks a question the harness has no prepared answer for**:
   the fixture feature is fixed, but the questions an agent asks about it are
   not guaranteed to be. Two independent runs asked the same two questions;
-  nothing guarantees the third does.
+  nothing guarantees the third does. The one fixed reply answers those two
+  and delegates anything else to the stage's own judgment, so the attempt
+  proceeds rather than stalling.
 - **The pipeline asks no question at all**: a spec with zero
   `[NEEDS CLARIFICATION]` markers means the clarification gate never opens.
   The run must not wait for an answer nobody was asked for, and must not
@@ -270,9 +279,9 @@ in the same change that records the evidence — not before.
 - **The pause switch is set mid-attempt**: unchanged — the in-flight
   attempt may finish; no new attempt starts.
 - **The fixture's gate configuration drifts from this repository's own**:
-  the fixture is configured as an adopter would be; any deliberate
-  difference is part of the accepted-gap statement rather than an
-  undocumented divergence.
+  the fixture is configured as an adopter would be, with every human gate
+  left on so all four are driven; any deliberate difference is part of the
+  accepted-gap statement rather than an undocumented divergence.
 
 ## Requirements *(mandatory)*
 
@@ -283,23 +292,27 @@ in the same change that records the evidence — not before.
 - **FR-001**: The end-to-end verification run MUST be able to carry its
   fixture feature from kickoff to a terminal lifecycle state with zero human
   acts in the test repository.
-- **FR-002**: Every point in the lifecycle at which the pipeline waits for a
-  human MUST be resolved either by the harness performing that act or by the
-  test repository's own configuration removing the gate. Which of the two
-  applies MUST be a recorded decision per gate, never an incidental outcome.
-  [NEEDS CLARIFICATION: which gates does the unattended run drive, and which
-  does it remove by configuring the fixture repository — the clarification
-  exchange, the spec pull request, the plan pull request, and the finalize
-  pull request each fall one way or the other, and each removal subtracts a
-  stage from what spec 045 FR-008 claims the run exercises.]
-- **FR-003**: The identity the harness acts as MUST be accepted by the
-  published stages' own actor gates as they already stand — in particular by
-  the clarify entry point, which ignores comments from bots and requires a
-  maintainer association or the lifecycle issue's own author.
-  [NEEDS CLARIFICATION: which identity plays the maintainer in the test
-  repository, and is granting an unattended actor the ability to answer
-  clarification questions and merge pull requests acceptable given those
-  gates exist to keep a human in the loop?]
+- **FR-002**: All four points at which the lifecycle waits for a human MUST
+  be driven by the harness performing that act: the harness answers the
+  clarification questions and merges the spec, plan, and finalize pull
+  requests. No gate is removed by configuring the fixture repository, so
+  spec 045 FR-008's full-lifecycle claim stays true with no new accepted
+  gap. Each gate's disposition remains a recorded decision, never an
+  incidental outcome; a gate that cannot be driven is a gate stall
+  (FR-021), not a silent removal.
+- **FR-003**: The harness MUST act as a dedicated machine user account — a
+  real user account, not a bot identity — holding a credential scoped to the
+  test repository alone, so that it is accepted by the published stages' own
+  actor gates as they already stand, in particular by the clarify entry
+  point, which ignores comments from bots and requires a maintainer
+  association or the lifecycle issue's own author. Granting that account the
+  ability to answer clarification questions and merge pull requests inside
+  the disposable fixture repository is accepted, on the conditions FR-011
+  through FR-015 impose.
+- **FR-003a**: Provisioning that account and storing its credential as a
+  secret in this repository is a maintainer act performed outside the
+  pipeline, and MUST be stated as a prerequisite rather than automated. The
+  credential MUST be read only by the auto-release verification job.
 - **FR-004**: Driving a gate MUST NOT require modifying the published stage
   workflows, and MUST NOT require the fixture's installed wrapper workflows
   to differ from the set `docs/adoption.md` documents in any way that
@@ -312,12 +325,12 @@ in the same change that records the evidence — not before.
   MUST be bounded, and exhausting that bound MUST end the attempt with a
   gate-stall outcome rather than an open-ended wait.
 - **FR-007**: The harness MUST handle a clarification question it did not
-  anticipate without stalling the attempt and without any human act.
-  [NEEDS CLARIFICATION: how — a single fixed reply that answers the known
-  questions and delegates anything else to the stage's own judgment, a
-  kickoff request written so precisely that no question is expected (which
-  would make an unexpected question a verification failure), or a bounded
-  generic reply repeated per round?]
+  anticipate without stalling the attempt and without any human act, by
+  posting one fixed, pre-authored reply that answers the two known questions
+  and tells the stage to use its own judgment on anything else. The same
+  reply is posted once per round, up to the bound FR-006 sets; an
+  unanticipated question is therefore a normal event rather than a
+  verification failure.
 - **FR-008**: When the pipeline asks no clarification question at all, the
   attempt MUST proceed to the next gate rather than waiting for, or
   requiring, an exchange that never opened.
@@ -330,18 +343,21 @@ in the same change that records the evidence — not before.
 
 #### Containment
 
-- **FR-011**: The credential that lets the harness act in the test
-  repository MUST be scoped to that repository alone. It MUST NOT be able to
-  comment on, approve, or merge anything in this repository.
+- **FR-011**: The machine user account's credential MUST be scoped to the
+  test repository alone — the account holds access to no other repository,
+  and the credential itself is narrowed to the same single repository. It
+  MUST NOT be able to comment on, approve, or merge anything in this
+  repository.
 - **FR-012**: This feature MUST NOT weaken any actor gate, merge gate, or
   human gate in the published stage workflows. No adopter gains an
   unattended path to merging into their default branch as a result of it.
 - **FR-013**: When the configured test repository resolves to this
   repository, the attempt MUST refuse outright before acting, extending the
   refusal the branch reset already performs to every act this feature adds.
-- **FR-014**: When the harness's credential is missing, malformed, or
+- **FR-014**: When the harness's credential secret is unset, malformed, or
   rejected, the attempt MUST produce the infrastructure-failure outcome
-  naming precisely what to configure, MUST cut no release, and MUST NOT
+  naming precisely what to configure — the same way the run already reports
+  an unset test-repository variable — MUST cut no release, and MUST NOT
   start a lifecycle it cannot carry to a verdict.
 - **FR-015**: The harness's acts MUST be attributable in the test
   repository's own audit trail, so a maintainer inspecting an attempt can
@@ -359,15 +375,17 @@ in the same change that records the evidence — not before.
 - **FR-018**: A run in which a gate the harness was supposed to drive was
   never reached or never satisfied MUST NOT produce a `pass` verdict, even
   if the lifecycle reached a terminal state by another route.
-- **FR-019**: Every gate removed by fixture configuration rather than driven
-  MUST be named in a written accepted-gap statement alongside spec 045's
-  FR-008a, stating what goes unverified as a result, and MUST also be named
-  in the run's own report so a reader of the report knows what the pass
-  covers.
+- **FR-019**: Because FR-002 drives all four gates, this feature adds no
+  accepted gap: the accepted-gap statement alongside spec 045's FR-008a MUST
+  record that the four human gates are driven rather than removed, and the
+  run's own report MUST name the four gates it drove so a reader of the
+  report knows what the pass covers. Should a gate ever be removed by
+  fixture configuration instead, it MUST be named in both places along with
+  what goes unverified as a result.
 - **FR-020**: Spec 045's FR-008 claim of full intake→cleanup coverage MUST
-  be reconciled with what this run actually exercises — either the coverage
-  is genuinely full, or the difference is stated as an accepted gap. The two
-  MUST NOT disagree.
+  be reconciled with what this run actually exercises. Under FR-002 the
+  coverage is genuinely full and the claim stands unamended; any future
+  divergence MUST be stated as an accepted gap. The two MUST NOT disagree.
 
 #### Reporting
 
@@ -406,20 +424,24 @@ in the same change that records the evidence — not before.
 - **Lifecycle gate**: one point at which the pipeline waits for a human act
   in the test repository — the clarification exchange, the spec pull
   request, the plan pull request, the finalize pull request. Each carries a
-  recorded disposition: driven by the harness, or removed by fixture
-  configuration.
-- **Fixture maintainer identity**: whoever the harness acts as inside the
-  test repository. Must satisfy the published stages' existing actor gates
-  and must be unable to reach any other repository.
+  recorded disposition; under FR-002 all four are driven by the harness and
+  none is removed by fixture configuration.
+- **Fixture maintainer identity**: the dedicated machine user account the
+  harness acts as inside the test repository, provisioned by a maintainer
+  outside the pipeline and reached through a credential held as a secret in
+  this repository. Satisfies the published stages' existing actor gates as a
+  real user rather than a bot, and can reach no other repository.
 - **Prepared answer**: the deterministic, pre-authored text the harness
-  posts when the clarification gate opens. Fixed content, not generated per
-  run.
+  posts when the clarification gate opens — one fixed reply answering the
+  two known questions and delegating anything else to the stage's judgment.
+  Fixed content, not generated per run, posted once per round.
 - **Gate evidence**: the machine-observable repository state proving a gate
   was actually satisfied — the question comment, the answer comment, the
   stage run that consumed it, each pull request's merge state.
 - **Accepted-gap statement**: the written record of which gates this
   verification removes rather than drives, and what consequently goes
-  unverified before a tag is cut. Sibling of spec 045's FR-008a.
+  unverified before a tag is cut. Sibling of spec 045's FR-008a; under
+  FR-002 it records that all four gates are driven and names no removal.
 - **Gate stall**: the outcome class for an attempt that stopped at a named
   gate, distinct from a poll timeout and from a pipeline defect.
 - **Resume condition**: the evidence that must exist before the pause switch
@@ -439,8 +461,9 @@ in the same change that records the evidence — not before.
 - **SC-004**: Every driven gate in a `pass` verdict carries its own
   evidence: the count of gates recorded as satisfied without evidence is
   zero.
-- **SC-005**: The count of gates removed by fixture configuration that are
-  absent from the accepted-gap statement is zero.
+- **SC-005**: The count of gates removed by fixture configuration rather
+  than driven is zero — all four are driven — and the count of any such
+  removal absent from the accepted-gap statement is likewise zero.
 - **SC-006**: A maintainer reading only the failure report can state, in
   under two minutes and without opening the run, whether an attempt stopped
   at a gate — and which — or failed for another reason.
@@ -472,8 +495,8 @@ in the same change that records the evidence — not before.
 - Constitution Principle V governs this repository and the published
   product. The test repository is a disposable fixture whose entire contents
   are force-reset before every attempt, which is why an unattended actor
-  merging there is even discussable — the question of whether it is
-  acceptable is left open in FR-003 rather than assumed.
+  merging there is discussable at all; FR-003 settles that it is acceptable
+  there, and only there, under the containment requirements.
 - The existing verdict shape, failure classification, durable failure issue,
   and run-summary mechanics are reused; this feature adds outcome classes to
   them rather than a new reporting channel.
@@ -482,11 +505,18 @@ in the same change that records the evidence — not before.
   other.
 - The clarify entry point's actor gate — no bots, maintainer association or
   the issue's own author — is a published compatibility surface and is not
-  widened by this feature. The harness works within it.
+  widened by this feature. The harness works within it: the machine user
+  account carries the association the gate already requires in the fixture
+  repository.
+- Provisioning the machine user account, granting it access to the test
+  repository, and storing its credential as a secret in this repository are
+  maintainer prerequisites performed outside the pipeline (FR-003a). An
+  attempt that runs before they exist reports the infrastructure failure of
+  FR-014 rather than attempting to create them.
 - The plan review gate is already configurable per repository
-  (`WING_COMMANDER_PLAN_REVIEW`), so removing that one gate needs no new
-  mechanism; whether it *should* be removed is part of FR-002's open
-  question, not settled by the fact that it can be.
+  (`WING_COMMANDER_PLAN_REVIEW`), so removing that one gate would need no
+  new mechanism — but FR-002 does not remove it. The fixture leaves it on as
+  an adopter would have it, and the harness merges the plan pull request.
 - The current poll budget and the roughly one-dollar-per-attempt figure were
   sized before the run had to wait on any gate. Both are re-derived from an
   observed complete unattended run rather than being carried forward.
@@ -501,5 +531,52 @@ in the same change that records the evidence — not before.
   disproved that, so nothing here assumes a fixed question set.
 - Attributability (FR-015) is satisfied by the test repository's ordinary
   audit trail — who commented, who merged — rather than by a new ledger.
-</content>
-</invoke>
+
+## Clarifications
+
+### Session 2026-09-19
+
+All three open questions were answered by the repository owner on lifecycle
+issue [#386](https://github.com/charlesguse/wing-commander/issues/386). No
+`[NEEDS CLARIFICATION]` markers remain.
+
+**Question 1 — Which identity plays the maintainer in the test repository**
+(FR-003, FR-003a, FR-011, FR-014, User Story 4)
+
+*Asked*: which identity plays the maintainer in the test repository, and is
+granting an unattended actor the ability to answer clarification questions
+and merge pull requests acceptable given those gates exist to keep a human
+in the loop?
+
+*Answered*: **Option A** — a dedicated machine user account holding a
+credential scoped to the test repository alone, stored as a secret in this
+repository and used only by the auto-release verification job. Provisioning
+the account and the secret is a maintainer act that happens outside the
+pipeline, so it is stated as a prerequisite; the job fails with a clear
+infrastructure verdict when the secret is unset, the way it already does for
+the test-repository variable.
+
+**Question 2 — Which gates are driven and which are removed** (FR-002,
+FR-019, FR-020, SC-005, User Stories 1 and 2)
+
+*Asked*: which gates does the unattended run drive, and which does it remove
+by configuring the fixture repository — each removal subtracts a stage from
+what spec 045 FR-008 claims the run exercises.
+
+*Answered*: **Option A** — drive all four gates: the harness answers the
+clarification questions and merges the spec, plan, and finalize pull
+requests. Spec 045 FR-008's full-lifecycle claim stays true with no new
+accepted gap.
+
+**Question 3 — Handling an unanticipated clarification question** (FR-005,
+FR-006, FR-007)
+
+*Asked*: how is a clarification question the harness did not anticipate
+handled — a single fixed reply that delegates anything else to the stage's
+own judgment, a kickoff request precise enough that any question is a
+verification failure, or a bounded generic reply repeated per round?
+
+*Answered*: **Option A** — one fixed, pre-authored reply that answers the
+two known questions and tells the stage to use its own judgment on anything
+else, posted once per round up to a bounded number of rounds. Exhausting the
+bound is a gate stall under FR-006.
