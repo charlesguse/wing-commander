@@ -1762,6 +1762,18 @@ jobs:
           owner: ${{ steps.scratch-parts.outputs.owner }}
           repo-name: ${{ steps.scratch-parts.outputs.name }}
 
+      # Relayed into a job-scoped env var (not amended into
+      # _shared/scoped-app-token itself, which auto-release.yml also uses for
+      # an unrelated purpose and has no reason to know about WC_SCRATCH_TOKEN)
+      # so the post-agent re-mint below can refresh it for every step after
+      # the agent with no further per-step edits -- see clarify.yml.
+      - name: Relay scratch token to the job environment
+        shell: bash
+        env:
+          TOKEN: ${{ steps.scratch-token.outputs.token }}
+        run: |
+          echo "WC_SCRATCH_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
       - name: Resolve the scratch repository
         id: scratch-repo
         shell: bash
@@ -1828,7 +1840,7 @@ jobs:
         id: scaffold-reset
         uses: ./.wing-commander-pipeline/.github/actions/_shared/orphan-branch-reset
         with:
-          token: ${{ steps.scratch-token.outputs.token }}
+          token: ${{ env.WC_SCRATCH_TOKEN }}
           repo: ${{ steps.scratch-repo.outputs.full-name }}
           branch: ${{ steps.scratch-repo.outputs.branch }}
           bot-name: "${{ steps.ctx.outputs.bot-slug }}[bot]"
@@ -1841,7 +1853,7 @@ jobs:
         shell: bash
         env:
           # The scratch-scoped token, not steps.ctx's — see the mint step.
-          GH_TOKEN: ${{ steps.scratch-token.outputs.token }}
+          GH_TOKEN: ${{ env.WC_SCRATCH_TOKEN }}
           FULL_NAME: ${{ steps.scratch-repo.outputs.full-name }}
           BRANCH: ${{ steps.scratch-repo.outputs.branch }}
           CANDIDATE: ${{ needs.prepare.outputs.candidate-version }}
@@ -1916,7 +1928,7 @@ jobs:
         timeout-minutes: 15
         uses: anthropics/claude-code-action@v1
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
           # Without this the stage verifies the WRONG REPOSITORY. The
           # candidate's `create-new-feature.sh` resolves its project root with
@@ -1945,7 +1957,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
-          github_token: ${{ steps.ctx.outputs.token }}
+          github_token: ${{ env.WC_BOT_TOKEN }}
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           prompt: |
             Run this command, exactly as written, from the directory you
@@ -2001,6 +2013,36 @@ jobs:
             --max-turns ${{ steps.decide-ceiling.outputs.ceiling }}
             --allowedTools "Bash(e2e-scratch/.specify/scripts/bash/create-new-feature.sh:*),Bash(bash e2e-scratch/.specify/scripts/bash/create-new-feature.sh:*),Write(e2e-scratch/**),Edit(e2e-scratch/**),Write(${{ github.workspace }}/e2e-scratch/**),Edit(${{ github.workspace }}/e2e-scratch/**)"
             --disallowedTools "WebSearch,WebFetch,Bash(git push:*)"
+
+      - name: Re-establish Wing Commander context (post-agent)
+        if: always()
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      # Independent of the WC_BOT_TOKEN refresh above -- this scratch-scoped
+      # credential authenticates a different repository entirely (D8, see the
+      # mint step). Neither token is embedded in a persisted git remote in
+      # this job (every push builds its authenticated URL fresh from the env
+      # var at push time), so only the relay needs refreshing, not a remote.
+      - name: Re-mint scratch-repository App token (post-agent)
+        if: always()
+        id: scratch-token-post-agent
+        uses: ./.wing-commander-pipeline/.github/actions/_shared/scoped-app-token
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+          owner: ${{ steps.scratch-parts.outputs.owner }}
+          repo-name: ${{ steps.scratch-parts.outputs.name }}
+
+      - name: Relay scratch token to the job environment (post-agent)
+        if: always()
+        shell: bash
+        env:
+          TOKEN: ${{ steps.scratch-token-post-agent.outputs.token }}
+        run: |
+          echo "WC_SCRATCH_TOKEN=$TOKEN" >> "$GITHUB_ENV"
 
       - name: Compute agent run verdict
         id: decide-verdict
@@ -2097,7 +2139,7 @@ jobs:
         continue-on-error: true
         env:
           # The scratch-scoped token, not steps.ctx's — see the mint step.
-          GH_TOKEN: ${{ steps.scratch-token.outputs.token }}
+          GH_TOKEN: ${{ env.WC_SCRATCH_TOKEN }}
           FULL_NAME: ${{ steps.scratch-repo.outputs.full-name }}
           BRANCH: ${{ steps.scratch-repo.outputs.branch }}
           BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
