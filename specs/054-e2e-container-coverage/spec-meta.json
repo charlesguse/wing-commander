@@ -3,7 +3,7 @@
   "spec_dir": "specs/054-e2e-container-coverage",
   "feature_num": "054",
   "stage": "implement",
-  "iteration": 1,
+  "iteration": 2,
   "spec_branch": "spec/054-e2e-container-coverage",
   "pending_re_review_from": ["charlesguse"]
 }
