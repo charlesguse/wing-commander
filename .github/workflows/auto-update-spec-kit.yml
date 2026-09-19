@@ -2064,14 +2064,18 @@ jobs:
           owner: ${{ steps.scratch-parts.outputs.owner }}
           repo-name: ${{ steps.scratch-parts.outputs.name }}
 
-      # FR-005/FR-004 (spec 052, maintainer review of PR #407): guarded on
-      # the mint's own outcome -- a step's continue-on-error rewrites
-      # .conclusion to success on failure, but .outcome still reflects the
-      # real result. Without this guard, a failed re-mint (empty token
+      # FR-005/FR-004 (spec 052, second maintainer review of PR #407):
+      # guarded on the composite's own `ok` output, not `.outcome` --
+      # `scoped-app-token`'s "Confirm the target repository is reachable"
+      # step always `exit 0`s regardless of whether the mint actually
+      # succeeded (it reports failure only through `ok`/`failure-reason`
+      # outputs), so the calling step's `.outcome` reads "success"
+      # unconditionally and can never distinguish a real mint failure.
+      # Without this guard reading `ok`, a failed re-mint (empty token
       # output) would blank an otherwise-still-valid WC_SCRATCH_TOKEN ahead
       # of the step-21 push, instead of simply leaving it unrefreshed.
       - name: Relay scratch token to the job environment (post-agent)
-        if: "!cancelled() && steps.decide.outcome != 'skipped' && steps.scratch-token-post-agent.outcome == 'success'"
+        if: "!cancelled() && steps.decide.outcome != 'skipped' && steps.scratch-token-post-agent.outputs.ok == 'true'"
         continue-on-error: true
         shell: bash
         env:
@@ -2195,13 +2199,18 @@ jobs:
       # maintainer review of PR #407). No remote-refresh step for
       # env.WC_BOT_TOKEN in this job (it never persists a credential in a
       # git remote -- the scratch-token mint above is the one credential
-      # this job pushes with), so refresh-outcome defaults to 'success'.
+      # this job pushes with). refresh-outcome carries the scratch-token
+      # mint's own `ok` output instead (second maintainer review of PR
+      # #407, FR-004): this job's WC_SCRATCH_TOKEN is a second, independent
+      # credential the composite's two-input shape does not otherwise see,
+      # so a failed scratch re-mint would previously go unattributed here.
       - name: Determine post-agent credential status
         id: credential-status
         if: "!cancelled() && steps.decide.outcome != 'skipped'"
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
         with:
           mint-outcome: ${{ steps.reestablish.outcome }}
+          refresh-outcome: ${{ steps.scratch-token-post-agent.outputs.ok == 'true' && 'success' || 'failure' }}
 
   # Tiered smoke test against the prepared candidate.
   verify:

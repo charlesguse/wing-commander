@@ -260,7 +260,7 @@ Code review of PR #407 at head bb064e9 (charlesguse) found the shipped remedy do
 
 ### Must fix
 
-- [ ] `auto-update-spec-kit.yml:2074`: guard on `steps.scratch-token-post-agent.outputs.ok == 'true'` instead of `.outcome == 'success'` (the composite's mint is `continue-on-error` and its check step always exits 0, so `.outcome` is always `success`) so a failed re-mint can't blank a still-valid `WC_SCRATCH_TOKEN` ahead of the push at `:2078-2080`. Also pass the scratch-mint result into the `credential-status` call at `:2199` (which currently passes only `reestablish.outcome`) so a failed scratch mint is attributed to the credential. (FR-005, FR-004)
+- [X] `auto-update-spec-kit.yml:2074`: guard on `steps.scratch-token-post-agent.outputs.ok == 'true'` instead of `.outcome == 'success'` (the composite's mint is `continue-on-error` and its check step always exits 0, so `.outcome` is always `success`) so a failed re-mint can't blank a still-valid `WC_SCRATCH_TOKEN` ahead of the push at `:2078-2080`. Also pass the scratch-mint result into the `credential-status` call at `:2199` (which currently passes only `reestablish.outcome`) so a failed scratch mint is attributed to the credential. (FR-005, FR-004) — done: the relay guard now reads `outputs.ok`, and `credential-status`'s `refresh-outcome` input carries the scratch mint's `ok` output (mapped to success/failure) since this job's WC_SCRATCH_TOKEN has no remote-refresh step of its own to occupy that input.
 
 ## Maintainer Feedback (second review, PR #407 @ fbbae61)
 
