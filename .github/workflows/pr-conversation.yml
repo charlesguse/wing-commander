@@ -1013,6 +1013,7 @@ jobs:
       # non-healthy verdict actually fails the job -- see
       # specs/037-agent-turn-budget-guard/research.md R7 (step 5).
       - name: Fail loud on non-healthy agent verdict
+        id: verdict-fail
         if: always() && steps.agent.outcome != 'skipped' && steps.agent-verdict.outputs.verdict != 'healthy'
         env:
           VERDICT: ${{ steps.agent-verdict.outputs.verdict }}
@@ -1433,15 +1434,19 @@ jobs:
         with:
           mint-outcome: ${{ steps.reestablish.outcome }}
 
+      # candidates-json lists this job's own hard-failing (non-continue-on-
+      # error) post-agent steps, each read via `.conclusion` -- see
+      # clarify.yml for the single-homed composite.
       - name: Determine failed post-agent step
         id: failed-step
         if: "!cancelled() && steps.agent.outcome != 'skipped'"
-        shell: bash
-        env:
-          STEPS_JSON: ${{ toJSON(steps) }}
-        run: |
-          failed="$(printf '%s' "$STEPS_JSON" | jq -r 'to_entries | map(select(.value.outcome == "failure")) | .[-1].key // ""')"
-          echo "step=$failed" >> "$GITHUB_OUTPUT"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-failed-post-agent-step
+        with:
+          candidates-json: >-
+            [
+              {"id": "schema-check", "conclusion": "${{ steps.schema-check.conclusion }}"},
+              {"id": "verdict-fail", "conclusion": "${{ steps.verdict-fail.conclusion }}"}
+            ]
 
   # Executes each classification's route: fold-in + implement re-dispatch
   # (in-scope-change), new-issue/new-PR spin-offs (new-functionality,
@@ -3103,28 +3108,15 @@ jobs:
       - name: Determine which dependency did not start
         id: reason
         if: needs.classify-and-announce.outputs.refusal-reason == ''
-        env:
-          IMAGE_RESULT: ${{ needs.verify-image-prerequisites.result }}
-          JOB_RESULT: ${{ needs.classify-and-announce.result }}
-          AGENT_RAN: ${{ needs.classify-and-announce.outputs.agent-ran }}
-          AGENT_CONCLUSION: ${{ needs.classify-and-announce.outputs.agent-conclusion }}
-          CREDENTIAL_REFRESH_OK: ${{ needs.classify-and-announce.outputs.credential-refresh-ok }}
-          FAILED_STEP: ${{ needs.classify-and-announce.outputs.failed-post-agent-step }}
-        run: |
-          if [ "$AGENT_RAN" = "true" ] && [ "$CREDENTIAL_REFRESH_OK" = "false" ]; then
-            reason="the agent step ran (concluded: $AGENT_CONCLUSION) and the post-agent wing-commander-bot credential re-establishment failed (see the 'Determine post-agent credential status' step) -- treat the credential, not the agent or a downstream step, as the cause"
-          elif [ "$AGENT_RAN" = "true" ] && [ -n "$FAILED_STEP" ]; then
-            reason="the agent step ran (concluded: $AGENT_CONCLUSION) and the '$FAILED_STEP' step after it did not complete"
-          elif [ "$AGENT_RAN" = "true" ]; then
-            reason="the agent step ran (concluded: $AGENT_CONCLUSION) and a step after it did not complete"
-          elif [ "$IMAGE_RESULT" = "failure" ]; then
-            reason="the verify-image-prerequisites job failed, so the pr-conversation stage never started"
-          elif [ "$JOB_RESULT" = "skipped" ]; then
-            reason="the pr-conversation stage was skipped because a dependency it needs did not run"
-          else
-            reason="the pr-conversation stage failed before it could run its own steps"
-          fi
-          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-stall-reason
+        with:
+          stage-name: pr-conversation
+          image-result: ${{ needs.verify-image-prerequisites.result }}
+          entry-result: ${{ needs.classify-and-announce.result }}
+          agent-ran: ${{ needs.classify-and-announce.outputs.agent-ran }}
+          agent-conclusion: ${{ needs.classify-and-announce.outputs.agent-conclusion }}
+          credential-refresh-ok: ${{ needs.classify-and-announce.outputs.credential-refresh-ok }}
+          failed-post-agent-step: ${{ needs.classify-and-announce.outputs.failed-post-agent-step }}
 
       # pr-number is the one identifier FR-003 guarantees present regardless
       # of how early this job died — used as the post target whenever the

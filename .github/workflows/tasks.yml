@@ -788,6 +788,7 @@ jobs:
           run-label: "auto"
 
       - name: Fail loud on non-healthy agent verdict (auto)
+        id: verdict-fail-auto
         if: always() && steps.agent-auto.outcome != 'skipped' && steps.agent-auto-verdict.outputs.verdict != 'healthy'
         env:
           VERDICT: ${{ steps.agent-auto-verdict.outputs.verdict }}
@@ -954,6 +955,7 @@ jobs:
           run-label: "pr"
 
       - name: Fail loud on non-healthy agent verdict (pr)
+        id: verdict-fail-pr
         if: always() && steps.agent-pr.outcome != 'skipped' && steps.agent-pr-verdict.outputs.verdict != 'healthy'
         env:
           VERDICT: ${{ steps.agent-pr-verdict.outputs.verdict }}
@@ -1032,6 +1034,7 @@ jobs:
       # agent-auto now runs with continue-on-error, so its outcome alone can
       # no longer be trusted to reflect a genuine failure.
       - name: Verify tasks committed (auto)
+        id: verify-tasks-auto
         if: steps.guard.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto' && steps.agent-auto-verdict.outputs.verdict == 'healthy'
         env:
           SLUG: ${{ needs.resolve-spec.outputs.slug }}
@@ -1060,6 +1063,7 @@ jobs:
       # continue-on-error, so its outcome alone can no longer be trusted to
       # reflect a genuine failure.
       - name: Verify tasks PR (pr)
+        id: verify-tasks-pr
         if: >-
           steps.guard.outputs.skip != 'true' &&
           steps.mode.outputs.mode == 'pr' &&
@@ -1087,6 +1091,7 @@ jobs:
       # Flip the stage label only after the mode-appropriate verification
       # passed (the verify steps above fail the job otherwise).
       - name: Flip stage label
+        id: flip-label
         if: steps.guard.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
@@ -1217,15 +1222,24 @@ jobs:
           mint-outcome: ${{ steps.reestablish-pr.outcome }}
           refresh-outcome: ${{ steps.refresh-remote-pr.outcome }}
 
+      # candidates-json lists this job's own hard-failing (non-continue-on-
+      # error) post-agent steps, each read via `.conclusion` -- see
+      # clarify.yml for the single-homed composite. auto/pr branches are
+      # mutually exclusive, so at most one of each pair's steps ever ran;
+      # the id-less candidate that never ran simply reads conclusion "".
       - name: Determine failed post-agent step
         id: failed-step
         if: "!cancelled() && (steps.agent-auto.outcome != 'skipped' || steps.agent-pr.outcome != 'skipped')"
-        shell: bash
-        env:
-          STEPS_JSON: ${{ toJSON(steps) }}
-        run: |
-          failed="$(printf '%s' "$STEPS_JSON" | jq -r 'to_entries | map(select(.value.outcome == "failure")) | .[-1].key // ""')"
-          echo "step=$failed" >> "$GITHUB_OUTPUT"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-failed-post-agent-step
+        with:
+          candidates-json: >-
+            [
+              {"id": "verdict-fail-auto", "conclusion": "${{ steps.verdict-fail-auto.conclusion }}"},
+              {"id": "verdict-fail-pr", "conclusion": "${{ steps.verdict-fail-pr.conclusion }}"},
+              {"id": "verify-tasks-auto", "conclusion": "${{ steps.verify-tasks-auto.conclusion }}"},
+              {"id": "verify-tasks-pr", "conclusion": "${{ steps.verify-tasks-pr.conclusion }}"},
+              {"id": "flip-label", "conclusion": "${{ steps.flip-label.conclusion }}"}
+            ]
 
   # mode: approved — a tasks PR merged by a maintainer is the review-mode
   # acceptance signal; the stage flip rode in with the merge. No agent work:
@@ -1519,33 +1533,22 @@ jobs:
       # FR-004/FR-011: a credential re-establishment failure is named as
       # such, ahead of the generic agent-ran branch; otherwise, a real
       # post-agent step failure names the step -- see clarify.yml.
+      # RESOLVE_RESULT == 'failure' collapsed into the composite's own
+      # else-fallback below -- both rendered the identical "failed before it
+      # could run its own steps" sentence, so dropping the redundant branch
+      # changes no observable behavior (verified against the pre-image git
+      # history of this step).
       - name: Determine which dependency did not start
         id: reason
-        env:
-          IMAGE_RESULT: ${{ needs.verify-image-prerequisites.result }}
-          RESOLVE_RESULT: ${{ needs.resolve-spec.result }}
-          TASKS_RESULT: ${{ needs.tasks.result }}
-          AGENT_RAN: ${{ needs.tasks.outputs.agent-ran }}
-          AGENT_CONCLUSION: ${{ needs.tasks.outputs.agent-conclusion }}
-          CREDENTIAL_REFRESH_OK: ${{ needs.tasks.outputs.credential-refresh-ok }}
-          FAILED_STEP: ${{ needs.tasks.outputs.failed-post-agent-step }}
-        run: |
-          if [ "$AGENT_RAN" = "true" ] && [ "$CREDENTIAL_REFRESH_OK" = "false" ]; then
-            reason="the agent step ran (concluded: $AGENT_CONCLUSION) and the post-agent wing-commander-bot credential re-establishment failed (see the 'Determine post-agent credential status' step) -- treat the credential, not the agent or a downstream step, as the cause"
-          elif [ "$AGENT_RAN" = "true" ] && [ -n "$FAILED_STEP" ]; then
-            reason="the agent step ran (concluded: $AGENT_CONCLUSION) and the '$FAILED_STEP' step after it did not complete"
-          elif [ "$AGENT_RAN" = "true" ]; then
-            reason="the agent step ran (concluded: $AGENT_CONCLUSION) and a step after it did not complete"
-          elif [ "$IMAGE_RESULT" = "failure" ]; then
-            reason="the verify-image-prerequisites job failed, so the tasks stage never started"
-          elif [ "$RESOLVE_RESULT" = "failure" ]; then
-            reason="the tasks stage failed before it could run its own steps"
-          elif [ "$TASKS_RESULT" = "skipped" ]; then
-            reason="the tasks stage was skipped because a dependency it needs did not run"
-          else
-            reason="the tasks stage failed before it could run its own steps"
-          fi
-          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-stall-reason
+        with:
+          stage-name: tasks
+          image-result: ${{ needs.verify-image-prerequisites.result }}
+          entry-result: ${{ needs.tasks.result }}
+          agent-ran: ${{ needs.tasks.outputs.agent-ran }}
+          agent-conclusion: ${{ needs.tasks.outputs.agent-conclusion }}
+          credential-refresh-ok: ${{ needs.tasks.outputs.credential-refresh-ok }}
+          failed-post-agent-step: ${{ needs.tasks.outputs.failed-post-agent-step }}
 
       - name: Report the stage did not start
         if: steps.issuelookup.outputs.issue != ''
