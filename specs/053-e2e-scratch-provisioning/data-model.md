@@ -97,12 +97,16 @@ path User Story 1's acceptance scenarios 4 and 5 describe:
 not-ready (app_installation missing)
    │  [human installs the App in the GitHub UI — the only external event]
    ▼
-re-invoke provision-e2e-target.sh (same command, same target)
+dispatch auto-update-spec-kit-scratch-preflight.yml (same target) — not a
+re-invocation of provision-e2e-target.sh: GET /repos/{owner}/{repo}/installation
+is App-JWT-only, so the local command can never itself observe the install
+and always reports app_installation as the outstanding manual step (T043);
+the readiness workflow proves installation instead, from its own successful
+App-token mint
    │  [claude_credential / spec_request_label / wrapper_set / container_image_pin
-   │   were blocked behind app_installation for auto-release's App-scoped
-   │   checks only where the check itself requires the installation to exist;
-   │   elements provisionable without it were already completed on the first run]
+   │   were already completed on the first local run, independent of
+   │   app_installation]
    ▼
-ready (all elements ready) — idempotent from here: a further re-invocation
-changes nothing (FR-005, SC-003)
+ready (all elements ready) — idempotent from here: a further dispatch, or a
+further local re-invocation, changes nothing (FR-005, SC-003)
 ```
