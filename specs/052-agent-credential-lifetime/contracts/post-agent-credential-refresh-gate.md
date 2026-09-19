@@ -1,4 +1,4 @@
-# Contract: Gate 67 (provisional) — `verify-post-agent-credential-refresh.py`
+# Contract: Gate 68 — `verify-post-agent-credential-refresh.py`
 
 **File**: `.github/scripts/verify-post-agent-credential-refresh.py`, wired
 into `.github/workflows/lint-workflows.yml`'s existing PR-time job (a new
@@ -7,11 +7,12 @@ into `.github/workflows/lint-workflows.yml`'s existing PR-time job (a new
 `verify-gate-wiring.py` confirms the wiring is complete in both
 directions).
 
-**Numbering**: provisional. The highest gate at plan time is Gate 66
-(`verify-auto-release-e2e-gate-decisions.py`); a parallel-landed spec may
-force a renumber before this feature merges, matching this repository's own
-documented norm (see the Gate 62–66 collision comments in
-`lint-workflows.yml`).
+**Numbering**: the highest gate at plan time was Gate 66
+(`verify-auto-release-e2e-gate-decisions.py`), so this gate provisionally
+claimed Gate 67 — but #401 (`verify-auto-release-credential-step.py`)
+landed first on the same base and took that number, so this gate is
+**Gate 68**, matching this repository's own documented renumbering norm
+(see the Gate 62–67 collision comments in `lint-workflows.yml`).
 
 ## Subject
 

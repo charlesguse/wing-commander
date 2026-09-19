@@ -465,6 +465,8 @@ jobs:
           aws-role-arn: ${{ inputs.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
 
+      # Credential re-establishment (the env.WC_BOT_TOKEN relay and
+      # post-agent refresh) -- see clarify.yml.
       - name: Wing Commander context
         id: ctx
         if: steps.lifecycle-gate.outputs.is-open == 'true'
@@ -1095,6 +1097,10 @@ jobs:
           slug: ${{ steps.spec.outputs.slug }}
           spec-dir: ${{ steps.spec.outputs.spec-dir }}
 
+      # FR-008 residual risk (spec 052): the WC_BOT_TOKEN relay above keeps
+      # every step after each agent step credentialed, but not the agent
+      # step's own push credential while it is still running -- see
+      # docs/architecture.md's "Identity & chaining" section.
       - name: Read back cycle outcome
         id: outcome
         shell: bash

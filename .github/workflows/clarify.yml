@@ -396,6 +396,24 @@ jobs:
           json=$(gh issue view "$ISSUE" --json labels --jq '[.labels[] | {name: .name}]')
           echo "json=$json" >> "$GITHUB_OUTPUT"
 
+      # (canonical copy; do not condense)
+      # Credential re-establishment (spec 052, FR-001/FR-002): the minted
+      # App installation token has a one-hour lifetime, shorter than some
+      # agent runs. `wing-commander-context` relays its mint into the
+      # job-scoped env.WC_BOT_TOKEN var (an internal step inside the
+      # composite, not a new composite output); every bot-acting step in
+      # this job, before or after the agent step, reads env.WC_BOT_TOKEN
+      # instead of steps.ctx.outputs.token. Immediately after the agent
+      # step, an if: always() pair re-invokes wing-commander-context
+      # (overwriting env.WC_BOT_TOKEN with a fresh mint) and refreshes the
+      # checkout's authenticated remote via `git remote set-url` — not a
+      # second checkout, so an agent's possibly-uncommitted working tree is
+      # never disturbed. The other 7 sweep-stage workflows point here
+      # instead of repeating this paragraph. docs/architecture.md's
+      # "Identity & chaining" section carries the same statement for
+      # readers outside the workflow files, including the FR-008 residual
+      # risk (the agent's own push credential, tracked in issue #402) this
+      # mechanism does not cover.
       - name: Wing Commander context
         id: ctx
         if: steps.lifecycle-gate.outputs.is-open == 'true'
@@ -952,7 +970,10 @@ jobs:
       # (canonical copy; do not condense)
       # Observability, not failure (FR-017) — the intended budget was fully
       # used but the run finished healthy; the runaway ceiling above is the
-      # only hard stop.
+      # only hard stop. This tolerance is enforced, not just documented
+      # (spec 052, FR-021): continue-on-error: true below means this step's
+      # own failure can never strand the deterministic read-back or any
+      # step after it.
       - name: Report over-budget agent run
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent-verdict.outputs.verdict == 'healthy' && steps.agent-verdict.outputs.over-budget == 'true'
         continue-on-error: true

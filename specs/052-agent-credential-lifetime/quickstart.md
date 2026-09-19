@@ -18,10 +18,11 @@ CI-only features (specs/038, specs/041).
 python .github/scripts/run-local-gates.py
 ```
 
-Expected: all gates pass, including the new Gate 67 (provisional numbering
-— see contracts/post-agent-credential-refresh-gate.md), once implemented.
+Expected: all gates pass, including the new Gate 68 (renumbered from the
+provisional Gate 67 — see contracts/post-agent-credential-refresh-gate.md),
+once implemented.
 
-## 2. Prove Gate 67 catches every care point FR-020/FR-021 name
+## 2. Prove Gate 68 catches every care point FR-020/FR-021 name
 
 ```bash
 python3 .github/scripts/verify-post-agent-credential-refresh.py --self-test

@@ -221,10 +221,13 @@ alternative.
 **Decision**: One new script, `.github/scripts/verify-post-agent-credential-
 refresh.py`, wired into `.github/workflows/lint-workflows.yml`'s existing
 `pull_request` job (picked up automatically by `wc_gate_registry.py`'s
-filename convention — no registry edit). Provisional numbering: **Gate 67**
-(highest existing is Gate 66; renumbering on merge conflict with a
-parallel-landed spec is expected and already this repository's norm — see
-the Gate 62–66 collision comments in `lint-workflows.yml`). It checks, for
+filename convention — no registry edit). Numbering: claimed **Gate 67**
+provisionally at plan time (highest existing was Gate 66); #401
+(`verify-auto-release-credential-step.py`) landed first on the same base
+and took that number, so this gate shipped as **Gate 68** — renumbering on
+merge conflict with a parallel-landed spec is expected and already this
+repository's norm — see the Gate 62–67 collision comments in
+`lint-workflows.yml`. It checks, for
 each of the 8 sweep-stage workflow files' jobs that contain an agent step:
 
 1. **No stale reference** (FR-020 care point 1): no bot-acting step

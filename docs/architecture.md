@@ -164,6 +164,27 @@ Where a stage has no natural GitHub event (tasks → implement, iteration N → 
 implement → finalize), chaining is explicit via `gh workflow run`
 (`workflow_dispatch`), which works regardless of token type.
 
+The minted token is a one-hour-lifetime App installation token, so any
+bot-acting step that runs after an agent step whose own duration can approach
+or exceed that hour needs a credential newer than the one minted before the
+agent started. Every agent-bearing job relays the mint into a job-scoped
+`WC_BOT_TOKEN` (`WC_SCRATCH_TOKEN` for `auto-update-spec-kit.yml`'s `e2e-stage`
+scratch-repository arm) environment variable — set by an internal step inside
+`wing-commander-context` immediately after minting, so every caller, not just
+the one composite output, sees it — and re-invokes `wing-commander-context`
+(or the scratch-token mint) immediately after each agent step to overwrite
+that variable with a fresh mint before any step below reads it. The checkout's
+authenticated remote is refreshed in place via `git remote set-url` rather
+than a second `actions/checkout`, so a refresh can never disturb an agent's
+possibly-uncommitted working tree. `implement.yml`'s three sequential agent
+steps (cycle, retry, progress) each get their own independent refresh
+immediately after them, so `WC_BOT_TOKEN` always names the most recent mint
+regardless of which agent step most recently ran.
+
+This remedy does not cover the credential an agent step itself pushes with
+while it is still running — only the steps that run after it. That residual
+risk is tracked in [issue #402](https://github.com/charlesguse/wing-commander/issues/402).
+
 ### State model
 - **`specs/NNN-slug/spec-meta.json`** — durable source of truth:
   `{issue, spec_dir, feature_num, stage, iteration, spec_branch}`.

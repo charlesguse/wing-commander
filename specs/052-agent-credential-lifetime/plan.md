@@ -48,7 +48,9 @@ observability rather than failure but never enforced as such, gain
 the deterministic read-back and everything below it (research.md D5).
 
 A new gate, `.github/scripts/verify-post-agent-credential-refresh.py`
-(provisionally Gate 67), makes the remedy durable: it fails when a
+(Gate 68 — renumbered from the provisional Gate 67 claimed at plan time,
+which #401 landed first as `verify-auto-release-credential-step.py`), makes
+the remedy durable: it fails when a
 post-agent step reads a pre-agent-captured credential, when a second agent
 step in a job has no re-establishment before it, or when a declared-
 observability step in the audited region is not tolerated — and fails
@@ -91,7 +93,7 @@ and the `agent-ran`/`agent-conclusion` outputs are job-scoped and ephemeral.
 
 **Testing**: New `.github/scripts/verify-post-agent-credential-refresh.py`,
 wired into `.github/workflows/lint-workflows.yml` as a new PR-time step
-(provisionally Gate 67), following the existing `verify-plan-tasks-cost-
+(Gate 68), following the existing `verify-plan-tasks-cost-
 line.py` live-tree-mutation self-test convention. `.github/scripts/
 verify-implement-stall-notice-unchanged.py`'s existing pinned-step family is
 checked for non-interference (this feature's stall-wording change lands on
@@ -182,7 +184,7 @@ specs/052-agent-credential-lifetime/
 ├── contracts/                                 # Phase 1 output (/speckit-plan command)
 │   ├── wing-commander-context-relay.md        # composite amendment + call-site convention
 │   ├── agent-ran-signal.md                    # publication + stall-path consumption
-│   └── post-agent-credential-refresh-gate.md  # new Gate 67's contract
+│   └── post-agent-credential-refresh-gate.md  # new Gate 68's contract
 ├── checklists/
 │   └── requirements.md                        # already present (intake stage output)
 ├── spec-meta.json
@@ -203,11 +205,11 @@ feature touches:
 │                                             #   (WC_BOT_TOKEN via $GITHUB_ENV);
 │                                             #   inputs:/outputs: unchanged
 ├── scripts/
-│   ├── verify-post-agent-credential-refresh.py   # NEW — Gate 67
+│   ├── verify-post-agent-credential-refresh.py   # NEW — Gate 68
 │   └── verify-implement-stall-notice-unchanged.py # + one fixture for the
 │                                                    #   agent-ran=='true' wording
 └── workflows/
-    ├── lint-workflows.yml                   # + Gate 67 step
+    ├── lint-workflows.yml                   # + Gate 68 step
     ├── intake.yml                           # + post-agent refresh + agent-ran
     │                                         #   signal; token refs migrated to
     │                                         #   env.WC_BOT_TOKEN; over-budget

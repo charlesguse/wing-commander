@@ -1694,6 +1694,8 @@ jobs:
           path: .wing-commander-pipeline
           persist-credentials: false
 
+      # Credential re-establishment (the env.WC_BOT_TOKEN relay and
+      # post-agent refresh) -- see clarify.yml.
       - name: Wing Commander context
         id: ctx
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
