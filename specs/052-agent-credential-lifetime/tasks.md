@@ -303,3 +303,9 @@ Code review of PR #407 at head bb064e9 (charlesguse) found the shipped remedy do
 ### Must fix
 
 - [ ] Fix the credential branch of the stall reason (FR-004): `.github/actions/wing-commander-stall-reason/action.yml:69` names only "Determine post-agent credential status" and discards `FAILED_STEP`, so the step that actually needed the credential (e.g. the next dispatch) is never named. When both are known, say "the credential could not be re-established, and step `<failed step>` failed after it." Also fix precedence: the credential branch currently outranks a real named failure (a stage that fails on `unresolved-markers` while an earlier re-mint was rate-limited is wrongly blamed on the credential) — prefer the named real failure and mention the credential only as context. (FR-004)
+
+## Maintainer Feedback (third review, PR #407 @ 453656c)
+
+### Should fix
+
+- [ ] `agent-conclusion` and `credential-refresh-ok` overstate failure after a healed retry (`implement.yml:375-382`, `plan.yml:412-413`, `tasks.yml:441`): any-failure-wins (from the prior review) means a cycle that concluded `failure` and was then healed by a successful retry, or a failed haiku progress agent, still reports `failure`/`credential-refresh-ok=false` for the job, so an unrelated later stall wrongly says the agent step failed or blames the credential. Report the LAST chain that ran for the stall reason, and keep the any-failure value as a separate output for the record. (FR-010, FR-011)
