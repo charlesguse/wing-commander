@@ -309,6 +309,13 @@ jobs:
           MODE: ${{ steps.mode.outputs.mode }}
         run: |
           set -uo pipefail
+          # A username secret stored with a trailing newline or space (easy to
+          # do with `echo login | gh secret set`) still passes the case-
+          # insensitive login comparison below, because command substitution
+          # strips the newline, but it defeats the redaction of the reached
+          # repository names, which uses the value as a pattern. GitHub logins
+          # contain no whitespace, so it is stripped once, here (#396 review).
+          MAINTAINER_USERNAME="$(printf '%s' "$MAINTAINER_USERNAME" | tr -d '[:space:]')"
           if [ -z "$MAINTAINER_TOKEN" ]; then
             echo "ok=false" >> "$GITHUB_OUTPUT"
             {
@@ -762,6 +769,10 @@ jobs:
           MODE: ${{ steps.mode.outputs.mode }}
         run: |
           set -uo pipefail
+          # Same whitespace hazard as the credential step above: the login is
+          # compared with `==` and used as a jq argument, so a secret stored
+          # with a trailing newline would never match (#396 review).
+          HARNESS_LOGIN="$(printf '%s' "$HARNESS_LOGIN" | tr -d '[:space:]')"
 
           # $5 (evidence_url) defaults to the kickoff issue; a caller that
           # has better evidence (e.g. the test repository run a stall

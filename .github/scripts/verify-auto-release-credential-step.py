@@ -102,9 +102,23 @@ SCENARIOS = [
      ["reached 0 repositories"]),
     ("a token that authenticates as a different login",
      {"STUB_LOGIN": "someone-else"}, "false", ["authenticated as a different login"]),
-    ("a token without write access", {"STUB_PERMISSION": "READ"}, "false", []),
-    ("the token secret unset", {"MAINTAINER_TOKEN": ""}, "false", []),
-    ("the username secret unset", {"MAINTAINER_USERNAME": ""}, "false", []),
+    ("a token without write access", {"STUB_PERMISSION": "READ"}, "false",
+     ["viewerPermission was 'READ'"]),
+    ("gh returns no login for the token", {"STUB_LOGIN": ""}, "false",
+     ["gh rejected the token"], ["viewerPermission"]),
+    # Each "unset" branch must be the one that fires: without asserting which
+    # secret the verdict names, deleting a guard would fall through to the
+    # "different login" branch, which is also ok=false, and this gate would
+    # stay green. The username guard is also what keeps the redaction's
+    # pattern from ever being empty.
+    ("the token secret unset", {"MAINTAINER_TOKEN": ""}, "false",
+     ["MAINTAINER_TOKEN set to a classic PAT", "unset"]),
+    ("the username secret unset", {"MAINTAINER_USERNAME": ""}, "false",
+     ["MAINTAINER_USERNAME set to that account's login", "unset"]),
+    ("the username secret stored with a trailing newline",
+     {"MAINTAINER_USERNAME": LOGIN + "\n",
+      "STUB_REPOS": f"charlesguse/test-repo;{LOGIN}/notes"}, "false",
+     ["<maintainer account>/notes"]),
 ]
 
 
@@ -134,7 +148,8 @@ def run_scenario(script, name, overrides, tmproot):
 
 def suite(script, tmproot):
     failures = []
-    for name, overrides, want_ok, want_in_observed in SCENARIOS:
+    for name, overrides, want_ok, want_in_verdict, *rest in SCENARIOS:
+        want_not_in_verdict = rest[0] if rest else []
         env, rc, _out, outputs = run_scenario(script, name, overrides, tmproot)
         if rc != 0:
             failures.append(f"{name}: the step exited {rc}, expected 0 (every branch "
@@ -154,13 +169,19 @@ def suite(script, tmproot):
                 if verdict.get("outcome") != "fail-infra":
                     failures.append(f"{name}: outcome={verdict.get('outcome')!r}, "
                                     f"expected 'fail-infra'")
-                observed = str(verdict.get("observed", ""))
-                for want in want_in_observed or []:
-                    if want not in observed:
-                        failures.append(f"{name}: observed {observed!r} lacks {want!r}")
+                # Both fields: `expected` names which secret or check the
+                # branch is about, `observed` says what was found.
+                text = f"{verdict.get('expected', '')} | {verdict.get('observed', '')}"
+                for want in want_in_verdict or []:
+                    if want not in text:
+                        failures.append(f"{name}: verdict {text!r} lacks {want!r}")
+                for unwanted in want_not_in_verdict:
+                    if unwanted in text:
+                        failures.append(f"{name}: verdict {text!r} unexpectedly "
+                                        f"contains {unwanted!r}")
         # The invariant this gate exists for: the secret's value reaches no
         # output, whatever the scenario and whatever its letter case.
-        secret = env.get("MAINTAINER_USERNAME") or ""
+        secret = (env.get("MAINTAINER_USERNAME") or "").strip()
         if secret and secret.lower() in json.dumps(outputs, sort_keys=True).lower():
             failures.append(f"{name}: the masked login {secret!r} appears in a step "
                             f"output -- GitHub would drop that output")
@@ -174,9 +195,24 @@ def mut_raw_repository_names(script):
     return script.replace(old, new)
 
 
+def mut_no_username_guard(script):
+    """The username-unset guard deleted: an empty username would fall through
+    to the different-login branch (also ok=false), and the redaction could
+    receive an empty pattern."""
+    return script.replace('if [ -z "$MAINTAINER_USERNAME" ]; then', "if false; then")
+
+
+def mut_no_whitespace_trim(script):
+    """The one-time whitespace strip of the username removed."""
+    old = 'MAINTAINER_USERNAME="$(printf \'%s\' "$MAINTAINER_USERNAME" | tr -d \'[:space:]\')"'
+    return script.replace(old, ":")
+
+
 MUTATIONS = [
     ("the reached repository names quoted verbatim (login not redacted)",
      mut_raw_repository_names),
+    ("the username-unset guard deleted", mut_no_username_guard),
+    ("the username's whitespace no longer stripped", mut_no_whitespace_trim),
 ]
 
 
