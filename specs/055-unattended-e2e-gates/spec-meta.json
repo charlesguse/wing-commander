@@ -2,7 +2,8 @@
   "issue": 386,
   "spec_dir": "specs/055-unattended-e2e-gates",
   "feature_num": "055",
-  "stage": "spec",
-  "iteration": 0,
-  "spec_branch": null
+  "stage": "review",
+  "iteration": 4,
+  "spec_branch": "spec/055-unattended-e2e-gates",
+  "pending_re_review_from": []
 }
