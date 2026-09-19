@@ -37,35 +37,26 @@ on:
 permissions: {}
 
 jobs:
-  # Resolve run-id from whichever trigger fired. No checkout (the run-id is
-  # all this job needs), actions:read only.
-  resolve:
-    # Kill switch (constitution VII: the wrapper owns every vars.* read).
-    if: vars.WING_COMMANDER_METRICS_PAUSED != 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-    outputs:
-      run-id: ${{ steps.resolve.outputs.run-id }}
-    steps:
-      - name: Resolve run-id
-        id: resolve
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          EVENT_RUN_ID: ${{ github.event.workflow_run.id }}
-          DISPATCH_RUN_ID: ${{ inputs.run-id }}
-        run: |
-          set -euo pipefail
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            run_id="$DISPATCH_RUN_ID"
-          else
-            run_id="$EVENT_RUN_ID"
-          fi
-          echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
-
+  # One job, with no resolve job in front of it. The run-id is a one-line
+  # expression (the dispatch input, else the workflow_run payload), and a
+  # wrapper job exists only to gate and forward. Every job a wrapper
+  # declares is a runner allocation that GitHub counts as a whole minute
+  # however short it runs, so the 2-second resolve job this file used to
+  # carry cost as much as the 9-second persist it fed.
   persist:
-    needs: resolve
-    if: vars.WING_COMMANDER_METRICS_PAUSED != 'true'
+    # Kill switch (constitution VII: the wrapper owns every vars.* read),
+    # and the skipped-source guard. A workflow_run whose conclusion is
+    # 'skipped' executed no job at all -- the source wrapper's own `if:`
+    # gated it off -- so it owns no metrics-record artifact, and persisting
+    # it is FR-021's zero-record no-op bought at a job-minute per job. Most
+    # completions this wrapper hears are exactly that: every comment the
+    # pipeline posts wakes the clarify and pr-conversation wrappers, which
+    # skip. The other wrappers that react to completed runs point here for
+    # the rationale. On workflow_dispatch there is no workflow_run payload,
+    # the comparison is against '', and the guard stays open.
+    if: >-
+      vars.WING_COMMANDER_METRICS_PAUSED != 'true' &&
+      github.event.workflow_run.conclusion != 'skipped'
     permissions:
       contents: write
       issues: write
@@ -73,7 +64,12 @@ jobs:
       id-token: write
     uses: ./.github/workflows/metrics-persist.yml
     with:
-      run-id: ${{ needs.resolve.outputs.run-id }}
+      # The dispatch input when present, else the completed run this event
+      # announces. `inputs` is empty, not an error, under workflow_run --
+      # the resolve job read it the same way on every event-driven run.
+      # format() because workflow_run.id is a number and the input is typed
+      # string; the resolve job's output was always a string.
+      run-id: ${{ format('{0}', inputs.run-id || github.event.workflow_run.id) }}
       destination-branch: ${{ vars.WING_COMMANDER_METRICS_BRANCH || 'metrics' }}
       destination-path: ${{ vars.WING_COMMANDER_METRICS_PATH || 'records.jsonl' }}
       runner: ${{ vars.WING_COMMANDER_RUNNER || 'ubuntu-latest' }}

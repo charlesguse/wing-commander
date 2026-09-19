@@ -57,7 +57,21 @@ jobs:
     # (#152): it stops writes without stopping work, which is exactly what
     # made a "paused" watchdog keep spending. It is scheduled for removal
     # alongside the stage's other vars.* reads (#149).
-    if: vars.WING_COMMANDER_WATCHDOG_PAUSED != 'true'
+    #
+    # Second clause, the skipped-source guard: a completed run whose
+    # conclusion is 'skipped' executed nothing, and FR-026
+    # (specs/015-pipeline-watchdog/spec.md) binds every collector to emit no
+    # signal about such a run -- so inspecting one is five job-minutes
+    # (resolve, verify-image-prerequisites, collect, diagnose,
+    # report-unhandled-failure) plus a diagnose agent call for a verdict
+    # fixed before the first job starts, and it was the common case: every
+    # pipeline comment on a spec issue wakes the clarify wrapper, which
+    # skips. The rationale for gating at the wrapper -- see
+    # wing-commander-metrics-persist.yml. Dispatch carries no workflow_run
+    # payload; '' != 'skipped' keeps that path open.
+    if: >-
+      vars.WING_COMMANDER_WATCHDOG_PAUSED != 'true' &&
+      github.event.workflow_run.conclusion != 'skipped'
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -88,9 +102,11 @@ jobs:
   watchdog:
     needs: resolve
     # Redundant with resolve's gate (a job needing a skipped job is skipped),
-    # but stated explicitly so the kill switch is visible at the job that
-    # actually spends money.
-    if: vars.WING_COMMANDER_WATCHDOG_PAUSED != 'true'
+    # but stated explicitly so the kill switch and the skipped-source guard
+    # are visible at the job that actually spends money.
+    if: >-
+      vars.WING_COMMANDER_WATCHDOG_PAUSED != 'true' &&
+      github.event.workflow_run.conclusion != 'skipped'
     # Must be a superset of watchdog.yml's workflow-level `permissions:` —
     # GitHub validates the grant against every job in the called workflow at
     # startup (including if-skipped ones) and fails the run with zero jobs if
