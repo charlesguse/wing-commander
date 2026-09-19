@@ -29,7 +29,7 @@ CI/CD pipeline infrastructure repository — no `src`/`tests` split. Paths below
 
 **Purpose**: Establish the baseline facts the gate's provisional numbering and this sweep's scope depend on, before any file changes.
 
-- [ ] T001 Confirm the working tree's baseline: run `python .github/scripts/run-local-gates.py` and record that it is green before this feature's changes; confirm the highest existing gate is Gate 66 (`.github/workflows/lint-workflows.yml:3567-3586`, `verify-auto-release-e2e-gate-decisions.py`), so this feature's new gate provisionally claims **Gate 67** — subject to renumbering at merge if a parallel-landed spec claims it first, per CLAUDE.md's documented norm (research.md D6, the Gate 62-66 collision comments already in `lint-workflows.yml`). No file changes.
+- [X] T001 Confirm the working tree's baseline: run `python .github/scripts/run-local-gates.py` and record that it is green before this feature's changes; confirm the highest existing gate is Gate 66 (`.github/workflows/lint-workflows.yml:3567-3586`, `verify-auto-release-e2e-gate-decisions.py`), so this feature's new gate provisionally claims **Gate 67** — subject to renumbering at merge if a parallel-landed spec claims it first, per CLAUDE.md's documented norm (research.md D6, the Gate 62-66 collision comments already in `lint-workflows.yml`). No file changes.
 
 **Checkpoint**: Baseline recorded; gate numbering claim is on record.
 
@@ -41,7 +41,7 @@ CI/CD pipeline infrastructure repository — no `src`/`tests` split. Paths below
 
 **⚠️ CRITICAL**: No User Story 1 task can be written correctly until this phase is complete.
 
-- [ ] T002 Amend `.github/actions/wing-commander-context/action.yml`: add one new internal step to `runs.steps`, immediately after the existing `id: app-token` step (today lines 62-67) and before the existing `id: resolve` step (today lines 69-81):
+- [X] T002 Amend `.github/actions/wing-commander-context/action.yml`: add one new internal step to `runs.steps`, immediately after the existing `id: app-token` step (today lines 62-67) and before the existing `id: resolve` step (today lines 69-81):
   ```yaml
   - name: Relay bot token to the job environment
     shell: bash

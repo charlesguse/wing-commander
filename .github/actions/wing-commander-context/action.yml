@@ -66,6 +66,13 @@ runs:
         client-id: ${{ inputs.app-id }}
         private-key: ${{ inputs.private-key }}
 
+    - name: Relay bot token to the job environment
+      shell: bash
+      env:
+        TOKEN: ${{ steps.app-token.outputs.token }}
+      run: |
+        echo "WC_BOT_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
     - name: Resolve spec identity from labels
       id: resolve
       shell: bash
