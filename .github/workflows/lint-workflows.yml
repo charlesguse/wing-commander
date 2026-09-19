@@ -3585,6 +3585,19 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-auto-release-e2e-gate-decisions.py --self-test
 
+      # Gate 67 — auto-release's maintainer-credential step never lets the
+      # masked login reach a step output (#396). The login is held in a
+      # secret, and GitHub drops any step output that contains a masked
+      # value, so a verdict quoting it (a reached repository owned by the
+      # account, `<login>/...`) silently turns into "verdict not a JSON
+      # object" in exactly the case the containment check exists to catch.
+      # Runs the real step against a stubbed `gh` and asserts the documented
+      # outcomes and that no output contains the login; a mutation that
+      # restores the raw names must fail it.
+      - name: Gate 67 — the maintainer-credential step never puts the masked login in an output
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-auto-release-credential-step.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

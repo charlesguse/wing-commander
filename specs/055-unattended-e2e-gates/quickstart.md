@@ -24,10 +24,13 @@ installed) — this feature adds one more prerequisite on top of that.
    check, not by the token's own scoping. The account's username is
    stored alongside it as
    `WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME`.
-4. `WING_COMMANDER_AUTO_RELEASE_PAUSED` may stay `true` for a manually
-   dispatched validation run (the job-level `if:` doesn't gate
-   `workflow_dispatch` the same way `schedule` is — confirm against the
-   current `detect`/`verify-e2e` job conditions before relying on this).
+4. `WING_COMMANDER_AUTO_RELEASE_PAUSED` must be **cleared** for a validation
+   dispatch, and a run that passes will cut a real release. The switch gates
+   the `detect` job (`auto-release.yml:40`) and every job after it
+   (`verify-e2e`, `decide-version`, `dispatch-release`, `report`)
+   regardless of the trigger, so a dispatch while it is set does nothing; and
+   a `pass` goes on to `decide-version` and `dispatch-release`. Plan for the
+   release before clearing the switch (#396).
 
 ## Scenario 1 — a full unattended pass (User Story 1, Independent Test)
 
