@@ -214,3 +214,26 @@ Per CLAUDE.md's own cap (concurrent local agents kept to two during this pipelin
 ---
 
 Lifecycle issue: #345.
+
+## Maintainer Feedback
+
+Code review of PR #407 at head bb064e9 (charlesguse) found the shipped remedy does not fully satisfy spec 052's requirements. Must-fix items block merge; should-fix items should be addressed in the same PR per CLAUDE.md's rule that every fix PR gets its review findings fixed in the same PR.
+
+### Must fix
+
+- [ ] Record `.outcome` (not `.conclusion`) at every "Record agent-ran signal" step (15 sites: `clarify.yml:629`, `intake.yml:732`, `finalize.yml:708`, `implement.yml:943/1505/1990`, `plan.yml:764/940`, `tasks.yml:749/918`, `pr-conversation.yml:943/2006`, `auto-update-spec-kit.yml:2027`) — a `continue-on-error: true` step reports `conclusion=success` even on failure, so a failed agent is currently signaled as having run to completion. Fix `verify-implement-stall-notice-unchanged.py`'s self-test to only feed values production can emit. (FR-010, FR-011)
+- [ ] Update `.github/actions/wing-commander-chain-stop-notice/action.yml:152-159` to drop the "the stage did not start" / "no work was lost" wording when `agent-ran=true`, per `contracts/agent-ran-signal.md:59-66` and `data-model.md:57`; also stop the spec-meta commit message from saying "did not start" when the agent ran. (FR-011, FR-015)
+- [ ] Name the failed post-agent step in the stall reason, currently the generic "a step after it did not complete" in `clarify.yml:1126`, `finalize.yml:1384`, `implement.yml:2832`, `intake.yml:1357`, `pr-conversation.yml:3061`, `tasks.yml:1484`. (FR-011, SC-003)
+- [ ] Emit a distinct, named outcome from each re-establish step when the mint fails, and have the stall path and the next credential-bearing step report it naming the credential as cause and the step as site, instead of surfacing a bare 401 attributed to the wrong step. (FR-004)
+- [ ] Move the byte-identical "Refresh authenticated spec-branch remote" `run:` block (11 sites across 7 workflows) and the agent-ran-signal block (15 sites) into composite action(s) under `.github/actions/` (or `_shared/`), reducing each call site to a call; extend Gate 68 to assert the call exists at every site, since `verify-credential-relay-shell.py:46` currently claims byte-identity is enforced when it is not. (CLAUDE.md single-home rule)
+- [ ] Close three Gate 68 self-test holes: (a) require re-establishment after the *last* agent step in a job, not only between consecutive ones — currently misses clarify's single-agent case and implement's `progress` agent; (b) match all step-name variants (`(cycle)`, `(retry)`, `(progress comment)`, `(auto)`, `(pr)`), not only the exact string `"Report over-budget agent run"`; (c) fail when a job that had an agent step stops having one, instead of silently skipping all of that job's checks. (FR-020, FR-021)
+- [ ] Guard `auto-update-spec-kit.yml:2053-2060`'s `WC_SCRATCH_TOKEN` assignment with `steps.scratch-token-post-agent.outputs.ok == 'true'` so a failed mint cannot blank a still-valid token ahead of the step-21 push. (FR-005)
+
+### Should fix
+
+- [ ] Add checked-in fixtures for FR-023: Gate 68's "job not found" branch and Gate 69 currently ship with no self-test/mutation coverage (the stall-notice sibling only asserts `"ran" in reason`).
+- [ ] Harden the Gate 68/69 token-check beyond a single regex — `steps['ctx'].outputs['token']`, `fromJSON(steps.ctx.outputs.json).token`, and any `${{ env.X }}` spelling currently pass, and the relay exemption is by step name only.
+- [ ] Change `always()` to `!cancelled() && <agent>.outcome != 'skipped'` (or document in a comment why not) at the 13 sites of the three new steps — a cancelled run currently still performs a network mint and a remote rewrite inside the cancel window.
+- [ ] Record FR-013's cancellation gap explicitly in the spec's accepted-gap statement — every `stalled` job is `!cancelled()`, so cancellation after the agent ran currently posts no notice, leaving FR-013 apparently met when it isn't.
+- [ ] Record, per FR-005/SC-005, the reason `evaluate-path` and `comment-reply` in `auto-update-spec-kit.yml` are left reading `steps.ctx.outputs.token` after their agent steps (outside FR-007's eight stages, bounded by a 10-minute agent timeout, but currently undocumented).
+- [ ] Derive the gate's scanned job list from the workflow files instead of hard-coding it, so a new agent job added to the eight covered files, or to `rebase.yml`/`cleanup.yml`, is not silently left unscanned.
