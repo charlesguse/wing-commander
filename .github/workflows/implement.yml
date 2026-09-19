@@ -653,10 +653,11 @@ jobs:
       # the shell inside run: blocks, using the shellcheck pre-installed on
       # ubuntu-latest) is not on the runner by default. Install it here, once,
       # onto PATH via GITHUB_PATH so BOTH the cycle and retry agent steps can
-      # invoke it. Pinned to a version tag; the official download script
-      # verifies the release checksum. yamllint alone only proves a file
-      # parses — actionlint catches Actions-schema and embedded-shell bugs the
-      # agent would otherwise ship blind (it edits workflow YAML for a living).
+      # invoke it. Pinned to a version tag; the upstream download script does
+      # not verify a checksum, so the tag is the only pin. yamllint alone only
+      # proves a file parses — actionlint catches Actions-schema and
+      # embedded-shell bugs the agent would otherwise ship blind (it edits
+      # workflow YAML for a living).
       - name: Install actionlint for the agent
         id: actionlint
         shell: bash
@@ -685,7 +686,7 @@ jobs:
             fi
           done
           if [ "$installed" != "true" ]; then
-            echo "::error::wing-commander implement: could not install actionlint v${ACTIONLINT_VERSION} after 3 attempts -- the download from github.com/rhysd/actionlint failed each time, so the agent cannot be given it. Re-dispatch this cycle."
+            echo "::error::wing-commander implement: could not install actionlint v${ACTIONLINT_VERSION} after 3 attempts -- the download or install from github.com/rhysd/actionlint did not succeed on any of them, so the agent cannot be given it. Re-dispatch this cycle."
             exit 1
           fi
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
