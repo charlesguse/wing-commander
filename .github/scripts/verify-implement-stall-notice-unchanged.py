@@ -55,6 +55,10 @@ STEP_NAMES = [
 
 DEPENDENCY_STEP_NAME = "Determine which dependency did not start"
 NEVER_STARTED_PHRASE = "the implement stage failed before it could run its own steps"
+# Second maintainer review of PR #407 (CLAUDE.md single-home rule): the step
+# itself is now a `uses:` call to this composite, not an inline `run:` block
+# in implement.yml -- the composite's own copy is what this gate executes.
+STALL_REASON_COMPOSITE = ".github/actions/wing-commander-stall-reason/action.yml"
 
 
 def find_step_in_text(text, name):
@@ -83,12 +87,24 @@ def check_dependency_reason_branch():
     render the pre-existing never-started phrase and must name the agent's
     own conclusion; agent-ran unset must render that literal phrase
     byte-for-byte, unchanged from today (the regression pin).
+
+    Second maintainer review of PR #407 (CLAUDE.md single-home rule): the
+    step in implement.yml is now a `uses:` call to
+    wing-commander-stall-reason, not an inline `run:` block -- this gate
+    executes the composite's own shipped copy instead, confirming
+    implement.yml's `if:` guard is unchanged as a structural check below
+    (main()), and covering the behavior once here rather than re-testing it
+    identically at all six call sites (the composite has exactly one body).
     """
-    step = find_step(STAGE, DEPENDENCY_STEP_NAME)
-    script = step.get("run")
+    if find_step(STAGE, DEPENDENCY_STEP_NAME) is None:
+        return [f"{DEPENDENCY_STEP_NAME!r} not found in {STAGE} -- the "
+                f"dependency-diagnosis step was removed."]
+    step = find_step(STALL_REASON_COMPOSITE, DEPENDENCY_STEP_NAME)
+    script = step.get("run") if step else None
     if not script:
-        return [f"{DEPENDENCY_STEP_NAME!r} has no `run:` block in {STAGE} — "
-                f"the dependency-diagnosis step was removed or reshaped."]
+        return [f"{DEPENDENCY_STEP_NAME!r} has no `run:` block in "
+                f"{STALL_REASON_COMPOSITE} — the dependency-diagnosis step "
+                f"was removed or reshaped."]
 
     bash = resolve_bash()
     failures = []
@@ -96,7 +112,8 @@ def check_dependency_reason_branch():
          tempfile.TemporaryDirectory() as runner_temp:
         rc, _out, outputs, _summary = run_step(
             bash, script, workdir,
-            {"IMAGE_RESULT": "success", "IMPLEMENT_RESULT": "failure",
+            {"STAGE_NAME": "implement", "IMAGE_RESULT": "success",
+             "ENTRY_RESULT": "failure",
              "AGENT_RAN": "true", "AGENT_CONCLUSION": "failure",
              "CREDENTIAL_REFRESH_OK": "true", "FAILED_STEP": ""},
             runner_temp)
@@ -114,7 +131,8 @@ def check_dependency_reason_branch():
         # specific post-agent step that failed, when it could identify one.
         rc, _out, outputs, _summary = run_step(
             bash, script, workdir,
-            {"IMAGE_RESULT": "success", "IMPLEMENT_RESULT": "failure",
+            {"STAGE_NAME": "implement", "IMAGE_RESULT": "success",
+             "ENTRY_RESULT": "failure",
              "AGENT_RAN": "true", "AGENT_CONCLUSION": "failure",
              "CREDENTIAL_REFRESH_OK": "true", "FAILED_STEP": "push"},
             runner_temp)
@@ -128,7 +146,8 @@ def check_dependency_reason_branch():
         # credential, not to the agent or a downstream step.
         rc, _out, outputs, _summary = run_step(
             bash, script, workdir,
-            {"IMAGE_RESULT": "success", "IMPLEMENT_RESULT": "failure",
+            {"STAGE_NAME": "implement", "IMAGE_RESULT": "success",
+             "ENTRY_RESULT": "failure",
              "AGENT_RAN": "true", "AGENT_CONCLUSION": "success",
              "CREDENTIAL_REFRESH_OK": "false", "FAILED_STEP": ""},
             runner_temp)
@@ -141,7 +160,8 @@ def check_dependency_reason_branch():
 
         rc, _out, outputs, _summary = run_step(
             bash, script, workdir,
-            {"IMAGE_RESULT": "success", "IMPLEMENT_RESULT": "failure",
+            {"STAGE_NAME": "implement", "IMAGE_RESULT": "success",
+             "ENTRY_RESULT": "failure",
              "AGENT_RAN": "", "AGENT_CONCLUSION": "",
              "CREDENTIAL_REFRESH_OK": "", "FAILED_STEP": ""},
             runner_temp)

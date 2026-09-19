@@ -494,11 +494,11 @@ def _mut_notice_ignores_agent_conclusion(steps):
     concluded success or failure."""
     steps[NOTICE_STEP] = steps[NOTICE_STEP].replace(
         'case "$AGENT_CONCLUSION" in\n'
-        '            success) agent_clause="the agent completed its work" ;;\n'
-        '            failure) agent_clause="the agent step failed after '
+        '    success) agent_clause="the agent completed its work" ;;\n'
+        '    failure) agent_clause="the agent step failed after '
         'running; its pushed commits are on the branch" ;;\n'
-        '            *) agent_clause="the agent step ran" ;;\n'
-        '          esac',
+        '    *) agent_clause="the agent step ran" ;;\n'
+        '  esac',
         'agent_clause="the agent completed its work"')
 
 

@@ -50,13 +50,19 @@ runs an agent step by design):
    loudly rather than passing vacuously over an empty result set (FR-022,
    Constitution Principle VIII; maintainer review of PR #407 hole (c): a
    job silently losing its agent step used to pass this gate).
-5. Every "Record agent-ran signal" and "Refresh authenticated spec-branch
-   remote (post-agent...)" step resolves through its one shared composite
-   home (`.github/actions/wing-commander-agent-ran-signal`,
-   `.github/actions/wing-commander-refresh-remote`) rather than a re-pasted
-   inline `run:` block (CLAUDE.md's single-home rule; maintainer review of
-   PR #407: this repository's own docs claimed byte-identity was already
-   enforced here, and it was not).
+5. Every "Record agent-ran signal", "Refresh authenticated spec-branch
+   remote (post-agent...)", and "Determine failed post-agent step" step
+   resolves through its one shared composite home
+   (`.github/actions/wing-commander-agent-ran-signal`,
+   `.github/actions/wing-commander-refresh-remote`,
+   `.github/actions/wing-commander-failed-post-agent-step`) rather than a
+   re-pasted inline `run:` block (CLAUDE.md's single-home rule; maintainer
+   review of PR #407: this repository's own docs claimed byte-identity was
+   already enforced here, and it was not).
+6. Each of the six stages' separate 'stalled' survivor job (STALL_REASON_JOBS)
+   has a "Determine which dependency did not start" step that resolves
+   through `.github/actions/wing-commander-stall-reason` (second maintainer
+   review of PR #407, CLAUDE.md single-home rule).
 
 Static structure only (`yaml.safe_load`) -- this gate's subject is step
 *ordering and reference shape*, not step *behaviour*, so no
@@ -113,7 +119,27 @@ SINGLE_HOME_STEPS = [
      "wing-commander-agent-ran-signal"),
     (re.compile(r"^Refresh authenticated spec-branch remote \(post-agent"),
      "wing-commander-refresh-remote"),
+    (re.compile(r"^Determine failed post-agent step$"),
+     "wing-commander-failed-post-agent-step"),
 ]
+
+# The "Determine which dependency did not start" reason step lives in each
+# stage's separate survivor/stalled job (spec 041), not the entry job
+# SUBJECTS scans -- a second, small map and check covers it (second
+# maintainer review of PR #407, CLAUDE.md single-home rule). auto-update-
+# spec-kit.yml's e2e-stage and plan.yml are excluded: neither has a
+# wing-commander-chain-stop-notice-based survivor job (contracts/
+# agent-ran-signal.md's "Not in scope for consumption").
+STALL_REASON_JOBS = {
+    ".github/workflows/clarify.yml": "stalled",
+    ".github/workflows/finalize.yml": "stalled",
+    ".github/workflows/implement.yml": "stalled",
+    ".github/workflows/intake.yml": "stalled",
+    ".github/workflows/pr-conversation.yml": "stalled",
+    ".github/workflows/tasks.yml": "stalled",
+}
+REASON_STEP_NAME = "Determine which dependency did not start"
+REASON_COMPOSITE = "wing-commander-stall-reason"
 
 # path -> job names in scope, per FR-007's eight named stages.
 SUBJECTS = {
@@ -254,10 +280,45 @@ def check_job(path, job_name, job):
     return failures, len(agent_idxs)
 
 
-def scan(loaded, subjects=None):
+def check_stall_reason_job(path, job):
+    """-> list[str]. The reason step's own single-home composite call."""
+    step = _find_step(job, REASON_STEP_NAME)
+    if step is None:
+        return [f"{path}: no {REASON_STEP_NAME!r} step found in the "
+                f"'stalled' job -- cannot check its single-home composite "
+                f"call (CLAUDE.md single-home rule)"]
+    uses = str((step or {}).get("uses", ""))
+    if REASON_COMPOSITE not in uses:
+        return [f"{path} [stalled] step {REASON_STEP_NAME!r} does not call "
+                f"the {REASON_COMPOSITE} composite (CLAUDE.md single-home "
+                f"rule) -- got uses: {uses!r}"]
+    return []
+
+
+def scan(loaded, subjects=None, stall_reason_jobs=None):
     subjects = SUBJECTS if subjects is None else subjects
+    stall_reason_jobs = (STALL_REASON_JOBS if stall_reason_jobs is None
+                         else stall_reason_jobs)
     failures = []
     total_agent_steps = 0
+    for path, job_name in stall_reason_jobs.items():
+        wf = loaded.get(path)
+        if wf is None:
+            # Already reported (or not, per subjects) by the main SUBJECTS
+            # loop below when path is also a SUBJECTS key; otherwise still
+            # worth naming here so a missing file is never silently unchecked.
+            failures.append(
+                f"{path}: file not found -- cannot check its stall-reason "
+                f"composite call (FR-022)")
+            continue
+        job = (wf.get("jobs") or {}).get(job_name)
+        if job is None:
+            failures.append(
+                f"{path}: job {job_name!r} not found -- cannot check its "
+                f"stall-reason composite call (FR-022)")
+            continue
+        failures += check_stall_reason_job(path, job)
+
     for path, job_names in subjects.items():
         wf = loaded.get(path)
         if wf is None:
@@ -381,6 +442,29 @@ def mut_single_home_reverted(loaded):
     step["uses"] = "actions/checkout@v5"
 
 
+def mut_failed_step_single_home_reverted(loaded):
+    """Second maintainer review of PR #407: the 'Determine failed
+    post-agent step' composite call reverted to a re-pasted inline block."""
+    job = loaded[".github/workflows/clarify.yml"]["jobs"]["clarify"]
+    step = _find_step(job, "Determine failed post-agent step")
+    assert step is not None, "fixture assumption broken: step renamed"
+    assert "wing-commander-failed-post-agent-step" in str(step.get("uses", "")), \
+        "fixture assumption broken: composite already not called"
+    step["uses"] = "actions/checkout@v5"
+
+
+def mut_stall_reason_single_home_reverted(loaded):
+    """Second maintainer review of PR #407: the 'Determine which dependency
+    did not start' composite call, in the separate 'stalled' job, reverted
+    to a re-pasted inline block."""
+    job = loaded[".github/workflows/clarify.yml"]["jobs"]["stalled"]
+    step = _find_step(job, REASON_STEP_NAME)
+    assert step is not None, "fixture assumption broken: step renamed"
+    assert REASON_COMPOSITE in str(step.get("uses", "")), \
+        "fixture assumption broken: composite already not called"
+    step["uses"] = "actions/checkout@v5"
+
+
 def mut_nonexistent_ninth_file(loaded_and_subjects):
     loaded, subjects = loaded_and_subjects
     subjects["nonexistent-ninth-workflow.yml"] = ["some-job"]
@@ -415,6 +499,11 @@ SIMPLE_MUTATIONS = [
      mut_job_loses_agent_step),
     ("a single-home composite call reverted to a non-composite step",
      mut_single_home_reverted),
+    ("the 'Determine failed post-agent step' composite call reverted to a "
+     "non-composite step", mut_failed_step_single_home_reverted),
+    ("the 'Determine which dependency did not start' composite call (in "
+     "the stalled job) reverted to a non-composite step",
+     mut_stall_reason_single_home_reverted),
 ]
 
 SUBJECT_MUTATIONS = [
