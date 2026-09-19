@@ -52,13 +52,20 @@ jobs:
     # run executed nothing (FR-026) -- see wing-commander-8-watchdog.yml.
     # A stage-8 run gated off that way executed none of the watchdog's
     # logic, so there is nothing of the watchdog's to verify, and the second
-    # clause reads the same conclusion from the payload and stands down.
-    # FR-021's "never skipped or softened" still holds for every stage-8 run
-    # that executed: this keys on the conclusion alone, never on what the
-    # run found.
+    # clause stands down -- but only when BOTH conclusions say skipped: the
+    # stage-8 run's, from this payload, and the source run's, which stage 8
+    # writes at the end of its run title (see its `run-name:`). Keying on
+    # stage 8's conclusion alone would also stand down for a gating
+    # regression there that skipped a source run which executed, and every
+    # such miss would then look like a healthy silence. FR-021's "never
+    # skipped or softened" still holds for every stage-8 run that executed:
+    # this keys on conclusions alone, never on what the run found. Gate 70
+    # (verify-watchdog-self-skip-guard.py) evaluates this clause against
+    # stage 8's run-name and guards.
     if: >-
       vars.WING_COMMANDER_WATCHDOG_PAUSED != 'true' &&
-      github.event.workflow_run.conclusion != 'skipped'
+      (github.event.workflow_run.conclusion != 'skipped' ||
+        !endsWith(github.event.workflow_run.display_title, '(skipped)'))
     runs-on: ubuntu-latest
     permissions:
       actions: read      # run/jobs/artifact reads

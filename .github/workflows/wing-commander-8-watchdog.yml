@@ -18,6 +18,19 @@
 # not an error, just a trigger that silently never fires. lint-workflows.yml
 # gate 2 enforces both rules.
 name: "Wing Commander · 8 watchdog"
+# The run title ends with the inspected run's own conclusion in parentheses,
+# because the 8b verifier needs that fact and has no other way to get it:
+# 8b's workflow_run payload describes THIS run, and a run whose jobs were all
+# gated off leaves no job output behind. 8b stands down on a skipped stage-8
+# run only when this title says the source was skipped as well, so a gating
+# regression below that skips a source run which DID execute still reaches
+# 8b's check 1 instead of passing as a deliberate decline. Gate 70
+# (verify-watchdog-self-skip-guard.py) evaluates this expression against
+# 8b's `if:` -- change the suffix in both files or in neither.
+run-name: >-
+  ${{ github.event_name == 'workflow_run'
+      && format('inspect {0} run {1} ({2})', github.event.workflow_run.name, github.event.workflow_run.id, github.event.workflow_run.conclusion)
+      || format('re-inspect run {0}', inputs.run-id) }}
 
 on:
   workflow_run:

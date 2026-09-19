@@ -47,8 +47,10 @@ raising the destination's `retention-days` or otherwise investigating).
 The wrapper used to open with a `resolve` job (no checkout,
 `permissions: actions: read` only) that branched on `github.event_name`
 to produce one `run-id` output. It is gone: the same value is a one-line
-expression, `${{ inputs.run-id || github.event.workflow_run.id }}`
-(`inputs` is empty, not an error, under `workflow_run`), and every job a
+expression, `${{ format('{0}', inputs.run-id || github.event.workflow_run.id) }}`
+(`inputs` is empty, not an error, under `workflow_run`; `format()`
+because `workflow_run.id` is a number and the published workflow's
+`run-id` input is typed `string`), and every job a
 wrapper declares is a runner allocation GitHub counts as a whole minute
 however briefly it runs -- a 2-second resolve job cost as much as the
 9-second persist it fed, on every one of the ~3,000 completions a month
@@ -63,7 +65,8 @@ persist:
     github.event.workflow_run.conclusion != 'skipped'
   uses: ./.github/workflows/metrics-persist.yml
   with:
-    run-id: ${{ inputs.run-id || github.event.workflow_run.id }}
+    # format(): workflow_run.id is a number and run-id is typed string
+    run-id: ${{ format('{0}', inputs.run-id || github.event.workflow_run.id) }}
     destination-branch: ${{ vars.WING_COMMANDER_METRICS_BRANCH || 'metrics' }}
     destination-path: ${{ vars.WING_COMMANDER_METRICS_PATH || 'records.jsonl' }}
   secrets:
