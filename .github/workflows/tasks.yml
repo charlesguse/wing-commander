@@ -537,7 +537,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           ref: ${{ inputs.spec-prefix }}${{ needs.resolve-spec.outputs.slug }}
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           fetch-depth: 0
           clean: false
 
@@ -547,7 +547,7 @@ jobs:
       - name: Verify spec artifacts and resolve lifecycle issue
         id: meta
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SPEC_DIR: ${{ needs.resolve-spec.outputs.spec-dir }}
         run: |
           if [ ! -f "$SPEC_DIR/spec.md" ] || [ ! -f "$SPEC_DIR/spec-meta.json" ] || [ ! -f "$SPEC_DIR/plan.md" ]; then
@@ -584,7 +584,7 @@ jobs:
         if: steps.guard.outputs.skip != 'true' && steps.meta.outputs.issue != ''
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE: ${{ steps.meta.outputs.issue }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           ACTOR: ${{ github.triggering_actor }}
@@ -652,7 +652,7 @@ jobs:
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SPECIFY_FEATURE_DIRECTORY: ${{ needs.resolve-spec.outputs.spec-dir }}
           # subagents forced synchronous, no turn-boundary resume (#1462/#1499) -- see clarify.yml.
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
@@ -660,7 +660,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
           use_bedrock: ${{ inputs.use-bedrock }}
-          github_token: ${{ steps.ctx.outputs.token }}
+          github_token: ${{ env.WC_BOT_TOKEN }}
           # Wrapper triggers can dispatch this stage via GITHUB_TOKEN, making
           # the triggering actor github-actions[bot]; the action rejects bot
           # actors unless allow-listed.
@@ -736,6 +736,19 @@ jobs:
             --allowedTools "${{ steps.tool-args-tasks-direct-commit.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-tasks-direct-commit.outputs.disallowed-tools }}"
 
+      - name: Re-establish Wing Commander context (post-agent, auto)
+        if: always()
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      - name: Refresh authenticated spec-branch remote (post-agent, auto)
+        if: always()
+        shell: bash
+        run: |
+          git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/${{ github.repository }}.git"
+
       # deterministic, transcript-only verdict replacing raw steps.agent-auto.outcome checks
       # -- see specs/037-agent-turn-budget-guard/data-model.md. Gated on
       # steps.agent-auto.outcome alone — the one condition that cannot drift
@@ -797,14 +810,14 @@ jobs:
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SPECIFY_FEATURE_DIRECTORY: ${{ needs.resolve-spec.outputs.spec-dir }}
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
           use_bedrock: ${{ inputs.use-bedrock }}
-          github_token: ${{ steps.ctx.outputs.token }}
+          github_token: ${{ env.WC_BOT_TOKEN }}
           # See the auto-mode step above.
           # the pipeline's own App bot is allow-listed too (bare slug) -- see clarify.yml.
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
@@ -880,6 +893,19 @@ jobs:
             --max-turns ${{ steps.agent-pr-ceiling.outputs.ceiling }}
             --allowedTools "${{ steps.tool-args-tasks-pr.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-tasks-pr.outputs.disallowed-tools }}"
+
+      - name: Re-establish Wing Commander context (post-agent, pr)
+        if: always()
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      - name: Refresh authenticated spec-branch remote (post-agent, pr)
+        if: always()
+        shell: bash
+        run: |
+          git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/${{ github.repository }}.git"
 
       - name: Compute agent run verdict (pr)
         id: agent-pr-verdict
@@ -1002,7 +1028,7 @@ jobs:
           steps.dupe.outputs.skip != 'true' &&
           steps.agent-pr-verdict.outputs.verdict == 'healthy'
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SLUG: ${{ needs.resolve-spec.outputs.slug }}
           ISSUE: ${{ steps.meta.outputs.issue }}
           TASKS_PREFIX: ${{ inputs.tasks-prefix }}
@@ -1025,7 +1051,7 @@ jobs:
       - name: Flip stage label
         if: steps.guard.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE: ${{ steps.meta.outputs.issue }}
         run: |
           gh label create "stage:tasks" --color BFD4F2 --description "Task list generated; awaiting/into implementation" --force
@@ -1042,7 +1068,7 @@ jobs:
         if: steps.guard.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto'
         env:
           GH_TOKEN: ${{ github.token }}
-          APP_TOKEN: ${{ steps.ctx.outputs.token }}
+          APP_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SLUG: ${{ needs.resolve-spec.outputs.slug }}
           ISSUE: ${{ steps.meta.outputs.issue }}
           NEXT_WORKFLOW: ${{ inputs.next-workflow }}
@@ -1073,7 +1099,7 @@ jobs:
         if: steps.guard.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto' && steps.dispatch-auto.outputs.dispatched == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ steps.meta.outputs.issue }}
           kind: info
           summary: "Task list committed; implementation was dispatched automatically."
@@ -1097,7 +1123,7 @@ jobs:
         if: steps.guard.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto' && steps.agent-auto-verdict.outputs.verdict == 'healthy' && steps.agent-auto-verdict.outputs.over-budget == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ steps.meta.outputs.issue }}
           kind: info
           summary: "This step used its full intended turn budget."
@@ -1117,7 +1143,7 @@ jobs:
           steps.agent-pr-verdict.outputs.over-budget == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ steps.meta.outputs.issue }}
           kind: info
           summary: "This step used its full intended turn budget."
@@ -1241,7 +1267,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           ref: ${{ inputs.spec-prefix }}${{ needs.resolve-spec.outputs.slug }}
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           fetch-depth: 0
           clean: false
 
@@ -1279,7 +1305,7 @@ jobs:
       - name: Verify stage and dispatch implement stage
         if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           DISPATCH_TOKEN: ${{ github.token }}
           SLUG: ${{ needs.resolve-spec.outputs.slug }}
           SPEC_DIR: ${{ needs.resolve-spec.outputs.spec-dir }}

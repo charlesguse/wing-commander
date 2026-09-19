@@ -454,7 +454,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           ref: ${{ steps.defbranch.outputs.name }}
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           fetch-depth: 0
           clean: false
 
@@ -491,7 +491,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true'
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE: ${{ inputs.issue-number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           ACTOR: ${{ github.triggering_actor }}
@@ -509,7 +509,7 @@ jobs:
         id: comment-trust-gate
         if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE: ${{ inputs.issue-number }}
         run: |
           mkdir -p /tmp/wing-commander
@@ -554,7 +554,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.comment-trust-gate.outputs.qualifying-count == '0' && steps.comment-trust-gate.outputs.excluded-human-count != '0'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ inputs.issue-number }}
           kind: action
           summary: "Confirm the issue body reflects the discussion before relying on this spec"
@@ -592,14 +592,14 @@ jobs:
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           # subagents forced synchronous, no turn-boundary resume (#1462/#1499) -- see clarify.yml.
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
           use_bedrock: ${{ inputs.use-bedrock }}
-          github_token: ${{ steps.ctx.outputs.token }}
+          github_token: ${{ env.WC_BOT_TOKEN }}
           # Wrappers may dispatch this stage via GITHUB_TOKEN (custom
           # triggers), making the triggering actor github-actions[bot]; the
           # action rejects bot actors unless allow-listed.
@@ -718,6 +718,19 @@ jobs:
             --json-schema '{"type":"object","properties":{"specified":{"type":"boolean"},"clarifications":{"type":"array","items":{"type":"object","properties":{"question":{"type":"string"},"context":{"type":["string","null"]},"options":{"type":"array","items":{"type":"object","properties":{"answer":{"type":"string"},"implications":{"type":["string","null"]}},"required":["answer"]}}},"required":["question"]}}},"required":["specified","clarifications"]}'
             --allowedTools "${{ steps.tool-args-intake.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-intake.outputs.disallowed-tools }}"
+
+      - name: Re-establish Wing Commander context (post-agent)
+        if: always()
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      - name: Refresh authenticated spec-branch remote (post-agent)
+        if: always()
+        shell: bash
+        run: |
+          git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/${{ github.repository }}.git"
 
       # deterministic, transcript-only verdict (healthy/exhausted/failed/unclassifiable) replacing
       # the raw outcome check the action's post-hoc rejection can no longer be trusted to reflect
@@ -1095,7 +1108,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ inputs.issue-number }}
           kind: action
           summary: "Answer the open clarification questions"
@@ -1123,7 +1136,7 @@ jobs:
         id: spec-pr
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'false' && steps.clarification.outputs.specified == 'true' && steps.clarification.outputs.blocked != 'true' && steps.created.outputs.spec-dir != ''
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           NUM: ${{ steps.num.outputs.num }}
           SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
         run: |
@@ -1135,7 +1148,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'false' && steps.clarification.outputs.specified == 'true' && steps.clarification.outputs.blocked != 'true' && steps.created.outputs.spec-dir != ''
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ inputs.issue-number }}
           kind: action
           summary: "Review the spec PR"
@@ -1149,7 +1162,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true'
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE: ${{ inputs.issue-number }}
           NUM: ${{ steps.num.outputs.num }}
           SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
@@ -1170,7 +1183,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent-verdict.outputs.verdict == 'healthy' && steps.agent-verdict.outputs.over-budget == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ inputs.issue-number }}
           kind: info
           summary: "This step used its full intended turn budget."
