@@ -3141,6 +3141,7 @@ jobs:
           reason: ${{ steps.reason.outputs.reason }}
           # FR-015: resume-oriented wording when the agent ran and a step
           # after it is what stalled the job -- not a from-scratch restart.
-          restart-command: ${{ needs.classify-and-announce.outputs.agent-ran == 'true' && 'The classify agent step ran to completion; a step after it did not. Re-dispatch the pr-conversation stage for this pull request once the cause above is resolved.' || 'Re-dispatch the pr-conversation stage for this pull request once the cause above is resolved.' }}
+          # Worded from agent-conclusion -- see clarify.yml.
+          restart-command: ${{ needs.classify-and-announce.outputs.agent-ran == 'true' && needs.classify-and-announce.outputs.agent-conclusion == 'success' && 'The classify agent step completed its work; a step after it did not. Re-dispatch the pr-conversation stage for this pull request once the cause above is resolved.' || needs.classify-and-announce.outputs.agent-ran == 'true' && 'The classify agent step failed after running; its pushed commits are on the branch. Re-dispatch the pr-conversation stage for this pull request once the cause above is resolved.' || 'Re-dispatch the pr-conversation stage for this pull request once the cause above is resolved.' }}
           agent-ran: ${{ needs.classify-and-announce.outputs.agent-ran }}
           agent-conclusion: ${{ needs.classify-and-announce.outputs.agent-conclusion }}

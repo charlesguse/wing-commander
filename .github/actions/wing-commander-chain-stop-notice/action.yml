@@ -175,12 +175,23 @@ runs:
         # "no work was lost" are both false -- drop them. Any other value of
         # agent-ran (including a caller that predates this input) keeps
         # today's wording byte-for-byte (FR-012).
+        #
+        # The agent clause itself is worded from agent-conclusion, not
+        # asserted as "completed its own work" regardless of outcome
+        # (second maintainer review of PR #407, FR-011): a
+        # continue-on-error-wrapped agent step can conclude failure, and the
+        # notice must say so rather than implying success either way.
         if [ "$AGENT_RAN" = "true" ]; then
           headline="⏸️ **Stage stalled — the agent ran but the stage did not complete**"
+          case "$AGENT_CONCLUSION" in
+            success) agent_clause="the agent completed its work" ;;
+            failure) agent_clause="the agent step failed after running; its pushed commits are on the branch" ;;
+            *) agent_clause="the agent step ran" ;;
+          esac
           if [ "$RECORD_STATUS" = "marked" ]; then
-            body="The agent step ran (concluded: $AGENT_CONCLUSION) and completed its own work; a step after it did not complete. This specification's lifecycle record has been marked stalled."
+            body="The agent step ran (concluded: $AGENT_CONCLUSION) -- $agent_clause; a step after it did not complete. This specification's lifecycle record has been marked stalled."
           else
-            body="The agent step ran (concluded: $AGENT_CONCLUSION) and a step after it did not complete. **The lifecycle record could not be updated** — a maintainer should confirm the spec branch and the record's \`stage\` field by hand before restarting."
+            body="The agent step ran (concluded: $AGENT_CONCLUSION) -- $agent_clause; a step after it did not complete. **The lifecycle record could not be updated** — a maintainer should confirm the spec branch and the record's \`stage\` field by hand before restarting."
           fi
         else
           headline="⏸️ **Stage stalled — the stage did not start**"

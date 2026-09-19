@@ -1558,7 +1558,8 @@ jobs:
           reason: ${{ steps.reason.outputs.reason }}
           # FR-015: resume-oriented wording when the agent ran and a step
           # after it is what stalled the job -- not a from-scratch restart.
-          restart-command: ${{ needs.tasks.outputs.agent-ran == 'true' && 'The tasks agent step ran to completion; a step after it did not. Re-dispatch the tasks stage for this specification once the cause above is resolved.' || 'Re-dispatch the tasks stage for this specification once the cause above is resolved.' }}
+          # Worded from agent-conclusion -- see clarify.yml.
+          restart-command: ${{ needs.tasks.outputs.agent-ran == 'true' && needs.tasks.outputs.agent-conclusion == 'success' && 'The tasks agent step completed its work; a step after it did not. Re-dispatch the tasks stage for this specification once the cause above is resolved.' || needs.tasks.outputs.agent-ran == 'true' && 'The tasks agent step failed after running; its pushed commits are on the branch. Re-dispatch the tasks stage for this specification once the cause above is resolved.' || 'Re-dispatch the tasks stage for this specification once the cause above is resolved.' }}
           agent-ran: ${{ needs.tasks.outputs.agent-ran }}
           agent-conclusion: ${{ needs.tasks.outputs.agent-conclusion }}
 

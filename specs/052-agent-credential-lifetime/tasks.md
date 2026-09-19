@@ -242,13 +242,13 @@ Code review of PR #407 at head bb064e9 (charlesguse) found the shipped remedy do
 
 ### Must fix
 
-- [ ] `wing-commander-post-agent-credential-status/action.yml`: stop hard-failing (`exit 1`) the job on a re-mint failure when the step is last in the job and not `continue-on-error`. Emit `::warning::` and set `ok=false` instead, and let the existing `ok`-first check in the stall path (`clarify.yml:1184` pattern) decide, so a run whose later steps all succeeded stays green. (FR-004, FR-005)
+- [X] `wing-commander-post-agent-credential-status/action.yml`: stop hard-failing (`exit 1`) the job on a re-mint failure when the step is last in the job and not `continue-on-error`. Emit `::warning::` and set `ok=false` instead, and let the existing `ok`-first check in the stall path (`clarify.yml:1184` pattern) decide, so a run whose later steps all succeeded stays green. (FR-004, FR-005) — done: the composite now `exit 0`s after emitting `::warning::` and `ok=false`; the canonical comment in clarify.yml (pointed at by the other 7 call sites) updated to explain why the step never fails the job.
 
 ## Maintainer Feedback (second review, PR #407 @ fbbae61)
 
 ### Must fix
 
-- [ ] `chain-stop-notice/action.yml:152-165` and the per-stage `restart-command` text (`clarify.yml:1211` and its counterparts in `finalize.yml`, `implement.yml`, `intake.yml`, `pr-conversation.yml`, `tasks.yml`) claim the agent 'ran to completion'/'completed its own work' regardless of conclusion. Word the notice from `agent-conclusion`: success → 'the agent completed its work'; failure → 'the agent step failed after running; its pushed commits are on the branch'. (FR-011)
+- [X] `chain-stop-notice/action.yml:152-165` and the per-stage `restart-command` text (`clarify.yml:1211` and its counterparts in `finalize.yml`, `implement.yml`, `intake.yml`, `pr-conversation.yml`, `tasks.yml`) claim the agent 'ran to completion'/'completed its own work' regardless of conclusion. Word the notice from `agent-conclusion`: success → 'the agent completed its work'; failure → 'the agent step failed after running; its pushed commits are on the branch'. (FR-011) — done at all 7 sites (the composite plus the 6 restart-command sites); `verify-chain-stop-notice-body.py` gained a success-conclusion scenario and a mutation proving the conclusion-conditional wording is enforced.
 
 ## Maintainer Feedback (second review, PR #407 @ fbbae61)
 

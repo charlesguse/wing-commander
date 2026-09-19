@@ -2842,6 +2842,7 @@ jobs:
           SELF_WORKFLOW: ${{ inputs.self-workflow }}
           CHECKOUT_OK: ${{ steps.identity-checkout.outcome == 'success' }}
           AGENT_RAN: ${{ needs.implement.outputs.agent-ran }}
+          AGENT_CONCLUSION: ${{ needs.implement.outputs.agent-conclusion }}
         run: |
           restart_workflow="$SELF_WORKFLOW"
           [ -n "$restart_workflow" ] || restart_workflow="<your implement wrapper workflow>"
@@ -2855,8 +2856,13 @@ jobs:
             # FR-015: a resume-oriented sentence when the agent step ran and a
             # step after it is what stalled the job -- re-dispatching is not
             # "starting from zero" here, the cycle's own work already landed.
-            if [ "$AGENT_RAN" = "true" ]; then
-              echo "The implement agent step ran to completion; a step after it did not. Once the cause above is resolved, resume via **Run workflow** with these inputs (GitHub cannot prefill them from a link):"
+            # Worded from agent-conclusion, not asserted as "ran to
+            # completion" regardless of outcome (second maintainer review of
+            # PR #407, FR-011) -- see clarify.yml.
+            if [ "$AGENT_RAN" = "true" ] && [ "$AGENT_CONCLUSION" = "success" ]; then
+              echo "The implement agent step completed its work; a step after it did not. Once the cause above is resolved, resume via **Run workflow** with these inputs (GitHub cannot prefill them from a link):"
+            elif [ "$AGENT_RAN" = "true" ]; then
+              echo "The implement agent step failed after running; its pushed commits are on the branch. Once the cause above is resolved, resume via **Run workflow** with these inputs (GitHub cannot prefill them from a link):"
             else
               echo "Re-dispatch the implement wrapper workflow via **Run workflow** with these inputs (GitHub cannot prefill them from a link):"
             fi

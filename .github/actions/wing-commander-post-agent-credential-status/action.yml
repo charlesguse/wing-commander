@@ -6,14 +6,19 @@
 # .github/actions/wing-commander-context/action.yml.
 name: wing-commander-post-agent-credential-status
 description: >
-  Given the outcomes of the post-agent mint and remote-refresh steps, fails
-  loudly with a message naming the credential as cause and this step as
-  site when either did not succeed (FR-004), and publishes an `ok` output
-  the job can pass on to its own outputs for the stall path to read
-  (FR-011). Never itself the source of a bare, misattributed 401 -- a
-  caller should NOT add continue-on-error to the step that invokes this
-  composite, so the job registers as failed right here, not at whichever
-  step first tries to use the stale credential.
+  Given the outcomes of the post-agent mint and remote-refresh steps, warns
+  with a message naming the credential as cause and this step as site when
+  either did not succeed (FR-004), and publishes an `ok` output the job can
+  pass on to its own outputs for the stall path to read (FR-011). Does NOT
+  fail the job itself (second maintainer review of PR #407): a transient
+  re-mint failure at this, the job's last step, with every earlier step
+  healthy is not a stalled stage, and hard-failing here would report a
+  false "stalled" outcome for a run that already did its work. The `ok`
+  output is what the stall path's existing ok-first check
+  (clarify.yml-pattern "Determine which dependency did not start" step)
+  reads to attribute a *real* failure (one that already flipped the job
+  red for an unrelated reason) to the credential rather than to the agent
+  or a downstream step.
 
 inputs:
   mint-outcome:
@@ -44,7 +49,7 @@ runs:
       run: |
         if [ "$MINT_OUTCOME" = "failure" ] || [ "$REFRESH_OUTCOME" = "failure" ]; then
           echo "ok=false" >> "$GITHUB_OUTPUT"
-          echo "::error::wing-commander-post-agent-credential-status: post-agent credential re-establishment failed (mint outcome: $MINT_OUTCOME, refresh outcome: $REFRESH_OUTCOME). Every credential-bearing step below this point needs a live token -- treat THIS step, not the agent step or a downstream step, as the cause (spec 052 FR-004)."
-          exit 1
+          echo "::warning::wing-commander-post-agent-credential-status: post-agent credential re-establishment failed (mint outcome: $MINT_OUTCOME, refresh outcome: $REFRESH_OUTCOME). Every credential-bearing step below this point needs a live token -- treat THIS step, not the agent step or a downstream step, as the cause (spec 052 FR-004). Not failing the job here: if every step above this one succeeded, the stage did its work, and the stall path's ok-first check reports this credential as cause only when something else already made the job unhealthy."
+          exit 0
         fi
         echo "ok=true" >> "$GITHUB_OUTPUT"

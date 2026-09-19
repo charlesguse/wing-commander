@@ -1413,6 +1413,7 @@ jobs:
           reason: ${{ steps.reason.outputs.reason }}
           # FR-015: resume-oriented wording when the agent ran and a step
           # after it is what stalled the job -- not a from-scratch restart.
-          restart-command: ${{ needs.intake.outputs.agent-ran == 'true' && 'The intake agent step ran to completion; a step after it did not. Re-dispatch the intake stage for this specification once the cause above is resolved.' || 'Re-dispatch the intake stage for this specification once the cause above is resolved.' }}
+          # Worded from agent-conclusion -- see clarify.yml.
+          restart-command: ${{ needs.intake.outputs.agent-ran == 'true' && needs.intake.outputs.agent-conclusion == 'success' && 'The intake agent step completed its work; a step after it did not. Re-dispatch the intake stage for this specification once the cause above is resolved.' || needs.intake.outputs.agent-ran == 'true' && 'The intake agent step failed after running; its pushed commits are on the branch. Re-dispatch the intake stage for this specification once the cause above is resolved.' || 'Re-dispatch the intake stage for this specification once the cause above is resolved.' }}
           agent-ran: ${{ needs.intake.outputs.agent-ran }}
           agent-conclusion: ${{ needs.intake.outputs.agent-conclusion }}

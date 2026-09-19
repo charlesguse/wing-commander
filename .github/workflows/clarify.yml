@@ -1029,13 +1029,17 @@ jobs:
       # refresh pair (review-step-gating skill, spec 052 self-review after
       # the maintainer review of PR #407): every business-logic/report step
       # between the agent step and here is gated on its own implicit
-      # success(), with no always()/!cancelled() -- a credential-status hard
-      # exit placed any earlier would silently strand them (a lost
-      # "Announce spec PR ready for review" callout, etc.) even when the
-      # agent itself succeeded, exactly the intake.yml "defer the guard"
-      # pattern the skill documents. The job still ends red; it just does so
-      # after its own housekeeping runs, the same as every other failure
-      # path in this job.
+      # success(), with no always()/!cancelled() -- placed any earlier, a
+      # step that reads the composite's `ok` output for its own gating
+      # could observe a stale value from before the mint/refresh pair ran.
+      # The composite itself never fails the job (second maintainer review
+      # of PR #407): it warns and publishes `ok=false` instead of exiting
+      # non-zero, since a re-mint failure here, with every earlier step
+      # healthy, means the stage already did its work -- hard-failing would
+      # report a false "stalled" outcome for a run that succeeded. When
+      # something else already flipped the job red, the stall path's
+      # ok-first check below still attributes that failure to the
+      # credential when `ok=false`, ahead of the generic agent-ran branch.
       - name: Determine post-agent credential status
         id: credential-status
         if: "!cancelled() && steps.agent.outcome != 'skipped'"
@@ -1208,7 +1212,11 @@ jobs:
           reason: ${{ steps.reason.outputs.reason }}
           # FR-015: resume-oriented wording when the agent ran and a step
           # after it is what stalled the job -- not a from-scratch restart.
-          restart-command: ${{ needs.clarify.outputs.agent-ran == 'true' && 'The clarify agent step ran to completion; a step after it did not. Re-dispatch the clarify stage for this specification once the cause above is resolved.' || 'Re-dispatch the clarify stage for this specification once the cause above is resolved.' }}
+          # Worded from agent-conclusion, not asserted as "ran to
+          # completion" regardless of outcome (second maintainer review of
+          # PR #407, FR-011) -- see clarify.yml's own copy of this note in
+          # wing-commander-chain-stop-notice/action.yml.
+          restart-command: ${{ needs.clarify.outputs.agent-ran == 'true' && needs.clarify.outputs.agent-conclusion == 'success' && 'The clarify agent step completed its work; a step after it did not. Re-dispatch the clarify stage for this specification once the cause above is resolved.' || needs.clarify.outputs.agent-ran == 'true' && 'The clarify agent step failed after running; its pushed commits are on the branch. Re-dispatch the clarify stage for this specification once the cause above is resolved.' || 'Re-dispatch the clarify stage for this specification once the cause above is resolved.' }}
           # FR-011/FR-015: drops the composite's default "stage did not
           # start" / "no work was lost" wording, which is false once the
           # agent ran -- see clarify.yml.
