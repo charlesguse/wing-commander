@@ -164,6 +164,51 @@ Where a stage has no natural GitHub event (tasks → implement, iteration N → 
 implement → finalize), chaining is explicit via `gh workflow run`
 (`workflow_dispatch`), which works regardless of token type.
 
+The minted token is a one-hour-lifetime App installation token, so any
+bot-acting step that runs after an agent step whose own duration can approach
+or exceed that hour needs a credential newer than the one minted before the
+agent started. Every agent-bearing job in this feature's 8-stage sweep (spec
+052 FR-007: intake, clarify, plan, tasks, implement, finalize, pr-conversation,
+and `auto-update-spec-kit.yml`'s `e2e-stage` arm — NOT that workflow's
+`evaluate-path` or `comment-reply` jobs, whose own agent steps carry a
+10-minute `timeout-minutes`, an order of magnitude under this hour, so the
+defect below cannot reach them; research.md D5a) relays the mint into a
+job-scoped `WC_BOT_TOKEN` (`WC_SCRATCH_TOKEN` for the `e2e-stage` scratch-
+repository arm) environment variable — set by an internal step inside
+`wing-commander-context` immediately after minting, so every caller, not just
+the one composite output, sees it — and re-invokes `wing-commander-context`
+(or the scratch-token mint) immediately after each agent step to overwrite
+that variable with a fresh mint before any step below reads it. The checkout's
+authenticated remote is refreshed in place — clearing the stale
+`http.https://github.com/.extraheader` config entry `actions/checkout@v5`
+wrote (that header, not the remote URL, is what git's http transport
+actually authenticates with) and re-embedding the fresh token in the remote
+URL — rather than a second `actions/checkout`, so a refresh can never
+disturb an agent's possibly-uncommitted working tree. `implement.yml`'s three sequential agent
+steps (cycle, retry, progress) each get their own independent refresh
+immediately after them, so `WC_BOT_TOKEN` always names the most recent mint
+regardless of which agent step most recently ran.
+
+The re-mint, the remote refresh, and the durable "did the agent step run"
+signal each live in their own shared composite under `.github/actions/`
+(`wing-commander-context`'s internal relay, `wing-commander-refresh-remote`,
+`wing-commander-agent-ran-signal`) — every call site invokes them rather
+than repeating the shell, so a fix to one lands everywhere at once. When the
+re-mint or the remote refresh does not succeed, `wing-commander-post-agent-
+credential-status` never fails the job itself — a re-mint failure at this,
+the job's own last step, with every earlier step healthy, means the stage
+already did its work, and hard-failing here would report a false "stalled"
+outcome. It instead warns and publishes an `ok` output naming the credential
+as cause; `wing-commander-stall-reason`'s ok-first check reads it to
+attribute a later, real failure to the credential rather than to whichever
+unrelated step happens to run next — but a named post-agent step failure
+always outranks the credential-only diagnosis, mentioning the credential
+only as context when both are known (third maintainer review of PR #407).
+
+This remedy does not cover the credential an agent step itself pushes with
+while it is still running — only the steps that run after it. That residual
+risk is tracked in [issue #402](https://github.com/charlesguse/wing-commander/issues/402).
+
 ### State model
 - **`specs/NNN-slug/spec-meta.json`** — durable source of truth:
   `{issue, spec_dir, feature_num, stage, iteration, spec_branch}`.

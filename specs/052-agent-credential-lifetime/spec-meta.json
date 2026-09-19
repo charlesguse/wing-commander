@@ -2,7 +2,8 @@
   "issue": 345,
   "spec_dir": "specs/052-agent-credential-lifetime",
   "feature_num": "052",
-  "stage": "spec",
-  "iteration": 0,
-  "spec_branch": null
+  "stage": "review",
+  "iteration": 5,
+  "spec_branch": "spec/052-agent-credential-lifetime",
+  "pending_re_review_from": []
 }

@@ -294,6 +294,10 @@ jobs:
     # specs/041-implement-stall-notice/research.md D3.
     outputs:
       refusal-reason: ${{ steps.preflight.outputs.reason || steps.identity.outputs.reason }}
+      agent-ran: ${{ steps.agent-ran.outputs.ran }}
+      agent-conclusion: ${{ steps.agent-ran.outputs.conclusion }}
+      credential-refresh-ok: ${{ steps.credential-status.outputs.ok }}
+      failed-post-agent-step: ${{ steps.failed-step.outputs.step }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v5
@@ -394,6 +398,40 @@ jobs:
           json=$(gh issue view "$ISSUE" --json labels --jq '[.labels[] | {name: .name}]')
           echo "json=$json" >> "$GITHUB_OUTPUT"
 
+      # (canonical copy; do not condense)
+      # Credential re-establishment (spec 052, FR-001/FR-002/FR-004): the
+      # minted App installation token has a one-hour lifetime, shorter than
+      # some agent runs. `wing-commander-context` relays its mint into the
+      # job-scoped env.WC_BOT_TOKEN var (an internal step inside the
+      # composite, not a new composite output); every bot-acting step in
+      # this job, before or after the agent step, reads env.WC_BOT_TOKEN
+      # instead of steps.ctx.outputs.token. Immediately after the agent
+      # step, an if: always() && steps.agent.outcome != 'skipped' chain of
+      # four shared composite calls runs: `wing-commander-agent-ran-signal`
+      # (publishes agent-ran/agent-conclusion from the agent step's
+      # .outcome, never .conclusion -- continue-on-error on the agent step
+      # itself rewrites .conclusion to success on a real failure, so only
+      # .outcome is trustworthy); `wing-commander-context` again
+      # (continue-on-error: true — overwrites env.WC_BOT_TOKEN with a fresh
+      # mint); `wing-commander-refresh-remote` (continue-on-error: true —
+      # clears the stale http.https://github.com/.extraheader entry
+      # actions/checkout@v5 wrote, since that header, not the remote URL, is
+      # what git's http transport actually authenticates with, then
+      # `git remote set-url`s the fresh token in — not a second checkout, so
+      # an agent's possibly-uncommitted working tree is never disturbed);
+      # and `wing-commander-post-agent-credential-status` (never fails the
+      # job itself — warns and publishes an `ok` output naming the
+      # credential as cause when either of the previous two composites did
+      # not succeed, so `wing-commander-stall-reason`'s ok-first check can
+      # attribute a later, real failure to the credential instead of an
+      # unrelated downstream step, without reporting a false "stalled"
+      # outcome for a run whose earlier steps all succeeded). Single home for all
+      # four composites: .github/actions/wing-commander-*/action.yml — the
+      # other 7 sweep-stage workflows point here instead of repeating this
+      # paragraph. docs/architecture.md's "Identity & chaining" section
+      # carries the same statement for readers outside the workflow files,
+      # including the FR-008 residual risk (the agent's own push credential,
+      # tracked in issue #402) this mechanism does not cover.
       - name: Wing Commander context
         id: ctx
         if: steps.lifecycle-gate.outputs.is-open == 'true'
@@ -438,7 +476,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           ref: ${{ inputs.spec-draft-prefix }}${{ steps.ctx.outputs.spec-slug }}
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           fetch-depth: 0
           clean: false
 
@@ -448,7 +486,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true'
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           COMMENT_ID: ${{ inputs.comment-id }}
         run: |
           # `-X POST` is what this call has always done — `gh api` switches
@@ -463,7 +501,7 @@ jobs:
       - name: Stage the answer as a data file
         if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           COMMENT_ID: ${{ inputs.comment-id }}
         run: |
           mkdir -p /tmp/wing-commander
@@ -499,7 +537,7 @@ jobs:
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SPECIFY_FEATURE_DIRECTORY: ${{ steps.ctx.outputs.spec-dir }}
           # (canonical copy; do not condense)
           # Force subagents synchronous — headless has no turn-boundary resume,
@@ -510,7 +548,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
           use_bedrock: ${{ inputs.use-bedrock }}
-          github_token: ${{ steps.ctx.outputs.token }}
+          github_token: ${{ env.WC_BOT_TOKEN }}
           # (canonical copy; do not condense)
           # Wrappers may dispatch this stage via GITHUB_TOKEN (custom
           # triggers); the action rejects bot actors unless allow-listed.
@@ -593,6 +631,35 @@ jobs:
             --json-schema '{"type":"object","properties":{"answered":{"type":"boolean"},"clarifications":{"type":"array","items":{"type":"object","properties":{"question":{"type":"string"},"context":{"type":["string","null"]},"options":{"type":"array","items":{"type":"object","properties":{"answer":{"type":"string"},"implications":{"type":["string","null"]}},"required":["answer"]}}},"required":["question"]}}},"required":["answered","clarifications"]}'
             --allowedTools "${{ steps.tool-args-clarify.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-clarify.outputs.disallowed-tools }}"
+
+      # !cancelled(), not always() (spec 052, should-fix per maintainer
+      # review of PR #407): a run cancelled during the agent step must not
+      # still perform a network mint and a remote rewrite in the cancel
+      # window -- see clarify.yml.
+      - name: Record agent-ran signal
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        id: agent-ran
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-ran-signal
+        with:
+          agent-outcome: ${{ steps.agent.outcome }}
+
+      - name: Re-establish Wing Commander context (post-agent)
+        id: reestablish
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+          issue-labels-json: ${{ steps.labels.outputs.json }}
+
+      - name: Refresh authenticated spec-branch remote (post-agent)
+        id: refresh-remote
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-refresh-remote
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
 
       # deterministic, transcript-only verdict (healthy/exhausted/failed/unclassifiable) replacing
       # the raw outcome check the action's post-hoc rejection can no longer be trusted to reflect
@@ -687,6 +754,7 @@ jobs:
       # says the fold may already be committed, so whoever reads the red run
       # checks the PR rather than assuming nothing happened.
       - name: Fail on agent API error
+        id: api-error
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent-verdict.outputs.verdict == 'healthy'
         run: |
           f="$RUNNER_TEMP/claude-execution-output.json"
@@ -714,6 +782,7 @@ jobs:
       # cause; a healthy-but-post-hoc-rejected run skips this entirely and
       # the stage continues (FR-001-FR-003, FR-005).
       - name: Fail loud on non-healthy agent verdict
+        id: verdict-fail
         if: always() && steps.agent.outcome != 'skipped' && steps.agent-verdict.outputs.verdict != 'healthy'
         env:
           VERDICT: ${{ steps.agent-verdict.outputs.verdict }}
@@ -875,7 +944,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.outcome == 'needs-clarification'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ inputs.issue-number }}
           kind: action
           summary: "Answer the remaining clarification questions"
@@ -889,7 +958,7 @@ jobs:
         id: spec-pr
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.outcome == 'ready' && steps.clarification.outputs.blocked != 'true'
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
         run: |
           url=$(gh pr list --head "${{ inputs.spec-draft-prefix }}${{ steps.ctx.outputs.spec-slug }}" --state open --json url --jq '.[0].url // empty')
           echo "url=$url" >> "$GITHUB_OUTPUT"
@@ -898,7 +967,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.outcome == 'ready' && steps.clarification.outputs.blocked != 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ inputs.issue-number }}
           kind: action
           summary: "Review the spec PR"
@@ -919,7 +988,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.outcome == 'none'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ inputs.issue-number }}
           kind: info
           summary: "That reply did not answer an open clarification question, so the spec is unchanged."
@@ -928,12 +997,16 @@ jobs:
       # (canonical copy; do not condense)
       # Observability, not failure (FR-017) — the intended budget was fully
       # used but the run finished healthy; the runaway ceiling above is the
-      # only hard stop.
+      # only hard stop. This tolerance is enforced, not just documented
+      # (spec 052, FR-021): continue-on-error: true below means this step's
+      # own failure can never strand the deterministic read-back or any
+      # step after it.
       - name: Report over-budget agent run
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent-verdict.outputs.verdict == 'healthy' && steps.agent-verdict.outputs.over-budget == 'true'
+        continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ inputs.issue-number }}
           kind: info
           summary: "This step used its full intended turn budget."
@@ -951,10 +1024,59 @@ jobs:
       # refused, because a spec.md still carrying colon-form markers is not
       # ready and a human invited to merge it would merge them.
       - name: Fail on unresolved clarification markers
+        id: unresolved-markers
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.blocked == 'true'
         run: |
           echo "::error::wing-commander clarify stage: failing the run — the spec still carries colon-form [NEEDS CLARIFICATION: markers while the structured result reported none (see the error above). No readiness callout was posted."
           exit 1
+
+      # Deferred to the job's last steps, not placed right after the
+      # refresh pair (review-step-gating skill, spec 052 self-review after
+      # the maintainer review of PR #407): every business-logic/report step
+      # between the agent step and here is gated on its own implicit
+      # success(), with no always()/!cancelled() -- placed any earlier, a
+      # step that reads the composite's `ok` output for its own gating
+      # could observe a stale value from before the mint/refresh pair ran.
+      # The composite itself never fails the job (second maintainer review
+      # of PR #407): it warns and publishes `ok=false` instead of exiting
+      # non-zero, since a re-mint failure here, with every earlier step
+      # healthy, means the stage already did its work -- hard-failing would
+      # report a false "stalled" outcome for a run that succeeded. When
+      # something else already flipped the job red, the stall path's
+      # ok-first check below still attributes that failure to the
+      # credential when `ok=false`, ahead of the generic agent-ran branch.
+      - name: Determine post-agent credential status
+        id: credential-status
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
+        with:
+          mint-outcome: ${{ steps.reestablish.outcome }}
+          refresh-outcome: ${{ steps.refresh-remote.outcome }}
+
+      # FR-011: names the specific post-agent step that failed, for the
+      # stalled job to read instead of the generic "a step after it did not
+      # complete" (spec 052 maintainer review of PR #407). Must be the
+      # job's LAST step -- the steps context only carries the outcomes of
+      # steps that have already run by this point in the job, so any step
+      # added after this one would be invisible to it. The other 5
+      # consuming stages point here instead of repeating this paragraph.
+      #
+      # candidates-json lists this job's own hard-failing (non-continue-on-
+      # error) post-agent steps in execution order, each read via
+      # `.conclusion` (not `.outcome`) so a continue-on-error step that
+      # raw-failed is never misnamed as the cause (second maintainer review
+      # of PR #407, FR-011, SC-003) -- see clarify.yml for the composite.
+      - name: Determine failed post-agent step
+        id: failed-step
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-failed-post-agent-step
+        with:
+          candidates-json: >-
+            [
+              {"name": "Fail on agent API error", "conclusion": "${{ steps.api-error.conclusion }}"},
+              {"name": "Fail loud on non-healthy agent verdict", "conclusion": "${{ steps.verdict-fail.conclusion }}"},
+              {"name": "Fail on unresolved clarification markers", "conclusion": "${{ steps.unresolved-markers.conclusion }}"}
+            ]
 
   # Survivor job (the #224 idiom, research.md D4): new for clarify — this
   # stage has no exhausted-retry loop, so it admits only the abnormal-
@@ -1058,21 +1180,27 @@ jobs:
             echo "spec-dir=" >> "$GITHUB_OUTPUT"
           fi
 
+      # (canonical copy; do not condense)
+      # FR-004/FR-011 (spec 052, maintainer review of PR #407): a credential
+      # re-establishment failure is named as such, ahead of the generic
+      # agent-ran branch; otherwise, a real post-agent step failure names
+      # the step, falling back to the pre-052 generic wording only when the
+      # entry job could not identify which step failed. The other 5
+      # consuming stages point here instead of repeating this paragraph.
+      # Single-homed in wing-commander-stall-reason (second maintainer
+      # review of PR #407, CLAUDE.md single-home rule).
       - name: Determine which dependency did not start
         id: reason
         if: needs.clarify.outputs.refusal-reason == ''
-        env:
-          IMAGE_RESULT: ${{ needs.verify-image-prerequisites.result }}
-          CLARIFY_RESULT: ${{ needs.clarify.result }}
-        run: |
-          if [ "$IMAGE_RESULT" = "failure" ]; then
-            reason="the verify-image-prerequisites job failed, so the clarify stage never started"
-          elif [ "$CLARIFY_RESULT" = "skipped" ]; then
-            reason="the clarify stage was skipped because a dependency it needs did not run"
-          else
-            reason="the clarify stage failed before it could run its own steps"
-          fi
-          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-stall-reason
+        with:
+          stage-name: clarify
+          image-result: ${{ needs.verify-image-prerequisites.result }}
+          entry-result: ${{ needs.clarify.result }}
+          agent-ran: ${{ needs.clarify.outputs.agent-ran }}
+          agent-conclusion: ${{ needs.clarify.outputs.agent-conclusion }}
+          credential-refresh-ok: ${{ needs.clarify.outputs.credential-refresh-ok }}
+          failed-post-agent-step: ${{ needs.clarify.outputs.failed-post-agent-step }}
 
       - name: Report the stage did not start
         if: needs.clarify.outputs.refusal-reason == ''
@@ -1084,4 +1212,15 @@ jobs:
           spec-branch: spec/${{ steps.identity.outputs.slug }}
           stage-label: "stage:clarify"
           reason: ${{ steps.reason.outputs.reason }}
-          restart-command: "Re-dispatch the clarify stage for this specification once the cause above is resolved."
+          # FR-015: resume-oriented wording when the agent ran and a step
+          # after it is what stalled the job -- not a from-scratch restart.
+          # Worded from agent-conclusion, not asserted as "ran to
+          # completion" regardless of outcome (second maintainer review of
+          # PR #407, FR-011) -- see clarify.yml's own copy of this note in
+          # wing-commander-chain-stop-notice/action.yml.
+          restart-command: ${{ needs.clarify.outputs.agent-ran == 'true' && needs.clarify.outputs.agent-conclusion == 'success' && 'The clarify agent step completed its work; a step after it did not. Re-dispatch the clarify stage for this specification once the cause above is resolved.' || needs.clarify.outputs.agent-ran == 'true' && 'The clarify agent step failed after running; its pushed commits are on the branch. Re-dispatch the clarify stage for this specification once the cause above is resolved.' || 'Re-dispatch the clarify stage for this specification once the cause above is resolved.' }}
+          # FR-011/FR-015: drops the composite's default "stage did not
+          # start" / "no work was lost" wording, which is false once the
+          # agent ran -- see clarify.yml.
+          agent-ran: ${{ needs.clarify.outputs.agent-ran }}
+          agent-conclusion: ${{ needs.clarify.outputs.agent-conclusion }}

@@ -1,0 +1,41 @@
+# Single home for the "did the agent step run, and how did it conclude"
+# signal every sweep-stage job publishes immediately after its own agent
+# step (spec 052, FR-010, FR-014). Resolved from the pipeline repository's
+# own checkout the same way every other shared composite is -- see the
+# header of .github/actions/wing-commander-context/action.yml for the
+# verified self-checkout snippet.
+name: wing-commander-agent-ran-signal
+description: >
+  Publishes a durable, prose-free record of whether an agent step ran and
+  what it concluded, immune to the agent step's own `continue-on-error:
+  true` masking a real failure as `success` (spec 052 maintainer review of
+  PR #407: `steps.<id>.conclusion` is rewritten to `success` by
+  continue-on-error; only `steps.<id>.outcome` preserves the real result,
+  so this composite takes outcome, never conclusion).
+
+inputs:
+  agent-outcome:
+    description: >
+      The agent step's `steps.<id>.outcome` (NOT `.conclusion`). Caller
+      passes this in rather than the composite reading it directly, since
+      composite steps cannot see the calling job's `steps` context.
+    required: true
+
+outputs:
+  ran:
+    description: Always 'true' -- the caller only invokes this composite when its own `if:` guard (steps.<agent-id>.outcome != 'skipped') already confirms the agent step ran.
+    value: 'true'
+  conclusion:
+    description: One of success/failure/cancelled, sourced from the agent step's outcome.
+    value: ${{ steps.record.outputs.conclusion }}
+
+runs:
+  using: composite
+  steps:
+    - name: Record agent-ran signal
+      id: record
+      shell: bash
+      env:
+        AGENT_OUTCOME: ${{ inputs.agent-outcome }}
+      run: |
+        echo "conclusion=$AGENT_OUTCOME" >> "$GITHUB_OUTPUT"

@@ -3598,6 +3598,46 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-auto-release-credential-step.py
 
+      # Gate 68 — specs/052-agent-credential-lifetime: the minted App
+      # installation token has a one-hour lifetime, shorter than some agent
+      # steps run. Every agent-bearing job in the 8 sweep stages relays its
+      # mint into env.WC_BOT_TOKEN / env.WC_SCRATCH_TOKEN and re-mints it
+      # immediately after each agent step; this asserts no post-agent step
+      # reads the stale steps.<id>.outputs.token form (nor a pre-agent step's
+      # $GITHUB_ENV relay of one under a different name), no agent step in a
+      # job runs unrefreshed, every "Report over-budget agent run" copy
+      # carries continue-on-error: true, the agent-ran-signal/refresh-
+      # remote/failed-post-agent-step/stall-reason steps all resolve through
+      # their one shared composite home (never a re-pasted inline block, and
+      # never simply absent), and each agent step's own composite calls are
+      # checked by position, not merely by a job-wide total -- see
+      # verify-post-agent-credential-refresh.py's own docstring (checks 1-9)
+      # for the current, authoritative list.
+      - name: Gate 68 — every post-agent step holds a fresh credential and every observability callout is tolerated
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-post-agent-credential-refresh.py
+      - name: Gate 68 self-test — each documented mutation fails
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-post-agent-credential-refresh.py --self-test
+
+      # Gate 69 — specs/052-agent-credential-lifetime (User Story 1's own
+      # "STOP and VALIDATE" step, quickstart.md section 4): the credential
+      # relay's env-var precedence and the post-agent remote refresh are
+      # both plain shell, so Gate 68's structural check alone cannot prove
+      # them correct. This feature's own T046 code review found the remote
+      # refresh, as first shipped, only rewrote the remote URL and never
+      # cleared the stale http.https://github.com/.extraheader entry
+      # actions/checkout@v5 leaves behind — a no-op that would have
+      # silently reproduced the exact 401 this feature exists to eliminate.
+      # This drives both shipped `run:` blocks against a real $GITHUB_ENV
+      # file and a real git repository with that exact stale extraheader.
+      - name: Gate 69 — the credential relay's env-var precedence and the post-agent remote refresh both behave as designed
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-credential-relay-shell.py
+      - name: Gate 69 self-test — both regressions this gate exists to catch fail
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-credential-relay-shell.py --self-test
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when
