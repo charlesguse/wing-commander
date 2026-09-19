@@ -315,3 +315,9 @@ Code review of PR #407 at head bb064e9 (charlesguse) found the shipped remedy do
 ### Should fix
 
 - [ ] Harden Gate 68 further: (a) nothing requires the "Determine failed post-agent step" composite call to exist — deleting it passes Gate 68 (only `verify-actionlint.py` fails, indirectly, via an undefined job output) and pasting the old jq back under another step name passes every gate; require the call in each stage that reads the signal. (b) Match Gate 60's refresh idiom without depending on the literal quotes and `--local` — `git config --unset-all http.https://github.com/.extraheader` without them evades it today. (c) The composite-call check counts calls per job, not their position, so removing `progress`'s credential-status call and duplicating `cycle`'s would pass — check position, not just count. (FR-020, FR-021, FR-022)
+
+## Maintainer Feedback (third review, PR #407 @ 453656c)
+
+### Should fix
+
+- [ ] Polish: the Gate 68 header comment in `lint-workflows.yml` (~line 3601) describes only the original three assertions and the script docstring's check numbers no longer match the code's labels — bring both up to date. Also, the stall notice currently prints the step id (`'verdict-fail'`) rather than a readable step name — use the readable name. (FR-011, FR-020)
