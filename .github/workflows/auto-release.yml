@@ -309,6 +309,13 @@ jobs:
           MODE: ${{ steps.mode.outputs.mode }}
         run: |
           set -uo pipefail
+          # A username secret stored with a trailing newline or space (easy to
+          # do with `echo login | gh secret set`) still passes the case-
+          # insensitive login comparison below, because command substitution
+          # strips the newline, but it defeats the redaction of the reached
+          # repository names, which uses the value as a pattern. GitHub logins
+          # contain no whitespace, so it is stripped once, here (#396 review).
+          MAINTAINER_USERNAME="$(printf '%s' "$MAINTAINER_USERNAME" | tr -d '[:space:]')"
           if [ -z "$MAINTAINER_TOKEN" ]; then
             echo "ok=false" >> "$GITHUB_OUTPUT"
             {
@@ -381,10 +388,18 @@ jobs:
           reachable_repos="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api "user/repos?affiliation=owner,collaborator,organization_member" --paginate --jq '.full_name' 2>/dev/null | sort -u)"
           reachable_count="$(printf '%s' "$reachable_repos" | grep -c . || true)"
           if [ "$reachable_count" -ne 1 ] || [ "$(printf '%s' "$reachable_repos" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$E2E_REPO" | tr '[:upper:]' '[:lower:]')" ]; then
+            # The login is held in a masked secret, and GitHub drops any step
+            # output that contains a masked value. A reached repository owned
+            # by this very account (`<login>/...`) would therefore take the
+            # whole verdict with it in exactly the case this check exists to
+            # catch, and the report would say "verdict not a JSON object"
+            # instead of naming what was reached. The names are shown with the
+            # account's own login replaced by a placeholder (#396).
+            reachable_shown="$(printf '%s' "$reachable_repos" | jq -Rr --arg login "$MAINTAINER_USERNAME" 'gsub($login; "<maintainer account>"; "i")' | tr '\n' ',')"
             echo "ok=false" >> "$GITHUB_OUTPUT"
             {
               echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity containment" "the credential reaches exactly one repository, the configured test repository" "reached: [$(printf '%s' "$reachable_repos" | tr '\n' ',')]" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity containment" "the credential reaches exactly one repository, the configured test repository" "reached ${reachable_count} repositories: [${reachable_shown}]" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
             echo "::error::wing-commander auto-release verify-e2e: the fixture maintainer identity's credential does not reach exactly the configured test repository -- see docs/setup.md."
@@ -754,6 +769,10 @@ jobs:
           MODE: ${{ steps.mode.outputs.mode }}
         run: |
           set -uo pipefail
+          # Same whitespace hazard as the credential step above: the login is
+          # compared with `==` and used as a jq argument, so a secret stored
+          # with a trailing newline would never match (#396 review).
+          HARNESS_LOGIN="$(printf '%s' "$HARNESS_LOGIN" | tr -d '[:space:]')"
 
           # $5 (evidence_url) defaults to the kickoff issue; a caller that
           # has better evidence (e.g. the test repository run a stall
@@ -1206,7 +1225,7 @@ jobs:
           plan_pr_out="$(printf '%s' "$plan_pr" | jq -c 'if . == null then null else {number, mergedAt} end' 2>/dev/null || echo null)"
           finalize_pr_out="$(printf '%s' "$finalize_pr" | jq -c 'if . == null then null else {number, mergedAt} end' 2>/dev/null || echo null)"
 
-          clarification_comment_ids="$(printf '%s' "$comments_json" | jq -c --argjson markers "$markers_json" --arg login "$HARNESS_LOGIN" '{questions: [ $markers[].id ], replies: [ .[] | select((.user.login // "") == $login) | .id ]}' 2>/dev/null || echo '{"questions":[],"replies":[]}')"
+          clarification_comment_ids="$(printf '%s' "$comments_json" | jq -c --argjson markers "$markers_json" --arg login "$HARNESS_LOGIN" '{questions: [ $markers[].id ], replies: [ .[] | select(((.user.login // "") | ascii_downcase) == ($login | ascii_downcase)) | .id ]}' 2>/dev/null || echo '{"questions":[],"replies":[]}')"
           {
             echo "spec-draft-pr=$spec_draft_pr_out"
             echo "plan-pr=$plan_pr_out"
