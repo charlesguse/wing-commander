@@ -238,9 +238,92 @@ With two maintainers/agents (CLAUDE.md caps concurrent local agents at two for t
 Code review findings from PR #373 (maintainer @charlesguse) to fix before merge:
 
 - [ ] MF1 (Must fix) — Derive `container_image_configured` from the test repository's actual `WING_COMMANDER_CONTAINER_IMAGE` value and the `verify-image-prerequisites` job's outcome, instead of the constant `(if $mode == "container" then {container_image_configured: true} else {} end)` tag applied to every container-turn verdict (e.g. `auto-release.yml:554`); record which stage actually ran inside the image (FR-001, FR-007); have `report` (~line 1081) classify a poll's `fail-incomplete` caused by an image pull failure or rate limit as infrastructure-class, not a pipeline defect; add a gate scenario asserting a container-mode `pass` with the variable unset fails. Completes T009, T010, T011.
-- [ ] MF2 (Must fix) — Give `_shared/auto-release-verdict.sh` the mode as an argument (or read it from the environment) so it emits the mode-tagged verdict itself; delete the twelve pasted `| jq --arg mode "$MODE" '. + {mode:$mode} + (...)'` pipes after every call site (lines 175, 190, 208, 255, 262, 378, 422, 434, 477, 512, 523, 554); extend `verify-single-home-idioms.py`'s `check_verdict_shape` so this jq shape (today undetected — it has none of the six field names the check looks for) fails if it reappears (CLAUDE.md "Shared logic has exactly one home").
-- [ ] MF3 (Must fix) — Replace the day-of-year parity check (`auto-release.yml:144`, `date -u +%j`) with a monotonic count (e.g. days since a fixed epoch), since in a non-leap year day 365 (31 Dec) and day 1 (1 Jan) are both odd and repeat container mode across the boundary, skipping the default-runner leg (SC-009, FR-018); add a year-boundary scenario.
-- [ ] MF4 (Must fix) — Fix the Gate 62/63 renumbering mismatch: `lint-workflows.yml` now names the cost-line gate "Gate 63" and the reference-image gate "Gate 62", but `verify-plan-tasks-cost-line.py` still prints "Gate 62" in its docstring and `::error::` lines (lines 2, 401, 404, 424) — update it to Gate 63 so two gates don't both report as 62.
-- [ ] SF1 (Should fix) — Make `verify-gate-62.py`'s `build_image` report a clear skip or infrastructure-class result when `docker` is missing, instead of raising an uncaught `FileNotFoundError`, and separate a build failure from a tool-set mismatch, so `run-local-gates.py` (CLAUDE.md's named PR-time gate set) doesn't traceback on a Docker-less machine.
-- [ ] SF2 (Should fix) — Assert that the default-runner `sed` substitution at `auto-release.yml:460` actually matched the wrapper text, so a future wrapper-text change can't silently leak container mode into a default-runner turn with nothing detecting it.
-- [ ] SF3 (Should fix) — Correct `architecture.md`'s claim that a pass "can never overstate coverage" (contradicted by MF1's finding), and add to `setup.md` that the `WING_COMMANDER_CONTAINER_IMAGE` variable should be set to the digest the reference-image workflow's job summary prints, per that workflow's own comment.
+
+  Partially done 2026-09-19: `container_image_configured` now defaults to
+  `false` for every container-turn verdict and only the poll step's own
+  `pass` (reached once the full scaffolded chain closed `stage:done`)
+  passes the explicit `true` that earns it — this default now lives
+  solely inside `_shared/auto-release-verdict.sh` (folded in alongside
+  MF2), not guessed per call site. The poll step also scans the kickoff
+  issue's own comments for a `wing-commander-chain-stop-notice` naming a
+  failed `verify-image-prerequisites` job (readable with the Issues-read
+  permission already granted — no new grant needed, FR-017) and reports
+  that as `fail-infra` naming the failing stage, with `evidence_url`
+  pointing at the actual failed run parsed from the comment, rather than
+  the generic `fail-incomplete` a pipeline defect would get. A GitHub API
+  rate limit hit while polling is likewise now `fail-infra`. `report`'s
+  existing `outcome == "fail-infra"` → infrastructure classification
+  picks both up unchanged, verified by a new `verify-auto-release-report.py`
+  scenario.
+
+  What remains open, and why this checkbox stays unchecked rather than
+  claiming MF1 fully done: the harder half — a container-mode turn whose
+  `WING_COMMANDER_CONTAINER_IMAGE` was left **unset** on the test
+  repository, so `verify-image-prerequisites` has nothing to pull and
+  vacuously succeeds — cannot be told apart from a real container run
+  using only the Issues-read permission this App installation carries.
+  research.md D7 and this task's own text already flag that the only
+  viable signal for that case is the test repository's Actions run data,
+  which needs a new `Actions: read` grant on *that repository's*
+  installation (not wing-commander's own) — not something to add
+  silently. Documented as a known limitation in `docs/setup.md` (the
+  `WING_COMMANDER_AUTO_RELEASE_E2E_REPO` row) and `docs/architecture.md`;
+  raised on issue #364 for owner confirmation per D7/T009's own
+  instruction. The gate scenario this item also asks for ("a container-mode
+  `pass` with the variable unset fails") is exactly this undetectable
+  case, so it could not be added honestly — a scenario asserting the
+  *detectable* case (a `fail-infra` verdict naming an unresolved image
+  classifies as infrastructure, not a pipeline defect) was added instead.
+
+- [X] MF2 (Must fix) — Give `_shared/auto-release-verdict.sh` the mode as an argument (or read it from the environment) so it emits the mode-tagged verdict itself; delete the twelve pasted `| jq --arg mode "$MODE" '. + {mode:$mode} + (...)'` pipes after every call site (lines 175, 190, 208, 255, 262, 378, 422, 434, 477, 512, 523, 554); extend `verify-single-home-idioms.py`'s `check_verdict_shape` so this jq shape (today undetected — it has none of the six field names the check looks for) fails if it reappears (CLAUDE.md "Shared logic has exactly one home").
+
+  Done 2026-09-19: `mode` and `container_image_configured` are now two
+  additional optional positional arguments to `auto-release-verdict.sh`;
+  all 12 pasted pipes are gone (plus the two `reset`-step call sites,
+  which had never been threaded with `MODE` at all — a real gap this
+  refactor also closed). Added a fifth check, `mode-tag-shape`, to Gate
+  60 (`verify-single-home-idioms.py`), with its own self-test case
+  proving a third paste of the old shape is caught. Gate 60's existing
+  byte-identity check against the 15 fixed real inputs still passes
+  unchanged, since a call site that omits the two new arguments gets
+  byte-identical output to before they existed.
+
+- [X] MF3 (Must fix) — Replace the day-of-year parity check (`auto-release.yml:144`, `date -u +%j`) with a monotonic count (e.g. days since a fixed epoch), since in a non-leap year day 365 (31 Dec) and day 1 (1 Jan) are both odd and repeat container mode across the boundary, skipping the default-runner leg (SC-009, FR-018); add a year-boundary scenario.
+
+  Done 2026-09-19: mode is now derived from days-since-epoch
+  (`date -u +%s / 86400`). Added Gate 64 (`verify-auto-release-mode.py`),
+  which executes the shipped mode step against a stubbed `date` for a
+  real December-31/January-1 pair (plus an ordinary consecutive-day pair
+  and the pause-control interaction) and mutates the day-of-year check
+  back in to prove the year-boundary scenario actually fails on that
+  defect.
+
+- [X] MF4 (Must fix) — Fix the Gate 62/63 renumbering mismatch: `lint-workflows.yml` now names the cost-line gate "Gate 63" and the reference-image gate "Gate 62", but `verify-plan-tasks-cost-line.py` still prints "Gate 62" in its docstring and `::error::` lines (lines 2, 401, 404, 424) — update it to Gate 63 so two gates don't both report as 62.
+
+  Done 2026-09-19: all four occurrences updated to Gate 63, matching
+  `lint-workflows.yml`'s registration.
+
+- [X] SF1 (Should fix) — Make `verify-gate-62.py`'s `build_image` report a clear skip or infrastructure-class result when `docker` is missing, instead of raising an uncaught `FileNotFoundError`, and separate a build failure from a tool-set mismatch, so `run-local-gates.py` (CLAUDE.md's named PR-time gate set) doesn't traceback on a Docker-less machine.
+
+  Done 2026-09-19: `main()` checks `docker_available()` first and prints
+  a clear skip (exit 0) rather than letting `build_image` raise
+  `FileNotFoundError`. The existing separation between a build failure
+  and a tool-set mismatch in `scan()` was already correct and is
+  unchanged.
+
+- [X] SF2 (Should fix) — Assert that the default-runner `sed` substitution at `auto-release.yml:460` actually matched the wrapper text, so a future wrapper-text change can't silently leak container mode into a default-runner turn with nothing detecting it.
+
+  Done 2026-09-19: the `scaffold` step now `grep -q`s for the expected
+  passthrough pattern before running the `sed`, and degrades to a
+  `fail-infra` verdict naming the file if the pattern is not found.
+
+- [X] SF3 (Should fix) — Correct `architecture.md`'s claim that a pass "can never overstate coverage" (contradicted by MF1's finding), and add to `setup.md` that the `WING_COMMANDER_CONTAINER_IMAGE` variable should be set to the digest the reference-image workflow's job summary prints, per that workflow's own comment.
+
+  Done 2026-09-19: `architecture.md`'s reporting bullet now describes the
+  new default and names the residual unset-variable gap instead of
+  claiming a pass can never overstate coverage; its mode-derivation bullet
+  was also updated off the stale day-of-year description (MF3).
+  `setup.md`'s `WING_COMMANDER_CONTAINER_IMAGE` row now says to use the
+  digest the reference-image workflow prints, and its
+  `WING_COMMANDER_AUTO_RELEASE_E2E_REPO` row documents the MF1 residual
+  gap.
