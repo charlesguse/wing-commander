@@ -279,3 +279,9 @@ Code review of PR #407 at head bb064e9 (charlesguse) found the shipped remedy do
 ### Must fix
 
 - [ ] Close two remaining Gate 68/69 holes (FR-020, FR-021): (a) require each stage's agent jobs to explicitly call the refresh, agent-ran, and credential-status composites (today, deleting one or pasting the refresh block back under a different name still passes Gates 60/68/69); add the `extraheader`/`set-url origin` idiom to Gate 60 as the one-home check CLAUDE.md asks for. (b) Flag any post-agent read of `env.*` whose value was set from the pre-agent token, and match the additional spellings that currently pass: `fromJSON(...)['token']`, `fromJSON(toJSON(steps.ctx.outputs)).token`, `toJSON(steps.ctx.outputs)`, `steps['ctx']['outputs']['token']`.
+
+## Maintainer Feedback (second review, PR #407 @ fbbae61)
+
+### Should fix
+
+- [ ] Record why `evaluate-path` and `comment-reply` in `auto-update-spec-kit.yml` are out of scope (10-minute `timeout-minutes` on both agent steps) in the scope statements of `spec.md`, `plan.md`, `research.md`, and `architecture.md` — today it's only in YAML comments (`auto-update-spec-kit.yml:1093`, `:3246`) and one tasks.md line, citing a research.md D4/D5 scope table that doesn't list them, while `architecture.md:167` still says every agent-bearing job relays. (FR-005, SC-005)
