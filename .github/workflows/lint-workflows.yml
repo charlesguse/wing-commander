@@ -3634,6 +3634,9 @@ jobs:
       - name: Gate 69 — the credential relay's env-var precedence and the post-agent remote refresh both behave as designed
         if: "!cancelled()"
         run: python3 .github/scripts/verify-credential-relay-shell.py
+      - name: Gate 69 self-test — both regressions this gate exists to catch fail
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-credential-relay-shell.py --self-test
 
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and

@@ -52,7 +52,16 @@ construction rather than by an unenforced claim of byte-identity
 claimed Gate 68 already enforced byte-identity across 8 pasted copies; it
 did not).
 
-Usage: python3 .github/scripts/verify-credential-relay-shell.py
+Self-test (--self-test): runs both checks clean against the real shipped
+scripts, then reintroduces the two regressions this gate exists to catch
+and asserts each one fails its check -- check 1 against a relay script
+where an already-set WC_BOT_TOKEN short-circuits the write (the FIRST
+mint sticks instead of the LAST), and check 2 against the pre-T046
+remote-refresh form (`git remote set-url` alone, the extraheader-clearing
+line removed) that this feature's own T046 code review found shipped as
+a no-op (FR-023, tasks.md T048).
+
+Usage: python3 .github/scripts/verify-credential-relay-shell.py [--self-test]
 Requires: bash, git (both present on ubuntu-latest runners).
 """
 import os
@@ -75,10 +84,18 @@ EXTRAHEADER_KEY = "http.https://github.com/.extraheader"
 BASH = None
 
 
-def check_relay_env_precedence(root):
+def relay_script():
+    return str(find_step(COMPOSITE, RELAY_STEP)["run"])
+
+
+def refresh_script():
+    return str(find_step(REFRESH_COMPOSITE, REFRESH_STEP)["run"])
+
+
+def check_relay_env_precedence(root, script=None):
     """Check 1: two mints into the same $GITHUB_ENV, the second wins."""
-    step = find_step(COMPOSITE, RELAY_STEP)
-    script = str(step["run"])
+    if script is None:
+        script = relay_script()
     workdir = tempfile.mkdtemp(dir=root)
     env_file = os.path.join(workdir, "github_env")
     open(env_file, "w").close()
@@ -114,11 +131,12 @@ def _run_git(repo, *args):
                     capture_output=True, text=True)
 
 
-def check_remote_refresh_clears_stale_extraheader(root):
+def check_remote_refresh_clears_stale_extraheader(root, script=None):
     """Check 2: the refresh step beats a stale actions/checkout extraheader
     without touching the working tree."""
-    step = find_step(REFRESH_COMPOSITE, REFRESH_STEP)
-    script = str(step["run"]).replace("${{ github.repository }}", REPO)
+    if script is None:
+        script = refresh_script()
+    script = script.replace("${{ github.repository }}", REPO)
 
     workdir = tempfile.mkdtemp(dir=root)
     repo = os.path.join(workdir, "repo")
@@ -183,10 +201,89 @@ def check_remote_refresh_clears_stale_extraheader(root):
     return failures
 
 
+def mut_relay_first_write_wins():
+    """Regression: skip the $GITHUB_ENV write once WC_BOT_TOKEN is already
+    set, so the FIRST mint sticks for the rest of the job instead of the
+    LAST (the exact inversion of research.md D1)."""
+    script = relay_script()
+    mutated = script.replace(
+        'echo "WC_BOT_TOKEN=$TOKEN" >> "$GITHUB_ENV"',
+        'grep -q "^WC_BOT_TOKEN=" "$GITHUB_ENV" || '
+        'echo "WC_BOT_TOKEN=$TOKEN" >> "$GITHUB_ENV"')
+    if mutated == script:
+        sys.exit("::error::Gate 69 self-test: mut_relay_first_write_wins "
+                 "changed nothing -- the relay step's shipped text was "
+                 "rewritten; update the mutation to match.")
+    return mutated
+
+
+def mut_refresh_remote_no_extraheader_clear():
+    """Regression: the pre-T046 form -- `git remote set-url` alone, with
+    the extraheader-clearing line removed. This is the exact bug this
+    feature's own T046 code review found shipping as a silent no-op."""
+    script = refresh_script()
+    mutated_lines = [line for line in script.splitlines()
+                      if "unset-all" not in line]
+    mutated = "\n".join(mutated_lines)
+    if script.endswith("\n"):
+        mutated += "\n"
+    if mutated == script:
+        sys.exit("::error::Gate 69 self-test: "
+                 "mut_refresh_remote_no_extraheader_clear changed nothing "
+                 "-- the refresh step's shipped text was rewritten; update "
+                 "the mutation to match.")
+    return mutated
+
+
+def self_test():
+    problems = []
+    tmproot = tempfile.mkdtemp(prefix="verify_credential_relay_shell_selftest_")
+    try:
+        clean = (check_relay_env_precedence(tmproot)
+                 + check_remote_refresh_clears_stale_extraheader(tmproot))
+        if clean:
+            problems.append(
+                "the clean shipped scripts FAILED their own checks: "
+                + "; ".join(clean))
+
+        broke = check_relay_env_precedence(tmproot, mut_relay_first_write_wins())
+        if not broke:
+            problems.append(
+                "MUTATION SURVIVED -- reintroducing 'first $GITHUB_ENV "
+                "write wins instead of last' broke nothing in check 1.")
+        else:
+            print(f"Mutation OK -- relay first-write-wins: "
+                  f"{len(broke)} assertion(s) fail.")
+
+        broke = check_remote_refresh_clears_stale_extraheader(
+            tmproot, mut_refresh_remote_no_extraheader_clear())
+        if not broke:
+            problems.append(
+                "MUTATION SURVIVED -- reintroducing the pre-T046 "
+                "remote-refresh form (no extraheader clear) broke nothing "
+                "in check 2.")
+        else:
+            print(f"Mutation OK -- pre-T046 remote refresh (no extraheader "
+                  f"clear): {len(broke)} assertion(s) fail.")
+    finally:
+        import shutil
+        shutil.rmtree(tmproot, ignore_errors=True)
+
+    for p in problems:
+        print(f"::error::Gate 69 self-test: {p}")
+    if problems:
+        return 1
+    print("Gate 69 self-test: clean shipped scripts pass; each mutation fails.")
+    return 0
+
+
 def main():
     global BASH
     use_utf8_stdout()
     BASH = resolve_bash()
+
+    if "--self-test" in sys.argv[1:]:
+        return self_test()
 
     tmproot = tempfile.mkdtemp(prefix="verify_credential_relay_shell_")
     try:
