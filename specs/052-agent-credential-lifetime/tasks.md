@@ -249,3 +249,9 @@ Code review of PR #407 at head bb064e9 (charlesguse) found the shipped remedy do
 ### Must fix
 
 - [ ] `chain-stop-notice/action.yml:152-165` and the per-stage `restart-command` text (`clarify.yml:1211` and its counterparts in `finalize.yml`, `implement.yml`, `intake.yml`, `pr-conversation.yml`, `tasks.yml`) claim the agent 'ran to completion'/'completed its own work' regardless of conclusion. Word the notice from `agent-conclusion`: success → 'the agent completed its work'; failure → 'the agent step failed after running; its pushed commits are on the branch'. (FR-011)
+
+## Maintainer Feedback (second review, PR #407 @ fbbae61)
+
+### Must fix
+
+- [ ] Fix the 'Determine failed post-agent step' jq at `clarify.yml:1054-1061`, `finalize.yml:1306`, `implement.yml:2531`, `intake.yml:1285`, `pr-conversation.yml:1436`, `tasks.yml:1220`: (a) give every hard-failing id-less step ("Fail loud on non-healthy agent verdict", "Fail on agent API error", "Fail on unresolved clarification markers", "Flip stage label") an `id:`; (b) select on `.conclusion == "failure"` and exclude the agent step so a `continue-on-error` step or the agent itself is never named; (c) pick by an explicit ordered id list rather than assuming `steps` serializes in execution order; (d) stop passing the entire `toJSON(steps)` through one `STEPS_JSON` env var (can exceed Linux's 128 KiB per-variable limit in the 87-step implement job) — pass only the needed fields. (FR-011, SC-003)
