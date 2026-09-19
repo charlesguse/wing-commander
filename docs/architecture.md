@@ -287,7 +287,8 @@ change to the tiering above.
 - Humans merge every spec, plan and final PR into main, and every
   constitution amendment; the bot cannot approve those or merge one. The one
   bot merge is the bounded fix-PR merge of constitution X, behind its
-  deterministic gate: checks green on the exact head SHA, zero open findings
+  deterministic gate: checks green on the exact head SHA (no checks is not
+  green, and the gate suite must have run on that SHA), zero open findings
   from an independent review, the size-and-path backstop on the final diff,
   and a clear `WING_COMMANDER_*_PAUSED` switch.
 
