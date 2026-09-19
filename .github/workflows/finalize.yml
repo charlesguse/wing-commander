@@ -445,7 +445,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           ref: ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           fetch-depth: 0
           clean: false
 
@@ -499,7 +499,7 @@ jobs:
         id: guard
         if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SLUG: ${{ steps.spec.outputs.slug }}
           DB: ${{ steps.defbranch.outputs.name }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
@@ -539,7 +539,7 @@ jobs:
         id: diff
         if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           GUARD_PR_STATE: ${{ steps.guard.outputs.pr-state }}
           SLUG: ${{ steps.spec.outputs.slug }}
           ISSUE: ${{ inputs.issue-number }}
@@ -585,7 +585,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.anomaly == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ inputs.issue-number }}
           kind: action
           summary: "the persistent branch `${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}` carries no changes against `${{ steps.defbranch.outputs.name }}`; nothing to finalize"
@@ -598,7 +598,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.pr-state == 'merged'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ inputs.issue-number }}
           kind: info
           summary: "The final pull request (#${{ steps.guard.outputs.pr-number }}) is already merged — nothing was changed."
@@ -607,7 +607,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.pr-state == 'closed'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ inputs.issue-number }}
           kind: info
           summary: "The final pull request (#${{ steps.guard.outputs.pr-number }}) is closed (not merged) — nothing was changed."
@@ -642,7 +642,7 @@ jobs:
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SPECIFY_FEATURE_DIRECTORY: ${{ steps.spec.outputs.spec-dir }}
           # subagents forced synchronous, no turn-boundary resume (#1462/#1499) -- see clarify.yml.
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
@@ -650,7 +650,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
           use_bedrock: ${{ inputs.use-bedrock }}
-          github_token: ${{ steps.ctx.outputs.token }}
+          github_token: ${{ env.WC_BOT_TOKEN }}
           # The implement stage auto-dispatches finalize wrappers via
           # GITHUB_TOKEN, making the triggering actor github-actions[bot];
           # the action rejects bot actors unless allow-listed.
@@ -694,6 +694,19 @@ jobs:
             --max-turns ${{ steps.summarize-ceiling.outputs.ceiling }}
             --allowedTools "${{ steps.tool-args-finalize.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-finalize.outputs.disallowed-tools }}"
+
+      - name: Re-establish Wing Commander context (post-agent)
+        if: always()
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      - name: Refresh authenticated spec-branch remote (post-agent)
+        if: always()
+        shell: bash
+        run: |
+          git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/${{ github.repository }}.git"
 
       # deterministic, transcript-only verdict replacing the raw steps.summarize.outcome checks
       # below -- see specs/037-agent-turn-budget-guard/data-model.md.
@@ -786,7 +799,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.summarize-verdict.outputs.verdict == 'healthy' && steps.summarize-verdict.outputs.over-budget == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ inputs.issue-number }}
           kind: info
           summary: "This step used its full intended turn budget."
@@ -823,7 +836,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.verify-agent-output.outputs.failed == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ inputs.issue-number }}
           kind: action
           summary: "wing-commander finalize stage: the change-summary/remaining-work step did not complete successfully. No final pull request was opened; retrigger the finalize stage to retry."
@@ -860,7 +873,7 @@ jobs:
           CHANGED_FILES: ${{ steps.diff.outputs.changed-files }}
           PR_STATE: ${{ steps.diff.outputs.pr-state }}
           EXISTING_PR: ${{ steps.guard.outputs.pr-number }}
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
           SLUG: ${{ steps.spec.outputs.slug }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
@@ -1025,7 +1038,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SLUG: ${{ steps.spec.outputs.slug }}
           ISSUE: ${{ inputs.issue-number }}
           TITLE: ${{ steps.title.outputs.feature-title }}
@@ -1048,7 +1061,7 @@ jobs:
         id: verify-pr
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SLUG: ${{ steps.spec.outputs.slug }}
           DB: ${{ steps.defbranch.outputs.name }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
@@ -1068,7 +1081,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.verify-pr.outputs.failed == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ inputs.issue-number }}
           kind: action
           summary: "wing-commander finalize stage: gh pr create did not result in a verifiable open pull request from ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }} to ${{ steps.defbranch.outputs.name }}. spec-meta.json was left untouched; retrigger the finalize stage to retry."
@@ -1085,7 +1098,7 @@ jobs:
       - name: Flip stage label
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE: ${{ inputs.issue-number }}
           PR: ${{ steps.verify-pr.outputs.pr-number }}
         run: |
@@ -1124,7 +1137,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.pr-state == 'open'
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
           EXISTING_PR: ${{ steps.guard.outputs.pr-number }}
         run: |
@@ -1149,7 +1162,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.pr-state == 'open' && steps.re-review.outputs.failed == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ inputs.issue-number }}
           kind: info
           summary: "Requesting re-review from ${{ steps.re-review.outputs.logins }} on the final PR did not succeed — request it manually."
@@ -1182,7 +1195,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ inputs.issue-number }}
           kind: action
           summary: ${{ steps.announce-summary.outputs.summary }}
@@ -1238,7 +1251,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.remaining.outputs.has-remaining == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ inputs.issue-number }}
           kind: action
           summary: "Complete the remaining manual work"
@@ -1249,7 +1262,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.remaining.outputs.has-remaining == 'false'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ inputs.issue-number }}
           kind: info
           summary: "No manual work remains."
