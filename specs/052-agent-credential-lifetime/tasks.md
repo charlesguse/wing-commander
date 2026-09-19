@@ -261,3 +261,9 @@ Code review of PR #407 at head bb064e9 (charlesguse) found the shipped remedy do
 ### Must fix
 
 - [ ] `auto-update-spec-kit.yml:2074`: guard on `steps.scratch-token-post-agent.outputs.ok == 'true'` instead of `.outcome == 'success'` (the composite's mint is `continue-on-error` and its check step always exits 0, so `.outcome` is always `success`) so a failed re-mint can't blank a still-valid `WC_SCRATCH_TOKEN` ahead of the push at `:2078-2080`. Also pass the scratch-mint result into the `credential-status` call at `:2199` (which currently passes only `reestablish.outcome`) so a failed scratch mint is attributed to the credential. (FR-005, FR-004)
+
+## Maintainer Feedback (second review, PR #407 @ fbbae61)
+
+### Must fix
+
+- [ ] `implement.yml:375-376`, `plan.yml:406-407`, `tasks.yml:434-435`: `credential-refresh-ok` and `agent-conclusion` are coalesced with `||`, which returns the first non-empty value across multiple chains rather than reflecting an earlier chain's failure. Combine them so any `false` wins. (FR-010, FR-011)
