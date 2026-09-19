@@ -185,6 +185,25 @@ SCENARIOS = [
         body_excludes=["the job stopped"],
     ),
     dict(
+        name="a fail-infra verdict naming an unresolved container image "
+             "(specs/054 MF1): infrastructure, never a pipeline defect, "
+             "even though it came from the poll step's own terminal-state "
+             "check rather than an earlier job crash",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
+                 VERDICT_JSON=json.dumps({
+                     "outcome": "fail-infra", "verified_head": HEAD,
+                     "failing_check": "container image pulled/authorized for the stage that ran it",
+                     "expected": "the reference image resolves and its registry credentials (if any) are accepted",
+                     "observed": "verify-image-prerequisites failed: wing-commander verify-image-prerequisites: failed to pull ghcr.io/example/image",
+                     "evidence_url": "https://github.com/owner/repo/actions/runs/555",
+                     "mode": "container", "container_image_configured": False})),
+        action="report",
+        body_contains=["infrastructure", "container image pulled/authorized",
+                       "https://github.com/owner/repo/actions/runs/555"],
+        body_excludes=["pipeline defect"],
+    ),
+    dict(
         name="a fail-wrong-output verdict: pipeline defect, filed with the "
              "verdict's own fields",
         env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",

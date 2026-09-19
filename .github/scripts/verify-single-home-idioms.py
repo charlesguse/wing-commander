@@ -28,7 +28,7 @@ PR #347, spec 046's PR #341 had registered Gates 53-58 on `main` and
 spec 048's PR #342 had taken 59, so this gate moved again, to Gate 60 --
 the next number actually free.
 
-FOUR CHECKS, per contracts/single-home-gate.md
+FIVE CHECKS, per contracts/single-home-gate.md
 -----------------------------------------------
 1. orphan-reset: literal co-occurrence, in one file, of the three
    fragments that only appear together in the orphan-branch-reset idiom's
@@ -64,6 +64,19 @@ FOUR CHECKS, per contracts/single-home-gate.md
    `actions/create-github-app-token@*`, and a later step in the same
    job/step-list whose `if:`/`env:`/`run:` references that step's
    `.outcome` output.
+
+5. mode-tag-shape: specs/054-e2e-container-coverage originally threaded
+   `mode`/`container_image_configured` onto the verdict by piping every
+   one of `auto-release-verdict.sh`'s 12 call sites through a second,
+   pasted `jq --arg mode "$MODE" '. + {mode:$mode} + (...)'` instead of
+   folding the two fields into the shared script itself -- undetected by
+   the verdict-shape check above, since that pasted pipe carries none of
+   the six field names it looks for. The mode-tagging jq now lives solely
+   inside `auto-release-verdict.sh` (its `mode`/`container-image-
+   configured` become two additional, optional positional arguments); this
+   check scans for the `{mode:$mode}` fragment co-occurring with
+   `container_image_configured` anywhere else, so a THIRD reappearance of
+   the pasted shape is caught the same way a third verdict-shape paste is.
 
 Plus a promotion-prevention pass (FR-025): every `workflow_call`-only
 stage workflow and every non-underscore-prefixed composite action scanned
@@ -111,6 +124,7 @@ DECLARED_HOMES = {
     "failure-issue": ".github/actions/_shared/durable-failure-issue/action.yml",
     "verdict-shape": ".github/actions/_shared/auto-release-verdict.sh",
     "token-mint": ".github/actions/_shared/scoped-app-token/action.yml",
+    "mode-tag-shape": ".github/actions/_shared/auto-release-verdict.sh",
 }
 CHECK_NAMES = tuple(DECLARED_HOMES) + ("promotion",)
 
@@ -125,6 +139,7 @@ ISSUE_LOOKUP_RE = re.compile(
     r"--json number\b[^\n]*--jq\b[^\n]*\.\[0\]\.number // empty")
 VERDICT_FIELDS = ("outcome", "verified_head", "failing_check", "expected",
                   "observed", "evidence_url")
+MODE_TAG_FRAGMENT_RE = re.compile(r"\{\s*mode\s*:\s*\$mode\s*\}")
 SHARED_REF_RE = re.compile(r"\.github/actions/_shared/[A-Za-z0-9_.\-/]+")
 
 Finding = namedtuple("Finding", ["path", "check", "line", "text"])
@@ -270,6 +285,26 @@ def check_verdict_shape(root="."):
 
 
 # --------------------------------------------------------------------------
+# Check 5: mode-tag-shape (file-wide, the pasted mode/container-image-
+# configured tagging pipe -- see module docstring)
+# --------------------------------------------------------------------------
+def check_mode_tag_shape(root="."):
+    home = DECLARED_HOMES["mode-tag-shape"]
+    findings = []
+    for path in all_subject_files(root):
+        if path == home:
+            continue
+        text = read(root, path)
+        for m in MODE_TAG_FRAGMENT_RE.finditer(text):
+            window = text[max(0, m.start() - 200):m.start() + 400]
+            if "container_image_configured" in window:
+                findings.append(Finding(
+                    path, "mode-tag-shape", line_of(text, m.start()),
+                    "jq '. + {mode:$mode} + (...container_image_configured...)'"))
+    return findings
+
+
+# --------------------------------------------------------------------------
 # Check 4: token-mint (YAML-structural, per job / composite step-list)
 # --------------------------------------------------------------------------
 CREATE_TOKEN_RE = re.compile(r"^actions/create-github-app-token@")
@@ -351,6 +386,7 @@ ALL_CHECKS = {
     "failure-issue": check_failure_issue,
     "verdict-shape": check_verdict_shape,
     "token-mint": check_token_mint,
+    "mode-tag-shape": check_mode_tag_shape,
     "promotion": check_promotion,
 }
 
@@ -809,6 +845,14 @@ def run_selftest():
         "          jq -n --arg outcome ok --arg head h --arg fc f --arg e e "
         "--arg o o --arg u u '{outcome:$outcome, verified_head:$head, "
         "failing_check:$fc, expected:$e, observed:$o, evidence_url:$u}'\n")
+    selftest_third_paste_fails(
+        "mode-tag-shape", ".github/workflows/third-mode-tag.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          bash .github/actions/_shared/auto-release-verdict.sh "
+        "\"fail-infra\" \"$HEAD_SHA\" \"c\" \"e\" \"o\" \"$E2E_REPO\" | "
+        "jq --arg mode \"$MODE\" '. + {mode:$mode} + (if $mode == "
+        "\"container\" then {container_image_configured: true} else {} end)'\n")
     selftest_third_paste_fails(
         "token-mint", ".github/workflows/third-token.yml",
         "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
