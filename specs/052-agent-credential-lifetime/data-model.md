@@ -28,7 +28,7 @@ repository's own installation.
 | Property | Value |
 |---|---|
 | Established by | `actions/checkout@v5`'s `token:` input on the "Checkout spec branch as wing-commander-bot" step (pre-agent, unchanged) |
-| Refreshed by | `git remote set-url origin https://x-access-token:${WC_BOT_TOKEN}@github.com/${{ github.repository }}.git`, run in the same post-agent refresh step that rewrites `WC_BOT_TOKEN` (research.md D2) |
+| Refreshed by | Clearing the stale `http.https://github.com/.extraheader` config entry `actions/checkout@v5` wrote (the header, not the remote URL, is what git's http transport actually authenticates with), then `git remote set-url origin https://x-access-token:${WC_BOT_TOKEN}@github.com/${{ github.repository }}.git` — both in the same post-agent refresh step that rewrites `WC_BOT_TOKEN` (research.md D2, corrected in this feature's own T046 code review) |
 | Consumers relying on it implicitly | `.github/actions/_shared/read-spec-meta.sh`'s bare `git fetch origin`, and any other composite that shells out to `git` rather than taking a `token:` input |
 
 ## Agent-ran signal (new — one per job containing an agent step)
@@ -90,7 +90,8 @@ the file is edited.
 
 | Gate | Script | Wired into | Proves |
 |---|---|---|---|
-| 67 (provisional) | `.github/scripts/verify-post-agent-credential-refresh.py` | `.github/workflows/lint-workflows.yml`, PR-time job (picked up automatically by `wc_gate_registry.py`'s filename convention) | FR-020 (no stale credential reference, no un-refreshed second agent step), FR-021 (every declared-observability step in the audited region is tolerated), FR-022 (reachable through the registry, same subject/arguments locally and in CI, fails loudly on an unreachable subject), FR-023 (every failure branch fixture-covered) |
+| 68 (renumbered from the provisional 67 — #401 took 67 first) | `.github/scripts/verify-post-agent-credential-refresh.py` | `.github/workflows/lint-workflows.yml`, PR-time job (picked up automatically by `wc_gate_registry.py`'s filename convention) | FR-020 (no stale credential reference, no un-refreshed second agent step), FR-021 (every declared-observability step in the audited region is tolerated), FR-022 (reachable through the registry, same subject/arguments locally and in CI, fails loudly on an unreachable subject), FR-023 (every failure branch fixture-covered) |
+| 69 (added in this feature's own T046 code review) | `.github/scripts/verify-credential-relay-shell.py` | `.github/workflows/lint-workflows.yml`, PR-time job | Behavioral proof that Gate 68 cannot provide statically: the relay's `$GITHUB_ENV` precedence (research.md D1) and that the post-agent remote refresh actually clears the stale `actions/checkout@v5` extraheader rather than leaving a no-op URL rewrite (research.md D2's correction) |
 
 See `contracts/post-agent-credential-refresh-gate.md` for the check's exact
 structure and required mutations.
