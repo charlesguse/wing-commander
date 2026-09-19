@@ -284,7 +284,12 @@ change to the tiering above.
   [stage-interfaces.md](../specs/010-reusable-pipeline/contracts/stage-interfaces.md#per-stage-default-tool-lists).
 - Only trusted refs are checked out (main, repo-local `spec*/` branches) — never
   fork PR heads.
-- Humans merge every PR into main. The bot cannot approve or merge.
+- Humans merge every spec, plan and final PR into main, and every
+  constitution amendment; the bot cannot approve those or merge one. The one
+  bot merge is the bounded fix-PR merge of constitution X, behind its
+  deterministic gate: checks green on the exact head SHA, zero open findings
+  from an independent review, the size-and-path backstop on the final diff,
+  and a clear `WING_COMMANDER_*_PAUSED` switch.
 
 ---
 
