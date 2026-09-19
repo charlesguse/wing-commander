@@ -936,8 +936,11 @@ jobs:
             --allowedTools "${{ steps.tool-args-classify.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-classify.outputs.disallowed-tools }}"
 
+      # !cancelled(), not always() (spec 052, should-fix per maintainer
+      # review of PR #407): a run cancelled during the agent step must not
+      # still perform a network mint in the cancel window -- see clarify.yml.
       - name: Record agent-ran signal
-        if: always() && steps.agent.outcome != 'skipped'
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
         id: agent-ran
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-ran-signal
         with:
@@ -945,22 +948,12 @@ jobs:
 
       - name: Re-establish Wing Commander context (post-agent)
         id: reestablish
-        if: always() && steps.agent.outcome != 'skipped'
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
-
-      # No remote-refresh step here -- this job resolves spec-meta.json via
-      # the contents API rather than a checkout, so refresh-outcome defaults
-      # to 'success' (nothing else to refresh) -- see clarify.yml.
-      - name: Determine post-agent credential status
-        id: credential-status
-        if: always() && steps.agent.outcome != 'skipped'
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
-        with:
-          mint-outcome: ${{ steps.reestablish.outcome }}
 
       # deterministic, transcript-only verdict (healthy/exhausted/failed/unclassifiable) replacing
       # the raw outcome check that continue-on-error above means can no longer be trusted alone --
@@ -1428,9 +1421,21 @@ jobs:
       # FR-011: names the specific post-agent step that failed, for the
       # stalled job to read instead of the generic "a step after it did not
       # complete" -- see clarify.yml.
+      # Deferred to the job's last steps -- see clarify.yml's copy of this
+      # note (review-step-gating skill, spec 052 self-review after the
+      # maintainer review of PR #407). No remote-refresh step in this job
+      # (it resolves spec-meta.json via the contents API rather than a
+      # checkout), so refresh-outcome defaults to 'success'.
+      - name: Determine post-agent credential status
+        id: credential-status
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
+        with:
+          mint-outcome: ${{ steps.reestablish.outcome }}
+
       - name: Determine failed post-agent step
         id: failed-step
-        if: always() && steps.agent.outcome != 'skipped'
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
         shell: bash
         env:
           STEPS_JSON: ${{ toJSON(steps) }}
@@ -2026,8 +2031,12 @@ jobs:
             --allowedTools "${{ steps.tool-args-act.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-act.outputs.disallowed-tools }}"
 
+      # !cancelled(), not always() (spec 052, should-fix per maintainer
+      # review of PR #407): a run cancelled during the agent step must not
+      # still perform a network mint and a remote rewrite in the cancel
+      # window -- see clarify.yml.
       - name: Record agent-ran signal
-        if: always() && steps.agent.outcome != 'skipped'
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
         id: agent-ran
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-ran-signal
         with:
@@ -2035,7 +2044,7 @@ jobs:
 
       - name: Re-establish Wing Commander context (post-agent)
         id: reestablish
-        if: always() && steps.agent.outcome != 'skipped'
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
         with:
@@ -2044,19 +2053,11 @@ jobs:
 
       - name: Refresh authenticated spec-branch remote (post-agent)
         id: refresh-remote
-        if: always() && steps.agent.outcome != 'skipped'
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-refresh-remote
         with:
           token: ${{ env.WC_BOT_TOKEN }}
-
-      - name: Determine post-agent credential status
-        id: credential-status
-        if: always() && steps.agent.outcome != 'skipped'
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
-        with:
-          mint-outcome: ${{ steps.reestablish.outcome }}
-          refresh-outcome: ${{ steps.refresh-remote.outcome }}
 
       - name: Compute agent run verdict
         id: agent-verdict
@@ -2516,6 +2517,17 @@ jobs:
             } > "$body_file"
             gh pr comment "$PR_NUMBER" --body-file "$body_file"
           fi
+
+      # Deferred to the job's last steps -- see clarify.yml's copy of this
+      # note (review-step-gating skill, spec 052 self-review after the
+      # maintainer review of PR #407).
+      - name: Determine post-agent credential status
+        id: credential-status
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
+        with:
+          mint-outcome: ${{ steps.reestablish.outcome }}
+          refresh-outcome: ${{ steps.refresh-remote.outcome }}
 
   # research.md D1/D2/D3/contracts/fold-dispatch-once.md: the ONLY job in
   # this workflow that calls `gh workflow run` for implement.yml, and it

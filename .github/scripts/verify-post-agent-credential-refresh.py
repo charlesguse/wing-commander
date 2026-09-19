@@ -23,12 +23,13 @@ AGENTLESS_JOBS (tasks-approved: a PR-merge acceptance handler that never
 runs an agent step by design):
 
 1. No step positioned after the job's first agent step references
-   `steps.<any-id>.outputs.*token*` directly -- it must resolve its
-   credential through `env.WC_BOT_TOKEN` / `env.WC_SCRATCH_TOKEN` instead.
-   The one exemption is the relay step itself (`name` starting with "Relay"
-   and containing "token to the job environment") -- that step's entire job
-   is to read the fresh mint's raw output and put it in the job environment,
-   so it necessarily reads the raw form (FR-020 care point 1).
+   `steps.<any-id>.outputs.*token*` directly (dot or bracket notation, or
+   through `fromJSON(...)`) -- it must resolve its credential through
+   `env.WC_BOT_TOKEN` / `env.WC_SCRATCH_TOKEN` instead. The one exemption is
+   the relay step itself (`name` starting with "Relay" and containing
+   "token to the job environment") -- that step's entire job is to read the
+   fresh mint's raw output and put it in the job environment, so it
+   necessarily reads the raw form (FR-020 care point 1).
 2. Every agent step in a job is followed, before the next agent step or the
    job's own end (whichever comes first), by a `wing-commander-context` (or,
    for auto-update-spec-kit.yml's e2e-stage job, `scoped-app-token`)
@@ -82,7 +83,16 @@ import sys
 import yaml
 
 AGENT_ACTION_RE = re.compile(r"^anthropics/claude-code-action@")
-TOKEN_REF_RE = re.compile(r"steps\.[\w-]+\.outputs\.[\w-]*token[\w-]*", re.IGNORECASE)
+# Matches steps.<id>.outputs.<...token...> in both dot and bracket notation
+# (steps['ctx'].outputs['token']), and fromJSON(...).<...token...> (a raw
+# mint's output re-wrapped through fromJSON instead of read directly) --
+# should-fix per maintainer review of PR #407: an earlier version of this
+# regex only matched the plain dot-notation spelling.
+TOKEN_REF_RE = re.compile(
+    r"steps(?:\.[\w-]+|\[[\'\"][\w-]+[\'\"]\])"
+    r"\.outputs(?:\.[\w-]*token[\w-]*|\[[\'\"][\w-]*token[\w-]*[\'\"]\])"
+    r"|fromJSON\([^)]*\)\.[\w-]*token[\w-]*",
+    re.IGNORECASE)
 RELAY_STEP_NAME_RE = re.compile(r"^Relay\b.*token to the job environment", re.IGNORECASE)
 MINT_USES_MARKERS = ("wing-commander-context", "scoped-app-token")
 # Matches the base name and every "(cycle)"/"(retry)"/"(progress comment)"/
@@ -296,6 +306,18 @@ def mut_stale_credential_reference(loaded):
     step["with"]["token"] = "${{ steps.ctx.outputs.token }}"
 
 
+def mut_bracket_notation_credential_reference(loaded):
+    """should-fix (PR #407 review): a stale reference spelled with bracket
+    notation (steps['ctx'].outputs['token']) must be caught too, not only
+    the plain dot-notation form."""
+    job = loaded[".github/workflows/clarify.yml"]["jobs"]["clarify"]
+    step = _find_step(job, "Announce spec PR ready for review")
+    assert step is not None, "fixture assumption broken: step renamed"
+    assert step["with"]["token"] == "${{ env.WC_BOT_TOKEN }}", \
+        "fixture assumption broken: token form changed"
+    step["with"]["token"] = "${{ steps['ctx'].outputs['token'] }}"
+
+
 def mut_drop_retry_progress_refresh(loaded):
     job = loaded[".github/workflows/implement.yml"]["jobs"]["implement"]
     steps = job["steps"]
@@ -379,6 +401,8 @@ def mut_nonexistent_job_in_existing_file(loaded_and_subjects):
 SIMPLE_MUTATIONS = [
     ("a post-agent step's credential reference reverted to the stale "
      "steps.ctx.outputs.token form", mut_stale_credential_reference),
+    ("a post-agent step's credential reference spelled with bracket "
+     "notation instead of dot notation", mut_bracket_notation_credential_reference),
     ("the refresh step between implement.yml's retry and progress agent "
      "steps deleted", mut_drop_retry_progress_refresh),
     ("continue-on-error: true stripped from clarify.yml's canonical "

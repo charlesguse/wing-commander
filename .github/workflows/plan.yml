@@ -756,8 +756,12 @@ jobs:
             --allowedTools "${{ steps.tool-args-plan-direct-commit.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-plan-direct-commit.outputs.disallowed-tools }}"
 
+      # !cancelled(), not always() (spec 052, should-fix per maintainer
+      # review of PR #407): a run cancelled during the agent step must not
+      # still perform a network mint and a remote rewrite in the cancel
+      # window -- see clarify.yml.
       - name: Record agent-ran signal (auto)
-        if: always() && steps.agent-auto.outcome != 'skipped'
+        if: "!cancelled() && steps.agent-auto.outcome != 'skipped'"
         id: agent-ran-auto
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-ran-signal
         with:
@@ -765,7 +769,7 @@ jobs:
 
       - name: Re-establish Wing Commander context (post-agent, auto)
         id: reestablish-auto
-        if: always() && steps.agent-auto.outcome != 'skipped'
+        if: "!cancelled() && steps.agent-auto.outcome != 'skipped'"
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
         with:
@@ -774,19 +778,12 @@ jobs:
 
       - name: Refresh authenticated spec-branch remote (post-agent, auto)
         id: refresh-remote-auto
-        if: always() && steps.agent-auto.outcome != 'skipped'
+        if: "!cancelled() && steps.agent-auto.outcome != 'skipped'"
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-refresh-remote
         with:
           token: ${{ env.WC_BOT_TOKEN }}
 
-      - name: Determine post-agent credential status (auto)
-        id: credential-status-auto
-        if: always() && steps.agent-auto.outcome != 'skipped'
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
-        with:
-          mint-outcome: ${{ steps.reestablish-auto.outcome }}
-          refresh-outcome: ${{ steps.refresh-remote-auto.outcome }}
 
       # deterministic, transcript-only verdict replacing the raw steps.agent-auto.outcome checks
       # -- see specs/037-agent-turn-budget-guard/data-model.md. Gated on
@@ -940,8 +937,12 @@ jobs:
             --allowedTools "${{ steps.tool-args-plan-pr.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-plan-pr.outputs.disallowed-tools }}"
 
+      # !cancelled(), not always() (spec 052, should-fix per maintainer
+      # review of PR #407): a run cancelled during the agent step must not
+      # still perform a network mint and a remote rewrite in the cancel
+      # window -- see clarify.yml.
       - name: Record agent-ran signal (pr)
-        if: always() && steps.agent-pr.outcome != 'skipped'
+        if: "!cancelled() && steps.agent-pr.outcome != 'skipped'"
         id: agent-ran-pr
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-ran-signal
         with:
@@ -949,7 +950,7 @@ jobs:
 
       - name: Re-establish Wing Commander context (post-agent, pr)
         id: reestablish-pr
-        if: always() && steps.agent-pr.outcome != 'skipped'
+        if: "!cancelled() && steps.agent-pr.outcome != 'skipped'"
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
         with:
@@ -958,19 +959,12 @@ jobs:
 
       - name: Refresh authenticated spec-branch remote (post-agent, pr)
         id: refresh-remote-pr
-        if: always() && steps.agent-pr.outcome != 'skipped'
+        if: "!cancelled() && steps.agent-pr.outcome != 'skipped'"
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-refresh-remote
         with:
           token: ${{ env.WC_BOT_TOKEN }}
 
-      - name: Determine post-agent credential status (pr)
-        id: credential-status-pr
-        if: always() && steps.agent-pr.outcome != 'skipped'
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
-        with:
-          mint-outcome: ${{ steps.reestablish-pr.outcome }}
-          refresh-outcome: ${{ steps.refresh-remote-pr.outcome }}
 
       - name: Compute agent run verdict (pr)
         id: agent-pr-verdict
@@ -1222,3 +1216,22 @@ jobs:
             finished successfully — the runaway ceiling
             (${{ steps.agent-pr-ceiling.outputs.ceiling }}) is the only hard
             stop; this is an observability note, not a failure.
+
+      # Deferred to the job's last steps, one per agent-step branch -- see
+      # clarify.yml's copy of this note (review-step-gating skill, spec 052
+      # self-review after the maintainer review of PR #407).
+      - name: Determine post-agent credential status (auto)
+        id: credential-status-auto
+        if: "!cancelled() && steps.agent-auto.outcome != 'skipped'"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
+        with:
+          mint-outcome: ${{ steps.reestablish-auto.outcome }}
+          refresh-outcome: ${{ steps.refresh-remote-auto.outcome }}
+
+      - name: Determine post-agent credential status (pr)
+        id: credential-status-pr
+        if: "!cancelled() && steps.agent-pr.outcome != 'skipped'"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
+        with:
+          mint-outcome: ${{ steps.reestablish-pr.outcome }}
+          refresh-outcome: ${{ steps.refresh-remote-pr.outcome }}
