@@ -46,7 +46,19 @@ jobs:
     # with conclusion 'skipped'. verify-watchdog-run.sh check 1 fails on any
     # conclusion that is not 'success', so an ungated 8b would file a
     # pipeline-defect issue for every deliberately paused stage-8 run.
-    if: vars.WING_COMMANDER_WATCHDOG_PAUSED != 'true'
+    #
+    # Stage 8 concludes 'skipped' one other way: its wrapper declines to
+    # inspect a source run that itself concluded 'skipped', because such a
+    # run executed nothing (FR-026) -- see wing-commander-8-watchdog.yml.
+    # A stage-8 run gated off that way executed none of the watchdog's
+    # logic, so there is nothing of the watchdog's to verify, and the second
+    # clause reads the same conclusion from the payload and stands down.
+    # FR-021's "never skipped or softened" still holds for every stage-8 run
+    # that executed: this keys on the conclusion alone, never on what the
+    # run found.
+    if: >-
+      vars.WING_COMMANDER_WATCHDOG_PAUSED != 'true' &&
+      github.event.workflow_run.conclusion != 'skipped'
     runs-on: ubuntu-latest
     permissions:
       actions: read      # run/jobs/artifact reads

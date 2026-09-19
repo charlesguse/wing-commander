@@ -42,26 +42,47 @@ so a human can re-run collection for a historical run (spec.md's
 edge case is most likely to be manually re-driven this way, after
 raising the destination's `retention-days` or otherwise investigating).
 
-## Resolve job (no checkout, `permissions: actions: read` only)
+## No resolve job
 
-Mirrors `wing-commander-8-watchdog.yml`'s `resolve` job: branches on
-`github.event_name` to produce one `run-id` output regardless of which
-trigger fired. Gated by a kill switch,
-`if: vars.WING_COMMANDER_METRICS_PAUSED != 'true'`, matching the
-watchdog wrapper's existing pause convention.
+The wrapper used to open with a `resolve` job (no checkout,
+`permissions: actions: read` only) that branched on `github.event_name`
+to produce one `run-id` output. It is gone: the same value is a one-line
+expression, `${{ inputs.run-id || github.event.workflow_run.id }}`
+(`inputs` is empty, not an error, under `workflow_run`), and every job a
+wrapper declares is a runner allocation GitHub counts as a whole minute
+however briefly it runs -- a 2-second resolve job cost as much as the
+9-second persist it fed, on every one of the ~3,000 completions a month
+this wrapper hears.
 
 ## Persist job
 
 ```yaml
 persist:
-  needs: resolve
+  if: >-
+    vars.WING_COMMANDER_METRICS_PAUSED != 'true' &&
+    github.event.workflow_run.conclusion != 'skipped'
   uses: ./.github/workflows/metrics-persist.yml
   with:
-    run-id: ${{ needs.resolve.outputs.run-id }}
+    run-id: ${{ inputs.run-id || github.event.workflow_run.id }}
     destination-branch: ${{ vars.WING_COMMANDER_METRICS_BRANCH || 'metrics' }}
     destination-path: ${{ vars.WING_COMMANDER_METRICS_PATH || 'records.jsonl' }}
-  secrets: inherit
+  secrets:
+    pipeline-repo-token: ${{ secrets.PIPELINE_REPO_TOKEN }}
+    # ... the registry pair, named explicitly (PR #267 re-review)
 ```
+
+Two clauses gate it. The kill switch,
+`vars.WING_COMMANDER_METRICS_PAUSED != 'true'`, matches the watchdog
+wrapper's pause convention. The skipped-source guard declines a
+`workflow_run` whose `conclusion` is `skipped`: that run executed no job
+(the source wrapper's own `if:` gated it off), so it owns no
+metrics-record artifact and persisting it is FR-021's zero-record no-op
+paid for at a job-minute per job -- and it is the common case, because
+every comment the pipeline posts wakes the clarify and pr-conversation
+wrappers, which skip. `workflow_dispatch` carries no `workflow_run`
+payload, so the comparison is against `''` and the manual re-drive path
+stays open. Cancelled runs are deliberately NOT excluded: a cancelled
+stage can have uploaded a record before the cancel landed.
 
 `vars.WING_COMMANDER_METRICS_BRANCH` / `_PATH` are this repository's own
 choice of destination (R5) — an adopter forking this wrapper supplies
@@ -75,9 +96,10 @@ that state (FR-002, spec.md Edge Case).
 
 - The trigger (`workflow_run` + the specific workflow name list).
 - The destination (`vars.WING_COMMANDER_METRICS_BRANCH` / `_PATH`).
-- The pause/kill switch.
-- The token used to call the published workflow (`secrets: inherit`,
-  this repository's own convention for wrapper→stage calls elsewhere).
+- The pause/kill switch and the skipped-source guard.
+- The secrets handed to the published workflow, named one by one
+  (`inherit` would hand the Claude credentials into the one chain that
+  deliberately runs no agent).
 
 Everything else — discovery, retrieval, validation, retry, rollup — is
 `metrics-persist.yml`'s (contracts/persist-workflow.md), identical for
