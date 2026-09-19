@@ -309,3 +309,9 @@ Code review of PR #407 at head bb064e9 (charlesguse) found the shipped remedy do
 ### Should fix
 
 - [ ] `agent-conclusion` and `credential-refresh-ok` overstate failure after a healed retry (`implement.yml:375-382`, `plan.yml:412-413`, `tasks.yml:441`): any-failure-wins (from the prior review) means a cycle that concluded `failure` and was then healed by a successful retry, or a failed haiku progress agent, still reports `failure`/`credential-refresh-ok=false` for the job, so an unrelated later stall wrongly says the agent step failed or blames the credential. Report the LAST chain that ran for the stall reason, and keep the any-failure value as a separate output for the record. (FR-010, FR-011)
+
+## Maintainer Feedback (third review, PR #407 @ 453656c)
+
+### Should fix
+
+- [ ] Harden Gate 68 further: (a) nothing requires the "Determine failed post-agent step" composite call to exist — deleting it passes Gate 68 (only `verify-actionlint.py` fails, indirectly, via an undefined job output) and pasting the old jq back under another step name passes every gate; require the call in each stage that reads the signal. (b) Match Gate 60's refresh idiom without depending on the literal quotes and `--local` — `git config --unset-all http.https://github.com/.extraheader` without them evades it today. (c) The composite-call check counts calls per job, not their position, so removing `progress`'s credential-status call and duplicating `cycle`'s would pass — check position, not just count. (FR-020, FR-021, FR-022)
