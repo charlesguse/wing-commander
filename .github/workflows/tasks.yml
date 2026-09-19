@@ -431,8 +431,14 @@ jobs:
       # resolve-spec's own refusal too -- see specs/041-implement-stall-notice/research.md D3.
       refusal-reason: ${{ needs.resolve-spec.outputs.refusal-reason || steps.preflight.outputs.reason }}
       agent-ran: ${{ steps.agent-ran-auto.outputs.ran || steps.agent-ran-pr.outputs.ran }}
-      agent-conclusion: ${{ steps.agent-ran-auto.outputs.conclusion || steps.agent-ran-pr.outputs.conclusion }}
-      credential-refresh-ok: ${{ steps.credential-status-auto.outputs.ok || steps.credential-status-pr.outputs.ok }}
+      # Second maintainer review of PR #407 (FR-010, FR-011): a plain `||`
+      # chain returns the first non-empty value, which could silently hide
+      # one mode's failure behind the other's success -- see implement.yml's
+      # copy of this note. auto/pr are mutually exclusive per run, so at
+      # most one side is ever non-empty, but the any-failure-wins guard
+      # keeps this expression correct regardless of that invariant holding.
+      agent-conclusion: ${{ (steps.agent-ran-auto.outputs.conclusion == 'failure' || steps.agent-ran-pr.outputs.conclusion == 'failure') && 'failure' || (steps.agent-ran-auto.outputs.conclusion || steps.agent-ran-pr.outputs.conclusion) }}
+      credential-refresh-ok: ${{ (steps.credential-status-auto.outputs.ok == 'false' || steps.credential-status-pr.outputs.ok == 'false') && 'false' || (steps.credential-status-auto.outputs.ok || steps.credential-status-pr.outputs.ok) }}
       failed-post-agent-step: ${{ steps.failed-step.outputs.step }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)

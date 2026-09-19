@@ -372,8 +372,14 @@ jobs:
       refusal-reason: ${{ steps.preflight.outputs.reason || steps.spec.outputs.reason || steps.meta.outputs.reason }}
       # Most-recent-agent-step-that-ran wins, by construction.
       agent-ran: ${{ steps.agent-ran-progress.outputs.ran || steps.agent-ran-retry.outputs.ran || steps.agent-ran-cycle.outputs.ran }}
-      agent-conclusion: ${{ steps.agent-ran-progress.outputs.conclusion || steps.agent-ran-retry.outputs.conclusion || steps.agent-ran-cycle.outputs.conclusion }}
-      credential-refresh-ok: ${{ steps.credential-status-progress.outputs.ok || steps.credential-status-retry.outputs.ok || steps.credential-status-cycle.outputs.ok }}
+      # Second maintainer review of PR #407 (FR-010, FR-011): a plain `||`
+      # chain returns the first non-empty value scanning most-recent-first,
+      # so a later chain's success silently hid an earlier chain's failure
+      # instead of surfacing it. Any 'failure'/'false' among the chains that
+      # actually ran now wins outright; only when none did does the
+      # most-recent-wins fallback apply.
+      agent-conclusion: ${{ (steps.agent-ran-progress.outputs.conclusion == 'failure' || steps.agent-ran-retry.outputs.conclusion == 'failure' || steps.agent-ran-cycle.outputs.conclusion == 'failure') && 'failure' || (steps.agent-ran-progress.outputs.conclusion || steps.agent-ran-retry.outputs.conclusion || steps.agent-ran-cycle.outputs.conclusion) }}
+      credential-refresh-ok: ${{ (steps.credential-status-progress.outputs.ok == 'false' || steps.credential-status-retry.outputs.ok == 'false' || steps.credential-status-cycle.outputs.ok == 'false') && 'false' || (steps.credential-status-progress.outputs.ok || steps.credential-status-retry.outputs.ok || steps.credential-status-cycle.outputs.ok) }}
       failed-post-agent-step: ${{ steps.failed-step.outputs.step }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)

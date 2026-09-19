@@ -266,7 +266,7 @@ Code review of PR #407 at head bb064e9 (charlesguse) found the shipped remedy do
 
 ### Must fix
 
-- [ ] `implement.yml:375-376`, `plan.yml:406-407`, `tasks.yml:434-435`: `credential-refresh-ok` and `agent-conclusion` are coalesced with `||`, which returns the first non-empty value across multiple chains rather than reflecting an earlier chain's failure. Combine them so any `false` wins. (FR-010, FR-011)
+- [X] `implement.yml:375-376`, `plan.yml:406-407`, `tasks.yml:434-435`: `credential-refresh-ok` and `agent-conclusion` are coalesced with `||`, which returns the first non-empty value across multiple chains rather than reflecting an earlier chain's failure. Combine them so any `false` wins. (FR-010, FR-011) — done at all three sites: both outputs now short-circuit to `failure`/`false` when any chain reports it, falling back to the existing most-recent-wins `||` chain only when none did.
 
 ## Maintainer Feedback (second review, PR #407 @ fbbae61)
 
