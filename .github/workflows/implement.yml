@@ -659,13 +659,35 @@ jobs:
       # agent would otherwise ship blind (it edits workflow YAML for a living).
       - name: Install actionlint for the agent
         id: actionlint
+        shell: bash
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
         env:
           ACTIONLINT_VERSION: "1.7.7"
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL "https://raw.githubusercontent.com/rhysd/actionlint/v${ACTIONLINT_VERSION}/scripts/download-actionlint.bash" \
-            | bash -s -- "$ACTIONLINT_VERSION" "$RUNNER_TEMP/bin"
+          # One connection reset from GitHub's release CDN used to fail the
+          # whole cycle before the agent started, marking the spec stalled
+          # (#395), so the install is retried. The retry wraps the whole
+          # pipeline because the download script fetches the release tarball
+          # itself, with a curl call this step cannot give flags to; success
+          # is judged by the binary existing, not by the pipe's exit status.
+          installed=false
+          for attempt in 1 2 3; do
+            if curl -fsSL "https://raw.githubusercontent.com/rhysd/actionlint/v${ACTIONLINT_VERSION}/scripts/download-actionlint.bash" \
+                | bash -s -- "$ACTIONLINT_VERSION" "$RUNNER_TEMP/bin" \
+              && [ -x "$RUNNER_TEMP/bin/actionlint" ]; then
+              installed=true
+              break
+            fi
+            echo "::warning::wing-commander implement: downloading actionlint v${ACTIONLINT_VERSION} failed (attempt $attempt of 3)."
+            if [ "$attempt" -lt 3 ]; then
+              sleep $((attempt * 5))
+            fi
+          done
+          if [ "$installed" != "true" ]; then
+            echo "::error::wing-commander implement: could not install actionlint v${ACTIONLINT_VERSION} after 3 attempts -- the download from github.com/rhysd/actionlint failed each time, so the agent cannot be given it. Re-dispatch this cycle."
+            exit 1
+          fi
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/bin/actionlint" -version
 
