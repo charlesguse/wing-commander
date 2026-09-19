@@ -237,3 +237,9 @@ Code review of PR #407 at head bb064e9 (charlesguse) found the shipped remedy do
 - [X] Record FR-013's cancellation gap explicitly in the spec's accepted-gap statement — every `stalled` job is `!cancelled()`, so cancellation after the agent ran currently posts no notice, leaving FR-013 apparently met when it isn't. — done, new Assumptions bullet in spec.md.
 - [X] Record, per FR-005/SC-005, the reason `evaluate-path` and `comment-reply` in `auto-update-spec-kit.yml` are left reading `steps.ctx.outputs.token` after their agent steps (outside FR-007's eight stages, bounded by a 10-minute agent timeout, but currently undocumented). — done, in-place comments at both jobs' agent steps.
 - [ ] Derive the gate's scanned job list from the workflow files instead of hard-coding it, so a new agent job added to the eight covered files, or to `rebase.yml`/`cleanup.yml`, is not silently left unscanned. — deferred: auto-discovering agent-bearing jobs risks pulling `rebase.yml`/`cleanup.yml` into scope by accident (both deliberately out of FR-007, research.md D5); the new per-job "must contain an agent step" check (must-fix item 6) covers the narrower, safer regression this was really guarding against (a covered job silently losing its agent step).
+
+## Maintainer Feedback (second review, PR #407 @ fbbae61)
+
+### Must fix
+
+- [ ] `wing-commander-post-agent-credential-status/action.yml`: stop hard-failing (`exit 1`) the job on a re-mint failure when the step is last in the job and not `continue-on-error`. Emit `::warning::` and set `ok=false` instead, and let the existing `ok`-first check in the stall path (`clarify.yml:1184` pattern) decide, so a run whose later steps all succeeded stays green. (FR-004, FR-005)
