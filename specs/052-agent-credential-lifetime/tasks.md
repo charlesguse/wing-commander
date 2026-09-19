@@ -255,3 +255,9 @@ Code review of PR #407 at head bb064e9 (charlesguse) found the shipped remedy do
 ### Must fix
 
 - [ ] Fix the 'Determine failed post-agent step' jq at `clarify.yml:1054-1061`, `finalize.yml:1306`, `implement.yml:2531`, `intake.yml:1285`, `pr-conversation.yml:1436`, `tasks.yml:1220`: (a) give every hard-failing id-less step ("Fail loud on non-healthy agent verdict", "Fail on agent API error", "Fail on unresolved clarification markers", "Flip stage label") an `id:`; (b) select on `.conclusion == "failure"` and exclude the agent step so a `continue-on-error` step or the agent itself is never named; (c) pick by an explicit ordered id list rather than assuming `steps` serializes in execution order; (d) stop passing the entire `toJSON(steps)` through one `STEPS_JSON` env var (can exceed Linux's 128 KiB per-variable limit in the 87-step implement job) — pass only the needed fields. (FR-011, SC-003)
+
+## Maintainer Feedback (second review, PR #407 @ fbbae61)
+
+### Must fix
+
+- [ ] `auto-update-spec-kit.yml:2074`: guard on `steps.scratch-token-post-agent.outputs.ok == 'true'` instead of `.outcome == 'success'` (the composite's mint is `continue-on-error` and its check step always exits 0, so `.outcome` is always `success`) so a failed re-mint can't blank a still-valid `WC_SCRATCH_TOKEN` ahead of the push at `:2078-2080`. Also pass the scratch-mint result into the `credential-status` call at `:2199` (which currently passes only `reestablish.outcome`) so a failed scratch mint is attributed to the credential. (FR-005, FR-004)
