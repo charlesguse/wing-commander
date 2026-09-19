@@ -23,7 +23,10 @@ gate name / expectation / observation described in
 | Merge decision = `conflicting` | `fail-gate-stall` | `"<gate name>"` | `"gh pr merge succeeds"` | `"PR #<n>: CONFLICTING"` |
 | Merge decision = `blocked` | `fail-gate-stall` | `"<gate name>"` | `"gh pr merge succeeds"` | `"PR #<n>: required check blocked"` |
 | Merge decision = `wrong-attempt` | `fail-gate-stall` | `"<gate name>"` | `"the PR at this branch belongs to the current attempt"` | `"PR #<n> belongs to a previous attempt"` |
-| Clarification gate opened, no harness reply exists by `stage:done` | `fail-wrong-output` | `"clarification gate answered before stage:done"` | `"a harness reply after every open question"` | `"question opened, never answered"` |
+| Merge decision = `wrong-base` (maintainer feedback on PR #389) | `fail-gate-stall` | `"<gate name>"` | `"the PR at this branch targets <expected base>"` | `"PR #<n> targets a different base branch"` |
+| A gate-driving read or write fails `MAX_GATE_FAILURES` (3) times running (maintainer feedback) | `fail-gate-stall` | `"<gate name>"` | `"reading/deciding/writing each succeed within 3 attempts"` | the failed command's own captured stderr, or a generic reason |
+| Clarification gate opened, no QUALIFYING reply (the harness's own, or a human's, per FR-010) exists by `stage:done` | `fail-wrong-output` | `"clarification gate answered before stage:done"` | `"a qualifying reply after every open question"` | `"question opened, never answered"` |
+| A merge-gate PR exists but is missing or not attributed to the harness login by `stage:done` (maintainer feedback, FR-016/FR-018) | `fail-wrong-output` | `"<gate name> merged by the harness before stage:done"` | `"the PR merged, attributed to <harness login>"` | `"no merged PR found"`, or `"merged by '<login>'"` |
 
 `<gate name>` is one of `"spec-draft PR merge"`, `"plan PR merge"`,
 `"finalize PR merge"`, matching the Lifecycle gate table in

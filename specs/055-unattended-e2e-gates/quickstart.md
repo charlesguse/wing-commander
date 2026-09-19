@@ -14,10 +14,16 @@ installed) — this feature adds one more prerequisite on top of that.
    collaborator to the test repository named above, and holds no access to
    this repository or any other (FR-011). This is a one-time maintainer
    act performed in the GitHub UI, outside the pipeline (FR-003a).
-3. A fine-grained personal access token for that account, scoped to the
-   test repository alone, with Contents/Issues/Pull requests write, is
-   stored as the repository secret
-   `WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN`.
+3. A classic personal access token for that account (not fine-grained — a
+   fine-grained PAT can only reach repositories the account itself owns,
+   never one it merely collaborates on, so it cannot be issued for this
+   Write-collaborator setup), with `repo` scope, is stored as the
+   repository secret `WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN`.
+   "Scoped to the test repository alone" (FR-011) is enforced by the
+   account's own memberships plus `verify-e2e`'s runtime containment
+   check, not by the token's own scoping. The account's username is
+   stored alongside it as
+   `WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME`.
 4. `WING_COMMANDER_AUTO_RELEASE_PAUSED` may stay `true` for a manually
    dispatched validation run (the job-level `if:` doesn't gate
    `workflow_dispatch` the same way `schedule` is — confirm against the

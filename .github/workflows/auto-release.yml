@@ -110,7 +110,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      verdict: ${{ steps.config.outputs.verdict || steps.reachable.outputs.verdict || steps.maintainer-credential.outputs.verdict || steps.reset.outputs.verdict || steps.speckit-version.outputs.verdict || steps.scaffold.outputs.verdict || steps.kickoff.outputs.verdict || steps.poll.outputs.verdict }}
+      verdict: ${{ steps.config.outputs.verdict || steps.reachable.outputs.verdict || steps.maintainer-credential.outputs.verdict || steps.cleanup.outputs.verdict || steps.reset.outputs.verdict || steps.speckit-version.outputs.verdict || steps.scaffold.outputs.verdict || steps.kickoff.outputs.verdict || steps.poll.outputs.verdict }}
       # Carried separately from the verdict's `mode` field (data-model.md
       # "Execution mode") -- true only when the container leg was due by
       # date parity but the pause control (research.md D3) forced this run
@@ -286,29 +286,47 @@ jobs:
 
       # specs/055-unattended-e2e-gates D1/D2: the fixture maintainer
       # identity is a dedicated GitHub user account (never a bot), invited
-      # as a Write collaborator on the test repository alone, whose
-      # fine-grained PAT drives the four human gates later in this job.
-      # Checked here, before any of those gates are reached, so a
-      # misconfigured credential ends fail-infra before any attempt spend
-      # rather than surfacing as a mysterious gate stall.
+      # as a Write collaborator on the test repository alone, whose PAT
+      # drives the four human gates later in this job. A classic PAT, not
+      # a fine-grained one -- a fine-grained PAT can only reach
+      # repositories the token's own account OWNS, never one it merely
+      # collaborates on, so the runtime containment check below (not
+      # token scoping alone) is what actually enforces "the test
+      # repository alone" for this credential (maintainer feedback on PR
+      # #389; corrects every prior "fine-grained" claim about this
+      # secret). Checked here, before any of those gates are reached, so
+      # a misconfigured credential ends fail-infra before any attempt
+      # spend rather than surfacing as a mysterious gate stall.
       - name: Confirm the fixture maintainer identity's credential
         id: maintainer-credential
         if: steps.reachable.outputs.ok == 'true'
         shell: bash
         env:
           MAINTAINER_TOKEN: ${{ secrets.WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN }}
+          MAINTAINER_USERNAME: ${{ secrets.WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME }}
           E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
+          MODE: ${{ steps.mode.outputs.mode }}
         run: |
           set -uo pipefail
           if [ -z "$MAINTAINER_TOKEN" ]; then
             echo "ok=false" >> "$GITHUB_OUTPUT"
             {
               echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN set to a fine-grained PAT for a Write collaborator on the test repository" "unset" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN"
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN set to a classic PAT for a Write collaborator on the test repository" "unset" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
             echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN is unset -- see docs/setup.md."
+            exit 0
+          fi
+          if [ -z "$MAINTAINER_USERNAME" ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME set to that account's login" "unset" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME" "$MODE"
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME is unset -- see docs/setup.md."
             exit 0
           fi
           permission="$(GH_TOKEN="$MAINTAINER_TOKEN" gh repo view "$E2E_REPO" --json viewerPermission --jq .viewerPermission 2>/dev/null || true)"
@@ -318,7 +336,7 @@ jobs:
               echo "ok=false" >> "$GITHUB_OUTPUT"
               {
                 echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates as a Write (or higher) collaborator on the test repository" "gh rejected the token, or viewerPermission was '${permission:-none}'" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN"
+                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates as a Write (or higher) collaborator on the test repository" "gh rejected the token, or viewerPermission was '${permission:-none}'" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
                 echo 'AUTO_RELEASE_VERDICT_EOF'
               } >> "$GITHUB_OUTPUT"
               echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN did not authenticate with Write access to $E2E_REPO -- see docs/setup.md."
@@ -330,10 +348,42 @@ jobs:
             echo "ok=false" >> "$GITHUB_OUTPUT"
             {
               echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates as a Write (or higher) collaborator on the test repository" "gh rejected the token" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN"
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates as a Write (or higher) collaborator on the test repository" "gh rejected the token" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
             echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN could not resolve a login via gh api user -- see docs/setup.md."
+            exit 0
+          fi
+          if [ "$login" != "$MAINTAINER_USERNAME" ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates as WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME" "authenticated as a different login" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN, WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME" "$MODE"
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticated as a login other than WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME -- see docs/setup.md."
+            exit 0
+          fi
+          # Runtime containment (maintainer feedback): a classic PAT
+          # carries whatever repository access the account itself has, so
+          # the credential check above cannot on its own prove the
+          # account is contained to the test repository -- only the
+          # account's own memberships can. List every repository this
+          # token can reach and require the set to be EXACTLY the
+          # configured test repository; any other set -- including empty,
+          # which a `gh api` failure would also produce -- ends the
+          # attempt naming repository names only, never the token
+          # (FR-003a, FR-011).
+          reachable_repos="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api "user/repos?affiliation=owner,collaborator,organization_member" --paginate --jq '.full_name' 2>/dev/null | sort -u)"
+          reachable_count="$(printf '%s' "$reachable_repos" | grep -c . || true)"
+          if [ "$reachable_count" -ne 1 ] || [ "$(printf '%s' "$reachable_repos" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$E2E_REPO" | tr '[:upper:]' '[:lower:]')" ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity containment" "the credential reaches exactly one repository, the configured test repository" "reached: [$(printf '%s' "$reachable_repos" | tr '\n' ',')]" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            echo "::error::wing-commander auto-release verify-e2e: the fixture maintainer identity's credential does not reach exactly the configured test repository -- see docs/setup.md."
             exit 0
           fi
           echo "ok=true" >> "$GITHUB_OUTPUT"
@@ -354,6 +404,8 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
+          HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
+          MODE: ${{ steps.mode.outputs.mode }}
         run: |
           set -uo pipefail
 
@@ -362,11 +414,34 @@ jobs:
             [ -n "$n" ] || continue
             gh issue close "$n" --repo "$E2E_REPO" --comment "Closed by wing-commander's auto-release.yml before a fresh verification attempt." >/dev/null 2>&1 || true
           done
+          # A failed PR close, unlike a failed issue close, is not merely
+          # cosmetic: this fixture's kickoff issue body is fixed (research.md
+          # D8), so every attempt derives the SAME feature slug, and a
+          # leftover PR from a previous attempt that failed to close could
+          # be mistaken for this attempt's own gate once the new spec-draft
+          # PR reopens the same slug -- FR-009's `wrong-attempt` guard
+          # protects against a DIFFERENT slug, not this same-slug replay.
+          # Ending the attempt here (maintainer feedback) is strictly safer
+          # than letting the poll loop merge a leftover.
+          pr_close_failures=""
           mapfile -t open_prs < <(gh pr list --repo "$E2E_REPO" --state open --json number --jq '.[].number' 2>/dev/null || true)
           for n in "${open_prs[@]}"; do
             [ -n "$n" ] || continue
-            gh pr close "$n" --repo "$E2E_REPO" --comment "Closed by wing-commander's auto-release.yml before a fresh verification attempt." >/dev/null 2>&1 || true
+            if ! close_err="$(gh pr close "$n" --repo "$E2E_REPO" --comment "Closed by wing-commander's auto-release.yml before a fresh verification attempt." 2>&1 >/dev/null)"; then
+              pr_close_failures="${pr_close_failures}PR #${n}: ${close_err}; "
+            fi
           done
+          if [ -n "$pr_close_failures" ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "closing prior leftover pull requests" "gh pr close succeeds for every open PR in the test repository" "$pr_close_failures" "$E2E_REPO" "$MODE"
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            echo "::error::wing-commander auto-release verify-e2e: could not close a leftover PR in $E2E_REPO before resetting -- refusing to risk a stale PR being merged as this attempt's own."
+            exit 0
+          fi
+          echo "ok=true" >> "$GITHUB_OUTPUT"
 
       # specs/049-single-home-release-idioms: the detach-through-push
       # portion of the reset is now the shared _shared/orphan-branch-reset
@@ -378,7 +453,7 @@ jobs:
       # output wiring below are unchanged.
       - name: Reset the default branch to an empty tree
         id: reset-branch
-        if: steps.maintainer-credential.outputs.ok == 'true'
+        if: steps.cleanup.outputs.ok == 'true'
         uses: ./.github/actions/_shared/orphan-branch-reset
         with:
           token: ${{ steps.token.outputs.token }}
@@ -391,7 +466,7 @@ jobs:
 
       - name: Report the reset outcome
         id: reset
-        if: steps.maintainer-credential.outputs.ok == 'true'
+        if: steps.cleanup.outputs.ok == 'true'
         shell: bash
         env:
           OK: ${{ steps.reset-branch.outputs.ok }}
@@ -624,9 +699,16 @@ jobs:
       # -- the clarification exchange and the spec-draft/plan/finalize PR
       # merges -- under the fixture maintainer identity's own token, so a
       # decision is attributed to the harness rather than the App (research.md
-      # D4, D9). POLL_BUDGET_SECONDS is raised to match the job's own
-      # `timeout-minutes: 150` (research.md D13) so gate-driving has room to
-      # actually resolve all four gates before the budget itself binds.
+      # D4, D9). POLL_BUDGET_SECONDS is 8100 (135 minutes), NOT the job's
+      # own `timeout-minutes: 150` (9000s) -- `$SECONDS` starts at 0 when
+      # THIS step's shell starts, not at job start, so setting the two
+      # numerically equal would leave zero margin for the twelve steps that
+      # already ran before this one (checkout through kickoff) and for this
+      # step's own post-loop evidence gathering, all of which still count
+      # against the job's `timeout-minutes` (maintainer feedback on PR #389
+      # correcting research.md D13's original, incorrect "align the two
+      # clocks" reasoning). The 900s (15 minute) reserve is sized for that
+      # pre-loop and post-loop work, not for the loop itself.
       - name: Poll the test repository to a verdict
         id: poll
         if: steps.kickoff.outputs.ok == 'true'
@@ -634,12 +716,17 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           HARNESS_TOKEN: ${{ secrets.WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN }}
-          HARNESS_LOGIN: ${{ steps.maintainer-credential.outputs.login }}
+          # Read directly from the secret, not from an earlier step's
+          # output -- GitHub drops a step output whose value is masked
+          # (maintainer feedback: the prior `steps.maintainer-credential.
+          # outputs.login` wiring left HARNESS_LOGIN empty).
+          HARNESS_LOGIN: ${{ secrets.WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME }}
           E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
+          DEFAULT_BRANCH: ${{ steps.reachable.outputs.default-branch }}
           ISSUE: ${{ steps.kickoff.outputs.issue-number }}
           ISSUE_URL: ${{ steps.kickoff.outputs.issue-url }}
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
-          POLL_BUDGET_SECONDS: "9000"
+          POLL_BUDGET_SECONDS: "8100"
           MAX_CLARIFICATION_ROUNDS: "3"
           MODE: ${{ steps.mode.outputs.mode }}
         run: |
@@ -665,22 +752,51 @@ jobs:
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
           }
+          # FR-016/FR-018, maintainer feedback: a `pass` verdict must not
+          # rest on an inference (reaching stage:done implies the PR
+          # merged) -- assert each merge PR is non-null AND attributed to
+          # the harness login, failing the pass outright otherwise.
+          assert_merged_by_harness() {
+            local gate_label="$1" pr_json="$2" merged_by
+            merged_by="$(printf '%s' "$pr_json" | jq -r '.mergedBy.login // ""' 2>/dev/null || echo "")"
+            if [ "$pr_json" = "null" ] || [ "$merged_by" != "$HARNESS_LOGIN" ]; then
+              local observed="merged by '${merged_by:-unknown}'"
+              [ "$pr_json" = "null" ] && observed="no merged PR found"
+              write_verdict "fail-wrong-output" "${gate_label} merged by the harness before stage:done" \
+                "the PR merged, attributed to ${HARNESS_LOGIN}" "$observed"
+              emit_verdict
+              exit 0
+            fi
+          }
+
+          # This attempt's kickoff issue author id -- used by the clarify-
+          # decision script's actor-gate check (a qualifying reply is one
+          # from a non-Bot OWNER/MEMBER/COLLABORATOR, or from this id,
+          # mirroring intake.yml:524). Resolved once; the issue's author
+          # never changes mid-attempt.
+          author_id="$(gh api "repos/${E2E_REPO}/issues/${ISSUE}" --jq '.user.id' 2>/dev/null || true)"
 
           # The three PR-merge gates share one shape (research.md D6/D9);
           # gate_name is the failing_check string contracts/verdict-
           # extension.md specifies for a fail-gate-stall at that gate.
           declare -A gate_merged=([spec-draft/]=false [plan/]=false [spec/]=false)
           declare -A gate_name=([spec-draft/]="spec-draft PR merge" [plan/]="plan PR merge" [spec/]="finalize PR merge")
-          # A gate-driving write (the clarification reply, a PR merge) that
-          # fails at the API level -- e.g. the harness identity's write
-          # access was revoked mid-run -- must not retry silently until
-          # POLL_BUDGET_SECONDS elapses and the attempt reports the generic
-          # fail-timeout; it becomes a fail-gate-stall at that named gate
-          # after this many consecutive failures (specs/055-unattended-e2e-
-          # gates T028, FR-023).
-          MAX_GATE_WRITE_FAILURES=3
-          declare -A gate_merge_failures=([spec-draft/]=0 [plan/]=0 [spec/]=0)
-          clarify_write_failures=0
+          declare -A gate_failures=([spec-draft/]=0 [plan/]=0 [spec/]=0)
+          declare -A gate_last_failure=([spec-draft/]="" [plan/]="" [spec/]="")
+          # A gate-driving read OR write (fetching comments/PR state, a
+          # decision-script crash, posting the clarification reply, a PR
+          # merge) that fails at the API level -- e.g. the harness
+          # identity's write access was revoked mid-run -- must not retry
+          # silently until POLL_BUDGET_SECONDS elapses and the attempt
+          # reports the generic fail-timeout; it becomes a fail-gate-stall
+          # at that named gate after this many consecutive failures
+          # (specs/055-unattended-e2e-gates T028, FR-023; broadened from
+          # writes-only to reads too per maintainer feedback on PR #389).
+          MAX_GATE_FAILURES=3
+          clarify_failures=0
+          clarify_last_failure=""
+          slug_lookup_failures=0
+          slug_lookup_last_failure=""
           slug=""
           clarification_rounds=0
 
@@ -690,25 +806,28 @@ jobs:
           rate_limited=""
           while [ "$SECONDS" -lt "$POLL_BUDGET_SECONDS" ]; do
             # --- Clarification gate (research.md D4, D6, D7, D8) ---
-            comments_json="$(GH_TOKEN="$HARNESS_TOKEN" gh issue view "$ISSUE" --repo "$E2E_REPO" --json comments --jq '.comments' 2>/dev/null || true)"
-            if [ -n "$comments_json" ]; then
-              clarify_decision="$(bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh "$comments_json" "$HARNESS_LOGIN" "$clarification_rounds" 2>/dev/null || true)"
+            if ! gh api "repos/${E2E_REPO}/issues/${ISSUE}/comments" --paginate --jq \
+                '.[] | {id, user: {login: .user.login, id: .user.id, type: .user.type}, author_association, body, created_at}' \
+                > "$RUNNER_TEMP/auto-release-comments.ndjson" 2>"$RUNNER_TEMP/auto-release-comments-err.txt"; then
+              clarify_failures=$((clarify_failures + 1))
+              clarify_last_failure="$(tail -c 300 "$RUNNER_TEMP/auto-release-comments-err.txt")"
+            elif ! clarify_decision="$(jq -cs '.' "$RUNNER_TEMP/auto-release-comments.ndjson" 2>/dev/null \
+                | bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh decide "$author_id" "$clarification_rounds" \
+                2>"$RUNNER_TEMP/auto-release-clarify-decision-err.txt")"; then
+              clarify_failures=$((clarify_failures + 1))
+              clarify_last_failure="decision script: $(tail -c 300 "$RUNNER_TEMP/auto-release-clarify-decision-err.txt")"
+            else
+              clarify_failures=0
               clarify_head="$(printf '%s\n' "$clarify_decision" | head -1)"
               case "$clarify_head" in
                 reply)
                   reply_body="$(printf '%s\n' "$clarify_decision" | tail -n +2)"
                   if reply_err="$(GH_TOKEN="$HARNESS_TOKEN" gh issue comment "$ISSUE" --repo "$E2E_REPO" --body "$reply_body" 2>&1 >/dev/null)"; then
                     clarification_rounds=$((clarification_rounds + 1))
-                    clarify_write_failures=0
+                    clarify_failures=0
                   else
-                    clarify_write_failures=$((clarify_write_failures + 1))
-                    if [ "$clarify_write_failures" -ge "$MAX_GATE_WRITE_FAILURES" ]; then
-                      write_verdict "fail-gate-stall" "clarification" \
-                        "gh issue comment succeeds within ${MAX_GATE_WRITE_FAILURES} attempts" \
-                        "${reply_err:-identity refused, or the write action failed repeatedly}"
-                      emit_verdict
-                      exit 0
-                    fi
+                    clarify_failures=$((clarify_failures + 1))
+                    clarify_last_failure="$reply_err"
                   fi
                   ;;
                 exhausted)
@@ -720,54 +839,107 @@ jobs:
                   ;;
               esac
             fi
+            if [ "$clarify_failures" -ge "$MAX_GATE_FAILURES" ]; then
+              write_verdict "fail-gate-stall" "clarification" \
+                "reading the issue's comments, deciding, and posting a reply each succeed within ${MAX_GATE_FAILURES} attempts" \
+                "${clarify_last_failure:-identity refused, or a read/write action failed repeatedly}"
+              emit_verdict
+              exit 0
+            fi
 
             # --- PR-merge gates (research.md D4, D9, D10) ---
+            # The slug is bound to THIS attempt's own kickoff issue (FR-009,
+            # research.md D10) -- the spec-draft PR title ends in the exact
+            # literal intake.yml's own `gh pr create --title` call stamps,
+            # `(#<issue-number>)` -- never merely the first open
+            # spec-draft/* PR repository-wide (maintainer feedback: that
+            # made `wrong-attempt` impossible to ever observe).
             if [ -z "$slug" ]; then
-              spec_draft_head="$(GH_TOKEN="$HARNESS_TOKEN" gh pr list --repo "$E2E_REPO" --state open --json headRefName --jq '[.[] | select(.headRefName | startswith("spec-draft/"))][0].headRefName // empty' 2>/dev/null || true)"
-              if [ -n "$spec_draft_head" ]; then
-                slug="${spec_draft_head#spec-draft/}"
+              if ! GH_TOKEN="$HARNESS_TOKEN" gh pr list --repo "$E2E_REPO" --state open --json headRefName,title \
+                  > "$RUNNER_TEMP/auto-release-spec-draft-list.json" 2>"$RUNNER_TEMP/auto-release-spec-draft-list-err.txt"; then
+                slug_lookup_failures=$((slug_lookup_failures + 1))
+                slug_lookup_last_failure="$(tail -c 300 "$RUNNER_TEMP/auto-release-spec-draft-list-err.txt")"
+                if [ "$slug_lookup_failures" -ge "$MAX_GATE_FAILURES" ]; then
+                  write_verdict "fail-gate-stall" "spec-draft PR merge" \
+                    "reading open pull requests succeeds within ${MAX_GATE_FAILURES} attempts" \
+                    "${slug_lookup_last_failure:-identity refused, or the read failed repeatedly}"
+                  emit_verdict
+                  exit 0
+                fi
+              else
+                slug_lookup_failures=0
+                spec_draft_head="$(jq -r --arg suffix "(#${ISSUE})" \
+                  '[.[] | select(.headRefName | startswith("spec-draft/")) | select(.title | endswith($suffix))][0].headRefName // empty' \
+                  "$RUNNER_TEMP/auto-release-spec-draft-list.json" 2>/dev/null || true)"
+                if [ -n "$spec_draft_head" ]; then
+                  slug="${spec_draft_head#spec-draft/}"
+                fi
               fi
             fi
             if [ -n "$slug" ]; then
+              # research.md D9: spec-draft and finalize base the default
+              # branch; plan bases the still-open spec/<slug> integration
+              # branch.
+              declare -A gate_expected_base=([spec-draft/]="$DEFAULT_BRANCH" [plan/]="spec/${slug}" [spec/]="$DEFAULT_BRANCH")
               for prefix in "spec-draft/" "plan/" "spec/"; do
                 [ "${gate_merged[$prefix]}" = "true" ] && continue
-                pr_json="$(GH_TOKEN="$HARNESS_TOKEN" gh pr list --repo "$E2E_REPO" --head "${prefix}${slug}" --json number,headRefName,mergeable,mergeStateStatus,isDraft,state 2>/dev/null || echo '[]')"
-                merge_decision="$(bash .github/actions/_shared/auto-release-e2e-merge-decision.sh "$pr_json" "$prefix" "$slug" 2>/dev/null || true)"
-                merge_head="$(printf '%s\n' "$merge_decision" | head -1)"
-                pr_number="$(printf '%s' "$pr_json" | jq -r '.[0].number // "?"' 2>/dev/null || echo '?')"
-                case "$merge_head" in
-                  merge)
-                    merge_number="$(printf '%s\n' "$merge_decision" | tail -n +2)"
-                    if merge_err="$(GH_TOKEN="$HARNESS_TOKEN" gh pr merge "$merge_number" --merge --repo "$E2E_REPO" 2>&1 >/dev/null)"; then
-                      gate_merged[$prefix]="true"
-                      gate_merge_failures[$prefix]=0
-                    else
-                      gate_merge_failures[$prefix]=$(( gate_merge_failures[$prefix] + 1 ))
-                      if [ "${gate_merge_failures[$prefix]}" -ge "$MAX_GATE_WRITE_FAILURES" ]; then
-                        write_verdict "fail-gate-stall" "${gate_name[$prefix]}" \
-                          "gh pr merge succeeds within ${MAX_GATE_WRITE_FAILURES} attempts" \
-                          "${merge_err:-identity refused, or the write action failed repeatedly}"
+                if ! GH_TOKEN="$HARNESS_TOKEN" gh pr list --repo "$E2E_REPO" --head "${prefix}${slug}" \
+                    --json number,headRefName,baseRefName,mergeable,mergeStateStatus,isDraft,state,statusCheckRollup \
+                    > "$RUNNER_TEMP/auto-release-pr-list.json" 2>"$RUNNER_TEMP/auto-release-pr-list-err.txt"; then
+                  gate_failures[$prefix]=$(( gate_failures[$prefix] + 1 ))
+                  gate_last_failure[$prefix]="$(tail -c 300 "$RUNNER_TEMP/auto-release-pr-list-err.txt")"
+                else
+                  pr_json="$(cat "$RUNNER_TEMP/auto-release-pr-list.json")"
+                  pr_number="$(printf '%s' "$pr_json" | jq -r '.[0].number // "?"' 2>/dev/null || echo '?')"
+                  if ! merge_decision="$(printf '%s' "$pr_json" \
+                      | bash .github/actions/_shared/auto-release-e2e-merge-decision.sh "$prefix" "$slug" "${gate_expected_base[$prefix]}" \
+                      2>"$RUNNER_TEMP/auto-release-merge-decision-err.txt")"; then
+                    gate_failures[$prefix]=$(( gate_failures[$prefix] + 1 ))
+                    gate_last_failure[$prefix]="decision script: $(tail -c 300 "$RUNNER_TEMP/auto-release-merge-decision-err.txt")"
+                  else
+                    gate_failures[$prefix]=0
+                    merge_head="$(printf '%s\n' "$merge_decision" | head -1)"
+                    case "$merge_head" in
+                      merge)
+                        merge_number="$(printf '%s\n' "$merge_decision" | tail -n +2)"
+                        if merge_err="$(GH_TOKEN="$HARNESS_TOKEN" gh pr merge "$merge_number" --merge --repo "$E2E_REPO" 2>&1 >/dev/null)"; then
+                          gate_merged[$prefix]="true"
+                          gate_failures[$prefix]=0
+                        else
+                          gate_failures[$prefix]=$(( gate_failures[$prefix] + 1 ))
+                          gate_last_failure[$prefix]="$merge_err"
+                        fi
+                        ;;
+                      conflicting)
+                        write_verdict "fail-gate-stall" "${gate_name[$prefix]}" "gh pr merge succeeds" "PR #${pr_number}: CONFLICTING"
                         emit_verdict
                         exit 0
-                      fi
-                    fi
-                    ;;
-                  conflicting)
-                    write_verdict "fail-gate-stall" "${gate_name[$prefix]}" "gh pr merge succeeds" "PR #${pr_number}: CONFLICTING"
-                    emit_verdict
-                    exit 0
-                    ;;
-                  blocked)
-                    write_verdict "fail-gate-stall" "${gate_name[$prefix]}" "gh pr merge succeeds" "PR #${pr_number}: required check blocked"
-                    emit_verdict
-                    exit 0
-                    ;;
-                  wrong-attempt)
-                    write_verdict "fail-gate-stall" "${gate_name[$prefix]}" "the PR at this branch belongs to the current attempt" "PR #${pr_number} belongs to a previous attempt"
-                    emit_verdict
-                    exit 0
-                    ;;
-                esac
+                        ;;
+                      blocked)
+                        write_verdict "fail-gate-stall" "${gate_name[$prefix]}" "gh pr merge succeeds" "PR #${pr_number}: required check blocked"
+                        emit_verdict
+                        exit 0
+                        ;;
+                      wrong-attempt)
+                        write_verdict "fail-gate-stall" "${gate_name[$prefix]}" "the PR at this branch belongs to the current attempt" "PR #${pr_number} belongs to a previous attempt"
+                        emit_verdict
+                        exit 0
+                        ;;
+                      wrong-base)
+                        write_verdict "fail-gate-stall" "${gate_name[$prefix]}" "the PR at this branch targets ${gate_expected_base[$prefix]}" "PR #${pr_number} targets a different base branch"
+                        emit_verdict
+                        exit 0
+                        ;;
+                    esac
+                  fi
+                fi
+                if [ "${gate_failures[$prefix]}" -ge "$MAX_GATE_FAILURES" ]; then
+                  write_verdict "fail-gate-stall" "${gate_name[$prefix]}" \
+                    "reading the PR's state, deciding, and merging each succeed within ${MAX_GATE_FAILURES} attempts" \
+                    "${gate_last_failure[$prefix]:-identity refused, or a read/write action failed repeatedly}"
+                  emit_verdict
+                  exit 0
+                fi
               done
             fi
 
@@ -889,32 +1061,42 @@ jobs:
 
           # --- Clarification-gate pass assertion (research.md D12) ---
           # Reaching stage:done is not on its own evidence the gate was
-          # satisfied (FR-016) -- assert a harness reply followed every
-          # question the issue's comment history ever carried.
-          comments_json="$(GH_TOKEN="$HARNESS_TOKEN" gh issue view "$ISSUE" --repo "$E2E_REPO" --json comments --jq '.comments' 2>/dev/null || echo '[]')"
-          markers_json="$(printf '%s' "$comments_json" | jq -c '[ .[] | select((.body // "") | contains("[!IMPORTANT]")) | select((((.body // "") | contains("Answer the open clarification questions"))) or (((.body // "") | contains("Answer the remaining clarification questions")))) ]' 2>/dev/null || echo '[]')"
-          marker_count="$(printf '%s' "$markers_json" | jq 'length' 2>/dev/null || echo 0)"
-          clarification_gate_ok=true
-          if [ "$marker_count" -gt 0 ]; then
-            clarification_gate_ok="$(printf '%s' "$comments_json" | jq -r --argjson markers "$markers_json" --arg login "$HARNESS_LOGIN" '
-              [ $markers[] as $m
-                | ( [ .[] | select((.author.login // "") == $login and (.createdAt // "") > $m.createdAt) ] | length > 0 )
-              ] | all
-            ' 2>/dev/null || echo false)"
+          # satisfied (FR-016) -- assert a QUALIFYING reply (the harness's
+          # own, or a human's, per FR-010) followed every question the
+          # issue's comment history ever carried. The marker predicate and
+          # the qualifying-reply rule both live in the clarify-decision
+          # script (its `satisfied`/`markers` modes) -- the single home
+          # CLAUDE.md requires, not re-derived here a second time
+          # (maintainer feedback on PR #389).
+          if ! gh api "repos/${E2E_REPO}/issues/${ISSUE}/comments" --paginate --jq \
+              '.[] | {id, user: {login: .user.login, id: .user.id, type: .user.type}, author_association, body, created_at}' \
+              > "$RUNNER_TEMP/auto-release-final-comments.ndjson" 2>/dev/null; then
+            : > "$RUNNER_TEMP/auto-release-final-comments.ndjson"
           fi
-          if [ "$clarification_gate_ok" != "true" ]; then
+          comments_json="$(jq -cs '.' "$RUNNER_TEMP/auto-release-final-comments.ndjson" 2>/dev/null || echo '[]')"
+          clarification_satisfied="$(printf '%s' "$comments_json" \
+            | bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh satisfied "$author_id" 2>/dev/null || echo unsatisfied)"
+          if [ "$clarification_satisfied" != "ok" ]; then
             write_verdict "fail-wrong-output" "clarification gate answered before stage:done" \
-              "a harness reply after every open question" "question opened, never answered"
+              "a qualifying reply after every open question" "question opened, never answered"
             emit_verdict
             exit 0
           fi
+          markers_json="$(printf '%s' "$comments_json" | bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh markers 2>/dev/null || echo '[]')"
 
           # --- Gate evidence for the report job (research.md D12, FR-017,
           # FR-019) -- presentation-layer only, no verdict schema change. ---
-          spec_draft_pr="$(GH_TOKEN="$HARNESS_TOKEN" gh pr list --repo "$E2E_REPO" --state merged --head "spec-draft/${slug}" --json number,mergedAt 2>/dev/null | jq -c '.[0] // null' 2>/dev/null || echo null)"
-          plan_pr="$(GH_TOKEN="$HARNESS_TOKEN" gh pr list --repo "$E2E_REPO" --state merged --head "plan/${slug}" --json number,mergedAt 2>/dev/null | jq -c '.[0] // null' 2>/dev/null || echo null)"
-          finalize_pr="$(GH_TOKEN="$HARNESS_TOKEN" gh pr list --repo "$E2E_REPO" --state merged --head "spec/${slug}" --json number,mergedAt 2>/dev/null | jq -c '.[0] // null' 2>/dev/null || echo null)"
-          clarification_comment_ids="$(printf '%s' "$comments_json" | jq -c --argjson markers "$markers_json" --arg login "$HARNESS_LOGIN" '{questions: [ $markers[].id ], replies: [ .[] | select((.author.login // "") == $login) | .id ]}' 2>/dev/null || echo '{"questions":[],"replies":[]}')"
+          spec_draft_pr="$(GH_TOKEN="$HARNESS_TOKEN" gh pr list --repo "$E2E_REPO" --state merged --head "spec-draft/${slug}" --json number,mergedAt,mergedBy 2>/dev/null | jq -c '.[0] // null' 2>/dev/null || echo null)"
+          plan_pr="$(GH_TOKEN="$HARNESS_TOKEN" gh pr list --repo "$E2E_REPO" --state merged --head "plan/${slug}" --json number,mergedAt,mergedBy 2>/dev/null | jq -c '.[0] // null' 2>/dev/null || echo null)"
+          finalize_pr="$(GH_TOKEN="$HARNESS_TOKEN" gh pr list --repo "$E2E_REPO" --state merged --head "spec/${slug}" --json number,mergedAt,mergedBy 2>/dev/null | jq -c '.[0] // null' 2>/dev/null || echo null)"
+
+          # --- PR-merge gates pass assertion (FR-016/FR-018, maintainer
+          # feedback) -- see assert_merged_by_harness above. ---
+          assert_merged_by_harness "spec-draft PR merge" "$spec_draft_pr"
+          assert_merged_by_harness "plan PR merge" "$plan_pr"
+          assert_merged_by_harness "finalize PR merge" "$finalize_pr"
+
+          clarification_comment_ids="$(printf '%s' "$comments_json" | jq -c --argjson markers "$markers_json" --arg login "$HARNESS_LOGIN" '{questions: [ $markers[].id ], replies: [ .[] | select((.user.login // "") == $login) | .id ]}' 2>/dev/null || echo '{"questions":[],"replies":[]}')"
           {
             echo "spec-draft-pr=$spec_draft_pr"
             echo "plan-pr=$plan_pr"
@@ -1400,8 +1582,18 @@ jobs:
           # step's own evidence-gathering outputs (research.md D12,
           # data-model.md's Gate evidence table). Presentation only -- the
           # verdict JSON schema is unchanged.
+          # A question count of 0 in CLARIFICATION_COMMENT_IDS means the
+          # gate genuinely never opened; ROUNDS_ANSWERED alone can't tell
+          # that apart from "a human answered before the harness's own
+          # round counter ever moved" (maintainer feedback: the previous
+          # check read the latter as "not opened," which is wrong per
+          # FR-010 -- a human answering first is a normal pass, not an
+          # unopened gate).
+          question_count="$(printf '%s' "${CLARIFICATION_COMMENT_IDS:-{}}" | jq '.questions | length' 2>/dev/null || echo 0)"
           if [ -n "$CLARIFICATION_ROUNDS_ANSWERED" ] && [ "$CLARIFICATION_ROUNDS_ANSWERED" != "0" ]; then
-            clarification_line="clarification: answered (${CLARIFICATION_ROUNDS_ANSWERED} round(s); comments ${CLARIFICATION_COMMENT_IDS:-unknown})"
+            clarification_line="clarification: answered (${CLARIFICATION_ROUNDS_ANSWERED} harness round(s); comments ${CLARIFICATION_COMMENT_IDS:-unknown})"
+          elif [ "$question_count" != "0" ]; then
+            clarification_line="clarification: answered by a human before the harness (comments ${CLARIFICATION_COMMENT_IDS:-unknown})"
           else
             clarification_line="clarification: not opened"
           fi

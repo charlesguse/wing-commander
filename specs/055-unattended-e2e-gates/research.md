@@ -14,11 +14,18 @@ related files as of `53e203b` (the branch head this plan starts from).
 
 **Decision**: a dedicated GitHub user account (never a bot identity),
 invited as a collaborator with **Write** access to the test repository
-only, authenticating via a fine-grained personal access token scoped to
-that single repository with Contents (write), Issues (write), and Pull
-requests (write) permissions. The token is stored as a new repository
-secret, `WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN`, read only by
-`verify-e2e`.
+only, authenticating via a **classic** personal access token with `repo`
+scope. The token is stored as a new repository secret,
+`WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN`; the account's
+username is stored alongside it as
+`WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME`, read directly by
+the `poll` step's own env (a step *output* carrying a masked value is
+dropped by GitHub, so the login must come from the secret itself, not
+from an earlier step's output). Both are read only by `verify-e2e`.
+"Scoped to the test repository alone" is enforced by the account's own
+repository memberships plus D2's runtime containment check below, not by
+the token's own scoping — see the corrected rationale below (maintainer
+feedback on PR #389).
 
 **Rationale**: the clarify entry point's actor gate
 (`wing-commander-2-clarify.yml:22-27`) rejects `github.event.comment.user.type
@@ -39,21 +46,37 @@ by design, and widening that gate to accept bots would be exactly the kind
 of gate-weakening FR-012 forbids. A second GitHub App installed as a
 "maintainer" App — rejected: Apps are always `type: Bot` on the comment
 payload; there is no App configuration that presents as a `User`. A
-classic (non-fine-grained) PAT — rejected: classic PATs cannot be scoped to
-a single repository, so they cannot satisfy FR-011's "no other repository"
-requirement by construction; only a fine-grained PAT can.
+fine-grained PAT — this plan's original draft chose one on the theory it
+could be scoped to the single test repository by construction; that is
+wrong for this credential's shape. A fine-grained PAT's repository picker
+only offers repositories the *token's own account owns* (or, for an
+organization-owned repository, ones an org owner has pre-approved); it has
+no path to select a repository where the account is merely an invited
+Write collaborator, which is exactly this account's relationship to the
+test repository. A classic PAT carries whatever access the account
+already has and nothing else, which does cover this case, at the cost of
+not being self-scoping — D2's runtime read of the account's own
+repository list is what actually proves "the test repository alone" for
+this credential shape, not the token type.
 
 ## D2. Runtime containment check for the new credential (FR-014)
 
 **Decision**: a new step immediately after the existing `token`/`reachable`
-steps (`auto-release.yml:181-224`) checks the new secret is non-empty and
-that `GH_TOKEN=<secret> gh repo view <e2e-repo> --json viewerPermission`
-succeeds and reports `WRITE` or higher. Any failure — secret unset, `gh`
-rejects the token, or `viewerPermission` below `WRITE` — produces a
-`fail-infra` verdict via `auto-release-verdict.sh`, naming
-`WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN` as the thing to set, the
-same wording shape the existing App-token `reachable` step already uses at
-`auto-release.yml:206-219`.
+steps checks the new secrets are non-empty, that `GH_TOKEN=<secret> gh
+repo view <e2e-repo> --json viewerPermission` succeeds and reports `WRITE`
+or higher, that `gh api user --jq .login` matches
+`WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME` exactly, and —
+since D1 corrects the credential to a classic PAT, which is not
+self-scoping — that `GH_TOKEN=<secret> gh api
+"user/repos?affiliation=owner,collaborator,organization_member" --paginate
+--jq .full_name` returns a set containing EXACTLY the configured test
+repository, nothing more and nothing less. Any failure — a secret unset,
+`gh` rejects the token, `viewerPermission` below `WRITE`, a login
+mismatch, or a reachable-repository set other than exactly the test
+repository — produces a `fail-infra` verdict via `auto-release-verdict.sh`.
+The containment failure names repository names only, never the token
+itself, matching FR-011/FR-014's "name precisely what to configure"
+without leaking the credential into a failure report.
 
 **Rationale**: FR-014 requires the same treatment this job already gives an
 unset `WING_COMMANDER_AUTO_RELEASE_E2E_REPO` (`docs/setup.md:126`) — a
@@ -63,12 +86,22 @@ rather than merely "the token authenticates" catches the case where the
 account exists and the token is valid but was never actually invited as a
 collaborator to the test repository — a misconfiguration this job should
 name rather than discover as a mysterious merge failure two hours later.
+The repository-list read is what actually enforces FR-011's containment
+requirement now that D1 corrects the credential to a classic (not
+self-scoping) PAT: a classic token reaches every repository its account
+can reach, so containment is a property of the *account's own
+memberships*, verified at runtime, not of the token's own claimed scope.
 
 **Alternatives considered**: skip the up-front check and let the first
 gate-driving attempt fail naturally — rejected, because that would surface
 as a late `fail-gate-stall` after intake has already spent real money
 (the two prior failing attempts each did real agent work before stalling),
-where an up-front check costs nothing and fails before any spend.
+where an up-front check costs nothing and fails before any spend. Trust
+the fine-grained-PAT-implies-containment reasoning of this plan's
+original draft and skip the repository-list read entirely — rejected once
+D1's correction was made: a classic PAT proves nothing about containment
+by its own shape, so skipping the read would leave FR-011 unenforced at
+runtime.
 
 ## D3. FR-013's self-repository refusal already covers every new act
 
@@ -258,11 +291,19 @@ pr merge <number> --merge` (a merge commit, matching the plain "click
 merge" a human performs per `docs/setup.md:192`'s smoke test — no
 `--squash`, no `--admin`, no `--delete-branch`; branch deletion stays
 `cleanup.yml`'s job, unchanged). A `wait` decision does nothing this
-iteration (checks still settling). A `conflicting`, `blocked`, or
-`wrong-attempt` decision is an immediate `fail-gate-stall` (D11) — the
-attempt does not wait out the remaining poll budget once a merge attempt
-has concretely failed, per FR-023's requirement to distinguish the reason
-rather than let it read as a generic timeout.
+iteration (checks still settling). A `conflicting`, `blocked`,
+`wrong-attempt`, or `wrong-base` decision is an immediate `fail-gate-stall`
+(D11) — the attempt does not wait out the remaining poll budget once a
+merge attempt has concretely failed, per FR-023's requirement to
+distinguish the reason rather than let it read as a generic timeout.
+`wrong-base` (maintainer feedback on PR #389) guards against a retargeted
+PR: the merge-decision script also requires `baseRefName` match the
+gate's expected base (the default branch for the spec-draft and finalize
+gates, `spec/<slug>` for the plan gate) before ever deciding `merge`. A
+`BLOCKED` `mergeStateStatus` is refined by `statusCheckRollup`: an entry
+still short of `COMPLETED`, or `COMPLETED` with no `conclusion` recorded
+yet, reads as `wait` rather than `blocked`, so a PR merely waiting on a
+still-running required check is never declared a gate stall.
 
 **Rationale**: `WING_COMMANDER_PLAN_REVIEW`'s default (`pr`,
 `plan.yml:46,584-600`) and `WING_COMMANDER_TASKS_REVIEW`'s default (`auto`,
@@ -285,18 +326,33 @@ the same `fail-gate-stall` verdict while spending more of the run's cost.
 ## D10. Leftover-attempt guard (FR-009)
 
 **Decision**: `<slug>` in D9's `gh pr list --head` filter is the exact
-slug intake derives from this attempt's kickoff issue title (already
-computed and available to the `poll` step as the branch-name component the
-spec-draft/plan/finalize PRs are required to carry), not merely the
-prefix. A PR at the right prefix but the wrong slug is `wrong-attempt`
-(D6), never merged.
+slug for THIS attempt's own kickoff issue, resolved by finding the open
+spec-draft PR whose title ends in the literal `(#<ISSUE>)` — the same
+suffix `intake.yml`'s own `gh pr create --title` call stamps on the
+spec-draft PR — where `<ISSUE>` is this attempt's own kickoff issue
+number, not merely the first open PR at the `spec-draft/` prefix
+repository-wide. A PR at the right prefix but the wrong slug is
+`wrong-attempt` (D6), never merged.
 
-**Rationale**: the existing `cleanup` step (`auto-release.yml:234-253`)
-already closes every open issue and PR in the test repository before each
-attempt's reset, so an exact-slug match is defense in depth rather than
-the primary guard — but FR-009 asks that the harness "never act on a
-leftover from a previous attempt," and matching by prefix alone would
-still be technically capable of merging a same-prefix PR from a
+Corrected by maintainer feedback on PR #389: the original draft resolved
+`<slug>` from the first open `spec-draft/*` PR repository-wide, which
+meant `wrong-attempt` could never actually fire (there was nothing to
+compare the resolved slug against — it always matched itself). Binding
+the lookup to this attempt's own issue number is what makes the
+comparison meaningful, and also fixes the leftover-cleanup-failure gap:
+the `cleanup` step's PR-close loop is no longer merely best-effort
+(`|| true`) — a failed close now ends the attempt as `fail-infra` before
+the reset, since this fixture's kickoff issue body is fixed and every
+attempt derives the same slug, so a same-slug leftover really could
+otherwise be mistaken for this attempt's own gate.
+
+**Rationale**: the `cleanup` step already closes every open issue and PR
+in the test repository before each attempt's reset, and now fails the
+attempt outright (rather than continuing past a swallowed error) if any
+PR close fails — so an exact-issue-bound slug match is defense in depth
+rather than the primary guard — but FR-009 asks that the harness "never
+act on a leftover from a previous attempt," and matching by prefix alone
+would still be technically capable of merging a same-prefix PR from a
 same-second race (Edge Cases: "two attempts overlap" is already excluded
 by FR-023 elsewhere, but a slug check costs nothing and removes the
 possibility entirely rather than relying solely on the serialization
@@ -305,7 +361,13 @@ guarantee holding).
 **Alternatives considered**: trust the pre-attempt cleanup alone and match
 by prefix only — rejected as a single point of failure for a requirement
 FR-009 states as a MUST; matching by exact branch name is nearly free once
-the slug is already known to the step.
+the slug is already known to the step. Deriving the slug independently
+from the kickoff issue's own title (re-running intake's own slug-derivation
+algorithm) — rejected per CLAUDE.md's single-home rule (see T008's
+implementation note in tasks.md): that algorithm lives in
+`create-new-feature.sh` alone; the PR-title suffix is the one artifact
+already carrying the binding this feature needs without pasting that
+algorithm a second time.
 
 ## D11. New outcome class: `fail-gate-stall`, and three-way failure
 classification (FR-018, FR-021–FR-024, SC-010, User Story 3 Acceptance
@@ -353,23 +415,30 @@ gathering step:
 
 - **New assertion — clarification gate**: if any clarification-question
   comment (D6's marker) ever appeared in the issue's comment history,
-  there MUST also be a harness-authored reply comment after it, for every
-  such question, before `stage:done`. If a question appeared with no
-  reply-after-it, that is `fail-wrong-output` (the lifecycle reached a
-  terminal state despite an ostensibly open gate — should not happen if
-  D4's loop drove it, but is asserted rather than assumed, per FR-016: "
-  reaching the next stage is not on its own evidence that the gate was
-  satisfied"). If no question ever appeared, the gate is skipped per
-  FR-008 and asserted as N/A, not as a failure.
-- **New evidence gathering — the three PR gates**: `gh pr list --state
-  merged --head <prefix><slug>` for each of the three prefixes, recording
-  each PR's number and `mergedAt` into the verdict's evidence. These gates
-  were already *transitively* proven by the existing `stage:plan`/`stage
-  :tasks` timeline-label assertions (`auto-release.yml:540-560`) — a
-  `plan` stage cannot have run under `WING_COMMANDER_PLAN_REVIEW=pr`
-  without its PR having merged first — so no new pass/fail logic is
-  needed for them; what's missing today is only the *legible evidence*
-  FR-017/FR-019 ask the report to name.
+  there MUST also be a QUALIFYING reply comment after it, for every such
+  question, before `stage:done` — the harness's own reply, or a human's,
+  per FR-010 (maintainer feedback: the original draft required the reply
+  come specifically from `HARNESS_LOGIN`, which meant a run a human
+  answered first still failed the pass assertion). The clarify-decision
+  script's `satisfied` subcommand is the one home for this check. If a
+  question appeared with no qualifying reply after it, that is
+  `fail-wrong-output` (the lifecycle reached a terminal state despite an
+  ostensibly open gate — should not happen if D4's loop drove it, but is
+  asserted rather than assumed, per FR-016: "reaching the next stage is
+  not on its own evidence that the gate was satisfied"). If no question
+  ever appeared, the gate is skipped per FR-008 and asserted as N/A, not
+  as a failure.
+- **New assertion and evidence gathering — the three PR gates**: `gh pr
+  list --state merged --head <prefix><slug>` for each of the three
+  prefixes, requesting `mergedBy` alongside `number`/`mergedAt`. Reaching
+  `stage:done` is transitive evidence the PRs existed and merged (a `plan`
+  stage cannot have run under `WING_COMMANDER_PLAN_REVIEW=pr` without its
+  PR having merged first), but FR-016/FR-018 require a POSITIVE assertion,
+  not an inference: the pass path now fails outright (`fail-wrong-output`)
+  if any of the three lookups returns nothing, or if `mergedBy.login` is
+  not the harness login (maintainer feedback — the original draft
+  gathered this evidence but never asserted on it, so a `null` silently
+  flowed into the report as `null` instead of failing the pass).
 
 The `pass` verdict's `evidence_url` stays the issue URL (unchanged shape);
 the newly gathered PR numbers and the clarification comment IDs are
@@ -401,14 +470,24 @@ duplicates a *conclusion* the label check already implies.
 (FR-026, FR-027)
 
 **Decision**: raise `POLL_BUDGET_SECONDS` from `6900` (115 minutes) to
-`9000` (150 minutes, matching the job's existing `timeout-minutes: 150` so
-the poll budget is never the binding constraint) as a provisional value for
-this feature's first shipped version. State the expected per-attempt cost
-as "materially more than the roughly one dollar the intake-only attempts
-recorded, on the order of the sum of every stage's own per-invocation
-model cost (spec/plan/tasks/implement/finalize), with the exact figure to
-be recorded from the first unattended run that reaches a verdict" — this
-plan does not fabricate a precise number no run has yet produced.
+`8100` (135 minutes) — NOT to `9000`/150 minutes, and not equal to the
+job's own `timeout-minutes: 150`. `$SECONDS` inside a `run:` step's shell
+starts at 0 when THAT step's shell begins, not at job start (a bash
+fact this plan's original draft got wrong) — so `POLL_BUDGET_SECONDS`
+bounds only the `poll` step's own `while` loop, not the wall-clock time
+the twelve steps before it (checkout, mode derivation, config validation,
+token mint, reachability, the credential/containment check, closing
+leftovers, the branch reset, the second checkout, resolving
+`SPECKIT_SUPPORTED_VERSION`, installing `uv`, and scaffolding/pushing the
+fixture) already spend, nor the `poll` step's own post-loop evidence
+gathering (the REST comment fetch and `satisfied` check, three merged-PR
+lookups, the timeline fetch, and the `specs/<slug>/*.md` presence checks)
+— all of which still count against the JOB's `timeout-minutes: 150`
+because they run inside the same job. `8100` reserves 900 seconds (15
+minutes) of the job's 150-minute ceiling for that pre-loop and post-loop
+work, so the runner cannot SIGKILL the job mid-loop, before any
+`write_verdict`/`emit_verdict` call has run, on a healthy attempt whose
+pre/post-loop steps stay within that reserve.
 
 **Rationale**: the spec's own Assumptions state both figures "were sized
 before the run had to wait on any gate" and "are re-derived from an
@@ -416,15 +495,23 @@ observed complete unattended run rather than carried forward" — this plan
 honors that by not inventing a precise final number, while still shipping
 a budget generous enough that a healthy run (all four gates driven
 promptly, every stage completing normally) does not exhaust it before the
-lifecycle itself finishes. Aligning the poll budget to the job's own
-`timeout-minutes` removes one of the two clocks that could independently
-time out the same attempt for different reasons.
+lifecycle itself finishes. The original draft's "aligning the poll budget
+to the job's own `timeout-minutes` removes one of the two clocks" reasoning
+was itself the defect maintainer feedback on PR #389 caught: the two
+"clocks" were never actually aligned, because one measures from job start
+and the other from the `poll` step's own start, so setting them numerically
+equal left zero margin for everything that runs between those two starts.
 
 **Alternatives considered**: leaving `POLL_BUDGET_SECONDS` at `6900` and
 raising only `timeout-minutes` — rejected: the two would then disagree
 about which fires first, reintroducing exactly the "generic timeout vs.
 named gate stall" ambiguity User Story 3 exists to remove, just at the
-job-timeout layer instead of the poll layer.
+job-timeout layer instead of the poll layer. Setting `POLL_BUDGET_SECONDS`
+to `9000` (this plan's original, incorrect choice) — rejected once the
+`$SECONDS`-resets-per-step fact above was caught: it left no reserve at
+all for the pre-loop and post-loop work, so a completely healthy run could
+still be killed by the job's own `timeout-minutes` before writing a
+verdict.
 
 ## D14. Resume condition is a follow-up maintainer action, not shipped
 code (FR-028, FR-029, User Story 5)

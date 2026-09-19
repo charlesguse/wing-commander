@@ -302,7 +302,10 @@ in the same change that records the evidence — not before.
   (FR-021), not a silent removal.
 - **FR-003**: The harness MUST act as a dedicated machine user account — a
   real user account, not a bot identity — holding a credential scoped to the
-  test repository alone, so that it is accepted by the published stages' own
+  test repository alone (enforced by the account's own repository
+  memberships plus a runtime containment check the verification job
+  performs, not by the credential's own claimed scope — see FR-011), so
+  that it is accepted by the published stages' own
   actor gates as they already stand, in particular by the clarify entry
   point, which ignores comments from bots and requires a maintainer
   association or the lifecycle issue's own author. Granting that account the
@@ -343,11 +346,12 @@ in the same change that records the evidence — not before.
 
 #### Containment
 
-- **FR-011**: The machine user account's credential MUST be scoped to the
+- **FR-011**: The machine user account's credential MUST be contained to the
   test repository alone — the account holds access to no other repository,
-  and the credential itself is narrowed to the same single repository. It
-  MUST NOT be able to comment on, approve, or merge anything in this
-  repository.
+  verified at runtime by the credential's own reachable-repository set
+  (not assumed from the credential's claimed type or scope, which may not
+  itself be repository-narrowing — see research.md D1). It MUST NOT be
+  able to comment on, approve, or merge anything in this repository.
 - **FR-012**: This feature MUST NOT weaken any actor gate, merge gate, or
   human gate in the published stage workflows. No adopter gains an
   unattended path to merging into their default branch as a result of it.
@@ -549,8 +553,12 @@ and merge pull requests acceptable given those gates exist to keep a human
 in the loop?
 
 *Answered*: **Option A** — a dedicated machine user account holding a
-credential scoped to the test repository alone, stored as a secret in this
-repository and used only by the auto-release verification job. Provisioning
+credential contained to the test repository alone (by the account's own
+memberships, verified at runtime — a classic PAT rather than a
+fine-grained one, since a fine-grained PAT cannot be issued for a
+repository the account only collaborates on; research.md D1/D2), stored
+as a secret in this repository and used only by the auto-release
+verification job. Provisioning
 the account and the secret is a maintainer act that happens outside the
 pipeline, so it is stated as a prerequisite; the job fails with a clear
 infrastructure verdict when the secret is unset, the way it already does for

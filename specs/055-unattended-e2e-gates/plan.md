@@ -13,9 +13,12 @@ unattended — it stops at the first of four points where the published
 pipeline stages wait for a human (a clarification reply, and three PR
 merges: spec, plan, finalize). This plan drives all four from inside the
 job's existing `poll` loop, using a dedicated real GitHub user account
-(never a bot) whose fine-grained PAT is scoped to the disposable test
-repository alone, so the pipeline's own actor gates accept it exactly as
-they accept a maintainer today. The clarification reply and every merge
+(never a bot) whose classic PAT is contained to the disposable test
+repository alone by the account's own memberships plus a runtime
+containment check (not by token scoping — a fine-grained PAT cannot be
+issued for a repository the account only collaborates on, research.md
+D1), so the pipeline's own actor gates accept it exactly as they accept a
+maintainer today. The clarification reply and every merge
 decision are deterministic — a fixed pre-authored answer, and a merge
 attempted only once GitHub reports the PR mergeable — never an agent's
 judgment call (Constitution IX). A new outcome class, `fail-gate-stall`,
