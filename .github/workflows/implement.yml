@@ -370,6 +370,9 @@ jobs:
       # internal job-to-job wiring only, never a workflow_call output (research.md D3) -- see
       # specs/041-implement-stall-notice/research.md D3.
       refusal-reason: ${{ steps.preflight.outputs.reason || steps.spec.outputs.reason || steps.meta.outputs.reason }}
+      # Most-recent-agent-step-that-ran wins, by construction.
+      agent-ran: ${{ steps.agent-ran-progress.outputs.ran || steps.agent-ran-retry.outputs.ran || steps.agent-ran-cycle.outputs.ran }}
+      agent-conclusion: ${{ steps.agent-ran-progress.outputs.conclusion || steps.agent-ran-retry.outputs.conclusion || steps.agent-ran-cycle.outputs.conclusion }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v5
@@ -929,6 +932,14 @@ jobs:
             --allowedTools "${{ steps.tool-args-cycle.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-cycle.outputs.disallowed-tools }}"
 
+      - name: Record agent-ran signal (cycle)
+        if: always() && steps.cycle.outcome != 'skipped'
+        id: agent-ran-cycle
+        shell: bash
+        run: |
+          echo "ran=true" >> "$GITHUB_OUTPUT"
+          echo "conclusion=${{ steps.cycle.conclusion }}" >> "$GITHUB_OUTPUT"
+
       - name: Re-establish Wing Commander context (post-agent, cycle)
         if: always()
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
@@ -1475,6 +1486,14 @@ jobs:
             --allowedTools "${{ steps.tool-args-retry.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-retry.outputs.disallowed-tools }}"
 
+      - name: Record agent-ran signal (retry)
+        if: always() && steps.retry.outcome != 'skipped'
+        id: agent-ran-retry
+        shell: bash
+        run: |
+          echo "ran=true" >> "$GITHUB_OUTPUT"
+          echo "conclusion=${{ steps.retry.conclusion }}" >> "$GITHUB_OUTPUT"
+
       - name: Re-establish Wing Commander context (post-agent, retry)
         if: always()
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
@@ -1947,6 +1966,14 @@ jobs:
             --max-turns ${{ steps.progress-ceiling.outputs.ceiling }}
             --allowedTools "${{ steps.tool-args-post-progress-comment.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-post-progress-comment.outputs.disallowed-tools }}"
+
+      - name: Record agent-ran signal (progress)
+        if: always() && steps.progress.outcome != 'skipped'
+        id: agent-ran-progress
+        shell: bash
+        run: |
+          echo "ran=true" >> "$GITHUB_OUTPUT"
+          echo "conclusion=${{ steps.progress.conclusion }}" >> "$GITHUB_OUTPUT"
 
       - name: Re-establish Wing Commander context (post-agent, progress)
         if: always()

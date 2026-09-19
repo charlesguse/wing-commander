@@ -402,6 +402,8 @@ jobs:
     outputs:
       spec-branch: ${{ inputs.spec-prefix }}${{ needs.resolve-spec.outputs.slug }}
       spec-dir: ${{ needs.resolve-spec.outputs.spec-dir }}
+      agent-ran: ${{ steps.agent-ran-auto.outputs.ran || steps.agent-ran-pr.outputs.ran }}
+      agent-conclusion: ${{ steps.agent-ran-auto.outputs.conclusion || steps.agent-ran-pr.outputs.conclusion }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v5
@@ -751,6 +753,14 @@ jobs:
             --allowedTools "${{ steps.tool-args-plan-direct-commit.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-plan-direct-commit.outputs.disallowed-tools }}"
 
+      - name: Record agent-ran signal (auto)
+        if: always() && steps.agent-auto.outcome != 'skipped'
+        id: agent-ran-auto
+        shell: bash
+        run: |
+          echo "ran=true" >> "$GITHUB_OUTPUT"
+          echo "conclusion=${{ steps.agent-auto.conclusion }}" >> "$GITHUB_OUTPUT"
+
       - name: Re-establish Wing Commander context (post-agent, auto)
         if: always()
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
@@ -915,6 +925,14 @@ jobs:
             --max-turns ${{ steps.agent-pr-ceiling.outputs.ceiling }}
             --allowedTools "${{ steps.tool-args-plan-pr.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-plan-pr.outputs.disallowed-tools }}"
+
+      - name: Record agent-ran signal (pr)
+        if: always() && steps.agent-pr.outcome != 'skipped'
+        id: agent-ran-pr
+        shell: bash
+        run: |
+          echo "ran=true" >> "$GITHUB_OUTPUT"
+          echo "conclusion=${{ steps.agent-pr.conclusion }}" >> "$GITHUB_OUTPUT"
 
       - name: Re-establish Wing Commander context (post-agent, pr)
         if: always()

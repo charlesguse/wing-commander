@@ -430,6 +430,8 @@ jobs:
       # internal job-to-job wiring only, never a workflow_call output (research.md D3); folds in
       # resolve-spec's own refusal too -- see specs/041-implement-stall-notice/research.md D3.
       refusal-reason: ${{ needs.resolve-spec.outputs.refusal-reason || steps.preflight.outputs.reason }}
+      agent-ran: ${{ steps.agent-ran-auto.outputs.ran || steps.agent-ran-pr.outputs.ran }}
+      agent-conclusion: ${{ steps.agent-ran-auto.outputs.conclusion || steps.agent-ran-pr.outputs.conclusion }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v5
@@ -736,6 +738,14 @@ jobs:
             --allowedTools "${{ steps.tool-args-tasks-direct-commit.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-tasks-direct-commit.outputs.disallowed-tools }}"
 
+      - name: Record agent-ran signal (auto)
+        if: always() && steps.agent-auto.outcome != 'skipped'
+        id: agent-ran-auto
+        shell: bash
+        run: |
+          echo "ran=true" >> "$GITHUB_OUTPUT"
+          echo "conclusion=${{ steps.agent-auto.conclusion }}" >> "$GITHUB_OUTPUT"
+
       - name: Re-establish Wing Commander context (post-agent, auto)
         if: always()
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
@@ -893,6 +903,14 @@ jobs:
             --max-turns ${{ steps.agent-pr-ceiling.outputs.ceiling }}
             --allowedTools "${{ steps.tool-args-tasks-pr.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-tasks-pr.outputs.disallowed-tools }}"
+
+      - name: Record agent-ran signal (pr)
+        if: always() && steps.agent-pr.outcome != 'skipped'
+        id: agent-ran-pr
+        shell: bash
+        run: |
+          echo "ran=true" >> "$GITHUB_OUTPUT"
+          echo "conclusion=${{ steps.agent-pr.conclusion }}" >> "$GITHUB_OUTPUT"
 
       - name: Re-establish Wing Commander context (post-agent, pr)
         if: always()
