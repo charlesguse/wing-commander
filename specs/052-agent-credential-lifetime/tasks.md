@@ -254,7 +254,7 @@ Code review of PR #407 at head bb064e9 (charlesguse) found the shipped remedy do
 
 ### Must fix
 
-- [ ] Fix the 'Determine failed post-agent step' jq at `clarify.yml:1054-1061`, `finalize.yml:1306`, `implement.yml:2531`, `intake.yml:1285`, `pr-conversation.yml:1436`, `tasks.yml:1220`: (a) give every hard-failing id-less step ("Fail loud on non-healthy agent verdict", "Fail on agent API error", "Fail on unresolved clarification markers", "Flip stage label") an `id:`; (b) select on `.conclusion == "failure"` and exclude the agent step so a `continue-on-error` step or the agent itself is never named; (c) pick by an explicit ordered id list rather than assuming `steps` serializes in execution order; (d) stop passing the entire `toJSON(steps)` through one `STEPS_JSON` env var (can exceed Linux's 128 KiB per-variable limit in the 87-step implement job) — pass only the needed fields. (FR-011, SC-003)
+- [X] Fix the 'Determine failed post-agent step' jq at `clarify.yml:1054-1061`, `finalize.yml:1306`, `implement.yml:2531`, `intake.yml:1285`, `pr-conversation.yml:1436`, `tasks.yml:1220`: (a) give every hard-failing id-less step ("Fail loud on non-healthy agent verdict", "Fail on agent API error", "Fail on unresolved clarification markers", "Flip stage label") an `id:`; (b) select on `.conclusion == "failure"` and exclude the agent step so a `continue-on-error` step or the agent itself is never named; (c) pick by an explicit ordered id list rather than assuming `steps` serializes in execution order; (d) stop passing the entire `toJSON(steps)` through one `STEPS_JSON` env var (can exceed Linux's 128 KiB per-variable limit in the 87-step implement job) — pass only the needed fields. (FR-011, SC-003) — done via the new `wing-commander-failed-post-agent-step` composite (see item 6 below); every genuinely hard-failing (non-continue-on-error) id-less step at all six sites named, each candidate read via `.conclusion`.
 
 ## Maintainer Feedback (second review, PR #407 @ fbbae61)
 
@@ -272,7 +272,7 @@ Code review of PR #407 at head bb064e9 (charlesguse) found the shipped remedy do
 
 ### Must fix
 
-- [ ] Move the 'Determine failed post-agent step' `run:` block (byte-identical, one md5, at the six sites named in the item-3 finding) and the near-identical reason-computation block into a composite under `.github/actions/`, reducing each call site to a call; extend Gate 68 to assert the call exists at every site. (CLAUDE.md single-home rule)
+- [X] Move the 'Determine failed post-agent step' `run:` block (byte-identical, one md5, at the six sites named in the item-3 finding) and the near-identical reason-computation block into a composite under `.github/actions/`, reducing each call site to a call; extend Gate 68 to assert the call exists at every site. (CLAUDE.md single-home rule) — done: `wing-commander-failed-post-agent-step` (candidates supplied as an explicit ordered `{id, conclusion}` list, never a caller-side `toJSON(steps)` dump) and `wing-commander-stall-reason` (generic over stage-name/image-result/entry-result); Gate 68 extended with a new single-home entry plus a new `STALL_REASON_JOBS` check covering the six stalled jobs, both with self-test mutations.
 
 ## Maintainer Feedback (second review, PR #407 @ fbbae61)
 
