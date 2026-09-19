@@ -267,3 +267,9 @@ Code review of PR #407 at head bb064e9 (charlesguse) found the shipped remedy do
 ### Must fix
 
 - [ ] `implement.yml:375-376`, `plan.yml:406-407`, `tasks.yml:434-435`: `credential-refresh-ok` and `agent-conclusion` are coalesced with `||`, which returns the first non-empty value across multiple chains rather than reflecting an earlier chain's failure. Combine them so any `false` wins. (FR-010, FR-011)
+
+## Maintainer Feedback (second review, PR #407 @ fbbae61)
+
+### Must fix
+
+- [ ] Move the 'Determine failed post-agent step' `run:` block (byte-identical, one md5, at the six sites named in the item-3 finding) and the near-identical reason-computation block into a composite under `.github/actions/`, reducing each call site to a call; extend Gate 68 to assert the call exists at every site. (CLAUDE.md single-home rule)
