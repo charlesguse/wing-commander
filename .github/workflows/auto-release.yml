@@ -841,6 +841,8 @@ jobs:
           labels=""
           terminal=false
           rate_limited=""
+          rate_limit_hits=0
+          MAX_RATE_LIMIT_POLLS=3
           while [ "$SECONDS" -lt "$POLL_BUDGET_SECONDS" ]; do
             # --- Clarification gate (research.md D4, D6, D7, D8) ---
             # author_id is resolved lazily here (not before the loop), so a
@@ -992,6 +994,7 @@ jobs:
 
             info="$(gh issue view "$ISSUE" --repo "$E2E_REPO" --json state,labels 2>"$RUNNER_TEMP/auto-release-poll-err.txt")" || info=""
             if [ -n "$info" ]; then
+              rate_limit_hits=0
               state="$(printf '%s' "$info" | jq -r '.state')"
               labels="$(printf '%s' "$info" | jq -r '[.labels[].name] | join(",")')"
               if [ "$state" = "CLOSED" ] || printf ',%s,' "$labels" | grep -q ',stage:stalled,'; then
@@ -1002,10 +1005,22 @@ jobs:
             # under test taking too long -- reported distinctly rather than
             # left to exhaust the poll budget and read as fail-timeout
             # (specs/054 MF1: `report` classifies fail-infra as
-            # infrastructure, never a pipeline defect).
+            # infrastructure, never a pipeline defect). It takes
+            # MAX_RATE_LIMIT_POLLS consecutive rate-limited reads to give up,
+            # each followed by a longer back-off, because a secondary rate
+            # limit usually clears within a minute and ending a run that
+            # long-polls for up to POLL_BUDGET_SECONDS on the first hit
+            # would file an infrastructure failure for a blip. A read that
+            # succeeds, or fails for another reason, restarts the count.
             elif grep -qi 'rate limit' "$RUNNER_TEMP/auto-release-poll-err.txt" 2>/dev/null; then
-              rate_limited="$(tail -c 500 "$RUNNER_TEMP/auto-release-poll-err.txt")"
-              break
+              rate_limit_hits=$((rate_limit_hits + 1))
+              if [ "$rate_limit_hits" -ge "$MAX_RATE_LIMIT_POLLS" ]; then
+                rate_limited="$(tail -c 500 "$RUNNER_TEMP/auto-release-poll-err.txt")"
+                break
+              fi
+              sleep 60
+            else
+              rate_limit_hits=0
             fi
             sleep 30
           done

@@ -258,6 +258,15 @@ what the verification does in the interval.
   run in which the container-mode leg was configured to run but did not
   actually execute inside a container. Silent degradation to a hosted
   runner MUST be reported as a failure of the leg.
+  **Accepted gap** (repository owner's decision on #373, tracked in #390):
+  one case cannot be told apart today. A container-mode turn whose
+  `WING_COMMANDER_CONTAINER_IMAGE` variable is unset on the test repository
+  still reaches a plain `pass`, because `verify-image-prerequisites`
+  vacuously succeeds and the run completes on a hosted runner; detecting it
+  needs a permission (reading the test repository's variable or Actions
+  run data) that this verification has not been granted. Every other route
+  to a silent fallback is reported, and `container_image_configured`
+  defaults to false on every verdict except the poll step's own `pass`.
 - **FR-005**: Every failure mode of the container leg MUST degrade to a
   named verdict the reporting step can render, never to an unreported
   crash or an empty verdict.
