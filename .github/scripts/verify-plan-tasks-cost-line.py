@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 62 - plan.yml and tasks.yml report the run's cost on every auto-mode
+"""Gate 63 - plan.yml and tasks.yml report the run's cost on every auto-mode
 hand-off.
 
 WHY THIS EXISTS
@@ -398,10 +398,10 @@ def self_test():
         shutil.rmtree(tmproot, ignore_errors=True)
 
     for p in problems:
-        print(f"::error::Gate 62 self-test: {p}")
+        print(f"::error::Gate 63 self-test: {p}")
     if problems:
         return 1
-    print("Gate 62 self-test: clean tree passes; each mutation fails.")
+    print("Gate 63 self-test: clean tree passes; each mutation fails.")
     return 0
 
 
@@ -421,8 +421,8 @@ def main(argv):
         shutil.rmtree(tmproot, ignore_errors=True)
 
     for f in failures:
-        print(f"::error::Gate 62: {f}")
-    print(f"Gate 62: plan/tasks auto-mode cost-line reporting; "
+        print(f"::error::Gate 63: {f}")
+    print(f"Gate 63: plan/tasks auto-mode cost-line reporting; "
           f"{len(failures)} failure(s).")
     return 1 if failures else 0
 

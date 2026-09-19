@@ -141,8 +141,15 @@ jobs:
           CONTAINER_PAUSED: ${{ vars.WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED }}
         run: |
           set -uo pipefail
-          doy="$(date -u +%j)"
-          if [ $(( 10#$doy % 2 )) -eq 0 ]; then
+          # Days since the Unix epoch, NOT day-of-year parity (SC-009): the
+          # day-of-year resets to 1 every January 1st, and in a non-leap
+          # year day 365 (Dec 31) and day 1 (Jan 1) are both odd, so parity
+          # of day-of-year repeats the same mode across every year boundary
+          # instead of alternating -- a monotonic count has no such seam,
+          # since consecutive calendar days always increment it by exactly
+          # one regardless of which year they fall in.
+          days_since_epoch="$(( $(date -u +%s) / 86400 ))"
+          if [ $(( days_since_epoch % 2 )) -eq 0 ]; then
             mode=default-runner
           else
             mode=container
