@@ -58,7 +58,7 @@ extended per research.md D9:
 | `expected` / `observed` | string | Existing, unchanged. |
 | `evidence_url` | string (URL or reference) | Existing field, new use per D7: for a container-mode run, points at the leg's `verify-image-prerequisites` job run rather than (or in addition to) the repository-level pointer used today — this is how "the image reference used" (FR-003) is recorded without a new App permission. |
 | `mode` | string enum | **New.** `"container"` \| `"default-runner"` — always present, satisfying FR-003/FR-020 ("state explicitly when container mode was not exercised", "runs must remain distinguishable by mode after the fact"). |
-| `container_image_configured` | boolean | **New.** Present only when `mode == "container"`. `false` when the test repository's `WING_COMMANDER_CONTAINER_IMAGE` was unset (an infra-class failure per FR-004/User Story 2 Acceptance Scenario 1), distinguishing "the leg was configured to run but the image was never resolved" from "the leg ran and failed inside the image" (FR-006). |
+| `container_image_configured` | boolean | **New.** Present only when `mode == "container"`. Defaults to `false` on every container-mode verdict (`_shared/auto-release-verdict.sh`), so "unknown" never reads as "true"; only the poll step's own `pass`, reached once the whole scaffolded chain closed `stage:done`, sets it `true`. That distinguishes "the leg was configured to run but the image was never resolved" from "the leg ran and failed inside the image" (FR-006) on every route except one: a variable left **unset** on the test repository reaches that same `pass` and so carries `true` although nothing ran in a container. That is the accepted gap on FR-004 (tracked in #390), not an infra-class failure yet. |
 
 ## Required-tool list
 

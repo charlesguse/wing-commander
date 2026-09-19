@@ -29,8 +29,8 @@ documents the existing container-mode contract it builds on.
 - **Unset behavior**: **accepted gap** (FR-004; the repository owner's
   decision on #373, tracked in #390). A scheduled run whose turn is
   `container` mode with this variable unset on the test repository cannot be
-  told apart from a real container run today and reaches a plain `pass`;
-  detecting it needs read access to the test repository's variable or Actions
+  told apart from a real container run today and reaches a plain `pass`
+  that carries `container_image_configured: true`; detecting it needs read access to the test repository's variable or Actions
   run data, which this verification has not been granted. The intent of
   FR-004 stands (a silent fallback to a hosted runner MUST be reported as a
   failure of the leg, `outcome: "fail-infra"` with

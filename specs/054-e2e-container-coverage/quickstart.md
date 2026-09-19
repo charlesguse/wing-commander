@@ -63,8 +63,10 @@ not a pass/fail check. Do not run it expecting `fail-infra`.
 2. Dispatch `auto-release.yml` on a day whose mode resolves to `container`.
 3. **Observed today**: the wrappers fall back to hosted runners,
    `verify-image-prerequisites` succeeds vacuously, the chain completes, and
-   the run reports `outcome: "pass"`, `mode: "container"` -- indistinguishable
-   from a real container run. Closing this needs read access to the test
+   the run reports `outcome: "pass"`, `mode: "container"` with
+   `container_image_configured: true` -- indistinguishable from a real
+   container run, and claiming an image was resolved that never was. Closing
+   this needs read access to the test
    repository's variable or Actions run data (#390); once it exists, this
    scenario becomes `outcome: "fail-infra"` naming the unset variable.
 
