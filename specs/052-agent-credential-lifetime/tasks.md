@@ -243,3 +243,9 @@ Code review of PR #407 at head bb064e9 (charlesguse) found the shipped remedy do
 ### Must fix
 
 - [ ] `wing-commander-post-agent-credential-status/action.yml`: stop hard-failing (`exit 1`) the job on a re-mint failure when the step is last in the job and not `continue-on-error`. Emit `::warning::` and set `ok=false` instead, and let the existing `ok`-first check in the stall path (`clarify.yml:1184` pattern) decide, so a run whose later steps all succeeded stays green. (FR-004, FR-005)
+
+## Maintainer Feedback (second review, PR #407 @ fbbae61)
+
+### Must fix
+
+- [ ] `chain-stop-notice/action.yml:152-165` and the per-stage `restart-command` text (`clarify.yml:1211` and its counterparts in `finalize.yml`, `implement.yml`, `intake.yml`, `pr-conversation.yml`, `tasks.yml`) claim the agent 'ran to completion'/'completed its own work' regardless of conclusion. Word the notice from `agent-conclusion`: success → 'the agent completed its work'; failure → 'the agent step failed after running; its pushed commits are on the branch'. (FR-011)
