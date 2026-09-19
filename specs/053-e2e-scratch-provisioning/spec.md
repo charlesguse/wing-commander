@@ -58,8 +58,8 @@ and which kind of target they need. When it finishes, the target either *is*
 ready to be dispatched against, or the output names precisely which
 onboarding element is still missing and what to do about it — in the normal
 case that is the one declared manual step, installing the wing-commander App
-on the new repository, after which a second invocation of the same command
-reports ready.
+on the new repository, after which dispatching the readiness check (User
+Story 2) against the same target reports ready.
 
 **Why this priority**: this is the whole ask. Everything else in this spec is
 either a safety rail around it or a convenience on top of it. On its own it
@@ -95,9 +95,10 @@ dispatch reaches the agent stages rather than failing on infrastructure.
    as **not** ready and names the exact remaining step, and where to take it,
    rather than reporting success with a gap.
 5. **Given** the human has since installed the App on the target, **When**
-   the same command is invoked a second time, **Then** it completes any
-   element that was blocked behind the installation and reports ready,
-   without redoing or undoing what the first invocation already did.
+   the readiness check (User Story 2) is dispatched against it, **Then** it
+   reports every element ready, including the App installation, without the
+   local provisioning command redoing or undoing anything the first
+   invocation already did.
 
 ---
 
@@ -268,9 +269,13 @@ creates no second repository, and deletes nothing.
   the target as the single declared manual step a human performs in the
   GitHub UI. Provisioning MUST perform and verify every other onboarding
   element itself, MUST report the App installation as the named remaining
-  action for as long as it is absent, and MUST converge to ready when
-  re-invoked after the human has performed it. No second manual step may be
-  introduced.
+  action for as long as it is absent. Because `GET
+  /repos/{owner}/{repo}/installation` requires GitHub App JWT authentication
+  that neither a maintainer's own credential nor an installation token can
+  supply, convergence to ready once the human has performed that step MUST
+  be observable by dispatching the readiness check (User Story 2) against
+  the target, not by re-invoking the local provisioning command a second
+  time. No second manual step may be introduced.
 - **FR-016**: Provisioned targets MUST NOT be deleted by this feature.
   Targets are reset and reused indefinitely by the per-run reset behaviour
   `auto-release.yml` and `e2e-stage` already own; no entry point this feature
@@ -320,8 +325,8 @@ creates no second repository, and deletes nothing.
 - **SC-001**: A maintainer or agent can go from "no E2E target exists" to "a
   target that a verification dispatch reaches the agent stages against" in
   one invocation, the one declared manual step (installing the App), and one
-  confirming re-invocation of the same command — under 15 minutes of
-  wall-clock time in total.
+  confirming dispatch of the readiness check (User Story 2) — under 15
+  minutes of wall-clock time in total.
 - **SC-002**: The readiness report accounts for 100% of the onboarding
   elements the chosen profile requires; no element is silently assumed.
 - **SC-003**: Re-running provisioning against an already-ready target

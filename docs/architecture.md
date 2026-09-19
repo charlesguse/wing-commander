@@ -1114,6 +1114,74 @@ wrapper's `dogfood` job is gated on the image variable being non-empty, so a
 repository that hasn't built and pushed the dogfood image yet gets a clean
 scheduled no-op instead of a permanently failing run.
 
+## Auto-Release (`auto-release.yml`)
+
+**Trigger**: daily `schedule` (`cron: "9 9 * * *"`) + manual
+`workflow_dispatch`, gated on the `WING_COMMANDER_AUTO_RELEASE_PAUSED`
+kill switch (see [docs/setup.md](setup.md)).
+
+Unnumbered and outside the intake→cleanup chain, like Rebase, Auto-Update
+Spec Kit, and Private-image dogfood above — this file releases *this*
+repository, not an adopter's, so it carries no `workflow_call` trigger and
+is never derived as a published stage. It verifies the latest unreleased
+work on `main` end to end against a maintainer-onboarded test repository
+before computing the next non-breaking version and dispatching
+`release.yml` to cut it: detect unreleased commits, reset the test
+repository to a known-empty state, scaffold the published pipeline stages
+at the commit under verification, kick off a trivial feature through the
+full intake→cleanup chain, and poll the result to a pass/fail verdict.
+Three idioms this workflow shares with `auto-update-spec-kit.yml` — minting
+a scoped App token and confirming reachability, force-resetting a branch to
+an empty tree, and filing or updating a durable failure issue — are each
+defined once, under `.github/actions/_shared/`, and consumed by both
+workflows rather than re-typed (specs/049-single-home-release-idioms); this
+section describes `auto-release.yml`'s own shape, not those composites'
+mechanics, which are documented at their own `action.yml` headers.
+
+## Auto-release container-mode leg (`auto-release.yml`'s `verify-e2e` job — `specs/054-e2e-container-coverage/`)
+
+`auto-release.yml`'s scheduled end-to-end verification (`verify-e2e`)
+alternates between two execution legs on every run, so the `container:`
+code path every published stage carries is dogfooded end to end rather
+than only ever exercised on a bare runner:
+
+- **Mode derivation**: a `mode` step, first in the job, derives
+  `container` vs `default-runner` fresh every run from a monotonic count
+  of days since the Unix epoch (`date -u +%s`, divided by 86400) — not
+  day-of-year parity, which repeats the same mode across a non-leap
+  year's December 31st/January 1st boundary (SC-009) — and nothing is
+  persisted, so a cancelled, skipped, or manually dispatched run can
+  never leave the rotation stuck on one mode (research.md D1). On a
+  `default-runner` turn, the `scaffold` step
+  blanks the container-image passthrough in every wrapper it copies into
+  the test repository, so a permanently-configured
+  `WING_COMMANDER_CONTAINER_IMAGE` there cannot leak container mode into
+  the wrong leg (research.md D2).
+- **Pause control**: `WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED`
+  (docs/setup.md), read immediately after the parity derivation, forces
+  `default-runner` regardless of parity when set — independent of the
+  global `WING_COMMANDER_AUTO_RELEASE_PAUSED` kill switch (research.md D3).
+- **Reference image**: the container leg's `WING_COMMANDER_CONTAINER_IMAGE`
+  (set on the end-to-end test repository) pins
+  `ghcr.io/charlesguse/wing-commander-e2e-image`, a minimal image this
+  repository builds and publishes itself via
+  `wing-commander-e2e-reference-image.yml` from
+  `.github/docker/e2e-reference-image/Dockerfile`, kept in agreement with
+  `.github/scripts/required-tools.txt` by Gate 62 (research.md D5, D6). See
+  [docs/adoption.md](adoption.md#runners-and-container-images) for why this
+  image is not a supported image for adopters.
+- **Reporting**: both the verdict and `report`'s failure/success output
+  always state which mode a run exercised, and `container_image_configured`
+  defaults to false on every container-turn verdict except the poll step's
+  own `pass` (data-model.md "Execution mode"). This narrows, but does not
+  close, the overstatement risk: a container-mode turn whose image
+  variable was left unset on the test repository still reaches a plain
+  `pass`, since `verify-image-prerequisites` vacuously succeeds and the
+  run completes outside any container with nothing in the verdict able to
+  tell — detecting that specific case needs a permission (reading the
+  test repository's Actions run data) this verification does not have and
+  has not been granted (FR-017; research.md D7, tasks.md T009).
+
 ## Reusability (current state — `specs/010-reusable-pipeline/`)
 
 Extraction is done: every stage is a published `workflow_call` workflow, and

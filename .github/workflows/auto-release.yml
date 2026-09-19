@@ -20,6 +20,13 @@ on:
 permissions: {}
 
 concurrency:
+  # This group is also what guarantees the container/default-runner leg
+  # alternation's isolation (specs/054-e2e-container-coverage FR-008,
+  # research.md D2): a second run -- scheduled or manually dispatched --
+  # queues behind an in-flight one rather than running concurrently, so
+  # two resets of the same test repository can never race across legs.
+  # Never loosen this without re-establishing that guarantee some other
+  # way.
   group: wing-commander-auto-release
   cancel-in-progress: false
 
@@ -100,24 +107,87 @@ jobs:
     if: needs.detect.outputs.has-new-work == 'true' && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 150
-    permissions: {}
+    permissions:
+      contents: read
     outputs:
-      verdict: ${{ steps.config.outputs.verdict || steps.reachable.outputs.verdict || steps.reset.outputs.verdict || steps.speckit-version.outputs.verdict || steps.scaffold.outputs.verdict || steps.kickoff.outputs.verdict || steps.poll.outputs.verdict }}
+      verdict: ${{ steps.config.outputs.verdict || steps.reachable.outputs.verdict || steps.maintainer-credential.outputs.verdict || steps.cleanup.outputs.verdict || steps.reset.outputs.verdict || steps.speckit-version.outputs.verdict || steps.scaffold.outputs.verdict || steps.kickoff.outputs.verdict || steps.poll.outputs.verdict }}
+      # Carried separately from the verdict's `mode` field (data-model.md
+      # "Execution mode") -- true only when the container leg was due by
+      # date parity but the pause control (research.md D3) forced this run
+      # to default-runner instead.
+      paused: ${{ steps.mode.outputs.paused }}
+      # Gate evidence for a `pass` verdict (research.md D12, FR-017, FR-019)
+      # -- empty on every non-pass path, since the poll step exits before
+      # writing them.
+      spec-draft-pr: ${{ steps.poll.outputs.spec-draft-pr }}
+      plan-pr: ${{ steps.poll.outputs.plan-pr }}
+      finalize-pr: ${{ steps.poll.outputs.finalize-pr }}
+      clarification-rounds-answered: ${{ steps.poll.outputs.clarification-rounds-answered }}
+      clarification-comment-ids: ${{ steps.poll.outputs.clarification-comment-ids }}
     steps:
+      # Every step below reads a local composite (`uses: ./...`) or shell
+      # helper (`.github/actions/_shared/*.sh`), which needs this
+      # repository on disk -- this job had no checkout at all, so its
+      # first scheduled run (this job is schedule/dispatch-only; PR CI
+      # never exercises it) would fail with "can't find action.yml".
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      # A stateless derivation, recomputed fresh every run from the UTC
+      # calendar date -- nothing is persisted, so a cancelled, skipped, or
+      # manually dispatched run can never leave the rotation stuck on one
+      # mode (research.md D1, Edge Case: "the alternation loses its
+      # place"). Runs first and unconditionally: every later verdict-
+      # emitting step threads its output through exactly as verified_head
+      # already is today (research.md D9).
+      - name: Derive this run's execution mode (container vs default-runner)
+        id: mode
+        shell: bash
+        env:
+          CONTAINER_PAUSED: ${{ vars.WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED }}
+        run: |
+          set -uo pipefail
+          # Days since the Unix epoch, NOT day-of-year parity (SC-009): the
+          # day-of-year resets to 1 every January 1st, and in a non-leap
+          # year day 365 (Dec 31) and day 1 (Jan 1) are both odd, so parity
+          # of day-of-year repeats the same mode across every year boundary
+          # instead of alternating -- a monotonic count has no such seam,
+          # since consecutive calendar days always increment it by exactly
+          # one regardless of which year they fall in.
+          days_since_epoch="$(( $(date -u +%s) / 86400 ))"
+          if [ $(( days_since_epoch % 2 )) -eq 0 ]; then
+            mode=default-runner
+          else
+            mode=container
+          fi
+          # Independent of WING_COMMANDER_AUTO_RELEASE_PAUSED (research.md
+          # D3): pausing the container leg does not pause auto-release as a
+          # whole, and vice versa. Never overrides an already-even-day
+          # (default-runner) result, since that leg was never paused.
+          paused=false
+          if [ "$CONTAINER_PAUSED" = "true" ] && [ "$mode" = "container" ]; then
+            mode=default-runner
+            paused=true
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "paused=$paused" >> "$GITHUB_OUTPUT"
+
       - name: Resolve and validate the end-to-end test repository configuration
         id: config
         shell: bash
         env:
           E2E_REPO: ${{ vars.WING_COMMANDER_AUTO_RELEASE_E2E_REPO }}
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
+          MODE: ${{ steps.mode.outputs.mode }}
         run: |
           set -uo pipefail
           if [ -z "$E2E_REPO" ]; then
             echo "ready=false" >> "$GITHUB_OUTPUT"
             {
               echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              jq -n --arg head "$HEAD_SHA" \
-                '{outcome:"fail-infra", verified_head:$head, failing_check:"WING_COMMANDER_AUTO_RELEASE_E2E_REPO is unset", expected:"a repository variable set to OWNER/NAME of a pre-onboarded test repository", observed:"unset", evidence_url:"WING_COMMANDER_AUTO_RELEASE_E2E_REPO"}'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "WING_COMMANDER_AUTO_RELEASE_E2E_REPO is unset" "a repository variable set to OWNER/NAME of a pre-onboarded test repository" "unset" "WING_COMMANDER_AUTO_RELEASE_E2E_REPO" "$MODE"
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
             echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_REPO is unset -- see docs/setup.md."
@@ -132,8 +202,7 @@ jobs:
             echo "ready=false" >> "$GITHUB_OUTPUT"
             {
               echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" \
-                '{outcome:"fail-infra", verified_head:$head, failing_check:"WING_COMMANDER_AUTO_RELEASE_E2E_REPO shape", expected:"OWNER/NAME", observed:$repo, evidence_url:"WING_COMMANDER_AUTO_RELEASE_E2E_REPO"}'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "WING_COMMANDER_AUTO_RELEASE_E2E_REPO shape" "OWNER/NAME" "$E2E_REPO" "WING_COMMANDER_AUTO_RELEASE_E2E_REPO" "$MODE"
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
             echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_REPO is '$E2E_REPO', which is not an OWNER/NAME pair."
@@ -151,8 +220,7 @@ jobs:
             echo "ready=false" >> "$GITHUB_OUTPUT"
             {
               echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" \
-                '{outcome:"fail-infra", verified_head:$head, failing_check:"WING_COMMANDER_AUTO_RELEASE_E2E_REPO names this repository", expected:"a separate, dedicated, pre-onboarded test repository", observed:$repo, evidence_url:"WING_COMMANDER_AUTO_RELEASE_E2E_REPO"}'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "WING_COMMANDER_AUTO_RELEASE_E2E_REPO names this repository" "a separate, dedicated, pre-onboarded test repository" "$E2E_REPO" "WING_COMMANDER_AUTO_RELEASE_E2E_REPO" "$MODE"
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
             echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_REPO is '$E2E_REPO', which is this repository itself. The end-to-end run resets the test repository's default branch; refusing."
@@ -163,58 +231,171 @@ jobs:
           echo "owner=${E2E_REPO%%/*}" >> "$GITHUB_OUTPUT"
           echo "name=${E2E_REPO#*/}" >> "$GITHUB_OUTPUT"
 
-      # continue-on-error, re-checked in the next step -- mirrors
-      # auto-update-spec-kit.yml's scratch-token step. With neither `owner`
-      # nor `repositories` set this action scopes to the CURRENT repository
-      # only (research.md D11), so a second, narrowly-scoped token is always
-      # minted here rather than reusing any other token in this workflow.
+      # specs/049-single-home-release-idioms: the mint-then-verify idiom
+      # this step used to re-type is now the shared
+      # _shared/scoped-app-token composite -- see
+      # specs/049-single-home-release-idioms/contracts/scoped-app-token.md.
+      # `id: token` is kept (not renamed) so
+      # steps.token.outputs.token below still resolves the same way it
+      # always has.
       - name: Mint a scoped App token for the test repository
         id: token
         if: steps.config.outputs.ready == 'true'
-        continue-on-error: true
-        uses: actions/create-github-app-token@v3
+        uses: ./.github/actions/_shared/scoped-app-token
         with:
-          client-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+          app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
           owner: ${{ steps.config.outputs.owner }}
-          repositories: ${{ steps.config.outputs.name }}
+          repo-name: ${{ steps.config.outputs.name }}
+          check-default-branch: "true"
 
       - name: Confirm the test repository is reachable
         id: reachable
         if: steps.config.outputs.ready == 'true'
         shell: bash
         env:
-          GH_TOKEN: ${{ steps.token.outputs.token }}
-          TOKEN_OUTCOME: ${{ steps.token.outcome }}
+          OK: ${{ steps.token.outputs.ok }}
+          FAILURE_REASON: ${{ steps.token.outputs.failure-reason }}
+          DEFAULT_BRANCH: ${{ steps.token.outputs.default-branch }}
           E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
+          MODE: ${{ steps.mode.outputs.mode }}
         run: |
           set -uo pipefail
-          if [ "$TOKEN_OUTCOME" != "success" ] || [ -z "$GH_TOKEN" ]; then
+          if [ "$OK" != "true" ]; then
             echo "ok=false" >> "$GITHUB_OUTPUT"
-            {
-              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" \
-                '{outcome:"fail-infra", verified_head:$head, failing_check:"wing-commander App installation on the test repository", expected:"installed on the test repository with Contents/Issues/Pull requests read-write", observed:"token mint failed", evidence_url:$repo}'
-              echo 'AUTO_RELEASE_VERDICT_EOF'
-            } >> "$GITHUB_OUTPUT"
-            echo "::error::wing-commander auto-release verify-e2e: the wing-commander App could not mint a token for $E2E_REPO -- install it there (docs/setup.md)."
-            exit 0
-          fi
-          default_branch="$(gh repo view "$E2E_REPO" --json defaultBranchRef --jq '.defaultBranchRef.name // empty' 2>/dev/null || true)"
-          if [ -z "$default_branch" ]; then
-            echo "ok=false" >> "$GITHUB_OUTPUT"
-            {
-              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" \
-                '{outcome:"fail-infra", verified_head:$head, failing_check:"test repository reachability", expected:"gh repo view succeeds and reports a default branch", observed:"unreachable, or has no default branch", evidence_url:$repo}'
-              echo 'AUTO_RELEASE_VERDICT_EOF'
-            } >> "$GITHUB_OUTPUT"
-            echo "::error::wing-commander auto-release verify-e2e: could not read $E2E_REPO's default branch -- is it reachable, and does the App installation cover it?"
+            if [ "$FAILURE_REASON" = "token-mint-failed" ]; then
+              {
+                echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "wing-commander App installation on the test repository" "installed on the test repository with Contents/Issues/Pull requests read-write" "token mint failed" "$E2E_REPO" "$MODE"
+                echo 'AUTO_RELEASE_VERDICT_EOF'
+              } >> "$GITHUB_OUTPUT"
+              echo "::error::wing-commander auto-release verify-e2e: the wing-commander App could not mint a token for $E2E_REPO -- install it there (docs/setup.md)."
+            else
+              {
+                echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "test repository reachability" "gh repo view succeeds and reports a default branch" "unreachable, or has no default branch" "$E2E_REPO" "$MODE"
+                echo 'AUTO_RELEASE_VERDICT_EOF'
+              } >> "$GITHUB_OUTPUT"
+              echo "::error::wing-commander auto-release verify-e2e: could not read $E2E_REPO's default branch -- is it reachable, and does the App installation cover it?"
+            fi
             exit 0
           fi
           echo "ok=true" >> "$GITHUB_OUTPUT"
-          echo "default-branch=$default_branch" >> "$GITHUB_OUTPUT"
+          echo "default-branch=$DEFAULT_BRANCH" >> "$GITHUB_OUTPUT"
+
+      # specs/055-unattended-e2e-gates D1/D2: the fixture maintainer
+      # identity is a dedicated GitHub user account (never a bot), invited
+      # as a Write collaborator on the test repository alone, whose PAT
+      # drives the four human gates later in this job. A classic PAT, not
+      # a fine-grained one -- a fine-grained PAT can only reach
+      # repositories the token's own account OWNS, never one it merely
+      # collaborates on, so the runtime containment check below (not
+      # token scoping alone) is what actually enforces "the test
+      # repository alone" for this credential (maintainer feedback on PR
+      # #389; corrects every prior "fine-grained" claim about this
+      # secret). Checked here, before any of those gates are reached, so
+      # a misconfigured credential ends fail-infra before any attempt
+      # spend rather than surfacing as a mysterious gate stall.
+      - name: Confirm the fixture maintainer identity's credential
+        id: maintainer-credential
+        if: steps.reachable.outputs.ok == 'true'
+        shell: bash
+        env:
+          MAINTAINER_TOKEN: ${{ secrets.WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN }}
+          MAINTAINER_USERNAME: ${{ secrets.WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME }}
+          E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
+          HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
+          MODE: ${{ steps.mode.outputs.mode }}
+        run: |
+          set -uo pipefail
+          if [ -z "$MAINTAINER_TOKEN" ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN set to a classic PAT for a Write collaborator on the test repository" "unset" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN is unset -- see docs/setup.md."
+            exit 0
+          fi
+          if [ -z "$MAINTAINER_USERNAME" ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME set to that account's login" "unset" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME" "$MODE"
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME is unset -- see docs/setup.md."
+            exit 0
+          fi
+          permission="$(GH_TOKEN="$MAINTAINER_TOKEN" gh repo view "$E2E_REPO" --json viewerPermission --jq .viewerPermission 2>/dev/null || true)"
+          case "$permission" in
+            WRITE|MAINTAIN|ADMIN) : ;;
+            *)
+              echo "ok=false" >> "$GITHUB_OUTPUT"
+              {
+                echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates as a Write (or higher) collaborator on the test repository" "gh rejected the token, or viewerPermission was '${permission:-none}'" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+                echo 'AUTO_RELEASE_VERDICT_EOF'
+              } >> "$GITHUB_OUTPUT"
+              echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN did not authenticate with Write access to $E2E_REPO -- see docs/setup.md."
+              exit 0
+              ;;
+          esac
+          login="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api user --jq .login 2>/dev/null || true)"
+          if [ -z "$login" ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates as a Write (or higher) collaborator on the test repository" "gh rejected the token" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN could not resolve a login via gh api user -- see docs/setup.md."
+            exit 0
+          fi
+          # Compared case-insensitively -- GitHub logins are case-
+          # insensitive, so a differently-cased secret must not produce a
+          # false pass-time failure here (maintainer feedback on PR #389,
+          # second review).
+          if [ "$(printf '%s' "$login" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$MAINTAINER_USERNAME" | tr '[:upper:]' '[:lower:]')" ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates as WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME" "authenticated as a different login" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN, WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME" "$MODE"
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticated as a login other than WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME -- see docs/setup.md."
+            exit 0
+          fi
+          # Runtime containment (maintainer feedback): a classic PAT
+          # carries whatever repository access the account itself has, so
+          # the credential check above cannot on its own prove the
+          # account is contained to the test repository -- only the
+          # account's own memberships can. List every repository this
+          # token can reach and require the set to be EXACTLY the
+          # configured test repository; any other set -- including empty,
+          # which a `gh api` failure would also produce -- ends the
+          # attempt naming repository names only, never the token
+          # (FR-003a, FR-011).
+          reachable_repos="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api "user/repos?affiliation=owner,collaborator,organization_member" --paginate --jq '.full_name' 2>/dev/null | sort -u)"
+          reachable_count="$(printf '%s' "$reachable_repos" | grep -c . || true)"
+          if [ "$reachable_count" -ne 1 ] || [ "$(printf '%s' "$reachable_repos" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$E2E_REPO" | tr '[:upper:]' '[:lower:]')" ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity containment" "the credential reaches exactly one repository, the configured test repository" "reached: [$(printf '%s' "$reachable_repos" | tr '\n' ',')]" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            echo "::error::wing-commander auto-release verify-e2e: the fixture maintainer identity's credential does not reach exactly the configured test repository -- see docs/setup.md."
+            exit 0
+          fi
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+          # No `login=$login` output here: the `poll` step reads the login
+          # directly from WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME
+          # (a masked secret, dropped from any step output that carried it --
+          # maintainer feedback on PR #389, second review), so this step's
+          # own resolved login was dead once that wiring changed.
 
       # Any open issue/PR left by a previous attempt is closed (best-effort)
       # before the reset -- an orphan-reset default branch otherwise leaves
@@ -224,15 +405,15 @@ jobs:
       # non-ref-scoped triggers like `issues` from the default branch, so
       # scaffolding anywhere else would produce wrapper workflows that never
       # fire.
-      - name: Close prior leftovers and reset the default branch
-        id: reset
-        if: steps.reachable.outputs.ok == 'true'
+      - name: Close prior leftovers
+        id: cleanup
+        if: steps.maintainer-credential.outputs.ok == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
-          DEFAULT_BRANCH: ${{ steps.reachable.outputs.default-branch }}
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
+          MODE: ${{ steps.mode.outputs.mode }}
         run: |
           set -uo pipefail
 
@@ -241,56 +422,100 @@ jobs:
             [ -n "$n" ] || continue
             gh issue close "$n" --repo "$E2E_REPO" --comment "Closed by wing-commander's auto-release.yml before a fresh verification attempt." >/dev/null 2>&1 || true
           done
-          mapfile -t open_prs < <(gh pr list --repo "$E2E_REPO" --state open --json number --jq '.[].number' 2>/dev/null || true)
+          # A failed PR close, unlike a failed issue close, is not merely
+          # cosmetic: this fixture's kickoff issue body is fixed (research.md
+          # D8), so every attempt derives the SAME feature slug, and a
+          # leftover PR from a previous attempt that failed to close could
+          # be mistaken for this attempt's own gate once the new spec-draft
+          # PR reopens the same slug -- FR-009's `wrong-attempt` guard
+          # protects against a DIFFERENT slug, not this same-slug replay.
+          # Ending the attempt here (maintainer feedback) is strictly safer
+          # than letting the poll loop merge a leftover.
+          # A failed LIST is exactly as unsafe as a failed CLOSE for the same
+          # same-slug-replay reason above: `|| true` here used to fall
+          # through as "nothing to close," silently proceeding to reset the
+          # default branch with a leftover PR from a previous attempt still
+          # open (maintainer feedback on PR #389, second review).
+          if ! open_prs_json="$(gh pr list --repo "$E2E_REPO" --state open --json number 2>"$RUNNER_TEMP/auto-release-open-prs-err.txt")"; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "listing open pull requests before closing leftovers" "gh pr list succeeds" "$(tail -c 500 "$RUNNER_TEMP/auto-release-open-prs-err.txt")" "$E2E_REPO" "$MODE"
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            echo "::error::wing-commander auto-release verify-e2e: could not list open pull requests in $E2E_REPO before resetting -- refusing to risk a stale PR being merged as this attempt's own."
+            exit 0
+          fi
+          pr_close_failures=""
+          mapfile -t open_prs < <(printf '%s' "$open_prs_json" | jq -r '.[].number')
           for n in "${open_prs[@]}"; do
             [ -n "$n" ] || continue
-            gh pr close "$n" --repo "$E2E_REPO" --comment "Closed by wing-commander's auto-release.yml before a fresh verification attempt." >/dev/null 2>&1 || true
-          done
-
-          rm -rf e2e-test-repo
-          auth_url="https://x-access-token:${GH_TOKEN}@github.com/${E2E_REPO}.git"
-          if ! git clone --quiet "$auth_url" e2e-test-repo 2>"$RUNNER_TEMP/auto-release-clone-err.txt"; then
-            echo "ok=false" >> "$GITHUB_OUTPUT"
-            {
-              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" --arg detail "$(tail -c 500 "$RUNNER_TEMP/auto-release-clone-err.txt")" \
-                '{outcome:"fail-infra", verified_head:$head, failing_check:"cloning the test repository", expected:"a clone over the scoped App token succeeds", observed:$detail, evidence_url:$repo}'
-              echo 'AUTO_RELEASE_VERDICT_EOF'
-            } >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          (
-            cd e2e-test-repo
-            git remote set-url origin "https://github.com/${E2E_REPO}.git"
-            git config user.name "wing-commander-auto-release[bot]"
-            git config user.email "wing-commander-auto-release[bot]@users.noreply.github.com"
-            # Detach-and-delete, same technique as auto-update-spec-kit.yml's
-            # scratch-repository reset, applied to the DEFAULT branch itself
-            # (research.md D6/D7) rather than a side branch.
-            if git rev-parse --verify HEAD >/dev/null 2>&1; then
-              git checkout --quiet --detach
-              git branch -D "$DEFAULT_BRANCH" >/dev/null 2>&1 || true
-              git checkout --quiet --orphan "$DEFAULT_BRANCH"
-              git rm -rq --cached . >/dev/null 2>&1 || true
-              find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
-            else
-              git checkout --quiet -b "$DEFAULT_BRANCH"
+            if ! close_err="$(gh pr close "$n" --repo "$E2E_REPO" --comment "Closed by wing-commander's auto-release.yml before a fresh verification attempt." 2>&1 >/dev/null)"; then
+              pr_close_failures="${pr_close_failures}PR #${n}: ${close_err}; "
             fi
-            git commit --quiet --allow-empty -m "chore: reset for a fresh end-to-end verification attempt"
-          )
-
-          if ! git -C e2e-test-repo push --force --quiet "$auth_url" "HEAD:refs/heads/${DEFAULT_BRANCH}" 2>"$RUNNER_TEMP/auto-release-push-err.txt"; then
+          done
+          if [ -n "$pr_close_failures" ]; then
             echo "ok=false" >> "$GITHUB_OUTPUT"
             {
               echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" --arg detail "$(tail -c 500 "$RUNNER_TEMP/auto-release-push-err.txt")" \
-                '{outcome:"fail-infra", verified_head:$head, failing_check:"resetting the test repository default branch", expected:"a force-push of the reset branch succeeds", observed:$detail, evidence_url:$repo}'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "closing prior leftover pull requests" "gh pr close succeeds for every open PR in the test repository" "$pr_close_failures" "$E2E_REPO" "$MODE"
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
+            echo "::error::wing-commander auto-release verify-e2e: could not close a leftover PR in $E2E_REPO before resetting -- refusing to risk a stale PR being merged as this attempt's own."
             exit 0
           fi
+          echo "ok=true" >> "$GITHUB_OUTPUT"
 
+      # specs/049-single-home-release-idioms: the detach-through-push
+      # portion of the reset is now the shared _shared/orphan-branch-reset
+      # composite -- see
+      # specs/049-single-home-release-idioms/contracts/orphan-branch-reset.md.
+      # `id: reset` is
+      # kept on the follow-up verdict-reporting step (not the composite
+      # step itself) so steps.reset.outputs.ok and the job's own `verdict`
+      # output wiring below are unchanged.
+      - name: Reset the default branch to an empty tree
+        id: reset-branch
+        if: steps.cleanup.outputs.ok == 'true'
+        uses: ./.github/actions/_shared/orphan-branch-reset
+        with:
+          token: ${{ steps.token.outputs.token }}
+          repo: ${{ steps.config.outputs.e2e-repo }}
+          branch: ${{ steps.reachable.outputs.default-branch }}
+          bot-name: wing-commander-auto-release[bot]
+          bot-email: wing-commander-auto-release[bot]@users.noreply.github.com
+          workdir: e2e-test-repo
+          commit-message: "chore: reset for a fresh end-to-end verification attempt"
+
+      - name: Report the reset outcome
+        id: reset
+        if: steps.cleanup.outputs.ok == 'true'
+        shell: bash
+        env:
+          OK: ${{ steps.reset-branch.outputs.ok }}
+          FAILURE_STAGE: ${{ steps.reset-branch.outputs.failure-stage }}
+          E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
+          HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
+          MODE: ${{ steps.mode.outputs.mode }}
+        run: |
+          set -uo pipefail
+          if [ "$OK" != "true" ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            if [ "$FAILURE_STAGE" = "clone" ]; then
+              {
+                echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "cloning the test repository" "a clone over the scoped App token succeeds" "$(tail -c 500 "$RUNNER_TEMP/orphan-branch-reset-clone-err.txt" 2>/dev/null)" "$E2E_REPO" "$MODE"
+                echo 'AUTO_RELEASE_VERDICT_EOF'
+              } >> "$GITHUB_OUTPUT"
+            else
+              {
+                echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "resetting the test repository default branch" "a force-push of the reset branch succeeds" "$(tail -c 500 "$RUNNER_TEMP/orphan-branch-reset-push-err.txt" 2>/dev/null)" "$E2E_REPO" "$MODE"
+                echo 'AUTO_RELEASE_VERDICT_EOF'
+              } >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
           echo "ok=true" >> "$GITHUB_OUTPUT"
 
       - name: Checkout this repository at the verified head (wrapper fixture + supported Spec Kit version)
@@ -307,6 +532,7 @@ jobs:
         shell: bash
         env:
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
+          MODE: ${{ steps.mode.outputs.mode }}
         run: |
           set -uo pipefail
           v="$(sed -n 's/.*SPECKIT_SUPPORTED_VERSION: "\([^"]*\)".*/\1/p' e2e-source/.github/actions/wing-commander-preflight/action.yml | head -1)"
@@ -318,8 +544,7 @@ jobs:
             echo "ok=false" >> "$GITHUB_OUTPUT"
             {
               echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              jq -n --arg head "$HEAD_SHA" \
-                '{outcome:"fail-infra", verified_head:$head, failing_check:"resolving SPECKIT_SUPPORTED_VERSION", expected:"a SPECKIT_SUPPORTED_VERSION line in .github/actions/wing-commander-preflight/action.yml at the verified head", observed:"no such line matched", evidence_url:$head}'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "resolving SPECKIT_SUPPORTED_VERSION" "a SPECKIT_SUPPORTED_VERSION line in .github/actions/wing-commander-preflight/action.yml at the verified head" "no such line matched" "$HEAD_SHA" "$MODE"
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
             echo "::error::wing-commander auto-release verify-e2e: could not resolve SPECKIT_SUPPORTED_VERSION from wing-commander-preflight/action.yml."
@@ -355,6 +580,7 @@ jobs:
           DEFAULT_BRANCH: ${{ steps.reachable.outputs.default-branch }}
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
           SPECKIT_VERSION: ${{ steps.speckit-version.outputs.version }}
+          MODE: ${{ steps.mode.outputs.mode }}
         run: |
           set -uo pipefail
 
@@ -362,8 +588,7 @@ jobs:
             echo "ok=false" >> "$GITHUB_OUTPUT"
             {
               echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" \
-                '{outcome:"fail-infra", verified_head:$head, failing_check:"scaffolding the test repository", expected:"uvx available on the runner", observed:"uvx not found", evidence_url:$repo}'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "scaffolding the test repository" "uvx available on the runner" "uvx not found" "$E2E_REPO" "$MODE"
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
             exit 0
@@ -375,8 +600,7 @@ jobs:
             echo "ok=false" >> "$GITHUB_OUTPUT"
             {
               echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" --arg detail "$(tail -c 500 "$RUNNER_TEMP/auto-release-scaffold-install.log")" \
-                '{outcome:"fail-infra", verified_head:$head, failing_check:"specify init in the test repository", expected:"specify init exits 0", observed:$detail, evidence_url:$repo}'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "specify init in the test repository" "specify init exits 0" "$(tail -c 500 "$RUNNER_TEMP/auto-release-scaffold-install.log")" "$E2E_REPO" "$MODE"
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
             exit 0
@@ -397,6 +621,28 @@ jobs:
             stage="${stage_file[$f]}"
             cp "../e2e-source/.github/workflows/$f" ".github/workflows/$f"
             sed -i "s#uses: \./\.github/workflows/${stage}#uses: charlesguse/wing-commander/.github/workflows/${stage}@${HEAD_SHA}#" ".github/workflows/$f"
+            # A permanently-configured test-repository WING_COMMANDER_CONTAINER_IMAGE
+            # must not leak container mode into a default-runner-turn run
+            # (research.md D2). No rewrite on a container-mode turn -- the
+            # copied wrapper's existing read of the variable already does
+            # the work.
+            if [ "$MODE" = "default-runner" ]; then
+              # SF2: assert the pattern is actually present before blanking
+              # it, so a future reformat of the wrapper's passthrough line
+              # (e.g. different quoting or whitespace) can't make this sed
+              # silently no-op and leak container mode into a default-
+              # runner turn with nothing here noticing.
+              if ! grep -q "vars\.WING_COMMANDER_CONTAINER_IMAGE || ''" ".github/workflows/$f"; then
+                echo "ok=false" >> "$GITHUB_OUTPUT"
+                {
+                  echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                  bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "blanking the container-image passthrough in $f for this default-runner turn" "the copied wrapper contains vars.WING_COMMANDER_CONTAINER_IMAGE || ''" "pattern not found -- the off-turn suppression sed would have silently done nothing" "$E2E_REPO" "$MODE"
+                  echo 'AUTO_RELEASE_VERDICT_EOF'
+                } >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              sed -i "s/vars\.WING_COMMANDER_CONTAINER_IMAGE || ''/''/" ".github/workflows/$f"
+            fi
           done
           # docs/adoption.md's own instruction: replace the literal `main`
           # in the two wrappers whose gate/trigger names it, since the test
@@ -411,8 +657,7 @@ jobs:
             echo "ok=false" >> "$GITHUB_OUTPUT"
             {
               echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" --arg detail "$(tail -c 500 "$RUNNER_TEMP/auto-release-scaffold-push-err.txt")" \
-                '{outcome:"fail-infra", verified_head:$head, failing_check:"pushing the scaffolded fixture", expected:"a force-push of the scaffold succeeds", observed:$detail, evidence_url:$repo}'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "pushing the scaffolded fixture" "a force-push of the scaffold succeeds" "$(tail -c 500 "$RUNNER_TEMP/auto-release-scaffold-push-err.txt")" "$E2E_REPO" "$MODE"
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
             exit 0
@@ -432,6 +677,7 @@ jobs:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
+          MODE: ${{ steps.mode.outputs.mode }}
         run: |
           set -uo pipefail
           short_sha="${HEAD_SHA:0:7}"
@@ -446,8 +692,7 @@ jobs:
             echo "ok=false" >> "$GITHUB_OUTPUT"
             {
               echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" --arg detail "$(tail -c 500 "$RUNNER_TEMP/auto-release-kickoff-err.txt")" \
-                '{outcome:"fail-infra", verified_head:$head, failing_check:"creating the kickoff issue", expected:"gh issue create succeeds", observed:$detail, evidence_url:$repo}'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "creating the kickoff issue" "gh issue create succeeds" "$(tail -c 500 "$RUNNER_TEMP/auto-release-kickoff-err.txt")" "$E2E_REPO" "$MODE"
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
             exit 0
@@ -458,8 +703,7 @@ jobs:
             echo "ok=false" >> "$GITHUB_OUTPUT"
             {
               echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              jq -n --arg head "$HEAD_SHA" --arg repo "$E2E_REPO" --arg detail "$(tail -c 500 "$RUNNER_TEMP/auto-release-label-err.txt")" \
-                '{outcome:"fail-infra", verified_head:$head, failing_check:"labelling the kickoff issue spec-request", expected:"the spec-request label exists and gh issue edit succeeds", observed:$detail, evidence_url:$repo}'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "labelling the kickoff issue spec-request" "the spec-request label exists and gh issue edit succeeds" "$(tail -c 500 "$RUNNER_TEMP/auto-release-label-err.txt")" "$E2E_REPO" "$MODE"
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
             exit 0
@@ -473,29 +717,56 @@ jobs:
       # presence -- never agent narration (research.md D10). Bounded by
       # POLL_BUDGET_SECONDS rather than the step's own `timeout-minutes`, so
       # a timeout still produces a `fail-timeout` verdict instead of the
-      # runner killing the step before it can write one.
+      # runner killing the step before it can write one. specs/055-
+      # unattended-e2e-gates: this loop now also DRIVES all four human gates
+      # -- the clarification exchange and the spec-draft/plan/finalize PR
+      # merges -- under the fixture maintainer identity's own token, so a
+      # decision is attributed to the harness rather than the App (research.md
+      # D4, D9). POLL_BUDGET_SECONDS is 8100 (135 minutes), NOT the job's
+      # own `timeout-minutes: 150` (9000s) -- `$SECONDS` starts at 0 when
+      # THIS step's shell starts, not at job start, so setting the two
+      # numerically equal would leave zero margin for the twelve steps that
+      # already ran before this one (checkout through kickoff) and for this
+      # step's own post-loop evidence gathering, all of which still count
+      # against the job's `timeout-minutes` (maintainer feedback on PR #389
+      # correcting research.md D13's original, incorrect "align the two
+      # clocks" reasoning). The 900s (15 minute) reserve is sized for that
+      # pre-loop and post-loop work, not for the loop itself.
       - name: Poll the test repository to a verdict
         id: poll
         if: steps.kickoff.outputs.ok == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
+          HARNESS_TOKEN: ${{ secrets.WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN }}
+          # Read directly from the secret, not from an earlier step's
+          # output -- GitHub drops a step output whose value is masked
+          # (maintainer feedback: the prior `steps.maintainer-credential.
+          # outputs.login` wiring left HARNESS_LOGIN empty).
+          HARNESS_LOGIN: ${{ secrets.WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME }}
           E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
+          DEFAULT_BRANCH: ${{ steps.reachable.outputs.default-branch }}
           ISSUE: ${{ steps.kickoff.outputs.issue-number }}
           ISSUE_URL: ${{ steps.kickoff.outputs.issue-url }}
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
-          POLL_BUDGET_SECONDS: "6900"
+          POLL_BUDGET_SECONDS: "8100"
+          MAX_CLARIFICATION_ROUNDS: "3"
+          MODE: ${{ steps.mode.outputs.mode }}
         run: |
           set -uo pipefail
 
+          # $5 (evidence_url) defaults to the kickoff issue; a caller that
+          # has better evidence (e.g. the test repository run a stall
+          # notice names) overrides it. $6 (container_image_configured) is
+          # passed through to auto-release-verdict.sh verbatim -- empty
+          # defaults to false whenever MODE is "container" (see that
+          # script's own comment for why "unknown" must never read as
+          # "true", specs/054 MF1); only the `pass` site below has earned
+          # an explicit "true".
           write_verdict() {
-            jq -n --arg outcome "$1" --arg head "$HEAD_SHA" --arg failing_check "$2" \
-                  --arg expected "$3" --arg observed "$4" --arg url "$ISSUE_URL" \
-              '{outcome:$outcome, verified_head:$head,
-                failing_check: (if $failing_check == "" then null else $failing_check end),
-                expected: (if $expected == "" then null else $expected end),
-                observed: (if $observed == "" then null else $observed end),
-                evidence_url:$url}' > "$RUNNER_TEMP/auto-release-verdict.json"
+            local evidence="${5:-$ISSUE_URL}"
+            local cic="${6:-}"
+            bash .github/actions/_shared/auto-release-verdict.sh "$1" "$HEAD_SHA" "$2" "$3" "$4" "$evidence" "$MODE" "$cic" > "$RUNNER_TEMP/auto-release-verdict.json"
           }
           emit_verdict() {
             {
@@ -504,12 +775,222 @@ jobs:
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
           }
+          # FR-016/FR-018, maintainer feedback: a `pass` verdict must not
+          # rest on an inference (reaching stage:done implies the PR
+          # merged) -- assert each merge PR is non-null AND attributed to
+          # the harness login, failing the pass outright otherwise. The
+          # login comparison is case-insensitive (GitHub logins are) and
+          # the `expected` text never interpolates HARNESS_LOGIN itself --
+          # HARNESS_LOGIN is a masked secret value, and GitHub Actions
+          # silently drops any step output containing one, which emptied
+          # this verdict's `expected` field and made the report job misfile
+          # the failure as an infrastructure problem (maintainer feedback on
+          # PR #389, second review).
+          assert_merged_by_harness() {
+            local gate_label="$1" pr_json="$2" merged_by
+            merged_by="$(printf '%s' "$pr_json" | jq -r '.mergedBy.login // ""' 2>/dev/null || echo "")"
+            if [ "$pr_json" = "null" ] || [ "$(printf '%s' "$merged_by" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$HARNESS_LOGIN" | tr '[:upper:]' '[:lower:]')" ]; then
+              local observed="merged, but not attributed to the configured maintainer identity"
+              [ "$pr_json" = "null" ] && observed="no merged PR found"
+              write_verdict "fail-wrong-output" "${gate_label} merged by the harness before stage:done" \
+                "the PR merged, attributed to the configured maintainer identity" "$observed"
+              emit_verdict
+              exit 0
+            fi
+          }
+
+          # This attempt's kickoff issue author id -- used by the clarify-
+          # decision script's actor-gate check (a qualifying reply is one
+          # from a non-Bot OWNER/MEMBER/COLLABORATOR, or from this id,
+          # mirroring intake.yml:524). The issue's author never changes
+          # mid-attempt, so this is resolved lazily on the first loop
+          # iteration below (not here) and cached -- a transient failure at
+          # this single, unretried call used to leave author_id empty for
+          # the rest of the attempt, and the clarify-decision script's own
+          # `${1:?}` then made every iteration's `decide` call fail, falsely
+          # stalling at "clarification" after MAX_GATE_FAILURES instead of
+          # simply retrying the read (maintainer feedback on PR #389, second
+          # review).
+          author_id=""
+
+          # The three PR-merge gates share one shape (research.md D6/D9);
+          # gate_name is the failing_check string contracts/verdict-
+          # extension.md specifies for a fail-gate-stall at that gate.
+          declare -A gate_merged=([spec-draft/]=false [plan/]=false [spec/]=false)
+          declare -A gate_name=([spec-draft/]="spec-draft PR merge" [plan/]="plan PR merge" [spec/]="finalize PR merge")
+          declare -A gate_failures=([spec-draft/]=0 [plan/]=0 [spec/]=0)
+          declare -A gate_last_failure=([spec-draft/]="" [plan/]="" [spec/]="")
+          # A gate-driving read OR write (fetching comments/PR state, a
+          # decision-script crash, posting the clarification reply, a PR
+          # merge) that fails at the API level -- e.g. the harness
+          # identity's write access was revoked mid-run -- must not retry
+          # silently until POLL_BUDGET_SECONDS elapses and the attempt
+          # reports the generic fail-timeout; it becomes a fail-gate-stall
+          # at that named gate after this many consecutive failures
+          # (specs/055-unattended-e2e-gates T028, FR-023; broadened from
+          # writes-only to reads too per maintainer feedback on PR #389).
+          MAX_GATE_FAILURES=3
+          clarify_failures=0
+          clarify_last_failure=""
+          slug_lookup_failures=0
+          slug_lookup_last_failure=""
+          slug=""
+          clarification_rounds=0
 
           state=""
           labels=""
           terminal=false
+          rate_limited=""
           while [ "$SECONDS" -lt "$POLL_BUDGET_SECONDS" ]; do
-            info="$(gh issue view "$ISSUE" --repo "$E2E_REPO" --json state,labels 2>/dev/null || true)"
+            # --- Clarification gate (research.md D4, D6, D7, D8) ---
+            # author_id is resolved lazily here (not before the loop), so a
+            # transient failure is retried on the next iteration and counted
+            # against the same MAX_GATE_FAILURES bound as the comments read
+            # and the decision script below, instead of leaving author_id
+            # permanently empty for the rest of the attempt (maintainer
+            # feedback on PR #389, second review).
+            if [ -z "$author_id" ] && ! author_id="$(gh api "repos/${E2E_REPO}/issues/${ISSUE}" --jq '.user.id' 2>"$RUNNER_TEMP/auto-release-author-id-err.txt")"; then
+              author_id=""
+              clarify_failures=$((clarify_failures + 1))
+              clarify_last_failure="issue author id: $(tail -c 300 "$RUNNER_TEMP/auto-release-author-id-err.txt")"
+            elif ! gh api "repos/${E2E_REPO}/issues/${ISSUE}/comments" --paginate --jq \
+                '.[] | {id, user: {login: .user.login, id: .user.id, type: .user.type}, author_association, body, created_at}' \
+                > "$RUNNER_TEMP/auto-release-comments.ndjson" 2>"$RUNNER_TEMP/auto-release-comments-err.txt"; then
+              clarify_failures=$((clarify_failures + 1))
+              clarify_last_failure="$(tail -c 300 "$RUNNER_TEMP/auto-release-comments-err.txt")"
+            elif ! clarify_decision="$(jq -cs '.' "$RUNNER_TEMP/auto-release-comments.ndjson" 2>/dev/null \
+                | bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh decide "$author_id" "$clarification_rounds" \
+                2>"$RUNNER_TEMP/auto-release-clarify-decision-err.txt")"; then
+              clarify_failures=$((clarify_failures + 1))
+              clarify_last_failure="decision script: $(tail -c 300 "$RUNNER_TEMP/auto-release-clarify-decision-err.txt")"
+            else
+              clarify_failures=0
+              clarify_head="$(printf '%s\n' "$clarify_decision" | head -1)"
+              case "$clarify_head" in
+                reply)
+                  reply_body="$(printf '%s\n' "$clarify_decision" | tail -n +2)"
+                  if reply_err="$(GH_TOKEN="$HARNESS_TOKEN" gh issue comment "$ISSUE" --repo "$E2E_REPO" --body "$reply_body" 2>&1 >/dev/null)"; then
+                    clarification_rounds=$((clarification_rounds + 1))
+                    clarify_failures=0
+                  else
+                    clarify_failures=$((clarify_failures + 1))
+                    clarify_last_failure="$reply_err"
+                  fi
+                  ;;
+                exhausted)
+                  write_verdict "fail-gate-stall" "clarification" \
+                    "a reply from the harness resolves the open clarification question within ${MAX_CLARIFICATION_ROUNDS} rounds" \
+                    "still asking after ${MAX_CLARIFICATION_ROUNDS} rounds"
+                  emit_verdict
+                  exit 0
+                  ;;
+              esac
+            fi
+            if [ "$clarify_failures" -ge "$MAX_GATE_FAILURES" ]; then
+              write_verdict "fail-gate-stall" "clarification" \
+                "reading the issue's comments, deciding, and posting a reply each succeed within ${MAX_GATE_FAILURES} attempts" \
+                "${clarify_last_failure:-identity refused, or a read/write action failed repeatedly}"
+              emit_verdict
+              exit 0
+            fi
+
+            # --- PR-merge gates (research.md D4, D9, D10) ---
+            # The slug is bound to THIS attempt's own kickoff issue (FR-009,
+            # research.md D10) -- the spec-draft PR title ends in the exact
+            # literal intake.yml's own `gh pr create --title` call stamps,
+            # `(#<issue-number>)` -- never merely the first open
+            # spec-draft/* PR repository-wide (maintainer feedback: that
+            # made `wrong-attempt` impossible to ever observe).
+            if [ -z "$slug" ]; then
+              if ! GH_TOKEN="$HARNESS_TOKEN" gh pr list --repo "$E2E_REPO" --state open --json headRefName,title \
+                  > "$RUNNER_TEMP/auto-release-spec-draft-list.json" 2>"$RUNNER_TEMP/auto-release-spec-draft-list-err.txt"; then
+                slug_lookup_failures=$((slug_lookup_failures + 1))
+                slug_lookup_last_failure="$(tail -c 300 "$RUNNER_TEMP/auto-release-spec-draft-list-err.txt")"
+                if [ "$slug_lookup_failures" -ge "$MAX_GATE_FAILURES" ]; then
+                  write_verdict "fail-gate-stall" "spec-draft PR merge" \
+                    "reading open pull requests succeeds within ${MAX_GATE_FAILURES} attempts" \
+                    "${slug_lookup_last_failure:-identity refused, or the read failed repeatedly}"
+                  emit_verdict
+                  exit 0
+                fi
+              else
+                slug_lookup_failures=0
+                spec_draft_head="$(jq -r --arg suffix "(#${ISSUE})" \
+                  '[.[] | select(.headRefName | startswith("spec-draft/")) | select(.title | endswith($suffix))][0].headRefName // empty' \
+                  "$RUNNER_TEMP/auto-release-spec-draft-list.json" 2>/dev/null || true)"
+                if [ -n "$spec_draft_head" ]; then
+                  slug="${spec_draft_head#spec-draft/}"
+                fi
+              fi
+            fi
+            if [ -n "$slug" ]; then
+              # research.md D9: spec-draft and finalize base the default
+              # branch; plan bases the still-open spec/<slug> integration
+              # branch.
+              declare -A gate_expected_base=([spec-draft/]="$DEFAULT_BRANCH" [plan/]="spec/${slug}" [spec/]="$DEFAULT_BRANCH")
+              for prefix in "spec-draft/" "plan/" "spec/"; do
+                [ "${gate_merged[$prefix]}" = "true" ] && continue
+                if ! GH_TOKEN="$HARNESS_TOKEN" gh pr list --repo "$E2E_REPO" --head "${prefix}${slug}" \
+                    --json number,headRefName,baseRefName,mergeable,mergeStateStatus,isDraft,state,statusCheckRollup \
+                    > "$RUNNER_TEMP/auto-release-pr-list.json" 2>"$RUNNER_TEMP/auto-release-pr-list-err.txt"; then
+                  gate_failures[$prefix]=$(( gate_failures[$prefix] + 1 ))
+                  gate_last_failure[$prefix]="$(tail -c 300 "$RUNNER_TEMP/auto-release-pr-list-err.txt")"
+                else
+                  pr_json="$(cat "$RUNNER_TEMP/auto-release-pr-list.json")"
+                  pr_number="$(printf '%s' "$pr_json" | jq -r '.[0].number // "?"' 2>/dev/null || echo '?')"
+                  if ! merge_decision="$(printf '%s' "$pr_json" \
+                      | bash .github/actions/_shared/auto-release-e2e-merge-decision.sh "$prefix" "$slug" "${gate_expected_base[$prefix]}" \
+                      2>"$RUNNER_TEMP/auto-release-merge-decision-err.txt")"; then
+                    gate_failures[$prefix]=$(( gate_failures[$prefix] + 1 ))
+                    gate_last_failure[$prefix]="decision script: $(tail -c 300 "$RUNNER_TEMP/auto-release-merge-decision-err.txt")"
+                  else
+                    gate_failures[$prefix]=0
+                    merge_head="$(printf '%s\n' "$merge_decision" | head -1)"
+                    case "$merge_head" in
+                      merge)
+                        merge_number="$(printf '%s\n' "$merge_decision" | tail -n +2)"
+                        if merge_err="$(GH_TOKEN="$HARNESS_TOKEN" gh pr merge "$merge_number" --merge --repo "$E2E_REPO" 2>&1 >/dev/null)"; then
+                          gate_merged[$prefix]="true"
+                          gate_failures[$prefix]=0
+                        else
+                          gate_failures[$prefix]=$(( gate_failures[$prefix] + 1 ))
+                          gate_last_failure[$prefix]="$merge_err"
+                        fi
+                        ;;
+                      conflicting)
+                        write_verdict "fail-gate-stall" "${gate_name[$prefix]}" "gh pr merge succeeds" "PR #${pr_number}: CONFLICTING"
+                        emit_verdict
+                        exit 0
+                        ;;
+                      blocked)
+                        write_verdict "fail-gate-stall" "${gate_name[$prefix]}" "gh pr merge succeeds" "PR #${pr_number}: required check blocked"
+                        emit_verdict
+                        exit 0
+                        ;;
+                      wrong-attempt)
+                        write_verdict "fail-gate-stall" "${gate_name[$prefix]}" "the PR at this branch belongs to the current attempt" "PR #${pr_number} belongs to a previous attempt"
+                        emit_verdict
+                        exit 0
+                        ;;
+                      wrong-base)
+                        write_verdict "fail-gate-stall" "${gate_name[$prefix]}" "the PR at this branch targets ${gate_expected_base[$prefix]}" "PR #${pr_number} targets a different base branch"
+                        emit_verdict
+                        exit 0
+                        ;;
+                    esac
+                  fi
+                fi
+                if [ "${gate_failures[$prefix]}" -ge "$MAX_GATE_FAILURES" ]; then
+                  write_verdict "fail-gate-stall" "${gate_name[$prefix]}" \
+                    "reading the PR's state, deciding, and merging each succeed within ${MAX_GATE_FAILURES} attempts" \
+                    "${gate_last_failure[$prefix]:-identity refused, or a read/write action failed repeatedly}"
+                  emit_verdict
+                  exit 0
+                fi
+              done
+            fi
+
+            info="$(gh issue view "$ISSUE" --repo "$E2E_REPO" --json state,labels 2>"$RUNNER_TEMP/auto-release-poll-err.txt")" || info=""
             if [ -n "$info" ]; then
               state="$(printf '%s' "$info" | jq -r '.state')"
               labels="$(printf '%s' "$info" | jq -r '[.labels[].name] | join(",")')"
@@ -517,9 +998,25 @@ jobs:
                 terminal=true
                 break
               fi
+            # A rate limit is an infrastructure condition, not the pipeline
+            # under test taking too long -- reported distinctly rather than
+            # left to exhaust the poll budget and read as fail-timeout
+            # (specs/054 MF1: `report` classifies fail-infra as
+            # infrastructure, never a pipeline defect).
+            elif grep -qi 'rate limit' "$RUNNER_TEMP/auto-release-poll-err.txt" 2>/dev/null; then
+              rate_limited="$(tail -c 500 "$RUNNER_TEMP/auto-release-poll-err.txt")"
+              break
             fi
             sleep 30
           done
+
+          if [ -n "$rate_limited" ]; then
+            write_verdict "fail-infra" "polling the test repository for a terminal state" \
+              "gh issue view succeeds within the poll budget" \
+              "GitHub API rate limit encountered while polling: $rate_limited"
+            emit_verdict
+            exit 0
+          fi
 
           if [ "$terminal" != "true" ]; then
             write_verdict "fail-timeout" "end-to-end run reaching a terminal state" \
@@ -530,6 +1027,28 @@ jobs:
           fi
 
           if [ "$state" != "CLOSED" ] || ! printf ',%s,' "$labels" | grep -q ',stage:done,'; then
+            # A container-mode turn that never actually resolved/pulled/
+            # authorized the reference image fails a stage's own
+            # verify-image-prerequisites job, which wing-commander-chain-
+            # stop-notice reports as an issue comment naming the job and
+            # linking that stage's own run -- readable with the same
+            # Issues-read permission this poll already holds, so this
+            # needs no new grant (FR-017; contrast research.md D7/T009,
+            # which is why the harder case -- the variable left unset
+            # entirely, so verify-image-prerequisites never even attempts
+            # a pull -- is not distinguishable from this comment scan
+            # alone; see the T009 status note in tasks.md).
+            image_failure_comment="$(gh api "repos/${E2E_REPO}/issues/${ISSUE}/comments" --paginate --jq '.[].body' 2>/dev/null | grep -m1 'verify-image-prerequisites job failed' || true)"
+            if [ "$MODE" = "container" ] && [ -n "$image_failure_comment" ]; then
+              run_url="$(printf '%s' "$image_failure_comment" | grep -oE 'https://[^ )]+/actions/runs/[0-9]+' | head -1)"
+              [ -n "$run_url" ] || run_url="$ISSUE_URL"
+              write_verdict "fail-infra" "container image pulled/authorized for the stage that ran it" \
+                "the reference image resolves and its registry credentials (if any) are accepted" \
+                "verify-image-prerequisites failed: $(printf '%s' "$image_failure_comment" | head -c 300)" \
+                "$run_url" "false"
+              emit_verdict
+              exit 0
+            fi
             write_verdict "fail-incomplete" "end-to-end run reaching stage:done" \
               "issue closed with the stage:done label" \
               "state=$state labels=[$labels]"
@@ -561,7 +1080,14 @@ jobs:
             exit 0
           fi
 
-          slug="$(gh api "repos/${E2E_REPO}/contents/specs" --jq '[.[] | select(.type=="dir")][0].name // empty' 2>/dev/null || true)"
+          # slug is normally already known from the merge-gate driving above
+          # (research.md D10); this is the fallback for the case where the
+          # loop never resolved it (e.g. the pass path was reached on the
+          # very first check after the finalize PR had already merged
+          # between iterations) -- one home, not a second derivation.
+          if [ -z "$slug" ]; then
+            slug="$(gh api "repos/${E2E_REPO}/contents/specs" --jq '[.[] | select(.type=="dir")][0].name // empty' 2>/dev/null || true)"
+          fi
           missing_file=""
           if [ -z "$slug" ]; then
             missing_file="specs/<slug>/"
@@ -580,7 +1106,89 @@ jobs:
             exit 0
           fi
 
-          write_verdict "pass" "" "" ""
+          # --- Clarification-gate pass assertion (research.md D12) ---
+          # Reaching stage:done is not on its own evidence the gate was
+          # satisfied (FR-016) -- assert a QUALIFYING reply (the harness's
+          # own, or a human's, per FR-010) followed every question the
+          # issue's comment history ever carried. The marker predicate and
+          # the qualifying-reply rule both live in the clarify-decision
+          # script (its `satisfied`/`markers` modes) -- the single home
+          # CLAUDE.md requires, not re-derived here a second time
+          # (maintainer feedback on PR #389).
+          #
+          # This is a one-shot read with no retry loop around it (unlike the
+          # per-iteration reads above), so a failure here must not fail OPEN
+          # into an empty file -- that used to make the assertion below
+          # vacuously pass on a transient API error, silently skipping the
+          # very check this pass path exists to make (maintainer feedback on
+          # PR #389, second review). It becomes an infrastructure outcome
+          # instead.
+          if ! gh api "repos/${E2E_REPO}/issues/${ISSUE}/comments" --paginate --jq \
+              '.[] | {id, user: {login: .user.login, id: .user.id, type: .user.type}, author_association, body, created_at}' \
+              > "$RUNNER_TEMP/auto-release-final-comments.ndjson" 2>"$RUNNER_TEMP/auto-release-final-comments-err.txt"; then
+            write_verdict "fail-infra" "reading the issue's comments for the pass-path clarification assertion" \
+              "gh api issues/comments succeeds" "$(tail -c 300 "$RUNNER_TEMP/auto-release-final-comments-err.txt")"
+            emit_verdict
+            exit 0
+          fi
+          comments_json="$(jq -cs '.' "$RUNNER_TEMP/auto-release-final-comments.ndjson" 2>/dev/null || echo '[]')"
+          # Fallback for the rare case the loop reached stage:done before
+          # author_id was ever resolved above (e.g. its very first attempt
+          # failed and the very same iteration's terminal-state check
+          # already found the issue closed) -- the same one-shot fallback
+          # idiom slug's own resolution above already uses.
+          if [ -z "$author_id" ]; then
+            author_id="$(gh api "repos/${E2E_REPO}/issues/${ISSUE}" --jq '.user.id' 2>/dev/null || true)"
+          fi
+          clarification_satisfied="$(printf '%s' "$comments_json" \
+            | bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh satisfied "$author_id" 2>/dev/null || echo unsatisfied)"
+          if [ "$clarification_satisfied" != "ok" ]; then
+            write_verdict "fail-wrong-output" "clarification gate answered before stage:done" \
+              "a qualifying reply after every open question" "question opened, never answered"
+            emit_verdict
+            exit 0
+          fi
+          markers_json="$(printf '%s' "$comments_json" | bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh markers 2>/dev/null || echo '[]')"
+
+          # --- Gate evidence for the report job (research.md D12, FR-017,
+          # FR-019) -- presentation-layer only, no verdict schema change. ---
+          # `mergedBy` is fetched for assert_merged_by_harness's own check
+          # below, but never written to a job output: HARNESS_LOGIN is a
+          # masked secret value, and GitHub Actions silently drops any step
+          # output whose value contains one, which used to empty every
+          # pass-verdict's spec-draft-pr/plan-pr/finalize-pr output entirely
+          # (maintainer feedback on PR #389, second review). Each `*_pr`
+          # variable below keeps the full object (for the assertion); each
+          # `*_pr_out` variable is the {number, mergedAt}-only projection
+          # that actually reaches $GITHUB_OUTPUT.
+          spec_draft_pr="$(GH_TOKEN="$HARNESS_TOKEN" gh pr list --repo "$E2E_REPO" --state merged --head "spec-draft/${slug}" --json number,mergedAt,mergedBy 2>/dev/null | jq -c '.[0] // null' 2>/dev/null || echo null)"
+          plan_pr="$(GH_TOKEN="$HARNESS_TOKEN" gh pr list --repo "$E2E_REPO" --state merged --head "plan/${slug}" --json number,mergedAt,mergedBy 2>/dev/null | jq -c '.[0] // null' 2>/dev/null || echo null)"
+          finalize_pr="$(GH_TOKEN="$HARNESS_TOKEN" gh pr list --repo "$E2E_REPO" --state merged --head "spec/${slug}" --json number,mergedAt,mergedBy 2>/dev/null | jq -c '.[0] // null' 2>/dev/null || echo null)"
+
+          # --- PR-merge gates pass assertion (FR-016/FR-018, maintainer
+          # feedback) -- see assert_merged_by_harness above. ---
+          assert_merged_by_harness "spec-draft PR merge" "$spec_draft_pr"
+          assert_merged_by_harness "plan PR merge" "$plan_pr"
+          assert_merged_by_harness "finalize PR merge" "$finalize_pr"
+
+          spec_draft_pr_out="$(printf '%s' "$spec_draft_pr" | jq -c 'if . == null then null else {number, mergedAt} end' 2>/dev/null || echo null)"
+          plan_pr_out="$(printf '%s' "$plan_pr" | jq -c 'if . == null then null else {number, mergedAt} end' 2>/dev/null || echo null)"
+          finalize_pr_out="$(printf '%s' "$finalize_pr" | jq -c 'if . == null then null else {number, mergedAt} end' 2>/dev/null || echo null)"
+
+          clarification_comment_ids="$(printf '%s' "$comments_json" | jq -c --argjson markers "$markers_json" --arg login "$HARNESS_LOGIN" '{questions: [ $markers[].id ], replies: [ .[] | select((.user.login // "") == $login) | .id ]}' 2>/dev/null || echo '{"questions":[],"replies":[]}')"
+          {
+            echo "spec-draft-pr=$spec_draft_pr_out"
+            echo "plan-pr=$plan_pr_out"
+            echo "finalize-pr=$finalize_pr_out"
+            echo "clarification-rounds-answered=$clarification_rounds"
+            echo "clarification-comment-ids=$clarification_comment_ids"
+          } >> "$GITHUB_OUTPUT"
+
+          # The one call site that has earned container_image_configured:
+          # true -- reached only once the full scaffolded chain closed
+          # stage:done, every intermediate stage label was observed, and
+          # the expected spec artifacts exist (specs/054 MF1).
+          write_verdict "pass" "" "" "" "$ISSUE_URL" "true"
           emit_verdict
 
   # Patch-vs-minor signal collection (research.md D5) plus tag-collision
@@ -828,17 +1436,40 @@ jobs:
     needs: [detect, verify-e2e, decide-version, dispatch-release]
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       issues: write
     steps:
-      - name: Report this run's outcome
+      # Same reason as verify-e2e's checkout above: this job calls a local
+      # shell helper and a local composite (`_shared/auto-release-
+      # verdict.sh`, `uses: ./_shared/durable-failure-issue`) and had no
+      # checkout at all.
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Determine this run's outcome
+        id: outcome
         shell: bash
         env:
+          # Still needed after specs/049 moved the issue mechanics into the
+          # durable-failure-issue composite: the branch-advanced/
+          # release-failed classifier below reads this repository's default
+          # branch with `gh repo view` (specs/048 FR-013).
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
           HAS_NEW_WORK: ${{ needs.detect.outputs.has-new-work }}
           TAG_EXISTS: ${{ needs.detect.outputs.tag-exists }}
           LATEST_TAG: ${{ needs.detect.outputs.latest-tag }}
           VERDICT_JSON: ${{ needs.verify-e2e.outputs.verdict }}
+          PAUSED: ${{ needs.verify-e2e.outputs.paused }}
+          # specs/055-unattended-e2e-gates FR-019/FR-025: gate evidence for
+          # a pass verdict's summary, read only on the pass path below.
+          SPEC_DRAFT_PR: ${{ needs.verify-e2e.outputs.spec-draft-pr }}
+          PLAN_PR: ${{ needs.verify-e2e.outputs.plan-pr }}
+          FINALIZE_PR: ${{ needs.verify-e2e.outputs.finalize-pr }}
+          CLARIFICATION_ROUNDS_ANSWERED: ${{ needs.verify-e2e.outputs.clarification-rounds-answered }}
+          CLARIFICATION_COMMENT_IDS: ${{ needs.verify-e2e.outputs.clarification-comment-ids }}
           NEXT_VERSION: ${{ needs.decide-version.outputs.next-version }}
           COLLISION: ${{ needs.decide-version.outputs.collision }}
           # The sole authority for "released" (FR-007, FR-007a) -- see
@@ -865,35 +1496,31 @@ jobs:
         run: |
           set -uo pipefail
 
-          FAILED_LABEL="auto-release:failed"
           RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
-          # Dedup by label (research.md D13): update the one open report
-          # rather than filing a second, and rebuild its body from the
-          # LATEST attempt's detail on every recurrence (data-model.md
-          # "Failure report" -- only the newest attempt is actionable).
-          file_or_update_failure() {
-            local body_file="$1"
-            local existing head_short
-            existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label "$FAILED_LABEL" --json number --jq '.[0].number // empty' 2>/dev/null || true)"
-            if [ -n "$existing" ]; then
-              gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body-file "$body_file"
-            else
-              # detect may have crashed before reporting a head (#325); the
-              # title must still name something.
-              head_short="${HEAD_SHA:0:7}"
-              [ -n "$head_short" ] || head_short="an unresolved head"
-              gh label create "$FAILED_LABEL" --color B60205 --description "wing-commander auto-release: a scheduled verification/release attempt failed" --force
-              gh issue create --repo "$GITHUB_REPOSITORY" --title "Auto-release verification failed at ${head_short}" --label "$FAILED_LABEL" --body-file "$body_file"
-            fi
-          }
+          # detect may have crashed before reporting a head (#325); the
+          # title must still name something. Every report site shares this
+          # one title (specs/049: the durable-failure-issue composite,
+          # below, owns the dedup-by-label lookup/create/comment/close
+          # mechanics -- this step only decides WHETHER to call it and with
+          # what title/body).
+          head_short="${HEAD_SHA:0:7}"
+          [ -n "$head_short" ] || head_short="an unresolved head"
+          echo "title=Auto-release verification failed at ${head_short}" >> "$GITHUB_OUTPUT"
 
+          # The close decision carries its own closing note, which the
+          # composite step below posts verbatim. Two paths close a standing
+          # report -- the quiet day whose latest tag already points at HEAD,
+          # and this attempt's own release -- and they name different
+          # versions (NEXT_VERSION is empty on the quiet-day path, where
+          # decide-version never ran), so the note is decided here rather
+          # than templated into the `with:` block.
           close_failure_on_success() {
-            local resolved_note="${1:-${NEXT_VERSION} released.}" existing
-            existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label "$FAILED_LABEL" --json number --jq '.[0].number // empty' 2>/dev/null || true)"
-            if [ -n "$existing" ]; then
-              gh issue close "$existing" --repo "$GITHUB_REPOSITORY" --comment "Resolved: ${resolved_note}"
-            fi
+            local resolved_note="${1:-${NEXT_VERSION} released.}"
+            {
+              echo "action=close"
+              echo "close-comment=Resolved: ${resolved_note}"
+            } >> "$GITHUB_OUTPUT"
           }
 
           # #325: a need whose job ended `failure` wrote no outputs, so
@@ -908,11 +1535,13 @@ jobs:
           # observed, evidence). Every filing path below calls this; none
           # spells the fields out itself.
           write_failure_body() {
-            local classification="$1" failing_check="$2" expected="$3" observed="$4" evidence="$5"
+            local classification="$1" failing_check="$2" expected="$3" observed="$4" evidence="$5" mode="$6"
             {
               echo "**Classification**: ${classification}"
               echo ""
               echo "**Verified head**: ${HEAD_SHA:-unknown (detect did not report one)}"
+              echo ""
+              echo "**Mode**: ${mode}"
               echo ""
               echo "**Failing check**: ${failing_check}"
               echo ""
@@ -925,14 +1554,14 @@ jobs:
           }
 
           file_job_failure() {
-            local job="$1" role="$2"
+            local job="$1" role="$2" mode="${3:-unknown (this run did not reach verify-e2e, or its mode could not be read)}"
             echo "infrastructure failure: the ${job} job did not succeed" >> "$GITHUB_STEP_SUMMARY"
             write_failure_body "infrastructure (job failure)" \
               "the \`${job}\` job (${role}) ended with result \`failure\` before writing its outputs" \
               "the job to succeed, or to degrade to a verdict this report could name" \
               "no outputs from \`${job}\`; nothing downstream of it ran, and nothing was cut" \
-              "${RUN_URL}"
-            file_or_update_failure "$RUNNER_TEMP/auto-release-failure-body.md"
+              "${RUN_URL}" "$mode"
+            echo "action=report" >> "$GITHUB_OUTPUT"
           }
 
           case "$DETECT_RESULT" in
@@ -992,23 +1621,78 @@ jobs:
             else
               no_verdict_observed="the job stopped before any step wrote one (job result: ${VERIFY_RESULT:-unknown})"
             fi
-            VERDICT_JSON="$(jq -n --arg head "$HEAD_SHA" --arg url "$RUN_URL" --arg observed "$no_verdict_observed" \
-              '{outcome:"fail-infra", verified_head:$head, failing_check:"verify-e2e produced no verdict", expected:"a JSON verdict from verify-e2e on every path", observed:$observed, evidence_url:$url}')"
+            VERDICT_JSON="$(bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "verify-e2e produced no verdict" "a JSON verdict from verify-e2e on every path" "$no_verdict_observed" "$RUN_URL")"
           fi
           outcome="$(printf '%s' "$VERDICT_JSON" | jq -r '.outcome // empty' 2>/dev/null || true)"
+          mode="$(printf '%s' "$VERDICT_JSON" | jq -r '.mode // "unknown"' 2>/dev/null || echo unknown)"
+          # FR-009 Acceptance Scenario: a paused run must read as "container
+          # mode not exercised: paused", never a plain default-runner pass
+          # that looks the same as an unpaused rotation turn.
+          if [ "$PAUSED" = "true" ]; then
+            mode="${mode} (container mode not exercised: paused)"
+          fi
 
           if [ "$outcome" != "pass" ]; then
             failing_check="$(printf '%s' "$VERDICT_JSON" | jq -r '.failing_check // "unknown"' 2>/dev/null || echo unknown)"
             expected="$(printf '%s' "$VERDICT_JSON" | jq -r '.expected // "unknown"' 2>/dev/null || echo unknown)"
             observed="$(printf '%s' "$VERDICT_JSON" | jq -r '.observed // "unknown"' 2>/dev/null || echo unknown)"
             evidence_url="$(printf '%s' "$VERDICT_JSON" | jq -r '.evidence_url // "unknown"' 2>/dev/null || echo unknown)"
-            classification="pipeline defect"
-            [ "$outcome" = "fail-infra" ] && classification="infrastructure"
-            echo "verification failed: ${failing_check}" >> "$GITHUB_STEP_SUMMARY"
-            write_failure_body "${classification} (${outcome:-unknown})" "$failing_check" "$expected" "$observed" "$evidence_url"
-            file_or_update_failure "$RUNNER_TEMP/auto-release-failure-body.md"
+            # specs/055-unattended-e2e-gates FR-021: a stalled gate is
+            # classified distinctly from both an infrastructure problem and
+            # a generic pipeline defect (contracts/verdict-extension.md).
+            case "$outcome" in
+              fail-infra) classification="infrastructure" ;;
+              fail-gate-stall) classification="gate stall" ;;
+              *) classification="pipeline defect" ;;
+            esac
+            echo "verification failed: ${failing_check} (mode: ${mode})" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$classification" = "gate stall" ]; then
+              write_failure_body "${classification} (${outcome:-unknown}) -- the harness attempted to drive this gate and could not; distinct from an infrastructure failure (misconfiguration) or a pipeline defect (a stage bug)" \
+                "$failing_check" "$expected" "$observed" "$evidence_url" "$mode"
+            else
+              write_failure_body "${classification} (${outcome:-unknown})" "$failing_check" "$expected" "$observed" "$evidence_url" "$mode"
+            fi
+            echo "action=report" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+
+          # specs/055-unattended-e2e-gates FR-019/FR-025: name all four
+          # gates and their evidence on a pass outcome, reading the poll
+          # step's own evidence-gathering outputs (research.md D12,
+          # data-model.md's Gate evidence table). Presentation only -- the
+          # verdict JSON schema is unchanged.
+          # A question count of 0 in CLARIFICATION_COMMENT_IDS means the
+          # gate genuinely never opened; ROUNDS_ANSWERED alone can't tell
+          # that apart from "a human answered before the harness's own
+          # round counter ever moved" (maintainer feedback: the previous
+          # check read the latter as "not opened," which is wrong per
+          # FR-010 -- a human answering first is a normal pass, not an
+          # unopened gate).
+          # A literal `{}` inside a `${VAR:-word}` default is NOT brace-
+          # matched by bash -- `${CLARIFICATION_COMMENT_IDS:-{}}` parses as
+          # `${CLARIFICATION_COMMENT_IDS:-{}` (default `{`) followed by a
+          # stray literal `}`, so with the variable SET the value gained an
+          # extra trailing `}`, jq errored, and `|| echo 0` made every run
+          # read as "clarification: not opened" even when a question had
+          # been opened and answered (maintainer feedback on PR #389, second
+          # review). The default now comes from a plain shell variable,
+          # which bash does not brace-match either.
+          clarification_comment_ids_default='{}'
+          question_count="$(printf '%s' "${CLARIFICATION_COMMENT_IDS:-$clarification_comment_ids_default}" | jq '.questions | length' 2>/dev/null || echo 0)"
+          if [ -n "$CLARIFICATION_ROUNDS_ANSWERED" ] && [ "$CLARIFICATION_ROUNDS_ANSWERED" != "0" ]; then
+            clarification_line="clarification: answered (${CLARIFICATION_ROUNDS_ANSWERED} harness round(s); comments ${CLARIFICATION_COMMENT_IDS:-unknown})"
+          elif [ "$question_count" != "0" ]; then
+            clarification_line="clarification: answered by a human before the harness (comments ${CLARIFICATION_COMMENT_IDS:-unknown})"
+          else
+            clarification_line="clarification: not opened"
+          fi
+          {
+            echo "gates driven:"
+            echo "- ${clarification_line}"
+            echo "- spec-draft PR merge: ${SPEC_DRAFT_PR:-null}"
+            echo "- plan PR merge: ${PLAN_PR:-null}"
+            echo "- finalize PR merge: ${FINALIZE_PR:-null}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
           # Verification passed, so decide-version ran (#325): a crash there
           # left COLLISION and TAG_MATCHES empty, which used to fall
@@ -1016,7 +1700,7 @@ jobs:
           # never dispatched.
           case "$DECIDE_RESULT" in
             failure)
-              file_job_failure decide-version "computing the next version from the merged pull requests' labels"
+              file_job_failure decide-version "computing the next version from the merged pull requests' labels" "$mode"
               exit 0
               ;;
             cancelled)
@@ -1034,14 +1718,14 @@ jobs:
               echo ""
               echo "**Computed next version**: ${NEXT_VERSION} already exists as a tag -- no dispatch was attempted."
             } > "$RUNNER_TEMP/auto-release-failure-body.md"
-            file_or_update_failure "$RUNNER_TEMP/auto-release-failure-body.md"
+            echo "action=report" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           # #325: no outcome at all means dispatch-release never wrote one --
           # the job crashed (infrastructure) or never ran.
           if [ "$DISPATCH_RESULT" = "failure" ]; then
-            file_job_failure dispatch-release "dispatching release.yml and correlating its run"
+            file_job_failure dispatch-release "dispatching release.yml and correlating its run" "$mode"
             exit 0
           fi
           if [ -z "$TAG_MATCHES" ]; then
@@ -1068,9 +1752,9 @@ jobs:
           # never correlated is still reported as a release.
           if [ "$TAG_MATCHES" = "true" ]; then
             if [ "$CORRELATION" = "found" ]; then
-              echo "released ${NEXT_VERSION} -- [correlated run](${CORRELATED_RUN_URL})" >> "$GITHUB_STEP_SUMMARY"
+              echo "released ${NEXT_VERSION} (mode: ${mode}) -- [correlated run](${CORRELATED_RUN_URL})" >> "$GITHUB_STEP_SUMMARY"
             else
-              echo "released ${NEXT_VERSION} -- own run not correlated" >> "$GITHUB_STEP_SUMMARY"
+              echo "released ${NEXT_VERSION} (mode: ${mode}) -- own run not correlated" >> "$GITHUB_STEP_SUMMARY"
             fi
             close_failure_on_success
             exit 0
@@ -1115,4 +1799,31 @@ jobs:
             echo ""
             echo "**Correlated run**: ${correlated_line}"
           } > "$RUNNER_TEMP/auto-release-failure-body.md"
-          file_or_update_failure "$RUNNER_TEMP/auto-release-failure-body.md"
+          echo "action=report" >> "$GITHUB_OUTPUT"
+
+      - name: File or update the failure issue
+        if: steps.outcome.outputs.action == 'report'
+        uses: ./.github/actions/_shared/durable-failure-issue
+        with:
+          token: ${{ github.token }}
+          operation: report
+          label: auto-release:failed
+          label-color: B60205
+          label-description: "wing-commander auto-release: a scheduled verification/release attempt failed"
+          title: ${{ steps.outcome.outputs.title }}
+          body-file: ${{ runner.temp }}/auto-release-failure-body.md
+
+      - name: Close the failure issue on success
+        if: steps.outcome.outputs.action == 'close'
+        uses: ./.github/actions/_shared/durable-failure-issue
+        with:
+          token: ${{ github.token }}
+          operation: close
+          label: auto-release:failed
+          label-color: B60205
+          label-description: "wing-commander auto-release: a scheduled verification/release attempt failed"
+          # Decided by the step above, not templated here: the quiet-day
+          # close names the latest tag (decide-version never ran, so
+          # next-version is empty there), this attempt's own release names
+          # the version it cut.
+          close-comment: ${{ steps.outcome.outputs.close-comment }}

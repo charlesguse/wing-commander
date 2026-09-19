@@ -46,6 +46,16 @@ path. When in doubt, read them — they are the living example.
    [Private pipeline repository](#private-pipeline-repository) apply; forks
    that republish under another name also set the `pipeline-repo` input.
 
+This repository stands up its own end-to-end test repositories (steps 2-4
+above, applied to a disposable target) with
+[`.github/scripts/provision-e2e-target.sh`](https://github.com/charlesguse/wing-commander/blob/main/.github/scripts/provision-e2e-target.sh)
+rather than by hand — see `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_SCRATCH_REPO`
+and `WING_COMMANDER_AUTO_RELEASE_E2E_REPO` in
+[docs/setup.md](setup.md#3-repository-variables). It is run locally,
+under your own `gh` authentication, never from a workflow; the one step it
+cannot perform for you is installing the wing-commander App, which it
+reports as the sole remaining step for as long as it is absent.
+
 ## Credentials
 
 Every agent-running stage declares two **optional** secrets; configure at
@@ -990,6 +1000,20 @@ know before you set either:
   above for how a pending job holds that slot); pointing multiple specs at a
   small self-hosted pool can queue jobs behind each other the way GitHub's
   hosted runners never do.
+- **This repository's own reference image is not a supported image for
+  adopters.** `ghcr.io/charlesguse/wing-commander-e2e-image`, built from
+  `.github/docker/e2e-reference-image/Dockerfile` and published by
+  `.github/workflows/wing-commander-e2e-reference-image.yml`, installs
+  exactly the tools this document's prerequisite-check list names — nothing
+  more — and exists solely so wing-commander's own scheduled `auto-release.yml`
+  verification can dogfood the `container:` code path above end to end
+  (specs/054-e2e-container-coverage). This repository's maintainers own it:
+  a change to `.github/scripts/required-tools.txt` is what triggers rebuilding
+  it, enforced at PR time by Gate 62 (`.github/scripts/verify-gate-62.py`,
+  which builds the image and inspects it the same way the prerequisite check
+  above inspects yours) and, at run time, by the same prerequisite check
+  every adopter's own image already goes through. Bring your own image for
+  your own pipeline runs; this one is not maintained for that.
 
 ## Stage reference
 

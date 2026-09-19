@@ -2,12 +2,17 @@
 # (specs/038-runner-container-passthrough research.md D6, contracts/
 # runner-container-passthrough.md "Image prerequisite contract").
 #
-# Read by two consumers that must stay in agreement structurally, not by
+# Read by three consumers that must stay in agreement structurally, not by
 # convention (FR-011a):
 #   - every stage file's verify-image-prerequisites job (T003) embeds this
 #     same list literally as REQUIRED_TOOLS in its tool-check step;
 #   - lint-workflows.yml's Gate 23 (T032) compares each stage's embedded
-#     list against this file and fails on drift.
+#     list against this file and fails on drift;
+#   - lint-workflows.yml's Gate 62 (specs/054-e2e-container-coverage)
+#     builds wing-commander's own e2e reference image
+#     (.github/docker/e2e-reference-image/Dockerfile) and inspects it
+#     against this file directly, the one consumer that can fail if the
+#     Dockerfile itself stops installing a tool the text still claims to.
 #
 # One tool name per line. '#'-prefixed and blank lines are ignored.
 #

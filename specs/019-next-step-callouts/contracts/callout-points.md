@@ -20,6 +20,9 @@ and with what deterministic condition selects `kind`.
 | 9 | `rebase.yml` | Blocked-escalation comment with `<!-- wing-commander-rebase: blocked ... -->` dedup marker | Always `action` when reached (skip-if-unchanged dedup already gates whether this step runs at all) | `kind: action`, `summary: "Manually rebase this branch"`, `body-file:` existing comment content including the unchanged dedup marker, no `pr-url` |
 | 10 | `cleanup.yml` | `"🚫 **Draft rejected**"` teardown-rejected comment | Always `action` when reached | `kind: action`, `summary: "Decide whether to revise and resubmit"`, `body-file` or `body:` existing rejection text, no `pr-url` (the draft PR is already closed) |
 | 11 | `intake.yml` | *(none before specs/029-intake-issue-comments)* — new "Post excluded-comments notice" step, posted before the agent step runs | `qualifying-count == 0 AND excluded-human-count > 0` (specs/029-intake-issue-comments/contracts/notice-callout.md) | `kind: action`, `summary: "Confirm the issue body reflects the discussion before relying on this spec"`, `body:` fixed text interpolating only the integer `excluded-human-count` (never a commenter's name or comment content), no `pr-url` |
+| 12 | `clarify.yml` | *(none before #366)* — the agent's own early-STOP comment (the reply answered no open question) was the run's only output, and the cost line rides on rows 3/4 | New step, always `info` when reached, gated on `steps.clarification.outputs.outcome == 'none'` — the third arm of the same decision rows 3/4 split; exactly one of the three fires on any healthy, unblocked path | `kind: info`, `summary: "That reply did not answer an open clarification question, so the spec is unchanged."`, `body:` the cost line, no `pr-url` |
+| 13 | `plan.yml` | *(none before #377)* — the auto-mode "Dispatch tasks stage (auto)" step posted the cost line only on its next-workflow-empty (standalone) branch; the branch that actually dispatches posted nothing | New step, always `info` when reached, gated on `steps.dispatch-auto.outputs.dispatched == 'true'` — the dispatch step's other arm, mutually exclusive with the standalone-mode comment it already posts | `kind: info`, `summary: "Plan committed; task generation was dispatched automatically."`, `body:` the cost line, no `pr-url` |
+| 14 | `tasks.yml` | *(none before #377)* — same gap as row 13, in "Dispatch implement stage (auto)" | Same shape as row 13, gated on `steps.dispatch-auto.outputs.dispatched == 'true'` | `kind: info`, `summary: "Task list committed; implementation was dispatched automatically."`, `body:` the cost line, no `pr-url` |
 
 **Contract clauses**:
 
@@ -45,6 +48,11 @@ and with what deterministic condition selects `kind`.
 - Sites explicitly **not** in this table (`plan.yml`'s gate-mode-fallback
   warning, all `watchdog.yml` comments, every purely informational
   stage-started/converged/summary comment) are unchanged by this feature
-  (research.md scope decision) — grep-auditable after implementation via:
-  `grep -rLn "wing-commander-callout" .github/workflows/{plan,tasks,watchdog}.yml`
-  should list all three, confirming no unintended migration crept in.
+  (research.md scope decision). At the time this feature shipped, that was
+  also grep-auditable as `grep -rLn "wing-commander-callout"
+  .github/workflows/{plan,tasks,watchdog}.yml` listing all three files —
+  since #377 (rows 13/14) and the earlier over-budget callouts, `plan.yml`
+  and `tasks.yml` both call `wing-commander-callout` at specific sites, so
+  that command now correctly lists only `watchdog.yml`. The scope decision
+  itself (the fallback warning and the finding comments stay unmigrated)
+  is unchanged; only the audit command's expected output is.

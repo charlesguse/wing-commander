@@ -194,6 +194,111 @@ else
   reason "cannot find .github/workflows/watchdog.yml to verify the attribution guard — run this from the repository root"
 fi
 
+# ── Regression (maintainer review of #354): a metrics-record-branch-advance
+#    artifact (specs/050-branch-drift-sha-baseline, deliberately
+#    transcript-less — turns.available:false) sorts before
+#    metrics-record-cycle in glob order. Selecting the first downloaded
+#    record instead of the named cycle/retry/progress artifact would let it
+#    silently shadow the real record and skip turn-budget coverage for
+#    every run that also emits one. Runs the REAL shipped step end-to-end
+#    (wc_shell_harness), not just TURN_BUDGET_FILTER above, since the
+#    selection bug lives in the surrounding bash.
+if ! command -v git >/dev/null 2>&1; then
+  reason "git is not on PATH — the shadow-selection regression check needs a local repo for collect-turn-budget's durable-store fetch"
+else
+  shadow_work="$work/shadow-selection"
+  mkdir -p "$shadow_work"
+  shadow_out="$(python3 - "$shadow_work" <<'PY'
+import json
+import os
+import subprocess
+import sys
+
+sys.path.insert(0, ".github/scripts")
+from wc_shell_harness import ensure_jq, find_step, resolve_bash, run_step
+
+work = sys.argv[1]
+ensure_jq()
+bash = resolve_bash()
+
+
+def sh(cmd):
+    subprocess.run(cmd, shell=True, check=True, cwd=work)
+
+
+remote = os.path.join(work, "remote.git")
+repo = os.path.join(work, "repo")
+sh(f"git init --bare -q -b main '{remote}'")
+sh(f"git clone -q '{remote}' '{repo}'")
+sh(f"cd '{repo}' && git config user.email h@example.invalid && git config user.name h "
+   f"&& echo x > f.txt && git add -A && git commit -q -m seed && git push -q origin main")
+
+runner_temp = os.path.join(work, "runner_temp")
+shared = os.path.join(runner_temp, "metrics-record-shared")
+cycle_dir = os.path.join(shared, "metrics-record-cycle")
+ba_dir = os.path.join(shared, "metrics-record-branch-advance")
+os.makedirs(cycle_dir)
+os.makedirs(ba_dir)
+cycle_record = {
+    "schema_version": 1, "record_available": True,
+    "run": {"workflow_run_id": "999000222", "job_key": "cycle", "job_id": None,
+            "step_index": 1, "record_key": "999000222:cycle:1"},
+    "stage": "implement", "stage_available": True,
+    "turns": {"counted": 20, "reported": 20, "intended_budget": 180,
+              "enforced_ceiling": 450, "available": True},
+}
+ba_record = {
+    "schema_version": 1, "record_available": False,
+    "run": {"workflow_run_id": "999000222", "job_key": "cycle", "job_id": None,
+            "step_index": 3, "record_key": "999000222:cycle:3"},
+    "stage": "implement", "stage_available": True,
+    "turns": {"counted": None, "reported": None, "intended_budget": None,
+              "enforced_ceiling": None, "available": False},
+}
+with open(os.path.join(cycle_dir, "wing-commander-metrics-record.json"), "w",
+          encoding="utf-8") as fh:
+    json.dump(cycle_record, fh)
+with open(os.path.join(ba_dir, "wing-commander-metrics-record-branch-advance.json"), "w",
+          encoding="utf-8") as fh:
+    json.dump(ba_record, fh)
+os.makedirs(runner_temp, exist_ok=True)
+with open(os.path.join(runner_temp, "collector-outcomes.json"), "w",
+          encoding="utf-8") as fh:
+    fh.write("[]")
+with open(os.path.join(runner_temp, "signals.json"), "w", encoding="utf-8") as fh:
+    fh.write("[]")
+
+step_text = find_step(".github/workflows/watchdog.yml", "Collect: turn budget")["run"]
+env = {
+    "GH_TOKEN": "x", "ACTIONS_TOKEN": "x", "RUN_ID": "999000222",
+    "RUN_CONCLUSION": "success",
+    "METRICS_BRANCH": "metrics", "METRICS_PATH": "records.jsonl",
+    "HISTORY_WINDOW": "10", "CONSECUTIVE_TRIGGER": "3", "CLIMB_FRACTION": "0.6",
+    "PATH": os.environ["PATH"],
+}
+rc, out, _outputs, summary = run_step(bash, step_text, repo, env, runner_temp)
+
+reasons = []
+if rc != 0:
+    reasons.append(f"exited {rc}: {out.strip()[:400]}")
+if "stage unresolved or turns.available is false" in summary:
+    reasons.append("branch-advance record shadowed the real cycle record")
+if "no metrics record (durable store or artifact) found" in summary:
+    reasons.append("selection found no usable record at all")
+if reasons:
+    for r in reasons:
+        print(f"FAIL: {r}")
+    sys.exit(1)
+print("PASS")
+PY
+)"
+  if [ $? -ne 0 ]; then
+    reason "maintainer review of #354: collect-turn-budget's artifact selection did not pick the real cycle record over a shadowing metrics-record-branch-advance artifact — $shadow_out"
+  else
+    note "collect-turn-budget correctly selects the named cycle/retry/progress record over a shadowing branch-advance artifact"
+  fi
+fi
+
 if [ "${#fail_reasons[@]}" -eq 0 ]; then
   echo "✅ verify-turn-budget-collector: all assertions passed."
   exit 0

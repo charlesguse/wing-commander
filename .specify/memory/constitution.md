@@ -1,4 +1,22 @@
 <!--
+Sync Impact Report — 2026-09-14
+Version change: 1.6.0 → 1.6.1 (PATCH: clarification — Principle VII gains one sentence stating that underscore-prefixed directories under `.github/actions/` are internal to this repository and are not part of the published, adopter-pinned surface, and that promoting one to the published surface later is a deliberate act in a future release, not a rename)
+Modified principles: VII. Two Interfaces — The Published Contract and the Consuming Instrument (one sentence added; no other change)
+Modified sections: none
+Added sections: none
+Removed sections: none
+Templates requiring updates:
+  ✅ .specify/templates/plan-template.md — no change needed (Constitution Check is generic; gates are derived from this file at plan time)
+  ✅ .specify/templates/spec-template.md — no change needed (no principle references)
+  ✅ .specify/templates/tasks-template.md — no change needed (no principle references)
+  ✅ README.md — no change needed (does not enumerate `.github/actions/` subdirectory naming)
+  ✅ docs/architecture.md, docs/adoption.md, docs/setup.md — no change needed (none claims every composite under `.github/actions/` is published; this PATCH only makes the existing published/internal split explicit for the underscore-prefixed case)
+  ✅ .specify/extensions.yml — absent; no before/after_constitution hooks apply
+Motivation: specs/049-single-home-release-idioms found that `auto-release.yml` had re-typed three of `auto-update-spec-kit.yml`'s shared shell idioms instead of consuming a shared definition, and consolidating them into composite actions under `.github/actions/_shared/` exposed a gap this principle did not close: nothing on record said an underscore-prefixed directory is internal rather than merely unpublished-so-far, leaving it one accidental rename away from becoming an adopter-pinned surface by convention rather than by decision.
+Worked example: this PR is the worked example — `.github/actions/_shared/scoped-app-token`, `.github/actions/_shared/orphan-branch-reset`, and `.github/actions/_shared/durable-failure-issue` are the first composite actions (not plain scripts) to live under `_shared/`, and Gate 60's promotion-prevention check enforces the amended sentence mechanically: a `workflow_call` stage or a non-underscore composite resolving a `_shared/` path fails the gate.
+Follow-up TODOs: none
+-->
+<!--
 Sync Impact Report — 2026-08-23
 Version change: 1.5.1 → 1.6.0 (MINOR: new principle added — IX. Judgment That Gates a Durable Action Belongs in Deterministic Code, requiring that judgment gating a filed finding, a fingerprint, a dedup outcome, or a write live in deterministic code rather than an agent's prompt, because a prompt instruction can be silently unfollowed with no error while code that computes the same input the same way every time cannot)
 Modified principles: none
@@ -140,6 +158,8 @@ This repository publishes one product and operates another. The **published cont
 
 Stage workflows own no triggers and read no ambient repository state: not `github.event.*`, not `vars.*`, and no secret beyond those their own `workflow_call` interface declares — a stage never relies on `secrets: inherit`. Every event fact and every knob arrives as a declared, typed input. Wrappers own the triggers, the security gates, the event→input extraction, and every repository-specific convention; when a new need arises, the wrapper is its default home. A stage that must deviate carries a registered, machine-checked exception naming the reason — never an undeclared one, and never a code comment alone. Every document states which layer it describes.
 
+Underscore-prefixed directories under `.github/actions/` (e.g. `.github/actions/_shared/`) are internal to this repository and are not part of the published, adopter-pinned surface; promoting one to the published surface later is a deliberate act taken in a future release, not a rename.
+
 ### VIII. A Green Check Means What It Says
 A check that cannot fail its own subject is a liability, not coverage: it reads as evidence while proving nothing, and it displaces the scrutiny a maintainer would otherwise have applied. Every instance this repository has found was found by accident — a maintainer noticing a stall, a drill performed by hand — never by another check. Therefore: every gate MUST be reachable through the gate registry, and MUST run the same subject with the same arguments locally as it does in CI. Every gate MUST be triggered by changes to the tree or document it checks. A gate that cannot reach its subject — the wrong working directory, an empty file list, an unresolvable reference — MUST fail loudly rather than report a pass it did not earn. A gate MUST NOT be suppressible by the failure of an unrelated gate that merely shares its job. Every failure branch a gate ships MUST be exercised by a checked-in fixture; a manual demonstration during development is evidence for that reviewer, not coverage for the next one. Prior art: #139 and #158 (a verifier that sat green while checking a filter that did not ship), #169, #213, #215, #229, #147.
 
@@ -162,4 +182,4 @@ Stages and their gates: intake (`/speckit-specify`, human gate = maintainer labe
 
 This constitution supersedes ad-hoc practice in this repository. Every spec, plan, and implementation PR is checked against it during review; violations must be fixed or the constitution amended first. Amendments arrive as ordinary PRs that modify this file, state the motivation, and bump the version below (semver: breaking principle changes = MAJOR, new principles/sections = MINOR, clarifications = PATCH).
 
-**Version**: 1.6.0 | **Ratified**: 2026-07-04 | **Last Amended**: 2026-08-23
+**Version**: 1.6.1 | **Ratified**: 2026-07-04 | **Last Amended**: 2026-09-14

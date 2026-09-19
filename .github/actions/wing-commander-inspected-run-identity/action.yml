@@ -43,9 +43,13 @@
 #      spec identity all leave the slug empty exactly as step 1 left it.
 #
 # With a slug in hand, spec-meta.json on the spec branch names the
-# lifecycle issue and the recorded stage; without one, or when the branch
-# has no record yet, the issue stays empty and the caller reports against
-# the run URL.
+# lifecycle issue and the recorded stage. A spec still in intake or clarify
+# has no spec branch yet -- it lives on its spec-draft branch until the spec
+# PR merges -- so when the spec branch yields no record the draft branch is
+# read the same way (#376: before this, every intake and clarify run
+# resolved a slug and then no issue, and the cost-report collector filed a
+# finding over each one). Without a slug, or when neither branch has a
+# record, the issue stays empty and the caller reports against the run URL.
 #
 # Tokens (docs/setup.md): `gh run view` and `gh run download` need
 # Actions:read, which the App token does not have, so both run under the
@@ -127,7 +131,7 @@ outputs:
     description: specs/<slug>, or empty.
     value: ${{ steps.resolve.outputs.spec-dir }}
   lifecycle-issue:
-    description: The lifecycle issue number from the spec branch's spec-meta.json, or empty.
+    description: The lifecycle issue number from spec-meta.json on the spec branch (else the spec-draft branch), or empty.
     value: ${{ steps.resolve.outputs.lifecycle-issue }}
   meta-stage:
     description: The `stage` recorded in spec-meta.json, or empty.
@@ -223,6 +227,12 @@ runs:
           # fetches the branch, reads the file and applies the self-identity
           # check; its values are sanitised, so eval is safe.
           eval "$(bash "$GITHUB_ACTION_PATH/../_shared/read-spec-meta.sh" "$SPEC_PREFIX" "$slug" "$spec_dir")"
+          # No record on the spec branch: the spec is still a draft (header).
+          # A record that IS there but fails its identity check is not
+          # papered over by the draft's.
+          if [ "$meta_found" != "true" ]; then
+            eval "$(bash "$GITHUB_ACTION_PATH/../_shared/read-spec-meta.sh" "$SPEC_DRAFT_PREFIX" "$slug" "$spec_dir")"
+          fi
           if [ "$meta_identity_ok" = "true" ]; then
             issue="$meta_issue"
           else

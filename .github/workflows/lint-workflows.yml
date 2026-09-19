@@ -53,6 +53,10 @@ on:
       # directions. Editing the table alone is the one change that can make
       # the two disagree.
       - "specs/038-runner-container-passthrough/contracts/runner-container-passthrough.md"
+      # Gate 62's subject: the reference image's build definition. Not
+      # covered by any glob above -- an edit here is the one change most
+      # likely to make the built image disagree with required-tools.txt.
+      - ".github/docker/e2e-reference-image/**"
       # verify-metrics-record-schema.py's subject: an edit to the documented
       # schema-version-1 shape alone (no code change) must still trigger the
       # gate that checks fixtures against it (FR-040).
@@ -3387,9 +3391,14 @@ jobs:
       # situation — a detect crash read as a quiet day, a decide-version
       # crash as "release dispatch failed" for a release never dispatched,
       # the stale-head guard's own failed read pointing at a release.yml run
-      # that does not exist. Executes the shipped step against every
-      # combination of job results and outputs it can meet, with gh stubbed
-      # to record what would have been filed, and mutates each defect back.
+      # that does not exist. Executes the shipped "Determine this run's
+      # outcome" step against every combination of job results and outputs
+      # it can meet, checking the action/title/close-comment/body/summary it
+      # decides on -- specs/049-single-home-release-idioms moved the actual
+      # gh-issue-report/-close mechanics this step used to perform inline
+      # into the shared durable-failure-issue composite, which the two
+      # `uses:` steps immediately after this one call based on that
+      # decision -- and mutates each #325 defect back.
       - name: Gate 52 — auto-release's report job attributes a crashed job to infrastructure, not to a quiet day or a phantom release run
         if: "!cancelled()"
         run: python3 .github/scripts/verify-auto-release-report.py
@@ -3443,6 +3452,39 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-correlated-release-dispatch.py --self-test
 
+      # Gate 60 — specs/049-single-home-release-idioms: each of the three
+      # cross-workflow idioms auto-release.yml and auto-update-spec-kit.yml
+      # share (scoped App-token mint + reachability, orphan-branch
+      # force-reset, durable failure issue) and the fail-infra verdict
+      # shape now has exactly one home under .github/actions/_shared/, and
+      # a structural scan -- not merely an assertion that the two known
+      # consumers call the shared definitions -- fails on a third,
+      # unknown site pasting any of them anywhere under
+      # .github/workflows/ or .github/actions/, naming both the offending
+      # site and the shared home to call instead. A separate pass fails if
+      # a workflow_call-only stage or a published (non-underscore)
+      # composite action ever resolves an internal _shared/ path (FR-025).
+      # Also runs the byte-identity check (FR-009): the shipped
+      # auto-release-verdict.sh against every real verdict-construction
+      # site's captured pre-refactor inputs, diffed against their
+      # pre-refactor jq -n output.
+      #
+      # Numbered 60, not 52 as research.md/tasks.md call it: Gate 52 was
+      # free when this feature's plan was written and was taken by
+      # verify-auto-release-report.py (#325) before this feature's branch
+      # was rebased past it. The branch then registered this gate as 53,
+      # the next number free in its own tree -- but by the time of the
+      # maintainer's review of PR #347, spec 046's PR #341 had registered
+      # Gates 53-58 on main and spec 048's PR #342 had taken 59, so this
+      # gate moved again, to 60 -- see verify-single-home-idioms.py's own
+      # module docstring.
+      - name: Gate 60 — each of the three cross-workflow idioms and the fail-infra verdict shape has exactly one home, and no published surface resolves an internal helper
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-single-home-idioms.py
+      - name: Gate 60 self-test — the structural scan detects a third paste, a waiver suppresses only what it names, and promotion into a published surface fails
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-single-home-idioms.py --self-test
+
       # Gate 61 — a spec branch's spec-meta.json is read in one place (#340).
       # The fetch-then-`git show`-then-jq read was pasted into implement.yml
       # (both read-backs), plan.yml, tasks.yml and the watchdog's identity
@@ -3459,6 +3501,89 @@ jobs:
       - name: Gate 61 self-test — a pasted copy and a dropped call each fail
         if: "!cancelled()"
         run: python3 .github/scripts/verify-spec-meta-single-home.py --self-test
+
+      # Gate 62 — specs/054-e2e-container-coverage (research.md D6, FR-019):
+      # Gate 23's drift check is purely textual (it compares the embedded
+      # REQUIRED_TOOLS= literal against required-tools.txt) and cannot fail
+      # if .github/docker/e2e-reference-image/Dockerfile silently stops
+      # installing a tool the text still claims to install. This gate
+      # builds the reference image locally and runs the same tool-presence
+      # probe every stage's verify-image-prerequisites job runs against an
+      # adopter's image, so it can actually fail on its own subject.
+      - name: Gate 62 — the e2e reference image's tool set agrees with required-tools.txt
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-gate-62.py
+      - name: Gate 62 self-test — a Dockerfile that drops a required tool's install fails
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-gate-62.py --self-test
+
+      # Gate 63 — plan.yml and tasks.yml report the run's cost on every
+      # auto-mode hand-off (#377). Both stages compute the cost line
+      # unconditionally but only ever posted it on the standalone
+      # (next-workflow empty) branch of their dispatch step; a run that
+      # spent money and handed off cleanly reported none of it. Mirrors
+      # #366's fix in clarify.yml for the analogous gap.
+      #
+      # Renumbered from 62 to 63 to clear the collision with
+      # specs/054-e2e-container-coverage's Gate 62, developed in parallel on
+      # the same base (that feature's script and tasks.md already name it
+      # 62) — the same reasoning as Gate 59's renumbering above.
+      - name: Gate 63 — plan/tasks auto-mode hand-off reports the run's cost
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-plan-tasks-cost-line.py
+      - name: Gate 63 self-test — a dropped callout, gate or cost line each fail
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-plan-tasks-cost-line.py --self-test
+
+      # Gate 64 — specs/054-e2e-container-coverage (SC-009): auto-release.yml's
+      # mode step used to derive the container/default-runner alternation
+      # from day-of-year parity, which repeats the same mode across a
+      # non-leap year's Dec-31/Jan-1 boundary (day 365 and day 1 are both
+      # odd) instead of alternating. Executes the shipped mode step against a
+      # stubbed `date` for a real year-boundary pair and mutates the fix back
+      # to prove the regression is caught.
+      - name: Gate 64 — auto-release's mode derivation never repeats a mode across a year boundary
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-auto-release-mode.py
+
+      # Gate 65 — specs/050-branch-drift-sha-baseline (issue #331): the
+      # watchdog's branch-drift collector, for a dispatched implement run,
+      # now compares the exact before/after SHA pair that run's own metrics
+      # record carries instead of counting commits in an open-ended
+      # `--since=<createdAt>` window. That old window could never catch a
+      # rebase force-push between the run finishing and the watchdog
+      # inspecting it, or a later run on the same branch that had already
+      # pushed by inspection time — both permanent misses this closes.
+      # Drives the real, shipped `collect-branch-drift` step text against a
+      # `gh` stub and a local git repository. Renumbered from 63 (T020's
+      # number was provisional) to 65 to clear the collision with Gate 63
+      # (plan/tasks cost line, #377) and Gate 64 (auto-release mode,
+      # specs/054-e2e-container-coverage), both landed in parallel on the
+      # same base — the same reasoning as Gate 63's renumbering above.
+      - name: Gate 65 — the branch-drift collector compares the implement run's own recorded SHAs, not a commits-since-run-created window
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-branch-drift-sha-baseline.py
+
+      # Gate 66 — specs/055-unattended-e2e-gates: auto-release.yml's `poll`
+      # step drives the clarification and three PR-merge gates through two
+      # pure decision scripts (.github/actions/_shared/auto-release-e2e-
+      # clarify-decision.sh, auto-release-e2e-merge-decision.sh) so the
+      # judgment that gates a durable action (posting a reply, merging a
+      # PR) stays deterministic code, never an agent's call (Constitution
+      # IX). This executes both shipped scripts against fixture JSON
+      # covering every branch contracts/gate-decision-scripts.md documents.
+      #
+      # Renumbered from 63 to 66 to clear the collision with Gate 63
+      # (plan/tasks cost line), Gate 64 (auto-release mode derivation), and
+      # Gate 65 (branch-drift SHA baseline, specs/050-branch-drift-sha-
+      # baseline), all landed in parallel on the same base — the same
+      # reasoning as Gate 62's and Gate 63's renumbering above.
+      - name: Gate 66 — the two e2e gate-decision scripts cover every documented branch
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-auto-release-e2e-gate-decisions.py
+      - name: Gate 66 self-test — each documented branch fails its own mutation
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-auto-release-e2e-gate-decisions.py --self-test
 
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
@@ -3478,6 +3603,16 @@ jobs:
       # hide from this check.
       - name: Gate 10 — every check is wired to a workflow, and every wire lands
         run: python3 .github/scripts/verify-gate-wiring.py
+
+      # spec 053, SC-007 (Constitution VIII) — the E2E onboarding-element
+      # list has exactly one home (.github/scripts/e2e-provisioning/), so a
+      # future change cannot paste a second, independently-drifting copy of
+      # it into a workflow or another script.
+      - name: E2E provisioning single-home gate
+        run: python3 .github/scripts/verify-e2e-provisioning-single-home.py
+
+      - name: E2E provisioning single-home gate self-test
+        run: python3 .github/scripts/verify-e2e-provisioning-single-home.py --self-test
 
   # Gate 4 — behavioral tests for the auto-update-spec-kit stage pair. Gates
   # 1-3 are static: they prove a workflow parses, registers, and is permitted
@@ -3507,6 +3642,14 @@ jobs:
 
       - name: Gate 4 — auto-update-spec-kit behavioral tests
         run: bash .github/scripts/auto-update-spec-kit-tests/run-tests.sh
+
+      # spec 053 — behavioral tests for provision-e2e-target.sh and the
+      # shared e2e-provisioning/checks.sh onboarding-element library, the
+      # same convention as Gate 4 above: the shipped scripts are exercised
+      # directly against a stubbed `gh`, so the suite cannot drift from what
+      # actually ships. See .github/scripts/e2e-provisioning-tests/.
+      - name: E2E provisioning behavioral tests
+        run: bash .github/scripts/e2e-provisioning-tests/run-tests.sh
 
   # Gate 1 — the catch-all. When GitHub cannot parse a workflow file it
   # registers the workflow with its PATH as its name and creates a failed

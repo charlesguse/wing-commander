@@ -2,7 +2,8 @@
   "issue": 362,
   "spec_dir": "specs/053-e2e-scratch-provisioning",
   "feature_num": "053",
-  "stage": "spec",
-  "iteration": 0,
-  "spec_branch": null
+  "stage": "review",
+  "iteration": 5,
+  "spec_branch": "spec/053-e2e-scratch-provisioning",
+  "pending_re_review_from": []
 }

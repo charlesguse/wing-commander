@@ -1,0 +1,121 @@
+# The scoped App-token-mint + reachability-check idiom, in one home.
+#
+# Extracted from auto-release.yml's "Mint a scoped App token for the test
+# repository" + "Confirm the test repository is reachable" steps and
+# auto-update-spec-kit.yml's "Mint a scratch-repository App token" +
+# "Resolve the scratch repository" steps -- both workflows minted a second,
+# narrowly-scoped App token for a target repository distinct from the one
+# the workflow itself runs in, then re-checked that the mint actually
+# worked before trusting the token. See
+# specs/049-single-home-release-idioms/contracts/scoped-app-token.md and
+# research.md D1/D2.
+#
+# This composite is internal to this repository, per constitution VII's
+# underscore-prefixed-directory clarification (specs/049): it is never
+# resolved by a workflow_call-only stage or a published (non-underscore)
+# composite action, and Gate 60's promotion-prevention check enforces that.
+#
+# Builds no remediation message or verdict itself (FR-005): the two call
+# sites' failure handling differs (auto-release.yml emits a fail-infra
+# verdict; auto-update-spec-kit.yml emits an ::error:: and exits 1), so
+# that composition stays at each call site, reading `failure-reason`.
+name: scoped-app-token
+description: >
+  Mints an App token scoped to a target repository distinct from the one
+  this workflow runs in, then confirms that repository is actually
+  reachable with it (and, optionally, that it reports a default branch).
+
+inputs:
+  app-id:
+    description: GitHub App ID (secrets.WING_COMMANDER_APP_ID or equivalent)
+    required: true
+  private-key:
+    description: GitHub App private key
+    required: true
+  owner:
+    description: Target repository's owner
+    required: true
+  repo-name:
+    description: Target repository's name
+    required: true
+  check-default-branch:
+    description: >
+      When "true", also require `gh repo view` to report a non-empty
+      default branch, publishing it as `default-branch`. A mint that
+      succeeds but a repo with no readable default branch is `ok=false`,
+      `failure-reason=unreachable` either way.
+    required: false
+    default: "false"
+
+outputs:
+  token:
+    description: Installation token for the target repository (empty if the mint failed)
+    value: ${{ steps.check.outputs.token }}
+  ok:
+    description: "\"true\"/\"false\" -- whether the mint and reachability check both succeeded"
+    value: ${{ steps.check.outputs.ok }}
+  default-branch:
+    description: Only populated when check-default-branch is "true" and resolution succeeded
+    value: ${{ steps.check.outputs.default-branch }}
+  failure-reason:
+    description: One of token-mint-failed | unreachable | "" (empty on success)
+    value: ${{ steps.check.outputs.failure-reason }}
+
+runs:
+  using: composite
+  steps:
+    # continue-on-error, re-checked in the next step: with `owner`/
+    # `repositories` both set this action scopes strictly to the named
+    # repository, so a failed mint here never widens to any other scope.
+    - name: Mint an App token for the target repository
+      id: mint
+      continue-on-error: true
+      uses: actions/create-github-app-token@v3
+      with:
+        client-id: ${{ inputs.app-id }}
+        private-key: ${{ inputs.private-key }}
+        owner: ${{ inputs.owner }}
+        repositories: ${{ inputs.repo-name }}
+
+    - name: Confirm the target repository is reachable
+      id: check
+      shell: bash
+      env:
+        GH_TOKEN: ${{ steps.mint.outputs.token }}
+        TOKEN_OUTCOME: ${{ steps.mint.outcome }}
+        OWNER: ${{ inputs.owner }}
+        REPO_NAME: ${{ inputs.repo-name }}
+        CHECK_DEFAULT_BRANCH: ${{ inputs.check-default-branch }}
+      run: |
+        set -uo pipefail
+        repo="${OWNER}/${REPO_NAME}"
+        if [ "$TOKEN_OUTCOME" != "success" ] || [ -z "$GH_TOKEN" ]; then
+          echo "token=" >> "$GITHUB_OUTPUT"
+          echo "ok=false" >> "$GITHUB_OUTPUT"
+          echo "default-branch=" >> "$GITHUB_OUTPUT"
+          echo "failure-reason=token-mint-failed" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        if [ "$CHECK_DEFAULT_BRANCH" = "true" ]; then
+          default_branch="$(gh repo view "$repo" --json defaultBranchRef --jq '.defaultBranchRef.name // empty' 2>/dev/null || true)"
+          if [ -z "$default_branch" ]; then
+            echo "token=$GH_TOKEN" >> "$GITHUB_OUTPUT"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "default-branch=" >> "$GITHUB_OUTPUT"
+            echo "failure-reason=unreachable" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "default-branch=$default_branch" >> "$GITHUB_OUTPUT"
+        else
+          if ! gh repo view "$repo" >/dev/null 2>&1; then
+            echo "token=$GH_TOKEN" >> "$GITHUB_OUTPUT"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "default-branch=" >> "$GITHUB_OUTPUT"
+            echo "failure-reason=unreachable" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "default-branch=" >> "$GITHUB_OUTPUT"
+        fi
+        echo "token=$GH_TOKEN" >> "$GITHUB_OUTPUT"
+        echo "ok=true" >> "$GITHUB_OUTPUT"
+        echo "failure-reason=" >> "$GITHUB_OUTPUT"

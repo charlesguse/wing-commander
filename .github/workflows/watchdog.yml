@@ -425,7 +425,7 @@ jobs:
           # top-level permissions: block grants it). This step has no
           # fallback: under `set -e` a 403 here used to kill the whole
           # collect job before any evidence was gathered.
-          json=$(GH_TOKEN="$ACTIONS_TOKEN" gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json headBranch,headSha,conclusion,url,event,createdAt,databaseId)
+          json=$(GH_TOKEN="$ACTIONS_TOKEN" gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json headBranch,headSha,conclusion,url,event,createdAt,updatedAt,databaseId)
           {
             echo "head-branch=$(printf '%s' "$json" | jq -r '.headBranch // empty')"
             echo "head-sha=$(printf '%s' "$json" | jq -r '.headSha // empty')"
@@ -433,6 +433,7 @@ jobs:
             echo "url=$(printf '%s' "$json" | jq -r '.url // empty')"
             echo "event=$(printf '%s' "$json" | jq -r '.event // empty')"
             echo "created-at=$(printf '%s' "$json" | jq -r '.createdAt // empty')"
+            echo "updated-at=$(printf '%s' "$json" | jq -r '.updatedAt // empty')"
           } >> "$GITHUB_OUTPUT"
 
       # Best-effort, read-only spec identity resolution (contract's collect
@@ -632,6 +633,8 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ACTIONS_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run-id }}
           HEAD_BRANCH: ${{ steps.run-meta.outputs.head-branch }}
           HEAD_SHA: ${{ steps.run-meta.outputs.head-sha }}
           RUN_CREATED_AT: ${{ steps.run-meta.outputs.created-at }}
@@ -702,19 +705,37 @@ jobs:
           # tasks and implement are only ever dispatched (default-branch
           # head), so no run's head was ever the spec branch.
           #
-          # The baseline for that arm is the run's start time, not
-          # HEAD_SHA: HEAD_SHA is the DEFAULT branch's tip, and
-          # `HEAD_SHA..spec/<slug>` would count the spec branch's whole
-          # history since it diverged — never zero, a measurement that can
-          # never fire. `--since=<createdAt>` counts commits whose committer
-          # date is at or after the run was created; the runner commits
-          # after that instant. Anything else that lands on the branch
-          # inside the window inflates the count: a rebase.yml force-push
-          # rewrites committer dates (implement run 34709026525 reads 22
-          # after a rebase, 16 before), and a later run on the same branch
-          # (a retry, the next cycle) that has already pushed by the time
-          # this one is inspected adds its own commits. Both are missed
-          # detections, never false ones.
+          # The baseline for that arm is measured two ways now
+          # (specs/050-branch-drift-sha-baseline). HEAD_SHA cannot be used
+          # directly for a dispatched run either way: it is the DEFAULT
+          # branch's tip, and `HEAD_SHA..spec/<slug>` would count the spec
+          # branch's whole history since it diverged — never zero, a
+          # measurement that can never fire.
+          #
+          # Primary (`baseline="exact-sha"`): a dispatched implement run's
+          # own cycle now records the exact branch/before-sha/after-sha/
+          # commits quadruple it observed (implement.yml's "Record branch
+          # advance (cycle)" step, after every push the cycle could make).
+          # When the inspected run's metrics record carries that evidence,
+          # the verdict is a pure comparison of the two recorded SHAs —
+          # invariant to anything that happens to the branch afterward,
+          # closing both the rebase-force-push miss and the second-run-
+          # masking miss described below.
+          #
+          # Fallback (`baseline="since-created"`): `--since=<createdAt>`
+          # counts commits whose committer date is at or after the run was
+          # created; the runner commits after that instant. This arm
+          # survives only for a record that predates this feature or never
+          # reached the recording point (an older pipeline version, an
+          # expired 90-day artifact retention window, a cycle whose push
+          # step never ran). Anything that lands on the branch inside its
+          # open-ended window still inflates the count the same way it
+          # always has: a rebase.yml force-push rewrites committer dates
+          # (implement run 34709026525 reads 22 after a rebase, 16 before),
+          # and a later run on the same branch (a retry, the next cycle)
+          # that has already pushed by the time this one is inspected adds
+          # its own commits. Both are missed detections, never false ones,
+          # for a run whose record lacks the new evidence (FR-018).
           _spec_prefix="${SPEC_PREFIX:-spec/}"
           measure_branch="$HEAD_BRANCH"
           baseline="head-sha"
@@ -729,79 +750,165 @@ jobs:
             fi
             measure_branch="${_spec_prefix}${SLUG}"
             baseline="since-created"
-            echo "branch-drift: run head is '$HEAD_BRANCH' (a dispatched implement run reports the default branch); measuring '$measure_branch' for commits since the run was created at $RUN_CREATED_AT (#322)." >> "$GITHUB_STEP_SUMMARY"
-          fi
 
-          # Captured through `|| fetch_rc=$?` rather than a bare `$?` on the
-          # next line: a `run:` block's default shell is `bash -e {0}`, and
-          # `set -uo pipefail` above does not turn errexit back off — so a
-          # bare failing command aborts the whole step before it can record
-          # WHY it failed, which is the one thing FR-010 needs it to do.
-          # The left side of a `||` is exempt from errexit, so this captures
-          # the code instead of dying on it. The outcome record is appended
-          # once, after every read below has had a chance to run (T032) —
-          # not immediately here — so a rev-parse/rev-list failure that
-          # follows is folded into the same record instead of being
-          # collapsed into a silent "nothing to see" by the `2>/dev/null`
-          # fallbacks those reads use.
-          fetch_rc=0
-          fetch_log="$(git fetch --no-tags --quiet origin "refs/heads/$measure_branch:refs/remotes/origin/$measure_branch" 2>&1)" || fetch_rc=$?
-          # A fetch failure caused by the ref genuinely no longer existing
-          # (branch already torn down) is expected and does not make this
-          # collector's read untrusted; any other fetch failure does
-          # (FR-010).
-          bd_outcome="ok"
-          branch_torn_down=false
-          if [ "$fetch_rc" != "0" ]; then
-            if printf '%s' "$fetch_log" | grep -qi "couldn't find remote ref\|couldn't find remote branch"; then
-              branch_torn_down=true
+            # R7: look for a downloaded metrics-record* artifact off the
+            # inspected run carrying branch_advance evidence before falling
+            # through to the since-created fallback. Same download pattern
+            # wing-commander-inspected-run-identity's record_fallback
+            # already uses. Filtered on the group's own `available` flag,
+            # not on step-index/run-label, since FR-020 makes the group
+            # stage-neutral — a future non-implement populator must be
+            # picked up here with no collector change.
+            exact_branch=""
+            exact_before_sha=""
+            exact_after_sha=""
+            exact_commits=""
+            # Shared with collect-turn-budget/collect-cost-report below
+            # (CLAUDE.md "shared logic has exactly one home"): same
+            # artifact, same run — whichever collector downloads it first
+            # saves the others the redundant `gh run download` round-trip.
+            mr_dir="$RUNNER_TEMP/metrics-record-shared"
+            mkdir -p "$mr_dir" 2>/dev/null || true
+            if [ -n "$(find "$mr_dir" -type f -name '*.json' 2>/dev/null)" ] || { [ -n "$RUN_ID" ] && GH_TOKEN="$ACTIONS_TOKEN" gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -p 'metrics-record*' -D "$mr_dir" >/dev/null 2>&1; }; then
+              while IFS= read -r rec; do
+                avail="$(jq -r '.branch_advance.available // false' "$rec" 2>/dev/null || true)"
+                [ "$avail" = "true" ] || continue
+                candidate_before="$(jq -r '.branch_advance.before_sha // empty' "$rec" 2>/dev/null || true)"
+                candidate_after="$(jq -r '.branch_advance.after_sha // empty' "$rec" 2>/dev/null || true)"
+                # Only a record with BOTH points present is usable; keep
+                # scanning past an available-but-partial one instead of
+                # locking onto it (this is the shape a caller with only one
+                # SHA resolved would emit).
+                if [ -n "$candidate_before" ] && [ -n "$candidate_after" ]; then
+                  exact_branch="$(jq -r '.branch_advance.branch // empty' "$rec" 2>/dev/null || true)"
+                  exact_before_sha="$candidate_before"
+                  exact_after_sha="$candidate_after"
+                  exact_commits="$(jq -r '.branch_advance.commits // empty' "$rec" 2>/dev/null || true)"
+                  break
+                fi
+              done < <(find "$mr_dir" -type f -name '*.json' 2>/dev/null | sort)
+            fi
+
+            if [ -n "$exact_before_sha" ] && [ -n "$exact_after_sha" ]; then
+              baseline="exact-sha"
+              # FR-003: the branch this arm reports is the one the record
+              # itself named, never re-derived from prefix+slug — the
+              # prefix-derived value above is only a fallback for the rare
+              # case a record carries both points but no branch name.
+              [ -n "$exact_branch" ] && measure_branch="$exact_branch"
+              echo "branch-drift: run head is '$HEAD_BRANCH' (a dispatched implement run reports the default branch); measuring '$measure_branch' via the implement run's own recorded before/after SHAs (specs/050-branch-drift-sha-baseline)." >> "$GITHUB_STEP_SUMMARY"
             else
-              bd_outcome="failed"
+              echo "branch-drift: run head is '$HEAD_BRANCH' (a dispatched implement run reports the default branch); measuring '$measure_branch' for commits since the run was created at $RUN_CREATED_AT (no recorded branch-advance evidence on this run)." >> "$GITHUB_STEP_SUMMARY"
             fi
           fi
 
-          rev_parse_rc=0
-          after_sha="$(git rev-parse "refs/remotes/origin/$measure_branch" 2>/dev/null)" || rev_parse_rc=$?
-          if [ -z "$after_sha" ] || [ "$rev_parse_rc" != "0" ]; then
-            # An empty/failed rev-parse is only a legitimate "branch already
-            # torn down" outcome when the fetch above already diagnosed
-            # that condition — otherwise the ref should have resolved, and a
-            # failure here is a genuine untrusted read (T032).
-            if [ "$branch_torn_down" != "true" ]; then
+          if [ "$baseline" = "exact-sha" ]; then
+            # research.md R7 / FR-019: the verdict is a pure comparison of
+            # the two points implement.yml's own cycle recorded, at the
+            # moment it held them — no fetch/rev-list against the measured
+            # branch's CURRENT state at all, so neither an intervening
+            # force-push nor an intervening later run's push can change it
+            # (SC-003; US2 T021 — this arm never reads the branch's
+            # current state).
+            after_sha="$exact_after_sha"
+            commits="$exact_commits"
+            bd_outcome="ok"
+            jq -c --arg c "collect-branch-drift" --arg o "$bd_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
+            # Healthy requires the two SHAs differing AND the recorded
+            # count not being explicitly zero — before==after is trivially
+            # zero progress regardless of what commits says, and a
+            # force-push/reset can leave before != after with commits == 0
+            # (the branch went backward, not forward); that shape must
+            # fall through to the lost-progress signal below, like the
+            # since-created arm's own "commits == 0 is lost-progress" rule
+            # (spec.md Edge Cases). When commits itself is unavailable
+            # (empty), FR-019 says the verdict stays a pure equal/
+            # not-equal comparison rather than depending on a count that
+            # was never recorded — an unavailable count must not turn a
+            # differing pair into a false lost-progress signal
+            # (FR-017/SC-002).
+            if [ "$exact_before_sha" != "$exact_after_sha" ] && [ "$commits" != "0" ]; then
+              exit 0
+            fi
+          else
+            # Captured through `|| fetch_rc=$?` rather than a bare `$?` on the
+            # next line: a `run:` block's default shell is `bash -e {0}`, and
+            # `set -uo pipefail` above does not turn errexit back off — so a
+            # bare failing command aborts the whole step before it can record
+            # WHY it failed, which is the one thing FR-010 needs it to do.
+            # The left side of a `||` is exempt from errexit, so this captures
+            # the code instead of dying on it. The outcome record is appended
+            # once, after every read below has had a chance to run (T032) —
+            # not immediately here — so a rev-parse/rev-list failure that
+            # follows is folded into the same record instead of being
+            # collapsed into a silent "nothing to see" by the `2>/dev/null`
+            # fallbacks those reads use.
+            fetch_rc=0
+            fetch_log="$(git fetch --no-tags --quiet origin "refs/heads/$measure_branch:refs/remotes/origin/$measure_branch" 2>&1)" || fetch_rc=$?
+            # A fetch failure caused by the ref genuinely no longer existing
+            # (branch already torn down) is expected and does not make this
+            # collector's read untrusted; any other fetch failure does
+            # (FR-010).
+            bd_outcome="ok"
+            branch_torn_down=false
+            if [ "$fetch_rc" != "0" ]; then
+              if printf '%s' "$fetch_log" | grep -qi "couldn't find remote ref\|couldn't find remote branch"; then
+                branch_torn_down=true
+              else
+                bd_outcome="failed"
+              fi
+            fi
+
+            rev_parse_rc=0
+            after_sha="$(git rev-parse "refs/remotes/origin/$measure_branch" 2>/dev/null)" || rev_parse_rc=$?
+            if [ -z "$after_sha" ] || [ "$rev_parse_rc" != "0" ]; then
+              # An empty/failed rev-parse is only a legitimate "branch already
+              # torn down" outcome when the fetch above already diagnosed
+              # that condition — otherwise the ref should have resolved, and a
+              # failure here is a genuine untrusted read (T032).
+              if [ "$branch_torn_down" != "true" ]; then
+                bd_outcome="failed"
+              fi
+              jq -c --arg c "collect-branch-drift" --arg o "$bd_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
+              echo "branch-drift: '$measure_branch' no longer exists (already torn down) — skipping." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+
+            commits_rc=0
+            if [ "$baseline" = "since-created" ]; then
+              commits="$(git rev-list --count --since="$RUN_CREATED_AT" "$after_sha" 2>/dev/null)" || commits_rc=$?
+            else
+              commits="$(git rev-list --count "$HEAD_SHA..$after_sha" 2>/dev/null)" || commits_rc=$?
+            fi
+            if [ "$commits_rc" != "0" ] || [ -z "$commits" ]; then
               bd_outcome="failed"
             fi
             jq -c --arg c "collect-branch-drift" --arg o "$bd_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
-            echo "branch-drift: '$measure_branch' no longer exists (already torn down) — skipping." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            if [ -z "$commits" ] || [ "$commits" != "0" ]; then
+              exit 0
+            fi
           fi
 
-          commits_rc=0
-          if [ "$baseline" = "since-created" ]; then
-            commits="$(git rev-list --count --since="$RUN_CREATED_AT" "$after_sha" 2>/dev/null)" || commits_rc=$?
-          else
-            commits="$(git rev-list --count "$HEAD_SHA..$after_sha" 2>/dev/null)" || commits_rc=$?
-          fi
-          if [ "$commits_rc" != "0" ] || [ -z "$commits" ]; then
-            bd_outcome="failed"
-          fi
-          jq -c --arg c "collect-branch-drift" --arg o "$bd_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
-          if [ -z "$commits" ] || [ "$commits" != "0" ]; then
-            exit 0
-          fi
-
-          # `before-sha` is the exact-baseline case's before SHA and null
-          # for the since-created arm (HEAD_SHA is main's tip there, not a
-          # point on the measured branch); `since` is the converse. The
-          # fingerprint projects only `branch` for lost-progress, so both
-          # shapes dedup the same way.
-          before_sha="$HEAD_SHA"; since=""
+          # `before-sha` is populated for the exact-sha arm (the recorded
+          # before point) and the head-sha arm (HEAD_SHA); null for the
+          # since-created arm (HEAD_SHA is main's tip there, not a point on
+          # the measured branch). `since` is the converse — populated only
+          # for since-created. `commits` in the signal is the value the
+          # implement stage itself recorded, read verbatim, for the
+          # exact-sha arm (FR-019 — never recomputed here); the head-sha
+          # and since-created arms keep today's fixed `0` placeholder,
+          # since both only ever fire on a zero count. The fingerprint
+          # projects only `branch` for lost-progress, so every shape dedups
+          # the same way (research.md R11).
+          before_sha="$HEAD_SHA"; since=""; commits_out="0"
           if [ "$baseline" = "since-created" ]; then before_sha=""; since="$RUN_CREATED_AT"; fi
+          if [ "$baseline" = "exact-sha" ]; then before_sha="$exact_before_sha"; since=""; commits_out="$commits"; fi
           if [ "$META_STAGE" = "stalled" ] || [ "$STALLED_LABEL" = "true" ]; then
-            entry=$(jq -n --arg branch "$measure_branch" --arg before "$before_sha" --arg since "$since" --arg after "$after_sha" \
-              '[{source:"branch-drift","class-hint":null,facts:{branch:$branch,"before-sha":(if $before == "" then null else $before end),since:(if $since == "" then null else $since end),"after-sha":$after,commits:0},alreadyHandledBy:"existing stalled automation (implement.yml stalled job / cleanup.yml mark-stalled job)"}]')
+            entry=$(jq -n --arg branch "$measure_branch" --arg before "$before_sha" --arg since "$since" --arg after "$after_sha" --arg commits "$commits_out" \
+              '[{source:"branch-drift","class-hint":null,facts:{branch:$branch,"before-sha":(if $before == "" then null else $before end),since:(if $since == "" then null else $since end),"after-sha":$after,commits:(if $commits == "" then null else ($commits|tonumber) end)},alreadyHandledBy:"existing stalled automation (implement.yml stalled job / cleanup.yml mark-stalled job)"}]')
           else
-            entry=$(jq -n --arg branch "$measure_branch" --arg before "$before_sha" --arg since "$since" --arg after "$after_sha" \
-              '[{source:"branch-drift","class-hint":"lost-progress",facts:{branch:$branch,"before-sha":(if $before == "" then null else $before end),since:(if $since == "" then null else $since end),"after-sha":$after,commits:0}}]')
+            entry=$(jq -n --arg branch "$measure_branch" --arg before "$before_sha" --arg since "$since" --arg after "$after_sha" --arg commits "$commits_out" \
+              '[{source:"branch-drift","class-hint":"lost-progress",facts:{branch:$branch,"before-sha":(if $before == "" then null else $before end),since:(if $since == "" then null else $since end),"after-sha":$after,commits:(if $commits == "" then null else ($commits|tonumber) end)}}]')
           fi
           jq -c --argjson new "$entry" '. + $new' "$RUNNER_TEMP/signals.json" > "$RUNNER_TEMP/signals.json.tmp" && mv "$RUNNER_TEMP/signals.json.tmp" "$RUNNER_TEMP/signals.json"
 
@@ -1184,15 +1291,35 @@ jobs:
           if [ -z "$own_record" ]; then
             # Fall back to this run's own metrics-record artifact
             # (research.md R3's interpretation of FR-014) — the same
-            # download idiom collect-execution-output already uses.
-            dl_dir="$RUNNER_TEMP/turn-budget-metrics"
+            # download idiom collect-execution-output already uses. Shared
+            # directory with collect-branch-drift/collect-cost-report
+            # (CLAUDE.md "shared logic has exactly one home"): same
+            # artifact, same run.
+            dl_dir="$RUNNER_TEMP/metrics-record-shared"
             mkdir -p "$dl_dir"
-            if GH_TOKEN="$ACTIONS_TOKEN" gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -p 'metrics-record*' -D "$dl_dir" >"$RUNNER_TEMP/tb-dl.log" 2>&1; then
-              for f in "$dl_dir"/*/*.json "$dl_dir"/*.json; do
+            if [ -n "$(find "$dl_dir" -type f -name '*.json' 2>/dev/null)" ] || GH_TOKEN="$ACTIONS_TOKEN" gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -p 'metrics-record*' -D "$dl_dir" >"$RUNNER_TEMP/tb-dl.log" 2>&1; then
+              # specs/050-branch-drift-sha-baseline added a fourth,
+              # transcript-less `metrics-record-branch-advance` artifact
+              # alongside cycle/retry/progress (`turns.available`/
+              # `cost_available` always false on it). Selecting by
+              # first-in-glob-order would let it shadow the real
+              # cycle/retry/progress record whenever it sorts first, so the
+              # named artifacts are tried in priority order before falling
+              # back to whatever else was downloaded (see collect-cost-report
+              # for the identical selection, shared per CLAUDE.md).
+              for known in cycle retry progress; do
+                f="$dl_dir/metrics-record-$known/wing-commander-metrics-record.json"
                 [ -e "$f" ] || continue
                 own_record="$(cat "$f")"
                 break
               done
+              if [ -z "$own_record" ]; then
+                for f in "$dl_dir"/*/*.json "$dl_dir"/*.json; do
+                  [ -e "$f" ] || continue
+                  own_record="$(cat "$f")"
+                  break
+                done
+              fi
             else
               grep -qiE "no artifact|no valid artifacts|no artifacts" "$RUNNER_TEMP/tb-dl.log" 2>/dev/null || tb_outcome="failed"
             fi
@@ -1267,7 +1394,22 @@ jobs:
       # specs/046-watchdog-supervision-collectors: every cost-bearing stage
       # run's spend must actually reach the lifecycle issue, correctly
       # formatted. COST_REPORT_FILTER is self-contained (research.md R8's
-      # magnitude-aware pattern) so the gate can fixture it directly.
+      # magnitude-aware pattern) so the gate can fixture it directly, and so
+      # is COST_ATTRIBUTION_FILTER, which decides WHICH comments are this
+      # run's own (#376).
+      #
+      # "Not checked" is never "checked and absent" (#376): with no lifecycle
+      # issue resolved (a cleanup sweep, a rebase run), or when the comment
+      # read itself failed, comments_checked stays false and the filter emits
+      # nothing. Eight false cost-line-missing issues were filed before this,
+      # every one over a run whose cost line had been posted.
+      #
+      # errexit is ON in this step: `shell: bash` starts it under `-e -o
+      # pipefail` and the script's own `set -uo pipefail` does not clear -e.
+      # So no `grep` that may legitimately match nothing runs here -- the
+      # cost line is matched inside jq. The grep pipeline this replaced
+      # exited 1 on any comment with no cost line, which under errexit killed
+      # the step for every run whose issue DID resolve (#376).
       - name: "Collect: cost report"
         id: collect-cost-report
         shell: bash
@@ -1278,7 +1420,9 @@ jobs:
           RUN_ID: ${{ inputs.run-id }}
           RUN_CONCLUSION: ${{ steps.run-meta.outputs.conclusion }}
           CREATED_AT: ${{ steps.run-meta.outputs.created-at }}
+          UPDATED_AT: ${{ steps.run-meta.outputs.updated-at }}
           ISSUE: ${{ steps.spec-slug.outputs.lifecycle-issue }}
+          BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
         run: |
           set -uo pipefail
           case "$RUN_CONCLUSION" in
@@ -1293,6 +1437,7 @@ jobs:
           COST_REPORT_FILTER='
             . as $in
             | if ($in.cost_available // false) != true then []
+              elif ($in.comments_checked // false) != true then []
               elif ($in.comment_found // false) != true then
                 [{source:"cost-report","class-hint":"cost-line-missing",facts:{stage:$in.stage,run:$in.run,"cost-available":true,"lifecycle-comment-found":false}}]
               elif ($in.cost_token // null) == null then
@@ -1306,16 +1451,58 @@ jobs:
               end
           '
 
+          # Attribution (spec.md edge case): this run's own comments are the
+          # ones the pipeline's identities posted on the lifecycle issue
+          # between the run's start and its end -- matched by login (the App
+          # as <slug>[bot], and github-actions[bot]), the way pr-conversation
+          # and metrics-persist recognise their own comments; "any bot"
+          # would admit a dependency or scanning bot's comment as the run's
+          # (implement.yml, PR #258 review). The cost line is looked for
+          # across ALL of them, because the earliest is normally the stage's
+          # "started" announcement, which never carries one -- and a comment
+          # by a person is never the run's: a clarify run is triggered by
+          # the owner's reply, and a second reply seconds later used to be
+          # taken for the run's own comment. Known limit: two runs
+          # overlapping on one issue can each be credited with the other's
+          # line; nothing in a comment names the run that posted it.
+          # shellcheck disable=SC2016 # this is a jq program — its $vars must
+          # NOT be shell-expanded.
+          COST_ATTRIBUTION_FILTER='
+            . as $in
+            | [ ($in.comments // [])[]
+                | select(.userLogin as $l | any(($in.logins // [])[]; . == $l))
+                | select(($in.since // "") == "" or .createdAt >= $in.since)
+                | select(($in.until // "") == "" or .createdAt <= $in.until) ]
+            | sort_by(.createdAt) as $own
+            | ([ $own[] | [(.body // "") | match("\\*{0,2}Cost\\*{0,2}:[^\\r\\n]*").string] | .[0] // empty ] | .[0] // null) as $raw
+            | (if $raw == null then null else ($raw | gsub("\\*"; "") | sub("^ +"; "")) end) as $observed
+            | { comment_found: (($own | length) > 0),
+                observed_text: $observed,
+                cost_token: (if $observed == null then null else ([$observed | match("\\$[^ ]*").string] | .[0] // null) end) }
+          '
+
           cr_outcome="ok"
-          dl_dir="$RUNNER_TEMP/cost-report-metrics"
+          # Shared directory with collect-branch-drift/collect-turn-budget
+          # (CLAUDE.md "shared logic has exactly one home"): same artifact,
+          # same run.
+          dl_dir="$RUNNER_TEMP/metrics-record-shared"
           mkdir -p "$dl_dir"
           own_record=""
-          if GH_TOKEN="$ACTIONS_TOKEN" gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -p 'metrics-record*' -D "$dl_dir" >"$RUNNER_TEMP/cr-dl.log" 2>&1; then
-            for f in "$dl_dir"/*/*.json "$dl_dir"/*.json; do
+          if [ -n "$(find "$dl_dir" -type f -name '*.json' 2>/dev/null)" ] || GH_TOKEN="$ACTIONS_TOKEN" gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -p 'metrics-record*' -D "$dl_dir" >"$RUNNER_TEMP/cr-dl.log" 2>&1; then
+            # Named-artifact-first selection -- see collect-turn-budget.
+            for known in cycle retry progress; do
+              f="$dl_dir/metrics-record-$known/wing-commander-metrics-record.json"
               [ -e "$f" ] || continue
               own_record="$(cat "$f")"
               break
             done
+            if [ -z "$own_record" ]; then
+              for f in "$dl_dir"/*/*.json "$dl_dir"/*.json; do
+                [ -e "$f" ] || continue
+                own_record="$(cat "$f")"
+                break
+              done
+            fi
           else
             grep -qiE "no artifact|no valid artifacts|no artifacts" "$RUNNER_TEMP/cr-dl.log" 2>/dev/null || cr_outcome="failed"
           fi
@@ -1334,15 +1521,17 @@ jobs:
             exit 0
           fi
 
-          # Attribution (spec.md edge case): the earliest lifecycle-issue
-          # comment created at or after this run's own start is the one this
-          # run itself is expected to have posted — the same "the comment
-          # closest to this run" reasoning the rest of this file uses when
-          # attributing artifacts to a run.
-          comment_found="false"
-          cost_token="null"
-          observed_text="null"
-          if [ -n "$ISSUE" ]; then
+          comments_checked="false"
+          attribution='{"comment_found":false,"observed_text":null,"cost_token":null}'
+          if [ -z "$ISSUE" ]; then
+            echo "cost-report: no lifecycle issue resolved for this run, so there is no comment list to check — no cost-line signal either way." >> "$GITHUB_STEP_SUMMARY"
+          elif [ -z "$CREATED_AT" ] || [ -z "$UPDATED_AT" ] || [ -z "$BOT_SLUG" ]; then
+            # Without both bounds and the App's login, "the run's own
+            # comments" cannot be told apart from the next run's on the same
+            # issue -- an open-ended window would credit this run with a
+            # later run's line, or blame it for one. Not checked, not absent.
+            echo "cost-report: the run's window (created-at '$CREATED_AT', updated-at '$UPDATED_AT') or the App login (slug '$BOT_SLUG') is unknown, so this run's own comments cannot be identified — no cost-line signal either way." >> "$GITHUB_STEP_SUMMARY"
+          else
             # Gate 18: --paginate emits one comment object per line across
             # every page; the wrapping array is built AFTER paginating
             # (jq -s), never inside the --jq filter itself, or a
@@ -1352,27 +1541,22 @@ jobs:
             # -cs` on an empty stream still exits 0, which would otherwise
             # silently read a failed `gh api` call as "zero comments."
             comments_rc=0
-            gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments" --paginate --jq '.[] | {body, createdAt: .created_at}' 2>"$RUNNER_TEMP/cr-comments-err.txt" | jq -cs '.' > "$RUNNER_TEMP/cr-comments.json" || comments_rc="${PIPESTATUS[0]}"
+            gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments" --paginate --jq '.[] | {body, createdAt: .created_at, userLogin: .user.login}' 2>"$RUNNER_TEMP/cr-comments-err.txt" | jq -cs '.' > "$RUNNER_TEMP/cr-comments.json" || comments_rc="${PIPESTATUS[0]}"
+            computed=""
             if [ "$comments_rc" = "0" ]; then
-              comments_json="$(cat "$RUNNER_TEMP/cr-comments.json")"
-              attributable="$(printf '%s' "$comments_json" | jq -c --arg since "$CREATED_AT" '[.[] | select($since == "" or .createdAt >= $since)] | sort_by(.createdAt) | .[0] // empty')"
-              if [ -n "$attributable" ]; then
-                comment_found="true"
-                body="$(printf '%s' "$attributable" | jq -r '.body')"
-                observed="$(printf '%s' "$body" | grep -oE '\*{0,2}Cost\*{0,2}:[^\n]*' | head -1 | sed 's/\*//g' | sed -E 's/^ +//')"
-                if [ -n "$observed" ]; then
-                  observed_text="$(jq -n --arg t "$observed" '$t')"
-                  token="$(printf '%s' "$observed" | grep -oE '\$[^ ]*' | head -1)"
-                  [ -n "$token" ] && cost_token="$(jq -n --arg t "$token" '$t')"
-                fi
-              fi
+              computed="$(jq -c --arg since "$CREATED_AT" --arg until "$UPDATED_AT" --arg app "${BOT_SLUG}[bot]" '{comments: ., since: $since, until: $until, logins: [$app, "github-actions[bot]"]}' "$RUNNER_TEMP/cr-comments.json" | jq -c "$COST_ATTRIBUTION_FILTER")" || computed=""
+            fi
+            if [ -n "$computed" ]; then
+              comments_checked="true"
+              attribution="$computed"
             else
               cr_outcome="failed"
+              echo "cost-report: the comments of lifecycle issue #$ISSUE could not be read — no cost-line signal either way; the collector is recorded as untrusted for this run." >> "$GITHUB_STEP_SUMMARY"
             fi
           fi
 
-          filter_input="$(jq -n --arg stage "$stage" --arg run "$RUN_ID" --argjson cost_available true --arg comment_found "$comment_found" --argjson cost_token "$cost_token" --argjson observed_text "$observed_text" \
-            '{stage:$stage, run:$run, cost_available:$cost_available, comment_found:($comment_found=="true"), cost_token:$cost_token, observed_text:$observed_text}')"
+          filter_input="$(jq -n --arg stage "$stage" --arg run "$RUN_ID" --argjson comments_checked "$comments_checked" --argjson attribution "$attribution" \
+            '{stage:$stage, run:$run, cost_available:true, comments_checked:$comments_checked} + $attribution')"
 
           entries="$(printf '%s' "$filter_input" | jq -c "$COST_REPORT_FILTER")"
           jq -c --argjson new "$entries" '. + $new' "$RUNNER_TEMP/signals.json" > "$RUNNER_TEMP/signals.json.tmp" && mv "$RUNNER_TEMP/signals.json.tmp" "$RUNNER_TEMP/signals.json"

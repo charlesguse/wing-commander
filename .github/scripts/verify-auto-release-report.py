@@ -16,12 +16,11 @@ dispatch and pointed at the same non-existent run.
 
 This harness EXECUTES the shipped step (read out of auto-release.yml at run
 time, so there is no second copy to drift) against synthetic `needs.*`
-values -- each job's `result` and outputs -- with `gh`/`git` stubbed to
-record what would have been filed, commented, or closed. Every attribution
-path the step has is a scenario: the two quiet days, each verdict class,
-each job-result crash, the collision, released (correlated and
-uncorrelated), branch-advanced, and a real release failure (with and
-without a correlated run).
+values -- each job's `result` and outputs -- with `gh`/`git` stubbed for the
+two live reads the step still makes. Every attribution path the step has is
+a scenario: the two quiet days, each verdict class, each job-result crash,
+the collision, released (correlated and uncorrelated), branch-advanced, and
+a real release failure (with and without a correlated run).
 
 specs/048-correlated-release-dispatch (FR-007/FR-007a/FR-013) replaced the
 step's `RELEASE_OUTCOME`/`RELEASE_RUN_ID` reads (a run's own conclusion)
@@ -29,6 +28,20 @@ with `TAG_MATCHES`/`CORRELATION`/`CORRELATED_RUN_ID`/`CORRELATED_RUN_URL`
 (tag state, decided independently of any run) -- this harness's scenarios
 and mutations were updated alongside that rewrite so the release-time
 answer and this self-test cannot drift apart.
+
+specs/049-single-home-release-idioms then moved the dedup-by-label
+lookup/create/comment/close mechanics that used to live inline in this step
+(shared, byte-for-byte, with auto-update-spec-kit.yml's four report sites)
+into `.github/actions/_shared/durable-failure-issue`, a `uses:` step this
+step's own script can no longer perform (a `run:` block cannot invoke a
+composite action). The step under test here -- renamed "Determine this
+run's outcome" -- now only DECIDES what happened and writes that decision
+to `$GITHUB_OUTPUT` (`action`: report | close | empty, plus `title` and
+`close-comment`) and to the failure-body file; the two follow-up `uses:`
+steps in the real workflow read those outputs and call the composite. This
+harness therefore asserts on the decision (action/title/close-comment/
+body/summary), not on `gh` issue calls -- the composite's own
+report/close/dedup mechanics are its own concern, not re-tested here.
 
 It ends with MUTATION checks that put each defect back and assert the
 suite then fails. A test that cannot fail is not a test.
@@ -47,25 +60,20 @@ from wc_shell_harness import (  # noqa: E402
     ensure_jq, find_step, resolve_bash, run_step, use_utf8_stdout)
 
 WORKFLOW = ".github/workflows/auto-release.yml"
-STEP = "Report this run's outcome"
+STEP = "Determine this run's outcome"
 
 BASH = None
 
-# A `gh` stand-in that records every invocation and answers the four calls
-# the step makes: `issue list` (the open auto-release:failed issue, if the
-# scenario says one exists), `issue create`, `issue comment`, `issue close`
-# and `label create` (all no-ops beyond the log).
+# Since specs/049 moved the issue mechanics into the durable-failure-issue
+# composite, the step's only remaining `gh` call is the branch-advanced/
+# release-failed classifier's default-branch read. Any other invocation is
+# a regression -- a report/close site that crept back inline, where Gate 60
+# would also fail -- so the stub refuses it loudly instead of no-op'ing.
 STUB_GH = r'''#!/usr/bin/env bash
-if [ -n "${GH_STUB_LOG:-}" ]; then printf '%s\n' "$*" >> "$GH_STUB_LOG"; fi
-case "$1 $2" in
-  "issue list")
-    printf '%s\n' "${GH_STUB_EXISTING_ISSUE:-}"
-    exit 0
-    ;;
-  "issue create"|"issue comment"|"issue close"|"label create")
-    exit 0
-    ;;
-esac
+if [ "$1 $2" = "repo view" ]; then
+  printf '%s\n' "${GH_STUB_DEFAULT_BRANCH:-main}"
+  exit 0
+fi
 echo "unexpected gh invocation: $*" >&2
 exit 1
 '''
@@ -86,18 +94,54 @@ RUN_URL = "https://github.com/charlesguse/wing-commander/actions/runs/777"
 CORRELATED_RUN_URL = "https://github.com/charlesguse/wing-commander/actions/runs/4242"
 HEAD = "0123456789abcdef0123456789abcdef01234567"
 OTHER_SHA = "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
-PASS = json.dumps({"outcome": "pass", "verified_head": HEAD})
+PASS = json.dumps({"outcome": "pass", "verified_head": HEAD,
+                   "mode": "container", "container_image_configured": True})
 WRONG_OUTPUT = json.dumps({"outcome": "fail-wrong-output", "verified_head": HEAD,
                            "failing_check": "spec.md content",
                            "expected": "the fixture's heading",
                            "observed": "an empty file",
-                           "evidence_url": "https://example.invalid/e2e"})
+                           "evidence_url": "https://example.invalid/e2e",
+                           "mode": "default-runner"})
+
+# specs/055-unattended-e2e-gates: the clarification gate's pass-path
+# assertion (research.md D12, T012) ends the poll step with this exact
+# fail-wrong-output shape when a question opened with no harness reply
+# before stage:done -- unrelated to the new fail-gate-stall outcome, and
+# must still render as "pipeline defect" (unchanged classification).
+CLARIFICATION_UNANSWERED = json.dumps({
+    "outcome": "fail-wrong-output", "verified_head": HEAD,
+    "failing_check": "clarification gate answered before stage:done",
+    "expected": "a harness reply after every open question",
+    "observed": "question opened, never answered",
+    "evidence_url": "https://example.invalid/e2e"})
+
+
+def gate_stall(failing_check, expected, observed):
+    return json.dumps({"outcome": "fail-gate-stall", "verified_head": HEAD,
+                       "failing_check": failing_check, "expected": expected,
+                       "observed": observed,
+                       "evidence_url": "https://example.invalid/e2e"})
+
+
+GATE_STALL_CLARIFICATION = gate_stall(
+    "clarification",
+    "a reply from the harness resolves the open clarification question within 3 rounds",
+    "still asking after 3 rounds")
+GATE_STALL_SPEC_DRAFT = gate_stall(
+    "spec-draft PR merge", "gh pr merge succeeds", "PR #12: CONFLICTING")
+GATE_STALL_PLAN = gate_stall(
+    "plan PR merge", "gh pr merge succeeds", "PR #13: required check blocked")
+GATE_STALL_FINALIZE = gate_stall(
+    "finalize PR merge", "the PR at this branch belongs to the current attempt",
+    "PR #14 belongs to a previous attempt")
 
 # Every scenario starts from a run where nothing has happened yet -- every
 # result `skipped`, every output empty -- and overrides what its situation
-# sets. `filed` is what the step did with the failure issue: "create",
-# "comment" (dedup onto the existing one), or None. `current_tip` feeds the
-# git ls-remote stub (defaults to HEAD -- the branch has not advanced).
+# sets. `action` is the decision the step wrote to $GITHUB_OUTPUT for the
+# two follow-up composite steps to act on: "report", "close", or None (it
+# decided nothing needed doing). `close_comment_contains` asserts on the
+# note a "close" decision carries. `current_tip` feeds the ls-remote stub
+# (defaults to HEAD -- the branch has not advanced).
 REQUEST_TIME = "2024-01-01T00:00:00Z"
 
 BASE = dict(DETECT_RESULT="skipped", VERIFY_RESULT="skipped",
@@ -106,14 +150,18 @@ BASE = dict(DETECT_RESULT="skipped", VERIFY_RESULT="skipped",
             VERDICT_JSON="", NEXT_VERSION="", COLLISION="",
             TAG_MATCHES="", CORRELATION="", CORRELATED_RUN_ID="",
             CORRELATED_RUN_URL="", REQUEST_TIME=REQUEST_TIME,
-            DISPATCH_REJECTED="false")
+            DISPATCH_REJECTED="false", PAUSED="false",
+            # specs/055-unattended-e2e-gates FR-019/FR-025: gate evidence
+            # for a pass verdict's summary.
+            SPEC_DRAFT_PR="", PLAN_PR="", FINALIZE_PR="",
+            CLARIFICATION_ROUNDS_ANSWERED="", CLARIFICATION_COMMENT_IDS="")
 
 SCENARIOS = [
     dict(
         name="detect crashed before writing outputs: infrastructure, filed, "
              "naming detect and this run -- not a quiet day (#325 case 1)",
         env=dict(DETECT_RESULT="failure"),
-        filed="create",
+        action="report",
         body_contains=["infrastructure", "`detect`", RUN_URL, "unknown"],
         body_excludes=["release.yml was dispatched"],
         summary_contains="infrastructure failure",
@@ -122,21 +170,24 @@ SCENARIOS = [
     dict(
         name="run cancelled during detect: summarised, nothing filed",
         env=dict(DETECT_RESULT="cancelled"),
-        filed=None,
+        action=None,
         summary_contains="cancelled",
     ),
     dict(
-        name="quiet day with a baseline tag (FR-003): nothing filed",
+        name="quiet day with a baseline tag (FR-003): nothing filed, and "
+             "a standing report from an earlier attempt is closed as stale "
+             "-- the latest tag already points at HEAD",
         env=dict(DETECT_RESULT="success", HAS_NEW_WORK="false", TAG_EXISTS="true",
                  LATEST_TAG="v2.7.2", HEAD_SHA=HEAD),
-        filed=None,
+        action="close",
+        close_comment_contains="v2.7.2 already released",
         summary_contains="no new work since v2.7.2",
     ),
     dict(
         name="no baseline tag yet (FR-004): nothing filed",
         env=dict(DETECT_RESULT="success", HAS_NEW_WORK="false", TAG_EXISTS="false",
                  HEAD_SHA=HEAD),
-        filed=None,
+        action=None,
         summary_contains="no release tag exists yet",
     ),
     dict(
@@ -144,7 +195,7 @@ SCENARIOS = [
              "naming the missing verdict and the job result",
         env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
                  LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="failure"),
-        filed="create",
+        action="report",
         body_contains=["infrastructure", "verify-e2e produced no verdict",
                        "job result: failure", RUN_URL],
         summary_contains="verification failed",
@@ -154,7 +205,7 @@ SCENARIOS = [
              "summarised, nothing filed -- not an infrastructure failure",
         env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
                  LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="cancelled"),
-        filed=None,
+        action=None,
         summary_contains="cancelled",
         summary_excludes="verification failed",
     ),
@@ -165,9 +216,28 @@ SCENARIOS = [
         env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
                  LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
                  VERDICT_JSON="pass"),
-        filed="create",
+        action="report",
         body_contains=["infrastructure", "verify-e2e produced no verdict", "contract broken"],
         body_excludes=["the job stopped"],
+    ),
+    dict(
+        name="a fail-infra verdict naming an unresolved container image "
+             "(specs/054 MF1): infrastructure, never a pipeline defect, "
+             "even though it came from the poll step's own terminal-state "
+             "check rather than an earlier job crash",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
+                 VERDICT_JSON=json.dumps({
+                     "outcome": "fail-infra", "verified_head": HEAD,
+                     "failing_check": "container image pulled/authorized for the stage that ran it",
+                     "expected": "the reference image resolves and its registry credentials (if any) are accepted",
+                     "observed": "verify-image-prerequisites failed: wing-commander verify-image-prerequisites: failed to pull ghcr.io/example/image",
+                     "evidence_url": "https://github.com/owner/repo/actions/runs/555",
+                     "mode": "container", "container_image_configured": False})),
+        action="report",
+        body_contains=["infrastructure", "container image pulled/authorized",
+                       "https://github.com/owner/repo/actions/runs/555"],
+        body_excludes=["pipeline defect"],
     ),
     dict(
         name="a fail-wrong-output verdict: pipeline defect, filed with the "
@@ -175,7 +245,7 @@ SCENARIOS = [
         env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
                  LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
                  VERDICT_JSON=WRONG_OUTPUT),
-        filed="create",
+        action="report",
         body_contains=["pipeline defect", "spec.md content", "https://example.invalid/e2e"],
         body_excludes=["infrastructure"],
     ),
@@ -186,7 +256,7 @@ SCENARIOS = [
         env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
                  LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
                  VERDICT_JSON=PASS, DECIDE_RESULT="failure"),
-        filed="create",
+        action="report",
         body_contains=["infrastructure", "`decide-version`", RUN_URL],
         body_excludes=["release.yml was dispatched", "release failure"],
         summary_excludes="release dispatch failed",
@@ -196,7 +266,7 @@ SCENARIOS = [
         env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
                  LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
                  VERDICT_JSON=PASS, DECIDE_RESULT="cancelled"),
-        filed=None,
+        action=None,
         summary_contains="cancelled",
     ),
     dict(
@@ -205,7 +275,7 @@ SCENARIOS = [
                  LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
                  VERDICT_JSON=PASS, DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
                  COLLISION="true"),
-        filed="create",
+        action="report",
         body_contains=["version collision", "v2.8.0"],
         summary_contains="version collision",
     ),
@@ -218,10 +288,9 @@ SCENARIOS = [
                  COLLISION="false", DISPATCH_RESULT="success",
                  TAG_MATCHES="true", CORRELATION="found",
                  CORRELATED_RUN_ID="4242", CORRELATED_RUN_URL=CORRELATED_RUN_URL),
-        existing_issue="42",
-        filed=None,
-        closed="42",
-        summary_contains=f"released v2.8.0 -- [correlated run]({CORRELATED_RUN_URL})",
+        action="close",
+        close_comment_contains="v2.8.0 released",
+        summary_contains=f"released v2.8.0 (mode: container) -- [correlated run]({CORRELATED_RUN_URL})",
     ),
     dict(
         name="released, own run never correlated (Edge Case: the release "
@@ -232,10 +301,27 @@ SCENARIOS = [
                  VERDICT_JSON=PASS, DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
                  COLLISION="false", DISPATCH_RESULT="success",
                  TAG_MATCHES="true", CORRELATION="not-observed"),
-        existing_issue="42",
-        filed=None,
-        closed="42",
-        summary_contains="released v2.8.0 -- own run not correlated",
+        action="close",
+        close_comment_contains="v2.8.0 released",
+        summary_contains="released v2.8.0 (mode: container) -- own run not correlated",
+    ),
+    dict(
+        name="released while a container-mode turn was paused (FR-009): "
+             "reports the default-runner mode the run actually exercised, "
+             "annotated as paused rather than a plain default-runner pass",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
+                 VERDICT_JSON=json.dumps({"outcome": "pass", "verified_head": HEAD,
+                                          "mode": "default-runner"}),
+                 DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
+                 COLLISION="false", DISPATCH_RESULT="success",
+                 TAG_MATCHES="true", CORRELATION="found",
+                 CORRELATED_RUN_ID="4242", CORRELATED_RUN_URL=CORRELATED_RUN_URL,
+                 PAUSED="true"),
+        action="close",
+        close_comment_contains="v2.8.0 released",
+        summary_contains=f"released v2.8.0 (mode: default-runner (container mode "
+                         f"not exercised: paused)) -- [correlated run]({CORRELATED_RUN_URL})",
     ),
     dict(
         name="branch-advanced (FR-013): expected behaviour, nothing filed, "
@@ -246,7 +332,7 @@ SCENARIOS = [
                  COLLISION="false", DISPATCH_RESULT="success",
                  TAG_MATCHES="false", CORRELATION="not-observed"),
         current_tip=OTHER_SHA,
-        filed=None,
+        action=None,
         summary_contains=f"the branch advanced past the verified head ({HEAD})",
     ),
     dict(
@@ -258,7 +344,7 @@ SCENARIOS = [
                  COLLISION="false", DISPATCH_RESULT="success",
                  TAG_MATCHES="false", CORRELATION="not-observed"),
         current_tip=OTHER_SHA,
-        filed=None,
+        action=None,
         summary_contains=f"not observed within the correlation window for v2.8.0 requested at {REQUEST_TIME}",
     ),
     dict(
@@ -270,7 +356,7 @@ SCENARIOS = [
                  COLLISION="false", DISPATCH_RESULT="success",
                  TAG_MATCHES="false", CORRELATION="not-observed",
                  DISPATCH_REJECTED="true"),
-        filed="create",
+        action="report",
         body_contains=[f"the dispatch of v2.8.0 requested at {REQUEST_TIME} was rejected outright"],
         body_excludes=["own run was not observed within the correlation window"],
         summary_contains="release dispatch failed for v2.8.0",
@@ -282,7 +368,7 @@ SCENARIOS = [
                  LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
                  VERDICT_JSON=PASS, DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
                  COLLISION="false", DISPATCH_RESULT="failure"),
-        filed="create",
+        action="report",
         body_contains=["infrastructure", "`dispatch-release`", RUN_URL],
         body_excludes=["release failure"],
     ),
@@ -293,7 +379,7 @@ SCENARIOS = [
                  LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
                  VERDICT_JSON=PASS, DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
                  COLLISION="false", DISPATCH_RESULT="skipped"),
-        filed=None,
+        action=None,
         summary_contains="did not run",
     ),
     dict(
@@ -305,7 +391,7 @@ SCENARIOS = [
                  COLLISION="false", DISPATCH_RESULT="success",
                  TAG_MATCHES="false", CORRELATION="found",
                  CORRELATED_RUN_ID="9999", CORRELATED_RUN_URL=CORRELATED_RUN_URL),
-        filed="create",
+        action="report",
         body_contains=["pipeline defect", CORRELATED_RUN_URL],
         body_excludes=["not correlated (see tag state below)"],
         summary_contains="release dispatch failed for v2.8.0",
@@ -319,19 +405,140 @@ SCENARIOS = [
                  VERDICT_JSON=PASS, DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
                  COLLISION="false", DISPATCH_RESULT="success",
                  TAG_MATCHES="false", CORRELATION="ambiguous"),
-        filed="create",
+        action="report",
         body_contains=["pipeline defect", "not correlated (see tag state below)",
                        f"could not be uniquely identified among the candidate runs "
                        f"matched for v2.8.0 requested at {REQUEST_TIME}"],
         summary_contains="release dispatch failed for v2.8.0",
     ),
     dict(
-        name="a failure with an open report already filed: commented onto "
-             "it, not filed twice (research.md D13)",
-        env=dict(DETECT_RESULT="failure"),
-        existing_issue="42",
-        filed="comment",
-        body_contains=["infrastructure", "`detect`"],
+        name="specs/055: clarification gate opened with no harness reply "
+             "before stage:done (T012's poll-step assertion) -- an "
+             "unrelated fail-wrong-output shape, still 'pipeline defect' "
+             "(SC-010: never collapsed into 'gate stall')",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
+                 VERDICT_JSON=CLARIFICATION_UNANSWERED),
+        action="report",
+        body_contains=["pipeline defect", "clarification gate answered before stage:done",
+                       "question opened, never answered"],
+        body_excludes=["gate stall"],
+    ),
+    dict(
+        name="specs/055: fail-gate-stall at the clarification gate "
+             "(round bound exhausted) -- classified 'gate stall', never "
+             "'infrastructure' or 'pipeline defect' (SC-010, FR-021)",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
+                 VERDICT_JSON=GATE_STALL_CLARIFICATION),
+        action="report",
+        body_contains=["gate stall", "clarification", "still asking after 3 rounds",
+                       "the harness attempted to drive this gate and could not"],
+        body_excludes=["**Classification**: infrastructure",
+                       "**Classification**: pipeline defect"],
+    ),
+    dict(
+        name="specs/055: fail-gate-stall, spec-draft PR merge conflicting",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
+                 VERDICT_JSON=GATE_STALL_SPEC_DRAFT),
+        action="report",
+        body_contains=["gate stall", "spec-draft PR merge", "PR #12: CONFLICTING"],
+        body_excludes=["**Classification**: infrastructure",
+                       "**Classification**: pipeline defect"],
+    ),
+    dict(
+        name="specs/055: fail-gate-stall, plan PR merge blocked",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
+                 VERDICT_JSON=GATE_STALL_PLAN),
+        action="report",
+        body_contains=["gate stall", "plan PR merge", "PR #13: required check blocked"],
+        body_excludes=["**Classification**: infrastructure",
+                       "**Classification**: pipeline defect"],
+    ),
+    dict(
+        name="specs/055: fail-gate-stall, finalize PR merge belongs to a "
+             "previous attempt (wrong-attempt, FR-009)",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
+                 VERDICT_JSON=GATE_STALL_FINALIZE),
+        action="report",
+        body_contains=["gate stall", "finalize PR merge",
+                       "PR #14 belongs to a previous attempt"],
+        body_excludes=["**Classification**: infrastructure",
+                       "**Classification**: pipeline defect"],
+    ),
+    dict(
+        name="specs/055: a pass verdict names all four gates and their "
+             "evidence in the summary (FR-019, FR-025)",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
+                 VERDICT_JSON=PASS, DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
+                 COLLISION="false", DISPATCH_RESULT="success",
+                 TAG_MATCHES="true", CORRELATION="found",
+                 CORRELATED_RUN_ID="4242", CORRELATED_RUN_URL=CORRELATED_RUN_URL,
+                 SPEC_DRAFT_PR='{"number":10,"mergedAt":"2026-01-01T00:10:00Z"}',
+                 PLAN_PR='{"number":11,"mergedAt":"2026-01-01T00:20:00Z"}',
+                 FINALIZE_PR='{"number":12,"mergedAt":"2026-01-01T00:30:00Z"}',
+                 CLARIFICATION_ROUNDS_ANSWERED="1",
+                 CLARIFICATION_COMMENT_IDS='{"questions":["c1"],"replies":["c2"]}'),
+        action="close",
+        summary_contains="gates driven:",
+    ),
+    dict(
+        name="specs/055: pass-path clarification line reads 'not opened' "
+             "when the gate never opened",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
+                 VERDICT_JSON=PASS, DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
+                 COLLISION="false", DISPATCH_RESULT="success",
+                 TAG_MATCHES="true", CORRELATION="found",
+                 CORRELATED_RUN_ID="4242", CORRELATED_RUN_URL=CORRELATED_RUN_URL,
+                 SPEC_DRAFT_PR='{"number":10,"mergedAt":"2026-01-01T00:10:00Z"}',
+                 PLAN_PR='{"number":11,"mergedAt":"2026-01-01T00:20:00Z"}',
+                 FINALIZE_PR='{"number":12,"mergedAt":"2026-01-01T00:30:00Z"}',
+                 CLARIFICATION_ROUNDS_ANSWERED="0",
+                 CLARIFICATION_COMMENT_IDS='{"questions":[],"replies":[]}'),
+        action="close",
+        summary_contains="clarification: not opened",
+    ),
+    dict(
+        name="specs/055: pass-path clarification line names the harness "
+             "round count when the harness answered",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
+                 VERDICT_JSON=PASS, DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
+                 COLLISION="false", DISPATCH_RESULT="success",
+                 TAG_MATCHES="true", CORRELATION="found",
+                 CORRELATED_RUN_ID="4242", CORRELATED_RUN_URL=CORRELATED_RUN_URL,
+                 SPEC_DRAFT_PR='{"number":10,"mergedAt":"2026-01-01T00:10:00Z"}',
+                 PLAN_PR='{"number":11,"mergedAt":"2026-01-01T00:20:00Z"}',
+                 FINALIZE_PR='{"number":12,"mergedAt":"2026-01-01T00:30:00Z"}',
+                 CLARIFICATION_ROUNDS_ANSWERED="2",
+                 CLARIFICATION_COMMENT_IDS='{"questions":["c1"],"replies":["c2","c3"]}'),
+        action="close",
+        summary_contains="clarification: answered (2 harness round(s)",
+    ),
+    dict(
+        name="specs/055: pass-path clarification line credits a human "
+             "answer before the harness's own round counter moved (FR-010); "
+             "also a regression guard for the stray '}' in "
+             "'${CLARIFICATION_COMMENT_IDS:-{}}' that used to make jq error "
+             "and misreport this case as 'not opened'",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
+                 VERDICT_JSON=PASS, DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
+                 COLLISION="false", DISPATCH_RESULT="success",
+                 TAG_MATCHES="true", CORRELATION="found",
+                 CORRELATED_RUN_ID="4242", CORRELATED_RUN_URL=CORRELATED_RUN_URL,
+                 SPEC_DRAFT_PR='{"number":10,"mergedAt":"2026-01-01T00:10:00Z"}',
+                 PLAN_PR='{"number":11,"mergedAt":"2026-01-01T00:20:00Z"}',
+                 FINALIZE_PR='{"number":12,"mergedAt":"2026-01-01T00:30:00Z"}',
+                 CLARIFICATION_ROUNDS_ANSWERED="0",
+                 CLARIFICATION_COMMENT_IDS='{"questions":["c1"],"replies":["c2"]}'),
+        action="close",
+        summary_contains="clarification: answered by a human before the harness",
     ),
 ]
 
@@ -352,10 +559,27 @@ def render_step(step):
     return script, env
 
 
+VERDICT_SCRIPT_REL = os.path.join(".github", "actions", "_shared", "auto-release-verdict.sh")
+
+
+def _stage_verdict_script(workdir):
+    """Copy the real verdict helper into workdir at its shipped relative
+    path. The step under test resolves it as `.github/actions/_shared/
+    auto-release-verdict.sh` -- correct when the real workflow runs from a
+    repository checkout, but this harness's workdir is a bare tempdir, so
+    the same relative path has to be staged there for each scenario."""
+    src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                       "actions", "_shared", "auto-release-verdict.sh")
+    dst = os.path.join(workdir, VERDICT_SCRIPT_REL)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.copyfile(src, dst)
+
+
 def run_scenario(script, env, sc, tmproot):
     workdir = tempfile.mkdtemp(dir=tmproot)
     runner_temp = tempfile.mkdtemp(dir=tmproot)
     bindir = tempfile.mkdtemp(dir=tmproot)
+    _stage_verdict_script(workdir)
 
     gh_path = os.path.join(bindir, "gh")
     with open(gh_path, "w", encoding="utf-8", newline="\n") as fh:
@@ -375,16 +599,8 @@ def run_scenario(script, env, sc, tmproot):
     run_env["GITHUB_REPOSITORY"] = "charlesguse/wing-commander"
     run_env["GITHUB_RUN_ID"] = "777"
     run_env["GIT_STUB_CURRENT_TIP"] = sc.get("current_tip") or run_env.get("HEAD_SHA") or HEAD
-    gh_log = os.path.join(runner_temp, "gh-stub.log")
-    run_env["GH_STUB_LOG"] = gh_log.replace("\\", "/")
-    if sc.get("existing_issue"):
-        run_env["GH_STUB_EXISTING_ISSUE"] = sc["existing_issue"]
 
-    rc, out, _, summary = run_step(BASH, script, workdir, run_env, runner_temp)
-    gh_calls = []
-    if os.path.exists(gh_log):
-        with open(gh_log, encoding="utf-8") as fh:
-            gh_calls = [ln.rstrip("\r\n") for ln in fh if ln.strip()]
+    rc, out, outputs, summary = run_step(BASH, script, workdir, run_env, runner_temp)
     body = ""
     body_path = os.path.join(runner_temp, "auto-release-failure-body.md")
     if os.path.exists(body_path):
@@ -392,31 +608,32 @@ def run_scenario(script, env, sc, tmproot):
             body = fh.read()
     for d in (workdir, runner_temp, bindir):
         shutil.rmtree(d, ignore_errors=True)
-    return rc, out, summary, gh_calls, body
+    return rc, out, summary, outputs, body
 
 
 def suite(script, env, tmproot):
     failures = []
     for sc in SCENARIOS:
         tag = f"[{sc['name']}]"
-        rc, out, summary, gh_calls, body = run_scenario(script, env, sc, tmproot)
+        rc, out, summary, outputs, body = run_scenario(script, env, sc, tmproot)
         if rc != 0:
             failures.append(f"{tag} the step exited {rc}:\n{out}")
             continue
-        created = any(c.startswith("issue create ") for c in gh_calls)
-        commented = any(c.startswith("issue comment ") for c in gh_calls)
-        closed = [c for c in gh_calls if c.startswith("issue close ")]
-        filed = "create" if created else ("comment" if commented else None)
-        if filed != sc["filed"]:
-            failures.append(f"{tag} expected filed={sc['filed']!r}, got {filed!r}; "
-                            f"gh calls: {gh_calls or '(none)'}")
-        want_closed = sc.get("closed")
-        if want_closed:
-            if not any(c.startswith(f"issue close {want_closed} ") for c in closed):
-                failures.append(f"{tag} expected `gh issue close {want_closed}`; "
-                                f"gh calls: {gh_calls or '(none)'}")
-        elif closed:
-            failures.append(f"{tag} closed an issue it should not have: {closed}")
+        action = outputs.get("action") or None
+        if action != sc["action"]:
+            failures.append(f"{tag} expected action={sc['action']!r}, got "
+                            f"{action!r}; outputs: {outputs}")
+        # The composite the decision feeds needs a title to create an issue
+        # with and a comment to close one with; an empty one reaches GitHub
+        # as a blank title or "Resolved: " with nothing after it.
+        if sc["action"] == "report" and not outputs.get("title"):
+            failures.append(f"{tag} action=report but no title output was set")
+        if sc["action"] == "close" and not outputs.get("close-comment"):
+            failures.append(f"{tag} action=close but no close-comment output was set")
+        want_note = sc.get("close_comment_contains")
+        if want_note and want_note not in (outputs.get("close-comment") or ""):
+            failures.append(f"{tag} close-comment lacks {want_note!r}: "
+                            f"{outputs.get('close-comment')!r}")
         for needle in sc.get("body_contains", []):
             if needle not in body:
                 failures.append(f"{tag} failure body lacks {needle!r}:\n{body}")
@@ -516,6 +733,20 @@ def mut_released_ignores_tag_matches(script):
     return script.replace(old, 'if [ "$CORRELATION" = "found" ]; then', 1)
 
 
+def mut_gate_stall_collapsed_into_pipeline_defect(script):
+    """specs/055-unattended-e2e-gates SC-010/FR-021: a fail-gate-stall
+    outcome must classify as 'gate stall', never fall back into the
+    generic 'pipeline defect' bucket the pre-055 binary switch used for
+    everything but fail-infra."""
+    old = 'fail-gate-stall) classification="gate stall" ;;'
+    if script.count(old) != 1:
+        sys.exit("::error::verify-auto-release-report: could not locate the "
+                 "fail-gate-stall classification arm to mutate — the step "
+                 "text may have changed shape; update this harness "
+                 "alongside it.")
+    return script.replace(old, 'fail-gate-stall) classification="pipeline defect" ;;', 1)
+
+
 MUTATIONS = [
     ("report ignoring detect's job result (#325 case 1)", mut_ignore_detect_result),
     ("report filing a cancelled verify-e2e as infrastructure", mut_ignore_verify_result),
@@ -529,6 +760,8 @@ MUTATIONS = [
      mut_released_ignores_tag_matches),
     ("a rejected dispatch collapsed into 'not observed' wording (FR-006/SC-004)",
      mut_dispatch_rejected_collapsed_into_not_observed),
+    ("a fail-gate-stall outcome collapsed into 'pipeline defect' (SC-010/FR-021)",
+     mut_gate_stall_collapsed_into_pipeline_defect),
 ]
 
 

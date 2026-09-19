@@ -1,0 +1,65 @@
+# Builds and publishes wing-commander's own reference image for the
+# auto-release.yml container-mode leg (specs/054-e2e-container-coverage,
+# research.md D5). Not a published stage: no `workflow_call` trigger, and
+# no adopter-facing surface -- this is wing-commander's own maintenance
+# tooling, the same category auto-release.yml and watchdog.yml's wrapper
+# already occupy (Constitution VII, "consuming instrument").
+#
+# This workflow never writes the end-to-end test repository's
+# WING_COMMANDER_CONTAINER_IMAGE variable -- no mechanism exists for
+# wing-commander to write an arbitrary test repository's configuration,
+# and none is added here. A maintainer copies the digest this workflow
+# prints in its job summary into that variable by hand (docs/setup.md);
+# the image is pinned there by digest, never by the moving `:latest` tag.
+name: "Wing Commander · e2e reference image"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/docker/e2e-reference-image/**"
+      - ".github/scripts/required-tools.txt"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push the reference image
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .github/docker/e2e-reference-image
+          push: true
+          tags: |
+            ghcr.io/charlesguse/wing-commander-e2e-image:latest
+            ghcr.io/charlesguse/wing-commander-e2e-image:${{ github.sha }}
+
+      - name: Print the published digest
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -uo pipefail
+          {
+            echo "### wing-commander-e2e-image published"
+            echo ""
+            echo "Digest: \`${DIGEST}\`"
+            echo ""
+            echo "Copy \`ghcr.io/charlesguse/wing-commander-e2e-image@${DIGEST}\` into the"
+            echo "end-to-end test repository's \`WING_COMMANDER_CONTAINER_IMAGE\` variable"
+            echo "(docs/setup.md) -- this workflow does not write it for you."
+          } >> "$GITHUB_STEP_SUMMARY"
