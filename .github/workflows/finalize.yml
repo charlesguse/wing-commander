@@ -1371,8 +1371,12 @@ jobs:
         env:
           IMAGE_RESULT: ${{ needs.verify-image-prerequisites.result }}
           FINALIZE_RESULT: ${{ needs.finalize.result }}
+          AGENT_RAN: ${{ needs.finalize.outputs.agent-ran }}
+          AGENT_CONCLUSION: ${{ needs.finalize.outputs.agent-conclusion }}
         run: |
-          if [ "$IMAGE_RESULT" = "failure" ]; then
+          if [ "$AGENT_RAN" = "true" ]; then
+            reason="the agent step ran (concluded: $AGENT_CONCLUSION) and a step after it did not complete"
+          elif [ "$IMAGE_RESULT" = "failure" ]; then
             reason="the verify-image-prerequisites job failed, so the finalize stage never started"
           elif [ "$FINALIZE_RESULT" = "skipped" ]; then
             reason="the finalize stage was skipped because a dependency it needs did not run"
@@ -1391,4 +1395,6 @@ jobs:
           spec-branch: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug }}
           stage-label: "stage:finalize"
           reason: ${{ steps.reason.outputs.reason }}
-          restart-command: "Re-dispatch the finalize stage for this specification once the cause above is resolved."
+          # FR-015: resume-oriented wording when the agent ran and a step
+          # after it is what stalled the job -- not a from-scratch restart.
+          restart-command: ${{ needs.finalize.outputs.agent-ran == 'true' && 'The finalize agent step ran to completion; a step after it did not. Re-dispatch the finalize stage for this specification once the cause above is resolved.' || 'Re-dispatch the finalize stage for this specification once the cause above is resolved.' }}

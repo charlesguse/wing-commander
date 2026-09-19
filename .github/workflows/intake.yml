@@ -1344,8 +1344,12 @@ jobs:
         env:
           IMAGE_RESULT: ${{ needs.verify-image-prerequisites.result }}
           INTAKE_RESULT: ${{ needs.intake.result }}
+          AGENT_RAN: ${{ needs.intake.outputs.agent-ran }}
+          AGENT_CONCLUSION: ${{ needs.intake.outputs.agent-conclusion }}
         run: |
-          if [ "$IMAGE_RESULT" = "failure" ]; then
+          if [ "$AGENT_RAN" = "true" ]; then
+            reason="the agent step ran (concluded: $AGENT_CONCLUSION) and a step after it did not complete"
+          elif [ "$IMAGE_RESULT" = "failure" ]; then
             reason="the verify-image-prerequisites job failed, so the intake stage never started"
           elif [ "$INTAKE_RESULT" = "skipped" ]; then
             reason="the intake stage was skipped because a dependency it needs did not run"
@@ -1362,4 +1366,6 @@ jobs:
           issue-number: ${{ inputs.issue-number }}
           spec-dir: ""
           reason: ${{ steps.reason.outputs.reason }}
-          restart-command: "Re-dispatch the intake stage for this specification once the cause above is resolved."
+          # FR-015: resume-oriented wording when the agent ran and a step
+          # after it is what stalled the job -- not a from-scratch restart.
+          restart-command: ${{ needs.intake.outputs.agent-ran == 'true' && 'The intake agent step ran to completion; a step after it did not. Re-dispatch the intake stage for this specification once the cause above is resolved.' || 'Re-dispatch the intake stage for this specification once the cause above is resolved.' }}

@@ -2763,6 +2763,7 @@ jobs:
           ITERATION: ${{ inputs.iteration }}
           SELF_WORKFLOW: ${{ inputs.self-workflow }}
           CHECKOUT_OK: ${{ steps.identity-checkout.outcome == 'success' }}
+          AGENT_RAN: ${{ needs.implement.outputs.agent-ran }}
         run: |
           restart_workflow="$SELF_WORKFLOW"
           [ -n "$restart_workflow" ] || restart_workflow="<your implement wrapper workflow>"
@@ -2773,7 +2774,14 @@ jobs:
           case "$recorded" in ''|*[!0-9]*) recorded="$ITERATION" ;; esac
           restart_iteration=$((recorded + 1))
           {
-            echo "Re-dispatch the implement wrapper workflow via **Run workflow** with these inputs (GitHub cannot prefill them from a link):"
+            # FR-015: a resume-oriented sentence when the agent step ran and a
+            # step after it is what stalled the job -- re-dispatching is not
+            # "starting from zero" here, the cycle's own work already landed.
+            if [ "$AGENT_RAN" = "true" ]; then
+              echo "The implement agent step ran to completion; a step after it did not. Once the cause above is resolved, resume via **Run workflow** with these inputs (GitHub cannot prefill them from a link):"
+            else
+              echo "Re-dispatch the implement wrapper workflow via **Run workflow** with these inputs (GitHub cannot prefill them from a link):"
+            fi
             echo ""
             echo "| input | value |"
             echo "|---|---|"
@@ -2799,8 +2807,12 @@ jobs:
         env:
           IMAGE_RESULT: ${{ needs.verify-image-prerequisites.result }}
           IMPLEMENT_RESULT: ${{ needs.implement.result }}
+          AGENT_RAN: ${{ needs.implement.outputs.agent-ran }}
+          AGENT_CONCLUSION: ${{ needs.implement.outputs.agent-conclusion }}
         run: |
-          if [ "$IMAGE_RESULT" = "failure" ]; then
+          if [ "$AGENT_RAN" = "true" ]; then
+            reason="the agent step ran (concluded: $AGENT_CONCLUSION) and a step after it did not complete"
+          elif [ "$IMAGE_RESULT" = "failure" ]; then
             reason="the verify-image-prerequisites job failed, so the implement stage never started"
           elif [ "$IMPLEMENT_RESULT" = "skipped" ]; then
             reason="the implement stage was skipped because a dependency it needs did not run"
