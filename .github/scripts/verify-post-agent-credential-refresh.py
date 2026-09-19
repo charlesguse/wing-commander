@@ -63,6 +63,14 @@ runs an agent step by design):
    has a "Determine which dependency did not start" step that resolves
    through `.github/actions/wing-commander-stall-reason` (second maintainer
    review of PR #407, CLAUDE.md single-home rule).
+7. Every agent step has its own refresh/agent-ran/credential-status
+   composite call, COUNTED BY `uses:` across the whole job rather than
+   matched by any one step's `name:` (REQUIRED_PER_AGENT_STEP_COMPOSITES,
+   exempting NO_REMOTE_REFRESH_JOBS from the refresh-remote leg where no
+   git remote is ever persisted in that job) -- second maintainer review of
+   PR #407, FR-020/FR-021 hole (a): deleting one of these steps, or
+   renaming it away from anything checks 2/5 recognized by name, used to
+   still pass Gates 68/69.
 
 Static structure only (`yaml.safe_load`) -- this gate's subject is step
 *ordering and reference shape*, not step *behaviour*, so no
@@ -70,13 +78,19 @@ Static structure only (`yaml.safe_load`) -- this gate's subject is step
 
 Self-test (--self-test): loads the real shipped trees, then reintroduces
 each way this could regress -- a post-agent step's credential reference
-reverted to the stale form, the refresh step between implement.yml's retry
-and progress agent steps deleted, `continue-on-error: true` stripped from
-clarify.yml's canonical over-budget step (and from a suffixed variant),
-clarify.yml's only post-agent refresh deleted, a subject job's agent step
-replaced with a non-agent step, a single-home composite call reverted to a
-non-composite step, the subject list pointed at a 9th nonexistent file, and
-the subject list emptied -- and asserts each one fails.
+reverted to the stale form or spelled with bracket notation, fromJSON(...)
+with or without nested parens/bracket key, a bare toJSON(...) outputs
+dump, or full bracket notation on every segment; the refresh step between
+implement.yml's retry and progress agent steps deleted;
+`continue-on-error: true` stripped from clarify.yml's canonical
+over-budget step (and from a suffixed variant); clarify.yml's only
+post-agent refresh deleted; a subject job's agent step replaced with a
+non-agent step; a single-home composite call reverted to a non-composite
+step (for each of the four single-homed step kinds); the refresh-remote
+step deleted entirely; the credential-status step renamed away from its
+recognized name with its `uses:` reverted; the subject list pointed at a
+9th nonexistent file; and the subject list emptied -- and asserts each one
+fails.
 
 Usage: python3 .github/scripts/verify-post-agent-credential-refresh.py [--self-test]
 """
@@ -89,15 +103,24 @@ import sys
 import yaml
 
 AGENT_ACTION_RE = re.compile(r"^anthropics/claude-code-action@")
-# Matches steps.<id>.outputs.<...token...> in both dot and bracket notation
-# (steps['ctx'].outputs['token']), and fromJSON(...).<...token...> (a raw
-# mint's output re-wrapped through fromJSON instead of read directly) --
-# should-fix per maintainer review of PR #407: an earlier version of this
-# regex only matched the plain dot-notation spelling.
+# Matches steps.<id>.outputs.<...token...> in every mix of dot and bracket
+# notation for EACH segment (steps['ctx']['outputs']['token'],
+# steps.ctx['outputs'].token, ...), fromJSON(...).<...token...> and
+# fromJSON(...)['token'] (a raw mint's output re-wrapped through fromJSON
+# instead of read directly, one level of nested parens tolerated so
+# fromJSON(toJSON(steps.ctx.outputs)).token is still caught), and a bare
+# toJSON(steps.<id>.outputs) dump of a step's whole outputs object (no
+# literal "token" substring to match on its own, but equivalent to reading
+# the token since the dumped object carries it) -- second maintainer
+# review of PR #407, FR-020 care point 1 hole (b): an earlier version of
+# this regex missed all of these spellings.
+_STEP_REF = r"steps(?:\.[\w-]+|\[[\'\"][\w-]+[\'\"]\])"
+_OUTPUTS_REF = r"(?:\.outputs|\[[\'\"]outputs[\'\"]\])"
+_TOKEN_KEY = r"(?:\.[\w-]*token[\w-]*|\[[\'\"][\w-]*token[\w-]*[\'\"]\])"
 TOKEN_REF_RE = re.compile(
-    r"steps(?:\.[\w-]+|\[[\'\"][\w-]+[\'\"]\])"
-    r"\.outputs(?:\.[\w-]*token[\w-]*|\[[\'\"][\w-]*token[\w-]*[\'\"]\])"
-    r"|fromJSON\([^)]*\)\.[\w-]*token[\w-]*",
+    rf"{_STEP_REF}{_OUTPUTS_REF}{_TOKEN_KEY}"
+    rf"|fromJSON\((?:[^()]|\([^()]*\))*\){_TOKEN_KEY}"
+    rf"|toJSON\({_STEP_REF}{_OUTPUTS_REF}\)",
     re.IGNORECASE)
 RELAY_STEP_NAME_RE = re.compile(r"^Relay\b.*token to the job environment", re.IGNORECASE)
 MINT_USES_MARKERS = ("wing-commander-context", "scoped-app-token")
@@ -161,6 +184,30 @@ SUBJECTS = {
 # for checks 3 and 5, which apply regardless of agent-step presence (checks
 # 1 and 2 are inherently agent-step-relative and never run for such a job).
 AGENTLESS_JOBS = {"tasks-approved"}
+
+# Second maintainer review of PR #407, FR-020/FR-021 hole (a): today,
+# deleting the refresh/agent-ran/credential-status step for one agent step,
+# or renaming it away from anything checks 2/5 recognize by `name:`, still
+# passes Gates 60/68/69. Counting `uses:` references to each composite --
+# which survives a rename, and which a re-pasted inline block (no `uses:`
+# at all) can never satisfy -- closes that hole. Keyed by (path, job_name)
+# rather than a blanket rule: e2e-stage never persists env.WC_BOT_TOKEN in
+# a git remote (contracts/wing-commander-context-relay.md's e2e-stage
+# section; the scratch-token relay is a distinct, second credential with no
+# remote of its own either), so it has no refresh-remote call to require.
+REQUIRED_PER_AGENT_STEP_COMPOSITES = [
+    ("wing-commander-refresh-remote", "refresh"),
+    ("wing-commander-agent-ran-signal", "agent-ran signal"),
+    ("wing-commander-post-agent-credential-status", "credential-status"),
+]
+NO_REMOTE_REFRESH_JOBS = {
+    (".github/workflows/auto-update-spec-kit.yml", "e2e-stage"),
+    # T009 (this feature's own tasks.md): classify-and-announce resolves
+    # spec-meta.json via the contents API rather than a "Checkout spec
+    # branch" step, so there is no persisted git remote credential to
+    # refresh in this job either.
+    (".github/workflows/pr-conversation.yml", "classify-and-announce"),
+}
 
 
 def _is_agent_step(step):
@@ -277,6 +324,23 @@ def check_job(path, job_name, job):
                 f"every step below it runs on a stale credential (FR-020 "
                 f"care point 2)")
 
+    # check 6 -- each agent step has its own refresh/agent-ran/credential-
+    # status composite call, counted by `uses:` (never by step `name:`, so a
+    # rename can't hide a deletion) -- second maintainer review of PR #407,
+    # FR-020/FR-021 hole (a).
+    for marker, label in REQUIRED_PER_AGENT_STEP_COMPOSITES:
+        if marker == "wing-commander-refresh-remote" and (path, job_name) in NO_REMOTE_REFRESH_JOBS:
+            continue
+        n_calls = sum(1 for s in steps if marker in str((s or {}).get("uses", "")))
+        if n_calls < len(agent_idxs):
+            failures.append(
+                f"{path} [{job_name}]: found {n_calls} step(s) calling "
+                f"{marker} but {len(agent_idxs)} agent step(s) -- each "
+                f"agent step needs its own {label} composite call; deleting "
+                f"one, renaming it away from the composite, or pasting the "
+                f"block back as inline (non-composite) code all reduce this "
+                f"count (FR-020, FR-021)")
+
     return failures, len(agent_idxs)
 
 
@@ -379,6 +443,55 @@ def mut_bracket_notation_credential_reference(loaded):
     step["with"]["token"] = "${{ steps['ctx'].outputs['token'] }}"
 
 
+def mut_fromjson_bracket_credential_reference(loaded):
+    """should-fix (second review of PR #407): fromJSON(...)['token'] --
+    bracket notation on the fromJSON(...) result -- must be caught too."""
+    job = loaded[".github/workflows/clarify.yml"]["jobs"]["clarify"]
+    step = _find_step(job, "Announce spec PR ready for review")
+    assert step is not None, "fixture assumption broken: step renamed"
+    assert step["with"]["token"] == "${{ env.WC_BOT_TOKEN }}", \
+        "fixture assumption broken: token form changed"
+    step["with"]["token"] = "${{ fromJSON(toJSON(steps.ctx.outputs))['token'] }}"
+
+
+def mut_nested_fromjson_credential_reference(loaded):
+    """should-fix (second review of PR #407):
+    fromJSON(toJSON(steps.ctx.outputs)).token -- a raw mint re-wrapped
+    through a nested fromJSON(toJSON(...)) round-trip instead of read
+    directly -- must be caught despite the inner call's own parens."""
+    job = loaded[".github/workflows/clarify.yml"]["jobs"]["clarify"]
+    step = _find_step(job, "Announce spec PR ready for review")
+    assert step is not None, "fixture assumption broken: step renamed"
+    assert step["with"]["token"] == "${{ env.WC_BOT_TOKEN }}", \
+        "fixture assumption broken: token form changed"
+    step["with"]["token"] = "${{ fromJSON(toJSON(steps.ctx.outputs)).token }}"
+
+
+def mut_bare_tojson_outputs_dump(loaded):
+    """should-fix (second review of PR #407): toJSON(steps.ctx.outputs) has
+    no literal "token" substring of its own but dumps the whole outputs
+    object -- equivalent to reading the token -- must be caught."""
+    job = loaded[".github/workflows/clarify.yml"]["jobs"]["clarify"]
+    step = _find_step(job, "Announce spec PR ready for review")
+    assert step is not None, "fixture assumption broken: step renamed"
+    assert step["with"]["token"] == "${{ env.WC_BOT_TOKEN }}", \
+        "fixture assumption broken: token form changed"
+    step["with"]["token"] = "${{ toJSON(steps.ctx.outputs) }}"
+
+
+def mut_full_bracket_credential_reference(loaded):
+    """should-fix (second review of PR #407):
+    steps['ctx']['outputs']['token'] -- bracket notation on every segment,
+    including "outputs" itself, which the dot-only middle segment in an
+    earlier version of this regex missed."""
+    job = loaded[".github/workflows/clarify.yml"]["jobs"]["clarify"]
+    step = _find_step(job, "Announce spec PR ready for review")
+    assert step is not None, "fixture assumption broken: step renamed"
+    assert step["with"]["token"] == "${{ env.WC_BOT_TOKEN }}", \
+        "fixture assumption broken: token form changed"
+    step["with"]["token"] = "${{ steps['ctx']['outputs']['token'] }}"
+
+
 def mut_drop_retry_progress_refresh(loaded):
     job = loaded[".github/workflows/implement.yml"]["jobs"]["implement"]
     steps = job["steps"]
@@ -465,6 +578,33 @@ def mut_stall_reason_single_home_reverted(loaded):
     step["uses"] = "actions/checkout@v5"
 
 
+def mut_refresh_remote_step_deleted(loaded):
+    """Hole (a): deleting the refresh-remote step entirely (not merely
+    reverting its `uses:`) must fail -- check 5 alone only inspects a step
+    that still exists under the recognized name."""
+    job = loaded[".github/workflows/clarify.yml"]["jobs"]["clarify"]
+    steps = job["steps"]
+    name = "Refresh authenticated spec-branch remote (post-agent)"
+    idx = next((i for i, s in enumerate(steps) if (s or {}).get("name") == name), None)
+    assert idx is not None, "fixture assumption broken: step renamed"
+    del steps[idx]
+
+
+def mut_credential_status_renamed_and_reverted(loaded):
+    """Hole (a): today, renaming a step away from anything a name-keyed
+    check recognizes lets its `uses:` be reverted to a non-composite step
+    undetected (no check still watching it by its old name). Check 6 keys
+    on `uses:` counted across the whole job, not on any one step's name, so
+    it still catches the missing composite call after the rename."""
+    job = loaded[".github/workflows/clarify.yml"]["jobs"]["clarify"]
+    step = _find_step(job, "Determine post-agent credential status")
+    assert step is not None, "fixture assumption broken: step renamed"
+    assert "wing-commander-post-agent-credential-status" in str(step.get("uses", "")), \
+        "fixture assumption broken: composite already not called"
+    step["name"] = "Check the token is still good"
+    step["uses"] = "actions/checkout@v5"
+
+
 def mut_nonexistent_ninth_file(loaded_and_subjects):
     loaded, subjects = loaded_and_subjects
     subjects["nonexistent-ninth-workflow.yml"] = ["some-job"]
@@ -487,6 +627,14 @@ SIMPLE_MUTATIONS = [
      "steps.ctx.outputs.token form", mut_stale_credential_reference),
     ("a post-agent step's credential reference spelled with bracket "
      "notation instead of dot notation", mut_bracket_notation_credential_reference),
+    ("a post-agent step's credential reference spelled fromJSON(...)['token']",
+     mut_fromjson_bracket_credential_reference),
+    ("a post-agent step's credential reference spelled "
+     "fromJSON(toJSON(steps.ctx.outputs)).token", mut_nested_fromjson_credential_reference),
+    ("a post-agent step's credential reference spelled bare "
+     "toJSON(steps.ctx.outputs)", mut_bare_tojson_outputs_dump),
+    ("a post-agent step's credential reference spelled "
+     "steps['ctx']['outputs']['token']", mut_full_bracket_credential_reference),
     ("the refresh step between implement.yml's retry and progress agent "
      "steps deleted", mut_drop_retry_progress_refresh),
     ("continue-on-error: true stripped from clarify.yml's canonical "
@@ -504,6 +652,11 @@ SIMPLE_MUTATIONS = [
     ("the 'Determine which dependency did not start' composite call (in "
      "the stalled job) reverted to a non-composite step",
      mut_stall_reason_single_home_reverted),
+    ("the refresh-remote step deleted entirely, not merely reverted",
+     mut_refresh_remote_step_deleted),
+    ("the credential-status step renamed away from its recognized name "
+     "and its uses: reverted to a non-composite step",
+     mut_credential_status_renamed_and_reverted),
 ]
 
 SUBJECT_MUTATIONS = [
