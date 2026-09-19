@@ -65,6 +65,22 @@ inputs:
       generic "re-dispatch this stage" line.
     required: false
     default: ""
+  agent-ran:
+    description: >
+      'true' when the entry job's own agent step ran to some conclusion
+      before this stall was detected (spec 052 FR-011/FR-015) -- drops the
+      "the stage did not start" / "no work was lost" wording, which is
+      false in that case. Any other value (including empty, the default for
+      a caller that predates this input) keeps today's wording unchanged
+      (FR-012).
+    required: false
+    default: "false"
+  agent-conclusion:
+    description: >
+      One of success/failure/cancelled, from the entry job's agent-ran
+      signal. Only rendered when agent-ran is 'true'.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -86,8 +102,12 @@ runs:
       shell: bash
       env:
         SPEC_DIR: ${{ inputs.spec-dir }}
+        AGENT_RAN: ${{ inputs.agent-ran }}
       run: |
         set -uo pipefail
+
+        commit_note="stage did not start"
+        [ "$AGENT_RAN" = "true" ] && commit_note="post-agent step failed"
 
         status="marked"
         if jq '.stage = "stalled"' "$SPEC_DIR/spec-meta.json" > /tmp/wcsn-meta.json 2>/tmp/wcsn-jq-err; then
@@ -99,7 +119,7 @@ runs:
           # iteration) produces no commit — treated as success, not failure
           # (idempotent on the mark).
           if ! git diff --cached --quiet; then
-            if ! git commit -m "implement: mark $SPEC_DIR stalled (stage did not start)"; then
+            if ! git commit -m "implement: mark $SPEC_DIR stalled ($commit_note)"; then
               status="unwritable"
             elif ! git push; then
               status="unwritable"
@@ -139,6 +159,8 @@ runs:
         DEFAULT_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         RESTART_COMMAND: ${{ inputs.restart-command }}
         RECORD_STATUS: ${{ steps.mark.outputs.record-status }}
+        AGENT_RAN: ${{ inputs.agent-ran }}
+        AGENT_CONCLUSION: ${{ inputs.agent-conclusion }}
       run: |
         set -uo pipefail
 
@@ -148,16 +170,44 @@ runs:
         restart="$RESTART_COMMAND"
         [ -n "$restart" ] || restart="Re-dispatch this stage once the cause above is resolved."
 
+        # spec 052 FR-011/FR-015 (maintainer review of PR #407): when the
+        # agent step ran to some conclusion, "the stage did not start" and
+        # "no work was lost" are both false -- drop them. Any other value of
+        # agent-ran (including a caller that predates this input) keeps
+        # today's wording byte-for-byte (FR-012).
+        #
+        # The agent clause itself is worded from agent-conclusion, not
+        # asserted as "completed its own work" regardless of outcome
+        # (second maintainer review of PR #407, FR-011): a
+        # continue-on-error-wrapped agent step can conclude failure, and the
+        # notice must say so rather than implying success either way.
+        if [ "$AGENT_RAN" = "true" ]; then
+          headline="⏸️ **Stage stalled — the agent ran but the stage did not complete**"
+          case "$AGENT_CONCLUSION" in
+            success) agent_clause="the agent completed its work" ;;
+            failure) agent_clause="the agent step failed after running; its pushed commits are on the branch" ;;
+            *) agent_clause="the agent step ran" ;;
+          esac
+          if [ "$RECORD_STATUS" = "marked" ]; then
+            body="The agent step ran (concluded: $AGENT_CONCLUSION) -- $agent_clause; a step after it did not complete. This specification's lifecycle record has been marked stalled."
+          else
+            body="The agent step ran (concluded: $AGENT_CONCLUSION) -- $agent_clause; a step after it did not complete. **The lifecycle record could not be updated** — a maintainer should confirm the spec branch and the record's \`stage\` field by hand before restarting."
+          fi
+        else
+          headline="⏸️ **Stage stalled — the stage did not start**"
+          if [ "$RECORD_STATUS" = "marked" ]; then
+            body="No implementation attempt was made — nothing was escalated, no model tier was used, and no work was lost. This specification's lifecycle record has been marked stalled."
+          else
+            body="No implementation attempt was made. **The lifecycle record could not be updated** — a maintainer should confirm the spec branch and the record's \`stage\` field by hand before restarting."
+          fi
+        fi
+
         {
-          echo "⏸️ **Stage stalled — the stage did not start**"
+          echo "$headline"
           echo ""
           echo "$REASON ($run_url)."
           echo ""
-          if [ "$RECORD_STATUS" = "marked" ]; then
-            echo "No implementation attempt was made — nothing was escalated, no model tier was used, and no work was lost. This specification's lifecycle record has been marked stalled."
-          else
-            echo "No implementation attempt was made. **The lifecycle record could not be updated** — a maintainer should confirm the spec branch and the record's \`stage\` field by hand before restarting."
-          fi
+          echo "$body"
           echo ""
           echo "$restart"
         } > /tmp/wcsn-notice.md

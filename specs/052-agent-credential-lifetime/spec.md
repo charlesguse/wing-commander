@@ -174,6 +174,7 @@ Six months from now someone adds a seventh credential-bearing step after an agen
 - Establishing a credential is cheap and fast relative to an agent cycle, so the cost of doing it once more per agent step is not a reason to avoid the chosen remedy.
 - Recovery for the spec that surfaced this (049) was already performed by re-dispatch on 2026-09-15; this feature is about preventing recurrence, not about that spec's state.
 - The three consequences in the source issue are independent: the tolerance fix and the accurate-stall-notice fix are worth shipping on their own merits and remain correct alongside the re-establishment remedy of FR-002.
+- FR-013's "cancellation" enum value is reachable only when the run's own survivor (`stalled`) job itself still executes after a cancellation. Every survivor job's own job-level condition is already `!cancelled()` (spec 041), so a run cancelled cleanly after the agent step ran posts no notice at all — FR-013's enum value exists for the narrower case of a partially-completed cancellation (the agent step's own outcome reads `cancelled`, but the job's later steps ran long enough to hit a genuine failure before the run-level cancel fully propagated), not for every cancellation. This gap is accepted, not fixed, by this feature (maintainer review of PR #407): closing it would mean reworking spec 041's own survivor-job gating, which is out of this feature's scope.
 
 ## Out of Scope
 
@@ -184,3 +185,4 @@ Six months from now someone adds a seventh credential-bearing step after an agen
 - Changing the authentication mechanism itself — the pipeline continues to authenticate as a dedicated application, never a personal token.
 - Backfilling or re-reporting lifecycle issues whose stall notices were already posted under the incorrect diagnosis.
 - Any new agent-facing surface, prompt, or judgment step; every part of this feature is deterministic.
+- `auto-update-spec-kit.yml`'s `evaluate-path` and `comment-reply` jobs (second maintainer review of PR #407, FR-005/SC-005): neither is one of FR-007's eight named sweep stages — only that workflow's `e2e-stage` job is — and each agent step in both carries its own `timeout-minutes: 10`, an order of magnitude under the credential's one-hour lifetime, so the defect this feature fixes cannot occur there. Recorded as an explicit scope exclusion, with a reason, per SC-005's "zero stages neither covered nor recorded with a reason" (research.md D4/D5, architecture.md).

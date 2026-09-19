@@ -131,8 +131,9 @@ def read_calls(path):
         return [l for l in fh.read().splitlines() if l.strip()]
 
 
-def run_mark(steps, repo, runner_temp, spec_dir):
-    return run_step(BASH, steps[MARK_STEP], repo, {"SPEC_DIR": spec_dir},
+def run_mark(steps, repo, runner_temp, spec_dir, agent_ran=""):
+    return run_step(BASH, steps[MARK_STEP], repo,
+                    {"SPEC_DIR": spec_dir, "AGENT_RAN": agent_ran},
                     runner_temp)
 
 
@@ -147,13 +148,15 @@ def run_labels(steps, repo, runner_temp, bindir, calls, stage_label,
 
 
 def run_notice(steps, repo, runner_temp, bindir, calls, reason,
-               restart_command, record_status, run_url=""):
+               restart_command, record_status, run_url="", agent_ran="",
+               agent_conclusion=""):
     return run_step(
         BASH, steps[NOTICE_STEP], repo,
         {"GH_TOKEN": "x", "ISSUE": ISSUE, "REASON": reason,
          "RUN_URL_INPUT": run_url,
          "DEFAULT_RUN_URL": "https://example.invalid/actions/runs/1",
          "RESTART_COMMAND": restart_command, "RECORD_STATUS": record_status,
+         "AGENT_RAN": agent_ran, "AGENT_CONCLUSION": agent_conclusion,
          "GH_CALLS": calls,
          "PATH": bindir + os.pathsep + os.environ["PATH"]},
         runner_temp)
@@ -318,6 +321,80 @@ def scenario_empty_spec_dir(steps, root):
     return failures
 
 
+def scenario_agent_ran(steps, root):
+    """spec 052 FR-011/FR-015: agent-ran=true drops the "did not start" /
+    "no work was lost" wording, in both the marked and unwritable shapes."""
+    failures = []
+    where = "scenario: agent ran but a post-agent step failed (spec 052)"
+    work, repo = make_workspace(root, reachable_remote=True)
+    runner_temp = os.path.join(work, "runner_temp")
+    os.makedirs(runner_temp, exist_ok=True)
+    bindir, calls = new_gh_stub(work)
+
+    rc, out, _, _ = run_notice(
+        steps, repo, runner_temp, bindir, calls,
+        "the agent step ran (concluded: failure) and the 'push' step after "
+        "it did not complete",
+        "Re-dispatch the clarify stage for this specification once the "
+        "cause above is resolved.", "marked",
+        agent_ran="true", agent_conclusion="failure")
+    if rc != 0:
+        failures.append(f"{where}: {NOTICE_STEP!r} exited {rc}: {out.strip()}")
+        return failures
+    body = read_notice_body(work)
+    if "the stage did not start" in body:
+        failures.append(f"{where}: notice still claims the stage did not "
+                        f"start even though agent-ran=true: {body!r}")
+    if "no work was lost" in body:
+        failures.append(f"{where}: notice still claims no work was lost "
+                        f"even though agent-ran=true: {body!r}")
+    if "concluded: failure" not in body:
+        failures.append(f"{where}: notice does not name the agent's own "
+                        f"conclusion: {body!r}")
+    if "the agent completed its work" in body:
+        failures.append(f"{where}: notice claims the agent completed its "
+                        f"work even though it concluded failure (second "
+                        f"maintainer review of PR #407, FR-011): {body!r}")
+    if "failed after running" not in body:
+        failures.append(f"{where}: notice does not say the agent step "
+                        f"failed after running when agent-conclusion is "
+                        f"'failure': {body!r}")
+    return failures
+
+
+def scenario_agent_ran_success(steps, root):
+    """spec 052 second maintainer review of PR #407 (FR-011): a stall caused
+    by a step *after* a successfully-concluded agent step must say the agent
+    completed its work, not the generic (and previously unconditional)
+    "ran to completion" claim that also applied when the agent had failed."""
+    failures = []
+    where = "scenario: agent ran and succeeded, a later step stalled (spec 052)"
+    work, repo = make_workspace(root, reachable_remote=True)
+    runner_temp = os.path.join(work, "runner_temp")
+    os.makedirs(runner_temp, exist_ok=True)
+    bindir, calls = new_gh_stub(work)
+
+    rc, out, _, _ = run_notice(
+        steps, repo, runner_temp, bindir, calls,
+        "the agent step ran (concluded: success) and the 'push' step after "
+        "it did not complete",
+        "Re-dispatch the clarify stage for this specification once the "
+        "cause above is resolved.", "marked",
+        agent_ran="true", agent_conclusion="success")
+    if rc != 0:
+        failures.append(f"{where}: {NOTICE_STEP!r} exited {rc}: {out.strip()}")
+        return failures
+    body = read_notice_body(work)
+    if "the agent completed its work" not in body:
+        failures.append(f"{where}: notice does not say the agent completed "
+                        f"its work when agent-conclusion is 'success': "
+                        f"{body!r}")
+    if "failed after running" in body:
+        failures.append(f"{where}: notice claims the agent failed after "
+                        f"running even though it concluded success: {body!r}")
+    return failures
+
+
 def scenario_restart_command_verbatim(steps, root, stage, restart_command,
                                        forbid_substrings=()):
     """T019: restart-command is opaque to the composite — echoed verbatim."""
@@ -370,6 +447,8 @@ def suite(steps, root):
     failures += scenario_marked(steps, root)
     failures += scenario_unwritable_push(steps, root)
     failures += scenario_empty_spec_dir(steps, root)
+    failures += scenario_agent_ran(steps, root)
+    failures += scenario_agent_ran_success(steps, root)
     for stage, cmd in PLAIN_RESTART_FIXTURES:
         failures += scenario_restart_command_verbatim(
             steps, root, stage, cmd,
@@ -401,6 +480,28 @@ def _mut_notice_ignores_restart_command(steps):
         'restart=""')
 
 
+def _mut_notice_ignores_agent_ran(steps):
+    """spec 052 FR-011/FR-015 regression: the notice claims the stage never
+    started even though the entry job's agent step ran."""
+    steps[NOTICE_STEP] = steps[NOTICE_STEP].replace(
+        'if [ "$AGENT_RAN" = "true" ]; then',
+        'if false; then')
+
+
+def _mut_notice_ignores_agent_conclusion(steps):
+    """Second maintainer review of PR #407 (FR-011) regression: the notice
+    claims the agent "completed its work" regardless of whether it actually
+    concluded success or failure."""
+    steps[NOTICE_STEP] = steps[NOTICE_STEP].replace(
+        'case "$AGENT_CONCLUSION" in\n'
+        '    success) agent_clause="the agent completed its work" ;;\n'
+        '    failure) agent_clause="the agent step failed after '
+        'running; its pushed commits are on the branch" ;;\n'
+        '    *) agent_clause="the agent step ran" ;;\n'
+        '  esac',
+        'agent_clause="the agent completed its work"')
+
+
 MUTATIONS = [
     ("notice renders the same wording regardless of record-status",
      _mut_notice_ignores_record_status),
@@ -408,6 +509,11 @@ MUTATIONS = [
      _mut_labels_removes_regardless_of_status),
     ("notice ignores the caller's restart-command",
      _mut_notice_ignores_restart_command),
+    ("notice ignores agent-ran and always claims the stage never started",
+     _mut_notice_ignores_agent_ran),
+    ("notice ignores agent-conclusion and always claims the agent completed "
+     "its work",
+     _mut_notice_ignores_agent_conclusion),
 ]
 
 

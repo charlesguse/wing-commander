@@ -1088,6 +1088,19 @@ jobs:
             --disallowedTools "WebSearch,WebFetch,Write,Edit,Bash(git commit:*),Bash(git push:*)"
             --json-schema '{"type":"object","properties":{"outcome":{"type":"string","enum":["clean-bump","needs-migration","ambiguous-options"]},"reasoning":{"type":"string"},"sources":{"type":"array","items":{"type":"object","properties":{"title":{"type":"string"},"url":{"type":"string"}},"required":["title","url"]}},"options":{"type":["array","null"],"items":{"type":"object","properties":{"label":{"type":"string"},"description":{"type":"string"}},"required":["label","description"]}}},"required":["outcome","reasoning","sources"]}'
 
+      # spec 052 FR-005/SC-005 (second maintainer review of PR #407): steps
+      # below "Decide upgrade path" deliberately keep reading
+      # steps.ctx.outputs.token, not env.WC_BOT_TOKEN, and there is no
+      # post-agent re-mint pair in this job. evaluate-path is not one of
+      # FR-007's eight named sweep stages -- recorded, with this same
+      # reason, in spec.md's Out of Scope section, plan.md, and
+      # research.md D5a, not only here -- and its agent step carries its
+      # own timeout-minutes: 10, an order of magnitude under the
+      # credential's one-hour lifetime, so the defect this feature fixes
+      # cannot occur here. comment-reply (same file) shares this reasoning;
+      # refer to its own "Interpret the maintainer's reply" step for its
+      # copy of this note.
+      #
       # deterministic, transcript-only verdict replacing the raw steps.decide.outcome checks
       # below -- see specs/037-agent-turn-budget-guard/data-model.md.
       # Gated on steps.decide.outcome alone: it tracks that step's own `if:`
@@ -1659,6 +1672,8 @@ jobs:
       failure-detail: ${{ steps.readback.outputs.failure-detail }}
       scratch-repo: ${{ steps.scratch-repo.outputs.full-name }}
       scratch-branch: ${{ steps.scratch-repo.outputs.branch }}
+      agent-ran: ${{ steps.agent-ran.outputs.ran }}
+      agent-conclusion: ${{ steps.agent-ran.outputs.conclusion }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v5
@@ -1692,6 +1707,8 @@ jobs:
           path: .wing-commander-pipeline
           persist-credentials: false
 
+      # Credential re-establishment (the env.WC_BOT_TOKEN relay and
+      # post-agent refresh) -- see clarify.yml.
       - name: Wing Commander context
         id: ctx
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
@@ -1762,6 +1779,18 @@ jobs:
           owner: ${{ steps.scratch-parts.outputs.owner }}
           repo-name: ${{ steps.scratch-parts.outputs.name }}
 
+      # Relayed into a job-scoped env var (not amended into
+      # _shared/scoped-app-token itself, which auto-release.yml also uses for
+      # an unrelated purpose and has no reason to know about WC_SCRATCH_TOKEN)
+      # so the post-agent re-mint below can refresh it for every step after
+      # the agent with no further per-step edits -- see clarify.yml.
+      - name: Relay scratch token to the job environment
+        shell: bash
+        env:
+          TOKEN: ${{ steps.scratch-token.outputs.token }}
+        run: |
+          echo "WC_SCRATCH_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
       - name: Resolve the scratch repository
         id: scratch-repo
         shell: bash
@@ -1828,7 +1857,7 @@ jobs:
         id: scaffold-reset
         uses: ./.wing-commander-pipeline/.github/actions/_shared/orphan-branch-reset
         with:
-          token: ${{ steps.scratch-token.outputs.token }}
+          token: ${{ env.WC_SCRATCH_TOKEN }}
           repo: ${{ steps.scratch-repo.outputs.full-name }}
           branch: ${{ steps.scratch-repo.outputs.branch }}
           bot-name: "${{ steps.ctx.outputs.bot-slug }}[bot]"
@@ -1841,7 +1870,7 @@ jobs:
         shell: bash
         env:
           # The scratch-scoped token, not steps.ctx's — see the mint step.
-          GH_TOKEN: ${{ steps.scratch-token.outputs.token }}
+          GH_TOKEN: ${{ env.WC_SCRATCH_TOKEN }}
           FULL_NAME: ${{ steps.scratch-repo.outputs.full-name }}
           BRANCH: ${{ steps.scratch-repo.outputs.branch }}
           CANDIDATE: ${{ needs.prepare.outputs.candidate-version }}
@@ -1916,7 +1945,7 @@ jobs:
         timeout-minutes: 15
         uses: anthropics/claude-code-action@v1
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
           # Without this the stage verifies the WRONG REPOSITORY. The
           # candidate's `create-new-feature.sh` resolves its project root with
@@ -1945,7 +1974,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
-          github_token: ${{ steps.ctx.outputs.token }}
+          github_token: ${{ env.WC_BOT_TOKEN }}
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           prompt: |
             Run this command, exactly as written, from the directory you
@@ -2001,6 +2030,60 @@ jobs:
             --max-turns ${{ steps.decide-ceiling.outputs.ceiling }}
             --allowedTools "Bash(e2e-scratch/.specify/scripts/bash/create-new-feature.sh:*),Bash(bash e2e-scratch/.specify/scripts/bash/create-new-feature.sh:*),Write(e2e-scratch/**),Edit(e2e-scratch/**),Write(${{ github.workspace }}/e2e-scratch/**),Edit(${{ github.workspace }}/e2e-scratch/**)"
             --disallowedTools "WebSearch,WebFetch,Bash(git push:*)"
+
+      # !cancelled(), not always() (spec 052, should-fix per maintainer
+      # review of PR #407): a run cancelled during the agent step must not
+      # still perform a network mint in the cancel window -- see clarify.yml.
+      - name: Record agent-ran signal
+        if: "!cancelled() && steps.decide.outcome != 'skipped'"
+        id: agent-ran
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-ran-signal
+        with:
+          agent-outcome: ${{ steps.decide.outcome }}
+
+      - name: Re-establish Wing Commander context (post-agent)
+        id: reestablish
+        if: "!cancelled() && steps.decide.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      # Independent of the WC_BOT_TOKEN refresh above -- this scratch-scoped
+      # credential authenticates a different repository entirely (D8, see the
+      # mint step). Neither token is embedded in a persisted git remote in
+      # this job (every push builds its authenticated URL fresh from the env
+      # var at push time), so only the relay needs refreshing, not a remote.
+      - name: Re-mint scratch-repository App token (post-agent)
+        if: "!cancelled() && steps.decide.outcome != 'skipped'"
+        continue-on-error: true
+        id: scratch-token-post-agent
+        uses: ./.wing-commander-pipeline/.github/actions/_shared/scoped-app-token
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+          owner: ${{ steps.scratch-parts.outputs.owner }}
+          repo-name: ${{ steps.scratch-parts.outputs.name }}
+
+      # FR-005/FR-004 (spec 052, second maintainer review of PR #407):
+      # guarded on the composite's own `ok` output, not `.outcome` --
+      # `scoped-app-token`'s "Confirm the target repository is reachable"
+      # step always `exit 0`s regardless of whether the mint actually
+      # succeeded (it reports failure only through `ok`/`failure-reason`
+      # outputs), so the calling step's `.outcome` reads "success"
+      # unconditionally and can never distinguish a real mint failure.
+      # Without this guard reading `ok`, a failed re-mint (empty token
+      # output) would blank an otherwise-still-valid WC_SCRATCH_TOKEN ahead
+      # of the step-21 push, instead of simply leaving it unrefreshed.
+      - name: Relay scratch token to the job environment (post-agent)
+        if: "!cancelled() && steps.decide.outcome != 'skipped' && steps.scratch-token-post-agent.outputs.ok == 'true'"
+        continue-on-error: true
+        shell: bash
+        env:
+          TOKEN: ${{ steps.scratch-token-post-agent.outputs.token }}
+        run: |
+          echo "WC_SCRATCH_TOKEN=$TOKEN" >> "$GITHUB_ENV"
 
       - name: Compute agent run verdict
         id: decide-verdict
@@ -2097,7 +2180,7 @@ jobs:
         continue-on-error: true
         env:
           # The scratch-scoped token, not steps.ctx's — see the mint step.
-          GH_TOKEN: ${{ steps.scratch-token.outputs.token }}
+          GH_TOKEN: ${{ env.WC_SCRATCH_TOKEN }}
           FULL_NAME: ${{ steps.scratch-repo.outputs.full-name }}
           BRANCH: ${{ steps.scratch-repo.outputs.branch }}
           BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
@@ -2111,6 +2194,25 @@ jobs:
             git commit -m "chore: e2e-stage agent output" --quiet || exit 0
             git push --quiet "https://x-access-token:${GH_TOKEN}@github.com/${FULL_NAME}.git" "HEAD:refs/heads/$BRANCH"
           ) || echo "::warning::wing-commander auto-update-spec-kit e2e-stage: best-effort push of the agent-produced spec.md failed — the gating assertion already ran against the local working tree, so this does not affect the verdict."
+
+      # Deferred to the job's last step, after "Read back stage result" and
+      # the best-effort scratch push -- see clarify.yml's copy of this note
+      # (review-step-gating skill, spec 052 self-review after the
+      # maintainer review of PR #407). No remote-refresh step for
+      # env.WC_BOT_TOKEN in this job (it never persists a credential in a
+      # git remote -- the scratch-token mint above is the one credential
+      # this job pushes with). refresh-outcome carries the scratch-token
+      # mint's own `ok` output instead (second maintainer review of PR
+      # #407, FR-004): this job's WC_SCRATCH_TOKEN is a second, independent
+      # credential the composite's two-input shape does not otherwise see,
+      # so a failed scratch re-mint would previously go unattributed here.
+      - name: Determine post-agent credential status
+        id: credential-status
+        if: "!cancelled() && steps.decide.outcome != 'skipped'"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
+        with:
+          mint-outcome: ${{ steps.reestablish.outcome }}
+          refresh-outcome: ${{ steps.scratch-token-post-agent.outputs.ok == 'true' && 'success' || 'failure' }}
 
   # Tiered smoke test against the prepared candidate.
   verify:
@@ -3151,6 +3253,10 @@ jobs:
       # T026: claude-haiku-4-5, bounded, read-only — map the reply onto one
       # of the previously posted options, or "unrecognized". The comment body
       # is framed as untrusted data throughout (constitution V, Scenario 15).
+      #
+      # steps below keep reading steps.ctx.outputs.token, no post-agent
+      # re-mint; refer to evaluate-path's "Compute agent run verdict" step
+      # (same file) for why (spec 052 FR-005/SC-005, should-fix).
       - name: Compute agent turn ceiling
         id: interpret-ceiling
         if: steps.guard.outputs.proceed == 'true'

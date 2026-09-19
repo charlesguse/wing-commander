@@ -28,7 +28,7 @@ PR #347, spec 046's PR #341 had registered Gates 53-58 on `main` and
 spec 048's PR #342 had taken 59, so this gate moved again, to Gate 60 --
 the next number actually free.
 
-FIVE CHECKS, per contracts/single-home-gate.md
+SIX CHECKS, per contracts/single-home-gate.md (plus a spec 052 addition)
 -----------------------------------------------
 1. orphan-reset: literal co-occurrence, in one file, of the three
    fragments that only appear together in the orphan-branch-reset idiom's
@@ -36,6 +36,26 @@ FIVE CHECKS, per contracts/single-home-gate.md
    against the real tree that none of these three fragments appears
    anywhere outside the declared composite once this feature's own
    refactor lands.
+
+1b. extraheader-refresh (spec 052, second maintainer review of PR #407,
+    FR-020/FR-021 hole (a) -- "add the extraheader/set-url origin idiom to
+    Gate 60 as the one-home check CLAUDE.md asks for"): co-occurrence, in
+    one file, of the `git remote set-url origin` fragment and a regex
+    match for the extraheader-unset idiom unique to
+    wing-commander-refresh-remote's own shell -- clearing
+    actions/checkout@v5's persisted `http.https://github.com/.extraheader`
+    entry before rewriting the remote URL (research.md D2's correction).
+    Verified empirically that "git remote set-url origin" alone, without
+    the extraheader-clear fragment, appears in two unrelated legitimate
+    idioms already (orphan-branch-reset, a test script), so co-occurrence
+    -- not the bare set-url fragment -- is what this check keys on. The
+    extraheader-unset side matches by regex, not literal string (third
+    maintainer review of PR #407, FR-020/FR-021 hole (b)): the original
+    literal fragment required `--local` and double-quoting the config key
+    exactly as wing-commander-refresh-remote spells it, so `git config
+    --unset-all http.https://github.com/.extraheader` (no `--local`, no
+    quotes) -- the same idiom, a different but equally valid spelling --
+    evaded it.
 
 2. failure-issue: co-occurrence of a `gh label create ... --force` call
    and a `gh issue list ... --label "..." --state open --json number --jq
@@ -125,6 +145,14 @@ DECLARED_HOMES = {
     "verdict-shape": ".github/actions/_shared/auto-release-verdict.sh",
     "token-mint": ".github/actions/_shared/scoped-app-token/action.yml",
     "mode-tag-shape": ".github/actions/_shared/auto-release-verdict.sh",
+    # spec 052, second maintainer review of PR #407 (FR-020/FR-021 hole (a)):
+    # the post-agent authenticated-remote refresh's own idiom -- clearing
+    # actions/checkout@v5's persisted extraheader before rewriting the
+    # remote URL, without which the rewrite is a silent no-op (research.md
+    # D2's correction) -- gets the same one-home check every other idiom in
+    # this gate does, so a rogue THIRD paste (e.g. a "fix" applied directly
+    # at a call site instead of to the shared composite) is caught.
+    "extraheader-refresh": ".github/actions/wing-commander-refresh-remote/action.yml",
 }
 CHECK_NAMES = tuple(DECLARED_HOMES) + ("promotion",)
 
@@ -133,6 +161,21 @@ ORPHAN_FRAGMENTS = (
     "git rm -rq --cached",
     "find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf",
 )
+EXTRAHEADER_FRAGMENTS = (
+    'git config --local --unset-all "http.https://github.com/.extraheader"',
+    "git remote set-url origin",
+)
+# Third maintainer review of PR #407 (FR-020/FR-021 hole (b)): the literal
+# fragment above depends on an exact spelling -- `--local` present and the
+# config key double-quoted. `git config --unset-all
+# http.https://github.com/.extraheader` (no `--local`, no quotes) is the
+# same idiom and evaded the literal-string check entirely. This regex
+# matches the unset-all fragment regardless of `--local` and quoting; the
+# `git remote set-url origin` fragment needs no such tolerance (it has no
+# optional flag or quoting variant in this repo's shell style).
+EXTRAHEADER_UNSET_RE = re.compile(
+    r'git config(?:\s+--local)?\s+--unset-all\s+"?'
+    r'http\.https://github\.com/\.extraheader"?')
 LABEL_CREATE_RE = re.compile(r"gh label create\b[^\n]*--force")
 ISSUE_LOOKUP_RE = re.compile(
     r"gh issue list\b[^\n]*--label\b[^\n]*--state open\b[^\n]*"
@@ -221,6 +264,23 @@ def check_orphan_reset(root="."):
             offset = text.index(ORPHAN_FRAGMENTS[0])
             findings.append(Finding(path, "orphan-reset", line_of(text, offset),
                                     ORPHAN_FRAGMENTS[0]))
+    return findings
+
+
+# --------------------------------------------------------------------------
+# Check 1b: extraheader-refresh (file-wide literal co-occurrence, spec 052)
+# --------------------------------------------------------------------------
+def check_extraheader_refresh(root="."):
+    home = DECLARED_HOMES["extraheader-refresh"]
+    findings = []
+    for path in all_subject_files(root):
+        if path == home:
+            continue
+        text = read(root, path)
+        m = EXTRAHEADER_UNSET_RE.search(text)
+        if m and EXTRAHEADER_FRAGMENTS[1] in text:
+            findings.append(Finding(path, "extraheader-refresh", line_of(text, m.start()),
+                                    m.group(0)))
     return findings
 
 
@@ -383,6 +443,7 @@ def check_promotion(root="."):
 
 ALL_CHECKS = {
     "orphan-reset": check_orphan_reset,
+    "extraheader-refresh": check_extraheader_refresh,
     "failure-issue": check_failure_issue,
     "verdict-shape": check_verdict_shape,
     "token-mint": check_token_mint,
@@ -687,6 +748,13 @@ def _clean_tree(root):
           "    - shell: bash\n      env:\n"
           "        OUTCOME: ${{ steps.mint.outcome }}\n"
           "      run: echo hi\n")
+    _write(root, DECLARED_HOMES["extraheader-refresh"],
+          "runs:\n  using: composite\n  steps:\n"
+          "    - shell: bash\n      run: |\n"
+          "        git config --local --unset-all "
+          "\"http.https://github.com/.extraheader\" 2>/dev/null || true\n"
+          "        git remote set-url origin "
+          "\"https://x-access-token:${TOKEN}@github.com/repo.git\"\n")
     _write(root, ".github/workflows/harmless.yml",
           "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
           "      - run: echo hi\n")
@@ -831,6 +899,25 @@ def run_selftest():
         "          checkout --quiet --orphan\n"
         "          git rm -rq --cached\n"
         "          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf\n")
+    selftest_third_paste_fails(
+        "extraheader-refresh", ".github/workflows/third-extraheader.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          git config --local --unset-all "
+        "\"http.https://github.com/.extraheader\" 2>/dev/null || true\n"
+        "          git remote set-url origin "
+        "\"https://x-access-token:${TOKEN}@github.com/repo.git\"\n")
+    # Third maintainer review of PR #407 (FR-020/FR-021 hole (b)): the same
+    # idiom, spelled without `--local` and without quoting the config key,
+    # must be caught too -- not only the exact spelling the composite uses.
+    selftest_third_paste_fails(
+        "extraheader-refresh", ".github/workflows/third-extraheader-bare.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          git config --unset-all "
+        "http.https://github.com/.extraheader 2>/dev/null || true\n"
+        "          git remote set-url origin "
+        "\"https://x-access-token:${TOKEN}@github.com/repo.git\"\n")
     selftest_third_paste_fails(
         "failure-issue", ".github/workflows/third-failure-issue.yml",
         "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
