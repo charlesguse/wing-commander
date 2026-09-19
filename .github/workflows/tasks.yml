@@ -430,6 +430,8 @@ jobs:
       # internal job-to-job wiring only, never a workflow_call output (research.md D3); folds in
       # resolve-spec's own refusal too -- see specs/041-implement-stall-notice/research.md D3.
       refusal-reason: ${{ needs.resolve-spec.outputs.refusal-reason || steps.preflight.outputs.reason }}
+      agent-ran: ${{ steps.agent-ran-auto.outputs.ran || steps.agent-ran-pr.outputs.ran }}
+      agent-conclusion: ${{ steps.agent-ran-auto.outputs.conclusion || steps.agent-ran-pr.outputs.conclusion }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v5
@@ -524,6 +526,8 @@ jobs:
           aws-role-arn: ${{ inputs.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
 
+      # Credential re-establishment (the env.WC_BOT_TOKEN relay and
+      # post-agent refresh) -- see clarify.yml.
       - name: Wing Commander context
         id: ctx
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
@@ -537,7 +541,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           ref: ${{ inputs.spec-prefix }}${{ needs.resolve-spec.outputs.slug }}
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           fetch-depth: 0
           clean: false
 
@@ -547,7 +551,7 @@ jobs:
       - name: Verify spec artifacts and resolve lifecycle issue
         id: meta
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SPEC_DIR: ${{ needs.resolve-spec.outputs.spec-dir }}
         run: |
           if [ ! -f "$SPEC_DIR/spec.md" ] || [ ! -f "$SPEC_DIR/spec-meta.json" ] || [ ! -f "$SPEC_DIR/plan.md" ]; then
@@ -584,7 +588,7 @@ jobs:
         if: steps.guard.outputs.skip != 'true' && steps.meta.outputs.issue != ''
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE: ${{ steps.meta.outputs.issue }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           ACTOR: ${{ github.triggering_actor }}
@@ -652,7 +656,7 @@ jobs:
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SPECIFY_FEATURE_DIRECTORY: ${{ needs.resolve-spec.outputs.spec-dir }}
           # subagents forced synchronous, no turn-boundary resume (#1462/#1499) -- see clarify.yml.
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
@@ -660,7 +664,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
           use_bedrock: ${{ inputs.use-bedrock }}
-          github_token: ${{ steps.ctx.outputs.token }}
+          github_token: ${{ env.WC_BOT_TOKEN }}
           # Wrapper triggers can dispatch this stage via GITHUB_TOKEN, making
           # the triggering actor github-actions[bot]; the action rejects bot
           # actors unless allow-listed.
@@ -736,6 +740,30 @@ jobs:
             --allowedTools "${{ steps.tool-args-tasks-direct-commit.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-tasks-direct-commit.outputs.disallowed-tools }}"
 
+      - name: Record agent-ran signal (auto)
+        if: always() && steps.agent-auto.outcome != 'skipped'
+        id: agent-ran-auto
+        shell: bash
+        run: |
+          echo "ran=true" >> "$GITHUB_OUTPUT"
+          echo "conclusion=${{ steps.agent-auto.conclusion }}" >> "$GITHUB_OUTPUT"
+
+      - name: Re-establish Wing Commander context (post-agent, auto)
+        if: always() && steps.agent-auto.outcome != 'skipped'
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      - name: Refresh authenticated spec-branch remote (post-agent, auto)
+        if: always() && steps.agent-auto.outcome != 'skipped'
+        continue-on-error: true
+        shell: bash
+        run: |
+          git config --local --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
+          git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/${{ github.repository }}.git"
+
       # deterministic, transcript-only verdict replacing raw steps.agent-auto.outcome checks
       # -- see specs/037-agent-turn-budget-guard/data-model.md. Gated on
       # steps.agent-auto.outcome alone — the one condition that cannot drift
@@ -797,14 +825,14 @@ jobs:
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SPECIFY_FEATURE_DIRECTORY: ${{ needs.resolve-spec.outputs.spec-dir }}
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
           use_bedrock: ${{ inputs.use-bedrock }}
-          github_token: ${{ steps.ctx.outputs.token }}
+          github_token: ${{ env.WC_BOT_TOKEN }}
           # See the auto-mode step above.
           # the pipeline's own App bot is allow-listed too (bare slug) -- see clarify.yml.
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
@@ -880,6 +908,30 @@ jobs:
             --max-turns ${{ steps.agent-pr-ceiling.outputs.ceiling }}
             --allowedTools "${{ steps.tool-args-tasks-pr.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-tasks-pr.outputs.disallowed-tools }}"
+
+      - name: Record agent-ran signal (pr)
+        if: always() && steps.agent-pr.outcome != 'skipped'
+        id: agent-ran-pr
+        shell: bash
+        run: |
+          echo "ran=true" >> "$GITHUB_OUTPUT"
+          echo "conclusion=${{ steps.agent-pr.conclusion }}" >> "$GITHUB_OUTPUT"
+
+      - name: Re-establish Wing Commander context (post-agent, pr)
+        if: always() && steps.agent-pr.outcome != 'skipped'
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      - name: Refresh authenticated spec-branch remote (post-agent, pr)
+        if: always() && steps.agent-pr.outcome != 'skipped'
+        continue-on-error: true
+        shell: bash
+        run: |
+          git config --local --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
+          git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/${{ github.repository }}.git"
 
       - name: Compute agent run verdict (pr)
         id: agent-pr-verdict
@@ -1002,7 +1054,7 @@ jobs:
           steps.dupe.outputs.skip != 'true' &&
           steps.agent-pr-verdict.outputs.verdict == 'healthy'
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SLUG: ${{ needs.resolve-spec.outputs.slug }}
           ISSUE: ${{ steps.meta.outputs.issue }}
           TASKS_PREFIX: ${{ inputs.tasks-prefix }}
@@ -1025,7 +1077,7 @@ jobs:
       - name: Flip stage label
         if: steps.guard.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE: ${{ steps.meta.outputs.issue }}
         run: |
           gh label create "stage:tasks" --color BFD4F2 --description "Task list generated; awaiting/into implementation" --force
@@ -1042,7 +1094,7 @@ jobs:
         if: steps.guard.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto'
         env:
           GH_TOKEN: ${{ github.token }}
-          APP_TOKEN: ${{ steps.ctx.outputs.token }}
+          APP_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SLUG: ${{ needs.resolve-spec.outputs.slug }}
           ISSUE: ${{ steps.meta.outputs.issue }}
           NEXT_WORKFLOW: ${{ inputs.next-workflow }}
@@ -1073,7 +1125,7 @@ jobs:
         if: steps.guard.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto' && steps.dispatch-auto.outputs.dispatched == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ steps.meta.outputs.issue }}
           kind: info
           summary: "Task list committed; implementation was dispatched automatically."
@@ -1095,9 +1147,10 @@ jobs:
       # over-budget is observability, not failure (FR-017) -- see clarify.yml.
       - name: Report over-budget agent run (auto)
         if: steps.guard.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto' && steps.agent-auto-verdict.outputs.verdict == 'healthy' && steps.agent-auto-verdict.outputs.over-budget == 'true'
+        continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ steps.meta.outputs.issue }}
           kind: info
           summary: "This step used its full intended turn budget."
@@ -1115,9 +1168,10 @@ jobs:
           steps.dupe.outputs.skip != 'true' &&
           steps.agent-pr-verdict.outputs.verdict == 'healthy' &&
           steps.agent-pr-verdict.outputs.over-budget == 'true'
+        continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ steps.meta.outputs.issue }}
           kind: info
           summary: "This step used its full intended turn budget."
@@ -1229,6 +1283,8 @@ jobs:
           kind: action
           summary: "This stage could not start — ${{ steps.preflight.outputs.reason }}"
 
+      # Credential re-establishment (the env.WC_BOT_TOKEN relay and
+      # post-agent refresh) -- see clarify.yml.
       - name: Wing Commander context
         id: ctx
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
@@ -1241,7 +1297,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           ref: ${{ inputs.spec-prefix }}${{ needs.resolve-spec.outputs.slug }}
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           fetch-depth: 0
           clean: false
 
@@ -1279,7 +1335,7 @@ jobs:
       - name: Verify stage and dispatch implement stage
         if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           DISPATCH_TOKEN: ${{ github.token }}
           SLUG: ${{ needs.resolve-spec.outputs.slug }}
           SPEC_DIR: ${{ needs.resolve-spec.outputs.spec-dir }}
@@ -1421,8 +1477,12 @@ jobs:
           IMAGE_RESULT: ${{ needs.verify-image-prerequisites.result }}
           RESOLVE_RESULT: ${{ needs.resolve-spec.result }}
           TASKS_RESULT: ${{ needs.tasks.result }}
+          AGENT_RAN: ${{ needs.tasks.outputs.agent-ran }}
+          AGENT_CONCLUSION: ${{ needs.tasks.outputs.agent-conclusion }}
         run: |
-          if [ "$IMAGE_RESULT" = "failure" ]; then
+          if [ "$AGENT_RAN" = "true" ]; then
+            reason="the agent step ran (concluded: $AGENT_CONCLUSION) and a step after it did not complete"
+          elif [ "$IMAGE_RESULT" = "failure" ]; then
             reason="the verify-image-prerequisites job failed, so the tasks stage never started"
           elif [ "$RESOLVE_RESULT" = "failure" ]; then
             reason="the tasks stage failed before it could run its own steps"
@@ -1442,7 +1502,9 @@ jobs:
           spec-dir: ${{ steps.identity.outputs.spec-dir }}
           spec-branch: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug }}
           reason: ${{ steps.reason.outputs.reason }}
-          restart-command: "Re-dispatch the tasks stage for this specification once the cause above is resolved."
+          # FR-015: resume-oriented wording when the agent ran and a step
+          # after it is what stalled the job -- not a from-scratch restart.
+          restart-command: ${{ needs.tasks.outputs.agent-ran == 'true' && 'The tasks agent step ran to completion; a step after it did not. Re-dispatch the tasks stage for this specification once the cause above is resolved.' || 'Re-dispatch the tasks stage for this specification once the cause above is resolved.' }}
 
   # Survivor job for mode: approved — same shape as the mode: generate job
   # above, against tasks-approved.

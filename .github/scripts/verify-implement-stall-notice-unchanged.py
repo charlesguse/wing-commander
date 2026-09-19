@@ -22,11 +22,26 @@ pre-041 text, and a git-ref baseline is unreadable in CI's shallow
 checkout). Each step's `run:`, `uses:`, and `with:` must match the pin
 byte-for-byte; only `if:` guards were 041's to change.
 
+specs/052-agent-credential-lifetime extends this file with a second,
+behavioral check over a DIFFERENT step — "Determine which dependency did
+not start" in the `stalled` job — which is not one of the three pinned
+above and belongs to a different stall path entirely (a post-agent failure,
+not an exhausted retry). That check executes the shipped `run:` block via
+wc_shell_harness.py's run_step, asserting the new `agent-ran == 'true'`
+branch never emits the pre-existing "never started" phrase, and that the
+`agent-ran` unset case still emits that phrase byte-for-byte (the
+regression pin research.md calls for: this feature's wording change must
+land only on the new branch).
+
 Usage: python3 .github/scripts/verify-implement-stall-notice-unchanged.py
 """
 import json
 import os
 import sys
+import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_shell_harness import find_step, resolve_bash, run_step  # noqa: E402
 
 STAGE = ".github/workflows/implement.yml"
 FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -37,6 +52,9 @@ STEP_NAMES = [
     "Report stalled on lifecycle issue",
     "Announce the stall on the lifecycle issue",
 ]
+
+DEPENDENCY_STEP_NAME = "Determine which dependency did not start"
+NEVER_STARTED_PHRASE = "the implement stage failed before it could run its own steps"
 
 
 def find_step_in_text(text, name):
@@ -56,6 +74,52 @@ def load_baseline():
     except (OSError, KeyError, ValueError) as e:
         sys.exit(f"::error file={FIXTURE}::could not load the pinned "
                  f"baseline: {e}")
+
+
+def check_dependency_reason_branch():
+    """Execute the shipped "Determine which dependency did not start" script.
+
+    Two cases, matching quickstart.md §5: agent-ran == 'true' must never
+    render the pre-existing never-started phrase and must name the agent's
+    own conclusion; agent-ran unset must render that literal phrase
+    byte-for-byte, unchanged from today (the regression pin).
+    """
+    step = find_step(STAGE, DEPENDENCY_STEP_NAME)
+    script = step.get("run")
+    if not script:
+        return [f"{DEPENDENCY_STEP_NAME!r} has no `run:` block in {STAGE} — "
+                f"the dependency-diagnosis step was removed or reshaped."]
+
+    bash = resolve_bash()
+    failures = []
+    with tempfile.TemporaryDirectory() as workdir, \
+         tempfile.TemporaryDirectory() as runner_temp:
+        rc, _out, outputs, _summary = run_step(
+            bash, script, workdir,
+            {"IMAGE_RESULT": "success", "IMPLEMENT_RESULT": "failure",
+             "AGENT_RAN": "true", "AGENT_CONCLUSION": "failure"},
+            runner_temp)
+        reason = outputs.get("reason", "")
+        if NEVER_STARTED_PHRASE in reason:
+            failures.append(
+                f"{DEPENDENCY_STEP_NAME!r} with agent-ran == 'true' still "
+                f"rendered the never-started phrase: {reason!r}")
+        if "ran" not in reason or "failure" not in reason:
+            failures.append(
+                f"{DEPENDENCY_STEP_NAME!r} with agent-ran == 'true' did not "
+                f"name the agent's own conclusion: {reason!r}")
+
+        rc, _out, outputs, _summary = run_step(
+            bash, script, workdir,
+            {"IMAGE_RESULT": "success", "IMPLEMENT_RESULT": "failure",
+             "AGENT_RAN": "", "AGENT_CONCLUSION": ""},
+            runner_temp)
+        reason = outputs.get("reason", "")
+        if reason != NEVER_STARTED_PHRASE:
+            failures.append(
+                f"{DEPENDENCY_STEP_NAME!r} with agent-ran unset changed from "
+                f"the pinned never-started phrase: {reason!r}")
+    return failures
 
 
 def main():
@@ -93,10 +157,13 @@ def main():
                     f"{name!r}'s `{key}:` changed since the pinned baseline: "
                     f"{old_step.get(key)!r} -> {new_step.get(key)!r}.")
 
+    failures.extend(check_dependency_reason_branch())
+
     for f in failures:
         print(f"::error::{f}")
     print(f"implement.yml exhausted-retry notice: {len(STEP_NAMES)} step(s) "
-          f"checked against the pinned baseline; {len(failures)} failure(s).")
+          f"checked against the pinned baseline; dependency-reason branch "
+          f"behaviorally checked; {len(failures)} failure(s).")
     sys.exit(1 if failures else 0)
 
 
