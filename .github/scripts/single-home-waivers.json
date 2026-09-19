@@ -29,7 +29,7 @@
     {
       "file": ".github/workflows/auto-update-spec-kit-scratch-preflight.yml",
       "check": "token-mint",
-      "pattern": "scratch-token",
+      "pattern": "target-token",
       "count": 1,
       "issue": "#326",
       "reason": "This workflow's own header comment documents the duplication as deliberate: it exists to test the raw actions/create-github-app-token@v3 call independently of e2e-stage, so a regression in the shared scoped-app-token composite cannot silently pass both the diagnostic and the real stage the same way. Routing it through the composite would defeat that independence -- the composite's own bug would then read as 'reachable' in both places at once."
