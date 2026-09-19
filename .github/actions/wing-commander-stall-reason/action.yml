@@ -1,0 +1,74 @@
+# Single home for the "Determine which dependency did not start" reason
+# string (CLAUDE.md single-home rule; second maintainer review of PR #407).
+# Resolved from the pipeline repository's own checkout -- see the header of
+# .github/actions/wing-commander-context/action.yml.
+name: wing-commander-stall-reason
+description: >
+  Diagnoses why a gated stage's survivor job is running: a credential
+  re-establishment failure ahead of the generic agent-ran branch, a real
+  post-agent step failure naming the step, the generic agent-ran branch,
+  or (when the agent never ran at all) the pre-052 image/entry-result
+  diagnosis (FR-004, FR-011, SC-003) -- see clarify.yml for the call-site
+  convention every one of the six consuming stages follows.
+
+inputs:
+  stage-name:
+    description: One-word stage name interpolated into the fallback sentences ("the <stage-name> stage never started").
+    required: true
+  image-result:
+    description: needs.verify-image-prerequisites.result
+    required: true
+  entry-result:
+    description: The entry job's own needs.<job>.result.
+    required: true
+  agent-ran:
+    description: needs.<job>.outputs.agent-ran
+    required: false
+    default: ""
+  agent-conclusion:
+    description: needs.<job>.outputs.agent-conclusion
+    required: false
+    default: ""
+  credential-refresh-ok:
+    description: needs.<job>.outputs.credential-refresh-ok
+    required: false
+    default: ""
+  failed-post-agent-step:
+    description: needs.<job>.outputs.failed-post-agent-step
+    required: false
+    default: ""
+
+outputs:
+  reason:
+    description: One sentence naming where the run stopped.
+    value: ${{ steps.determine.outputs.reason }}
+
+runs:
+  using: composite
+  steps:
+    - name: Determine which dependency did not start
+      id: determine
+      shell: bash
+      env:
+        STAGE_NAME: ${{ inputs.stage-name }}
+        IMAGE_RESULT: ${{ inputs.image-result }}
+        ENTRY_RESULT: ${{ inputs.entry-result }}
+        AGENT_RAN: ${{ inputs.agent-ran }}
+        AGENT_CONCLUSION: ${{ inputs.agent-conclusion }}
+        CREDENTIAL_REFRESH_OK: ${{ inputs.credential-refresh-ok }}
+        FAILED_STEP: ${{ inputs.failed-post-agent-step }}
+      run: |
+        if [ "$AGENT_RAN" = "true" ] && [ "$CREDENTIAL_REFRESH_OK" = "false" ]; then
+          reason="the agent step ran (concluded: $AGENT_CONCLUSION) and the post-agent wing-commander-bot credential re-establishment failed (see the 'Determine post-agent credential status' step) -- treat the credential, not the agent or a downstream step, as the cause"
+        elif [ "$AGENT_RAN" = "true" ] && [ -n "$FAILED_STEP" ]; then
+          reason="the agent step ran (concluded: $AGENT_CONCLUSION) and the '$FAILED_STEP' step after it did not complete"
+        elif [ "$AGENT_RAN" = "true" ]; then
+          reason="the agent step ran (concluded: $AGENT_CONCLUSION) and a step after it did not complete"
+        elif [ "$IMAGE_RESULT" = "failure" ]; then
+          reason="the verify-image-prerequisites job failed, so the $STAGE_NAME stage never started"
+        elif [ "$ENTRY_RESULT" = "skipped" ]; then
+          reason="the $STAGE_NAME stage was skipped because a dependency it needs did not run"
+        else
+          reason="the $STAGE_NAME stage failed before it could run its own steps"
+        fi
+        echo "reason=$reason" >> "$GITHUB_OUTPUT"

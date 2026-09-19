@@ -752,6 +752,7 @@ jobs:
       # says the fold may already be committed, so whoever reads the red run
       # checks the PR rather than assuming nothing happened.
       - name: Fail on agent API error
+        id: api-error
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent-verdict.outputs.verdict == 'healthy'
         run: |
           f="$RUNNER_TEMP/claude-execution-output.json"
@@ -779,6 +780,7 @@ jobs:
       # cause; a healthy-but-post-hoc-rejected run skips this entirely and
       # the stage continues (FR-001-FR-003, FR-005).
       - name: Fail loud on non-healthy agent verdict
+        id: verdict-fail
         if: always() && steps.agent.outcome != 'skipped' && steps.agent-verdict.outputs.verdict != 'healthy'
         env:
           VERDICT: ${{ steps.agent-verdict.outputs.verdict }}
@@ -1020,6 +1022,7 @@ jobs:
       # refused, because a spec.md still carrying colon-form markers is not
       # ready and a human invited to merge it would merge them.
       - name: Fail on unresolved clarification markers
+        id: unresolved-markers
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.blocked == 'true'
         run: |
           echo "::error::wing-commander clarify stage: failing the run — the spec still carries colon-form [NEEDS CLARIFICATION: markers while the structured result reported none (see the error above). No readiness callout was posted."
@@ -1055,15 +1058,23 @@ jobs:
       # steps that have already run by this point in the job, so any step
       # added after this one would be invisible to it. The other 5
       # consuming stages point here instead of repeating this paragraph.
+      #
+      # candidates-json lists this job's own hard-failing (non-continue-on-
+      # error) post-agent steps in execution order, each read via
+      # `.conclusion` (not `.outcome`) so a continue-on-error step that
+      # raw-failed is never misnamed as the cause (second maintainer review
+      # of PR #407, FR-011, SC-003) -- see clarify.yml for the composite.
       - name: Determine failed post-agent step
         id: failed-step
         if: "!cancelled() && steps.agent.outcome != 'skipped'"
-        shell: bash
-        env:
-          STEPS_JSON: ${{ toJSON(steps) }}
-        run: |
-          failed="$(printf '%s' "$STEPS_JSON" | jq -r 'to_entries | map(select(.value.outcome == "failure")) | .[-1].key // ""')"
-          echo "step=$failed" >> "$GITHUB_OUTPUT"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-failed-post-agent-step
+        with:
+          candidates-json: >-
+            [
+              {"id": "api-error", "conclusion": "${{ steps.api-error.conclusion }}"},
+              {"id": "verdict-fail", "conclusion": "${{ steps.verdict-fail.conclusion }}"},
+              {"id": "unresolved-markers", "conclusion": "${{ steps.unresolved-markers.conclusion }}"}
+            ]
 
   # Survivor job (the #224 idiom, research.md D4): new for clarify — this
   # stage has no exhausted-retry loop, so it admits only the abnormal-
@@ -1174,31 +1185,20 @@ jobs:
       # the step, falling back to the pre-052 generic wording only when the
       # entry job could not identify which step failed. The other 5
       # consuming stages point here instead of repeating this paragraph.
+      # Single-homed in wing-commander-stall-reason (second maintainer
+      # review of PR #407, CLAUDE.md single-home rule).
       - name: Determine which dependency did not start
         id: reason
         if: needs.clarify.outputs.refusal-reason == ''
-        env:
-          IMAGE_RESULT: ${{ needs.verify-image-prerequisites.result }}
-          CLARIFY_RESULT: ${{ needs.clarify.result }}
-          AGENT_RAN: ${{ needs.clarify.outputs.agent-ran }}
-          AGENT_CONCLUSION: ${{ needs.clarify.outputs.agent-conclusion }}
-          CREDENTIAL_REFRESH_OK: ${{ needs.clarify.outputs.credential-refresh-ok }}
-          FAILED_STEP: ${{ needs.clarify.outputs.failed-post-agent-step }}
-        run: |
-          if [ "$AGENT_RAN" = "true" ] && [ "$CREDENTIAL_REFRESH_OK" = "false" ]; then
-            reason="the agent step ran (concluded: $AGENT_CONCLUSION) and the post-agent wing-commander-bot credential re-establishment failed (see the 'Determine post-agent credential status' step) -- treat the credential, not the agent or a downstream step, as the cause"
-          elif [ "$AGENT_RAN" = "true" ] && [ -n "$FAILED_STEP" ]; then
-            reason="the agent step ran (concluded: $AGENT_CONCLUSION) and the '$FAILED_STEP' step after it did not complete"
-          elif [ "$AGENT_RAN" = "true" ]; then
-            reason="the agent step ran (concluded: $AGENT_CONCLUSION) and a step after it did not complete"
-          elif [ "$IMAGE_RESULT" = "failure" ]; then
-            reason="the verify-image-prerequisites job failed, so the clarify stage never started"
-          elif [ "$CLARIFY_RESULT" = "skipped" ]; then
-            reason="the clarify stage was skipped because a dependency it needs did not run"
-          else
-            reason="the clarify stage failed before it could run its own steps"
-          fi
-          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-stall-reason
+        with:
+          stage-name: clarify
+          image-result: ${{ needs.verify-image-prerequisites.result }}
+          entry-result: ${{ needs.clarify.result }}
+          agent-ran: ${{ needs.clarify.outputs.agent-ran }}
+          agent-conclusion: ${{ needs.clarify.outputs.agent-conclusion }}
+          credential-refresh-ok: ${{ needs.clarify.outputs.credential-refresh-ok }}
+          failed-post-agent-step: ${{ needs.clarify.outputs.failed-post-agent-step }}
 
       - name: Report the stage did not start
         if: needs.clarify.outputs.refusal-reason == ''

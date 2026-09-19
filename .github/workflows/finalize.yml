@@ -756,6 +756,7 @@ jobs:
       # empty, and silently swallows that callout despite its always()
       # (PR #221 review).
       - name: Fail loud on non-healthy agent verdict
+        id: verdict-fail
         if: always() && steps.summarize.outcome != 'skipped' && steps.summarize-verdict.outputs.verdict != 'healthy'
         continue-on-error: true
         env:
@@ -1118,6 +1119,7 @@ jobs:
       # never written. For the same reason neither the read nor the write
       # below may fail the job: the stage's real work is already done.
       - name: Flip stage label
+        id: flip-label
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
@@ -1303,15 +1305,24 @@ jobs:
           mint-outcome: ${{ steps.reestablish.outcome }}
           refresh-outcome: ${{ steps.refresh-remote.outcome }}
 
+      # candidates-json lists this job's own hard-failing (non-continue-on-
+      # error) post-agent steps, each read via `.conclusion` -- see
+      # clarify.yml for the single-homed composite. "Fail loud on
+      # non-healthy agent verdict" is deliberately excluded here: it carries
+      # continue-on-error (the callout below it must still run for a
+      # rate-limited verdict, FR-015a), so its conclusion is always
+      # "success" and it can never be this job's actual point of failure.
       - name: Determine failed post-agent step
         id: failed-step
         if: "!cancelled() && steps.summarize.outcome != 'skipped'"
-        shell: bash
-        env:
-          STEPS_JSON: ${{ toJSON(steps) }}
-        run: |
-          failed="$(printf '%s' "$STEPS_JSON" | jq -r 'to_entries | map(select(.value.outcome == "failure")) | .[-1].key // ""')"
-          echo "step=$failed" >> "$GITHUB_OUTPUT"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-failed-post-agent-step
+        with:
+          candidates-json: >-
+            [
+              {"id": "verify-agent-output", "conclusion": "${{ steps.verify-agent-output.conclusion }}"},
+              {"id": "verify-pr", "conclusion": "${{ steps.verify-pr.conclusion }}"},
+              {"id": "flip-label", "conclusion": "${{ steps.flip-label.conclusion }}"}
+            ]
 
   # Survivor job (the #224 idiom, research.md D4): new for finalize — this
   # stage has no exhausted-retry loop, so it admits only the abnormal-
@@ -1407,28 +1418,15 @@ jobs:
       - name: Determine which dependency did not start
         id: reason
         if: needs.finalize.outputs.refusal-reason == ''
-        env:
-          IMAGE_RESULT: ${{ needs.verify-image-prerequisites.result }}
-          FINALIZE_RESULT: ${{ needs.finalize.result }}
-          AGENT_RAN: ${{ needs.finalize.outputs.agent-ran }}
-          AGENT_CONCLUSION: ${{ needs.finalize.outputs.agent-conclusion }}
-          CREDENTIAL_REFRESH_OK: ${{ needs.finalize.outputs.credential-refresh-ok }}
-          FAILED_STEP: ${{ needs.finalize.outputs.failed-post-agent-step }}
-        run: |
-          if [ "$AGENT_RAN" = "true" ] && [ "$CREDENTIAL_REFRESH_OK" = "false" ]; then
-            reason="the agent step ran (concluded: $AGENT_CONCLUSION) and the post-agent wing-commander-bot credential re-establishment failed (see the 'Determine post-agent credential status' step) -- treat the credential, not the agent or a downstream step, as the cause"
-          elif [ "$AGENT_RAN" = "true" ] && [ -n "$FAILED_STEP" ]; then
-            reason="the agent step ran (concluded: $AGENT_CONCLUSION) and the '$FAILED_STEP' step after it did not complete"
-          elif [ "$AGENT_RAN" = "true" ]; then
-            reason="the agent step ran (concluded: $AGENT_CONCLUSION) and a step after it did not complete"
-          elif [ "$IMAGE_RESULT" = "failure" ]; then
-            reason="the verify-image-prerequisites job failed, so the finalize stage never started"
-          elif [ "$FINALIZE_RESULT" = "skipped" ]; then
-            reason="the finalize stage was skipped because a dependency it needs did not run"
-          else
-            reason="the finalize stage failed before it could run its own steps"
-          fi
-          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-stall-reason
+        with:
+          stage-name: finalize
+          image-result: ${{ needs.verify-image-prerequisites.result }}
+          entry-result: ${{ needs.finalize.result }}
+          agent-ran: ${{ needs.finalize.outputs.agent-ran }}
+          agent-conclusion: ${{ needs.finalize.outputs.agent-conclusion }}
+          credential-refresh-ok: ${{ needs.finalize.outputs.credential-refresh-ok }}
+          failed-post-agent-step: ${{ needs.finalize.outputs.failed-post-agent-step }}
 
       - name: Report the stage did not start
         if: needs.finalize.outputs.refusal-reason == ''

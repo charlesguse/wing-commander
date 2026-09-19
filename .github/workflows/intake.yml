@@ -1223,6 +1223,7 @@ jobs:
       # research.md R7 step 5; clarify.yml exits in place instead because it
       # has no such housekeeping left to run by this point in its own job).
       - name: Fail loud on non-healthy agent verdict
+        id: verdict-fail
         if: always() && steps.agent.outcome != 'skipped' && steps.agent-verdict.outputs.verdict != 'healthy'
         env:
           VERDICT: ${{ steps.agent-verdict.outputs.verdict }}
@@ -1251,6 +1252,7 @@ jobs:
       # either: the agent step carries continue-on-error, so its own failure
       # never clears success() here in the first place.
       - name: Fail on invalid agent result
+        id: invalid-result
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent-verdict.outputs.verdict == 'healthy' && steps.agent-result.outputs.valid != 'true'
         run: |
           echo "::error::wing-commander intake stage: failing the run — the agent result did not validate (see the error above)."
@@ -1263,6 +1265,7 @@ jobs:
       # in the review queue with unresolved [NEEDS CLARIFICATION: markers in
       # it and a callout inviting someone to merge it.
       - name: Fail on unresolved clarification markers
+        id: unresolved-markers
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.blocked == 'true'
         run: |
           echo "::error::wing-commander intake stage: failing the run — the spec still carries colon-form [NEEDS CLARIFICATION: markers while the structured result reported none (see the error above). No readiness callout was posted."
@@ -1282,15 +1285,20 @@ jobs:
           mint-outcome: ${{ steps.reestablish.outcome }}
           refresh-outcome: ${{ steps.refresh-remote.outcome }}
 
+      # candidates-json lists this job's own hard-failing (non-continue-on-
+      # error) post-agent steps, each read via `.conclusion` -- see
+      # clarify.yml for the single-homed composite.
       - name: Determine failed post-agent step
         id: failed-step
         if: "!cancelled() && steps.agent.outcome != 'skipped'"
-        shell: bash
-        env:
-          STEPS_JSON: ${{ toJSON(steps) }}
-        run: |
-          failed="$(printf '%s' "$STEPS_JSON" | jq -r 'to_entries | map(select(.value.outcome == "failure")) | .[-1].key // ""')"
-          echo "step=$failed" >> "$GITHUB_OUTPUT"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-failed-post-agent-step
+        with:
+          candidates-json: >-
+            [
+              {"id": "verdict-fail", "conclusion": "${{ steps.verdict-fail.conclusion }}"},
+              {"id": "invalid-result", "conclusion": "${{ steps.invalid-result.conclusion }}"},
+              {"id": "unresolved-markers", "conclusion": "${{ steps.unresolved-markers.conclusion }}"}
+            ]
 
   # Survivor job (the #224 idiom, research.md D4): new for intake — this
   # stage has no exhausted-retry loop, so it admits only the abnormal-
@@ -1380,28 +1388,15 @@ jobs:
       - name: Determine which dependency did not start
         id: reason
         if: needs.intake.outputs.refusal-reason == ''
-        env:
-          IMAGE_RESULT: ${{ needs.verify-image-prerequisites.result }}
-          INTAKE_RESULT: ${{ needs.intake.result }}
-          AGENT_RAN: ${{ needs.intake.outputs.agent-ran }}
-          AGENT_CONCLUSION: ${{ needs.intake.outputs.agent-conclusion }}
-          CREDENTIAL_REFRESH_OK: ${{ needs.intake.outputs.credential-refresh-ok }}
-          FAILED_STEP: ${{ needs.intake.outputs.failed-post-agent-step }}
-        run: |
-          if [ "$AGENT_RAN" = "true" ] && [ "$CREDENTIAL_REFRESH_OK" = "false" ]; then
-            reason="the agent step ran (concluded: $AGENT_CONCLUSION) and the post-agent wing-commander-bot credential re-establishment failed (see the 'Determine post-agent credential status' step) -- treat the credential, not the agent or a downstream step, as the cause"
-          elif [ "$AGENT_RAN" = "true" ] && [ -n "$FAILED_STEP" ]; then
-            reason="the agent step ran (concluded: $AGENT_CONCLUSION) and the '$FAILED_STEP' step after it did not complete"
-          elif [ "$AGENT_RAN" = "true" ]; then
-            reason="the agent step ran (concluded: $AGENT_CONCLUSION) and a step after it did not complete"
-          elif [ "$IMAGE_RESULT" = "failure" ]; then
-            reason="the verify-image-prerequisites job failed, so the intake stage never started"
-          elif [ "$INTAKE_RESULT" = "skipped" ]; then
-            reason="the intake stage was skipped because a dependency it needs did not run"
-          else
-            reason="the intake stage failed before it could run its own steps"
-          fi
-          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-stall-reason
+        with:
+          stage-name: intake
+          image-result: ${{ needs.verify-image-prerequisites.result }}
+          entry-result: ${{ needs.intake.result }}
+          agent-ran: ${{ needs.intake.outputs.agent-ran }}
+          agent-conclusion: ${{ needs.intake.outputs.agent-conclusion }}
+          credential-refresh-ok: ${{ needs.intake.outputs.credential-refresh-ok }}
+          failed-post-agent-step: ${{ needs.intake.outputs.failed-post-agent-step }}
 
       - name: Report the stage did not start
         if: needs.intake.outputs.refusal-reason == ''
