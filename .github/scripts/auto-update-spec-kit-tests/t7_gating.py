@@ -52,9 +52,21 @@ def evaluate(expr, ctx):
     def _contains(m):
         return "(%s in %s)" % (_ref(m.group(2).strip()), m.group(1))
     e = re.sub(r"contains\(\s*fromJSON\('(\[[^)]*?\])'\)\s*,\s*([^)]+?)\s*\)", _contains, e)
+    # contains(<ref>, 'x'): membership when the ctx value is a list
+    # (github.event.issue.labels.*.name), substring when it is a string
+    # (github.event.issue.body) -- both as GitHub's contains() behaves.
+    # The wrapper's issue_comment pre-filter uses both.
+    def _contains_ref(m):
+        val = lookup(m.group(1), ctx)
+        if isinstance(val, str):
+            return repr(m.group(2) in val)
+        return "(%r in %r)" % (m.group(2), list(val or []))
+    e = re.sub(r"contains\(\s*([A-Za-z0-9_.*\-]+)\s*,\s*'([^']*)'\s*\)", _contains_ref, e)
+    # `!x` (not `!=`) -> `not x`
+    e = re.sub(r"!(?=\s*[A-Za-z(])", " not ", e)
     e = e.replace("&&", " and ").replace("||", " or ").replace("'", '"')
 
-    e = re.sub(r"\b(inputs|needs|vars|steps)\.[A-Za-z0-9_.\-]+", lambda m: repr(lookup(m.group(0), ctx)), e)
+    e = re.sub(r"\b(inputs|needs|vars|steps|github)\.[A-Za-z0-9_.\-]+", lambda m: repr(lookup(m.group(0), ctx)), e)
     return bool(eval(e, {"__builtins__": {}}, {}))
 
 
@@ -510,7 +522,8 @@ def main():
     print("\n--- wrapper pause kill-switch ---")
     for val, want in [("true", False), ("false", True), ("", True)]:
         got = evaluate(wrap["auto-update-spec-kit"],
-                       {"vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_PAUSED": val})
+                       {"vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_PAUSED": val,
+                        "github.event_name": "schedule"})
         if got == want:
             PASS += 1
             print("    ok   PAUSED=%-6r runs=%s" % (val, got))
@@ -518,6 +531,59 @@ def main():
             FAIL += 1
             FAILED.append("pause=%r" % val)
             print("    FAIL PAUSED=%r runs=%s expected %s" % (val, got, want))
+
+    # ---- wrapper issue_comment pre-filter --------------------------------
+    # Only a non-bot comment on a non-PR issue that is the settle-tracking
+    # issue -- carrying its label, or the body marker the stage itself
+    # recognises it by -- starts the stage; every other trigger passes
+    # untouched. Before this filter every comment in the repository started
+    # the stage and paid verify-image-prerequisites' minute to find nothing
+    # to do. The marker case exists because settle warns an older tracking
+    # issue can sit beyond its migration scan window and never be labelled.
+    print("\n--- wrapper issue_comment pre-filter ---")
+    LABELLED = ["auto-update:tracking", "enhancement"]
+    PLAIN = "Settle tracking for the next Spec Kit candidate."
+    MARKED = PLAIN + "\n<!-- wing-commander-auto-update-spec-kit: candidate=1.0.8 observed=1 -->"
+    cases = [
+        ("human on labelled issue",
+         {"github.event_name": "issue_comment", "github.event.issue.pull_request": "",
+          "github.event.comment.user.type": "User", "github.event.issue.labels.*.name": LABELLED,
+          "github.event.issue.body": PLAIN}, True),
+        ("bot on labelled issue",
+         {"github.event_name": "issue_comment", "github.event.issue.pull_request": "",
+          "github.event.comment.user.type": "Bot", "github.event.issue.labels.*.name": LABELLED,
+          "github.event.issue.body": PLAIN}, False),
+        ("human on unlabelled issue",
+         {"github.event_name": "issue_comment", "github.event.issue.pull_request": "",
+          "github.event.comment.user.type": "User", "github.event.issue.labels.*.name": ["spec:foo"],
+          "github.event.issue.body": PLAIN}, False),
+        ("human on unlabelled issue whose body carries the marker",
+         {"github.event_name": "issue_comment", "github.event.issue.pull_request": "",
+          "github.event.comment.user.type": "User", "github.event.issue.labels.*.name": ["spec:foo"],
+          "github.event.issue.body": MARKED}, True),
+        ("bot on marker-bearing unlabelled issue",
+         {"github.event_name": "issue_comment", "github.event.issue.pull_request": "",
+          "github.event.comment.user.type": "Bot", "github.event.issue.labels.*.name": ["spec:foo"],
+          "github.event.issue.body": MARKED}, False),
+        ("human on a PR",
+         {"github.event_name": "issue_comment", "github.event.issue.pull_request": "https://x/pull/1",
+          "github.event.comment.user.type": "User", "github.event.issue.labels.*.name": LABELLED,
+          "github.event.issue.body": PLAIN}, False),
+        ("pull_request (merge) passes untouched",
+         {"github.event_name": "pull_request"}, True),
+        ("workflow_dispatch passes untouched",
+         {"github.event_name": "workflow_dispatch"}, True),
+    ]
+    for label, ctx, want in cases:
+        ctx = dict(ctx, **{"vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_PAUSED": ""})
+        got = evaluate(wrap["auto-update-spec-kit"], ctx)
+        if got == want:
+            PASS += 1
+            print("    ok   %-40s runs=%s" % (label, got))
+        else:
+            FAIL += 1
+            FAILED.append("pre-filter: %s" % label)
+            print("    FAIL %-40s runs=%s expected %s" % (label, got, want))
 
     print("\n==================== T7 job gating ====================")
     print("passed: %d   failed: %d" % (PASS, FAIL))

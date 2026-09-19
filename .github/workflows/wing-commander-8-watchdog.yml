@@ -5,6 +5,17 @@
 # detection/triage/act job lives in watchdog.yml (docs/architecture.md),
 # called by local path.
 #
+# run-name here is the inspected run's WORKFLOW name -- its declared
+# `name:` -- read from the event payload's `workflow.name` on the event
+# path and from `gh run view --json workflowName` on the dispatch path.
+# Never the run's own `name` field, and never the payload's workflow_run
+# name: once a workflow sets `run-name:` (as this one does, below), the
+# Actions API reports that title in `name`, and watchdog.yml's
+# `case "$RUN_NAME"` arms and its FR-018 self-dispatch cap
+# (`inputs.run-name == 'Wing Commander · 8 watchdog'`) would silently stop
+# matching. Gate 70 (verify-watchdog-self-skip-guard.py) holds this and
+# fails a mutation that reads the title instead.
+#
 # Self-inspection (FR-021/US4) is NOT wired here: GitHub rejects the entire
 # file — "failed to parse workflow: Workflow '<name>' cannot listen to
 # itself" — if a workflow names itself under workflow_run.workflows, and an
@@ -18,6 +29,19 @@
 # not an error, just a trigger that silently never fires. lint-workflows.yml
 # gate 2 enforces both rules.
 name: "Wing Commander · 8 watchdog"
+# The run title ends with the inspected run's own conclusion in parentheses,
+# because the 8b verifier needs that fact and has no other way to get it:
+# 8b's workflow_run payload describes THIS run, and a run whose jobs were all
+# gated off leaves no job output behind. 8b stands down on a skipped stage-8
+# run only when this title says the source was skipped as well, so a gating
+# regression below that skips a source run which DID execute still reaches
+# 8b's check 1 instead of passing as a deliberate decline. Gate 70
+# (verify-watchdog-self-skip-guard.py) evaluates this expression against
+# 8b's `if:` -- change the suffix in both files or in neither.
+run-name: >-
+  ${{ github.event_name == 'workflow_run'
+      && format('inspect {0} run {1} ({2})', github.event.workflow.name, github.event.workflow_run.id, github.event.workflow_run.conclusion)
+      || format('re-inspect run {0}', inputs.run-id) }}
 
 on:
   workflow_run:
@@ -57,7 +81,21 @@ jobs:
     # (#152): it stops writes without stopping work, which is exactly what
     # made a "paused" watchdog keep spending. It is scheduled for removal
     # alongside the stage's other vars.* reads (#149).
-    if: vars.WING_COMMANDER_WATCHDOG_PAUSED != 'true'
+    #
+    # Second clause, the skipped-source guard: a completed run whose
+    # conclusion is 'skipped' executed nothing, and FR-026
+    # (specs/015-pipeline-watchdog/spec.md) binds every collector to emit no
+    # signal about such a run -- so inspecting one is five job-minutes
+    # (resolve, verify-image-prerequisites, collect, diagnose,
+    # report-unhandled-failure) plus a diagnose agent call for a verdict
+    # fixed before the first job starts, and it was the common case: every
+    # pipeline comment on a spec issue wakes the clarify wrapper, which
+    # skips. The rationale for gating at the wrapper -- see
+    # wing-commander-metrics-persist.yml. Dispatch carries no workflow_run
+    # payload; '' != 'skipped' keeps that path open.
+    if: >-
+      vars.WING_COMMANDER_WATCHDOG_PAUSED != 'true' &&
+      github.event.workflow_run.conclusion != 'skipped'
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -71,13 +109,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
           EVENT_RUN_ID: ${{ github.event.workflow_run.id }}
-          EVENT_RUN_NAME: ${{ github.event.workflow_run.name }}
+          # The workflow's declared name, not the run's title (see the file
+          # header): `workflow` is the workflow that ran, `workflow_run` the
+          # run, and only the former is what watchdog.yml keys on.
+          EVENT_RUN_NAME: ${{ github.event.workflow.name }}
           DISPATCH_RUN_ID: ${{ inputs.run-id }}
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             run_id="$DISPATCH_RUN_ID"
-            run_name="$(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json name --jq .name)"
+            # workflowName, never name: a run's `name` is its run-name title
+            # when the workflow sets one (stage 8 does; so does release.yml).
+            run_name="$(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json workflowName --jq .workflowName)"
           else
             run_id="$EVENT_RUN_ID"
             run_name="$EVENT_RUN_NAME"
@@ -88,9 +131,11 @@ jobs:
   watchdog:
     needs: resolve
     # Redundant with resolve's gate (a job needing a skipped job is skipped),
-    # but stated explicitly so the kill switch is visible at the job that
-    # actually spends money.
-    if: vars.WING_COMMANDER_WATCHDOG_PAUSED != 'true'
+    # but stated explicitly so the kill switch and the skipped-source guard
+    # are visible at the job that actually spends money.
+    if: >-
+      vars.WING_COMMANDER_WATCHDOG_PAUSED != 'true' &&
+      github.event.workflow_run.conclusion != 'skipped'
     # Must be a superset of watchdog.yml's workflow-level `permissions:` —
     # GitHub validates the grant against every job in the called workflow at
     # startup (including if-skipped ones) and fails the run with zero jobs if

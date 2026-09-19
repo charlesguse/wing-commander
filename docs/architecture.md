@@ -575,8 +575,21 @@ the label).
 
 **Trigger**: `workflow_run: [completed]` across the eight other stage
 wrappers, plus manual `workflow_dispatch` with a `run-id` to re-inspect any
-past run. The thin wrapper only resolves the inspected run's identity
-(`run-id`/`run-name`); every job below lives in the reusable `watchdog.yml`.
+past run. The thin wrapper resolves the inspected run's identity
+(`run-id`/`run-name`) and declines a source run whose conclusion is
+`skipped` — it executed nothing, so FR-026 leaves nothing to inspect, and it
+is the common case (every pipeline comment wakes the clarify wrapper, which
+skips). Every job below lives in the reusable `watchdog.yml`.
+
+The identity the wrapper forwards as `run-name` is the inspected run's
+**workflow** name — its declared `name:` — read from the event payload's
+`workflow.name` on the event path and from `gh run view --json
+workflowName` on the dispatch path. It is never the run's own `name`: once
+a workflow sets `run-name:`, as this wrapper does, the Actions API reports
+that title in `name`, and `watchdog.yml`'s `case "$RUN_NAME"` arms and its
+FR-018 self-dispatch cap (`inputs.run-name == 'Wing Commander · 8
+watchdog'`) would silently stop matching. Gate 70 asserts the wrapper reads
+the workflow name and fails a mutation that reads the title instead.
 
 Self-inspection (FR-021) lives in a **second wrapper**,
 `wing-commander-8b-watchdog-self.yml`, which listens to stage 8. It cannot be
@@ -872,7 +885,12 @@ and held to that count by lint-workflows Gate 31 (#149). Gating the 8b verifier 
 not optional — with stage 8's jobs
 skipped its run still completes with conclusion `skipped`, and
 `verify-watchdog-run.sh` fails any conclusion that is not `success`, so an
-ungated 8b would file a pipeline-defect issue per paused run.
+ungated 8b would file a pipeline-defect issue per paused run. The same holds
+for a stage-8 run that declined a skipped source, so 8b stands down for that
+too — but only when stage 8's run title (`run-name`, which ends with the
+source's conclusion in parentheses) says the source was skipped. A stage-8
+run that concluded `skipped` for any other reason is a gating regression, and
+8b still verifies it; Gate 70 holds the two files to that convention.
 `vars.WING_COMMANDER_WATCHDOG_SELF_DISPATCH_CAP` (default `3`) remains
 stage-side in `act`; the cap counts the consecutive `workflow_run`-sourced
 self-inspection chain and, once reached, suppresses all writes so an

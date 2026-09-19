@@ -3638,6 +3638,22 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-credential-relay-shell.py --self-test
 
+      # Gate 70 — the 8b verifier stands down on a skipped stage-8 run only
+      # when the run stage 8 was asked to inspect was itself skipped (PR
+      # #403). Stage 8 writes its source's conclusion at the end of its
+      # run-name and 8b reads it back from display_title: a string
+      # convention across two files with nothing else holding them
+      # together. Evaluates both files' real expressions for every source
+      # conclusion, paused and unpaused, and a regression that gates off a
+      # source run which executed must still reach 8b's check 1. Mutations
+      # (8b keyed on stage 8's conclusion alone, the suffix changed in one
+      # file, the skipped-source guard dropped, the inspected run's identity
+      # read from its run title instead of its workflow name) must each
+      # fail it.
+      - name: Gate 70 — 8b stands down only for a stage-8 run that declined a skipped source
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-watchdog-self-skip-guard.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

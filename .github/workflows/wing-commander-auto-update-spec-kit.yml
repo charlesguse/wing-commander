@@ -23,7 +23,28 @@ jobs:
     # Pause kill-switch, wrapper-side (constitution VII; the lesson
     # wing-commander-8-watchdog.yml already learned — a stage-side pause
     # check still bills for steps before discovering it's paused).
-    if: vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_PAUSED != 'true'
+    #
+    # Comment pre-filter, wrapper-side for the same reason. Every
+    # issue_comment in the repository -- the pipeline's own status comments
+    # included -- used to start this stage, whose verify-image-prerequisites
+    # job then ran for a billed minute before comment-reply's own `if:` (or
+    # its marker check) found nothing to do. The resume path only ever
+    # concerns a human reply on the settle-tracking issue, which the stage
+    # creates and re-labels with `auto-update:tracking` (TRACKING_LABEL in
+    # auto-update-spec-kit.yml is that literal's one home; this clause
+    # follows it). The stage's own self-recognition is the body marker, not
+    # the label: its settle job warns that an older tracking issue can sit
+    # beyond the migration scan window and never be re-labelled, so a body
+    # carrying the marker prefix is accepted too -- otherwise a maintainer's
+    # reply on such an issue would be dropped with no run to inspect.
+    # Schedule, dispatch, and pull_request pass untouched.
+    if: >-
+      vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_PAUSED != 'true' &&
+      (github.event_name != 'issue_comment' ||
+        (!github.event.issue.pull_request &&
+         github.event.comment.user.type != 'Bot' &&
+         (contains(github.event.issue.labels.*.name, 'auto-update:tracking') ||
+          contains(github.event.issue.body, '<!-- wing-commander-auto-update-spec-kit:'))))
     permissions:
       contents: write
       issues: write
