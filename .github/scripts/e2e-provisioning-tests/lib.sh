@@ -63,6 +63,12 @@ new_gh_state() {
   echo '{"repos": {}}' > "$GH_STATE"
   export GITHUB_REPOSITORY="${GITHUB_REPOSITORY:-charlesguse/wing-commander}"
   export WC_SOURCE_CONTAINER_IMAGE=""
+  # T043: app_installation trusts only this hint (never a stubbed API
+  # answer); each scenario starts without it and opts in explicitly (via
+  # seed_fully_onboarded's with-app-installation argument, or directly) so
+  # one scenario's installed-App state can never leak into the next within
+  # the same test file.
+  unset WC_APP_INSTALLATION_KNOWN_READY
 }
 
 # gh_state_set OWNER/NAME KEY JSON_VALUE -- seed/mutate one repo's field.
@@ -102,6 +108,15 @@ seed_fully_onboarded() {
       variables: {"WING_COMMANDER_CONTAINER_IMAGE": ""}, contents: $contents, installation: $install}' \
     "$GH_STATE" > "$tmp"
   mv "$tmp" "$GH_STATE"
+  # T043: app_installation no longer reads the "installation" state field
+  # above (no real API can answer it that way) -- it trusts
+  # WC_APP_INSTALLATION_KNOWN_READY alone, so this helper sets that directly
+  # from the same with-app-installation argument callers already pass.
+  if [ "$with_install" = "true" ]; then
+    export WC_APP_INSTALLATION_KNOWN_READY=true
+  else
+    unset WC_APP_INSTALLATION_KNOWN_READY
+  fi
 }
 
 check() { # check <label> <actual> <expected>

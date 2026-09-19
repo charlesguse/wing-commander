@@ -31,26 +31,26 @@ remaining_action_repository() {
 }
 
 # ---- app_installation (the one DeclaredManualStep, remedy: manual) -----
+# GET /repos/{owner}/{repo}/installation is App-JWT-only (REST API
+# reference, Apps category): an installation access token OR a
+# maintainer's own PAT gets a flat 401/403 regardless of whether the App
+# is actually installed, so the call can never report "ready" for either
+# caller -- and attempting it from the local path (T043) risks reading a
+# credential-rejection error as "not installed" rather than what it is.
+# WC_APP_INSTALLATION_KNOWN_READY is the only source of truth this element
+# ever trusts: the generalized readiness workflow sets it after
+# actions/create-github-app-token has already minted a token scoped to
+# this exact target, which only succeeds if the App is installed there.
+# The local, privileged path has no equivalent signal, so it always
+# reports this element as the outstanding declared manual step;
+# convergence is observed by dispatching the readiness check (Story 2)
+# after installing the App, not by this script re-verifying it under a
+# maintainer's own credential.
 check_app_installation() { # check_app_installation OWNER NAME
-  # GET /repos/{owner}/{repo}/installation requires GitHub App (JWT)
-  # authentication (REST API reference, Apps category) -- an installation
-  # access token or a maintainer's own PAT gets a flat 403 regardless of
-  # whether the App is actually installed, so this call alone can never
-  # report "ready" for the CI, App-token-scoped path. WC_APP_INSTALLATION_KNOWN_READY
-  # lets a caller that already knows installation succeeded from its own
-  # token-mint outcome (the readiness workflow, after
-  # actions/create-github-app-token succeeds for this exact target) trust
-  # that directly instead. Without that hint, this call remains a
-  # best-effort signal for the local, privileged path: it cannot return
-  # success for a repository the App is not installed on, so it produces no
-  # false positive.
-  if [ "${WC_APP_INSTALLATION_KNOWN_READY:-}" = "true" ]; then
-    return 0
-  fi
-  gh api "repos/$1/$2/installation" >/dev/null 2>&1
+  [ "${WC_APP_INSTALLATION_KNOWN_READY:-}" = "true" ]
 }
 remaining_action_app_installation() {
-  printf 'Install the wing-commander App on %s/%s: https://github.com/settings/installations' "$1" "$2"
+  printf 'Install the wing-commander App on %s/%s: https://github.com/settings/installations -- this cannot be verified with a maintainer'\''s own credential (T043); confirm it by dispatching the readiness check (auto-update-spec-kit-scratch-preflight.yml) once installed.' "$1" "$2"
 }
 
 # ---- scratch_marker (research.md D3) -----------------------------------
@@ -66,13 +66,21 @@ has_scratch_marker() { # has_scratch_marker OWNER NAME
 }
 # ready iff the repository does not exist yet (nothing to conflict with),
 # has zero commits (isEmpty), or its description already carries the
-# marker this script writes on first successful provisioning. Any other
-# pre-existing, non-empty, unmarked repository is not ready. `isEmpty` is
-# used rather than `diskUsage == 0` -- GitHub's reported disk usage for a
+# marker this script writes on first successful provisioning. On the
+# --check-only path (WC_CHECK_ONLY=true) this element is not applicable and
+# always reports ready (T044): it exists to gate the MUTATING path against
+# adopting a foreign repository (data-model.md D3), a concern that does not
+# arise when nothing mutates. Without this exemption, a hand-onboarded,
+# pre-053 target with real content and no marker would read as permanently
+# not-ready under a read-only check, which is exactly what FR-011 and User
+# Story 2's Independent Test rule out. Any other pre-existing, non-empty,
+# unmarked repository is not ready on the mutating path. `isEmpty` is used
+# rather than `diskUsage == 0` -- GitHub's reported disk usage for a
 # freshly pushed, still-tiny repository can itself read 0 for a time, which
 # would make a genuinely non-empty repository look claimable.
 check_scratch_marker() { # check_scratch_marker OWNER NAME
   local owner="$1" name="$2" json empty
+  [ "${WC_CHECK_ONLY:-}" = "true" ] && return 0
   if ! gh repo view "$owner/$name" >/dev/null 2>&1; then
     return 0
   fi
@@ -163,11 +171,17 @@ this_repo_container_image() {
   gh variable list --repo "$self" --json name,value -q '.[] | select(.name=="WING_COMMANDER_CONTAINER_IMAGE") | .value' 2>/dev/null
 }
 check_container_image_pin() { # check_container_image_pin OWNER NAME
-  local owner="$1" name="$2" want got rc
+  local owner="$1" name="$2" want got rc err
   want="$(this_repo_container_image)" || return 1
-  got="$(gh variable list --repo "$owner/$name" --json name,value -q '.[] | select(.name=="WING_COMMANDER_CONTAINER_IMAGE") | .value' 2>&1)"; rc=$?
+  got="$(gh variable list --repo "$owner/$name" --json name,value -q '.[] | select(.name=="WING_COMMANDER_CONTAINER_IMAGE") | .value' 2>/dev/null)"; rc=$?
   if [ "$rc" -ne 0 ]; then
-    gh_permission_denied "$got" && CONTAINER_IMAGE_PIN_NOT_CHECKABLE=true
+    # Re-run once, capturing stderr alone, purely to classify the failure
+    # (T047): folding stderr into $got via `2>&1` on the first attempt let a
+    # successful call's incidental stderr noise corrupt the compared value
+    # into a false not-ready mismatch, so the value used for the comparison
+    # above is always stdout-only.
+    err="$(gh variable list --repo "$owner/$name" --json name,value -q '.[] | select(.name=="WING_COMMANDER_CONTAINER_IMAGE") | .value' 2>&1 1>/dev/null)"
+    gh_permission_denied "$err" && CONTAINER_IMAGE_PIN_NOT_CHECKABLE=true
     return 1
   fi
   [ "$got" = "$want" ]

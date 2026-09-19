@@ -44,6 +44,10 @@ while [ $# -gt 0 ]; do
       usage; exit 1 ;;
   esac
 done
+# checks.sh's check_scratch_marker reads this to treat the marker element as
+# not applicable on the read-only path (T044) -- exported before checks.sh
+# is ever called against a real target.
+export WC_CHECK_ONLY="$CHECK_ONLY"
 
 if [ -z "$REPO" ]; then
   echo "provision-e2e-target.sh: --repo is required" >&2; usage; exit 1
@@ -91,8 +95,21 @@ this_repo_from_git() {
   [ -n "$rest" ] && printf '%s' "$rest"
 }
 
+# resolve_this_repo: this_repo_from_git(), falling back to GITHUB_REPOSITORY
+# (an env var, never a `gh` call, so this still runs before any `gh` call is
+# made) when the git remote can't be resolved -- e.g. a checkout with no
+# `origin` or an unparsable remote URL. T045: the old code silently skipped
+# the self-refusal entirely when this_repo_from_git failed, leaving only the
+# marker rail between a mutating run and this repository.
+resolve_this_repo() {
+  local r
+  r="$(this_repo_from_git || true)"
+  [ -n "$r" ] || r="${GITHUB_REPOSITORY:-}"
+  printf '%s' "$r"
+}
+
 # --- FR-007: refuse self-targeting, before any gh call ---------------------
-THIS_REPO="$(this_repo_from_git || true)"
+THIS_REPO="$(resolve_this_repo)"
 if [ -n "$THIS_REPO" ]; then
   repo_lc="$(printf '%s' "$REPO" | tr '[:upper:]' '[:lower:]')"
   self_lc="$(printf '%s' "$THIS_REPO" | tr '[:upper:]' '[:lower:]')"
@@ -100,6 +117,13 @@ if [ -n "$THIS_REPO" ]; then
     echo "provision-e2e-target.sh: refusing to target this repository ($THIS_REPO) -- FR-007" >&2
     exit 1
   fi
+elif [ "$CHECK_ONLY" != "true" ]; then
+  # Neither signal resolved, and this is the mutating path: refuse rather
+  # than proceed unable to rule out targeting this repository (T045). A
+  # read-only --check-only run mutates nothing, so it is allowed to proceed
+  # unresolved.
+  echo "provision-e2e-target.sh: could not determine this repository's own OWNER/NAME (no resolvable git remote and GITHUB_REPOSITORY is unset) -- refusing to proceed on the mutating path without being able to rule out targeting this repository -- FR-007/T045" >&2
+  exit 1
 fi
 
 act_repository() { # act_repository OWNER NAME
@@ -132,11 +156,20 @@ act_wrapper_set() { # act_wrapper_set OWNER NAME
     exit 1
   }
   head_sha="$(git -C "$REPO_ROOT" rev-parse HEAD)"
-  # T042: a HEAD not yet reachable from this checkout's upstream branch
+  # T042/T049: a HEAD not yet reachable from this checkout's upstream branch
   # would pin wrappers to a commit the target's own Actions runs cannot
-  # fetch, failing later and far from here. This is a warning, not a hard
-  # failure -- committing, pinning, then pushing before the target's first
-  # run is a normal and safe local sequence.
+  # fetch. This stays a warning, not a hard failure, by design: committing
+  # and pinning before pushing is a normal, safe local sequence (this
+  # feature's own implement stage does exactly that -- gate-check locally,
+  # commit, push after), and a hard failure here would block that legitimate
+  # sequence more often than it would catch a real mistake. The downstream
+  # failure mode if the SHA truly never gets pushed is not a vacuous pass:
+  # the target's own Actions run fails loudly and immediately at the
+  # unresolvable `uses:` ref, self-diagnosing at the exact point of the
+  # actual defect -- unlike a value silently written wrong (e.g. T040),
+  # this never reports `ready: true` for a target whose wrapper pin will
+  # not actually resolve as long as the run that observes readiness happens
+  # after the push, which quickstart.md's own sequencing already requires.
   upstream="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)" || upstream=""
   if [ -n "$upstream" ]; then
     upstream_sha="$(git -C "$REPO_ROOT" rev-parse "$upstream" 2>/dev/null)" || upstream_sha=""
@@ -222,7 +255,16 @@ if [ "$CHECK_ONLY" != "true" ]; then
   # never actually written until the repository was no longer empty, by
   # which point a foreign-non-empty-unmarked refusal was permanent.)
   if ! has_scratch_marker "$OWNER" "$NAME"; then
-    act_scratch_marker "$OWNER" "$NAME"
+    # T046: the script runs under `set -uo pipefail`, not `-e`, so a failed
+    # write here (permission, rate limit) would otherwise be silently
+    # ignored and the run would proceed to push wrapper content -- exactly
+    # the non-empty, unmarked, permanently-refused state T038/T039's
+    # marker-first ordering was meant to prevent. Exit before any further
+    # privileged action if the write itself did not succeed.
+    if ! act_scratch_marker "$OWNER" "$NAME"; then
+      echo "provision-e2e-target.sh: failed to write the scratch marker to $OWNER/$NAME -- refusing to proceed with any further privileged action (T046)" >&2
+      exit 1
+    fi
   fi
 
   mapfile -t ELEMENTS < <(profile_elements "$PROFILE")

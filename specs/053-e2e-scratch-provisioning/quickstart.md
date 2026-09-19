@@ -36,17 +36,29 @@ every element `ready: true` **except** `app_installation`, whose
 In the GitHub UI, install the wing-commander App on
 `your-account/wc-e2e-scratch`.
 
-## 3. Re-invoke the same command (Acceptance Scenario 5)
+## 3. Confirm the App is installed, then re-invoke the same command (Acceptance Scenario 5)
+
+`GET /repos/{owner}/{repo}/installation` requires GitHub App JWT
+authentication (REST API reference, Apps category): neither a maintainer's
+own token nor an installation access token can ever get a real answer from
+it, so this local command cannot verify `app_installation` itself and
+always reports it as the outstanding manual step (T043 of this feature's
+maintainer feedback). Convergence is observed through the readiness check
+(User Story 2) instead, since that workflow already proves installation
+from its own successful App-token mint:
 
 ```console
-$ .github/scripts/provision-e2e-target.sh \
-    --repo your-account/wc-e2e-scratch \
-    --profile auto-release
+$ gh workflow run auto-update-spec-kit-scratch-preflight.yml \
+    -f target=your-account/wc-e2e-scratch -f profile=auto-release
 ```
 
-Expected: every element (including `app_installation`) is now `ready`.
-Elements already written in step 1 are untouched — no second commit to the
-wrapper set, no label recreated, no secret rewritten. Exit code `0`.
+Expected: the dispatched run's `GITHUB_STEP_SUMMARY` shows every element
+(including `app_installation`) `ready`, exit code `0`. Re-invoking the
+local command from step 1 still re-checks and re-reports every other
+element correctly, but its own `app_installation` row stays `not ready`
+regardless of the real install state — that is expected, not a bug.
+Elements already written in step 1 are untouched either way — no second
+commit to the wrapper set, no label recreated, no secret rewritten.
 
 ## 4. Re-run against an already-ready target (Acceptance Scenario 3, FR-005, SC-003)
 
@@ -56,8 +68,11 @@ $ .github/scripts/provision-e2e-target.sh \
     --profile auto-release
 ```
 
-Expected: identical `ReadinessReport` to step 3, zero privileged calls
-made, exit code `0`.
+Expected: identical `ReadinessReport` to a re-run of step 1's local
+command (not step 3's CI dispatch — see step 3's note on why the local
+path's own `app_installation` row never flips), zero privileged calls
+made. Exit code stays `1` locally, for the same reason as step 1; dispatch
+the readiness check again if you want to see exit code `0`.
 
 ## 5. Dispatch a real verification against the provisioned target (Acceptance Scenario 2)
 

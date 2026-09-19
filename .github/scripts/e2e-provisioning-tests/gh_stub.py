@@ -19,6 +19,15 @@ import json
 import os
 import sys
 
+# T048: without this, a host whose default stdout/stderr encoding cannot
+# represent the scratch marker's em-dash (e.g. a non-UTF-8 locale on
+# Windows) either mangles or raises on the plain `print()` calls below that
+# emit raw repository description text (as opposed to `json.dumps`, whose
+# default `ensure_ascii=True` already escapes non-ASCII output safely).
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8")
+
 STATE = os.environ["GH_STATE"]
 CALLS = os.environ.get("GH_CALLS")
 
@@ -122,6 +131,9 @@ def main():
             if not repo:
                 sys.stderr.write("gh: repository %s not found\n" % full)
                 return 1
+            if repo.get("edit_forbidden"):
+                sys.stderr.write("gh: HTTP 500: Internal Server Error\n")
+                return 1
             desc = opt(argv, "--description")
             if desc is not None:
                 repo["description"] = desc
@@ -206,6 +218,11 @@ def main():
                     "(https://api.github.com/repos/%s/actions/variables)\n" % full
                 )
                 return 1
+            if repo.get("variables_noisy_stderr"):
+                # T047 regression fixture: a real `gh` call can print
+                # incidental stderr noise (deprecation notice, update
+                # nag, ...) on an otherwise successful call.
+                sys.stderr.write("gh: a new release of gh is available\n")
             variables = repo["variables"]
             if "-q" in argv:
                 q = opt(argv, "-q")
@@ -236,15 +253,11 @@ def main():
                 return 0
             sys.stderr.write("gh: 404 label %s not found\n" % label_name)
             return 1
-        # repos/OWNER/NAME/installation
-        if len(parts) == 4 and parts[0] == "repos" and parts[3] == "installation":
-            full = "%s/%s" % (parts[1], parts[2])
-            repo = get_repo(s, full)
-            if repo and repo.get("installation"):
-                print("{}")
-                return 0
-            sys.stderr.write("gh: not installed\n")
-            return 1
+        # repos/OWNER/NAME/installation is deliberately NOT handled here
+        # (T043): that endpoint is App-JWT-only against the real API and
+        # would 401/403 for either caller this feature has, so checks.sh no
+        # longer calls it at all -- a stub answer for it would let a test
+        # pass against behaviour the real API cannot produce.
         # repos/OWNER/NAME/contents/PATH
         if len(parts) >= 5 and parts[0] == "repos" and parts[3] == "contents":
             full = "%s/%s" % (parts[1], parts[2])

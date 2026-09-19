@@ -13,8 +13,12 @@ check "T3 first run reports not ready" "$(jq -r .ready <<<"$FIRST")" "false"
 check "T3 first run: only app_installation is not ready" \
   "$(jq -r '[.elements[] | select(.ready==false) | .key] | join(",")' <<<"$FIRST")" "app_installation"
 
-# Simulate a human installing the App -- the only external event.
-gh_state_set "wc-user/wc-e2e-converge" "installation" "true"
+# Simulate a human installing the App and that being confirmed the only way
+# it credibly can be (T043): a caller that already knows installation
+# succeeded -- here, standing in for the readiness workflow's own
+# successful App-token mint -- tells checks.sh directly, since no call this
+# script could make with a maintainer's own credential can ever answer it.
+export WC_APP_INSTALLATION_KNOWN_READY=true
 : > "$GH_CALLS"
 
 SECOND="$(bash "$PROVISION_SCRIPT" --repo wc-user/wc-e2e-converge --profile auto-release 2>/dev/null)"
