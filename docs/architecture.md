@@ -581,6 +581,16 @@ past run. The thin wrapper resolves the inspected run's identity
 is the common case (every pipeline comment wakes the clarify wrapper, which
 skips). Every job below lives in the reusable `watchdog.yml`.
 
+The identity the wrapper forwards as `run-name` is the inspected run's
+**workflow** name — its declared `name:` — read from the event payload's
+`workflow.name` on the event path and from `gh run view --json
+workflowName` on the dispatch path. It is never the run's own `name`: once
+a workflow sets `run-name:`, as this wrapper does, the Actions API reports
+that title in `name`, and `watchdog.yml`'s `case "$RUN_NAME"` arms and its
+FR-018 self-dispatch cap (`inputs.run-name == 'Wing Commander · 8
+watchdog'`) would silently stop matching. Gate 70 asserts the wrapper reads
+the workflow name and fails a mutation that reads the title instead.
+
 Self-inspection (FR-021) lives in a **second wrapper**,
 `wing-commander-8b-watchdog-self.yml`, which listens to stage 8. It cannot be
 folded into stage 8: GitHub rejects any workflow that names itself under

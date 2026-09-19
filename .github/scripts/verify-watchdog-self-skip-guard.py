@@ -26,10 +26,22 @@ dispatched, and asserts:
   * 8b still runs (so check 1 fires) when stage 8 concluded 'skipped' for a
     source that executed, or on a dispatch -- the regression case.
 
-Three mutations -- 8b keyed on stage 8's conclusion alone, the run-name
-suffix changed in one file only, stage 8's skipped-source guard dropped --
-must each break an assertion, so the gate proves it can see the drift it
-exists for. It reads the two workflow files only; it makes no network call.
+Setting `run-name:` also changes what the Actions API reports in a run's
+`name`: it becomes the title, not the workflow's declared name. Stage 8's
+resolve step derives the inspected run's identity -- which watchdog.yml
+keys its `case "$RUN_NAME"` arms and its FR-018 self-dispatch cap on --
+so it must read the workflow's own name (the payload's `workflow.name`,
+`--json workflowName`) and never the run's `name` or the payload's
+workflow_run name. Read from the title, a dispatched re-inspection of a
+stage-8 run hands watchdog.yml "inspect ... (success)" where it expects
+"Wing Commander · 8 watchdog", and the cap never engages. This gate
+asserts the identity source too.
+
+Four mutations -- 8b keyed on stage 8's conclusion alone, the run-name
+suffix changed in one file only, stage 8's skipped-source guard dropped,
+the inspected run's identity read from its run title -- must each break an
+assertion, so the gate proves it can see the drift it exists for. It reads
+the two workflow files only; it makes no network call.
 """
 import math
 import os
@@ -242,7 +254,8 @@ def load_subject():
     if not isinstance(run_name, str) or not run_name.strip():
         sys.exit(f"::error file={STAGE8}::no `run-name:` -- 8b cannot tell a "
                  f"declined skipped source from a gating regression without it.")
-    subject = {"run-name": run_name}
+    with open(STAGE8, encoding="utf-8") as fh:
+        subject = {"run-name": run_name, "stage8:text": fh.read()}
     for job in STAGE8_JOBS:
         subject[f"stage8:{job}"] = str(find_job(STAGE8, job).get("if") or "")
     subject["8b"] = str(find_job(SELF, SELF_JOB).get("if") or "")
@@ -261,14 +274,40 @@ def source_ctx(paused, conclusion):
     else:
         ctx.update({"github.event_name": "workflow_run",
                     "github.event.workflow_run.id": 17712345678.0,
-                    "github.event.workflow_run.name": "Wing Commander · 2 clarify",
+                    "github.event.workflow.name": "Wing Commander · 2 clarify",
                     "github.event.workflow_run.conclusion": conclusion})
     return ctx
 
 
+IDENTITY_MUST = ("EVENT_RUN_NAME: ${{ github.event.workflow.name }}",
+                 "--json workflowName --jq .workflowName")
+IDENTITY_MUST_NOT = ("github.event.workflow_run.name", "--json name --jq .name")
+
+
+def identity_failures(text):
+    """The inspected run's identity must be the workflow's declared name.
+
+    A run's `name` in the Actions API is its run title once the workflow sets
+    `run-name:` -- which stage 8 does -- so deriving identity from the run's
+    name hands watchdog.yml a title like "inspect ... (success)" where it
+    expects "Wing Commander · 8 watchdog", and its FR-018 self-dispatch cap
+    never engages. Checked on the wrapper's text, comments included, so the
+    forbidden forms may not be named there either.
+    """
+    broke = []
+    for needle in IDENTITY_MUST:
+        if needle not in text:
+            broke.append(f"stage 8 wrapper no longer resolves identity via {needle!r}")
+    for needle in IDENTITY_MUST_NOT:
+        if needle in text:
+            broke.append(f"stage 8 wrapper resolves identity via {needle!r} -- that is "
+                         f"the run title once run-name: is set, not the workflow name")
+    return broke
+
+
 def suite(subject):
     """Every broken assertion, as a message. Empty = the pair is consistent."""
-    broke = []
+    broke = identity_failures(subject.get("stage8:text", ""))
     for paused in (False, True):
         for source in SOURCE_CONCLUSIONS + (None,):
             where = f"paused={paused} source={source or 'dispatch'}"
@@ -331,10 +370,20 @@ def mut_stage8_guard_dropped(subject):
     return s
 
 
+def mut_identity_from_run_title(subject):
+    s = dict(subject)
+    s["stage8:text"] = (subject["stage8:text"]
+                        .replace(IDENTITY_MUST[0],
+                                 "EVENT_RUN_NAME: ${{ github.event.workflow_run.name }}")
+                        .replace(IDENTITY_MUST[1], "--json name --jq .name"))
+    return s
+
+
 MUTATIONS = [
     ("8b keys on stage 8's conclusion alone", mut_self_keys_on_stage8_alone),
     ("run-name suffix changed in stage 8 only", mut_suffix_drifts),
     ("stage 8's skipped-source guard dropped", mut_stage8_guard_dropped),
+    ("inspected run's identity read from its run title", mut_identity_from_run_title),
 ]
 
 
