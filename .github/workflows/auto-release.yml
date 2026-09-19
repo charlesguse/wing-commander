@@ -354,7 +354,11 @@ jobs:
             echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN could not resolve a login via gh api user -- see docs/setup.md."
             exit 0
           fi
-          if [ "$login" != "$MAINTAINER_USERNAME" ]; then
+          # Compared case-insensitively -- GitHub logins are case-
+          # insensitive, so a differently-cased secret must not produce a
+          # false pass-time failure here (maintainer feedback on PR #389,
+          # second review).
+          if [ "$(printf '%s' "$login" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$MAINTAINER_USERNAME" | tr '[:upper:]' '[:lower:]')" ]; then
             echo "ok=false" >> "$GITHUB_OUTPUT"
             {
               echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
@@ -387,7 +391,11 @@ jobs:
             exit 0
           fi
           echo "ok=true" >> "$GITHUB_OUTPUT"
-          echo "login=$login" >> "$GITHUB_OUTPUT"
+          # No `login=$login` output here: the `poll` step reads the login
+          # directly from WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME
+          # (a masked secret, dropped from any step output that carried it --
+          # maintainer feedback on PR #389, second review), so this step's
+          # own resolved login was dead once that wiring changed.
 
       # Any open issue/PR left by a previous attempt is closed (best-effort)
       # before the reset -- an orphan-reset default branch otherwise leaves
@@ -423,8 +431,23 @@ jobs:
           # protects against a DIFFERENT slug, not this same-slug replay.
           # Ending the attempt here (maintainer feedback) is strictly safer
           # than letting the poll loop merge a leftover.
+          # A failed LIST is exactly as unsafe as a failed CLOSE for the same
+          # same-slug-replay reason above: `|| true` here used to fall
+          # through as "nothing to close," silently proceeding to reset the
+          # default branch with a leftover PR from a previous attempt still
+          # open (maintainer feedback on PR #389, second review).
+          if ! open_prs_json="$(gh pr list --repo "$E2E_REPO" --state open --json number 2>"$RUNNER_TEMP/auto-release-open-prs-err.txt")"; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "listing open pull requests before closing leftovers" "gh pr list succeeds" "$(tail -c 500 "$RUNNER_TEMP/auto-release-open-prs-err.txt")" "$E2E_REPO" "$MODE"
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            echo "::error::wing-commander auto-release verify-e2e: could not list open pull requests in $E2E_REPO before resetting -- refusing to risk a stale PR being merged as this attempt's own."
+            exit 0
+          fi
           pr_close_failures=""
-          mapfile -t open_prs < <(gh pr list --repo "$E2E_REPO" --state open --json number --jq '.[].number' 2>/dev/null || true)
+          mapfile -t open_prs < <(printf '%s' "$open_prs_json" | jq -r '.[].number')
           for n in "${open_prs[@]}"; do
             [ -n "$n" ] || continue
             if ! close_err="$(gh pr close "$n" --repo "$E2E_REPO" --comment "Closed by wing-commander's auto-release.yml before a fresh verification attempt." 2>&1 >/dev/null)"; then
@@ -755,15 +778,22 @@ jobs:
           # FR-016/FR-018, maintainer feedback: a `pass` verdict must not
           # rest on an inference (reaching stage:done implies the PR
           # merged) -- assert each merge PR is non-null AND attributed to
-          # the harness login, failing the pass outright otherwise.
+          # the harness login, failing the pass outright otherwise. The
+          # login comparison is case-insensitive (GitHub logins are) and
+          # the `expected` text never interpolates HARNESS_LOGIN itself --
+          # HARNESS_LOGIN is a masked secret value, and GitHub Actions
+          # silently drops any step output containing one, which emptied
+          # this verdict's `expected` field and made the report job misfile
+          # the failure as an infrastructure problem (maintainer feedback on
+          # PR #389, second review).
           assert_merged_by_harness() {
             local gate_label="$1" pr_json="$2" merged_by
             merged_by="$(printf '%s' "$pr_json" | jq -r '.mergedBy.login // ""' 2>/dev/null || echo "")"
-            if [ "$pr_json" = "null" ] || [ "$merged_by" != "$HARNESS_LOGIN" ]; then
-              local observed="merged by '${merged_by:-unknown}'"
+            if [ "$pr_json" = "null" ] || [ "$(printf '%s' "$merged_by" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$HARNESS_LOGIN" | tr '[:upper:]' '[:lower:]')" ]; then
+              local observed="merged, but not attributed to the configured maintainer identity"
               [ "$pr_json" = "null" ] && observed="no merged PR found"
               write_verdict "fail-wrong-output" "${gate_label} merged by the harness before stage:done" \
-                "the PR merged, attributed to ${HARNESS_LOGIN}" "$observed"
+                "the PR merged, attributed to the configured maintainer identity" "$observed"
               emit_verdict
               exit 0
             fi
@@ -772,9 +802,16 @@ jobs:
           # This attempt's kickoff issue author id -- used by the clarify-
           # decision script's actor-gate check (a qualifying reply is one
           # from a non-Bot OWNER/MEMBER/COLLABORATOR, or from this id,
-          # mirroring intake.yml:524). Resolved once; the issue's author
-          # never changes mid-attempt.
-          author_id="$(gh api "repos/${E2E_REPO}/issues/${ISSUE}" --jq '.user.id' 2>/dev/null || true)"
+          # mirroring intake.yml:524). The issue's author never changes
+          # mid-attempt, so this is resolved lazily on the first loop
+          # iteration below (not here) and cached -- a transient failure at
+          # this single, unretried call used to leave author_id empty for
+          # the rest of the attempt, and the clarify-decision script's own
+          # `${1:?}` then made every iteration's `decide` call fail, falsely
+          # stalling at "clarification" after MAX_GATE_FAILURES instead of
+          # simply retrying the read (maintainer feedback on PR #389, second
+          # review).
+          author_id=""
 
           # The three PR-merge gates share one shape (research.md D6/D9);
           # gate_name is the failing_check string contracts/verdict-
@@ -806,7 +843,17 @@ jobs:
           rate_limited=""
           while [ "$SECONDS" -lt "$POLL_BUDGET_SECONDS" ]; do
             # --- Clarification gate (research.md D4, D6, D7, D8) ---
-            if ! gh api "repos/${E2E_REPO}/issues/${ISSUE}/comments" --paginate --jq \
+            # author_id is resolved lazily here (not before the loop), so a
+            # transient failure is retried on the next iteration and counted
+            # against the same MAX_GATE_FAILURES bound as the comments read
+            # and the decision script below, instead of leaving author_id
+            # permanently empty for the rest of the attempt (maintainer
+            # feedback on PR #389, second review).
+            if [ -z "$author_id" ] && ! author_id="$(gh api "repos/${E2E_REPO}/issues/${ISSUE}" --jq '.user.id' 2>"$RUNNER_TEMP/auto-release-author-id-err.txt")"; then
+              author_id=""
+              clarify_failures=$((clarify_failures + 1))
+              clarify_last_failure="issue author id: $(tail -c 300 "$RUNNER_TEMP/auto-release-author-id-err.txt")"
+            elif ! gh api "repos/${E2E_REPO}/issues/${ISSUE}/comments" --paginate --jq \
                 '.[] | {id, user: {login: .user.login, id: .user.id, type: .user.type}, author_association, body, created_at}' \
                 > "$RUNNER_TEMP/auto-release-comments.ndjson" 2>"$RUNNER_TEMP/auto-release-comments-err.txt"; then
               clarify_failures=$((clarify_failures + 1))
@@ -832,8 +879,8 @@ jobs:
                   ;;
                 exhausted)
                   write_verdict "fail-gate-stall" "clarification" \
-                    "a reply from the harness resolves the open clarification question within 3 rounds" \
-                    "still asking after 3 rounds"
+                    "a reply from the harness resolves the open clarification question within ${MAX_CLARIFICATION_ROUNDS} rounds" \
+                    "still asking after ${MAX_CLARIFICATION_ROUNDS} rounds"
                   emit_verdict
                   exit 0
                   ;;
@@ -1068,12 +1115,31 @@ jobs:
           # script (its `satisfied`/`markers` modes) -- the single home
           # CLAUDE.md requires, not re-derived here a second time
           # (maintainer feedback on PR #389).
+          #
+          # This is a one-shot read with no retry loop around it (unlike the
+          # per-iteration reads above), so a failure here must not fail OPEN
+          # into an empty file -- that used to make the assertion below
+          # vacuously pass on a transient API error, silently skipping the
+          # very check this pass path exists to make (maintainer feedback on
+          # PR #389, second review). It becomes an infrastructure outcome
+          # instead.
           if ! gh api "repos/${E2E_REPO}/issues/${ISSUE}/comments" --paginate --jq \
               '.[] | {id, user: {login: .user.login, id: .user.id, type: .user.type}, author_association, body, created_at}' \
-              > "$RUNNER_TEMP/auto-release-final-comments.ndjson" 2>/dev/null; then
-            : > "$RUNNER_TEMP/auto-release-final-comments.ndjson"
+              > "$RUNNER_TEMP/auto-release-final-comments.ndjson" 2>"$RUNNER_TEMP/auto-release-final-comments-err.txt"; then
+            write_verdict "fail-infra" "reading the issue's comments for the pass-path clarification assertion" \
+              "gh api issues/comments succeeds" "$(tail -c 300 "$RUNNER_TEMP/auto-release-final-comments-err.txt")"
+            emit_verdict
+            exit 0
           fi
           comments_json="$(jq -cs '.' "$RUNNER_TEMP/auto-release-final-comments.ndjson" 2>/dev/null || echo '[]')"
+          # Fallback for the rare case the loop reached stage:done before
+          # author_id was ever resolved above (e.g. its very first attempt
+          # failed and the very same iteration's terminal-state check
+          # already found the issue closed) -- the same one-shot fallback
+          # idiom slug's own resolution above already uses.
+          if [ -z "$author_id" ]; then
+            author_id="$(gh api "repos/${E2E_REPO}/issues/${ISSUE}" --jq '.user.id' 2>/dev/null || true)"
+          fi
           clarification_satisfied="$(printf '%s' "$comments_json" \
             | bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh satisfied "$author_id" 2>/dev/null || echo unsatisfied)"
           if [ "$clarification_satisfied" != "ok" ]; then
@@ -1086,6 +1152,15 @@ jobs:
 
           # --- Gate evidence for the report job (research.md D12, FR-017,
           # FR-019) -- presentation-layer only, no verdict schema change. ---
+          # `mergedBy` is fetched for assert_merged_by_harness's own check
+          # below, but never written to a job output: HARNESS_LOGIN is a
+          # masked secret value, and GitHub Actions silently drops any step
+          # output whose value contains one, which used to empty every
+          # pass-verdict's spec-draft-pr/plan-pr/finalize-pr output entirely
+          # (maintainer feedback on PR #389, second review). Each `*_pr`
+          # variable below keeps the full object (for the assertion); each
+          # `*_pr_out` variable is the {number, mergedAt}-only projection
+          # that actually reaches $GITHUB_OUTPUT.
           spec_draft_pr="$(GH_TOKEN="$HARNESS_TOKEN" gh pr list --repo "$E2E_REPO" --state merged --head "spec-draft/${slug}" --json number,mergedAt,mergedBy 2>/dev/null | jq -c '.[0] // null' 2>/dev/null || echo null)"
           plan_pr="$(GH_TOKEN="$HARNESS_TOKEN" gh pr list --repo "$E2E_REPO" --state merged --head "plan/${slug}" --json number,mergedAt,mergedBy 2>/dev/null | jq -c '.[0] // null' 2>/dev/null || echo null)"
           finalize_pr="$(GH_TOKEN="$HARNESS_TOKEN" gh pr list --repo "$E2E_REPO" --state merged --head "spec/${slug}" --json number,mergedAt,mergedBy 2>/dev/null | jq -c '.[0] // null' 2>/dev/null || echo null)"
@@ -1096,11 +1171,15 @@ jobs:
           assert_merged_by_harness "plan PR merge" "$plan_pr"
           assert_merged_by_harness "finalize PR merge" "$finalize_pr"
 
+          spec_draft_pr_out="$(printf '%s' "$spec_draft_pr" | jq -c 'if . == null then null else {number, mergedAt} end' 2>/dev/null || echo null)"
+          plan_pr_out="$(printf '%s' "$plan_pr" | jq -c 'if . == null then null else {number, mergedAt} end' 2>/dev/null || echo null)"
+          finalize_pr_out="$(printf '%s' "$finalize_pr" | jq -c 'if . == null then null else {number, mergedAt} end' 2>/dev/null || echo null)"
+
           clarification_comment_ids="$(printf '%s' "$comments_json" | jq -c --argjson markers "$markers_json" --arg login "$HARNESS_LOGIN" '{questions: [ $markers[].id ], replies: [ .[] | select((.user.login // "") == $login) | .id ]}' 2>/dev/null || echo '{"questions":[],"replies":[]}')"
           {
-            echo "spec-draft-pr=$spec_draft_pr"
-            echo "plan-pr=$plan_pr"
-            echo "finalize-pr=$finalize_pr"
+            echo "spec-draft-pr=$spec_draft_pr_out"
+            echo "plan-pr=$plan_pr_out"
+            echo "finalize-pr=$finalize_pr_out"
             echo "clarification-rounds-answered=$clarification_rounds"
             echo "clarification-comment-ids=$clarification_comment_ids"
           } >> "$GITHUB_OUTPUT"
@@ -1589,7 +1668,17 @@ jobs:
           # check read the latter as "not opened," which is wrong per
           # FR-010 -- a human answering first is a normal pass, not an
           # unopened gate).
-          question_count="$(printf '%s' "${CLARIFICATION_COMMENT_IDS:-{}}" | jq '.questions | length' 2>/dev/null || echo 0)"
+          # A literal `{}` inside a `${VAR:-word}` default is NOT brace-
+          # matched by bash -- `${CLARIFICATION_COMMENT_IDS:-{}}` parses as
+          # `${CLARIFICATION_COMMENT_IDS:-{}` (default `{`) followed by a
+          # stray literal `}`, so with the variable SET the value gained an
+          # extra trailing `}`, jq errored, and `|| echo 0` made every run
+          # read as "clarification: not opened" even when a question had
+          # been opened and answered (maintainer feedback on PR #389, second
+          # review). The default now comes from a plain shell variable,
+          # which bash does not brace-match either.
+          clarification_comment_ids_default='{}'
+          question_count="$(printf '%s' "${CLARIFICATION_COMMENT_IDS:-$clarification_comment_ids_default}" | jq '.questions | length' 2>/dev/null || echo 0)"
           if [ -n "$CLARIFICATION_ROUNDS_ANSWERED" ] && [ "$CLARIFICATION_ROUNDS_ANSWERED" != "0" ]; then
             clarification_line="clarification: answered (${CLARIFICATION_ROUNDS_ANSWERED} harness round(s); comments ${CLARIFICATION_COMMENT_IDS:-unknown})"
           elif [ "$question_count" != "0" ]; then

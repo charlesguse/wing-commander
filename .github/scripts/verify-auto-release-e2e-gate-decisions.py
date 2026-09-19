@@ -225,6 +225,11 @@ def pr(number, head_ref, base_ref=DEFAULT_BASE, mergeable="MERGEABLE",
 
 COMPLETED_CHECK = {"status": "COMPLETED", "conclusion": "FAILURE"}
 PENDING_CHECK = {"status": "IN_PROGRESS", "conclusion": None}
+# Legacy commit StatusContext shape -- no `status`/`conclusion` at all, only
+# `state` (SUCCESS/PENDING/ERROR/FAILURE). A required check backed by the
+# Status API (not a Check Run) reports this shape in statusCheckRollup.
+STATUS_CONTEXT_SUCCESS = {"state": "SUCCESS"}
+STATUS_CONTEXT_PENDING = {"state": "PENDING"}
 
 MERGE_SCENARIOS = [
     dict(name="empty array: none", prs=[], prefix="spec-draft/", slug="055-foo",
@@ -263,6 +268,20 @@ MERGE_SCENARIOS = [
                  status_checks=[COMPLETED_CHECK, PENDING_CHECK])],
          prefix="spec/", slug="055-foo", expected_base=DEFAULT_BASE,
          expect_head="wait"),
+    dict(name="mergeStateStatus BLOCKED, no check has registered yet (freshly opened PR): wait, not blocked",
+         prs=[pr(1, "spec/055-foo", merge_state="BLOCKED", status_checks=[])],
+         prefix="spec/", slug="055-foo", expected_base=DEFAULT_BASE,
+         expect_head="wait"),
+    dict(name="mergeStateStatus BLOCKED, a legacy StatusContext (state, no status/conclusion) still pending: wait",
+         prs=[pr(1, "spec/055-foo", merge_state="BLOCKED",
+                 status_checks=[STATUS_CONTEXT_PENDING])],
+         prefix="spec/", slug="055-foo", expected_base=DEFAULT_BASE,
+         expect_head="wait"),
+    dict(name="mergeStateStatus BLOCKED, a legacy StatusContext (state, no status/conclusion) resolved: blocked",
+         prs=[pr(1, "spec/055-foo", merge_state="BLOCKED",
+                 status_checks=[STATUS_CONTEXT_SUCCESS])],
+         prefix="spec/", slug="055-foo", expected_base=DEFAULT_BASE,
+         expect_head="blocked"),
     dict(name="clean and mergeable: merge <number>",
          prs=[pr(42, "spec-draft/055-foo")], prefix="spec-draft/", slug="055-foo",
          expected_base=DEFAULT_BASE, expect_head="merge", expect_number="42"),
@@ -333,6 +352,15 @@ MERGE_MUTATIONS = [
     ("a pending required check reads as blocked instead of wait",
      'if [ "$still_pending" = "true" ]; then',
      'if false; then'),
+    ("an empty statusCheckRollup (no check registered yet on a freshly "
+     "opened PR) reads as blocked instead of wait",
+     'if ($rollup | length) == 0 then true',
+     'if ($rollup | length) == 0 then false'),
+    ("a legacy StatusContext rollup entry (state, no status/conclusion) is "
+     "read with the CheckRun-shaped predicate and always reads as pending, "
+     "hanging forever",
+     'if has("state") then (.state == "PENDING")',
+     'if false then (.state == "PENDING")'),
     ("draft collapsed into merge",
      'if [ "$is_draft" = "true" ]; then',
      'if false; then'),
@@ -341,7 +369,12 @@ MERGE_MUTATIONS = [
 
 def run_mutation(script_path, run_suite, label, old, new, failures):
     mutated_text = mutate(script_path, old, new, label)
-    tmp_path = script_path + ".mutated.tmp"
+    # Keyed on this process's own pid, not a fixed name -- two --self-test
+    # invocations running in parallel (observed once on Windows) otherwise
+    # race on the same file, and the loser's os.remove in the other's
+    # `finally` raises FileNotFoundError (maintainer feedback on PR #389,
+    # second review, Verify item: a race, not a logic defect).
+    tmp_path = f"{script_path}.{os.getpid()}.mutated.tmp"
     with open(tmp_path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(mutated_text)
     try:

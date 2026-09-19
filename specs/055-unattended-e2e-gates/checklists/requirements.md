@@ -35,11 +35,16 @@
   answers on lifecycle issue #386, recorded in the spec's Clarifications
   section (Session 2026-09-19):
   - **FR-003 / FR-003a (identity)** — a dedicated machine user account, not
-    a bot, holding a credential scoped to the test repository alone and held
-    as a secret in this repository. Provisioning it is a maintainer
-    prerequisite outside the pipeline; an unset secret produces the
-    infrastructure verdict FR-014 describes. The published clarify gate is
-    satisfied as it stands, with no compatibility surface widened.
+    a bot, holding a classic PAT (fine-grained PATs cannot reach a
+    collaborator-only repository, so token scoping alone cannot enforce
+    containment) held as a secret in this repository; containment to the
+    test repository alone is enforced by the account's own memberships plus
+    a runtime check that the credential reaches exactly that one repository
+    (maintainer feedback on PR #389). Provisioning the account and inviting
+    it as a Write collaborator is a maintainer prerequisite outside the
+    pipeline; an unset secret produces the infrastructure verdict FR-014
+    describes. The published clarify gate is satisfied as it stands, with no
+    compatibility surface widened.
   - **FR-002 (which gates are driven vs. removed)** — all four are driven:
     the harness answers the clarification questions and merges the spec,
     plan, and finalize pull requests. Nothing is removed by fixture

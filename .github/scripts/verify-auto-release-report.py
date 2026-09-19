@@ -486,6 +486,60 @@ SCENARIOS = [
         action="close",
         summary_contains="gates driven:",
     ),
+    dict(
+        name="specs/055: pass-path clarification line reads 'not opened' "
+             "when the gate never opened",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
+                 VERDICT_JSON=PASS, DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
+                 COLLISION="false", DISPATCH_RESULT="success",
+                 TAG_MATCHES="true", CORRELATION="found",
+                 CORRELATED_RUN_ID="4242", CORRELATED_RUN_URL=CORRELATED_RUN_URL,
+                 SPEC_DRAFT_PR='{"number":10,"mergedAt":"2026-01-01T00:10:00Z"}',
+                 PLAN_PR='{"number":11,"mergedAt":"2026-01-01T00:20:00Z"}',
+                 FINALIZE_PR='{"number":12,"mergedAt":"2026-01-01T00:30:00Z"}',
+                 CLARIFICATION_ROUNDS_ANSWERED="0",
+                 CLARIFICATION_COMMENT_IDS='{"questions":[],"replies":[]}'),
+        action="close",
+        summary_contains="clarification: not opened",
+    ),
+    dict(
+        name="specs/055: pass-path clarification line names the harness "
+             "round count when the harness answered",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
+                 VERDICT_JSON=PASS, DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
+                 COLLISION="false", DISPATCH_RESULT="success",
+                 TAG_MATCHES="true", CORRELATION="found",
+                 CORRELATED_RUN_ID="4242", CORRELATED_RUN_URL=CORRELATED_RUN_URL,
+                 SPEC_DRAFT_PR='{"number":10,"mergedAt":"2026-01-01T00:10:00Z"}',
+                 PLAN_PR='{"number":11,"mergedAt":"2026-01-01T00:20:00Z"}',
+                 FINALIZE_PR='{"number":12,"mergedAt":"2026-01-01T00:30:00Z"}',
+                 CLARIFICATION_ROUNDS_ANSWERED="2",
+                 CLARIFICATION_COMMENT_IDS='{"questions":["c1"],"replies":["c2","c3"]}'),
+        action="close",
+        summary_contains="clarification: answered (2 harness round(s)",
+    ),
+    dict(
+        name="specs/055: pass-path clarification line credits a human "
+             "answer before the harness's own round counter moved (FR-010); "
+             "also a regression guard for the stray '}' in "
+             "'${CLARIFICATION_COMMENT_IDS:-{}}' that used to make jq error "
+             "and misreport this case as 'not opened'",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
+                 VERDICT_JSON=PASS, DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
+                 COLLISION="false", DISPATCH_RESULT="success",
+                 TAG_MATCHES="true", CORRELATION="found",
+                 CORRELATED_RUN_ID="4242", CORRELATED_RUN_URL=CORRELATED_RUN_URL,
+                 SPEC_DRAFT_PR='{"number":10,"mergedAt":"2026-01-01T00:10:00Z"}',
+                 PLAN_PR='{"number":11,"mergedAt":"2026-01-01T00:20:00Z"}',
+                 FINALIZE_PR='{"number":12,"mergedAt":"2026-01-01T00:30:00Z"}',
+                 CLARIFICATION_ROUNDS_ANSWERED="0",
+                 CLARIFICATION_COMMENT_IDS='{"questions":["c1"],"replies":["c2"]}'),
+        action="close",
+        summary_contains="clarification: answered by a human before the harness",
+    ),
 ]
 
 

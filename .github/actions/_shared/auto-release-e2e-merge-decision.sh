@@ -80,10 +80,34 @@ if [ "$merge_state" = "BLOCKED" ]; then
   # still PENDING/QUEUED/IN_PROGRESS -- or COMPLETED with no conclusion
   # yet recorded -- means the wait, not the block, is what's actually
   # happening; only a rollup with nothing left pending is a genuine stall.
+  #
+  # statusCheckRollup entries come in two shapes: a CheckRun (`status`/
+  # `conclusion`) and a legacy commit StatusContext (`state`, one of
+  # SUCCESS/PENDING/ERROR/FAILURE -- no `status` field at all). Reading
+  # a StatusContext with the CheckRun-shaped predicate always finds
+  # `.status` absent and so always reads as pending, which would wait
+  # forever on a repository whose required check is the legacy kind
+  # (maintainer feedback on PR #389, second review) -- handled here by
+  # branching on which shape the entry actually is.
+  #
+  # A freshly opened PR under required checks, before any check run or
+  # context has been created yet, has an EMPTY statusCheckRollup while
+  # still reporting BLOCKED -- indistinguishable, from this data alone,
+  # from a genuinely misconfigured required check that will never
+  # report. Treated as still-pending (wait), not a stall, since a false
+  # "wait" costs one more poll tick while a false "blocked" ends the
+  # attempt outright (maintainer feedback on PR #389, second review,
+  # Verify item).
   still_pending="$(printf '%s' "$entry" | jq -r '
-    [ (.statusCheckRollup // [])[]
-      | select((.status // "") != "COMPLETED" or ((.conclusion // "") == "")) ]
-    | length > 0
+    (.statusCheckRollup // []) as $rollup
+    | if ($rollup | length) == 0 then true
+      else
+        [ $rollup[]
+          | if has("state") then (.state == "PENDING")
+            else ((.status // "") != "COMPLETED" or ((.conclusion // "") == ""))
+            end ]
+        | any
+      end
   ')"
   if [ "$still_pending" = "true" ]; then
     echo "wait"
