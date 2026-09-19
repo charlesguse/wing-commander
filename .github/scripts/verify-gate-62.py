@@ -54,7 +54,16 @@ def read_required_tools(root="."):
     return tools
 
 
+def docker_available():
+    return shutil.which("docker") is not None
+
+
 def build_image(root, tag):
+    """-> (True/False, log). Raises only for reasons other than a missing
+    docker binary -- callers check docker_available() first so a
+    Docker-less machine gets a clear skip (SF1) instead of an uncaught
+    FileNotFoundError, which used to crash run-local-gates.py's whole
+    sweep instead of just this one gate."""
     proc = subprocess.run(
         ["docker", "build", "-t", tag, os.path.join(root, DOCKERFILE_DIR)],
         capture_output=True, text=True,
@@ -154,6 +163,18 @@ def self_test():
 
 
 def main(argv):
+    if not docker_available():
+        # A build-and-inspect check has nothing to inspect without Docker.
+        # CI (lint-workflows.yml's ubuntu-latest runner) always has it;
+        # this only fires for a maintainer running run-local-gates.py on a
+        # machine without it, and a clear skip beats the uncaught
+        # FileNotFoundError this used to raise (SF1: run-local-gates.py's
+        # whole sweep would otherwise traceback on this one gate).
+        print("Gate 62: skipped -- docker is not installed or not on PATH. "
+              "This check builds and inspects the reference image, so it "
+              "cannot run without Docker; CI always has it. Install Docker "
+              "to exercise this gate locally.")
+        return 0
     if "--self-test" in argv:
         return self_test()
     failures = scan(".")

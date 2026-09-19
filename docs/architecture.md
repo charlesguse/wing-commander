@@ -1146,10 +1146,13 @@ code path every published stage carries is dogfooded end to end rather
 than only ever exercised on a bare runner:
 
 - **Mode derivation**: a `mode` step, first in the job, derives
-  `container` vs `default-runner` fresh every run from UTC day-of-year
-  parity (`date -u +%j`) — nothing is persisted, so a cancelled, skipped,
-  or manually dispatched run can never leave the rotation stuck on one
-  mode (research.md D1). On a `default-runner` turn, the `scaffold` step
+  `container` vs `default-runner` fresh every run from a monotonic count
+  of days since the Unix epoch (`date -u +%s`, divided by 86400) — not
+  day-of-year parity, which repeats the same mode across a non-leap
+  year's December 31st/January 1st boundary (SC-009) — and nothing is
+  persisted, so a cancelled, skipped, or manually dispatched run can
+  never leave the rotation stuck on one mode (research.md D1). On a
+  `default-runner` turn, the `scaffold` step
   blanks the container-image passthrough in every wrapper it copies into
   the test repository, so a permanently-configured
   `WING_COMMANDER_CONTAINER_IMAGE` there cannot leak container mode into
@@ -1168,8 +1171,16 @@ than only ever exercised on a bare runner:
   [docs/adoption.md](adoption.md#runners-and-container-images) for why this
   image is not a supported image for adopters.
 - **Reporting**: both the verdict and `report`'s failure/success output
-  always state which mode a run exercised, so a pass can never overstate
-  coverage (research.md D9).
+  always state which mode a run exercised, and `container_image_configured`
+  defaults to false on every container-turn verdict except the poll step's
+  own `pass` (data-model.md "Execution mode"). This narrows, but does not
+  close, the overstatement risk: a container-mode turn whose image
+  variable was left unset on the test repository still reaches a plain
+  `pass`, since `verify-image-prerequisites` vacuously succeeds and the
+  run completes outside any container with nothing in the verdict able to
+  tell — detecting that specific case needs a permission (reading the
+  test repository's Actions run data) this verification does not have and
+  has not been granted (FR-017; research.md D7, tasks.md T009).
 
 ## Reusability (current state — `specs/010-reusable-pipeline/`)
 
