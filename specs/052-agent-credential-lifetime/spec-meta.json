@@ -3,7 +3,7 @@
   "spec_dir": "specs/052-agent-credential-lifetime",
   "feature_num": "052",
   "stage": "implement",
-  "iteration": 3,
+  "iteration": 4,
   "spec_branch": "spec/052-agent-credential-lifetime",
   "pending_re_review_from": ["charlesguse"]
 }
