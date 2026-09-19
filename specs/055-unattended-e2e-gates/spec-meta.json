@@ -2,10 +2,8 @@
   "issue": 386,
   "spec_dir": "specs/055-unattended-e2e-gates",
   "feature_num": "055",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 4,
   "spec_branch": "spec/055-unattended-e2e-gates",
-  "pending_re_review_from": [
-    "charlesguse"
-  ]
+  "pending_re_review_from": []
 }
