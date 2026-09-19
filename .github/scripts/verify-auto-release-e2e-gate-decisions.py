@@ -80,6 +80,10 @@ CLARIFY_SCENARIOS = [
          comments=[comment("c1", "wing-commander[bot]", OPEN_MARKER, "2026-01-01T00:00:00Z"),
                    comment("c2", "harness-user", "the answer", "2026-01-01T00:05:00Z")],
          login="harness-user", rounds="1", expect_head="wait"),
+    dict(name="marker open, a human answers first: wait (not duplicated by the harness)",
+         comments=[comment("c1", "wing-commander[bot]", OPEN_MARKER, "2026-01-01T00:00:00Z"),
+                   comment("c2", "a-human", "I already answered this", "2026-01-01T00:05:00Z")],
+         login="harness-user", rounds="0", expect_head="wait"),
 ]
 
 
@@ -180,8 +184,8 @@ CLARIFY_MUTATIONS = [
     ("exhausted collapsed into reply (round bound ignored)",
      'if [ "$rounds_answered" -lt "$MAX_CLARIFICATION_ROUNDS" ]; then',
      'if true; then'),
-    ("wait collapsed into reply (a harness reply already posted is ignored)",
-     'if [ "$harness_reply_exists" = "true" ]; then\n  echo "wait"\n  exit 0\nfi',
+    ("wait collapsed into reply (any reply already posted is ignored)",
+     'if [ "$reply_exists" = "true" ]; then\n  echo "wait"\n  exit 0\nfi',
      'if false; then\n  echo "wait"\n  exit 0\nfi'),
 ]
 

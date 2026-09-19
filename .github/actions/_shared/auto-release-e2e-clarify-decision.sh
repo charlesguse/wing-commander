@@ -13,6 +13,15 @@
 # COMMENTS_JSON is the `.comments` array from `gh issue view <n> --json
 # comments` -- entries of {id, author:{login}, body, createdAt}.
 #
+# HARNESS_LOGIN is accepted for interface stability (the caller always has
+# it, from the credential check) but the "already answered" check below
+# treats a reply from ANY author as answering the round, not only one from
+# HARNESS_LOGIN -- a human who replies first must not be duplicated by a
+# harness reply on the same question (specs/055-unattended-e2e-gates T029,
+# the "A human answers or merges first" Edge Case). ROUNDS_ANSWERED stays
+# scoped to harness-authored replies by the caller, since it bounds the
+# harness's own attempts (FR-006), not how many times anyone replied.
+#
 # Prints one of `none` / `wait` / `exhausted` / `reply` on stdout; `reply`
 # is followed on the next line by the fixed prepared-answer body (research.md
 # D8) -- the caller posts that comment and increments ROUNDS_ANSWERED only
@@ -21,7 +30,7 @@
 set -uo pipefail
 
 comments_json="${1:?comments JSON required}"
-harness_login="${2:?harness login required}"
+: "${2:?harness login required}"
 rounds_answered="${3:?rounds answered required}"
 
 MAX_CLARIFICATION_ROUNDS=3
@@ -41,11 +50,11 @@ if [ -z "$marker_created_at" ]; then
   exit 0
 fi
 
-harness_reply_exists="$(printf '%s' "$comments_json" | jq -r --arg login "$harness_login" --arg after "$marker_created_at" '
-  any(.[]; (.author.login // "") == $login and (.createdAt // "") > $after)
+reply_exists="$(printf '%s' "$comments_json" | jq -r --arg after "$marker_created_at" '
+  any(.[]; (.createdAt // "") > $after)
 ')"
 
-if [ "$harness_reply_exists" = "true" ]; then
+if [ "$reply_exists" = "true" ]; then
   echo "wait"
   exit 0
 fi

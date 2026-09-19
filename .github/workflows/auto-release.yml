@@ -671,6 +671,16 @@ jobs:
           # extension.md specifies for a fail-gate-stall at that gate.
           declare -A gate_merged=([spec-draft/]=false [plan/]=false [spec/]=false)
           declare -A gate_name=([spec-draft/]="spec-draft PR merge" [plan/]="plan PR merge" [spec/]="finalize PR merge")
+          # A gate-driving write (the clarification reply, a PR merge) that
+          # fails at the API level -- e.g. the harness identity's write
+          # access was revoked mid-run -- must not retry silently until
+          # POLL_BUDGET_SECONDS elapses and the attempt reports the generic
+          # fail-timeout; it becomes a fail-gate-stall at that named gate
+          # after this many consecutive failures (specs/055-unattended-e2e-
+          # gates T028, FR-023).
+          MAX_GATE_WRITE_FAILURES=3
+          declare -A gate_merge_failures=([spec-draft/]=0 [plan/]=0 [spec/]=0)
+          clarify_write_failures=0
           slug=""
           clarification_rounds=0
 
@@ -687,8 +697,18 @@ jobs:
               case "$clarify_head" in
                 reply)
                   reply_body="$(printf '%s\n' "$clarify_decision" | tail -n +2)"
-                  if GH_TOKEN="$HARNESS_TOKEN" gh issue comment "$ISSUE" --repo "$E2E_REPO" --body "$reply_body" >/dev/null 2>&1; then
+                  if reply_err="$(GH_TOKEN="$HARNESS_TOKEN" gh issue comment "$ISSUE" --repo "$E2E_REPO" --body "$reply_body" 2>&1 >/dev/null)"; then
                     clarification_rounds=$((clarification_rounds + 1))
+                    clarify_write_failures=0
+                  else
+                    clarify_write_failures=$((clarify_write_failures + 1))
+                    if [ "$clarify_write_failures" -ge "$MAX_GATE_WRITE_FAILURES" ]; then
+                      write_verdict "fail-gate-stall" "clarification" \
+                        "gh issue comment succeeds within ${MAX_GATE_WRITE_FAILURES} attempts" \
+                        "${reply_err:-identity refused, or the write action failed repeatedly}"
+                      emit_verdict
+                      exit 0
+                    fi
                   fi
                   ;;
                 exhausted)
@@ -718,8 +738,18 @@ jobs:
                 case "$merge_head" in
                   merge)
                     merge_number="$(printf '%s\n' "$merge_decision" | tail -n +2)"
-                    if GH_TOKEN="$HARNESS_TOKEN" gh pr merge "$merge_number" --merge --repo "$E2E_REPO" >/dev/null 2>&1; then
+                    if merge_err="$(GH_TOKEN="$HARNESS_TOKEN" gh pr merge "$merge_number" --merge --repo "$E2E_REPO" 2>&1 >/dev/null)"; then
                       gate_merged[$prefix]="true"
+                      gate_merge_failures[$prefix]=0
+                    else
+                      gate_merge_failures[$prefix]=$(( gate_merge_failures[$prefix] + 1 ))
+                      if [ "${gate_merge_failures[$prefix]}" -ge "$MAX_GATE_WRITE_FAILURES" ]; then
+                        write_verdict "fail-gate-stall" "${gate_name[$prefix]}" \
+                          "gh pr merge succeeds within ${MAX_GATE_WRITE_FAILURES} attempts" \
+                          "${merge_err:-identity refused, or the write action failed repeatedly}"
+                        emit_verdict
+                        exit 0
+                      fi
                     fi
                     ;;
                   conflicting)
