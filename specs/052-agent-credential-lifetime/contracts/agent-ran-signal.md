@@ -8,17 +8,26 @@ and the shared `wing-commander-chain-stop-notice` composite, spec 041).
 ## Publication (every job with at least one agent step, all 8 stages)
 
 Immediately after each agent step, before the credential refresh
-(contracts/wing-commander-context-relay.md), an `if: always()` step:
+(contracts/wing-commander-context-relay.md), an `if: !cancelled() &&
+steps.<agent-id>.outcome != 'skipped'` step invokes the shared
+`wing-commander-agent-ran-signal` composite (CLAUDE.md single-home rule;
+maintainer review of PR #407):
 
 ```yaml
 - name: Record agent-ran signal
-  if: always()
+  if: "!cancelled() && steps.<agent-id>.outcome != 'skipped'"
   id: agent-ran
-  shell: bash
-  run: |
-    echo "ran=true" >> "$GITHUB_OUTPUT"
-    echo "conclusion=${{ steps.<agent-id>.conclusion }}" >> "$GITHUB_OUTPUT"
+  uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-ran-signal
+  with:
+    agent-outcome: ${{ steps.<agent-id>.outcome }}
 ```
+
+Corrected from this contract's original design (maintainer review of PR
+#407): the value passed is `steps.<agent-id>.outcome`, never `.conclusion`.
+The agent step itself already carries `continue-on-error: true` (spec 037),
+which rewrites a real failure's `.conclusion` to `success` — only
+`.outcome` preserves the true result, so reading `.conclusion` here would
+have signaled a failed agent as having run to completion.
 
 The job's `outputs:` block gains:
 
@@ -44,10 +53,21 @@ agent's own output.
 ## Consumption (the six stages with an existing survivor job)
 
 Inside each survivor job's existing "Determine which dependency did not
-start" step (spec 041's `id: reason`), one new branch is inserted ahead of
-the existing fallback:
+start" step (spec 041's `id: reason`), two new branches are inserted ahead
+of the existing fallback (corrected from this contract's original single-
+branch design — maintainer review of PR #407, FR-004/FR-011/SC-003):
 
 ```text
+when needs.<entry-job>.outputs.agent-ran == 'true'
+ and needs.<entry-job>.outputs.credential-refresh-ok == 'false':
+    reason = "the agent step ran (concluded: <agent-conclusion>) and the
+              post-agent wing-commander-bot credential re-establishment
+              failed ... -- treat the credential, not the agent or a
+              downstream step, as the cause"
+when needs.<entry-job>.outputs.agent-ran == 'true'
+ and needs.<entry-job>.outputs.failed-post-agent-step is non-empty:
+    reason = "the agent step ran (concluded: <agent-conclusion>) and the
+              '<failed-post-agent-step>' step after it did not complete"
 when needs.<entry-job>.outputs.agent-ran == 'true':
     reason = "the agent step ran (concluded: <agent-conclusion>) and a
               step after it did not complete"
@@ -55,6 +75,15 @@ else:
     # unchanged — today's existing diagnosis, including the distinction
     # between a failed prerequisite job and a skipped one
 ```
+
+`credential-refresh-ok` is published by `wing-commander-post-agent-
+credential-status` (a new step deferred to each job's own last steps, after
+every business-logic/report step, so its hard exit on a credential failure
+cannot strand them — review-step-gating self-review). `failed-post-agent-
+step` is published by a new job-final "Determine failed post-agent step"
+step, which reads `toJSON(steps)` for the last step with `outcome ==
+'failure'` — it must be the job's actual last step, since the `steps`
+context only carries the outcomes of steps that already ran by that point.
 
 The chain-stop notice's "stage did not start" body (spec 041's rendering,
 `wing-commander-chain-stop-notice`) is passed this reason string as-is —

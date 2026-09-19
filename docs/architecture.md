@@ -184,6 +184,16 @@ steps (cycle, retry, progress) each get their own independent refresh
 immediately after them, so `WC_BOT_TOKEN` always names the most recent mint
 regardless of which agent step most recently ran.
 
+The re-mint, the remote refresh, and the durable "did the agent step run"
+signal each live in their own shared composite under `.github/actions/`
+(`wing-commander-context`'s internal relay, `wing-commander-refresh-remote`,
+`wing-commander-agent-ran-signal`) — every call site invokes them rather
+than repeating the shell, so a fix to one lands everywhere at once. When the
+re-mint or the remote refresh does not succeed, `wing-commander-post-agent-
+credential-status` fails the job loudly right there, naming the credential
+as cause, instead of letting a stale credential surface later as a bare 401
+attributed to whichever unrelated step happens to run next.
+
 This remedy does not cover the credential an agent step itself pushes with
 while it is still running — only the steps that run after it. That residual
 risk is tracked in [issue #402](https://github.com/charlesguse/wing-commander/issues/402).

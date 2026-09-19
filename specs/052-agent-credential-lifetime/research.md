@@ -394,3 +394,55 @@ for the tasks/implement stage's own workflow, not something the plan stage
 produces. This plan records the requirement (D7) so the implement stage has
 a concrete pointer (the architecture.md residual-risk section) to cite when
 filing it.
+
+## D10 — Corrections from the maintainer's code review of PR #407 (head bb064e9)
+
+**Decision**: rather than editing D1-D9 in place, this entry records what
+changed and why, the same precedent D2's own in-place correction note
+already set for a narrower fix.
+
+- **D1's `.conclusion` was wrong.** The agent-ran signal reads
+  `steps.<agent-id>.outcome`, never `.conclusion` — the agent step's own
+  `continue-on-error: true` (spec 037) rewrites a real failure's
+  `.conclusion` to `success`, so reading it signaled a failed agent as
+  having run to completion. `.outcome` is unaffected by
+  `continue-on-error` and is the value every downstream consumer
+  (`wing-commander-agent-ran-signal`, the stall-reason branch, the
+  chain-stop-notice wording) now reads.
+- **D1/D2's single-home claim was aspirational, not enforced.** The relay
+  and refresh steps were pasted at every call site with no gate asserting
+  they matched. Both are now shared composites
+  (`wing-commander-agent-ran-signal`, `wing-commander-refresh-remote`;
+  `wing-commander-context`'s own internal relay was already single-homed),
+  and Gate 68 gained a check asserting every site calls them.
+- **FR-004 was undersized.** The original design assumed a failed mint or
+  refresh would simply surface as a 401 on whichever step used the stale
+  credential next. A new `wing-commander-post-agent-credential-status`
+  composite fails loud, naming the credential as cause, right where the
+  re-establishment itself did not succeed — deferred to each job's own
+  last steps (not immediately after the refresh pair) so its hard exit
+  cannot strand the business-logic/report steps between it and the agent
+  step, which are gated on their own implicit `success()` (review-step-
+  gating self-review, not a maintainer-review finding).
+- **D3's "a step after it did not complete" was as specific as the design
+  got.** FR-011/SC-003 ask for the step to be *named*. A new per-job
+  "Determine failed post-agent step" step (the job's actual last step,
+  reading `toJSON(steps)`) publishes which step failed, read by the
+  stall-reason branch ahead of the generic fallback.
+- **Cancellation window.** Every new step's guard changed from
+  `always() && ...` to `!cancelled() && ...`, so a cancelled run no longer
+  performs a network mint or a remote rewrite after cancellation was
+  requested.
+- **D5's over-budget tolerance and D6's gate self-test both had real
+  holes**, closed in the same pass: the over-budget continue-on-error
+  check now matches every `(cycle)`/`(retry)`/etc. suffix, not only the
+  bare name; the refresh-after-agent-step check covers a job's *last*
+  agent step, not only gaps between two; and a subject job silently
+  losing its agent step now fails the gate instead of skipping its checks.
+
+None of D1-D9's underlying reasoning (env-var relay over a step-id chain,
+in-place remote refresh, a separate signal step, consumption scoped to the
+six existing survivor jobs, the over-budget population, the gate's
+structural-fixture design, the canonical-documentation placement, scratch-
+token as a second credential, and the follow-up issue's filing point) is
+overturned by this review — only the specific mechanics listed above.

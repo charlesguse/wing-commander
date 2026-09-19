@@ -26,6 +26,28 @@ does not touch) is unaffected: the composite still emits its `token` output
 exactly as before, and the extra `$GITHUB_ENV` write is inert if nothing
 reads `WC_BOT_TOKEN` (FR-025's compatibility requirement).
 
+## Corrected from this contract's original design (maintainer review of PR #407)
+
+- Steps 2 and 3 below are each single-homed as shared composites
+  (`.github/actions/wing-commander-refresh-remote/action.yml`; step 2 stays
+  a direct `wing-commander-context` call, not its own composite, since a
+  composite step's own `uses:` cannot reliably resolve a nested local
+  composite call — CLAUDE.md single-home rule) rather than an inline `run:`
+  block repeated at every call site.
+- A fourth step, `wing-commander-post-agent-credential-status`, follows:
+  given steps 2 and 3's own outcomes, it fails loud (no
+  `continue-on-error`) naming the credential as cause when either did not
+  succeed, and publishes a job-scoped `credential-refresh-ok` output for
+  the stall path to read (FR-004, contracts/agent-ran-signal.md). This
+  step is deferred to the job's own last steps — after every
+  business-logic/report step the agent step's own success gates, not
+  immediately after step 3 — so its hard exit cannot strand any of them
+  (review-step-gating self-review).
+- Steps 1-3 (and the deferred step 4) use `if: "!cancelled() && ..."`, not
+  `if: "always() && ..."`: a run cancelled during the agent step must not
+  still perform a network mint or a remote rewrite in the cancel window
+  (should-fix, maintainer review of PR #407).
+
 ## Call-site convention (every one of the 8 sweep-stage workflows)
 
 1. **Before the agent step** (unchanged in count, changed in downstream
