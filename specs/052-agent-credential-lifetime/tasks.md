@@ -285,3 +285,9 @@ Code review of PR #407 at head bb064e9 (charlesguse) found the shipped remedy do
 ### Should fix
 
 - [X] Record why `evaluate-path` and `comment-reply` in `auto-update-spec-kit.yml` are out of scope (10-minute `timeout-minutes` on both agent steps) in the scope statements of `spec.md`, `plan.md`, `research.md`, and `architecture.md` — today it's only in YAML comments (`auto-update-spec-kit.yml:1093`, `:3246`) and one tasks.md line, citing a research.md D4/D5 scope table that doesn't list them, while `architecture.md:167` still says every agent-bearing job relays. (FR-005, SC-005) — done: spec.md's Out of Scope gained an explicit bullet, plan.md names both jobs alongside the scratch-token paragraph, research.md gained a new D5a decision entry (the actual listing the canonical YAML comment now cites), and architecture.md's "every agent-bearing job relays" line now names the sweep explicitly and carves out both jobs with the same reason.
+
+## Maintainer Feedback (third review, PR #407 @ 453656c)
+
+### Must fix
+
+- [ ] Close the remaining FR-020 gate hole: Gate 68 does not yet flag a post-agent bot-acting step whose token comes from `env.*` or a shell variable set, before the agent step, from the pre-agent token (a `$GITHUB_ENV` write in a pre-agent step whose value reads `steps.ctx.outputs.token`, `env.WC_BOT_TOKEN`, or a `secrets`-derived token output), nor `toJSON(steps.ctx)` / `toJSON(steps)` used the same way. Flag this pattern for any bot-acting step other than the relayed `WC_BOT_TOKEN`/`WC_SCRATCH_TOKEN`, and add a `--self-test` mutation for it. (FR-020)
