@@ -246,6 +246,36 @@ sites), is that record.
 inspection (research phase), not a judgment call with a rejected
 alternative.
 
+## D5a — `auto-update-spec-kit.yml`'s `evaluate-path` and `comment-reply` jobs are out of scope, same as `rebase.yml`/`cleanup.yml` (second maintainer review of PR #407, FR-005/SC-005)
+
+**Decision**: `auto-update-spec-kit.yml` runs three agent steps across three
+jobs — `evaluate-path`, `comment-reply`, and `e2e-stage` — but FR-007's
+eight-stage enumeration names only "the auto-update stage's end-to-end
+arm," i.e. `e2e-stage`. `evaluate-path` and `comment-reply` are left
+untouched by this feature's sweep (D1-D3's relay/refresh mechanism, D4's
+signal, D5's tolerance), same as `rebase.yml`/`cleanup.yml`: neither is one
+of the 8 named stages. Each carries its own `timeout-minutes: 10` on its
+agent step (an order of magnitude under the minted token's one-hour
+lifetime), so the defect this feature fixes — a bot-acting step running
+after the credential has actually expired — cannot occur there regardless.
+This was previously recorded only in the YAML comments at the two jobs'
+own agent steps (`auto-update-spec-kit.yml:1093`, `:3246`) and one
+tasks.md line citing this D4/D5 table without either job actually being
+listed in it; this entry is that listing.
+
+**Rationale**: SC-005 requires "zero stages... neither covered nor recorded
+with a reason" — an exclusion resting only on an inline YAML comment, with
+the spec-level scope table it cites not actually naming the excluded jobs,
+does not satisfy that bar for a reviewer reading spec.md/research.md
+without also reading the workflow file.
+
+**Alternatives considered**:
+- *Fold both jobs into the sweep for full uniformity* — rejected: their
+  10-minute timeout already makes the defect structurally unreachable, so
+  adding the relay/refresh/signal/tolerance machinery would be inert
+  weight with no defect it could ever catch, the same reasoning D5 applies
+  to `rebase.yml`/`cleanup.yml`.
+
 ## D6 — Gate design: one new check, structural + fixture-mutation, following `verify-plan-tasks-cost-line.py`'s live-tree-mutation convention
 
 **Decision**: One new script, `.github/scripts/verify-post-agent-credential-

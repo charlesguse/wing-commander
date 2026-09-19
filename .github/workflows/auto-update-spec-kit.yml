@@ -1088,16 +1088,18 @@ jobs:
             --disallowedTools "WebSearch,WebFetch,Write,Edit,Bash(git commit:*),Bash(git push:*)"
             --json-schema '{"type":"object","properties":{"outcome":{"type":"string","enum":["clean-bump","needs-migration","ambiguous-options"]},"reasoning":{"type":"string"},"sources":{"type":"array","items":{"type":"object","properties":{"title":{"type":"string"},"url":{"type":"string"}},"required":["title","url"]}},"options":{"type":["array","null"],"items":{"type":"object","properties":{"label":{"type":"string"},"description":{"type":"string"}},"required":["label","description"]}}},"required":["outcome","reasoning","sources"]}'
 
-      # spec 052 FR-005/SC-005 (maintainer review of PR #407, should-fix):
-      # steps below "Decide upgrade path" deliberately keep reading
+      # spec 052 FR-005/SC-005 (second maintainer review of PR #407): steps
+      # below "Decide upgrade path" deliberately keep reading
       # steps.ctx.outputs.token, not env.WC_BOT_TOKEN, and there is no
       # post-agent re-mint pair in this job. evaluate-path is not one of
-      # FR-007's eight named sweep stages (research.md D4/D5's scope table)
-      # and its agent step carries its own timeout-minutes: 10, an order of
-      # magnitude under the credential's one-hour lifetime, so the defect
-      # this feature fixes cannot occur here. comment-reply (same file)
-      # shares this reasoning; refer to its own "Interpret the maintainer's
-      # reply" step for its copy of this note.
+      # FR-007's eight named sweep stages -- recorded, with this same
+      # reason, in spec.md's Out of Scope section, plan.md, and
+      # research.md D5a, not only here -- and its agent step carries its
+      # own timeout-minutes: 10, an order of magnitude under the
+      # credential's one-hour lifetime, so the defect this feature fixes
+      # cannot occur here. comment-reply (same file) shares this reasoning;
+      # refer to its own "Interpret the maintainer's reply" step for its
+      # copy of this note.
       #
       # deterministic, transcript-only verdict replacing the raw steps.decide.outcome checks
       # below -- see specs/037-agent-turn-budget-guard/data-model.md.

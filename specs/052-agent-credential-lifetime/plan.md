@@ -34,6 +34,11 @@ credential (research.md D2). `implement.yml`'s three sequential agent steps
 (`cycle` → `retry` → `progress`) each get their own refresh triple, and
 `auto-update-spec-kit.yml`'s independent `scratch-token` gets the identical
 treatment under its own relay variable (research.md D8).
+`auto-update-spec-kit.yml`'s other two agent-bearing jobs, `evaluate-path`
+and `comment-reply`, are out of scope (research.md D5a): each agent step
+there carries its own `timeout-minutes: 10`, an order of magnitude under
+the credential's one-hour lifetime, so the defect this feature fixes
+cannot occur in either job regardless.
 
 Alongside the credential fix, two deterministic fixes close the blast
 radius the source issue names: an `if: always()` step immediately after

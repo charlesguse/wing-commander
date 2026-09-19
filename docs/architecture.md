@@ -167,9 +167,14 @@ implement → finalize), chaining is explicit via `gh workflow run`
 The minted token is a one-hour-lifetime App installation token, so any
 bot-acting step that runs after an agent step whose own duration can approach
 or exceed that hour needs a credential newer than the one minted before the
-agent started. Every agent-bearing job relays the mint into a job-scoped
-`WC_BOT_TOKEN` (`WC_SCRATCH_TOKEN` for `auto-update-spec-kit.yml`'s `e2e-stage`
-scratch-repository arm) environment variable — set by an internal step inside
+agent started. Every agent-bearing job in this feature's 8-stage sweep (spec
+052 FR-007: intake, clarify, plan, tasks, implement, finalize, pr-conversation,
+and `auto-update-spec-kit.yml`'s `e2e-stage` arm — NOT that workflow's
+`evaluate-path` or `comment-reply` jobs, whose own agent steps carry a
+10-minute `timeout-minutes`, an order of magnitude under this hour, so the
+defect below cannot reach them; research.md D5a) relays the mint into a
+job-scoped `WC_BOT_TOKEN` (`WC_SCRATCH_TOKEN` for the `e2e-stage` scratch-
+repository arm) environment variable — set by an internal step inside
 `wing-commander-context` immediately after minting, so every caller, not just
 the one composite output, sees it — and re-invokes `wing-commander-context`
 (or the scratch-token mint) immediately after each agent step to overwrite
