@@ -95,6 +95,8 @@ def main():
                         out[f] = repo.get("description")
                     elif f == "diskUsage":
                         out[f] = repo.get("diskUsage", 0)
+                    elif f == "isEmpty":
+                        out[f] = repo.get("diskUsage", 0) == 0
                     elif f == "defaultBranchRef":
                         out[f] = {"name": repo.get("defaultBranch", "main")}
                     elif f == "nameWithOwner":
@@ -146,11 +148,22 @@ def main():
             if not repo:
                 sys.stderr.write("gh: repository %s not found\n" % full)
                 return 1
+            if repo.get("secrets_forbidden"):
+                sys.stderr.write(
+                    "gh: HTTP 403: Resource not accessible by integration "
+                    "(https://api.github.com/repos/%s/actions/secrets)\n" % full
+                )
+                return 1
             for name in repo["secrets"]:
                 print("%s\tsome-date" % name)
             return 0
 
     # ---- gh label --------------------------------------------------------
+    # Only `create` is a real `gh label` subcommand this feature uses --
+    # `gh label view` does not exist in the real CLI (clone/create/delete/
+    # edit/list only), so it is deliberately NOT handled here: a caller that
+    # still invokes it falls through to the unhandled-command error below,
+    # the way the real `gh` would refuse it too.
     if cmd == "label":
         sub = argv[1]
         name = argv[2]
@@ -166,8 +179,6 @@ def main():
                 # commit-content proxy for other elements only).
             save(s)
             return 0
-        if sub == "view":
-            return 0 if name in repo["labels"] else 1
 
     # ---- gh variable -----------------------------------------------------
     if cmd == "variable":
@@ -189,6 +200,12 @@ def main():
             if not repo:
                 sys.stderr.write("gh: repository %s not found\n" % full)
                 return 1
+            if repo.get("variables_forbidden"):
+                sys.stderr.write(
+                    "gh: HTTP 403: Resource not accessible by integration "
+                    "(https://api.github.com/repos/%s/actions/variables)\n" % full
+                )
+                return 1
             variables = repo["variables"]
             if "-q" in argv:
                 q = opt(argv, "-q")
@@ -206,6 +223,19 @@ def main():
         path = argv[1]
         method = opt(argv, "-X") or opt(argv, "--method") or "GET"
         parts = path.strip("/").split("/")
+        # repos/OWNER/NAME/labels/NAME
+        if len(parts) == 5 and parts[0] == "repos" and parts[3] == "labels":
+            full = "%s/%s" % (parts[1], parts[2])
+            label_name = parts[4]
+            repo = get_repo(s, full)
+            if not repo:
+                sys.stderr.write("gh: repository %s not found\n" % full)
+                return 1
+            if label_name in repo["labels"]:
+                print(json.dumps({"name": label_name}))
+                return 0
+            sys.stderr.write("gh: 404 label %s not found\n" % label_name)
+            return 1
         # repos/OWNER/NAME/installation
         if len(parts) == 4 and parts[0] == "repos" and parts[3] == "installation":
             full = "%s/%s" % (parts[1], parts[2])

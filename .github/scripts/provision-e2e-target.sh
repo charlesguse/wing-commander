@@ -102,13 +102,6 @@ if [ -n "$THIS_REPO" ]; then
   fi
 fi
 
-# --- data-model.md D3: refuse a foreign, non-empty, unmarked repository ---
-# before any privileged action -- T025 hardens this ordering.
-if ! check_scratch_marker "$OWNER" "$NAME"; then
-  echo "provision-e2e-target.sh: $(remaining_action_scratch_marker "$OWNER" "$NAME")" >&2
-  exit 1
-fi
-
 act_repository() { # act_repository OWNER NAME
   gh repo create "$1/$2" --private >/dev/null
 }
@@ -133,11 +126,28 @@ act_spec_request_label() { # act_spec_request_label OWNER NAME
 # files auto-release.yml's scaffold step copies) and no local git identity
 # on the target, only the maintainer's own `gh` authentication (FR-003).
 act_wrapper_set() { # act_wrapper_set OWNER NAME
-  local owner="$1" name="$2" default_branch head_sha this_repo f stage content sha b64
+  local owner="$1" name="$2" default_branch head_sha this_repo f stage content sha b64 upstream upstream_sha
+  this_repo="$(this_repo_from_git)" || {
+    echo "provision-e2e-target.sh: could not determine this repository's OWNER/NAME from its git remote -- refusing to pin wrapper workflows in $owner/$name to an unresolvable source (T042)" >&2
+    exit 1
+  }
+  head_sha="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+  # T042: a HEAD not yet reachable from this checkout's upstream branch
+  # would pin wrappers to a commit the target's own Actions runs cannot
+  # fetch, failing later and far from here. This is a warning, not a hard
+  # failure -- committing, pinning, then pushing before the target's first
+  # run is a normal and safe local sequence.
+  upstream="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)" || upstream=""
+  if [ -n "$upstream" ]; then
+    upstream_sha="$(git -C "$REPO_ROOT" rev-parse "$upstream" 2>/dev/null)" || upstream_sha=""
+    if [ "$upstream_sha" != "$head_sha" ]; then
+      echo "provision-e2e-target.sh: warning: HEAD ($head_sha) is ahead of $upstream -- push it before $owner/$name's Actions runs need to resolve wrapper workflows pinned to it (T042)" >&2
+    fi
+  else
+    echo "provision-e2e-target.sh: warning: this checkout's current branch has no upstream tracking branch -- cannot confirm HEAD ($head_sha) will be reachable from $this_repo when $owner/$name's Actions runs resolve pinned wrapper workflows (T042)" >&2
+  fi
   default_branch="$(gh repo view "$owner/$name" --json defaultBranchRef -q '.defaultBranchRef.name // empty' 2>/dev/null)"
   [ -n "$default_branch" ] || default_branch="main"
-  head_sha="$(git -C "$REPO_ROOT" rev-parse HEAD)"
-  this_repo="$(this_repo_from_git)"
   for f in "${WRAPPER_FILES[@]}"; do
     stage="${WRAPPER_STAGE_FILE[$f]}"
     content="$(sed -e "s#uses: \./\.github/workflows/${stage}#uses: ${this_repo}/.github/workflows/${stage}@${head_sha}#" \
@@ -168,7 +178,16 @@ act_wrapper_set() { # act_wrapper_set OWNER NAME
 
 act_container_image_pin() { # act_container_image_pin OWNER NAME
   local value
-  value="$(this_repo_container_image)" || value=""
+  # T040: a failed read (auth, cwd, network) must never be treated as "this
+  # repository pins no image" -- that silently overwrites the target's pin
+  # with an empty string instead of failing loudly. An explicit empty
+  # STRING read successfully from this_repo_container_image is still a
+  # valid value (FR-017) and is written as-is; `gh variable set --body ""`
+  # is a normal, supported call that stores an empty-string variable value.
+  value="$(this_repo_container_image)" || {
+    echo "provision-e2e-target.sh: could not read this repository's own WING_COMMANDER_CONTAINER_IMAGE value -- refusing to pin $1/$2 to an empty value that may only be a read failure (FR-017)" >&2
+    exit 1
+  }
   gh variable set WING_COMMANDER_CONTAINER_IMAGE --repo "$1/$2" --body "$value" >/dev/null
 }
 
@@ -177,23 +196,47 @@ act_scratch_marker() { # act_scratch_marker OWNER NAME
 }
 
 if [ "$CHECK_ONLY" != "true" ]; then
+  # data-model.md D3: refuse a foreign, non-empty, unmarked repository
+  # before any privileged action -- T025 hardens this ordering. Scoped to
+  # the mutating path only (T037): a --check-only run against a
+  # hand-onboarded, non-empty, unmarked target (the normal shape of an
+  # existing pre-053 target) must still produce a full ReadinessReport
+  # naming scratch_marker as the not-ready element, not a bare stderr
+  # refusal with no JSON on stdout (FR-011, US2 Acceptance Scenario 2).
+  if ! check_scratch_marker "$OWNER" "$NAME"; then
+    echo "provision-e2e-target.sh: $(remaining_action_scratch_marker "$OWNER" "$NAME")" >&2
+    exit 1
+  fi
+
+  if ! check_repository "$OWNER" "$NAME"; then
+    act_repository "$OWNER" "$NAME"
+  fi
+  # T038/T039: claim the marker immediately once the repository exists,
+  # before any other privileged action (e.g. wrapper_set) can give it
+  # content -- whenever it is ABSENT, regardless of how empty the
+  # repository still is. A run that dies partway now leaves a
+  # marked-but-incomplete, re-runnable repository, never a non-empty,
+  # unmarked one that the refusal above would then block forever. (Before
+  # this fix, act_scratch_marker was gated on `! check_scratch_marker`,
+  # which already reports an empty repository as ready -- so the marker was
+  # never actually written until the repository was no longer empty, by
+  # which point a foreign-non-empty-unmarked refusal was permanent.)
+  if ! has_scratch_marker "$OWNER" "$NAME"; then
+    act_scratch_marker "$OWNER" "$NAME"
+  fi
+
   mapfile -t ELEMENTS < <(profile_elements "$PROFILE")
   for key in "${ELEMENTS[@]}"; do
     case "$key" in
       # app_installation is the DeclaredManualStep: never performed, only
-      # checked (FR-015). scratch_marker is deferred below -- it is written
-      # "on first successful provisioning" (D3/T015), which can only be
-      # decided AFTER every other privileged action in this run (e.g.
-      # wrapper_set) has had a chance to give the target its first content.
-      app_installation|scratch_marker) continue ;;
+      # checked (FR-015). repository and scratch_marker are handled above,
+      # in that order, before this loop.
+      app_installation|repository|scratch_marker) continue ;;
     esac
     if ! "check_$key" "$OWNER" "$NAME"; then
       "act_$key" "$OWNER" "$NAME"
     fi
   done
-  if ! check_scratch_marker "$OWNER" "$NAME"; then
-    act_scratch_marker "$OWNER" "$NAME"
-  fi
 fi
 
 REPORT="$(assemble_report "$OWNER" "$NAME" "$PROFILE")"

@@ -28,4 +28,8 @@ check_contains "T7 an unset resolved target fails loudly, naming docs/setup.md" 
 echo "--- the trigger stays workflow_dispatch only (no pause kill-switch, by design) ---"
 check_not_contains "T7 no schedule trigger was added" "$TEXT" "schedule:"
 
+echo "--- T035: app_installation is answered from the token-mint outcome, not a JWT-only API call ---"
+check_contains "T7 the readiness check tells checks.sh installation is already known ready" \
+  "$TEXT" "WC_APP_INSTALLATION_KNOWN_READY"
+
 report "T7 readiness workflow"

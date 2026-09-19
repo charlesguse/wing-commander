@@ -32,6 +32,21 @@ remaining_action_repository() {
 
 # ---- app_installation (the one DeclaredManualStep, remedy: manual) -----
 check_app_installation() { # check_app_installation OWNER NAME
+  # GET /repos/{owner}/{repo}/installation requires GitHub App (JWT)
+  # authentication (REST API reference, Apps category) -- an installation
+  # access token or a maintainer's own PAT gets a flat 403 regardless of
+  # whether the App is actually installed, so this call alone can never
+  # report "ready" for the CI, App-token-scoped path. WC_APP_INSTALLATION_KNOWN_READY
+  # lets a caller that already knows installation succeeded from its own
+  # token-mint outcome (the readiness workflow, after
+  # actions/create-github-app-token succeeds for this exact target) trust
+  # that directly instead. Without that hint, this call remains a
+  # best-effort signal for the local, privileged path: it cannot return
+  # success for a repository the App is not installed on, so it produces no
+  # false positive.
+  if [ "${WC_APP_INSTALLATION_KNOWN_READY:-}" = "true" ]; then
+    return 0
+  fi
   gh api "repos/$1/$2/installation" >/dev/null 2>&1
 }
 remaining_action_app_installation() {
@@ -39,22 +54,32 @@ remaining_action_app_installation() {
 }
 
 # ---- scratch_marker (research.md D3) -----------------------------------
+# has_scratch_marker: true iff the repository's description already carries
+# the marker this script writes. Kept separate from check_scratch_marker
+# (below) so act_scratch_marker can claim an EMPTY repository immediately,
+# rather than only once it is no longer empty (T038/T039) -- "ready" and
+# "already marked" are different questions.
+has_scratch_marker() { # has_scratch_marker OWNER NAME
+  local desc
+  desc="$(gh repo view "$1/$2" --json description -q .description 2>/dev/null)" || return 1
+  [ "$desc" = "$SCRATCH_MARKER" ]
+}
 # ready iff the repository does not exist yet (nothing to conflict with),
-# has zero commits (diskUsage == 0), or its description already carries the
+# has zero commits (isEmpty), or its description already carries the
 # marker this script writes on first successful provisioning. Any other
-# pre-existing, non-empty, unmarked repository is not ready — and this is
-# the check provision-e2e-target.sh refuses on, before any privileged
-# action, per FR-007/data-model.md D3.
+# pre-existing, non-empty, unmarked repository is not ready. `isEmpty` is
+# used rather than `diskUsage == 0` -- GitHub's reported disk usage for a
+# freshly pushed, still-tiny repository can itself read 0 for a time, which
+# would make a genuinely non-empty repository look claimable.
 check_scratch_marker() { # check_scratch_marker OWNER NAME
-  local owner="$1" name="$2" json disk desc
+  local owner="$1" name="$2" json empty
   if ! gh repo view "$owner/$name" >/dev/null 2>&1; then
     return 0
   fi
-  json="$(gh repo view "$owner/$name" --json description,diskUsage 2>/dev/null)" || return 1
-  disk="$(jq -r '.diskUsage // 0' <<<"$json")"
-  [ "$disk" = "0" ] && return 0
-  desc="$(jq -r '.description // ""' <<<"$json")"
-  [ "$desc" = "$SCRATCH_MARKER" ]
+  has_scratch_marker "$owner" "$name" && return 0
+  json="$(gh repo view "$owner/$name" --json isEmpty 2>/dev/null)" || return 1
+  empty="$(jq -r '.isEmpty // false' <<<"$json")"
+  [ "$empty" = "true" ]
 }
 remaining_action_scratch_marker() {
   local owner="$1" name="$2" desc
@@ -62,17 +87,42 @@ remaining_action_scratch_marker() {
   printf '%s/%s already has commits and its description does not carry the scratch marker, so it cannot be established as a reusable scratch verification target. Found description: %s' "$owner" "$name" "${desc:-<none>}"
 }
 
+# gh_permission_denied OUTPUT -- true if a failed gh call's captured output
+# looks like the caller's token was rejected for lacking a permission scope
+# (e.g. an App installation token with no Secrets/Variables read -- the App
+# is documented, and gated, to have Contents/Issues/Pull requests only:
+# docs/setup.md), rather than the resource simply not existing.
+gh_permission_denied() {
+  case "$1" in
+    *"HTTP 403"*|*"Resource not accessible by integration"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # ---- claude_credential (auto-release only) -----------------------------
 check_claude_credential() { # check_claude_credential OWNER NAME
-  gh secret list --repo "$1/$2" 2>/dev/null | awk '{print $1}' | grep -qE '^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY)$'
+  local out rc
+  out="$(gh secret list --repo "$1/$2" 2>&1)"; rc=$?
+  if [ "$rc" -ne 0 ]; then
+    gh_permission_denied "$out" && CLAUDE_CREDENTIAL_NOT_CHECKABLE=true
+    return 1
+  fi
+  printf '%s\n' "$out" | awk '{print $1}' | grep -qE '^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY)$'
 }
 remaining_action_claude_credential() {
+  if [ "${CLAUDE_CREDENTIAL_NOT_CHECKABLE:-}" = "true" ]; then
+    printf 'Not checkable with this token: the wing-commander App has no Secrets read permission on %s/%s (docs/setup.md declares Contents, Issues, Pull requests only). Run provision-e2e-target.sh --repo %s/%s --profile auto-release --check-only locally under your own gh authentication to check this element.' "$1" "$2" "$1" "$2"
+    return
+  fi
   printf 'Export CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in this shell, then re-run provision-e2e-target.sh --repo %s/%s --profile auto-release to write it to %s/%s as a repository secret.' "$1" "$2" "$1" "$2"
 }
 
 # ---- spec_request_label (auto-release only) ----------------------------
 check_spec_request_label() { # check_spec_request_label OWNER NAME
-  gh label view spec-request --repo "$1/$2" >/dev/null 2>&1
+  # `gh label view` is not a real `gh label` subcommand (gh offers
+  # clone/create/delete/edit/list only) -- this call can never pass against
+  # the real CLI. Read the label directly through the REST API instead.
+  gh api "repos/$1/$2/labels/spec-request" >/dev/null 2>&1
 }
 remaining_action_spec_request_label() {
   printf 'Run provision-e2e-target.sh --repo %s/%s --profile auto-release (without --check-only) to create the spec-request label on %s/%s.' "$1" "$2" "$1" "$2"
@@ -113,12 +163,20 @@ this_repo_container_image() {
   gh variable list --repo "$self" --json name,value -q '.[] | select(.name=="WING_COMMANDER_CONTAINER_IMAGE") | .value' 2>/dev/null
 }
 check_container_image_pin() { # check_container_image_pin OWNER NAME
-  local owner="$1" name="$2" want got
+  local owner="$1" name="$2" want got rc
   want="$(this_repo_container_image)" || return 1
-  got="$(gh variable list --repo "$owner/$name" --json name,value -q '.[] | select(.name=="WING_COMMANDER_CONTAINER_IMAGE") | .value' 2>/dev/null)"
+  got="$(gh variable list --repo "$owner/$name" --json name,value -q '.[] | select(.name=="WING_COMMANDER_CONTAINER_IMAGE") | .value' 2>&1)"; rc=$?
+  if [ "$rc" -ne 0 ]; then
+    gh_permission_denied "$got" && CONTAINER_IMAGE_PIN_NOT_CHECKABLE=true
+    return 1
+  fi
   [ "$got" = "$want" ]
 }
 remaining_action_container_image_pin() {
+  if [ "${CONTAINER_IMAGE_PIN_NOT_CHECKABLE:-}" = "true" ]; then
+    printf 'Not checkable with this token: the wing-commander App has no Variables read permission on %s/%s (docs/setup.md declares Contents, Issues, Pull requests only). Run provision-e2e-target.sh --repo %s/%s --profile auto-release --check-only locally under your own gh authentication to check this element.' "$1" "$2" "$1" "$2"
+    return
+  fi
   printf 'Run provision-e2e-target.sh --repo %s/%s --profile auto-release (without --check-only) to set WING_COMMANDER_CONTAINER_IMAGE on %s/%s to match this repository'\''s own pinned value.' "$1" "$2" "$1" "$2"
 }
 

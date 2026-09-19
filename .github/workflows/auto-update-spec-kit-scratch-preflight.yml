@@ -112,6 +112,14 @@ jobs:
       # own `vars.*` back through the API -- the workflow already knows that
       # value from its own context, so it is handed across directly instead
       # of asking checks.sh to re-derive it with a token that cannot.
+      #
+      # WC_APP_INSTALLATION_KNOWN_READY=true: reaching this step already
+      # means actions/create-github-app-token minted a token scoped to this
+      # exact target, which only succeeds if the App is installed there --
+      # `GET /repos/{owner}/{repo}/installation` itself requires GitHub App
+      # JWT authentication and would 403 this installation token regardless
+      # of the true install state, so checks.sh is told the answer directly
+      # instead of re-deriving it with a call that cannot succeed here.
       - name: Run the readiness check
         env:
           GH_TOKEN: ${{ steps.target-token.outputs.token }}
@@ -119,6 +127,7 @@ jobs:
           TARGET: ${{ steps.resolve.outputs.target }}
           PROFILE: ${{ steps.resolve.outputs.profile }}
           WC_SOURCE_CONTAINER_IMAGE: ${{ vars.WING_COMMANDER_CONTAINER_IMAGE }}
+          WC_APP_INSTALLATION_KNOWN_READY: "true"
         run: |
           set -uo pipefail
           if [ "$TOKEN_OUTCOME" != "success" ] || [ -z "$GH_TOKEN" ]; then
