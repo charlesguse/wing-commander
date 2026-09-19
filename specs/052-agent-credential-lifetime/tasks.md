@@ -297,3 +297,9 @@ Code review of PR #407 at head bb064e9 (charlesguse) found the shipped remedy do
 ### Must fix
 
 - [ ] Correct stale statements that the post-agent credential-status step fails the job (it now warns and exits 0): the canonical comment at `clarify.yml:422-427` ("no continue-on-error - fails the job right here", which every other stage's comment points at and Gate 47 byte-compares — update it and every pointer together), `docs/architecture.md:196-200`, `specs/052-agent-credential-lifetime/research.md:449-456` (also still says `toJSON(steps)`), `contracts/wing-commander-context-relay.md:37-39`, and `contracts/agent-ran-signal.md:80-86` (still says `toJSON(steps)` and `outcome == 'failure'`). Describe the shipped behaviour: the composite never fails the job, records `ok`, and a failed re-mint is reported by the stall reason only when a step genuinely fails afterward. (FR-024)
+
+## Maintainer Feedback (third review, PR #407 @ 453656c)
+
+### Must fix
+
+- [ ] Fix the credential branch of the stall reason (FR-004): `.github/actions/wing-commander-stall-reason/action.yml:69` names only "Determine post-agent credential status" and discards `FAILED_STEP`, so the step that actually needed the credential (e.g. the next dispatch) is never named. When both are known, say "the credential could not be re-established, and step `<failed step>` failed after it." Also fix precedence: the credential branch currently outranks a real named failure (a stage that fails on `unresolved-markers` while an earlier re-mint was rate-limited is wrongly blamed on the credential) — prefer the named real failure and mention the credential only as context. (FR-004)
