@@ -94,12 +94,14 @@ RUN_URL = "https://github.com/charlesguse/wing-commander/actions/runs/777"
 CORRELATED_RUN_URL = "https://github.com/charlesguse/wing-commander/actions/runs/4242"
 HEAD = "0123456789abcdef0123456789abcdef01234567"
 OTHER_SHA = "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
-PASS = json.dumps({"outcome": "pass", "verified_head": HEAD})
+PASS = json.dumps({"outcome": "pass", "verified_head": HEAD,
+                   "mode": "container", "container_image_configured": True})
 WRONG_OUTPUT = json.dumps({"outcome": "fail-wrong-output", "verified_head": HEAD,
                            "failing_check": "spec.md content",
                            "expected": "the fixture's heading",
                            "observed": "an empty file",
-                           "evidence_url": "https://example.invalid/e2e"})
+                           "evidence_url": "https://example.invalid/e2e",
+                           "mode": "default-runner"})
 
 # Every scenario starts from a run where nothing has happened yet -- every
 # result `skipped`, every output empty -- and overrides what its situation
@@ -116,7 +118,7 @@ BASE = dict(DETECT_RESULT="skipped", VERIFY_RESULT="skipped",
             VERDICT_JSON="", NEXT_VERSION="", COLLISION="",
             TAG_MATCHES="", CORRELATION="", CORRELATED_RUN_ID="",
             CORRELATED_RUN_URL="", REQUEST_TIME=REQUEST_TIME,
-            DISPATCH_REJECTED="false")
+            DISPATCH_REJECTED="false", PAUSED="false")
 
 SCENARIOS = [
     dict(
@@ -183,6 +185,25 @@ SCENARIOS = [
         body_excludes=["the job stopped"],
     ),
     dict(
+        name="a fail-infra verdict naming an unresolved container image "
+             "(specs/054 MF1): infrastructure, never a pipeline defect, "
+             "even though it came from the poll step's own terminal-state "
+             "check rather than an earlier job crash",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
+                 VERDICT_JSON=json.dumps({
+                     "outcome": "fail-infra", "verified_head": HEAD,
+                     "failing_check": "container image pulled/authorized for the stage that ran it",
+                     "expected": "the reference image resolves and its registry credentials (if any) are accepted",
+                     "observed": "verify-image-prerequisites failed: wing-commander verify-image-prerequisites: failed to pull ghcr.io/example/image",
+                     "evidence_url": "https://github.com/owner/repo/actions/runs/555",
+                     "mode": "container", "container_image_configured": False})),
+        action="report",
+        body_contains=["infrastructure", "container image pulled/authorized",
+                       "https://github.com/owner/repo/actions/runs/555"],
+        body_excludes=["pipeline defect"],
+    ),
+    dict(
         name="a fail-wrong-output verdict: pipeline defect, filed with the "
              "verdict's own fields",
         env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
@@ -233,7 +254,7 @@ SCENARIOS = [
                  CORRELATED_RUN_ID="4242", CORRELATED_RUN_URL=CORRELATED_RUN_URL),
         action="close",
         close_comment_contains="v2.8.0 released",
-        summary_contains=f"released v2.8.0 -- [correlated run]({CORRELATED_RUN_URL})",
+        summary_contains=f"released v2.8.0 (mode: container) -- [correlated run]({CORRELATED_RUN_URL})",
     ),
     dict(
         name="released, own run never correlated (Edge Case: the release "
@@ -246,7 +267,25 @@ SCENARIOS = [
                  TAG_MATCHES="true", CORRELATION="not-observed"),
         action="close",
         close_comment_contains="v2.8.0 released",
-        summary_contains="released v2.8.0 -- own run not correlated",
+        summary_contains="released v2.8.0 (mode: container) -- own run not correlated",
+    ),
+    dict(
+        name="released while a container-mode turn was paused (FR-009): "
+             "reports the default-runner mode the run actually exercised, "
+             "annotated as paused rather than a plain default-runner pass",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
+                 VERDICT_JSON=json.dumps({"outcome": "pass", "verified_head": HEAD,
+                                          "mode": "default-runner"}),
+                 DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
+                 COLLISION="false", DISPATCH_RESULT="success",
+                 TAG_MATCHES="true", CORRELATION="found",
+                 CORRELATED_RUN_ID="4242", CORRELATED_RUN_URL=CORRELATED_RUN_URL,
+                 PAUSED="true"),
+        action="close",
+        close_comment_contains="v2.8.0 released",
+        summary_contains=f"released v2.8.0 (mode: default-runner (container mode "
+                         f"not exercised: paused)) -- [correlated run]({CORRELATED_RUN_URL})",
     ),
     dict(
         name="branch-advanced (FR-013): expected behaviour, nothing filed, "
