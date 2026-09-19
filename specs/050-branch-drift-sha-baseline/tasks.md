@@ -512,3 +512,14 @@ issue #331 names.
   mark only one of `before_available`/`after_available` false at a time
   (or both true/available), so this state has no fixture of its own yet
   (missing).
+
+## Maintainer Feedback (code review of #354 by charlesguse)
+
+- [ ] Fix `watchdog.yml` collect-turn-budget (~1288-1292) and collect-cost-report (~1462-1466) to select the metrics record by name (cycle/retry/progress artifacts), not by first-in-glob-order, so `metrics-record-branch-advance` (transcript-less, `cost_available`/`turns.available` false) never shadows `metrics-record-cycle`. Add a scenario to the nearest existing gate that fails when a branch-advance record is present alongside a cycle record.
+- [ ] Make `wing-commander-metrics-persist/action.yml` (line ~151) pick up `wing-commander-metrics-record-branch-advance.json` (written by `implement.yml` line ~2198) instead of silently skipping it (line ~152), so the durable history and the Gate 41 rollup filter (~390) exercise the real artifact layout rather than only a synthetic batch.
+- [ ] Fix `watchdog.yml` line ~817 so a `commits`-null pair with `before_sha != after_sha` reads as healthy per FR-019/FR-017/SC-002, not as a false lost-progress signal. Add a Gate 63 scenario for this case.
+- [ ] Fix `metrics-summary/action.yml` line ~256 so `available`/`branch`-nulling matches the contract delta (available needs a branch and at least one SHA) and the `valid-branch-advance-before-unavailable`/`after-unavailable` fixtures (available: true, branch kept), instead of nulling `branch` and forcing `available: false` while leaving the other SHA set. Add a gate that runs the composite over each fixture case to cover the emission side.
+- [ ] Fix `watchdog.yml` line ~751 so `measure_branch` is read from `branch_advance.branch` when available, rather than always being derived from prefix and slug, per FR-003.
+- [ ] Extend `wing-commander-metrics-persist`'s inline jq validator to check `branch_advance` at the same strictness as Gate 39, and add the FR-008-required wrong-typed fixture for each new field beyond `commits`.
+- [ ] Verify: confirm whether the three new implement.yml steps (`Record branch advance (cycle)` and its metrics-summary/upload steps) should use `always()`/`!cancelled()` like their sibling metrics/upload steps rather than implicit `success()`, and align them if the siblings' intent requires it, so a hard failure in an earlier step doesn't skip the record on exactly the cycles where it matters.
+- [ ] Confirm FR-020's follow-up issue status: T027 remains unchecked/blocked (no `gh issue create` in this run's tool surface) — no new action needed beyond what's already documented, but note the review's reiteration on the PR.
