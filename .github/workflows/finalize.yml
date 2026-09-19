@@ -296,6 +296,8 @@ jobs:
       # internal job-to-job wiring only, never a workflow_call output (research.md D3) -- see
       # specs/041-implement-stall-notice/research.md D3.
       refusal-reason: ${{ steps.preflight.outputs.reason || steps.spec.outputs.reason || steps.meta.outputs.reason }}
+      agent-ran: ${{ steps.agent-ran.outputs.ran }}
+      agent-conclusion: ${{ steps.agent-ran.outputs.conclusion }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v5
@@ -694,6 +696,14 @@ jobs:
             --max-turns ${{ steps.summarize-ceiling.outputs.ceiling }}
             --allowedTools "${{ steps.tool-args-finalize.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-finalize.outputs.disallowed-tools }}"
+
+      - name: Record agent-ran signal
+        if: always() && steps.summarize.outcome != 'skipped'
+        id: agent-ran
+        shell: bash
+        run: |
+          echo "ran=true" >> "$GITHUB_OUTPUT"
+          echo "conclusion=${{ steps.summarize.conclusion }}" >> "$GITHUB_OUTPUT"
 
       - name: Re-establish Wing Commander context (post-agent)
         if: always()

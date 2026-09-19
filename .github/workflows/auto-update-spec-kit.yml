@@ -1659,6 +1659,8 @@ jobs:
       failure-detail: ${{ steps.readback.outputs.failure-detail }}
       scratch-repo: ${{ steps.scratch-repo.outputs.full-name }}
       scratch-branch: ${{ steps.scratch-repo.outputs.branch }}
+      agent-ran: ${{ steps.agent-ran.outputs.ran }}
+      agent-conclusion: ${{ steps.agent-ran.outputs.conclusion }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v5
@@ -2013,6 +2015,14 @@ jobs:
             --max-turns ${{ steps.decide-ceiling.outputs.ceiling }}
             --allowedTools "Bash(e2e-scratch/.specify/scripts/bash/create-new-feature.sh:*),Bash(bash e2e-scratch/.specify/scripts/bash/create-new-feature.sh:*),Write(e2e-scratch/**),Edit(e2e-scratch/**),Write(${{ github.workspace }}/e2e-scratch/**),Edit(${{ github.workspace }}/e2e-scratch/**)"
             --disallowedTools "WebSearch,WebFetch,Bash(git push:*)"
+
+      - name: Record agent-ran signal
+        if: always() && steps.decide.outcome != 'skipped'
+        id: agent-ran
+        shell: bash
+        run: |
+          echo "ran=true" >> "$GITHUB_OUTPUT"
+          echo "conclusion=${{ steps.decide.conclusion }}" >> "$GITHUB_OUTPUT"
 
       - name: Re-establish Wing Commander context (post-agent)
         if: always()

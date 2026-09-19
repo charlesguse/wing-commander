@@ -407,6 +407,8 @@ jobs:
       # internal job-to-job wiring only, never a workflow_call output (research.md D3) -- see
       # specs/041-implement-stall-notice/research.md D3.
       refusal-reason: ${{ steps.identity.outputs.reason || steps.preflight.outputs.reason || steps.meta.outputs.reason }}
+      agent-ran: ${{ steps.agent-ran.outputs.ran }}
+      agent-conclusion: ${{ steps.agent-ran.outputs.conclusion }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v5
@@ -929,6 +931,14 @@ jobs:
             --json-schema '{"type":"object","required":["classifications"],"properties":{"classifications":{"type":"array","minItems":1,"items":{"type":"object","required":["category","summary","planned-action"],"properties":{"category":{"enum":["in-scope-change","question","needs-info","push-back","new-functionality","small-unrelated-change","manual-step-permission","stop","no-action"]},"summary":{"type":"string"},"planned-action":{"type":"string"},"drafted-content":{"type":"object"},"fold-target":{"enum":["current-spec","new-spec",null]},"constitution-conflict":{"type":["string","null"]},"relayed":{"type":"object","properties":{"risk":{"type":"boolean"},"risk-note":{"type":["string","null"]}}}},"allOf":[{"if":{"required":["category"],"properties":{"category":{"const":"question"}}},"then":{"required":["drafted-content"],"properties":{"drafted-content":{"required":["answer"],"properties":{"answer":{"type":"string","minLength":1}}}}}},{"if":{"required":["category"],"properties":{"category":{"const":"needs-info"}}},"then":{"required":["drafted-content"],"properties":{"drafted-content":{"required":["clarifying-question"],"properties":{"clarifying-question":{"type":"string","minLength":1}}}}}}]}}}}'
             --allowedTools "${{ steps.tool-args-classify.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-classify.outputs.disallowed-tools }}"
+
+      - name: Record agent-ran signal
+        if: always() && steps.agent.outcome != 'skipped'
+        id: agent-ran
+        shell: bash
+        run: |
+          echo "ran=true" >> "$GITHUB_OUTPUT"
+          echo "conclusion=${{ steps.agent.conclusion }}" >> "$GITHUB_OUTPUT"
 
       - name: Re-establish Wing Commander context (post-agent)
         if: always()
@@ -1455,6 +1465,9 @@ jobs:
     concurrency:
       group: ${{ needs.classify-and-announce.outputs.concurrency-group }}
       cancel-in-progress: false
+    outputs:
+      agent-ran: ${{ steps.agent-ran.outputs.ran }}
+      agent-conclusion: ${{ steps.agent-ran.outputs.conclusion }}
     strategy:
       fail-fast: false
       # Legs are NOT run concurrently: two classifications from the SAME
@@ -1977,6 +1990,14 @@ jobs:
             --json-schema '{"type":"object","required":["mutated","summary"],"properties":{"mutated":{"type":"boolean"},"summary":{"type":"string"},"artifact-url":{"type":["string","null"]}}}'
             --allowedTools "${{ steps.tool-args-act.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-act.outputs.disallowed-tools }}"
+
+      - name: Record agent-ran signal
+        if: always() && steps.agent.outcome != 'skipped'
+        id: agent-ran
+        shell: bash
+        run: |
+          echo "ran=true" >> "$GITHUB_OUTPUT"
+          echo "conclusion=${{ steps.agent.conclusion }}" >> "$GITHUB_OUTPUT"
 
       - name: Re-establish Wing Commander context (post-agent)
         if: always()
