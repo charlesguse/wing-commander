@@ -321,3 +321,7 @@ Code review of PR #407 at head bb064e9 (charlesguse) found the shipped remedy do
 ### Should fix
 
 - [X] Polish: the Gate 68 header comment in `lint-workflows.yml` (~line 3601) describes only the original three assertions and the script docstring's check numbers no longer match the code's labels — bring both up to date. Also, the stall notice currently prints the step id (`'verdict-fail'`) rather than a readable step name — use the readable name. (FR-011, FR-020) — done: `lint-workflows.yml`'s Gate 68 comment now summarizes all nine checks (pointing at the script docstring as authoritative); the docstring's own numbering (1-9) now matches the code's check labels; `wing-commander-failed-post-agent-step` now takes `{"name": ..., "conclusion": ...}` candidates and returns the readable name (selecting the LAST failure, not the first) at all six call sites.
+
+## Phase 8: Convergence
+
+- [ ] T048 Add a `--self-test` entry point to `.github/scripts/verify-credential-relay-shell.py` (Gate 69) that reintroduces both regressions the gate exists to catch — feed check 1 a `$GITHUB_ENV` fixture where the FIRST write wins instead of the last, and feed check 2 the pre-T046 remote-refresh form that only runs `git remote set-url` without first clearing the stale `http.https://github.com/.extraheader` entry — and assert each mutation fails; wire a "Gate 69 self-test" step into `lint-workflows.yml` next to the existing Gate 69 step, following Gate 68's two-step wiring pattern. per FR-023 (partial)
