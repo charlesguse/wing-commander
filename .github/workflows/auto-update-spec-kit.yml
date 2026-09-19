@@ -2027,7 +2027,7 @@ jobs:
           echo "conclusion=${{ steps.decide.conclusion }}" >> "$GITHUB_OUTPUT"
 
       - name: Re-establish Wing Commander context (post-agent)
-        if: always()
+        if: always() && steps.decide.outcome != 'skipped'
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
         with:
@@ -2040,7 +2040,7 @@ jobs:
       # this job (every push builds its authenticated URL fresh from the env
       # var at push time), so only the relay needs refreshing, not a remote.
       - name: Re-mint scratch-repository App token (post-agent)
-        if: always()
+        if: always() && steps.decide.outcome != 'skipped'
         continue-on-error: true
         id: scratch-token-post-agent
         uses: ./.wing-commander-pipeline/.github/actions/_shared/scoped-app-token
@@ -2051,7 +2051,7 @@ jobs:
           repo-name: ${{ steps.scratch-parts.outputs.name }}
 
       - name: Relay scratch token to the job environment (post-agent)
-        if: always()
+        if: always() && steps.decide.outcome != 'skipped'
         continue-on-error: true
         shell: bash
         env:

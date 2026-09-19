@@ -64,18 +64,42 @@ composite's declared input surface widens" holds exactly.
   composite that takes `token:` as a `with:` input would need an extra read
   step to load the file, where `env.WC_BOT_TOKEN` is a direct expression.
 
-## D2 — The authenticated git remote is refreshed with `git remote set-url`, not a second checkout
+## D2 — The authenticated git remote is refreshed by clearing the stale `http.extraheader` and re-embedding the fresh token in the remote URL, not a second checkout
 
-**Decision**: The post-agent refresh step (D1) also runs `git remote
-set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/${{
-github.repository }}.git"` inside the already-checked-out spec-branch
-working tree, immediately after the token relay rewrites. This is the fix
-for the spec's own named care point: `.github/actions/_shared/
-read-spec-meta.sh`'s bare `git fetch origin ...` (and any other step that
-shells out to `git` rather than going through a composite's `token:` input)
-authenticates via the credential `actions/checkout@v5` embedded in
-`.git/config` at the *first* checkout, which is exactly as stale as the
-step-output token it was minted alongside.
+**Decision**: The post-agent refresh step (D1) runs, inside the
+already-checked-out spec-branch working tree, immediately after the token
+relay rewrites:
+
+```bash
+git config --local --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
+git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/${{ github.repository }}.git"
+```
+
+This is the fix for the spec's own named care point: `.github/actions/
+_shared/read-spec-meta.sh`'s bare `git fetch origin ...` (and any other step
+that shells out to `git` rather than going through a composite's `token:`
+input) authenticates against whatever credential `.git/config` actually
+carries, which is exactly as stale as the step-output token it was minted
+alongside unless both parts of that config are refreshed.
+
+**Correction (found in this feature's own code review, T046)**: an earlier
+draft of this decision refreshed only the remote URL, on the reasoning that
+"the credential `actions/checkout@v5` embedded in `.git/config`" and "the
+remote URL" were the same thing. They are not. With `persist-credentials`
+at its default (`true`, unchanged by this feature), `actions/checkout@v5`
+authenticates by writing an `http.https://github.com/.extraheader` local git
+config entry carrying a Basic-auth header for the token it was given — it
+does **not** embed any credential in the remote URL itself. A custom
+`Authorization` header supplied this way takes precedence over the
+Basic-auth header git's http transport would otherwise derive from a URL's
+embedded userinfo, so a bare `git remote set-url` (the original plan) left
+every subsequent `git fetch`/`push` against `origin` authenticating with the
+**original, now-possibly-stale** extraheader — a no-op fix that would have
+reproduced the exact 401 this feature exists to eliminate, undetected by
+quickstart.md §4's shell test because that test drives the remote-refresh
+step in a scratch repository with no extraheader configured. Unsetting the
+extraheader removes the competing credential, so the URL-embedded token
+(which the refresh step already sets) becomes the one git actually uses.
 
 **Rationale**: A second `actions/checkout@v5` invocation was considered and
 rejected specifically because of what runs between the agent step and the
@@ -84,12 +108,12 @@ residual risk already assumes this), but nothing in this feature guarantees
 every stage's working tree is clean and fast-forwardable at that point —
 composites between the two checkouts may hold uncommitted state a second
 `checkout@v5` (even with `clean: false`) is not contracted to preserve.
-`git remote set-url` touches only the remote URL credential embedded for
-`origin`; it cannot discard a commit, a staged change, or an untracked file,
-because it does not read or write the working tree at all. This is the
-narrowest fix for the narrow problem (an expired credential baked into a
-remote URL), matching the spec's framing of this exact edge case ("continues
-to reference the expired one unless it is refreshed too").
+Unsetting one local git config key and rewriting the remote URL touch only
+metadata for `origin`; neither reads nor writes the working tree, so they
+cannot discard a commit, a staged change, or an untracked file. This is the
+narrowest fix for the narrow problem (an expired credential the checkout
+step configured), matching the spec's framing of this exact edge case
+("continues to reference the expired one unless it is refreshed too").
 
 **Alternatives considered**:
 - *Re-run `actions/checkout@v5`* — rejected above (working-tree risk).
@@ -98,6 +122,12 @@ to reference the expired one unless it is refreshed too").
   among them) are call sites this feature does not otherwise need to touch;
   rewriting them to stop using `git` at all is a larger, riskier change than
   refreshing the one thing that goes stale.
+- *Set `persist-credentials: false` on the initial checkout instead, relying
+  solely on the remote URL's embedded token from the start* — rejected as a
+  larger blast radius for this feature to take on: it would change the
+  initial checkout's own authentication path (today's proven-working
+  behavior) for all 8 stages, rather than fixing only the post-agent
+  refresh this feature adds.
 
 ## D3 — The agent-ran signal is a job output, written by a step separate from the credential refresh
 

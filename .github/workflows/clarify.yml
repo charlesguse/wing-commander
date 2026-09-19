@@ -404,12 +404,18 @@ jobs:
       # composite, not a new composite output); every bot-acting step in
       # this job, before or after the agent step, reads env.WC_BOT_TOKEN
       # instead of steps.ctx.outputs.token. Immediately after the agent
-      # step, an if: always() pair re-invokes wing-commander-context
-      # (overwriting env.WC_BOT_TOKEN with a fresh mint) and refreshes the
-      # checkout's authenticated remote via `git remote set-url` — not a
-      # second checkout, so an agent's possibly-uncommitted working tree is
-      # never disturbed. The other 7 sweep-stage workflows point here
-      # instead of repeating this paragraph. docs/architecture.md's
+      # step, an if: always() && steps.agent.outcome != 'skipped' pair
+      # (continue-on-error: true on both, so a transient mint/remote
+      # failure cannot strand the deterministic read-back below) re-invokes
+      # wing-commander-context (overwriting env.WC_BOT_TOKEN with a fresh
+      # mint) and refreshes the checkout's authenticated remote — clearing
+      # the stale http.https://github.com/.extraheader entry
+      # actions/checkout@v5 wrote (that header, not the remote URL, is what
+      # git's http transport actually authenticates with) and then
+      # `git remote set-url`ing the fresh token in — not a second checkout,
+      # so an agent's possibly-uncommitted working tree is never disturbed.
+      # The other 7 sweep-stage workflows point here instead of repeating
+      # this paragraph. docs/architecture.md's
       # "Identity & chaining" section carries the same statement for
       # readers outside the workflow files, including the FR-008 residual
       # risk (the agent's own push credential, tracked in issue #402) this
@@ -623,7 +629,7 @@ jobs:
           echo "conclusion=${{ steps.agent.conclusion }}" >> "$GITHUB_OUTPUT"
 
       - name: Re-establish Wing Commander context (post-agent)
-        if: always()
+        if: always() && steps.agent.outcome != 'skipped'
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
         with:
@@ -632,10 +638,11 @@ jobs:
           issue-labels-json: ${{ steps.labels.outputs.json }}
 
       - name: Refresh authenticated spec-branch remote (post-agent)
-        if: always()
+        if: always() && steps.agent.outcome != 'skipped'
         continue-on-error: true
         shell: bash
         run: |
+          git config --local --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
           git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/${{ github.repository }}.git"
 
       # deterministic, transcript-only verdict (healthy/exhausted/failed/unclassifiable) replacing

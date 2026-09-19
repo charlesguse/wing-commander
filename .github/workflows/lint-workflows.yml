@@ -3613,6 +3613,21 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-post-agent-credential-refresh.py --self-test
 
+      # Gate 69 — specs/052-agent-credential-lifetime (User Story 1's own
+      # "STOP and VALIDATE" step, quickstart.md section 4): the credential
+      # relay's env-var precedence and the post-agent remote refresh are
+      # both plain shell, so Gate 68's structural check alone cannot prove
+      # them correct. This feature's own T046 code review found the remote
+      # refresh, as first shipped, only rewrote the remote URL and never
+      # cleared the stale http.https://github.com/.extraheader entry
+      # actions/checkout@v5 leaves behind — a no-op that would have
+      # silently reproduced the exact 401 this feature exists to eliminate.
+      # This drives both shipped `run:` blocks against a real $GITHUB_ENV
+      # file and a real git repository with that exact stale extraheader.
+      - name: Gate 69 — the credential relay's env-var precedence and the post-agent remote refresh both behave as designed
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-credential-relay-shell.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

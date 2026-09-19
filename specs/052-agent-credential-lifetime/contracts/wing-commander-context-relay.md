@@ -39,19 +39,42 @@ reads `WC_BOT_TOKEN` (FR-025's compatibility requirement).
    `env.WC_BOT_TOKEN` is available to it exactly as `steps.ctx.outputs.
    token` was.
 2. **Immediately after each agent step** (new): a step named "Re-establish
-   Wing Commander context (post-agent)", `if: always()`, invoking
-   `wing-commander-context` again with the same inputs the original call
-   used (`app-id`, `private-key`, `issue-labels-json` when the stage passes
-   it). This step's own outputs are not referenced anywhere — its only
-   effect that matters is the relay step inside it rewriting
-   `WC_BOT_TOKEN`.
+   Wing Commander context (post-agent)", `if: always() && steps.<agent-id>.
+   outcome != 'skipped'` (the outcome guard means a stage dispatched with
+   its lifecycle gate closed, which skips the agent step itself, mints no
+   unneeded token either), invoking `wing-commander-context` again with the
+   same inputs the original call used (`app-id`, `private-key`,
+   `issue-labels-json` when the stage passes it). This step's own outputs
+   are not referenced anywhere — its only effect that matters is the relay
+   step inside it rewriting `WC_BOT_TOKEN`.
 3. **Immediately after step 2** (new): a step named "Refresh authenticated
-   spec-branch remote (post-agent)", `if: always()`, `shell: bash`, running
-   `git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/${{ github.repository }}.git"` inside the job's existing checkout
-   directory — no new checkout, no working-tree change (research.md D2).
+   spec-branch remote (post-agent)", same `if:` guard as step 2, `shell:
+   bash`, running, inside the job's existing checkout directory — no new
+   checkout, no working-tree change (research.md D2):
+   ```bash
+   git config --local --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
+   git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/${{ github.repository }}.git"
+   ```
+   The `git config --unset-all` line is load-bearing, not defensive
+   cleanup: `actions/checkout@v5` (default `persist-credentials: true`,
+   unchanged by this feature) authenticates via that local
+   `http.https://github.com/.extraheader` config entry, not via any
+   credential embedded in the remote URL, and a custom `Authorization`
+   header set this way takes precedence over one git's http transport would
+   otherwise derive from the URL's embedded userinfo. Without clearing it
+   first, `git remote set-url`'s fresh token is never actually used by any
+   subsequent `git fetch`/`push` against `origin` (research.md D2's
+   correction, found in this feature's own T046 code review).
 4. **Every bot-acting step after the agent step** reads `env.WC_BOT_TOKEN`
    (already true by construction, since step 1 migrated the pre-agent
    references and no new reference form is introduced post-agent).
+5. **Steps 2 and 3 both carry `continue-on-error: true`** in addition to
+   their outcome guard: a transient failure re-minting the token or
+   rewriting the remote must not flip the job to failure and skip every
+   bare-conditioned step below it (each stage's own deterministic
+   read-back/stall-detection logic among them) — the same reasoning already
+   applied to "Fail loud on non-healthy agent verdict" and its siblings
+   (found in this feature's own T046 review-step-gating pass).
 
 ## `implement.yml`'s three-agent-step job
 

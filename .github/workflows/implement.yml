@@ -943,7 +943,7 @@ jobs:
           echo "conclusion=${{ steps.cycle.conclusion }}" >> "$GITHUB_OUTPUT"
 
       - name: Re-establish Wing Commander context (post-agent, cycle)
-        if: always()
+        if: always() && steps.cycle.outcome != 'skipped'
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
         with:
@@ -951,10 +951,11 @@ jobs:
           private-key: ${{ secrets.speckit-app-private-key }}
 
       - name: Refresh authenticated spec-branch remote (post-agent, cycle)
-        if: always()
+        if: always() && steps.cycle.outcome != 'skipped'
         continue-on-error: true
         shell: bash
         run: |
+          git config --local --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
           git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/${{ github.repository }}.git"
 
       # deterministic, transcript-only verdict -- see specs/037-agent-turn-budget-guard/
@@ -1504,7 +1505,7 @@ jobs:
           echo "conclusion=${{ steps.retry.conclusion }}" >> "$GITHUB_OUTPUT"
 
       - name: Re-establish Wing Commander context (post-agent, retry)
-        if: always()
+        if: always() && steps.retry.outcome != 'skipped'
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
         with:
@@ -1512,10 +1513,11 @@ jobs:
           private-key: ${{ secrets.speckit-app-private-key }}
 
       - name: Refresh authenticated spec-branch remote (post-agent, retry)
-        if: always()
+        if: always() && steps.retry.outcome != 'skipped'
         continue-on-error: true
         shell: bash
         run: |
+          git config --local --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
           git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/${{ github.repository }}.git"
 
       # See "Compute agent run verdict (cycle)" above — same shared
@@ -1988,7 +1990,7 @@ jobs:
           echo "conclusion=${{ steps.progress.conclusion }}" >> "$GITHUB_OUTPUT"
 
       - name: Re-establish Wing Commander context (post-agent, progress)
-        if: always()
+        if: always() && steps.progress.outcome != 'skipped'
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
         with:
@@ -1996,10 +1998,11 @@ jobs:
           private-key: ${{ secrets.speckit-app-private-key }}
 
       - name: Refresh authenticated spec-branch remote (post-agent, progress)
-        if: always()
+        if: always() && steps.progress.outcome != 'skipped'
         continue-on-error: true
         shell: bash
         run: |
+          git config --local --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
           git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/${{ github.repository }}.git"
 
       # Deterministic posting: the agent above only composes the summary —

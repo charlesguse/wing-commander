@@ -749,7 +749,7 @@ jobs:
           echo "conclusion=${{ steps.agent-auto.conclusion }}" >> "$GITHUB_OUTPUT"
 
       - name: Re-establish Wing Commander context (post-agent, auto)
-        if: always()
+        if: always() && steps.agent-auto.outcome != 'skipped'
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
         with:
@@ -757,10 +757,11 @@ jobs:
           private-key: ${{ secrets.speckit-app-private-key }}
 
       - name: Refresh authenticated spec-branch remote (post-agent, auto)
-        if: always()
+        if: always() && steps.agent-auto.outcome != 'skipped'
         continue-on-error: true
         shell: bash
         run: |
+          git config --local --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
           git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/${{ github.repository }}.git"
 
       # deterministic, transcript-only verdict replacing raw steps.agent-auto.outcome checks
@@ -917,7 +918,7 @@ jobs:
           echo "conclusion=${{ steps.agent-pr.conclusion }}" >> "$GITHUB_OUTPUT"
 
       - name: Re-establish Wing Commander context (post-agent, pr)
-        if: always()
+        if: always() && steps.agent-pr.outcome != 'skipped'
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
         with:
@@ -925,10 +926,11 @@ jobs:
           private-key: ${{ secrets.speckit-app-private-key }}
 
       - name: Refresh authenticated spec-branch remote (post-agent, pr)
-        if: always()
+        if: always() && steps.agent-pr.outcome != 'skipped'
         continue-on-error: true
         shell: bash
         run: |
+          git config --local --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
           git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/${{ github.repository }}.git"
 
       - name: Compute agent run verdict (pr)

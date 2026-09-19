@@ -174,9 +174,12 @@ scratch-repository arm) environment variable — set by an internal step inside
 the one composite output, sees it — and re-invokes `wing-commander-context`
 (or the scratch-token mint) immediately after each agent step to overwrite
 that variable with a fresh mint before any step below reads it. The checkout's
-authenticated remote is refreshed in place via `git remote set-url` rather
-than a second `actions/checkout`, so a refresh can never disturb an agent's
-possibly-uncommitted working tree. `implement.yml`'s three sequential agent
+authenticated remote is refreshed in place — clearing the stale
+`http.https://github.com/.extraheader` config entry `actions/checkout@v5`
+wrote (that header, not the remote URL, is what git's http transport
+actually authenticates with) and re-embedding the fresh token in the remote
+URL — rather than a second `actions/checkout`, so a refresh can never
+disturb an agent's possibly-uncommitted working tree. `implement.yml`'s three sequential agent
 steps (cycle, retry, progress) each get their own independent refresh
 immediately after them, so `WC_BOT_TOKEN` always names the most recent mint
 regardless of which agent step most recently ran.
