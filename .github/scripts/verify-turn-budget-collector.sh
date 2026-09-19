@@ -222,16 +222,24 @@ ensure_jq()
 bash = resolve_bash()
 
 
-def sh(cmd):
-    subprocess.run(cmd, shell=True, check=True, cwd=work)
+def git(*args, cwd=work):
+    # An argument list, never a shell string: quoted paths in a shell string
+    # reach cmd.exe on Windows with their quotes intact, so `git init --bare`
+    # exits 128 there (#393). No shell also means no quoting to get wrong.
+    subprocess.run(["git", *args], check=True, cwd=cwd)
 
 
 remote = os.path.join(work, "remote.git")
 repo = os.path.join(work, "repo")
-sh(f"git init --bare -q -b main '{remote}'")
-sh(f"git clone -q '{remote}' '{repo}'")
-sh(f"cd '{repo}' && git config user.email h@example.invalid && git config user.name h "
-   f"&& echo x > f.txt && git add -A && git commit -q -m seed && git push -q origin main")
+git("init", "--bare", "-q", "-b", "main", remote)
+git("clone", "-q", remote, repo)
+git("config", "user.email", "h@example.invalid", cwd=repo)
+git("config", "user.name", "h", cwd=repo)
+with open(os.path.join(repo, "f.txt"), "w", newline="\n") as seed:
+    seed.write("x\n")
+git("add", "-A", cwd=repo)
+git("commit", "-q", "-m", "seed", cwd=repo)
+git("push", "-q", "origin", "main", cwd=repo)
 
 runner_temp = os.path.join(work, "runner_temp")
 shared = os.path.join(runner_temp, "metrics-record-shared")
