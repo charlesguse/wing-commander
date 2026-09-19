@@ -58,6 +58,29 @@ def docker_available():
     return shutil.which("docker") is not None
 
 
+def docker_missing_result(env):
+    """-> (exit code, message) for a machine where docker is not on PATH.
+
+    Off CI this is a clear skip (SF1): a maintainer running
+    run-local-gates.py on a machine without Docker gets one skipped gate
+    instead of a traceback that ends the whole sweep. On CI
+    (GITHUB_ACTIONS=true) the same condition is a defect: the hosted runner
+    image is expected to carry Docker, and if it ever stopped doing so this
+    gate would otherwise pass silently over nothing, which is exactly the
+    green check that proves less than it says.
+    """
+    if env.get("GITHUB_ACTIONS") == "true":
+        return 1, ("::error::Gate 62: docker is not installed or not on PATH "
+                   "on a CI runner, so the e2e reference image cannot be built "
+                   "and inspected. The runner image is expected to carry "
+                   "Docker; a missing binary must fail this gate rather than "
+                   "let it pass over nothing.")
+    return 0, ("Gate 62: skipped -- docker is not installed or not on PATH. "
+               "This check builds and inspects the reference image, so it "
+               "cannot run without Docker; CI always has it. Install Docker "
+               "to exercise this gate locally.")
+
+
 def build_image(root, tag):
     """-> (True/False, log). Raises only for reasons other than a missing
     docker binary -- callers check docker_available() first so a
@@ -119,6 +142,18 @@ def _copy_subject(dst):
 
 def self_test():
     problems = []
+
+    # (0) the Docker-less decision. This self-test only runs where Docker is
+    # present (CI), so it is the place the CI branch of
+    # docker_missing_result is checked on every run.
+    code, _message = docker_missing_result({"GITHUB_ACTIONS": "true"})
+    if code != 1:
+        problems.append("a missing docker binary on a CI runner (GITHUB_ACTIONS=true) "
+                         "did NOT fail the gate")
+    code, _message = docker_missing_result({})
+    if code != 0:
+        problems.append("a missing docker binary off CI was not a clear skip")
+
     root = tempfile.mkdtemp(prefix="verify_gate_62_")
     try:
         # (a) the real Dockerfile and required-tools.txt, unmodified
@@ -165,16 +200,12 @@ def self_test():
 def main(argv):
     if not docker_available():
         # A build-and-inspect check has nothing to inspect without Docker.
-        # CI (lint-workflows.yml's ubuntu-latest runner) always has it;
-        # this only fires for a maintainer running run-local-gates.py on a
-        # machine without it, and a clear skip beats the uncaught
-        # FileNotFoundError this used to raise (SF1: run-local-gates.py's
-        # whole sweep would otherwise traceback on this one gate).
-        print("Gate 62: skipped -- docker is not installed or not on PATH. "
-              "This check builds and inspects the reference image, so it "
-              "cannot run without Docker; CI always has it. Install Docker "
-              "to exercise this gate locally.")
-        return 0
+        # Off CI that is a clear skip (a maintainer running
+        # run-local-gates.py on a machine without it); on CI it fails --
+        # see docker_missing_result.
+        code, message = docker_missing_result(os.environ)
+        print(message)
+        return code
     if "--self-test" in argv:
         return self_test()
     failures = scan(".")

@@ -768,6 +768,22 @@ jobs:
             local cic="${6:-}"
             bash .github/actions/_shared/auto-release-verdict.sh "$1" "$HEAD_SHA" "$2" "$3" "$4" "$evidence" "$MODE" "$cic" > "$RUNNER_TEMP/auto-release-verdict.json"
           }
+          # A read or write that kept failing because the API rate-limited the
+          # harness is an infrastructure condition, not a gate the harness
+          # could not satisfy -- the same reasoning as the poll's own rate-
+          # limit branch below, and the same fail-infra outcome, so `report`
+          # never files it as a gate stall (#391 review). The gate reads above
+          # the poll read use the same token, so under a persistent limit they
+          # reach their failure bound first.
+          write_repeated_failure_verdict() { # gate expected observed
+            if printf '%s' "$3" | grep -qi 'rate limit'; then
+              write_verdict "fail-infra" "polling the test repository for a terminal state" \
+                "gh calls succeed within the poll budget" \
+                "GitHub API rate limit encountered while driving the $1 gate: $3"
+            else
+              write_verdict "fail-gate-stall" "$1" "$2" "$3"
+            fi
+          }
           emit_verdict() {
             {
               echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
@@ -841,6 +857,8 @@ jobs:
           labels=""
           terminal=false
           rate_limited=""
+          rate_limit_hits=0
+          MAX_RATE_LIMIT_POLLS=3
           while [ "$SECONDS" -lt "$POLL_BUDGET_SECONDS" ]; do
             # --- Clarification gate (research.md D4, D6, D7, D8) ---
             # author_id is resolved lazily here (not before the loop), so a
@@ -887,7 +905,7 @@ jobs:
               esac
             fi
             if [ "$clarify_failures" -ge "$MAX_GATE_FAILURES" ]; then
-              write_verdict "fail-gate-stall" "clarification" \
+              write_repeated_failure_verdict "clarification" \
                 "reading the issue's comments, deciding, and posting a reply each succeed within ${MAX_GATE_FAILURES} attempts" \
                 "${clarify_last_failure:-identity refused, or a read/write action failed repeatedly}"
               emit_verdict
@@ -907,7 +925,7 @@ jobs:
                 slug_lookup_failures=$((slug_lookup_failures + 1))
                 slug_lookup_last_failure="$(tail -c 300 "$RUNNER_TEMP/auto-release-spec-draft-list-err.txt")"
                 if [ "$slug_lookup_failures" -ge "$MAX_GATE_FAILURES" ]; then
-                  write_verdict "fail-gate-stall" "spec-draft PR merge" \
+                  write_repeated_failure_verdict "spec-draft PR merge" \
                     "reading open pull requests succeeds within ${MAX_GATE_FAILURES} attempts" \
                     "${slug_lookup_last_failure:-identity refused, or the read failed repeatedly}"
                   emit_verdict
@@ -981,7 +999,7 @@ jobs:
                   fi
                 fi
                 if [ "${gate_failures[$prefix]}" -ge "$MAX_GATE_FAILURES" ]; then
-                  write_verdict "fail-gate-stall" "${gate_name[$prefix]}" \
+                  write_repeated_failure_verdict "${gate_name[$prefix]}" \
                     "reading the PR's state, deciding, and merging each succeed within ${MAX_GATE_FAILURES} attempts" \
                     "${gate_last_failure[$prefix]:-identity refused, or a read/write action failed repeatedly}"
                   emit_verdict
@@ -992,6 +1010,7 @@ jobs:
 
             info="$(gh issue view "$ISSUE" --repo "$E2E_REPO" --json state,labels 2>"$RUNNER_TEMP/auto-release-poll-err.txt")" || info=""
             if [ -n "$info" ]; then
+              rate_limit_hits=0
               state="$(printf '%s' "$info" | jq -r '.state')"
               labels="$(printf '%s' "$info" | jq -r '[.labels[].name] | join(",")')"
               if [ "$state" = "CLOSED" ] || printf ',%s,' "$labels" | grep -q ',stage:stalled,'; then
@@ -1002,10 +1021,22 @@ jobs:
             # under test taking too long -- reported distinctly rather than
             # left to exhaust the poll budget and read as fail-timeout
             # (specs/054 MF1: `report` classifies fail-infra as
-            # infrastructure, never a pipeline defect).
+            # infrastructure, never a pipeline defect). It takes
+            # MAX_RATE_LIMIT_POLLS consecutive rate-limited reads to give up,
+            # each followed by a longer back-off, because a secondary rate
+            # limit usually clears within a minute and ending a run that
+            # long-polls for up to POLL_BUDGET_SECONDS on the first hit
+            # would file an infrastructure failure for a blip. A read that
+            # succeeds, or fails for another reason, restarts the count.
             elif grep -qi 'rate limit' "$RUNNER_TEMP/auto-release-poll-err.txt" 2>/dev/null; then
-              rate_limited="$(tail -c 500 "$RUNNER_TEMP/auto-release-poll-err.txt")"
-              break
+              rate_limit_hits=$((rate_limit_hits + 1))
+              if [ "$rate_limit_hits" -ge "$MAX_RATE_LIMIT_POLLS" ]; then
+                rate_limited="$(tail -c 500 "$RUNNER_TEMP/auto-release-poll-err.txt")"
+                break
+              fi
+              sleep 60
+            else
+              rate_limit_hits=0
             fi
             sleep 30
           done

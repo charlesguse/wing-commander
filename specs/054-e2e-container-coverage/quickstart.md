@@ -54,13 +54,21 @@ as optional.
    `mode: "container"`, and `report`'s failure body identifies the leg as
    container-mode (FR-007) — and `dispatch-release` does not run (SC-002).
 
-## Scenario C — an unset image reference is an infra failure, never a silent pass (User Story 2, Acceptance Scenario 1)
+## Scenario C — an unset image reference is a known gap, not yet a failure (User Story 2, Acceptance Scenario 1; FR-004 accepted gap, #390)
+
+This scenario documents what the verification does NOT catch today; it is
+not a pass/fail check. Do not run it expecting `fail-infra`.
 
 1. Unset `WING_COMMANDER_CONTAINER_IMAGE` on the test repository.
 2. Dispatch `auto-release.yml` on a day whose mode resolves to `container`.
-3. **Expected**: `outcome: "fail-infra"`, `mode: "container"`,
-   `container_image_configured: false`, `failing_check` naming the unset
-   variable — never `outcome: "pass"`.
+3. **Observed today**: the wrappers fall back to hosted runners,
+   `verify-image-prerequisites` succeeds vacuously, the chain completes, and
+   the run reports `outcome: "pass"`, `mode: "container"` with
+   `container_image_configured: true` -- indistinguishable from a real
+   container run, and claiming an image was resolved that never was. Closing
+   this needs read access to the test
+   repository's variable or Actions run data (#390); once it exists, this
+   scenario becomes `outcome: "fail-infra"` naming the unset variable.
 
 ## Scenario D — pausing the container leg (User Story 3, Acceptance Scenario 1)
 
