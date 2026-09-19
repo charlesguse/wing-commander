@@ -759,6 +759,7 @@ jobs:
             # not on step-index/run-label, since FR-020 makes the group
             # stage-neutral — a future non-implement populator must be
             # picked up here with no collector change.
+            exact_branch=""
             exact_before_sha=""
             exact_after_sha=""
             exact_commits=""
@@ -779,6 +780,7 @@ jobs:
                 # locking onto it (this is the shape a caller with only one
                 # SHA resolved would emit).
                 if [ -n "$candidate_before" ] && [ -n "$candidate_after" ]; then
+                  exact_branch="$(jq -r '.branch_advance.branch // empty' "$rec" 2>/dev/null || true)"
                   exact_before_sha="$candidate_before"
                   exact_after_sha="$candidate_after"
                   exact_commits="$(jq -r '.branch_advance.commits // empty' "$rec" 2>/dev/null || true)"
@@ -789,6 +791,11 @@ jobs:
 
             if [ -n "$exact_before_sha" ] && [ -n "$exact_after_sha" ]; then
               baseline="exact-sha"
+              # FR-003: the branch this arm reports is the one the record
+              # itself named, never re-derived from prefix+slug — the
+              # prefix-derived value above is only a fallback for the rare
+              # case a record carries both points but no branch name.
+              [ -n "$exact_branch" ] && measure_branch="$exact_branch"
               echo "branch-drift: run head is '$HEAD_BRANCH' (a dispatched implement run reports the default branch); measuring '$measure_branch' via the implement run's own recorded before/after SHAs (specs/050-branch-drift-sha-baseline)." >> "$GITHUB_STEP_SUMMARY"
             else
               echo "branch-drift: run head is '$HEAD_BRANCH' (a dispatched implement run reports the default branch); measuring '$measure_branch' for commits since the run was created at $RUN_CREATED_AT (no recorded branch-advance evidence on this run)." >> "$GITHUB_STEP_SUMMARY"
@@ -807,14 +814,20 @@ jobs:
             commits="$exact_commits"
             bd_outcome="ok"
             jq -c --arg c "collect-branch-drift" --arg o "$bd_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
-            # Healthy requires BOTH SHAs differing AND a recorded non-zero
-            # count — before==after is trivially zero progress regardless
-            # of what commits says, and a force-push/reset can leave
-            # before != after with commits == 0 (the branch went backward,
-            # not forward). Either shape must fall through to the
-            # lost-progress signal below, like the since-created arm's own
-            # "commits == 0 is lost-progress" rule (spec.md Edge Cases).
-            if [ "$exact_before_sha" != "$exact_after_sha" ] && [ -n "$commits" ] && [ "$commits" != "0" ]; then
+            # Healthy requires the two SHAs differing AND the recorded
+            # count not being explicitly zero — before==after is trivially
+            # zero progress regardless of what commits says, and a
+            # force-push/reset can leave before != after with commits == 0
+            # (the branch went backward, not forward); that shape must
+            # fall through to the lost-progress signal below, like the
+            # since-created arm's own "commits == 0 is lost-progress" rule
+            # (spec.md Edge Cases). When commits itself is unavailable
+            # (empty), FR-019 says the verdict stays a pure equal/
+            # not-equal comparison rather than depending on a count that
+            # was never recorded — an unavailable count must not turn a
+            # differing pair into a false lost-progress signal
+            # (FR-017/SC-002).
+            if [ "$exact_before_sha" != "$exact_after_sha" ] && [ "$commits" != "0" ]; then
               exit 0
             fi
           else
@@ -1285,11 +1298,28 @@ jobs:
             dl_dir="$RUNNER_TEMP/metrics-record-shared"
             mkdir -p "$dl_dir"
             if [ -n "$(find "$dl_dir" -type f -name '*.json' 2>/dev/null)" ] || GH_TOKEN="$ACTIONS_TOKEN" gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -p 'metrics-record*' -D "$dl_dir" >"$RUNNER_TEMP/tb-dl.log" 2>&1; then
-              for f in "$dl_dir"/*/*.json "$dl_dir"/*.json; do
+              # specs/050-branch-drift-sha-baseline added a fourth,
+              # transcript-less `metrics-record-branch-advance` artifact
+              # alongside cycle/retry/progress (`turns.available`/
+              # `cost_available` always false on it). Selecting by
+              # first-in-glob-order would let it shadow the real
+              # cycle/retry/progress record whenever it sorts first, so the
+              # named artifacts are tried in priority order before falling
+              # back to whatever else was downloaded (see collect-cost-report
+              # for the identical selection, shared per CLAUDE.md).
+              for known in cycle retry progress; do
+                f="$dl_dir/metrics-record-$known/wing-commander-metrics-record.json"
                 [ -e "$f" ] || continue
                 own_record="$(cat "$f")"
                 break
               done
+              if [ -z "$own_record" ]; then
+                for f in "$dl_dir"/*/*.json "$dl_dir"/*.json; do
+                  [ -e "$f" ] || continue
+                  own_record="$(cat "$f")"
+                  break
+                done
+              fi
             else
               grep -qiE "no artifact|no valid artifacts|no artifacts" "$RUNNER_TEMP/tb-dl.log" 2>/dev/null || tb_outcome="failed"
             fi
@@ -1459,11 +1489,20 @@ jobs:
           mkdir -p "$dl_dir"
           own_record=""
           if [ -n "$(find "$dl_dir" -type f -name '*.json' 2>/dev/null)" ] || GH_TOKEN="$ACTIONS_TOKEN" gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -p 'metrics-record*' -D "$dl_dir" >"$RUNNER_TEMP/cr-dl.log" 2>&1; then
-            for f in "$dl_dir"/*/*.json "$dl_dir"/*.json; do
+            # Named-artifact-first selection -- see collect-turn-budget.
+            for known in cycle retry progress; do
+              f="$dl_dir/metrics-record-$known/wing-commander-metrics-record.json"
               [ -e "$f" ] || continue
               own_record="$(cat "$f")"
               break
             done
+            if [ -z "$own_record" ]; then
+              for f in "$dl_dir"/*/*.json "$dl_dir"/*.json; do
+                [ -e "$f" ] || continue
+                own_record="$(cat "$f")"
+                break
+              done
+            fi
           else
             grep -qiE "no artifact|no valid artifacts|no artifacts" "$RUNNER_TEMP/cr-dl.log" 2>/dev/null || cr_outcome="failed"
           fi

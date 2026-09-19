@@ -408,6 +408,78 @@ def case_repeated_invocation_in_one_job_gets_distinct_record_keys():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def case_branch_advance_availability_follows_contract_or_rule():
+    """metrics-record-schema-delta.md / data-model.md: branch_advance.
+    available is true iff branch is non-empty AND (before-sha-available OR
+    after-sha-available) — an AND of the two would null the group, and the
+    branch along with it, whenever only one point resolved (maintainer
+    review of #354). Runs the real composite over each state the
+    valid-branch-advance-before-unavailable/after-unavailable/both-
+    unavailable fixtures describe, covering the emission side those
+    static fixtures alone do not exercise."""
+    case = "branch_advance availability follows the contract's OR rule"
+    scenarios = [
+        ("before only available", {
+            "BRANCH": "spec/050-branch-drift-sha-baseline",
+            "BEFORE_SHA": "", "BEFORE_SHA_AVAILABLE": "false",
+            "AFTER_SHA": "b" * 40, "AFTER_SHA_AVAILABLE": "true",
+            "COMMITS": "", "COMMITS_AVAILABLE": "false"},
+         {"available": True, "branch": "spec/050-branch-drift-sha-baseline",
+          "before_sha": None, "before_available": False,
+          "after_sha": "b" * 40, "after_available": True,
+          "commits": None, "commits_available": False}),
+        ("after only available", {
+            "BRANCH": "spec/050-branch-drift-sha-baseline",
+            "BEFORE_SHA": "a" * 40, "BEFORE_SHA_AVAILABLE": "true",
+            "AFTER_SHA": "", "AFTER_SHA_AVAILABLE": "false",
+            "COMMITS": "", "COMMITS_AVAILABLE": "false"},
+         {"available": True, "branch": "spec/050-branch-drift-sha-baseline",
+          "before_sha": "a" * 40, "before_available": True,
+          "after_sha": None, "after_available": False,
+          "commits": None, "commits_available": False}),
+        ("both unavailable", {
+            "BRANCH": "spec/050-branch-drift-sha-baseline",
+            "BEFORE_SHA": "", "BEFORE_SHA_AVAILABLE": "false",
+            "AFTER_SHA": "", "AFTER_SHA_AVAILABLE": "false",
+            "COMMITS": "", "COMMITS_AVAILABLE": "false"},
+         {"available": False, "branch": None,
+          "before_sha": None, "before_available": False,
+          "after_sha": None, "after_available": False,
+          "commits": None, "commits_available": False}),
+    ]
+    any_failed = False
+    for label, env_over, want in scenarios:
+        tmp = tempfile.mkdtemp(prefix="wc-metrics-record-")
+        try:
+            run_env = dict(env_over)
+            run_env.update({"STEP_INDEX": "3", "RUN_LABEL": "branch advance"})
+            rc, _outputs, _summary, record, output = run_case(
+                tmp, missing=True, env_over=run_env)
+            if rc != 0:
+                fail(case, f"{label}: exited {rc}: {output.strip()[:300]}")
+                any_failed = True
+                continue
+            if record is None:
+                fail(case, f"{label}: record-path was not written")
+                any_failed = True
+                continue
+            ba = record.get("branch_advance") or {}
+            if ba != want:
+                fail(case, f"{label}: branch_advance = {ba!r}, want "
+                           f"{want!r} (available must follow branch "
+                           f"non-empty AND (before-available OR "
+                           f"after-available), never AND)")
+                any_failed = True
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    if not any_failed:
+        note("branch_advance.available correctly follows the OR rule "
+             "across before-only, after-only, and both-unavailable "
+             "inputs, matching the valid-branch-advance-before-"
+             "unavailable/after-unavailable fixtures (available:true, "
+             "branch kept)")
+
+
 def case_multi_model_record_tokens_sum_across_per_model():
     """A run that used two models (the watchdog diagnose site: an opus
     main loop plus a haiku helper) carries BOTH in `.modelUsage`, but the
@@ -594,6 +666,7 @@ CASES = [
     case_empty_transcript_degrades,
     case_unparseable_transcript_degrades,
     case_repeated_invocation_in_one_job_gets_distinct_record_keys,
+    case_branch_advance_availability_follows_contract_or_rule,
     case_multi_model_record_tokens_sum_across_per_model,
     case_cost_line_formatter_has_exactly_one_home,
     case_container_pipefail_steps_pin_shell_bash,

@@ -252,7 +252,7 @@ runs:
         COMMITS="${COMMITS:-}"
         COMMITS_AVAILABLE="${COMMITS_AVAILABLE:-false}"
         branch_advance_available=false
-        if [ -n "$BRANCH" ] && [ "$BEFORE_SHA_AVAILABLE" = "true" ] && [ "$AFTER_SHA_AVAILABLE" = "true" ]; then
+        if [ -n "$BRANCH" ] && { [ "$BEFORE_SHA_AVAILABLE" = "true" ] || [ "$AFTER_SHA_AVAILABLE" = "true" ]; }; then
           branch_advance_available=true
         fi
 

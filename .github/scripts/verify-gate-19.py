@@ -1526,8 +1526,17 @@ if [ "$1" = "run" ] && [ "$2" = "download" ]; then
     prev="$arg"
   done
   [ -n "$dest" ] || { echo "stub gh: no -D given" >&2; exit 1; }
-  mkdir -p "$dest/metrics-record"
-  printf '%s\n' "$GH_STUB_RECORD" > "$dest/metrics-record/wing-commander-metrics-record.json"
+  mkdir -p "$dest/metrics-record-cycle"
+  printf '%s\n' "$GH_STUB_RECORD" > "$dest/metrics-record-cycle/wing-commander-metrics-record.json"
+  if [ -n "${GH_STUB_SHADOW_RECORD:-}" ]; then
+    # Maintainer review of #354: a metrics-record-branch-advance artifact
+    # sorts alphabetically before metrics-record-cycle, so a selection that
+    # picked the first glob match instead of the named artifact would pick
+    # this transcript-less, cost_available:false record instead of the
+    # real one above.
+    mkdir -p "$dest/metrics-record-branch-advance"
+    printf '%s\n' "$GH_STUB_SHADOW_RECORD" > "$dest/metrics-record-branch-advance/wing-commander-metrics-record-branch-advance.json"
+  fi
   exit 0
 fi
 if [ "$1" = "api" ]; then
@@ -1549,6 +1558,14 @@ exit 1
 """
 
 COST_RECORD = json.dumps({"schema_version": 1, "stage": "clarify", "cost_available": True})
+COST_SHADOW_RECORD = json.dumps({
+    "schema_version": 1, "record_available": False, "stage": "implement",
+    "stage_available": True, "cost_available": False,
+    "branch_advance": {"available": True, "branch": "spec/999-x",
+                        "before_sha": "a" * 40, "before_available": True,
+                        "after_sha": "a" * 40, "after_available": True,
+                        "commits": 0, "commits_available": True},
+})
 COST_SINCE = "2026-09-16T23:46:22Z"
 COST_UNTIL = "2026-09-16T23:51:53Z"
 
@@ -1662,6 +1679,14 @@ COST_SCENARIOS = [
         issue="362", comments=[], comments_fail=True,
         expect=[], expect_outcome="failed",
     ),
+    dict(
+        name="a metrics-record-branch-advance artifact (maintainer review of "
+             "#354) sorts before metrics-record-cycle in glob order but must "
+             "not shadow it — the cost-line-missing signal still fires off "
+             "the real cycle record's own cost_available:true",
+        issue="362", comments=[OWNER_REPLY, NO_COST], shadow=True,
+        expect=[("cost-line-missing", True)], expect_outcome="ok",
+    ),
 ]
 
 
@@ -1687,6 +1712,8 @@ def run_cost_one(script, env, sc, tmproot):
                     "GH_STUB_COMMENTS": json.dumps(sc["comments"])})
     if sc.get("comments_fail"):
         run_env["GH_STUB_COMMENTS_FAIL"] = "1"
+    if sc.get("shadow"):
+        run_env["GH_STUB_SHADOW_RECORD"] = COST_SHADOW_RECORD
 
     rc, out, _, _ = run_step(BASH, script, workdir, run_env, runner_temp)
     with open(os.path.join(runner_temp, "signals.json"), encoding="utf-8") as fh:

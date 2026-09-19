@@ -2206,8 +2206,17 @@ jobs:
 
       # Durable record (specs/043-durable-metrics-record) — the artifact this
       # feature persists past the transcript's own retention window.
+      # continue-on-error, matching the two steps above it in this group
+      # (maintainer review of #354): "Record truncated-cycle count",
+      # "Flip stage label (first cycle)" and "Dispatch next step" below all
+      # carry no always() and rely on every step between the cycle's push
+      # and them staying continue-on-error so the job's implicit success()
+      # is never actually false here — an upload failure (e.g. a network
+      # flake) must not silently drop the next-cycle/finalize dispatch over
+      # nothing worse than a missing branch-advance artifact.
       - name: Upload metrics record (branch advance)
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
+        continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
           name: metrics-record-branch-advance

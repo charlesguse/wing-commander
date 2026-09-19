@@ -292,6 +292,42 @@ def scenario_exact_sha_differ_no_signal(step_text, root):
     return failures
 
 
+def scenario_exact_sha_commits_unavailable_reads_healthy(step_text, root):
+    """FR-019/FR-017/SC-002 (maintainer review of #354): a differing pair
+    whose recorded commits count is itself unavailable must read as
+    healthy, exactly like a differing pair with a positive count — the
+    verdict is the SHA equal/not-equal comparison alone, never gated on
+    the count also being present. A version of this collector that
+    required commits to be a resolved non-zero value before treating a
+    differing pair as healthy would wrongly fire lost-progress here."""
+    failures = []
+    work = tempfile.mkdtemp(dir=root)
+    bindir = new_stub_dir(work)
+    fixture_dir = make_fixture_dir(root, {
+        "available": True, "branch": BRANCH,
+        "before_sha": "a" * 40, "before_available": True,
+        "after_sha": "b" * 40, "after_available": True,
+        "commits": None, "commits_available": False,
+    })
+    env = base_env(bindir, {"GH_DOWNLOAD_FIXTURE_DIR": fixture_dir})
+    runner_temp = os.path.join(work, "runner_temp")
+    rc, out, signals, outcomes, _summary = run_collector(
+        step_text, work, runner_temp, env)
+    if rc != 0:
+        failures.append(f"exact-sha-commits-unavailable: exited {rc}: "
+                        f"{out.strip()[:300]}")
+        return failures
+    if signals:
+        failures.append(f"exact-sha-commits-unavailable: expected no "
+                        f"signal for a differing pair with commits "
+                        f"unavailable, got {signals!r}")
+    if {"collector": "collect-branch-drift", "outcome": "ok"} not in outcomes:
+        failures.append(f"exact-sha-commits-unavailable: collector-"
+                        f"outcomes.json does not record an 'ok' outcome: "
+                        f"{outcomes!r}")
+    return failures
+
+
 def scenario_exact_sha_ignores_live_branch_state(step_text, root):
     """US2 AS1-2 / T021: the exact-sha arm's verdict cannot be affected by
     the measured branch's CURRENT state — pointing the fixture repo's
@@ -565,6 +601,7 @@ def scenario_unresolved_slug_exits_quietly(step_text, root):
 SCENARIOS = [
     scenario_exact_sha_equal_fires_lost_progress,
     scenario_exact_sha_differ_no_signal,
+    scenario_exact_sha_commits_unavailable_reads_healthy,
     scenario_exact_sha_ignores_live_branch_state,
     scenario_stalled_short_circuits_exact_sha,
     scenario_no_branch_advance_falls_back_to_since_created,

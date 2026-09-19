@@ -493,7 +493,8 @@ def case_validate_then_append_persists_reusable_workflow_records():
         dl_dir = os.path.join(wc_dir, "downloaded")
         for name in ("metrics-record-diagnose", "metrics-record-act",
                      "metrics-record-collect", "metrics-record-cost-mismatch",
-                     "metrics-record-cost-unverifiable"):
+                     "metrics-record-cost-unverifiable",
+                     "metrics-record-branch-advance"):
             os.makedirs(os.path.join(dl_dir, name), exist_ok=True)
         # The jobs listing exactly as the discover step stores it: an array
         # of the jobs API's objects, named the way GitHub displays reusable-
@@ -547,6 +548,27 @@ def case_validate_then_append_persists_reusable_workflow_records():
         unverifiable_key = unverifiable["run"]["record_key"]
         _write_pretty(os.path.join(dl_dir, "metrics-record-cost-unverifiable",
                                    "wing-commander-metrics-record.json"), unverifiable)
+        # specs/050-branch-drift-sha-baseline's fourth implement.yml call
+        # site ("Record branch advance (cycle)") writes its record as
+        # `wing-commander-metrics-record-branch-advance.json` — the one
+        # local filename that differs from every other call site's plain
+        # `wing-commander-metrics-record.json`. A discover step that
+        # hardcoded the plain filename silently skipped this artifact's
+        # directory entirely (maintainer review of #354); this fixture,
+        # under the real artifact layout rather than a synthetic batch,
+        # is what would have caught it.
+        branch_advance = _reusable_workflow_record(run_id, "branch-advance")
+        branch_advance["stage"] = "implement"
+        branch_advance["branch_advance"] = {
+            "available": True, "branch": "spec/050-branch-drift-sha-baseline",
+            "before_sha": "a" * 40, "before_available": True,
+            "after_sha": "b" * 40, "after_available": True,
+            "commits": 3, "commits_available": True,
+        }
+        branch_advance_key = branch_advance["run"]["record_key"]
+        _write_pretty(os.path.join(dl_dir, "metrics-record-branch-advance",
+                                   "wing-commander-metrics-record-branch-advance.json"),
+                      branch_advance)
 
         rc, output, outputs, _summary = run_step(
             BASH, VALIDATE_SCRIPT, work, {"RUN_ID": run_id}, runner_temp)
@@ -564,7 +586,7 @@ def case_validate_then_append_persists_reusable_workflow_records():
         batch_path = os.path.join(wc_dir, "new-records.jsonl")
         with open(batch_path, encoding="utf-8") as f:
             batch_lines = [line for line in f.read().split("\n") if line.strip()]
-        if len(batch_lines) != 4:
+        if len(batch_lines) != 5:
             fail(case, "the batch must hold exactly one line per record "
                        f"(JSONL), got {len(batch_lines)} non-empty line(s) — "
                        "a pretty-printed record appended verbatim is what the "
@@ -579,6 +601,17 @@ def case_validate_then_append_persists_reusable_workflow_records():
                 fail(case, f"batch line is not one JSON record: {exc}: {line[:120]!r}")
                 return
             by_key[rec["run"]["job_key"]] = rec
+        if "branch-advance" not in by_key:
+            fail(case, "the metrics-record-branch-advance artifact's record "
+                       "(local filename wing-commander-metrics-record-branch-"
+                       "advance.json, not the plain wing-commander-metrics-"
+                       "record.json every other call site writes) must reach "
+                       "the batch, not be silently skipped")
+        elif by_key["branch-advance"].get("branch_advance", {}).get("branch") \
+                != "spec/050-branch-drift-sha-baseline":
+            fail(case, "the branch-advance record reached the batch but its "
+                       "branch_advance group was lost or altered: "
+                       f"{by_key['branch-advance'].get('branch_advance')!r}")
         if "cost-mismatch" in by_key:
             fail(case, "the cost-mismatch record reached the batch despite being "
                        "rejected — a rejected record must never be appended")
@@ -615,21 +648,22 @@ def case_validate_then_append_persists_reusable_workflow_records():
             fail(case, f"append step exited {rc} on the batch validate "
                        f"wrote: {output.strip()[:500]}")
             return
-        if outputs.get("persisted-count") != "4":
-            fail(case, f"expected persisted-count=4, got {outputs.get('persisted-count')!r}")
+        if outputs.get("persisted-count") != "5":
+            fail(case, f"expected persisted-count=5, got {outputs.get('persisted-count')!r}")
 
         text, final_work = fetch_dest(tmp, origin, "metrics", "final")
         shutil.rmtree(final_work, ignore_errors=True)
         dest_lines = [line for line in (text or "").split("\n") if line.strip()]
-        if len(dest_lines) != 4 or want_key not in (text or "") \
+        if len(dest_lines) != 5 or want_key not in (text or "") \
                 or f"{run_id}:collect:0" not in (text or "") \
                 or unverifiable_key not in (text or "") \
+                or branch_advance_key not in (text or "") \
                 or bad_cost_key in (text or ""):
-            fail(case, f"destination must hold exactly the four accepted records, "
+            fail(case, f"destination must hold exactly the five accepted records, "
                        f"one per line (numeric-job_id key for the resolved one, "
                        f"emission-time key for the ambiguous one, the "
-                       f"tokens-unavailable one) and not the rejected "
-                       f"cost-mismatch record; got: {text!r}")
+                       f"tokens-unavailable one, the branch-advance one) and "
+                       f"not the rejected cost-mismatch record; got: {text!r}")
         note("pretty-printed records from a 'watchdog / diagnose'-style job, "
              "an ambiguous two-caller 'collect' job (job_id kept null), and "
              "a multi-model run all validated and persisted as one JSONL "
