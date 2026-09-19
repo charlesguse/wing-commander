@@ -110,12 +110,20 @@ jobs:
     permissions:
       contents: read
     outputs:
-      verdict: ${{ steps.config.outputs.verdict || steps.reachable.outputs.verdict || steps.reset.outputs.verdict || steps.speckit-version.outputs.verdict || steps.scaffold.outputs.verdict || steps.kickoff.outputs.verdict || steps.poll.outputs.verdict }}
+      verdict: ${{ steps.config.outputs.verdict || steps.reachable.outputs.verdict || steps.maintainer-credential.outputs.verdict || steps.reset.outputs.verdict || steps.speckit-version.outputs.verdict || steps.scaffold.outputs.verdict || steps.kickoff.outputs.verdict || steps.poll.outputs.verdict }}
       # Carried separately from the verdict's `mode` field (data-model.md
       # "Execution mode") -- true only when the container leg was due by
       # date parity but the pause control (research.md D3) forced this run
       # to default-runner instead.
       paused: ${{ steps.mode.outputs.paused }}
+      # Gate evidence for a `pass` verdict (research.md D12, FR-017, FR-019)
+      # -- empty on every non-pass path, since the poll step exits before
+      # writing them.
+      spec-draft-pr: ${{ steps.poll.outputs.spec-draft-pr }}
+      plan-pr: ${{ steps.poll.outputs.plan-pr }}
+      finalize-pr: ${{ steps.poll.outputs.finalize-pr }}
+      clarification-rounds-answered: ${{ steps.poll.outputs.clarification-rounds-answered }}
+      clarification-comment-ids: ${{ steps.poll.outputs.clarification-comment-ids }}
     steps:
       # Every step below reads a local composite (`uses: ./...`) or shell
       # helper (`.github/actions/_shared/*.sh`), which needs this
@@ -276,6 +284,61 @@ jobs:
           echo "ok=true" >> "$GITHUB_OUTPUT"
           echo "default-branch=$DEFAULT_BRANCH" >> "$GITHUB_OUTPUT"
 
+      # specs/055-unattended-e2e-gates D1/D2: the fixture maintainer
+      # identity is a dedicated GitHub user account (never a bot), invited
+      # as a Write collaborator on the test repository alone, whose
+      # fine-grained PAT drives the four human gates later in this job.
+      # Checked here, before any of those gates are reached, so a
+      # misconfigured credential ends fail-infra before any attempt spend
+      # rather than surfacing as a mysterious gate stall.
+      - name: Confirm the fixture maintainer identity's credential
+        id: maintainer-credential
+        if: steps.reachable.outputs.ok == 'true'
+        shell: bash
+        env:
+          MAINTAINER_TOKEN: ${{ secrets.WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN }}
+          E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
+          HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
+        run: |
+          set -uo pipefail
+          if [ -z "$MAINTAINER_TOKEN" ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN set to a fine-grained PAT for a Write collaborator on the test repository" "unset" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN"
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN is unset -- see docs/setup.md."
+            exit 0
+          fi
+          permission="$(GH_TOKEN="$MAINTAINER_TOKEN" gh repo view "$E2E_REPO" --json viewerPermission --jq .viewerPermission 2>/dev/null || true)"
+          case "$permission" in
+            WRITE|MAINTAIN|ADMIN) : ;;
+            *)
+              echo "ok=false" >> "$GITHUB_OUTPUT"
+              {
+                echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates as a Write (or higher) collaborator on the test repository" "gh rejected the token, or viewerPermission was '${permission:-none}'" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN"
+                echo 'AUTO_RELEASE_VERDICT_EOF'
+              } >> "$GITHUB_OUTPUT"
+              echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN did not authenticate with Write access to $E2E_REPO -- see docs/setup.md."
+              exit 0
+              ;;
+          esac
+          login="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api user --jq .login 2>/dev/null || true)"
+          if [ -z "$login" ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates as a Write (or higher) collaborator on the test repository" "gh rejected the token" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN"
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN could not resolve a login via gh api user -- see docs/setup.md."
+            exit 0
+          fi
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+          echo "login=$login" >> "$GITHUB_OUTPUT"
+
       # Any open issue/PR left by a previous attempt is closed (best-effort)
       # before the reset -- an orphan-reset default branch otherwise leaves
       # a stale open PR pointing at history that no longer exists
@@ -286,7 +349,7 @@ jobs:
       # fire.
       - name: Close prior leftovers
         id: cleanup
-        if: steps.reachable.outputs.ok == 'true'
+        if: steps.maintainer-credential.outputs.ok == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
@@ -315,7 +378,7 @@ jobs:
       # output wiring below are unchanged.
       - name: Reset the default branch to an empty tree
         id: reset-branch
-        if: steps.reachable.outputs.ok == 'true'
+        if: steps.maintainer-credential.outputs.ok == 'true'
         uses: ./.github/actions/_shared/orphan-branch-reset
         with:
           token: ${{ steps.token.outputs.token }}
@@ -328,7 +391,7 @@ jobs:
 
       - name: Report the reset outcome
         id: reset
-        if: steps.reachable.outputs.ok == 'true'
+        if: steps.maintainer-credential.outputs.ok == 'true'
         shell: bash
         env:
           OK: ${{ steps.reset-branch.outputs.ok }}
@@ -556,18 +619,28 @@ jobs:
       # presence -- never agent narration (research.md D10). Bounded by
       # POLL_BUDGET_SECONDS rather than the step's own `timeout-minutes`, so
       # a timeout still produces a `fail-timeout` verdict instead of the
-      # runner killing the step before it can write one.
+      # runner killing the step before it can write one. specs/055-
+      # unattended-e2e-gates: this loop now also DRIVES all four human gates
+      # -- the clarification exchange and the spec-draft/plan/finalize PR
+      # merges -- under the fixture maintainer identity's own token, so a
+      # decision is attributed to the harness rather than the App (research.md
+      # D4, D9). POLL_BUDGET_SECONDS is raised to match the job's own
+      # `timeout-minutes: 150` (research.md D13) so gate-driving has room to
+      # actually resolve all four gates before the budget itself binds.
       - name: Poll the test repository to a verdict
         id: poll
         if: steps.kickoff.outputs.ok == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
+          HARNESS_TOKEN: ${{ secrets.WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN }}
+          HARNESS_LOGIN: ${{ steps.maintainer-credential.outputs.login }}
           E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
           ISSUE: ${{ steps.kickoff.outputs.issue-number }}
           ISSUE_URL: ${{ steps.kickoff.outputs.issue-url }}
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
-          POLL_BUDGET_SECONDS: "6900"
+          POLL_BUDGET_SECONDS: "9000"
+          MAX_CLARIFICATION_ROUNDS: "3"
           MODE: ${{ steps.mode.outputs.mode }}
         run: |
           set -uo pipefail
@@ -593,11 +666,81 @@ jobs:
             } >> "$GITHUB_OUTPUT"
           }
 
+          # The three PR-merge gates share one shape (research.md D6/D9);
+          # gate_name is the failing_check string contracts/verdict-
+          # extension.md specifies for a fail-gate-stall at that gate.
+          declare -A gate_merged=([spec-draft/]=false [plan/]=false [spec/]=false)
+          declare -A gate_name=([spec-draft/]="spec-draft PR merge" [plan/]="plan PR merge" [spec/]="finalize PR merge")
+          slug=""
+          clarification_rounds=0
+
           state=""
           labels=""
           terminal=false
           rate_limited=""
           while [ "$SECONDS" -lt "$POLL_BUDGET_SECONDS" ]; do
+            # --- Clarification gate (research.md D4, D6, D7, D8) ---
+            comments_json="$(GH_TOKEN="$HARNESS_TOKEN" gh issue view "$ISSUE" --repo "$E2E_REPO" --json comments --jq '.comments' 2>/dev/null || true)"
+            if [ -n "$comments_json" ]; then
+              clarify_decision="$(bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh "$comments_json" "$HARNESS_LOGIN" "$clarification_rounds" 2>/dev/null || true)"
+              clarify_head="$(printf '%s\n' "$clarify_decision" | head -1)"
+              case "$clarify_head" in
+                reply)
+                  reply_body="$(printf '%s\n' "$clarify_decision" | tail -n +2)"
+                  if GH_TOKEN="$HARNESS_TOKEN" gh issue comment "$ISSUE" --repo "$E2E_REPO" --body "$reply_body" >/dev/null 2>&1; then
+                    clarification_rounds=$((clarification_rounds + 1))
+                  fi
+                  ;;
+                exhausted)
+                  write_verdict "fail-gate-stall" "clarification" \
+                    "a reply from the harness resolves the open clarification question within 3 rounds" \
+                    "still asking after 3 rounds"
+                  emit_verdict
+                  exit 0
+                  ;;
+              esac
+            fi
+
+            # --- PR-merge gates (research.md D4, D9, D10) ---
+            if [ -z "$slug" ]; then
+              spec_draft_head="$(GH_TOKEN="$HARNESS_TOKEN" gh pr list --repo "$E2E_REPO" --state open --json headRefName --jq '[.[] | select(.headRefName | startswith("spec-draft/"))][0].headRefName // empty' 2>/dev/null || true)"
+              if [ -n "$spec_draft_head" ]; then
+                slug="${spec_draft_head#spec-draft/}"
+              fi
+            fi
+            if [ -n "$slug" ]; then
+              for prefix in "spec-draft/" "plan/" "spec/"; do
+                [ "${gate_merged[$prefix]}" = "true" ] && continue
+                pr_json="$(GH_TOKEN="$HARNESS_TOKEN" gh pr list --repo "$E2E_REPO" --head "${prefix}${slug}" --json number,headRefName,mergeable,mergeStateStatus,isDraft,state 2>/dev/null || echo '[]')"
+                merge_decision="$(bash .github/actions/_shared/auto-release-e2e-merge-decision.sh "$pr_json" "$prefix" "$slug" 2>/dev/null || true)"
+                merge_head="$(printf '%s\n' "$merge_decision" | head -1)"
+                pr_number="$(printf '%s' "$pr_json" | jq -r '.[0].number // "?"' 2>/dev/null || echo '?')"
+                case "$merge_head" in
+                  merge)
+                    merge_number="$(printf '%s\n' "$merge_decision" | tail -n +2)"
+                    if GH_TOKEN="$HARNESS_TOKEN" gh pr merge "$merge_number" --merge --repo "$E2E_REPO" >/dev/null 2>&1; then
+                      gate_merged[$prefix]="true"
+                    fi
+                    ;;
+                  conflicting)
+                    write_verdict "fail-gate-stall" "${gate_name[$prefix]}" "gh pr merge succeeds" "PR #${pr_number}: CONFLICTING"
+                    emit_verdict
+                    exit 0
+                    ;;
+                  blocked)
+                    write_verdict "fail-gate-stall" "${gate_name[$prefix]}" "gh pr merge succeeds" "PR #${pr_number}: required check blocked"
+                    emit_verdict
+                    exit 0
+                    ;;
+                  wrong-attempt)
+                    write_verdict "fail-gate-stall" "${gate_name[$prefix]}" "the PR at this branch belongs to the current attempt" "PR #${pr_number} belongs to a previous attempt"
+                    emit_verdict
+                    exit 0
+                    ;;
+                esac
+              done
+            fi
+
             info="$(gh issue view "$ISSUE" --repo "$E2E_REPO" --json state,labels 2>"$RUNNER_TEMP/auto-release-poll-err.txt")" || info=""
             if [ -n "$info" ]; then
               state="$(printf '%s' "$info" | jq -r '.state')"
@@ -688,7 +831,14 @@ jobs:
             exit 0
           fi
 
-          slug="$(gh api "repos/${E2E_REPO}/contents/specs" --jq '[.[] | select(.type=="dir")][0].name // empty' 2>/dev/null || true)"
+          # slug is normally already known from the merge-gate driving above
+          # (research.md D10); this is the fallback for the case where the
+          # loop never resolved it (e.g. the pass path was reached on the
+          # very first check after the finalize PR had already merged
+          # between iterations) -- one home, not a second derivation.
+          if [ -z "$slug" ]; then
+            slug="$(gh api "repos/${E2E_REPO}/contents/specs" --jq '[.[] | select(.type=="dir")][0].name // empty' 2>/dev/null || true)"
+          fi
           missing_file=""
           if [ -z "$slug" ]; then
             missing_file="specs/<slug>/"
@@ -706,6 +856,42 @@ jobs:
             emit_verdict
             exit 0
           fi
+
+          # --- Clarification-gate pass assertion (research.md D12) ---
+          # Reaching stage:done is not on its own evidence the gate was
+          # satisfied (FR-016) -- assert a harness reply followed every
+          # question the issue's comment history ever carried.
+          comments_json="$(GH_TOKEN="$HARNESS_TOKEN" gh issue view "$ISSUE" --repo "$E2E_REPO" --json comments --jq '.comments' 2>/dev/null || echo '[]')"
+          markers_json="$(printf '%s' "$comments_json" | jq -c '[ .[] | select((.body // "") | contains("[!IMPORTANT]")) | select((((.body // "") | contains("Answer the open clarification questions"))) or (((.body // "") | contains("Answer the remaining clarification questions")))) ]' 2>/dev/null || echo '[]')"
+          marker_count="$(printf '%s' "$markers_json" | jq 'length' 2>/dev/null || echo 0)"
+          clarification_gate_ok=true
+          if [ "$marker_count" -gt 0 ]; then
+            clarification_gate_ok="$(printf '%s' "$comments_json" | jq -r --argjson markers "$markers_json" --arg login "$HARNESS_LOGIN" '
+              [ $markers[] as $m
+                | ( [ .[] | select((.author.login // "") == $login and (.createdAt // "") > $m.createdAt) ] | length > 0 )
+              ] | all
+            ' 2>/dev/null || echo false)"
+          fi
+          if [ "$clarification_gate_ok" != "true" ]; then
+            write_verdict "fail-wrong-output" "clarification gate answered before stage:done" \
+              "a harness reply after every open question" "question opened, never answered"
+            emit_verdict
+            exit 0
+          fi
+
+          # --- Gate evidence for the report job (research.md D12, FR-017,
+          # FR-019) -- presentation-layer only, no verdict schema change. ---
+          spec_draft_pr="$(GH_TOKEN="$HARNESS_TOKEN" gh pr list --repo "$E2E_REPO" --state merged --head "spec-draft/${slug}" --json number,mergedAt 2>/dev/null | jq -c '.[0] // null' 2>/dev/null || echo null)"
+          plan_pr="$(GH_TOKEN="$HARNESS_TOKEN" gh pr list --repo "$E2E_REPO" --state merged --head "plan/${slug}" --json number,mergedAt 2>/dev/null | jq -c '.[0] // null' 2>/dev/null || echo null)"
+          finalize_pr="$(GH_TOKEN="$HARNESS_TOKEN" gh pr list --repo "$E2E_REPO" --state merged --head "spec/${slug}" --json number,mergedAt 2>/dev/null | jq -c '.[0] // null' 2>/dev/null || echo null)"
+          clarification_comment_ids="$(printf '%s' "$comments_json" | jq -c --argjson markers "$markers_json" --arg login "$HARNESS_LOGIN" '{questions: [ $markers[].id ], replies: [ .[] | select((.author.login // "") == $login) | .id ]}' 2>/dev/null || echo '{"questions":[],"replies":[]}')"
+          {
+            echo "spec-draft-pr=$spec_draft_pr"
+            echo "plan-pr=$plan_pr"
+            echo "finalize-pr=$finalize_pr"
+            echo "clarification-rounds-answered=$clarification_rounds"
+            echo "clarification-comment-ids=$clarification_comment_ids"
+          } >> "$GITHUB_OUTPUT"
 
           # The one call site that has earned container_image_configured:
           # true -- reached only once the full scaffolded chain closed
@@ -986,6 +1172,13 @@ jobs:
           LATEST_TAG: ${{ needs.detect.outputs.latest-tag }}
           VERDICT_JSON: ${{ needs.verify-e2e.outputs.verdict }}
           PAUSED: ${{ needs.verify-e2e.outputs.paused }}
+          # specs/055-unattended-e2e-gates FR-019/FR-025: gate evidence for
+          # a pass verdict's summary, read only on the pass path below.
+          SPEC_DRAFT_PR: ${{ needs.verify-e2e.outputs.spec-draft-pr }}
+          PLAN_PR: ${{ needs.verify-e2e.outputs.plan-pr }}
+          FINALIZE_PR: ${{ needs.verify-e2e.outputs.finalize-pr }}
+          CLARIFICATION_ROUNDS_ANSWERED: ${{ needs.verify-e2e.outputs.clarification-rounds-answered }}
+          CLARIFICATION_COMMENT_IDS: ${{ needs.verify-e2e.outputs.clarification-comment-ids }}
           NEXT_VERSION: ${{ needs.decide-version.outputs.next-version }}
           COLLISION: ${{ needs.decide-version.outputs.collision }}
           # The sole authority for "released" (FR-007, FR-007a) -- see
@@ -1153,13 +1346,42 @@ jobs:
             expected="$(printf '%s' "$VERDICT_JSON" | jq -r '.expected // "unknown"' 2>/dev/null || echo unknown)"
             observed="$(printf '%s' "$VERDICT_JSON" | jq -r '.observed // "unknown"' 2>/dev/null || echo unknown)"
             evidence_url="$(printf '%s' "$VERDICT_JSON" | jq -r '.evidence_url // "unknown"' 2>/dev/null || echo unknown)"
-            classification="pipeline defect"
-            [ "$outcome" = "fail-infra" ] && classification="infrastructure"
+            # specs/055-unattended-e2e-gates FR-021: a stalled gate is
+            # classified distinctly from both an infrastructure problem and
+            # a generic pipeline defect (contracts/verdict-extension.md).
+            case "$outcome" in
+              fail-infra) classification="infrastructure" ;;
+              fail-gate-stall) classification="gate stall" ;;
+              *) classification="pipeline defect" ;;
+            esac
             echo "verification failed: ${failing_check} (mode: ${mode})" >> "$GITHUB_STEP_SUMMARY"
-            write_failure_body "${classification} (${outcome:-unknown})" "$failing_check" "$expected" "$observed" "$evidence_url" "$mode"
+            if [ "$classification" = "gate stall" ]; then
+              write_failure_body "${classification} (${outcome:-unknown}) -- the harness attempted to drive this gate and could not; distinct from an infrastructure failure (misconfiguration) or a pipeline defect (a stage bug)" \
+                "$failing_check" "$expected" "$observed" "$evidence_url" "$mode"
+            else
+              write_failure_body "${classification} (${outcome:-unknown})" "$failing_check" "$expected" "$observed" "$evidence_url" "$mode"
+            fi
             echo "action=report" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+
+          # specs/055-unattended-e2e-gates FR-019/FR-025: name all four
+          # gates and their evidence on a pass outcome, reading the poll
+          # step's own evidence-gathering outputs (research.md D12,
+          # data-model.md's Gate evidence table). Presentation only -- the
+          # verdict JSON schema is unchanged.
+          if [ -n "$CLARIFICATION_ROUNDS_ANSWERED" ] && [ "$CLARIFICATION_ROUNDS_ANSWERED" != "0" ]; then
+            clarification_line="clarification: answered (${CLARIFICATION_ROUNDS_ANSWERED} round(s); comments ${CLARIFICATION_COMMENT_IDS:-unknown})"
+          else
+            clarification_line="clarification: not opened"
+          fi
+          {
+            echo "gates driven:"
+            echo "- ${clarification_line}"
+            echo "- spec-draft PR merge: ${SPEC_DRAFT_PR:-null}"
+            echo "- plan PR merge: ${PLAN_PR:-null}"
+            echo "- finalize PR merge: ${FINALIZE_PR:-null}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
           # Verification passed, so decide-version ran (#325): a crash there
           # left COLLISION and TAG_MATCHES empty, which used to fall

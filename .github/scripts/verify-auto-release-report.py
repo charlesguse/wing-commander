@@ -103,6 +103,38 @@ WRONG_OUTPUT = json.dumps({"outcome": "fail-wrong-output", "verified_head": HEAD
                            "evidence_url": "https://example.invalid/e2e",
                            "mode": "default-runner"})
 
+# specs/055-unattended-e2e-gates: the clarification gate's pass-path
+# assertion (research.md D12, T012) ends the poll step with this exact
+# fail-wrong-output shape when a question opened with no harness reply
+# before stage:done -- unrelated to the new fail-gate-stall outcome, and
+# must still render as "pipeline defect" (unchanged classification).
+CLARIFICATION_UNANSWERED = json.dumps({
+    "outcome": "fail-wrong-output", "verified_head": HEAD,
+    "failing_check": "clarification gate answered before stage:done",
+    "expected": "a harness reply after every open question",
+    "observed": "question opened, never answered",
+    "evidence_url": "https://example.invalid/e2e"})
+
+
+def gate_stall(failing_check, expected, observed):
+    return json.dumps({"outcome": "fail-gate-stall", "verified_head": HEAD,
+                       "failing_check": failing_check, "expected": expected,
+                       "observed": observed,
+                       "evidence_url": "https://example.invalid/e2e"})
+
+
+GATE_STALL_CLARIFICATION = gate_stall(
+    "clarification",
+    "a reply from the harness resolves the open clarification question within 3 rounds",
+    "still asking after 3 rounds")
+GATE_STALL_SPEC_DRAFT = gate_stall(
+    "spec-draft PR merge", "gh pr merge succeeds", "PR #12: CONFLICTING")
+GATE_STALL_PLAN = gate_stall(
+    "plan PR merge", "gh pr merge succeeds", "PR #13: required check blocked")
+GATE_STALL_FINALIZE = gate_stall(
+    "finalize PR merge", "the PR at this branch belongs to the current attempt",
+    "PR #14 belongs to a previous attempt")
+
 # Every scenario starts from a run where nothing has happened yet -- every
 # result `skipped`, every output empty -- and overrides what its situation
 # sets. `action` is the decision the step wrote to $GITHUB_OUTPUT for the
@@ -118,7 +150,11 @@ BASE = dict(DETECT_RESULT="skipped", VERIFY_RESULT="skipped",
             VERDICT_JSON="", NEXT_VERSION="", COLLISION="",
             TAG_MATCHES="", CORRELATION="", CORRELATED_RUN_ID="",
             CORRELATED_RUN_URL="", REQUEST_TIME=REQUEST_TIME,
-            DISPATCH_REJECTED="false", PAUSED="false")
+            DISPATCH_REJECTED="false", PAUSED="false",
+            # specs/055-unattended-e2e-gates FR-019/FR-025: gate evidence
+            # for a pass verdict's summary.
+            SPEC_DRAFT_PR="", PLAN_PR="", FINALIZE_PR="",
+            CLARIFICATION_ROUNDS_ANSWERED="", CLARIFICATION_COMMENT_IDS="")
 
 SCENARIOS = [
     dict(
@@ -375,6 +411,81 @@ SCENARIOS = [
                        f"matched for v2.8.0 requested at {REQUEST_TIME}"],
         summary_contains="release dispatch failed for v2.8.0",
     ),
+    dict(
+        name="specs/055: clarification gate opened with no harness reply "
+             "before stage:done (T012's poll-step assertion) -- an "
+             "unrelated fail-wrong-output shape, still 'pipeline defect' "
+             "(SC-010: never collapsed into 'gate stall')",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
+                 VERDICT_JSON=CLARIFICATION_UNANSWERED),
+        action="report",
+        body_contains=["pipeline defect", "clarification gate answered before stage:done",
+                       "question opened, never answered"],
+        body_excludes=["gate stall"],
+    ),
+    dict(
+        name="specs/055: fail-gate-stall at the clarification gate "
+             "(round bound exhausted) -- classified 'gate stall', never "
+             "'infrastructure' or 'pipeline defect' (SC-010, FR-021)",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
+                 VERDICT_JSON=GATE_STALL_CLARIFICATION),
+        action="report",
+        body_contains=["gate stall", "clarification", "still asking after 3 rounds",
+                       "the harness attempted to drive this gate and could not"],
+        body_excludes=["**Classification**: infrastructure",
+                       "**Classification**: pipeline defect"],
+    ),
+    dict(
+        name="specs/055: fail-gate-stall, spec-draft PR merge conflicting",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
+                 VERDICT_JSON=GATE_STALL_SPEC_DRAFT),
+        action="report",
+        body_contains=["gate stall", "spec-draft PR merge", "PR #12: CONFLICTING"],
+        body_excludes=["**Classification**: infrastructure",
+                       "**Classification**: pipeline defect"],
+    ),
+    dict(
+        name="specs/055: fail-gate-stall, plan PR merge blocked",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
+                 VERDICT_JSON=GATE_STALL_PLAN),
+        action="report",
+        body_contains=["gate stall", "plan PR merge", "PR #13: required check blocked"],
+        body_excludes=["**Classification**: infrastructure",
+                       "**Classification**: pipeline defect"],
+    ),
+    dict(
+        name="specs/055: fail-gate-stall, finalize PR merge belongs to a "
+             "previous attempt (wrong-attempt, FR-009)",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
+                 VERDICT_JSON=GATE_STALL_FINALIZE),
+        action="report",
+        body_contains=["gate stall", "finalize PR merge",
+                       "PR #14 belongs to a previous attempt"],
+        body_excludes=["**Classification**: infrastructure",
+                       "**Classification**: pipeline defect"],
+    ),
+    dict(
+        name="specs/055: a pass verdict names all four gates and their "
+             "evidence in the summary (FR-019, FR-025)",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
+                 VERDICT_JSON=PASS, DECIDE_RESULT="success", NEXT_VERSION="v2.8.0",
+                 COLLISION="false", DISPATCH_RESULT="success",
+                 TAG_MATCHES="true", CORRELATION="found",
+                 CORRELATED_RUN_ID="4242", CORRELATED_RUN_URL=CORRELATED_RUN_URL,
+                 SPEC_DRAFT_PR='{"number":10,"mergedAt":"2026-01-01T00:10:00Z"}',
+                 PLAN_PR='{"number":11,"mergedAt":"2026-01-01T00:20:00Z"}',
+                 FINALIZE_PR='{"number":12,"mergedAt":"2026-01-01T00:30:00Z"}',
+                 CLARIFICATION_ROUNDS_ANSWERED="1",
+                 CLARIFICATION_COMMENT_IDS='{"questions":["c1"],"replies":["c2"]}'),
+        action="close",
+        summary_contains="gates driven:",
+    ),
 ]
 
 
@@ -568,6 +679,20 @@ def mut_released_ignores_tag_matches(script):
     return script.replace(old, 'if [ "$CORRELATION" = "found" ]; then', 1)
 
 
+def mut_gate_stall_collapsed_into_pipeline_defect(script):
+    """specs/055-unattended-e2e-gates SC-010/FR-021: a fail-gate-stall
+    outcome must classify as 'gate stall', never fall back into the
+    generic 'pipeline defect' bucket the pre-055 binary switch used for
+    everything but fail-infra."""
+    old = 'fail-gate-stall) classification="gate stall" ;;'
+    if script.count(old) != 1:
+        sys.exit("::error::verify-auto-release-report: could not locate the "
+                 "fail-gate-stall classification arm to mutate — the step "
+                 "text may have changed shape; update this harness "
+                 "alongside it.")
+    return script.replace(old, 'fail-gate-stall) classification="pipeline defect" ;;', 1)
+
+
 MUTATIONS = [
     ("report ignoring detect's job result (#325 case 1)", mut_ignore_detect_result),
     ("report filing a cancelled verify-e2e as infrastructure", mut_ignore_verify_result),
@@ -581,6 +706,8 @@ MUTATIONS = [
      mut_released_ignores_tag_matches),
     ("a rejected dispatch collapsed into 'not observed' wording (FR-006/SC-004)",
      mut_dispatch_rejected_collapsed_into_not_observed),
+    ("a fail-gate-stall outcome collapsed into 'pipeline defect' (SC-010/FR-021)",
+     mut_gate_stall_collapsed_into_pipeline_defect),
 ]
 
 
