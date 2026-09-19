@@ -273,3 +273,9 @@ Code review of PR #407 at head bb064e9 (charlesguse) found the shipped remedy do
 ### Must fix
 
 - [ ] Move the 'Determine failed post-agent step' `run:` block (byte-identical, one md5, at the six sites named in the item-3 finding) and the near-identical reason-computation block into a composite under `.github/actions/`, reducing each call site to a call; extend Gate 68 to assert the call exists at every site. (CLAUDE.md single-home rule)
+
+## Maintainer Feedback (second review, PR #407 @ fbbae61)
+
+### Must fix
+
+- [ ] Close two remaining Gate 68/69 holes (FR-020, FR-021): (a) require each stage's agent jobs to explicitly call the refresh, agent-ran, and credential-status composites (today, deleting one or pasting the refresh block back under a different name still passes Gates 60/68/69); add the `extraheader`/`set-url origin` idiom to Gate 60 as the one-home check CLAUDE.md asks for. (b) Flag any post-agent read of `env.*` whose value was set from the pre-agent token, and match the additional spellings that currently pass: `fromJSON(...)['token']`, `fromJSON(toJSON(steps.ctx.outputs)).token`, `toJSON(steps.ctx.outputs)`, `steps['ctx']['outputs']['token']`.
