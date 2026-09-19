@@ -2351,6 +2351,7 @@ jobs:
       # The loop announces itself on the lifecycle issue from the first
       # completed cycle onward; later cycles change nothing.
       - name: Flip stage label (first cycle)
+        id: flip-label
         if: >-
           steps.lifecycle-gate.outputs.is-open == 'true' &&
           steps.guard.outputs.skip != 'true' &&
@@ -2372,6 +2373,7 @@ jobs:
       # report to the issue and stops — standalone adoption needs no sibling
       # workflow (FR-002).
       - name: Dispatch next step
+        id: dispatch-next
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.final.outputs.ok == 'true'
         env:
           APP_TOKEN: ${{ env.WC_BOT_TOKEN }}
@@ -2528,15 +2530,26 @@ jobs:
       # stalled job to read instead of the generic "a step after it did not
       # complete" -- see clarify.yml. Three agent steps share this one job
       # (cycle/retry/progress), so the guard is "any of them ran".
+      #
+      # candidates-json lists this job's own hard-failing (non-continue-on-
+      # error) post-agent steps, each read via `.conclusion` -- see
+      # clarify.yml for the single-homed composite. Every "Fail loud on
+      # non-healthy agent verdict (*)" and "Report exhausted cycle
+      # classification (*)" step in this job carries continue-on-error
+      # (research.md R13, so a non-healthy/exhausted verdict never strands
+      # the retry/dispatch logic below it) and is deliberately excluded;
+      # only "Flip stage label (first cycle)" and "Dispatch next step" can
+      # actually hard-fail this job.
       - name: Determine failed post-agent step
         id: failed-step
         if: "!cancelled() && (steps.cycle.outcome != 'skipped' || steps.retry.outcome != 'skipped' || steps.progress.outcome != 'skipped')"
-        shell: bash
-        env:
-          STEPS_JSON: ${{ toJSON(steps) }}
-        run: |
-          failed="$(printf '%s' "$STEPS_JSON" | jq -r 'to_entries | map(select(.value.outcome == "failure")) | .[-1].key // ""')"
-          echo "step=$failed" >> "$GITHUB_OUTPUT"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-failed-post-agent-step
+        with:
+          candidates-json: >-
+            [
+              {"id": "flip-label", "conclusion": "${{ steps.flip-label.conclusion }}"},
+              {"id": "dispatch-next", "conclusion": "${{ steps.dispatch-next.conclusion }}"}
+            ]
 
   # Survivor job (the #224 idiom, research.md D4/D7): reaches two mutually
   # exclusive arms. The exhausted-retry arm (final-ok == 'false') is today's
@@ -2891,28 +2904,15 @@ jobs:
       - name: Determine which dependency did not start
         id: reason
         if: needs.implement.outputs.final-ok != 'false' && needs.implement.outputs.refusal-reason == ''
-        env:
-          IMAGE_RESULT: ${{ needs.verify-image-prerequisites.result }}
-          IMPLEMENT_RESULT: ${{ needs.implement.result }}
-          AGENT_RAN: ${{ needs.implement.outputs.agent-ran }}
-          AGENT_CONCLUSION: ${{ needs.implement.outputs.agent-conclusion }}
-          CREDENTIAL_REFRESH_OK: ${{ needs.implement.outputs.credential-refresh-ok }}
-          FAILED_STEP: ${{ needs.implement.outputs.failed-post-agent-step }}
-        run: |
-          if [ "$AGENT_RAN" = "true" ] && [ "$CREDENTIAL_REFRESH_OK" = "false" ]; then
-            reason="the agent step ran (concluded: $AGENT_CONCLUSION) and the post-agent wing-commander-bot credential re-establishment failed (see the 'Determine post-agent credential status' step) -- treat the credential, not the agent or a downstream step, as the cause"
-          elif [ "$AGENT_RAN" = "true" ] && [ -n "$FAILED_STEP" ]; then
-            reason="the agent step ran (concluded: $AGENT_CONCLUSION) and the '$FAILED_STEP' step after it did not complete"
-          elif [ "$AGENT_RAN" = "true" ]; then
-            reason="the agent step ran (concluded: $AGENT_CONCLUSION) and a step after it did not complete"
-          elif [ "$IMAGE_RESULT" = "failure" ]; then
-            reason="the verify-image-prerequisites job failed, so the implement stage never started"
-          elif [ "$IMPLEMENT_RESULT" = "skipped" ]; then
-            reason="the implement stage was skipped because a dependency it needs did not run"
-          else
-            reason="the implement stage failed before it could run its own steps"
-          fi
-          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-stall-reason
+        with:
+          stage-name: implement
+          image-result: ${{ needs.verify-image-prerequisites.result }}
+          entry-result: ${{ needs.implement.result }}
+          agent-ran: ${{ needs.implement.outputs.agent-ran }}
+          agent-conclusion: ${{ needs.implement.outputs.agent-conclusion }}
+          credential-refresh-ok: ${{ needs.implement.outputs.credential-refresh-ok }}
+          failed-post-agent-step: ${{ needs.implement.outputs.failed-post-agent-step }}
 
       - name: Report the stage did not start
         if: needs.implement.outputs.final-ok != 'false' && needs.implement.outputs.refusal-reason == ''
