@@ -148,79 +148,112 @@ runs:
         if [ -d "$dl_dir" ]; then
           for adir in "$dl_dir"/metrics-record*/; do
             [ -d "$adir" ] || continue
-            f="${adir}wing-commander-metrics-record.json"
-            [ -f "$f" ] || continue
-            rec="$(cat "$f" 2>/dev/null || true)"
-            if ! printf '%s' "$rec" | jq -e . >/dev/null 2>&1; then
-              rejected="$rejected [unparseable:$(basename "$adir")]"
-              continue
-            fi
-            # One JSON line per record from here on, whatever path it
-            # takes below: the emitter writes the file pretty-printed,
-            # and the batch is JSONL that the append step reads line by
-            # line — a record appended verbatim made its per-line jq die
-            # on `{` ("Unfinished JSON term at EOF", exit 5). This is the
-            # single place the batch's one-line invariant is established.
-            rec="$(printf '%s' "$rec" | jq -c '.')"
+            # Every call site's local filename is
+            # `wing-commander-metrics-record.json` except specs/050-
+            # branch-drift-sha-baseline's fourth ("Record branch advance"),
+            # which writes `wing-commander-metrics-record-branch-advance
+            # .json` — a fixed filename here silently skipped that
+            # artifact's directory (it never matched `[ -f "$f" ]`), so the
+            # durable history and Gate 41's rollup filter never saw a real
+            # branch_advance-populated record, only a synthetic one. Glob
+            # for whatever `*.json` the artifact actually holds instead.
+            for f in "$adir"*.json; do
+              [ -f "$f" ] || continue
+              rec="$(cat "$f" 2>/dev/null || true)"
+              if ! printf '%s' "$rec" | jq -e . >/dev/null 2>&1; then
+                rejected="$rejected [unparseable:$(basename "$adir")]"
+                continue
+              fi
+              # One JSON line per record from here on, whatever path it
+              # takes below: the emitter writes the file pretty-printed,
+              # and the batch is JSONL that the append step reads line by
+              # line — a record appended verbatim made its per-line jq die
+              # on `{` ("Unfinished JSON term at EOF", exit 5). This is the
+              # single place the batch's one-line invariant is established.
+              rec="$(printf '%s' "$rec" | jq -c '.')"
 
-            version="$(printf '%s' "$rec" | jq -r '.schema_version // empty')"
-            if [ "$version" != "1" ]; then
-              # FR-025d: retain and skip, unvalidated, unrewritten.
-              printf '%s\n' "$rec" >> "$batch"
-              continue
-            fi
+              version="$(printf '%s' "$rec" | jq -r '.schema_version // empty')"
+              if [ "$version" != "1" ]; then
+                # FR-025d: retain and skip, unvalidated, unrewritten.
+                printf '%s\n' "$rec" >> "$batch"
+                continue
+              fi
 
-            # Minimal schema-version-1 shape check (field presence +
-            # types) mirroring contracts/metrics-record-schema.md's field
-            # table, plus the per_model sum invariant: the four token sums
-            # and (#316) the cost sum, gated and tolerated exactly as Gate
-            # 39 (verify-metrics-record-schema.py) does it so the shipped
-            # collector and the local gate agree on what a valid record is
-            # - all five only when tokens.available and per_model_available,
-            # the cost sum additionally only when cost_available and
-            # cost_usd is non-null, within 1e-9, with a per_model entry
-            # lacking cost_usd counting as 0. Rejects and names the
-            # record_key (FR-041: deterministic code, never judgment).
-            key="$(printf '%s' "$rec" | jq -r '.run.record_key // "unknown"')"
-            ok="$(printf '%s' "$rec" | jq -r '
-              def hasfields($o; $f): ($f - ($o | keys)) == [];
-              ( . as $r
-                | (hasfields($r; ["schema_version","record_available","run","stage","stage_available","spec","model","model_available","turns","tokens","cost_usd","cost_available","duration_ms","duration_available","outcome","per_model","per_model_available","emitted_at"]))
-                and ($r.record_available | type == "boolean")
-                and (hasfields($r.run; ["workflow_run_id","job_key","job_id","step_index","record_key"]))
-                and (hasfields($r.spec; ["spec_dir","issue","identity_available"]))
-                and (hasfields($r.turns; ["counted","reported","intended_budget","enforced_ceiling","available"]))
-                and (hasfields($r.tokens; ["input","output","cache_read","cache_creation","available"]))
-                and ($r.per_model | type == "array")
-                and (
-                  ($r.tokens.available != true) or ($r.per_model_available != true) or (
-                    ([$r.per_model[].input_tokens] | add) == $r.tokens.input and
-                    ([$r.per_model[].output_tokens] | add) == $r.tokens.output and
-                    ([$r.per_model[].cache_read_tokens] | add) == $r.tokens.cache_read and
-                    ([$r.per_model[].cache_creation_tokens] | add) == $r.tokens.cache_creation
-                    and (
-                      ($r.cost_available != true) or ($r.cost_usd == null) or (
-                        (([$r.per_model[] | (.cost_usd // 0)] | add // 0) - $r.cost_usd | fabs) <= 1e-9
+              # Minimal schema-version-1 shape check (field presence +
+              # types) mirroring contracts/metrics-record-schema.md's field
+              # table, plus the per_model sum invariant: the four token sums
+              # and (#316) the cost sum, gated and tolerated exactly as Gate
+              # 39 (verify-metrics-record-schema.py) does it so the shipped
+              # collector and the local gate agree on what a valid record is
+              # - all five only when tokens.available and per_model_available,
+              # the cost sum additionally only when cost_available and
+              # cost_usd is non-null, within 1e-9, with a per_model entry
+              # lacking cost_usd counting as 0. Rejects and names the
+              # record_key (FR-041: deterministic code, never judgment).
+              key="$(printf '%s' "$rec" | jq -r '.run.record_key // "unknown"')"
+              ok="$(printf '%s' "$rec" | jq -r '
+                def hasfields($o; $f): ($f - ($o | keys)) == [];
+                ( . as $r
+                  | (hasfields($r; ["schema_version","record_available","run","stage","stage_available","spec","model","model_available","turns","tokens","cost_usd","cost_available","duration_ms","duration_available","outcome","per_model","per_model_available","emitted_at"]))
+                  and ($r.record_available | type == "boolean")
+                  and (hasfields($r.run; ["workflow_run_id","job_key","job_id","step_index","record_key"]))
+                  and (hasfields($r.spec; ["spec_dir","issue","identity_available"]))
+                  and (hasfields($r.turns; ["counted","reported","intended_budget","enforced_ceiling","available"]))
+                  and (hasfields($r.tokens; ["input","output","cache_read","cache_creation","available"]))
+                  and ($r.per_model | type == "array")
+                  and (
+                    ($r.tokens.available != true) or ($r.per_model_available != true) or (
+                      ([$r.per_model[].input_tokens] | add) == $r.tokens.input and
+                      ([$r.per_model[].output_tokens] | add) == $r.tokens.output and
+                      ([$r.per_model[].cache_read_tokens] | add) == $r.tokens.cache_read and
+                      ([$r.per_model[].cache_creation_tokens] | add) == $r.tokens.cache_creation
+                      and (
+                        ($r.cost_available != true) or ($r.cost_usd == null) or (
+                          (([$r.per_model[] | (.cost_usd // 0)] | add // 0) - $r.cost_usd | fabs) <= 1e-9
+                        )
                       )
                     )
                   )
-                )
-              ) as $valid
-              | if $valid then "true" else "false" end
-            ' 2>/dev/null || echo false)"
+                  # branch_advance (specs/050-branch-drift-sha-baseline) is
+                  # optional at the top level, unlike every field above — a
+                  # record predating this feature has no such key at all
+                  # (contracts/metrics-record-schema.md Compatibility note)
+                  # — but when present it is checked at the same
+                  # field-presence-and-type strictness Gate 39 applies
+                  # (verify-metrics-record-schema.py REQUIRED_BRANCH_ADVANCE),
+                  # so a wrong-typed field is rejected here too, not just on
+                  # the next Gate 39 run.
+                  and (
+                    ($r | has("branch_advance") | not) or (
+                      ($r.branch_advance | type) == "object"
+                      and (hasfields($r.branch_advance; ["available","branch","before_sha","before_available","after_sha","after_available","commits","commits_available"]))
+                      and ($r.branch_advance.available | type) == "boolean"
+                      and ($r.branch_advance.branch == null or ($r.branch_advance.branch | type) == "string")
+                      and ($r.branch_advance.before_sha == null or ($r.branch_advance.before_sha | type) == "string")
+                      and ($r.branch_advance.before_available | type) == "boolean"
+                      and ($r.branch_advance.after_sha == null or ($r.branch_advance.after_sha | type) == "string")
+                      and ($r.branch_advance.after_available | type) == "boolean"
+                      and ($r.branch_advance.commits == null or ($r.branch_advance.commits | type) == "number")
+                      and ($r.branch_advance.commits_available | type) == "boolean"
+                    )
+                  )
+                ) as $valid
+                | if $valid then "true" else "false" end
+              ' 2>/dev/null || echo false)"
 
-            if [ "$ok" != "true" ]; then
-              rejected="$rejected $key"
-              continue
-            fi
+              if [ "$ok" != "true" ]; then
+                rejected="$rejected $key"
+                continue
+              fi
 
-            job_key="$(printf '%s' "$rec" | jq -r '.run.job_key // empty')"
-            job_id="$(printf '%s' "$jobs_json" | jq -r --arg n "$job_key" '[.[] | select(.name == $n or ((.name // "") | endswith(" / " + $n)))] | if length == 1 then .[0].id else empty end')"
-            if [ -n "$job_id" ]; then
-              rec="$(printf '%s' "$rec" | jq -c --argjson jid "$job_id" \
-                '.run.job_id = $jid | .run.record_key = "\(.run.workflow_run_id):\($jid):\(.run.step_index)"')"
-            fi
-            printf '%s\n' "$rec" >> "$batch"
+              job_key="$(printf '%s' "$rec" | jq -r '.run.job_key // empty')"
+              job_id="$(printf '%s' "$jobs_json" | jq -r --arg n "$job_key" '[.[] | select(.name == $n or ((.name // "") | endswith(" / " + $n)))] | if length == 1 then .[0].id else empty end')"
+              if [ -n "$job_id" ]; then
+                rec="$(printf '%s' "$rec" | jq -c --argjson jid "$job_id" \
+                  '.run.job_id = $jid | .run.record_key = "\(.run.workflow_run_id):\($jid):\(.run.step_index)"')"
+              fi
+              printf '%s\n' "$rec" >> "$batch"
+            done
           done
         fi
 
@@ -387,7 +420,11 @@ runs:
           fi
 
           recs="$dir/rollup-recs.jsonl"
-          jq -c --arg d "$spec_dir" 'select(.schema_version==1 and .spec.spec_dir==$d)' "$DEST_PATH" 2>/dev/null > "$recs"
+          # specs/050-branch-drift-sha-baseline: the transcript-less "branch
+          # advance" record exists only to carry before/after SHAs for the
+          # watchdog's branch-drift collector -- no agent ran, so it must
+          # not count as an (incomplete) run in the human-facing rollup.
+          jq -c --arg d "$spec_dir" 'select(.schema_version==1 and .spec.spec_dir==$d and (.run_label // "") != "branch advance")' "$DEST_PATH" 2>/dev/null > "$recs"
 
           totals="$(jq -s '
             {

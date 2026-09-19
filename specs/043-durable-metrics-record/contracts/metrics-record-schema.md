@@ -69,9 +69,34 @@ alone has them — not left to be inferred from spec.md):
     }
   ],
   "per_model_available": true,
-  "emitted_at": "2026-08-25T14:03:11Z"
+  "emitted_at": "2026-08-25T14:03:11Z",
+  "branch_advance": {
+    "available": true,
+    "branch": "spec/050-branch-drift-sha-baseline",
+    "before_sha": "5f2a1c9...",
+    "before_available": true,
+    "after_sha": "9b7e004...",
+    "after_available": true,
+    "commits": 3,
+    "commits_available": true
+  }
 }
 ```
+
+`branch_advance` is stage-neutral (specs/050-branch-drift-sha-baseline
+FR-020): its name and shape carry no reference to any one stage, so a
+future populator besides `implement` may adopt it later using the same
+shape and the same `branch_advance.available` gate, with no contract
+change required. `available` is `true` only when the emitting call site
+recorded both a branch and at least one of the two SHA points; every
+other field is `null`/`false` when `available` is `false`. A record
+produced by a version of `wing-commander-metrics-summary` that predates
+this group has no `branch_advance` key at all — a reader MUST treat that
+absence identically to `{available: false, branch: null, before_sha:
+null, before_available: false, after_sha: null, after_available: false,
+commits: null, commits_available: false}`, never as a validation
+failure; this is the one field this contract treats as optional at the
+top level rather than unconditionally required.
 
 ## Field reference
 
@@ -107,7 +132,8 @@ explains the rationale for each field's presence.
   "outcome": "unavailable",
   "per_model": [],
   "per_model_available": false,
-  "emitted_at": "2026-08-25T14:03:11Z"
+  "emitted_at": "2026-08-25T14:03:11Z",
+  "branch_advance": { "available": false, "branch": null, "before_sha": null, "before_available": false, "after_sha": null, "after_available": false, "commits": null, "commits_available": false }
 }
 ```
 

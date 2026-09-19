@@ -333,21 +333,40 @@ def case_unparseable_transcript_degrades():
 
 
 def case_repeated_invocation_in_one_job_gets_distinct_record_keys():
-    """implement.yml's cycle/retry/progress shape: one job, one shared
-    $RUNNER_TEMP, three invocations at step_index 0/1/2 — each call site
-    uploads its metrics-record artifact before the next runs (tasks.md T009),
-    so this captures each record immediately after its call, exactly as
-    production does, then asserts none of the three record_keys collide."""
+    """implement.yml's cycle/retry/progress/branch-advance shape: one job,
+    one shared $RUNNER_TEMP, four invocations at step_index 0/1/2/3 — each
+    call site uploads its metrics-record artifact before the next runs
+    (tasks.md T009-T011), so this captures each record immediately after
+    its call, exactly as production does, then asserts none of the four
+    record_keys collide. The fourth invocation (specs/050-branch-drift-
+    sha-baseline) mirrors implement.yml's own "Record branch advance
+    (cycle)" call site: an intentionally-absent transcript path plus
+    populated branch/SHA/commits inputs."""
     case = "repeated invocation, distinct step_index"
     tmp = tempfile.mkdtemp(prefix="wc-metrics-record-")
     try:
         captured = []
-        labels = {"0": "cycle", "1": "retry", "2": "progress"}
-        for step_index in ("0", "1", "2"):
-            rc, _outputs, _summary, record, output = run_case(
-                tmp, records=healthy_transcript(main=3 + int(step_index)),
-                env_over={"STEP_INDEX": step_index,
-                          "RUN_LABEL": labels[step_index]})
+        labels = {"0": "cycle", "1": "retry", "2": "progress",
+                  "3": "branch advance"}
+        for step_index in ("0", "1", "2", "3"):
+            if step_index == "3":
+                rc, _outputs, _summary, record, output = run_case(
+                    tmp, missing=True,
+                    env_over={
+                        "STEP_INDEX": step_index,
+                        "RUN_LABEL": labels[step_index],
+                        "BRANCH": "spec/050-branch-drift-sha-baseline",
+                        "BEFORE_SHA": "a" * 40,
+                        "BEFORE_SHA_AVAILABLE": "true",
+                        "AFTER_SHA": "b" * 40,
+                        "AFTER_SHA_AVAILABLE": "true",
+                        "COMMITS": "3",
+                        "COMMITS_AVAILABLE": "true"})
+            else:
+                rc, _outputs, _summary, record, output = run_case(
+                    tmp, records=healthy_transcript(main=3 + int(step_index)),
+                    env_over={"STEP_INDEX": step_index,
+                              "RUN_LABEL": labels[step_index]})
             if rc != 0:
                 fail(case, f"step_index={step_index} exited {rc}: "
                            f"{output.strip()[:300]}")
@@ -359,15 +378,106 @@ def case_repeated_invocation_in_one_job_gets_distinct_record_keys():
             validate_schema(f"{case} (step_index={step_index})", record)
             captured.append(record)
         keys = [r["run"]["record_key"] for r in captured]
-        if len(set(keys)) != 3:
-            fail(case, f"expected 3 distinct record_keys across the job's "
-                       f"three invocations, got {keys!r} — a downstream "
-                       f"persist reading all three artifacts back could not "
+        if len(set(keys)) != 4:
+            fail(case, f"expected 4 distinct record_keys across the job's "
+                       f"four invocations, got {keys!r} — a downstream "
+                       f"persist reading all four artifacts back could not "
                        f"tell them apart")
-        note(f"one job's three same-run_id/job_key invocations "
-             f"(step_index 0/1/2) produced distinct record_keys: {keys!r}")
+        branch_advance_record = captured[3]
+        if branch_advance_record.get("record_available") is not False:
+            fail(case, f"the branch-advance invocation's absent transcript "
+                       f"must still degrade record_available to false, got "
+                       f"{branch_advance_record.get('record_available')!r}")
+        ba = branch_advance_record.get("branch_advance") or {}
+        want_ba = {"available": True,
+                   "branch": "spec/050-branch-drift-sha-baseline",
+                   "before_sha": "a" * 40, "before_available": True,
+                   "after_sha": "b" * 40, "after_available": True,
+                   "commits": 3, "commits_available": True}
+        if ba != want_ba:
+            fail(case, f"branch_advance group did not match the inputs "
+                       f"passed in: got {ba!r}, want {want_ba!r} — proves "
+                       f"the transcript-degraded path and the "
+                       f"branch_advance path are independent "
+                       f"(specs/050-branch-drift-sha-baseline)")
+        note(f"one job's four same-run_id/job_key invocations "
+             f"(step_index 0/1/2/3) produced distinct record_keys: "
+             f"{keys!r}, and the fourth's branch_advance group matched its "
+             f"inputs despite an absent transcript")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def case_branch_advance_availability_follows_contract_or_rule():
+    """metrics-record-schema-delta.md / data-model.md: branch_advance.
+    available is true iff branch is non-empty AND (before-sha-available OR
+    after-sha-available) — an AND of the two would null the group, and the
+    branch along with it, whenever only one point resolved (maintainer
+    review of #354). Runs the real composite over each state the
+    valid-branch-advance-before-unavailable/after-unavailable/both-
+    unavailable fixtures describe, covering the emission side those
+    static fixtures alone do not exercise."""
+    case = "branch_advance availability follows the contract's OR rule"
+    scenarios = [
+        ("before only available", {
+            "BRANCH": "spec/050-branch-drift-sha-baseline",
+            "BEFORE_SHA": "", "BEFORE_SHA_AVAILABLE": "false",
+            "AFTER_SHA": "b" * 40, "AFTER_SHA_AVAILABLE": "true",
+            "COMMITS": "", "COMMITS_AVAILABLE": "false"},
+         {"available": True, "branch": "spec/050-branch-drift-sha-baseline",
+          "before_sha": None, "before_available": False,
+          "after_sha": "b" * 40, "after_available": True,
+          "commits": None, "commits_available": False}),
+        ("after only available", {
+            "BRANCH": "spec/050-branch-drift-sha-baseline",
+            "BEFORE_SHA": "a" * 40, "BEFORE_SHA_AVAILABLE": "true",
+            "AFTER_SHA": "", "AFTER_SHA_AVAILABLE": "false",
+            "COMMITS": "", "COMMITS_AVAILABLE": "false"},
+         {"available": True, "branch": "spec/050-branch-drift-sha-baseline",
+          "before_sha": "a" * 40, "before_available": True,
+          "after_sha": None, "after_available": False,
+          "commits": None, "commits_available": False}),
+        ("both unavailable", {
+            "BRANCH": "spec/050-branch-drift-sha-baseline",
+            "BEFORE_SHA": "", "BEFORE_SHA_AVAILABLE": "false",
+            "AFTER_SHA": "", "AFTER_SHA_AVAILABLE": "false",
+            "COMMITS": "", "COMMITS_AVAILABLE": "false"},
+         {"available": False, "branch": None,
+          "before_sha": None, "before_available": False,
+          "after_sha": None, "after_available": False,
+          "commits": None, "commits_available": False}),
+    ]
+    any_failed = False
+    for label, env_over, want in scenarios:
+        tmp = tempfile.mkdtemp(prefix="wc-metrics-record-")
+        try:
+            run_env = dict(env_over)
+            run_env.update({"STEP_INDEX": "3", "RUN_LABEL": "branch advance"})
+            rc, _outputs, _summary, record, output = run_case(
+                tmp, missing=True, env_over=run_env)
+            if rc != 0:
+                fail(case, f"{label}: exited {rc}: {output.strip()[:300]}")
+                any_failed = True
+                continue
+            if record is None:
+                fail(case, f"{label}: record-path was not written")
+                any_failed = True
+                continue
+            ba = record.get("branch_advance") or {}
+            if ba != want:
+                fail(case, f"{label}: branch_advance = {ba!r}, want "
+                           f"{want!r} (available must follow branch "
+                           f"non-empty AND (before-available OR "
+                           f"after-available), never AND)")
+                any_failed = True
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    if not any_failed:
+        note("branch_advance.available correctly follows the OR rule "
+             "across before-only, after-only, and both-unavailable "
+             "inputs, matching the valid-branch-advance-before-"
+             "unavailable/after-unavailable fixtures (available:true, "
+             "branch kept)")
 
 
 def case_multi_model_record_tokens_sum_across_per_model():
@@ -556,6 +666,7 @@ CASES = [
     case_empty_transcript_degrades,
     case_unparseable_transcript_degrades,
     case_repeated_invocation_in_one_job_gets_distinct_record_keys,
+    case_branch_advance_availability_follows_contract_or_rule,
     case_multi_model_record_tokens_sum_across_per_model,
     case_cost_line_formatter_has_exactly_one_home,
     case_container_pipefail_steps_pin_shell_bash,

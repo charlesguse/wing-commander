@@ -2,7 +2,8 @@
   "issue": 331,
   "spec_dir": "specs/050-branch-drift-sha-baseline",
   "feature_num": "050",
-  "stage": "spec",
-  "iteration": 0,
-  "spec_branch": null
+  "stage": "review",
+  "iteration": 3,
+  "spec_branch": "spec/050-branch-drift-sha-baseline",
+  "pending_re_review_from": []
 }
