@@ -1,0 +1,50 @@
+# Single home for attributing a post-agent credential re-establishment
+# failure to the credential itself, rather than letting it surface later as
+# a bare 401 on whichever bot-acting step happens to run next (spec 052
+# FR-004, maintainer review of PR #407). Resolved from the pipeline
+# repository's own checkout -- see the header of
+# .github/actions/wing-commander-context/action.yml.
+name: wing-commander-post-agent-credential-status
+description: >
+  Given the outcomes of the post-agent mint and remote-refresh steps, fails
+  loudly with a message naming the credential as cause and this step as
+  site when either did not succeed (FR-004), and publishes an `ok` output
+  the job can pass on to its own outputs for the stall path to read
+  (FR-011). Never itself the source of a bare, misattributed 401 -- a
+  caller should NOT add continue-on-error to the step that invokes this
+  composite, so the job registers as failed right here, not at whichever
+  step first tries to use the stale credential.
+
+inputs:
+  mint-outcome:
+    description: Outcome of the post-agent wing-commander-context (or scoped-app-token) re-mint step.
+    required: true
+  refresh-outcome:
+    description: >
+      Outcome of the post-agent remote-refresh (or token-relay) step.
+      Pass 'success' when the caller has no such step (e.g. a scratch-token
+      job that only relays, never rewrites a remote).
+    required: false
+    default: 'success'
+
+outputs:
+  ok:
+    description: "'true' when both inputs report success; 'false' otherwise."
+    value: ${{ steps.status.outputs.ok }}
+
+runs:
+  using: composite
+  steps:
+    - name: Determine post-agent credential status
+      id: status
+      shell: bash
+      env:
+        MINT_OUTCOME: ${{ inputs.mint-outcome }}
+        REFRESH_OUTCOME: ${{ inputs.refresh-outcome }}
+      run: |
+        if [ "$MINT_OUTCOME" = "failure" ] || [ "$REFRESH_OUTCOME" = "failure" ]; then
+          echo "ok=false" >> "$GITHUB_OUTPUT"
+          echo "::error::wing-commander-post-agent-credential-status: post-agent credential re-establishment failed (mint outcome: $MINT_OUTCOME, refresh outcome: $REFRESH_OUTCOME). Every credential-bearing step below this point needs a live token -- treat THIS step, not the agent step or a downstream step, as the cause (spec 052 FR-004)."
+          exit 1
+        fi
+        echo "ok=true" >> "$GITHUB_OUTPUT"

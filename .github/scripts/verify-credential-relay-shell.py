@@ -33,19 +33,24 @@ WHAT THIS CHECKS
    values against the same simulated $GITHUB_ENV file: the file's LAST
    WC_BOT_TOKEN= line must carry the SECOND value (research.md D1 -- later
    $GITHUB_ENV writes win for every subsequent step in the job).
-2. `clarify.yml`'s "Refresh authenticated spec-branch remote (post-agent)"
-   step, run inside a real git repository whose `origin` remote already
-   carries BOTH a stale credential embedded in its URL AND a stale
-   `http.https://github.com/.extraheader` config entry (research.md D2's
-   corrected mechanism): afterward, the remote URL carries the fresh
-   token, the stale extraheader is gone (not merely shadowed), and an
-   untracked file present before the step ran is untouched (research.md
-   D2's "cannot discard a commit or a staged change" claim, proven rather
-   than merely asserted).
+2. `wing-commander-refresh-remote`'s own "Refresh authenticated spec-branch
+   remote (post-agent)" step, run inside a real git repository whose
+   `origin` remote already carries BOTH a stale credential embedded in its
+   URL AND a stale `http.https://github.com/.extraheader` config entry
+   (research.md D2's corrected mechanism): afterward, the remote URL
+   carries the fresh token, the stale extraheader is gone (not merely
+   shadowed), and an untracked file present before the step ran is
+   untouched (research.md D2's "cannot discard a commit or a staged
+   change" claim, proven rather than merely asserted).
 
-Every one of the 8 sweep-stage workflows ships a byte-identical copy of
-this remote-refresh `run:` text (Gate 68 requires this); driving
-`clarify.yml`'s copy exercises all of them.
+Every one of the 11 post-agent call sites across the 8 sweep-stage
+workflows now calls the ONE shared composite below (CLAUDE.md's
+single-home rule; Gate 68 check 5 enforces the call exists at every site)
+-- driving the composite's own copy of the step exercises all of them, by
+construction rather than by an unenforced claim of byte-identity
+(maintainer review of PR #407: an earlier version of this docstring
+claimed Gate 68 already enforced byte-identity across 8 pasted copies; it
+did not).
 
 Usage: python3 .github/scripts/verify-credential-relay-shell.py
 Requires: bash, git (both present on ubuntu-latest runners).
@@ -61,7 +66,7 @@ from wc_shell_harness import find_step, resolve_bash, run_step, use_utf8_stdout 
 COMPOSITE = ".github/actions/wing-commander-context/action.yml"
 RELAY_STEP = "Relay bot token to the job environment"
 
-WORKFLOW = ".github/workflows/clarify.yml"
+REFRESH_COMPOSITE = ".github/actions/wing-commander-refresh-remote/action.yml"
 REFRESH_STEP = "Refresh authenticated spec-branch remote (post-agent)"
 
 REPO = "acme/widgets"
@@ -112,7 +117,7 @@ def _run_git(repo, *args):
 def check_remote_refresh_clears_stale_extraheader(root):
     """Check 2: the refresh step beats a stale actions/checkout extraheader
     without touching the working tree."""
-    step = find_step(WORKFLOW, REFRESH_STEP)
+    step = find_step(REFRESH_COMPOSITE, REFRESH_STEP)
     script = str(step["run"]).replace("${{ github.repository }}", REPO)
 
     workdir = tempfile.mkdtemp(dir=root)
@@ -134,8 +139,11 @@ def check_remote_refresh_clears_stale_extraheader(root):
 
     runner_temp = os.path.join(workdir, "runner_temp")
     os.makedirs(runner_temp, exist_ok=True)
+    # TOKEN, not WC_BOT_TOKEN -- the composite receives the token as its own
+    # `inputs.token`, relayed to this step's env as TOKEN (action.yml), not
+    # as the job-scoped env var the workflow-level call site reads from.
     rc, out, _, _ = run_step(
-        BASH, script, repo, {"WC_BOT_TOKEN": "fresh-token"}, runner_temp)
+        BASH, script, repo, {"TOKEN": "fresh-token"}, runner_temp)
 
     failures = []
     if rc != 0:

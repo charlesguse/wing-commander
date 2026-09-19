@@ -2021,18 +2021,29 @@ jobs:
       - name: Record agent-ran signal
         if: always() && steps.decide.outcome != 'skipped'
         id: agent-ran
-        shell: bash
-        run: |
-          echo "ran=true" >> "$GITHUB_OUTPUT"
-          echo "conclusion=${{ steps.decide.conclusion }}" >> "$GITHUB_OUTPUT"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-ran-signal
+        with:
+          agent-outcome: ${{ steps.decide.outcome }}
 
       - name: Re-establish Wing Commander context (post-agent)
+        id: reestablish
         if: always() && steps.decide.outcome != 'skipped'
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
+
+      # No remote-refresh step for env.WC_BOT_TOKEN in this job (it never
+      # persists a credential in a git remote -- see the scratch-token mint
+      # below for the one credential this job does push with), so
+      # refresh-outcome defaults to 'success' -- see clarify.yml.
+      - name: Determine post-agent credential status
+        id: credential-status
+        if: always() && steps.decide.outcome != 'skipped'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
+        with:
+          mint-outcome: ${{ steps.reestablish.outcome }}
 
       # Independent of the WC_BOT_TOKEN refresh above -- this scratch-scoped
       # credential authenticates a different repository entirely (D8, see the
@@ -2050,8 +2061,14 @@ jobs:
           owner: ${{ steps.scratch-parts.outputs.owner }}
           repo-name: ${{ steps.scratch-parts.outputs.name }}
 
+      # FR-005/FR-004 (spec 052, maintainer review of PR #407): guarded on
+      # the mint's own outcome -- a step's continue-on-error rewrites
+      # .conclusion to success on failure, but .outcome still reflects the
+      # real result. Without this guard, a failed re-mint (empty token
+      # output) would blank an otherwise-still-valid WC_SCRATCH_TOKEN ahead
+      # of the step-21 push, instead of simply leaving it unrefreshed.
       - name: Relay scratch token to the job environment (post-agent)
-        if: always() && steps.decide.outcome != 'skipped'
+        if: always() && steps.decide.outcome != 'skipped' && steps.scratch-token-post-agent.outcome == 'success'
         continue-on-error: true
         shell: bash
         env:

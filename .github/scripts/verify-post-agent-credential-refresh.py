@@ -18,9 +18,9 @@ that touches a workflow file.
 
 WHAT THIS CHECKS
 ----------------
-For each of the 8 sweep-stage jobs (FR-007's list) that contains at least
-one agent step (a step whose `uses:` resolves to
-`anthropics/claude-code-action@*`):
+For each of the 8 sweep-stage jobs (FR-007's list), except the jobs in
+AGENTLESS_JOBS (tasks-approved: a PR-merge acceptance handler that never
+runs an agent step by design):
 
 1. No step positioned after the job's first agent step references
    `steps.<any-id>.outputs.*token*` directly -- it must resolve its
@@ -29,18 +29,33 @@ one agent step (a step whose `uses:` resolves to
    and containing "token to the job environment") -- that step's entire job
    is to read the fresh mint's raw output and put it in the job environment,
    so it necessarily reads the raw form (FR-020 care point 1).
-2. Every agent step in a job after the first is preceded, since the
-   previous agent step, by a `wing-commander-context` (or, for
-   auto-update-spec-kit.yml's e2e-stage job, `scoped-app-token`) invocation
-   (FR-020 care point 2).
-3. Every step whose name is exactly "Report over-budget agent run" carries
-   `continue-on-error: true` (FR-021), in every job scanned -- not just
-   jobs with an agent step, since the tolerance is a property of the step
-   itself.
-4. If any of the 8 named files is missing, a named job cannot be located,
-   or zero agent steps are found across the whole named subject, the gate
-   fails loudly rather than passing vacuously over an empty result set
-   (FR-022, Constitution Principle VIII).
+2. Every agent step in a job is followed, before the next agent step or the
+   job's own end (whichever comes first), by a `wing-commander-context` (or,
+   for auto-update-spec-kit.yml's e2e-stage job, `scoped-app-token`)
+   invocation -- checking only "between two agent steps" missed both a
+   job's single agent step (clarify.yml) and the refresh after a job's LAST
+   agent step entirely (FR-020 care point 2, maintainer review of PR #407
+   hole (a)).
+3. Every step whose name matches "Report over-budget agent run", including
+   its "(cycle)"/"(retry)"/"(progress comment)"/"(auto)"/"(pr)" per-agent-step
+   variants (data-model.md's 12-row table), carries `continue-on-error: true`
+   (FR-021), in every job scanned -- not just jobs with an agent step, since
+   the tolerance is a property of the step itself (maintainer review of PR
+   #407 hole (b): an earlier version of this check matched only the bare
+   name).
+4. If any of the 8 named files is missing, a named job cannot be located, a
+   subject job outside AGENTLESS_JOBS contains zero agent steps, or zero
+   agent steps are found across the whole named subject, the gate fails
+   loudly rather than passing vacuously over an empty result set (FR-022,
+   Constitution Principle VIII; maintainer review of PR #407 hole (c): a
+   job silently losing its agent step used to pass this gate).
+5. Every "Record agent-ran signal" and "Refresh authenticated spec-branch
+   remote (post-agent...)" step resolves through its one shared composite
+   home (`.github/actions/wing-commander-agent-ran-signal`,
+   `.github/actions/wing-commander-refresh-remote`) rather than a re-pasted
+   inline `run:` block (CLAUDE.md's single-home rule; maintainer review of
+   PR #407: this repository's own docs claimed byte-identity was already
+   enforced here, and it was not).
 
 Static structure only (`yaml.safe_load`) -- this gate's subject is step
 *ordering and reference shape*, not step *behaviour*, so no
@@ -50,9 +65,11 @@ Self-test (--self-test): loads the real shipped trees, then reintroduces
 each way this could regress -- a post-agent step's credential reference
 reverted to the stale form, the refresh step between implement.yml's retry
 and progress agent steps deleted, `continue-on-error: true` stripped from
-clarify.yml's canonical over-budget step, the subject list pointed at a 9th
-nonexistent file, and the subject list emptied -- and asserts each one
-fails.
+clarify.yml's canonical over-budget step (and from a suffixed variant),
+clarify.yml's only post-agent refresh deleted, a subject job's agent step
+replaced with a non-agent step, a single-home composite call reverted to a
+non-composite step, the subject list pointed at a 9th nonexistent file, and
+the subject list emptied -- and asserts each one fails.
 
 Usage: python3 .github/scripts/verify-post-agent-credential-refresh.py [--self-test]
 """
@@ -68,7 +85,25 @@ AGENT_ACTION_RE = re.compile(r"^anthropics/claude-code-action@")
 TOKEN_REF_RE = re.compile(r"steps\.[\w-]+\.outputs\.[\w-]*token[\w-]*", re.IGNORECASE)
 RELAY_STEP_NAME_RE = re.compile(r"^Relay\b.*token to the job environment", re.IGNORECASE)
 MINT_USES_MARKERS = ("wing-commander-context", "scoped-app-token")
+# Matches the base name and every "(cycle)"/"(retry)"/"(progress comment)"/
+# "(auto)"/"(pr)" per-agent-step variant (data-model.md's 12-row table) --
+# an earlier version of this gate matched only the bare name and silently
+# never checked the 9 suffixed sites (maintainer review of PR #407).
 OVER_BUDGET_NAME = "Report over-budget agent run"
+OVER_BUDGET_NAME_RE = re.compile(
+    r"^Report over-budget agent run(\s*\([^)]+\))?$")
+
+# Single-home composites (spec 052, maintainer review of PR #407, CLAUDE.md's
+# "shared logic has exactly one home" rule): a step matching the name regex
+# must resolve through the named composite, never a re-pasted inline `run:`
+# block -- verify-credential-relay-shell.py's docstring claimed this was
+# already true; it was not enforced anywhere until this check existed.
+SINGLE_HOME_STEPS = [
+    (re.compile(r"^Record agent-ran signal\b"),
+     "wing-commander-agent-ran-signal"),
+    (re.compile(r"^Refresh authenticated spec-branch remote \(post-agent"),
+     "wing-commander-refresh-remote"),
+]
 
 # path -> job names in scope, per FR-007's eight named stages.
 SUBJECTS = {
@@ -81,6 +116,15 @@ SUBJECTS = {
     ".github/workflows/pr-conversation.yml": ["classify-and-announce", "act"],
     ".github/workflows/auto-update-spec-kit.yml": ["e2e-stage"],
 }
+
+# Jobs in SUBJECTS that never run an agent step, by design -- tasks-approved
+# is a PR-merge acceptance handler with no agent involvement at all (unlike
+# every other SUBJECTS job, whose absence of an agent step would mean the
+# sweep regressed). Exempted from the "must contain an agent step" check
+# (FR-020 care point 4/maintainer review of PR #407 hole (c)); still scanned
+# for checks 3 and 5, which apply regardless of agent-step presence (checks
+# 1 and 2 are inherently agent-step-relative and never run for such a job).
+AGENTLESS_JOBS = {"tasks-approved"}
 
 
 def _is_agent_step(step):
@@ -130,16 +174,38 @@ def check_job(path, job_name, job):
     steps = list((job or {}).get("steps") or [])
 
     # check 3 -- tolerance, independent of whether the job has an agent step.
+    # Matches every per-agent-step suffix variant, not only the bare name
+    # (maintainer review of PR #407 hole (b)).
     for step in steps:
-        if str((step or {}).get("name", "")) == OVER_BUDGET_NAME \
-                and not (step or {}).get("continue-on-error"):
+        name = str((step or {}).get("name", ""))
+        if OVER_BUDGET_NAME_RE.match(name) and not (step or {}).get("continue-on-error"):
             failures.append(
-                f"{path} [{job_name}]: {OVER_BUDGET_NAME!r} does not carry "
+                f"{path} [{job_name}]: {name!r} does not carry "
                 f"continue-on-error: true -- its own failure can strand the "
                 f"deterministic read-back and every step below it (FR-021)")
 
+    # check 5 -- shared post-agent logic resolves through its one composite
+    # home, never a re-pasted inline block (CLAUDE.md's single-home rule,
+    # maintainer review of PR #407).
+    for step in steps:
+        name = str((step or {}).get("name", ""))
+        uses = str((step or {}).get("uses", ""))
+        for name_re, composite in SINGLE_HOME_STEPS:
+            if name_re.match(name) and composite not in uses:
+                failures.append(
+                    f"{path} [{job_name}] step {name!r} does not call the "
+                    f"{composite} composite (CLAUDE.md single-home rule) -- "
+                    f"got uses: {uses!r}")
+
     agent_idxs = [i for i, s in enumerate(steps) if _is_agent_step(s)]
     if not agent_idxs:
+        if job_name not in AGENTLESS_JOBS:
+            failures.append(
+                f"{path} [{job_name}]: expected at least one agent step "
+                f"(uses: anthropics/claude-code-action@*) in this job and "
+                f"found none -- either the sweep regressed or this job "
+                f"belongs in AGENTLESS_JOBS (FR-020 care point 4/maintainer "
+                f"review of PR #407 hole (c))")
         return failures, 0
 
     first = agent_idxs[0]
@@ -157,19 +223,23 @@ def check_job(path, job_name, job):
                 f"resolve its credential through env.WC_BOT_TOKEN / "
                 f"env.WC_SCRATCH_TOKEN instead (FR-020 care point 1)")
 
-    # check 2 -- every agent step after the first is preceded, since the
-    # previous agent step, by a fresh mint.
-    prev = first
-    for idx in agent_idxs[1:]:
-        between = steps[prev + 1:idx]
+    # check 2 -- every agent step is followed, before the NEXT agent step or
+    # the end of the job (whichever comes first), by a fresh mint. Checking
+    # only "between consecutive agent steps" (agent_idxs[1:]) missed the
+    # single-agent-step case entirely (clarify.yml) and the refresh after
+    # the LAST agent step in every job (maintainer review of PR #407 hole
+    # (a)) -- a sentinel boundary at len(steps) covers both.
+    boundaries = agent_idxs[1:] + [len(steps)]
+    for idx, boundary in zip(agent_idxs, boundaries):
+        between = steps[idx + 1:boundary]
         if not any(_is_mint_step(s) for s in between):
             name = (steps[idx] or {}).get("name", "<unnamed step>")
             failures.append(
-                f"{path} [{job_name}]: agent step {name!r} is not preceded, "
-                f"since the previous agent step, by a wing-commander-context "
-                f"(or scoped-app-token) mint -- it runs on a stale "
-                f"credential (FR-020 care point 2)")
-        prev = idx
+                f"{path} [{job_name}]: agent step {name!r} has no "
+                f"wing-commander-context (or scoped-app-token) re-mint "
+                f"after it, before the next agent step or the job's end -- "
+                f"every step below it runs on a stale credential (FR-020 "
+                f"care point 2)")
 
     return failures, len(agent_idxs)
 
@@ -244,6 +314,51 @@ def mut_drop_tolerance(loaded):
     del step["continue-on-error"]
 
 
+def mut_drop_clarify_only_refresh(loaded):
+    """Hole (a): clarify has exactly one agent step, so the refresh check
+    only fires post-052-review when a job's LAST (not just "between two")
+    agent step is checked."""
+    job = loaded[".github/workflows/clarify.yml"]["jobs"]["clarify"]
+    steps = job["steps"]
+    name = "Re-establish Wing Commander context (post-agent)"
+    idx = next((i for i, s in enumerate(steps) if (s or {}).get("name") == name), None)
+    assert idx is not None, "fixture assumption broken: step renamed"
+    del steps[idx]
+
+
+def mut_drop_suffixed_tolerance(loaded):
+    """Hole (b): the over-budget check must match suffixed variants like
+    "(cycle)", not only the bare name."""
+    job = loaded[".github/workflows/implement.yml"]["jobs"]["implement"]
+    step = _find_step(job, "Report over-budget agent run (cycle)")
+    assert step is not None, "fixture assumption broken: step renamed"
+    assert step.get("continue-on-error") is True, \
+        "fixture assumption broken: tolerance already missing"
+    del step["continue-on-error"]
+
+
+def mut_job_loses_agent_step(loaded):
+    """Hole (c): a subject job that stops having an agent step must fail
+    loudly, not silently skip all of its checks."""
+    job = loaded[".github/workflows/clarify.yml"]["jobs"]["clarify"]
+    step = _find_step(job, "Fold answers into the draft spec")
+    assert step is not None, "fixture assumption broken: step renamed"
+    assert "claude-code-action" in str(step.get("uses", "")), \
+        "fixture assumption broken: no longer the agent step"
+    step["uses"] = "actions/checkout@v5"
+
+
+def mut_single_home_reverted(loaded):
+    """CLAUDE.md single-home rule: a call site reverting to a re-pasted
+    inline block instead of the shared composite must be caught."""
+    job = loaded[".github/workflows/clarify.yml"]["jobs"]["clarify"]
+    step = _find_step(job, "Record agent-ran signal")
+    assert step is not None, "fixture assumption broken: step renamed"
+    assert "wing-commander-agent-ran-signal" in str(step.get("uses", "")), \
+        "fixture assumption broken: composite already not called"
+    step["uses"] = "actions/checkout@v5"
+
+
 def mut_nonexistent_ninth_file(loaded_and_subjects):
     loaded, subjects = loaded_and_subjects
     subjects["nonexistent-ninth-workflow.yml"] = ["some-job"]
@@ -254,6 +369,13 @@ def mut_zero_files(loaded_and_subjects):
     subjects.clear()
 
 
+def mut_nonexistent_job_in_existing_file(loaded_and_subjects):
+    """should-fix (PR #407 review): a job that cannot be located inside an
+    existing, reachable file is its own failure mode from a missing file."""
+    loaded, subjects = loaded_and_subjects
+    subjects[".github/workflows/clarify.yml"] = ["nonexistent-job"]
+
+
 SIMPLE_MUTATIONS = [
     ("a post-agent step's credential reference reverted to the stale "
      "steps.ctx.outputs.token form", mut_stale_credential_reference),
@@ -261,12 +383,22 @@ SIMPLE_MUTATIONS = [
      "steps deleted", mut_drop_retry_progress_refresh),
     ("continue-on-error: true stripped from clarify.yml's canonical "
      "over-budget step", mut_drop_tolerance),
+    ("clarify.yml's only post-agent refresh (after its only agent step) "
+     "deleted", mut_drop_clarify_only_refresh),
+    ("continue-on-error: true stripped from a SUFFIXED over-budget step "
+     "(implement.yml's \"(cycle)\" variant)", mut_drop_suffixed_tolerance),
+    ("a subject job's agent step replaced with a non-agent step",
+     mut_job_loses_agent_step),
+    ("a single-home composite call reverted to a non-composite step",
+     mut_single_home_reverted),
 ]
 
 SUBJECT_MUTATIONS = [
     ("the subject list pointed at a 9th, nonexistent workflow file",
      mut_nonexistent_ninth_file),
     ("the subject list pointed at zero workflow files", mut_zero_files),
+    ("the subject list pointed at a nonexistent job inside an existing "
+     "file", mut_nonexistent_job_in_existing_file),
 ]
 
 

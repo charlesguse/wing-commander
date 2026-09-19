@@ -1,0 +1,32 @@
+# Single home for the post-agent authenticated-remote refresh every
+# sweep-stage job runs immediately after re-minting env.WC_BOT_TOKEN (spec
+# 052, research.md D2). Resolved from the pipeline repository's own
+# checkout -- see the header of .github/actions/wing-commander-context/
+# action.yml for the verified self-checkout snippet.
+name: wing-commander-refresh-remote
+description: >
+  Refreshes origin's authenticated remote with a freshly minted token,
+  clearing the stale `http.https://github.com/.extraheader` config entry
+  `actions/checkout@v5` (default persist-credentials: true) actually
+  authenticates with first -- a bare `git remote set-url` alone leaves every
+  subsequent git operation authenticating with the OLD credential
+  (research.md D2's correction, found in this feature's own T046 code
+  review). Runs inside the caller's existing checkout directory -- no new
+  checkout, no working-tree change.
+
+inputs:
+  token:
+    description: Freshly minted token to authenticate origin with.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Refresh authenticated spec-branch remote (post-agent)
+      id: refresh
+      shell: bash
+      env:
+        TOKEN: ${{ inputs.token }}
+      run: |
+        git config --local --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
+        git remote set-url origin "https://x-access-token:${TOKEN}@github.com/${{ github.repository }}.git"

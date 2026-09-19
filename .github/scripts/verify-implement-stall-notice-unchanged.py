@@ -97,7 +97,8 @@ def check_dependency_reason_branch():
         rc, _out, outputs, _summary = run_step(
             bash, script, workdir,
             {"IMAGE_RESULT": "success", "IMPLEMENT_RESULT": "failure",
-             "AGENT_RAN": "true", "AGENT_CONCLUSION": "failure"},
+             "AGENT_RAN": "true", "AGENT_CONCLUSION": "failure",
+             "CREDENTIAL_REFRESH_OK": "true", "FAILED_STEP": ""},
             runner_temp)
         reason = outputs.get("reason", "")
         if NEVER_STARTED_PHRASE in reason:
@@ -109,10 +110,40 @@ def check_dependency_reason_branch():
                 f"{DEPENDENCY_STEP_NAME!r} with agent-ran == 'true' did not "
                 f"name the agent's own conclusion: {reason!r}")
 
+        # spec 052 maintainer review of PR #407: the entry job now names the
+        # specific post-agent step that failed, when it could identify one.
         rc, _out, outputs, _summary = run_step(
             bash, script, workdir,
             {"IMAGE_RESULT": "success", "IMPLEMENT_RESULT": "failure",
-             "AGENT_RAN": "", "AGENT_CONCLUSION": ""},
+             "AGENT_RAN": "true", "AGENT_CONCLUSION": "failure",
+             "CREDENTIAL_REFRESH_OK": "true", "FAILED_STEP": "push"},
+            runner_temp)
+        reason = outputs.get("reason", "")
+        if "'push'" not in reason:
+            failures.append(
+                f"{DEPENDENCY_STEP_NAME!r} with a named failed-post-agent-step "
+                f"did not name it in the reason: {reason!r}")
+
+        # FR-004: a credential re-establishment failure is attributed to the
+        # credential, not to the agent or a downstream step.
+        rc, _out, outputs, _summary = run_step(
+            bash, script, workdir,
+            {"IMAGE_RESULT": "success", "IMPLEMENT_RESULT": "failure",
+             "AGENT_RAN": "true", "AGENT_CONCLUSION": "success",
+             "CREDENTIAL_REFRESH_OK": "false", "FAILED_STEP": ""},
+            runner_temp)
+        reason = outputs.get("reason", "")
+        if "credential" not in reason:
+            failures.append(
+                f"{DEPENDENCY_STEP_NAME!r} with credential-refresh-ok == "
+                f"'false' did not attribute the stall to the credential: "
+                f"{reason!r}")
+
+        rc, _out, outputs, _summary = run_step(
+            bash, script, workdir,
+            {"IMAGE_RESULT": "success", "IMPLEMENT_RESULT": "failure",
+             "AGENT_RAN": "", "AGENT_CONCLUSION": "",
+             "CREDENTIAL_REFRESH_OK": "", "FAILED_STEP": ""},
             runner_temp)
         reason = outputs.get("reason", "")
         if reason != NEVER_STARTED_PHRASE:

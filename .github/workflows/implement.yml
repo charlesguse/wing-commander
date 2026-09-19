@@ -373,6 +373,8 @@ jobs:
       # Most-recent-agent-step-that-ran wins, by construction.
       agent-ran: ${{ steps.agent-ran-progress.outputs.ran || steps.agent-ran-retry.outputs.ran || steps.agent-ran-cycle.outputs.ran }}
       agent-conclusion: ${{ steps.agent-ran-progress.outputs.conclusion || steps.agent-ran-retry.outputs.conclusion || steps.agent-ran-cycle.outputs.conclusion }}
+      credential-refresh-ok: ${{ steps.credential-status-progress.outputs.ok || steps.credential-status-retry.outputs.ok || steps.credential-status-cycle.outputs.ok }}
+      failed-post-agent-step: ${{ steps.failed-step.outputs.step }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v5
@@ -937,12 +939,12 @@ jobs:
       - name: Record agent-ran signal (cycle)
         if: always() && steps.cycle.outcome != 'skipped'
         id: agent-ran-cycle
-        shell: bash
-        run: |
-          echo "ran=true" >> "$GITHUB_OUTPUT"
-          echo "conclusion=${{ steps.cycle.conclusion }}" >> "$GITHUB_OUTPUT"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-ran-signal
+        with:
+          agent-outcome: ${{ steps.cycle.outcome }}
 
       - name: Re-establish Wing Commander context (post-agent, cycle)
+        id: reestablish-cycle
         if: always() && steps.cycle.outcome != 'skipped'
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
@@ -951,12 +953,20 @@ jobs:
           private-key: ${{ secrets.speckit-app-private-key }}
 
       - name: Refresh authenticated spec-branch remote (post-agent, cycle)
+        id: refresh-remote-cycle
         if: always() && steps.cycle.outcome != 'skipped'
         continue-on-error: true
-        shell: bash
-        run: |
-          git config --local --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
-          git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/${{ github.repository }}.git"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-refresh-remote
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+
+      - name: Determine post-agent credential status (cycle)
+        id: credential-status-cycle
+        if: always() && steps.cycle.outcome != 'skipped'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
+        with:
+          mint-outcome: ${{ steps.reestablish-cycle.outcome }}
+          refresh-outcome: ${{ steps.refresh-remote-cycle.outcome }}
 
       # deterministic, transcript-only verdict -- see specs/037-agent-turn-budget-guard/
       # data-model.md. Guarded like the upload/metrics
@@ -1499,12 +1509,12 @@ jobs:
       - name: Record agent-ran signal (retry)
         if: always() && steps.retry.outcome != 'skipped'
         id: agent-ran-retry
-        shell: bash
-        run: |
-          echo "ran=true" >> "$GITHUB_OUTPUT"
-          echo "conclusion=${{ steps.retry.conclusion }}" >> "$GITHUB_OUTPUT"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-ran-signal
+        with:
+          agent-outcome: ${{ steps.retry.outcome }}
 
       - name: Re-establish Wing Commander context (post-agent, retry)
+        id: reestablish-retry
         if: always() && steps.retry.outcome != 'skipped'
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
@@ -1513,12 +1523,20 @@ jobs:
           private-key: ${{ secrets.speckit-app-private-key }}
 
       - name: Refresh authenticated spec-branch remote (post-agent, retry)
+        id: refresh-remote-retry
         if: always() && steps.retry.outcome != 'skipped'
         continue-on-error: true
-        shell: bash
-        run: |
-          git config --local --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
-          git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/${{ github.repository }}.git"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-refresh-remote
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+
+      - name: Determine post-agent credential status (retry)
+        id: credential-status-retry
+        if: always() && steps.retry.outcome != 'skipped'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
+        with:
+          mint-outcome: ${{ steps.reestablish-retry.outcome }}
+          refresh-outcome: ${{ steps.refresh-remote-retry.outcome }}
 
       # See "Compute agent run verdict (cycle)" above — same shared
       # composite, same steps.retry.outcome != 'skipped' guard so this
@@ -1984,12 +2002,12 @@ jobs:
       - name: Record agent-ran signal (progress)
         if: always() && steps.progress.outcome != 'skipped'
         id: agent-ran-progress
-        shell: bash
-        run: |
-          echo "ran=true" >> "$GITHUB_OUTPUT"
-          echo "conclusion=${{ steps.progress.conclusion }}" >> "$GITHUB_OUTPUT"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-ran-signal
+        with:
+          agent-outcome: ${{ steps.progress.outcome }}
 
       - name: Re-establish Wing Commander context (post-agent, progress)
+        id: reestablish-progress
         if: always() && steps.progress.outcome != 'skipped'
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
@@ -1998,12 +2016,20 @@ jobs:
           private-key: ${{ secrets.speckit-app-private-key }}
 
       - name: Refresh authenticated spec-branch remote (post-agent, progress)
+        id: refresh-remote-progress
         if: always() && steps.progress.outcome != 'skipped'
         continue-on-error: true
-        shell: bash
-        run: |
-          git config --local --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
-          git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/${{ github.repository }}.git"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-refresh-remote
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+
+      - name: Determine post-agent credential status (progress)
+        id: credential-status-progress
+        if: always() && steps.progress.outcome != 'skipped'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
+        with:
+          mint-outcome: ${{ steps.reestablish-progress.outcome }}
+          refresh-outcome: ${{ steps.refresh-remote-progress.outcome }}
 
       # Deterministic posting: the agent above only composes the summary —
       # its final transcript message. The comment's fixed parts (heading,
@@ -2478,6 +2504,20 @@ jobs:
             fi
           fi
 
+      # FR-011: names the specific post-agent step that failed, for the
+      # stalled job to read instead of the generic "a step after it did not
+      # complete" -- see clarify.yml. Three agent steps share this one job
+      # (cycle/retry/progress), so the guard is "any of them ran".
+      - name: Determine failed post-agent step
+        id: failed-step
+        if: always() && (steps.cycle.outcome != 'skipped' || steps.retry.outcome != 'skipped' || steps.progress.outcome != 'skipped')
+        shell: bash
+        env:
+          STEPS_JSON: ${{ toJSON(steps) }}
+        run: |
+          failed="$(printf '%s' "$STEPS_JSON" | jq -r 'to_entries | map(select(.value.outcome == "failure")) | .[-1].key // ""')"
+          echo "step=$failed" >> "$GITHUB_OUTPUT"
+
   # Survivor job (the #224 idiom, research.md D4/D7): reaches two mutually
   # exclusive arms. The exhausted-retry arm (final-ok == 'false') is today's
   # original case, its three steps' wording untouched. The abnormal-
@@ -2819,6 +2859,9 @@ jobs:
             echo "WCSN_EOF"
           } >> "$GITHUB_OUTPUT"
 
+      # FR-004/FR-011: a credential re-establishment failure is named as
+      # such, ahead of the generic agent-ran branch; otherwise, a real
+      # post-agent step failure names the step -- see clarify.yml.
       - name: Determine which dependency did not start
         id: reason
         if: needs.implement.outputs.final-ok != 'false' && needs.implement.outputs.refusal-reason == ''
@@ -2827,8 +2870,14 @@ jobs:
           IMPLEMENT_RESULT: ${{ needs.implement.result }}
           AGENT_RAN: ${{ needs.implement.outputs.agent-ran }}
           AGENT_CONCLUSION: ${{ needs.implement.outputs.agent-conclusion }}
+          CREDENTIAL_REFRESH_OK: ${{ needs.implement.outputs.credential-refresh-ok }}
+          FAILED_STEP: ${{ needs.implement.outputs.failed-post-agent-step }}
         run: |
-          if [ "$AGENT_RAN" = "true" ]; then
+          if [ "$AGENT_RAN" = "true" ] && [ "$CREDENTIAL_REFRESH_OK" = "false" ]; then
+            reason="the agent step ran (concluded: $AGENT_CONCLUSION) and the post-agent wing-commander-bot credential re-establishment failed (see the 'Determine post-agent credential status' step) -- treat the credential, not the agent or a downstream step, as the cause"
+          elif [ "$AGENT_RAN" = "true" ] && [ -n "$FAILED_STEP" ]; then
+            reason="the agent step ran (concluded: $AGENT_CONCLUSION) and the '$FAILED_STEP' step after it did not complete"
+          elif [ "$AGENT_RAN" = "true" ]; then
             reason="the agent step ran (concluded: $AGENT_CONCLUSION) and a step after it did not complete"
           elif [ "$IMAGE_RESULT" = "failure" ]; then
             reason="the verify-image-prerequisites job failed, so the implement stage never started"
@@ -2850,3 +2899,5 @@ jobs:
           stage-label: "stage:implement"
           reason: ${{ steps.reason.outputs.reason }}
           restart-command: ${{ steps.restart.outputs.restart-command }}
+          agent-ran: ${{ needs.implement.outputs.agent-ran }}
+          agent-conclusion: ${{ needs.implement.outputs.agent-conclusion }}

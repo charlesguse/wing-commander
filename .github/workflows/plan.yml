@@ -404,6 +404,7 @@ jobs:
       spec-dir: ${{ needs.resolve-spec.outputs.spec-dir }}
       agent-ran: ${{ steps.agent-ran-auto.outputs.ran || steps.agent-ran-pr.outputs.ran }}
       agent-conclusion: ${{ steps.agent-ran-auto.outputs.conclusion || steps.agent-ran-pr.outputs.conclusion }}
+      credential-refresh-ok: ${{ steps.credential-status-auto.outputs.ok || steps.credential-status-pr.outputs.ok }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v5
@@ -758,12 +759,12 @@ jobs:
       - name: Record agent-ran signal (auto)
         if: always() && steps.agent-auto.outcome != 'skipped'
         id: agent-ran-auto
-        shell: bash
-        run: |
-          echo "ran=true" >> "$GITHUB_OUTPUT"
-          echo "conclusion=${{ steps.agent-auto.conclusion }}" >> "$GITHUB_OUTPUT"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-ran-signal
+        with:
+          agent-outcome: ${{ steps.agent-auto.outcome }}
 
       - name: Re-establish Wing Commander context (post-agent, auto)
+        id: reestablish-auto
         if: always() && steps.agent-auto.outcome != 'skipped'
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
@@ -772,12 +773,20 @@ jobs:
           private-key: ${{ secrets.speckit-app-private-key }}
 
       - name: Refresh authenticated spec-branch remote (post-agent, auto)
+        id: refresh-remote-auto
         if: always() && steps.agent-auto.outcome != 'skipped'
         continue-on-error: true
-        shell: bash
-        run: |
-          git config --local --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
-          git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/${{ github.repository }}.git"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-refresh-remote
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+
+      - name: Determine post-agent credential status (auto)
+        id: credential-status-auto
+        if: always() && steps.agent-auto.outcome != 'skipped'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
+        with:
+          mint-outcome: ${{ steps.reestablish-auto.outcome }}
+          refresh-outcome: ${{ steps.refresh-remote-auto.outcome }}
 
       # deterministic, transcript-only verdict replacing the raw steps.agent-auto.outcome checks
       # -- see specs/037-agent-turn-budget-guard/data-model.md. Gated on
@@ -934,12 +943,12 @@ jobs:
       - name: Record agent-ran signal (pr)
         if: always() && steps.agent-pr.outcome != 'skipped'
         id: agent-ran-pr
-        shell: bash
-        run: |
-          echo "ran=true" >> "$GITHUB_OUTPUT"
-          echo "conclusion=${{ steps.agent-pr.conclusion }}" >> "$GITHUB_OUTPUT"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-ran-signal
+        with:
+          agent-outcome: ${{ steps.agent-pr.outcome }}
 
       - name: Re-establish Wing Commander context (post-agent, pr)
+        id: reestablish-pr
         if: always() && steps.agent-pr.outcome != 'skipped'
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
@@ -948,12 +957,20 @@ jobs:
           private-key: ${{ secrets.speckit-app-private-key }}
 
       - name: Refresh authenticated spec-branch remote (post-agent, pr)
+        id: refresh-remote-pr
         if: always() && steps.agent-pr.outcome != 'skipped'
         continue-on-error: true
-        shell: bash
-        run: |
-          git config --local --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
-          git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/${{ github.repository }}.git"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-refresh-remote
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+
+      - name: Determine post-agent credential status (pr)
+        id: credential-status-pr
+        if: always() && steps.agent-pr.outcome != 'skipped'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
+        with:
+          mint-outcome: ${{ steps.reestablish-pr.outcome }}
+          refresh-outcome: ${{ steps.refresh-remote-pr.outcome }}
 
       - name: Compute agent run verdict (pr)
         id: agent-pr-verdict

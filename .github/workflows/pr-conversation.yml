@@ -409,6 +409,8 @@ jobs:
       refusal-reason: ${{ steps.identity.outputs.reason || steps.preflight.outputs.reason || steps.meta.outputs.reason }}
       agent-ran: ${{ steps.agent-ran.outputs.ran }}
       agent-conclusion: ${{ steps.agent-ran.outputs.conclusion }}
+      credential-refresh-ok: ${{ steps.credential-status.outputs.ok }}
+      failed-post-agent-step: ${{ steps.failed-step.outputs.step }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v5
@@ -937,18 +939,28 @@ jobs:
       - name: Record agent-ran signal
         if: always() && steps.agent.outcome != 'skipped'
         id: agent-ran
-        shell: bash
-        run: |
-          echo "ran=true" >> "$GITHUB_OUTPUT"
-          echo "conclusion=${{ steps.agent.conclusion }}" >> "$GITHUB_OUTPUT"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-ran-signal
+        with:
+          agent-outcome: ${{ steps.agent.outcome }}
 
       - name: Re-establish Wing Commander context (post-agent)
+        id: reestablish
         if: always() && steps.agent.outcome != 'skipped'
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
+
+      # No remote-refresh step here -- this job resolves spec-meta.json via
+      # the contents API rather than a checkout, so refresh-outcome defaults
+      # to 'success' (nothing else to refresh) -- see clarify.yml.
+      - name: Determine post-agent credential status
+        id: credential-status
+        if: always() && steps.agent.outcome != 'skipped'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
+        with:
+          mint-outcome: ${{ steps.reestablish.outcome }}
 
       # deterministic, transcript-only verdict (healthy/exhausted/failed/unclassifiable) replacing
       # the raw outcome check that continue-on-error above means can no longer be trusted alone --
@@ -1413,6 +1425,19 @@ jobs:
           tip=$(git ls-remote "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/heads/${SPEC_PREFIX}${SLUG}" | cut -f1)
           echo "sha=$tip" >> "$GITHUB_OUTPUT"
 
+      # FR-011: names the specific post-agent step that failed, for the
+      # stalled job to read instead of the generic "a step after it did not
+      # complete" -- see clarify.yml.
+      - name: Determine failed post-agent step
+        id: failed-step
+        if: always() && steps.agent.outcome != 'skipped'
+        shell: bash
+        env:
+          STEPS_JSON: ${{ toJSON(steps) }}
+        run: |
+          failed="$(printf '%s' "$STEPS_JSON" | jq -r 'to_entries | map(select(.value.outcome == "failure")) | .[-1].key // ""')"
+          echo "step=$failed" >> "$GITHUB_OUTPUT"
+
   # Executes each classification's route: fold-in + implement re-dispatch
   # (in-scope-change), new-issue/new-PR spin-offs (new-functionality,
   # small-unrelated-change, manual-step-permission's permission-request
@@ -1472,6 +1497,10 @@ jobs:
     outputs:
       agent-ran: ${{ steps.agent-ran.outputs.ran }}
       agent-conclusion: ${{ steps.agent-ran.outputs.conclusion }}
+      # No failed-post-agent-step output here: `act` has no stalled/survivor
+      # job wrapping it to read one (research.md D4, same status as
+      # plan.yml) -- see clarify.yml.
+      credential-refresh-ok: ${{ steps.credential-status.outputs.ok }}
     strategy:
       fail-fast: false
       # Legs are NOT run concurrently: two classifications from the SAME
@@ -2000,12 +2029,12 @@ jobs:
       - name: Record agent-ran signal
         if: always() && steps.agent.outcome != 'skipped'
         id: agent-ran
-        shell: bash
-        run: |
-          echo "ran=true" >> "$GITHUB_OUTPUT"
-          echo "conclusion=${{ steps.agent.conclusion }}" >> "$GITHUB_OUTPUT"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-ran-signal
+        with:
+          agent-outcome: ${{ steps.agent.outcome }}
 
       - name: Re-establish Wing Commander context (post-agent)
+        id: reestablish
         if: always() && steps.agent.outcome != 'skipped'
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
@@ -2014,12 +2043,20 @@ jobs:
           private-key: ${{ secrets.speckit-app-private-key }}
 
       - name: Refresh authenticated spec-branch remote (post-agent)
+        id: refresh-remote
         if: always() && steps.agent.outcome != 'skipped'
         continue-on-error: true
-        shell: bash
-        run: |
-          git config --local --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
-          git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/${{ github.repository }}.git"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-refresh-remote
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+
+      - name: Determine post-agent credential status
+        id: credential-status
+        if: always() && steps.agent.outcome != 'skipped'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
+        with:
+          mint-outcome: ${{ steps.reestablish.outcome }}
+          refresh-outcome: ${{ steps.refresh-remote.outcome }}
 
       - name: Compute agent run verdict
         id: agent-verdict
@@ -3048,6 +3085,9 @@ jobs:
             echo "issue-number=$issue"
           } >> "$GITHUB_OUTPUT"
 
+      # FR-004/FR-011: a credential re-establishment failure is named as
+      # such, ahead of the generic agent-ran branch; otherwise, a real
+      # post-agent step failure names the step -- see clarify.yml.
       - name: Determine which dependency did not start
         id: reason
         if: needs.classify-and-announce.outputs.refusal-reason == ''
@@ -3056,8 +3096,14 @@ jobs:
           JOB_RESULT: ${{ needs.classify-and-announce.result }}
           AGENT_RAN: ${{ needs.classify-and-announce.outputs.agent-ran }}
           AGENT_CONCLUSION: ${{ needs.classify-and-announce.outputs.agent-conclusion }}
+          CREDENTIAL_REFRESH_OK: ${{ needs.classify-and-announce.outputs.credential-refresh-ok }}
+          FAILED_STEP: ${{ needs.classify-and-announce.outputs.failed-post-agent-step }}
         run: |
-          if [ "$AGENT_RAN" = "true" ]; then
+          if [ "$AGENT_RAN" = "true" ] && [ "$CREDENTIAL_REFRESH_OK" = "false" ]; then
+            reason="the agent step ran (concluded: $AGENT_CONCLUSION) and the post-agent wing-commander-bot credential re-establishment failed (see the 'Determine post-agent credential status' step) -- treat the credential, not the agent or a downstream step, as the cause"
+          elif [ "$AGENT_RAN" = "true" ] && [ -n "$FAILED_STEP" ]; then
+            reason="the agent step ran (concluded: $AGENT_CONCLUSION) and the '$FAILED_STEP' step after it did not complete"
+          elif [ "$AGENT_RAN" = "true" ]; then
             reason="the agent step ran (concluded: $AGENT_CONCLUSION) and a step after it did not complete"
           elif [ "$IMAGE_RESULT" = "failure" ]; then
             reason="the verify-image-prerequisites job failed, so the pr-conversation stage never started"
@@ -3084,3 +3130,5 @@ jobs:
           # FR-015: resume-oriented wording when the agent ran and a step
           # after it is what stalled the job -- not a from-scratch restart.
           restart-command: ${{ needs.classify-and-announce.outputs.agent-ran == 'true' && 'The classify agent step ran to completion; a step after it did not. Re-dispatch the pr-conversation stage for this pull request once the cause above is resolved.' || 'Re-dispatch the pr-conversation stage for this pull request once the cause above is resolved.' }}
+          agent-ran: ${{ needs.classify-and-announce.outputs.agent-ran }}
+          agent-conclusion: ${{ needs.classify-and-announce.outputs.agent-conclusion }}
