@@ -2,7 +2,7 @@
   "issue": 345,
   "spec_dir": "specs/052-agent-credential-lifetime",
   "feature_num": "052",
-  "stage": "spec",
+  "stage": "plan",
   "iteration": 0,
-  "spec_branch": null
+  "spec_branch": "spec/052-agent-credential-lifetime"
 }
