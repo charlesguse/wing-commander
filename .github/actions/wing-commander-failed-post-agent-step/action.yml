@@ -6,29 +6,34 @@ name: wing-commander-failed-post-agent-step
 description: >
   Given an explicit, caller-ordered list of the job's own hard-failing
   (non-continue-on-error) post-agent steps and their conclusions, publishes
-  the id of the last one that actually failed the job (FR-011, SC-003).
-  The caller builds `candidates-json` from only the steps it knows can hard-
-  fail the job -- the agent step and any continue-on-error step (the
-  credential refresh/relay pair, the over-budget callout) are excluded by
-  construction, never by a runtime guess over the entire `steps` context.
+  the readable name of the last one that actually failed the job (FR-011,
+  SC-003) -- polish pass, third maintainer review of PR #407: the stall
+  notice used to print the bare step id (e.g. 'verdict-fail'), not a name a
+  reader recognizes. The caller builds `candidates-json` from only the
+  steps it knows can hard-fail the job -- the agent step and any
+  continue-on-error step (the credential refresh/relay pair, the
+  over-budget callout) are excluded by construction, never by a runtime
+  guess over the entire `steps` context.
 
 inputs:
   candidates-json:
     description: >
-      A JSON array of `{"id": "<step id>", "conclusion": "<conclusion>"}`
-      objects, listed in the same order the steps actually run in the job
-      (this composite does not, and cannot, read the caller's own `steps`
-      context to recover that order or to discover which steps exist --
-      GitHub Actions composite actions only see their own steps). Pass
-      `steps.<id>.conclusion`, never `.outcome`: `.conclusion` is the
-      result AFTER `continue-on-error` is applied, so a continue-on-error
-      step that raw-failed still reads "success" here and is correctly
-      never named as the cause.
+      A JSON array of `{"name": "<readable step name>", "conclusion":
+      "<conclusion>"}` objects, listed in the same order the steps
+      actually run in the job (this composite does not, and cannot, read
+      the caller's own `steps` context to recover that order or to
+      discover which steps exist -- GitHub Actions composite actions only
+      see their own steps). Pass `steps.<id>.conclusion`, never
+      `.outcome`: `.conclusion` is the result AFTER `continue-on-error` is
+      applied, so a continue-on-error step that raw-failed still reads
+      "success" here and is correctly never named as the cause. `name`
+      is each step's own `name:` field, not its `id:` -- what a reader of
+      the stall notice actually recognizes.
     required: true
 
 outputs:
   step:
-    description: "The id of the last candidate with conclusion == 'failure', or empty when none did."
+    description: "The readable name of the last candidate with conclusion == 'failure', or empty when none did."
     value: ${{ steps.determine.outputs.step }}
 
 runs:
@@ -40,5 +45,5 @@ runs:
       env:
         CANDIDATES_JSON: ${{ inputs.candidates-json }}
       run: |
-        failed="$(printf '%s' "$CANDIDATES_JSON" | jq -r 'map(select(.conclusion == "failure")) | .[-1].id // ""')"
+        failed="$(printf '%s' "$CANDIDATES_JSON" | jq -r 'map(select(.conclusion == "failure")) | .[-1].name // ""')"
         echo "step=$failed" >> "$GITHUB_OUTPUT"

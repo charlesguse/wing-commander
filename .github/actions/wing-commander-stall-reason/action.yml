@@ -4,12 +4,16 @@
 # .github/actions/wing-commander-context/action.yml.
 name: wing-commander-stall-reason
 description: >
-  Diagnoses why a gated stage's survivor job is running: a credential
-  re-establishment failure ahead of the generic agent-ran branch, a real
-  post-agent step failure naming the step, the generic agent-ran branch,
-  or (when the agent never ran at all) the pre-052 image/entry-result
-  diagnosis (FR-004, FR-011, SC-003) -- see clarify.yml for the call-site
-  convention every one of the six consuming stages follows.
+  Diagnoses why a gated stage's survivor job is running: a named
+  post-agent step failure (with the credential mentioned as context when
+  it also failed to re-establish), a credential-only re-establishment
+  failure when no step could be named, the generic agent-ran branch, or
+  (when the agent never ran at all) the pre-052 image/entry-result
+  diagnosis. A real, named failure always outranks the credential-only
+  branch -- third maintainer review of PR #407 found the credential
+  branch wrongly outranking a later, named failure (FR-004, FR-011,
+  SC-003) -- see clarify.yml for the call-site convention every one of
+  the six consuming stages follows.
 
 inputs:
   stage-name:
@@ -58,10 +62,12 @@ runs:
         CREDENTIAL_REFRESH_OK: ${{ inputs.credential-refresh-ok }}
         FAILED_STEP: ${{ inputs.failed-post-agent-step }}
       run: |
-        if [ "$AGENT_RAN" = "true" ] && [ "$CREDENTIAL_REFRESH_OK" = "false" ]; then
-          reason="the agent step ran (concluded: $AGENT_CONCLUSION) and the post-agent wing-commander-bot credential re-establishment failed (see the 'Determine post-agent credential status' step) -- treat the credential, not the agent or a downstream step, as the cause"
+        if [ "$AGENT_RAN" = "true" ] && [ -n "$FAILED_STEP" ] && [ "$CREDENTIAL_REFRESH_OK" = "false" ]; then
+          reason="the agent step ran (concluded: $AGENT_CONCLUSION); the credential could not be re-established, and step '$FAILED_STEP' failed after it"
         elif [ "$AGENT_RAN" = "true" ] && [ -n "$FAILED_STEP" ]; then
           reason="the agent step ran (concluded: $AGENT_CONCLUSION) and the '$FAILED_STEP' step after it did not complete"
+        elif [ "$AGENT_RAN" = "true" ] && [ "$CREDENTIAL_REFRESH_OK" = "false" ]; then
+          reason="the agent step ran (concluded: $AGENT_CONCLUSION) and the post-agent wing-commander-bot credential re-establishment failed (see the 'Determine post-agent credential status' step) -- treat the credential, not the agent or a downstream step, as the cause"
         elif [ "$AGENT_RAN" = "true" ]; then
           reason="the agent step ran (concluded: $AGENT_CONCLUSION) and a step after it did not complete"
         elif [ "$IMAGE_RESULT" = "failure" ]; then

@@ -1319,9 +1319,9 @@ jobs:
         with:
           candidates-json: >-
             [
-              {"id": "verify-agent-output", "conclusion": "${{ steps.verify-agent-output.conclusion }}"},
-              {"id": "verify-pr", "conclusion": "${{ steps.verify-pr.conclusion }}"},
-              {"id": "flip-label", "conclusion": "${{ steps.flip-label.conclusion }}"}
+              {"name": "Verify agent output", "conclusion": "${{ steps.verify-agent-output.conclusion }}"},
+              {"name": "Verify the final pull request was created", "conclusion": "${{ steps.verify-pr.conclusion }}"},
+              {"name": "Flip stage label", "conclusion": "${{ steps.flip-label.conclusion }}"}
             ]
 
   # Survivor job (the #224 idiom, research.md D4): new for finalize — this

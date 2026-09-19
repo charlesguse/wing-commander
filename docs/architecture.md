@@ -195,9 +195,15 @@ signal each live in their own shared composite under `.github/actions/`
 `wing-commander-agent-ran-signal`) — every call site invokes them rather
 than repeating the shell, so a fix to one lands everywhere at once. When the
 re-mint or the remote refresh does not succeed, `wing-commander-post-agent-
-credential-status` fails the job loudly right there, naming the credential
-as cause, instead of letting a stale credential surface later as a bare 401
-attributed to whichever unrelated step happens to run next.
+credential-status` never fails the job itself — a re-mint failure at this,
+the job's own last step, with every earlier step healthy, means the stage
+already did its work, and hard-failing here would report a false "stalled"
+outcome. It instead warns and publishes an `ok` output naming the credential
+as cause; `wing-commander-stall-reason`'s ok-first check reads it to
+attribute a later, real failure to the credential rather than to whichever
+unrelated step happens to run next — but a named post-agent step failure
+always outranks the credential-only diagnosis, mentioning the credential
+only as context when both are known (third maintainer review of PR #407).
 
 This remedy does not cover the credential an agent step itself pushes with
 while it is still running — only the steps that run after it. That residual

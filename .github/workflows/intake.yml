@@ -1295,9 +1295,9 @@ jobs:
         with:
           candidates-json: >-
             [
-              {"id": "verdict-fail", "conclusion": "${{ steps.verdict-fail.conclusion }}"},
-              {"id": "invalid-result", "conclusion": "${{ steps.invalid-result.conclusion }}"},
-              {"id": "unresolved-markers", "conclusion": "${{ steps.unresolved-markers.conclusion }}"}
+              {"name": "Fail loud on non-healthy agent verdict", "conclusion": "${{ steps.verdict-fail.conclusion }}"},
+              {"name": "Fail on invalid agent result", "conclusion": "${{ steps.invalid-result.conclusion }}"},
+              {"name": "Fail on unresolved clarification markers", "conclusion": "${{ steps.unresolved-markers.conclusion }}"}
             ]
 
   # Survivor job (the #224 idiom, research.md D4): new for intake — this

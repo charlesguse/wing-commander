@@ -64,13 +64,37 @@ runs an agent step by design):
    through `.github/actions/wing-commander-stall-reason` (second maintainer
    review of PR #407, CLAUDE.md single-home rule).
 7. Every agent step has its own refresh/agent-ran/credential-status
-   composite call, COUNTED BY `uses:` across the whole job rather than
-   matched by any one step's `name:` (REQUIRED_PER_AGENT_STEP_COMPOSITES,
-   exempting NO_REMOTE_REFRESH_JOBS from the refresh-remote leg where no
-   git remote is ever persisted in that job) -- second maintainer review of
-   PR #407, FR-020/FR-021 hole (a): deleting one of these steps, or
-   renaming it away from anything checks 2/5 recognized by name, used to
-   still pass Gates 68/69.
+   composite call, matched by `uses:` rather than any one step's `name:`
+   (REQUIRED_PER_AGENT_STEP_COMPOSITES, exempting NO_REMOTE_REFRESH_JOBS
+   from the refresh-remote leg where no git remote is ever persisted in
+   that job) -- second maintainer review of PR #407, FR-020/FR-021 hole
+   (a): deleting one of these steps, or renaming it away from anything
+   checks 2/5 recognized by name, used to still pass Gates 68/69. Checked
+   BY POSITION -- each agent step's own window, up to the next agent step
+   or the job's end -- not by a job-wide total (third maintainer review of
+   PR #407 hole (c)): a total alone cannot tell "each agent step has its
+   own call" from "one has two and another has none," e.g. duplicating an
+   earlier agent step's credential-status call while dropping a later
+   one's leaves the total unchanged.
+8. The "Determine failed post-agent step" composite call itself must exist
+   in each of the six entry jobs whose FAILED_STEP context a stall job
+   reads (FAILED_STEP_REQUIRED_JOBS) -- third maintainer review of PR #407,
+   Gate 68 hole (a): check 5 above only fires when a step named "Determine
+   failed post-agent step" is present, so deleting the step entirely, or
+   pasting its old inline jq back under an unrecognized step name, passed
+   every gate; this check requires the composite CALL to exist regardless
+   of what any step is named.
+9. No step BEFORE the job's first agent step relays a credential-shaped
+   value into `$GITHUB_ENV` under a name other than WC_BOT_TOKEN /
+   WC_SCRATCH_TOKEN (third maintainer review of PR #407, FR-020): a later
+   step reading that shadow variable -- before OR after the agent step --
+   would hold a token minted before the agent ran, without ever matching
+   check 1's direct `steps.<id>.outputs.token` reference pattern. Also
+   matches `env.WC_BOT_TOKEN`/`env.WC_SCRATCH_TOKEN` re-relayed under a
+   second name, and a bare `toJSON(steps.<id>)` / `toJSON(steps)` dump
+   (broader than check 1's `toJSON(...outputs)` -- the whole step result,
+   not just its outputs, still carries the token when the step IS the
+   mint).
 
 Static structure only (`yaml.safe_load`) -- this gate's subject is step
 *ordering and reference shape*, not step *behaviour*, so no
@@ -88,9 +112,12 @@ post-agent refresh deleted; a subject job's agent step replaced with a
 non-agent step; a single-home composite call reverted to a non-composite
 step (for each of the four single-homed step kinds); the refresh-remote
 step deleted entirely; the credential-status step renamed away from its
-recognized name with its `uses:` reverted; the subject list pointed at a
-9th nonexistent file; and the subject list emptied -- and asserts each one
-fails.
+recognized name with its `uses:` reverted; the "Determine failed
+post-agent step" step deleted outright (hole (a)); implement.yml's
+progress-agent-step credential-status call deleted while cycle's is
+duplicated, leaving the job-wide total unchanged (hole (c)); the subject
+list pointed at a 9th nonexistent file; and the subject list emptied --
+and asserts each one fails.
 
 Usage: python3 .github/scripts/verify-post-agent-credential-refresh.py [--self-test]
 """
@@ -123,6 +150,35 @@ TOKEN_REF_RE = re.compile(
     rf"|toJSON\({_STEP_REF}{_OUTPUTS_REF}\)",
     re.IGNORECASE)
 RELAY_STEP_NAME_RE = re.compile(r"^Relay\b.*token to the job environment", re.IGNORECASE)
+
+# Third maintainer review of PR #407 (FR-020): the hole check 1 does not
+# cover -- a step BEFORE the agent step relays a pre-agent-minted
+# credential-shaped value into $GITHUB_ENV under some name OTHER than the
+# two this feature's own relay uses (WC_BOT_TOKEN, WC_SCRATCH_TOKEN). Any
+# later step (before OR after the agent step) that reads that shadow
+# variable holds a token minted before the agent ran, evading the refresh
+# entirely without ever matching check 1's `steps.<id>.outputs.token`
+# pattern. ALLOWED_RELAY_VARS are the two names this feature's own design
+# legitimately relays through; GITHUB_ENV_ASSIGN_RE finds a `NAME=...`
+# write immediately feeding a `$GITHUB_ENV` append; SHADOW_TOKEN_SOURCE_RE
+# extends TOKEN_REF_RE with env.WC_BOT_TOKEN/env.WC_SCRATCH_TOKEN
+# (re-relaying an already-relayed token under a second name is just as
+# much a shadow copy) and a bare toJSON(steps.<id>) / toJSON(steps) dump
+# (broader than TOKEN_REF_RE's toJSON(....outputs) -- the whole step
+# result, not just its outputs, still carries the token when the step IS
+# the mint).
+ALLOWED_RELAY_VARS = {"WC_BOT_TOKEN", "WC_SCRATCH_TOKEN"}
+GITHUB_ENV_ASSIGN_RE = re.compile(
+    r'([A-Za-z_][A-Za-z0-9_]*)\s*=.*>>\s*"?\$GITHUB_ENV"?')
+_ENV_TOKEN_VAR_RE = (
+    r"env(?:\.(?:WC_BOT_TOKEN|WC_SCRATCH_TOKEN)\b"
+    r"|\[[\'\"](?:WC_BOT_TOKEN|WC_SCRATCH_TOKEN)[\'\"]\])")
+SHADOW_TOKEN_SOURCE_RE = re.compile(
+    TOKEN_REF_RE.pattern
+    + rf"|{_ENV_TOKEN_VAR_RE}"
+    + rf"|toJSON\({_STEP_REF}\)"
+    + r"|toJSON\(steps\)",
+    re.IGNORECASE)
 MINT_USES_MARKERS = ("wing-commander-context", "scoped-app-token")
 # Matches the base name and every "(cycle)"/"(retry)"/"(progress comment)"/
 # "(auto)"/"(pr)" per-agent-step variant (data-model.md's 12-row table) --
@@ -207,6 +263,27 @@ NO_REMOTE_REFRESH_JOBS = {
     # branch" step, so there is no persisted git remote credential to
     # refresh in this job either.
     (".github/workflows/pr-conversation.yml", "classify-and-announce"),
+}
+
+# Third maintainer review of PR #407, Gate 68 hole (a): nothing previously
+# required the "Determine failed post-agent step" step to exist at all --
+# check 5 (SINGLE_HOME_STEPS) only fires when a step matching that NAME is
+# present, so deleting the step entirely, or pasting the old inline jq
+# back under a different step name, passed every gate. This is the entry
+# job (not the survivor/stalled job) whose FAILED_STEP output the stall
+# path reads -- the same six jobs STALL_REASON_JOBS names, with
+# pr-conversation's and tasks.yml's survivor job translated to its own
+# entry job. 'act' (pr-conversation) and 'tasks-approved' are excluded:
+# neither has a survivor job wrapping it (tasks-approved is also agentless
+# -- AGENTLESS_JOBS -- so it has nothing to report as a failed post-agent
+# step in the first place).
+FAILED_STEP_REQUIRED_JOBS = {
+    ".github/workflows/clarify.yml": "clarify",
+    ".github/workflows/finalize.yml": "finalize",
+    ".github/workflows/implement.yml": "implement",
+    ".github/workflows/intake.yml": "intake",
+    ".github/workflows/pr-conversation.yml": "classify-and-announce",
+    ".github/workflows/tasks.yml": "tasks",
 }
 
 
@@ -306,6 +383,31 @@ def check_job(path, job_name, job):
                 f"resolve its credential through env.WC_BOT_TOKEN / "
                 f"env.WC_SCRATCH_TOKEN instead (FR-020 care point 1)")
 
+    # check 9 -- a step BEFORE the agent step relaying a pre-agent-minted
+    # credential-shaped value into $GITHUB_ENV under a name other than
+    # WC_BOT_TOKEN/WC_SCRATCH_TOKEN -- third maintainer review of PR #407,
+    # FR-020: any later step reading that shadow variable (before or after
+    # the agent step) holds a token minted before the agent ran, without
+    # ever matching check 1's direct steps.<id>.outputs.token pattern.
+    for step in steps[:first]:
+        if _is_relay_step(step):
+            continue
+        text = _step_text(step)
+        if not SHADOW_TOKEN_SOURCE_RE.search(text):
+            continue
+        for m in GITHUB_ENV_ASSIGN_RE.finditer(text):
+            varname = m.group(1)
+            if varname in ALLOWED_RELAY_VARS:
+                continue
+            name = (step or {}).get("name", "<unnamed step>")
+            failures.append(
+                f"{path} [{job_name}] pre-agent step {name!r} relays a "
+                f"credential-shaped value into env.{varname} via "
+                f"$GITHUB_ENV -- a later step reading env.{varname} would "
+                f"hold a token minted before the agent ran, evading the "
+                f"WC_BOT_TOKEN/WC_SCRATCH_TOKEN relay this feature "
+                f"requires (FR-020, third maintainer review of PR #407)")
+
     # check 2 -- every agent step is followed, before the NEXT agent step or
     # the end of the job (whichever comes first), by a fresh mint. Checking
     # only "between consecutive agent steps" (agent_idxs[1:]) missed the
@@ -325,21 +427,81 @@ def check_job(path, job_name, job):
                 f"care point 2)")
 
     # check 6 -- each agent step has its own refresh/agent-ran/credential-
-    # status composite call, counted by `uses:` (never by step `name:`, so a
+    # status composite call, matched by `uses:` (never by step `name:`, so a
     # rename can't hide a deletion) -- second maintainer review of PR #407,
-    # FR-020/FR-021 hole (a).
-    for marker, label in REQUIRED_PER_AGENT_STEP_COMPOSITES:
-        if marker == "wing-commander-refresh-remote" and (path, job_name) in NO_REMOTE_REFRESH_JOBS:
-            continue
-        n_calls = sum(1 for s in steps if marker in str((s or {}).get("uses", "")))
-        if n_calls < len(agent_idxs):
+    # FR-020/FR-021 hole (a). Checked by POSITION, not merely by a job-wide
+    # total (third maintainer review of PR #407 hole (c)): a job-wide count
+    # cannot tell "each agent step has its own call" from "one agent step
+    # has two and another has none" -- e.g. removing the LAST agent step's
+    # credential-status call while duplicating an EARLIER one's leaves the
+    # total unchanged. refresh-remote and agent-ran-signal each run
+    # immediately after their own agent step (contracts/
+    # wing-commander-context-relay.md's call-site convention), so their
+    # position check is "at least one call inside this agent step's own
+    # window" (same boundaries as check 2). credential-status is different
+    # BY DESIGN: it is deferred to the job's own last steps, after every
+    # business-logic/report step (review-step-gating self-review, spec
+    # 052's own T042/data-model.md), so in a multi-agent-step job all of a
+    # job's credential-status calls cluster at the END, never inside any
+    # individual agent step's window. Its "position" is therefore checked
+    # by REFERENCE, not by sequential order: each agent step's own mint
+    # step (found inside its window) must have some credential-status call,
+    # anywhere in the job, whose `mint-outcome` names that exact mint
+    # step's id -- the same reference a duplicated call cannot satisfy for
+    # more than one agent step, since ids are unique per agent step.
+    mint_id_re = re.compile(r"^[\w-]+$")
+    for idx, boundary in zip(agent_idxs, boundaries):
+        between = steps[idx + 1:boundary]
+        agent_name = (steps[idx] or {}).get("name", "<unnamed step>")
+        for marker, label in REQUIRED_PER_AGENT_STEP_COMPOSITES:
+            if marker == "wing-commander-post-agent-credential-status":
+                continue
+            if marker == "wing-commander-refresh-remote" and (path, job_name) in NO_REMOTE_REFRESH_JOBS:
+                continue
+            n_calls = sum(1 for s in between if marker in str((s or {}).get("uses", "")))
+            if n_calls < 1:
+                failures.append(
+                    f"{path} [{job_name}]: agent step {agent_name!r} has no "
+                    f"{marker} call between it and the next agent step or "
+                    f"the job's end -- each agent step needs its OWN {label} "
+                    f"composite call at that position, not merely a call "
+                    f"somewhere else in the job (FR-020, FR-021, third "
+                    f"maintainer review of PR #407 hole (c))")
+
+        mint_id = next(
+            ((s or {}).get("id") for s in between if _is_mint_step(s)), None)
+        if mint_id is None or not mint_id_re.match(str(mint_id)):
+            continue  # no mint id to cross-reference; check 2 already flags a missing mint.
+        mint_ref_re = re.compile(
+            rf"steps(?:\.{re.escape(mint_id)}\b"
+            rf"|\[[\'\"]{re.escape(mint_id)}[\'\"]\])")
+        referenced = any(
+            "wing-commander-post-agent-credential-status" in str((s or {}).get("uses", ""))
+            and mint_ref_re.search(_step_text(s))
+            for s in steps)
+        if not referenced:
             failures.append(
-                f"{path} [{job_name}]: found {n_calls} step(s) calling "
-                f"{marker} but {len(agent_idxs)} agent step(s) -- each "
-                f"agent step needs its own {label} composite call; deleting "
-                f"one, renaming it away from the composite, or pasting the "
-                f"block back as inline (non-composite) code all reduce this "
-                f"count (FR-020, FR-021)")
+                f"{path} [{job_name}]: agent step {agent_name!r}'s mint "
+                f"step (id: {mint_id!r}) is never referenced by any "
+                f"wing-commander-post-agent-credential-status call's "
+                f"mint-outcome anywhere in the job -- this agent step has "
+                f"no credential-status call of its OWN, even though the "
+                f"job-wide total may look sufficient (FR-020, FR-021, "
+                f"third maintainer review of PR #407 hole (c))")
+
+    # check 7 -- the "Determine failed post-agent step" composite call must
+    # actually exist in this job, not merely be well-formed when present --
+    # third maintainer review of PR #407, Gate 68 hole (a).
+    required_job = FAILED_STEP_REQUIRED_JOBS.get(path)
+    if required_job == job_name:
+        marker = "wing-commander-failed-post-agent-step"
+        if not any(marker in str((s or {}).get("uses", "")) for s in steps):
+            failures.append(
+                f"{path} [{job_name}]: no step calls the {marker} "
+                f"composite -- the stall path's FAILED_STEP context is "
+                f"unreachable if this step is deleted or pasted back "
+                f"under a different, uncalled shape (FR-020, FR-021, "
+                f"third maintainer review of PR #407 hole (a))")
 
     return failures, len(agent_idxs)
 
@@ -492,6 +654,25 @@ def mut_full_bracket_credential_reference(loaded):
     step["with"]["token"] = "${{ steps['ctx']['outputs']['token'] }}"
 
 
+def mut_shadow_env_relay(loaded):
+    """Third maintainer review of PR #407 (FR-020): a pre-agent step
+    relaying the pre-agent-minted token into a $GITHUB_ENV variable other
+    than WC_BOT_TOKEN/WC_SCRATCH_TOKEN must be caught -- a later step
+    reading it would hold a stale credential without ever matching check
+    1's direct steps.<id>.outputs.token pattern."""
+    job = loaded[".github/workflows/clarify.yml"]["jobs"]["clarify"]
+    steps = job["steps"]
+    ctx_idx = next((i for i, s in enumerate(steps) if (s or {}).get("id") == "ctx"), None)
+    assert ctx_idx is not None, "fixture assumption broken: ctx step renamed/moved"
+    shadow_step = {
+        "name": "Stash a spare copy of the token",
+        "shell": "bash",
+        "env": {"OLD_TOKEN": "${{ steps.ctx.outputs.token }}"},
+        "run": 'echo "STASHED_TOKEN=$OLD_TOKEN" >> "$GITHUB_ENV"\n',
+    }
+    steps.insert(ctx_idx + 1, shadow_step)
+
+
 def mut_drop_retry_progress_refresh(loaded):
     job = loaded[".github/workflows/implement.yml"]["jobs"]["implement"]
     steps = job["steps"]
@@ -564,6 +745,50 @@ def mut_failed_step_single_home_reverted(loaded):
     assert "wing-commander-failed-post-agent-step" in str(step.get("uses", "")), \
         "fixture assumption broken: composite already not called"
     step["uses"] = "actions/checkout@v5"
+
+
+def mut_failed_step_deleted_entirely(loaded):
+    """Hole (a): deleting the 'Determine failed post-agent step' step
+    outright (not merely reverting its `uses:`) must fail -- check 5 alone
+    only inspects a step that still exists under the recognized name."""
+    job = loaded[".github/workflows/clarify.yml"]["jobs"]["clarify"]
+    steps = job["steps"]
+    name = "Determine failed post-agent step"
+    idx = next((i for i, s in enumerate(steps) if (s or {}).get("name") == name), None)
+    assert idx is not None, "fixture assumption broken: step renamed"
+    del steps[idx]
+
+
+def mut_failed_step_pasted_under_new_name(loaded):
+    """Hole (a): the old inline jq pasted back under an unrecognized step
+    name (no `uses:` at all) must still fail -- check 7 requires the
+    composite CALL to exist, regardless of what any step is named."""
+    job = loaded[".github/workflows/clarify.yml"]["jobs"]["clarify"]
+    step = _find_step(job, "Determine failed post-agent step")
+    assert step is not None, "fixture assumption broken: step renamed"
+    step["name"] = "Compute the step that failed"
+    step.pop("uses", None)
+    step.pop("with", None)
+    step["run"] = "echo step=$(echo)>> \"$GITHUB_OUTPUT\""
+
+
+def mut_credential_status_position_swap(loaded):
+    """Hole (c): implement.yml's progress-agent-step credential-status call
+    deleted while cycle's is duplicated -- the job-wide TOTAL stays the
+    same (3 calls either way), so only a position-aware check catches
+    that the progress agent step's own window now has zero."""
+    job = loaded[".github/workflows/implement.yml"]["jobs"]["implement"]
+    steps = job["steps"]
+    progress_idx = next((i for i, s in enumerate(steps)
+                         if (s or {}).get("name") == "Determine post-agent credential status (progress)"), None)
+    cycle_idx = next((i for i, s in enumerate(steps)
+                      if (s or {}).get("name") == "Determine post-agent credential status (cycle)"), None)
+    assert progress_idx is not None, "fixture assumption broken: step renamed"
+    assert cycle_idx is not None, "fixture assumption broken: step renamed"
+    dup = copy.deepcopy(steps[cycle_idx])
+    dup["id"] = "credential-status-cycle-dup"
+    del steps[progress_idx]
+    steps.insert(cycle_idx + 1, dup)
 
 
 def mut_stall_reason_single_home_reverted(loaded):
@@ -657,6 +882,15 @@ SIMPLE_MUTATIONS = [
     ("the credential-status step renamed away from its recognized name "
      "and its uses: reverted to a non-composite step",
      mut_credential_status_renamed_and_reverted),
+    ("the 'Determine failed post-agent step' step deleted outright",
+     mut_failed_step_deleted_entirely),
+    ("the old inline jq pasted back under an unrecognized step name with "
+     "no uses: at all", mut_failed_step_pasted_under_new_name),
+    ("implement.yml's progress-agent-step credential-status call deleted "
+     "while cycle's is duplicated (job-wide total unchanged)",
+     mut_credential_status_position_swap),
+    ("a pre-agent step relaying the pre-agent token into a $GITHUB_ENV "
+     "variable other than WC_BOT_TOKEN/WC_SCRATCH_TOKEN", mut_shadow_env_relay),
 ]
 
 SUBJECT_MUTATIONS = [

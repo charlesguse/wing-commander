@@ -35,14 +35,20 @@ reads `WC_BOT_TOKEN` (FR-025's compatibility requirement).
   composite call — CLAUDE.md single-home rule) rather than an inline `run:`
   block repeated at every call site.
 - A fourth step, `wing-commander-post-agent-credential-status`, follows:
-  given steps 2 and 3's own outcomes, it fails loud (no
-  `continue-on-error`) naming the credential as cause when either did not
-  succeed, and publishes a job-scoped `credential-refresh-ok` output for
-  the stall path to read (FR-004, contracts/agent-ran-signal.md). This
-  step is deferred to the job's own last steps — after every
-  business-logic/report step the agent step's own success gates, not
-  immediately after step 3 — so its hard exit cannot strand any of them
-  (review-step-gating self-review).
+  given steps 2 and 3's own outcomes, it never fails the job itself
+  (second maintainer review of PR #407) — a re-mint failure at this, the
+  job's own last step, with every earlier step healthy, means the stage
+  already did its work, so hard-failing here would report a false
+  "stalled" outcome. It instead warns, naming the credential as cause when
+  either did not succeed, and publishes a job-scoped `credential-refresh-
+  ok` output for the stall path to read (FR-004, contracts/agent-ran-
+  signal.md) — `wing-commander-stall-reason`'s ok-first check is what
+  attributes a *later, real* failure to the credential, and a named
+  post-agent step failure always outranks this credential-only diagnosis
+  (third maintainer review of PR #407). This step is deferred to the
+  job's own last steps — after every business-logic/report step the agent
+  step's own success gates, not immediately after step 3 — so a warning
+  here cannot strand any of them (review-step-gating self-review).
 - Steps 1-3 (and the deferred step 4) use `if: "!cancelled() && ..."`, not
   `if: "always() && ..."`: a run cancelled during the agent step must not
   still perform a network mint or a remote rewrite in the cancel window

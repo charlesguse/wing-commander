@@ -419,11 +419,13 @@ jobs:
       # what git's http transport actually authenticates with, then
       # `git remote set-url`s the fresh token in — not a second checkout, so
       # an agent's possibly-uncommitted working tree is never disturbed);
-      # and `wing-commander-post-agent-credential-status` (no
-      # continue-on-error — fails the job right here, naming the credential
-      # as cause, when either of the previous two composites did not
-      # succeed, so a stale credential never surfaces later as a bare 401
-      # attributed to an unrelated downstream step). Single home for all
+      # and `wing-commander-post-agent-credential-status` (never fails the
+      # job itself — warns and publishes an `ok` output naming the
+      # credential as cause when either of the previous two composites did
+      # not succeed, so `wing-commander-stall-reason`'s ok-first check can
+      # attribute a later, real failure to the credential instead of an
+      # unrelated downstream step, without reporting a false "stalled"
+      # outcome for a run whose earlier steps all succeeded). Single home for all
       # four composites: .github/actions/wing-commander-*/action.yml — the
       # other 7 sweep-stage workflows point here instead of repeating this
       # paragraph. docs/architecture.md's "Identity & chaining" section
@@ -1071,9 +1073,9 @@ jobs:
         with:
           candidates-json: >-
             [
-              {"id": "api-error", "conclusion": "${{ steps.api-error.conclusion }}"},
-              {"id": "verdict-fail", "conclusion": "${{ steps.verdict-fail.conclusion }}"},
-              {"id": "unresolved-markers", "conclusion": "${{ steps.unresolved-markers.conclusion }}"}
+              {"name": "Fail on agent API error", "conclusion": "${{ steps.api-error.conclusion }}"},
+              {"name": "Fail loud on non-healthy agent verdict", "conclusion": "${{ steps.verdict-fail.conclusion }}"},
+              {"name": "Fail on unresolved clarification markers", "conclusion": "${{ steps.unresolved-markers.conclusion }}"}
             ]
 
   # Survivor job (the #224 idiom, research.md D4): new for clarify — this

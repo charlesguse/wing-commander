@@ -158,6 +158,28 @@ def check_dependency_reason_branch():
                 f"'false' did not attribute the stall to the credential: "
                 f"{reason!r}")
 
+        # Third maintainer review of PR #407 (FR-004): when both a named
+        # post-agent step failure AND a credential re-establishment failure
+        # are known, the named failure must win precedence -- the credential
+        # is context, not the primary cause -- and both facts must appear.
+        rc, _out, outputs, _summary = run_step(
+            bash, script, workdir,
+            {"STAGE_NAME": "implement", "IMAGE_RESULT": "success",
+             "ENTRY_RESULT": "failure",
+             "AGENT_RAN": "true", "AGENT_CONCLUSION": "success",
+             "CREDENTIAL_REFRESH_OK": "false", "FAILED_STEP": "push"},
+            runner_temp)
+        reason = outputs.get("reason", "")
+        if "'push'" not in reason:
+            failures.append(
+                f"{DEPENDENCY_STEP_NAME!r} with both a named failed step and "
+                f"a credential failure did not name the step: {reason!r}")
+        if "credential" not in reason:
+            failures.append(
+                f"{DEPENDENCY_STEP_NAME!r} with both a named failed step and "
+                f"a credential failure dropped the credential context: "
+                f"{reason!r}")
+
         rc, _out, outputs, _summary = run_step(
             bash, script, workdir,
             {"STAGE_NAME": "implement", "IMAGE_RESULT": "success",

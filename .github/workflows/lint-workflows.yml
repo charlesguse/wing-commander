@@ -3603,9 +3603,16 @@ jobs:
       # steps run. Every agent-bearing job in the 8 sweep stages relays its
       # mint into env.WC_BOT_TOKEN / env.WC_SCRATCH_TOKEN and re-mints it
       # immediately after each agent step; this asserts no post-agent step
-      # reads the stale steps.<id>.outputs.token form, no second agent step
-      # in a job runs unrefreshed, and every "Report over-budget agent run"
-      # copy carries continue-on-error: true.
+      # reads the stale steps.<id>.outputs.token form (nor a pre-agent step's
+      # $GITHUB_ENV relay of one under a different name), no agent step in a
+      # job runs unrefreshed, every "Report over-budget agent run" copy
+      # carries continue-on-error: true, the agent-ran-signal/refresh-
+      # remote/failed-post-agent-step/stall-reason steps all resolve through
+      # their one shared composite home (never a re-pasted inline block, and
+      # never simply absent), and each agent step's own composite calls are
+      # checked by position, not merely by a job-wide total -- see
+      # verify-post-agent-credential-refresh.py's own docstring (checks 1-9)
+      # for the current, authoritative list.
       - name: Gate 68 — every post-agent step holds a fresh credential and every observability callout is tolerated
         if: "!cancelled()"
         run: python3 .github/scripts/verify-post-agent-credential-refresh.py

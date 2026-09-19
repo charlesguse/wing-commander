@@ -1444,8 +1444,8 @@ jobs:
         with:
           candidates-json: >-
             [
-              {"id": "schema-check", "conclusion": "${{ steps.schema-check.conclusion }}"},
-              {"id": "verdict-fail", "conclusion": "${{ steps.verdict-fail.conclusion }}"}
+              {"name": "Fail on agent API error", "conclusion": "${{ steps.schema-check.conclusion }}"},
+              {"name": "Fail loud on non-healthy agent verdict", "conclusion": "${{ steps.verdict-fail.conclusion }}"}
             ]
 
   # Executes each classification's route: fold-in + implement re-dispatch

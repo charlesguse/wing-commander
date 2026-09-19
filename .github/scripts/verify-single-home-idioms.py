@@ -39,15 +39,23 @@ SIX CHECKS, per contracts/single-home-gate.md (plus a spec 052 addition)
 
 1b. extraheader-refresh (spec 052, second maintainer review of PR #407,
     FR-020/FR-021 hole (a) -- "add the extraheader/set-url origin idiom to
-    Gate 60 as the one-home check CLAUDE.md asks for"): literal
-    co-occurrence, in one file, of the two fragments unique to
+    Gate 60 as the one-home check CLAUDE.md asks for"): co-occurrence, in
+    one file, of the `git remote set-url origin` fragment and a regex
+    match for the extraheader-unset idiom unique to
     wing-commander-refresh-remote's own shell -- clearing
     actions/checkout@v5's persisted `http.https://github.com/.extraheader`
     entry before rewriting the remote URL (research.md D2's correction).
     Verified empirically that "git remote set-url origin" alone, without
     the extraheader-clear fragment, appears in two unrelated legitimate
     idioms already (orphan-branch-reset, a test script), so co-occurrence
-    -- not the bare set-url fragment -- is what this check keys on.
+    -- not the bare set-url fragment -- is what this check keys on. The
+    extraheader-unset side matches by regex, not literal string (third
+    maintainer review of PR #407, FR-020/FR-021 hole (b)): the original
+    literal fragment required `--local` and double-quoting the config key
+    exactly as wing-commander-refresh-remote spells it, so `git config
+    --unset-all http.https://github.com/.extraheader` (no `--local`, no
+    quotes) -- the same idiom, a different but equally valid spelling --
+    evaded it.
 
 2. failure-issue: co-occurrence of a `gh label create ... --force` call
    and a `gh issue list ... --label "..." --state open --json number --jq
@@ -157,6 +165,17 @@ EXTRAHEADER_FRAGMENTS = (
     'git config --local --unset-all "http.https://github.com/.extraheader"',
     "git remote set-url origin",
 )
+# Third maintainer review of PR #407 (FR-020/FR-021 hole (b)): the literal
+# fragment above depends on an exact spelling -- `--local` present and the
+# config key double-quoted. `git config --unset-all
+# http.https://github.com/.extraheader` (no `--local`, no quotes) is the
+# same idiom and evaded the literal-string check entirely. This regex
+# matches the unset-all fragment regardless of `--local` and quoting; the
+# `git remote set-url origin` fragment needs no such tolerance (it has no
+# optional flag or quoting variant in this repo's shell style).
+EXTRAHEADER_UNSET_RE = re.compile(
+    r'git config(?:\s+--local)?\s+--unset-all\s+"?'
+    r'http\.https://github\.com/\.extraheader"?')
 LABEL_CREATE_RE = re.compile(r"gh label create\b[^\n]*--force")
 ISSUE_LOOKUP_RE = re.compile(
     r"gh issue list\b[^\n]*--label\b[^\n]*--state open\b[^\n]*"
@@ -258,10 +277,10 @@ def check_extraheader_refresh(root="."):
         if path == home:
             continue
         text = read(root, path)
-        if all(frag in text for frag in EXTRAHEADER_FRAGMENTS):
-            offset = text.index(EXTRAHEADER_FRAGMENTS[0])
-            findings.append(Finding(path, "extraheader-refresh", line_of(text, offset),
-                                    EXTRAHEADER_FRAGMENTS[0]))
+        m = EXTRAHEADER_UNSET_RE.search(text)
+        if m and EXTRAHEADER_FRAGMENTS[1] in text:
+            findings.append(Finding(path, "extraheader-refresh", line_of(text, m.start()),
+                                    m.group(0)))
     return findings
 
 
@@ -886,6 +905,17 @@ def run_selftest():
         "      - shell: bash\n        run: |\n"
         "          git config --local --unset-all "
         "\"http.https://github.com/.extraheader\" 2>/dev/null || true\n"
+        "          git remote set-url origin "
+        "\"https://x-access-token:${TOKEN}@github.com/repo.git\"\n")
+    # Third maintainer review of PR #407 (FR-020/FR-021 hole (b)): the same
+    # idiom, spelled without `--local` and without quoting the config key,
+    # must be caught too -- not only the exact spelling the composite uses.
+    selftest_third_paste_fails(
+        "extraheader-refresh", ".github/workflows/third-extraheader-bare.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          git config --unset-all "
+        "http.https://github.com/.extraheader 2>/dev/null || true\n"
         "          git remote set-url origin "
         "\"https://x-access-token:${TOKEN}@github.com/repo.git\"\n")
     selftest_third_paste_fails(

@@ -431,14 +431,17 @@ jobs:
       # resolve-spec's own refusal too -- see specs/041-implement-stall-notice/research.md D3.
       refusal-reason: ${{ needs.resolve-spec.outputs.refusal-reason || steps.preflight.outputs.reason }}
       agent-ran: ${{ steps.agent-ran-auto.outputs.ran || steps.agent-ran-pr.outputs.ran }}
-      # Second maintainer review of PR #407 (FR-010, FR-011): a plain `||`
-      # chain returns the first non-empty value, which could silently hide
-      # one mode's failure behind the other's success -- see implement.yml's
-      # copy of this note. auto/pr are mutually exclusive per run, so at
-      # most one side is ever non-empty, but the any-failure-wins guard
-      # keeps this expression correct regardless of that invariant holding.
-      agent-conclusion: ${{ (steps.agent-ran-auto.outputs.conclusion == 'failure' || steps.agent-ran-pr.outputs.conclusion == 'failure') && 'failure' || (steps.agent-ran-auto.outputs.conclusion || steps.agent-ran-pr.outputs.conclusion) }}
-      credential-refresh-ok: ${{ (steps.credential-status-auto.outputs.ok == 'false' || steps.credential-status-pr.outputs.ok == 'false') && 'false' || (steps.credential-status-auto.outputs.ok || steps.credential-status-pr.outputs.ok) }}
+      # Third maintainer review of PR #407 (FR-010, FR-011): the second
+      # review's any-failure-wins formula (kept below as a record-only
+      # output) overstates failure once a later chain heals an earlier one
+      # -- see implement.yml's copy of this note. auto/pr are mutually
+      # exclusive per run, so at most one side is ever non-empty here, but
+      # the primary output still uses the same most-recent-wins `||` as
+      # agent-ran above, for the same reason implement.yml does.
+      agent-conclusion: ${{ steps.agent-ran-auto.outputs.conclusion || steps.agent-ran-pr.outputs.conclusion }}
+      credential-refresh-ok: ${{ steps.credential-status-auto.outputs.ok || steps.credential-status-pr.outputs.ok }}
+      agent-any-failure: ${{ (steps.agent-ran-auto.outputs.conclusion == 'failure' || steps.agent-ran-pr.outputs.conclusion == 'failure') && 'true' || 'false' }}
+      credential-any-refresh-failure: ${{ (steps.credential-status-auto.outputs.ok == 'false' || steps.credential-status-pr.outputs.ok == 'false') && 'true' || 'false' }}
       failed-post-agent-step: ${{ steps.failed-step.outputs.step }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
@@ -1240,11 +1243,11 @@ jobs:
         with:
           candidates-json: >-
             [
-              {"id": "verdict-fail-auto", "conclusion": "${{ steps.verdict-fail-auto.conclusion }}"},
-              {"id": "verdict-fail-pr", "conclusion": "${{ steps.verdict-fail-pr.conclusion }}"},
-              {"id": "verify-tasks-auto", "conclusion": "${{ steps.verify-tasks-auto.conclusion }}"},
-              {"id": "verify-tasks-pr", "conclusion": "${{ steps.verify-tasks-pr.conclusion }}"},
-              {"id": "flip-label", "conclusion": "${{ steps.flip-label.conclusion }}"}
+              {"name": "Fail loud on non-healthy agent verdict (auto)", "conclusion": "${{ steps.verdict-fail-auto.conclusion }}"},
+              {"name": "Fail loud on non-healthy agent verdict (pr)", "conclusion": "${{ steps.verdict-fail-pr.conclusion }}"},
+              {"name": "Verify tasks committed (auto)", "conclusion": "${{ steps.verify-tasks-auto.conclusion }}"},
+              {"name": "Verify tasks PR (pr)", "conclusion": "${{ steps.verify-tasks-pr.conclusion }}"},
+              {"name": "Flip stage label", "conclusion": "${{ steps.flip-label.conclusion }}"}
             ]
 
   # mode: approved — a tasks PR merged by a maintainer is the review-mode

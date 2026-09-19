@@ -57,17 +57,28 @@ start" step (spec 041's `id: reason`), two new branches are inserted ahead
 of the existing fallback (corrected from this contract's original single-
 branch design — maintainer review of PR #407, FR-004/FR-011/SC-003):
 
+A named failure always outranks the credential-only diagnosis (third
+maintainer review of PR #407: the original precedence had the credential
+branch wrongly outrank a real, later, named failure and discard the named
+step when both were known):
+
 ```text
+when needs.<entry-job>.outputs.agent-ran == 'true'
+ and needs.<entry-job>.outputs.failed-post-agent-step is non-empty
+ and needs.<entry-job>.outputs.credential-refresh-ok == 'false':
+    reason = "the agent step ran (concluded: <agent-conclusion>); the
+              credential could not be re-established, and step
+              '<failed-post-agent-step>' failed after it"
+when needs.<entry-job>.outputs.agent-ran == 'true'
+ and needs.<entry-job>.outputs.failed-post-agent-step is non-empty:
+    reason = "the agent step ran (concluded: <agent-conclusion>) and the
+              '<failed-post-agent-step>' step after it did not complete"
 when needs.<entry-job>.outputs.agent-ran == 'true'
  and needs.<entry-job>.outputs.credential-refresh-ok == 'false':
     reason = "the agent step ran (concluded: <agent-conclusion>) and the
               post-agent wing-commander-bot credential re-establishment
               failed ... -- treat the credential, not the agent or a
               downstream step, as the cause"
-when needs.<entry-job>.outputs.agent-ran == 'true'
- and needs.<entry-job>.outputs.failed-post-agent-step is non-empty:
-    reason = "the agent step ran (concluded: <agent-conclusion>) and the
-              '<failed-post-agent-step>' step after it did not complete"
 when needs.<entry-job>.outputs.agent-ran == 'true':
     reason = "the agent step ran (concluded: <agent-conclusion>) and a
               step after it did not complete"
@@ -78,12 +89,25 @@ else:
 
 `credential-refresh-ok` is published by `wing-commander-post-agent-
 credential-status` (a new step deferred to each job's own last steps, after
-every business-logic/report step, so its hard exit on a credential failure
-cannot strand them — review-step-gating self-review). `failed-post-agent-
-step` is published by a new job-final "Determine failed post-agent step"
-step, which reads `toJSON(steps)` for the last step with `outcome ==
-'failure'` — it must be the job's actual last step, since the `steps`
-context only carries the outcomes of steps that already ran by that point.
+every business-logic/report step). That composite never fails the job
+itself (second maintainer review of PR #407) — it warns and publishes
+`ok=false` when the re-mint or refresh did not succeed, since a transient
+failure at this, the job's own last step, with every earlier step healthy,
+means the stage already did its work; hard-failing would report a false
+"stalled" outcome for a run that succeeded. `failed-post-agent-step` is
+published by the shared `wing-commander-failed-post-agent-step` composite
+(third maintainer review of PR #407, replacing the original design's
+`toJSON(steps)` scan, which could exceed Linux's 128 KiB per-env-var limit
+in `implement.yml`'s 87-step job and assumed `steps` serializes in
+execution order): each call site supplies an explicit, ordered list of
+`{name, conclusion}` candidates — its own hard-failing (non-`continue-on-
+error`) steps, named by their own `name:` field (a further polish pass,
+also third maintainer review, replaced the bare step id the stall notice
+used to print with this readable name) — and the composite selects the
+LAST one whose `.conclusion == "failure"`, excluding the agent step itself
+so it is never misnamed as the cause. It is still the job's actual last
+step, since the `steps` context only carries the outcomes of steps that
+already ran by that point.
 
 The chain-stop notice's "stage did not start" body (spec 041's rendering,
 `wing-commander-chain-stop-notice`) is passed this reason string as-is —

@@ -476,3 +476,45 @@ six existing survivor jobs, the over-budget population, the gate's
 structural-fixture design, the canonical-documentation placement, scratch-
 token as a second credential, and the follow-up issue's filing point) is
 overturned by this review — only the specific mechanics listed above.
+
+## D10a — Further corrections from the second and third maintainer reviews of PR #407
+
+**Decision**: two of D10's own mechanics did not survive later review; this
+entry records what changed on top of D10, same convention.
+
+- **D10's "fails loud" was wrong too.** The second review found that a
+  transient re-mint failure at `wing-commander-post-agent-credential-
+  status`'s own step — the job's last one, every earlier step already
+  healthy — hard-failing there reports a false "stalled" outcome for a run
+  that already did its work. The composite now never fails the job: it
+  emits `::warning::` naming the credential as cause, and publishes
+  `ok=false`. `wing-commander-stall-reason`'s ok-first check is what
+  attributes a *later, real* failure to the credential; a run whose later
+  steps all succeeded despite the warning stays green.
+- **D10's `toJSON(steps)` was replaced.** "Determine failed post-agent
+  step" does not read the whole `steps` context (it can exceed Linux's
+  128 KiB per-env-var limit in `implement.yml`'s 87-step job, and `steps`
+  is not guaranteed to serialize in execution order). It is now the
+  `wing-commander-failed-post-agent-step` composite, given an explicit,
+  caller-supplied ordered list of `{name, conclusion}` candidates — every
+  genuinely hard-failing (non-`continue-on-error`) step at each call site
+  is named by its own `name:` field (a readable name, not its `id:` — a
+  polish-pass correction, also third review, since the stall notice used
+  to print the bare id) — and it selects the last one on `.conclusion ==
+  "failure"`, excluding the agent step itself, so a tolerated
+  `continue-on-error` step or the agent step is never misnamed as the
+  cause.
+- **The credential branch's precedence was backwards.** The third review
+  found `wing-commander-stall-reason` checking `credential-refresh-ok ==
+  'false'` *ahead of* a named `failed-post-agent-step`, so a stage that
+  failed for an unrelated, already-identified reason while an earlier
+  re-mint also happened to warn was wrongly blamed on the credential; the
+  branch also discarded the named step when both were known. A named
+  failure now always outranks the credential-only diagnosis; when both are
+  known, the reason names the step and mentions the credential as context
+  (`"the credential could not be re-established, and step '<step>' failed
+  after it"`) rather than picking one.
+
+D10's own closing statement (none of D1-D9's underlying reasoning
+overturned) still holds; this entry narrows two of D10's own corrections,
+not the original design.

@@ -372,14 +372,21 @@ jobs:
       refusal-reason: ${{ steps.preflight.outputs.reason || steps.spec.outputs.reason || steps.meta.outputs.reason }}
       # Most-recent-agent-step-that-ran wins, by construction.
       agent-ran: ${{ steps.agent-ran-progress.outputs.ran || steps.agent-ran-retry.outputs.ran || steps.agent-ran-cycle.outputs.ran }}
-      # Second maintainer review of PR #407 (FR-010, FR-011): a plain `||`
-      # chain returns the first non-empty value scanning most-recent-first,
-      # so a later chain's success silently hid an earlier chain's failure
-      # instead of surfacing it. Any 'failure'/'false' among the chains that
-      # actually ran now wins outright; only when none did does the
-      # most-recent-wins fallback apply.
-      agent-conclusion: ${{ (steps.agent-ran-progress.outputs.conclusion == 'failure' || steps.agent-ran-retry.outputs.conclusion == 'failure' || steps.agent-ran-cycle.outputs.conclusion == 'failure') && 'failure' || (steps.agent-ran-progress.outputs.conclusion || steps.agent-ran-retry.outputs.conclusion || steps.agent-ran-cycle.outputs.conclusion) }}
-      credential-refresh-ok: ${{ (steps.credential-status-progress.outputs.ok == 'false' || steps.credential-status-retry.outputs.ok == 'false' || steps.credential-status-cycle.outputs.ok == 'false') && 'false' || (steps.credential-status-progress.outputs.ok || steps.credential-status-retry.outputs.ok || steps.credential-status-cycle.outputs.ok) }}
+      # Third maintainer review of PR #407 (FR-010, FR-011): the second
+      # review's any-failure-wins formula (below, kept as a record-only
+      # output) overstated failure after a later chain healed an earlier
+      # one -- a cycle that concluded 'failure' and was then healed by a
+      # successful retry still reported 'failure'/credential-refresh-
+      # ok=false for the job, so an unrelated later stall wrongly blamed
+      # the agent step or the credential. The primary output the stall
+      # path reads is the LAST chain that actually ran, by construction
+      # (most-recent-wins `||`, same convention as agent-ran above).
+      agent-conclusion: ${{ steps.agent-ran-progress.outputs.conclusion || steps.agent-ran-retry.outputs.conclusion || steps.agent-ran-cycle.outputs.conclusion }}
+      credential-refresh-ok: ${{ steps.credential-status-progress.outputs.ok || steps.credential-status-retry.outputs.ok || steps.credential-status-cycle.outputs.ok }}
+      # Record-only (not read by the stall path): 'true' when ANY chain
+      # that ran failed/could not refresh, even one a later chain healed.
+      agent-any-failure: ${{ (steps.agent-ran-progress.outputs.conclusion == 'failure' || steps.agent-ran-retry.outputs.conclusion == 'failure' || steps.agent-ran-cycle.outputs.conclusion == 'failure') && 'true' || 'false' }}
+      credential-any-refresh-failure: ${{ (steps.credential-status-progress.outputs.ok == 'false' || steps.credential-status-retry.outputs.ok == 'false' || steps.credential-status-cycle.outputs.ok == 'false') && 'true' || 'false' }}
       failed-post-agent-step: ${{ steps.failed-step.outputs.step }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
@@ -2553,8 +2560,8 @@ jobs:
         with:
           candidates-json: >-
             [
-              {"id": "flip-label", "conclusion": "${{ steps.flip-label.conclusion }}"},
-              {"id": "dispatch-next", "conclusion": "${{ steps.dispatch-next.conclusion }}"}
+              {"name": "Flip stage label (first cycle)", "conclusion": "${{ steps.flip-label.conclusion }}"},
+              {"name": "Dispatch next step", "conclusion": "${{ steps.dispatch-next.conclusion }}"}
             ]
 
   # Survivor job (the #224 idiom, research.md D4/D7): reaches two mutually
