@@ -267,3 +267,23 @@ Task: "Create .github/actions/_shared/auto-release-e2e-merge-decision.sh"
 ### Local-only (optional)
 - [ ] Add a sentinel to the gate-decisions script's "merge: empty array: none" scenario so it no longer crashes Git Bash on Windows (0xC0000005) for local contributors running `run-local-gates.py` — not a CI defect (CI is Linux), quality-of-life only.
   - Left unchecked: explicitly out of scope per its own label (local-only, quality-of-life, not a CI defect) and this cycle's turn budget went to the eleven must-fix and four should-fix items plus the verify item above.
+
+## Maintainer Feedback (PR #389 second review by charlesguse, head 32bac5f)
+
+### Must fix
+- [ ] Masked harness login dropped from job outputs: `HARNESS_LOGIN` (from `secrets.WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME`) is masked, and GitHub Actions silently drops any step output containing a masked value. `auto-release.yml:1089-1091` writes `mergedBy` (which contains the login) into the `spec-draft-pr`/`plan-pr`/`finalize-pr` outputs, so a passing run's gate-evidence lines read "null" (FR-019); `:766` puts `${HARNESS_LOGIN}` into the wrong-merger `fail-wrong-output` verdict's `expected` text, so that output is dropped too and the reporter (`:1540-1547`) misfiles it as an infrastructure failure instead of the intended verdict. Assert on `mergedBy` inside the poll step itself, project each PR to `{number, mergedAt}` before writing it to an output, reword the wrong-merger `expected` text without the login (e.g. "attributed to the configured maintainer identity"), and remove the dead `login=$login` output at `:390`. Add a fixture or scenario asserting no verdict or output field ever carries the login.
+- [ ] Stray `}` breaks the clarification summary line: `auto-release.yml:1592`'s `"${CLARIFICATION_COMMENT_IDS:-{}}"` parses in bash as `${CLARIFICATION_COMMENT_IDS:-{}` followed by a literal `}`, so with the variable set the value becomes `[1,2]}`, jq errors, and a run where clarification never opened is misreported as "answered by a human before the harness." Use a variable for the default (`default='{}'` then `${VAR:-$default}`) and add a fixture asserting the summary line for the no-question, harness-answered, and human-answered cases.
+- [ ] Two reads on the pass path fail open instead of becoming infrastructure/gate-stall outcomes: `:1073-1076` turns a failed final-comments read into `[]`, so the `satisfied` check returns a vacuous "ok" and the clarification assertion is skipped; `:777`'s `author_id=...||true` yields an empty id on a transient failure, the clarify script then exits on `${1:?}`, and the attempt stalls falsely at "clarification." Treat a failed read on the pass path as an infrastructure outcome, and retry the author lookup within the existing bounded-failure count rather than silently continuing.
+
+### Should fix
+- [ ] The login comparison (`gh api user` against the secret, and against `mergedBy.login`) is case-sensitive though GitHub logins are case-insensitive; compare lowercased on both sides so a differently-cased secret can't produce a false pass-time failure.
+- [ ] The verdict text hard-codes "3 rounds" (`:835-836`) though the script now reads the bound from the environment; interpolate `MAX_CLARIFICATION_ROUNDS` instead.
+- [ ] `checklists/requirements.md:38` still says "credential scoped to the test repository alone" — correct it to match the classic-PAT-plus-runtime-containment wording already fixed elsewhere in round 1.
+
+### Verify
+- [ ] `auto-release-e2e-merge-decision.sh:83-93` reports `BLOCKED` with an empty `statusCheckRollup` as `blocked`; confirm a freshly opened PR under required checks, before any check has registered, is not declared a stall in that window.
+- [ ] A `StatusContext` entry in the rollup with no `.status` always reads as pending, so the gate would wait forever; handle it explicitly.
+- [ ] `:427`'s `gh pr list ... || true` in the cleanup step means a failed list silently closes nothing and proceeds; treat a failed list as an infrastructure outcome, like a failed close.
+- [ ] Gate 66's `--self-test` failed once in a parallel run with a `FileNotFoundError` on its fixed-name `.mutated.tmp` file and passed on rerun (a Windows-parallel race, not a logic defect); give it a per-process temp name.
+
+Note: the reviewer says historical "Gate 63" mentions elsewhere in this file can stay as-is — no action needed on those.
