@@ -1465,8 +1465,12 @@ jobs:
           IMAGE_RESULT: ${{ needs.verify-image-prerequisites.result }}
           RESOLVE_RESULT: ${{ needs.resolve-spec.result }}
           TASKS_RESULT: ${{ needs.tasks.result }}
+          AGENT_RAN: ${{ needs.tasks.outputs.agent-ran }}
+          AGENT_CONCLUSION: ${{ needs.tasks.outputs.agent-conclusion }}
         run: |
-          if [ "$IMAGE_RESULT" = "failure" ]; then
+          if [ "$AGENT_RAN" = "true" ]; then
+            reason="the agent step ran (concluded: $AGENT_CONCLUSION) and a step after it did not complete"
+          elif [ "$IMAGE_RESULT" = "failure" ]; then
             reason="the verify-image-prerequisites job failed, so the tasks stage never started"
           elif [ "$RESOLVE_RESULT" = "failure" ]; then
             reason="the tasks stage failed before it could run its own steps"
@@ -1486,7 +1490,9 @@ jobs:
           spec-dir: ${{ steps.identity.outputs.spec-dir }}
           spec-branch: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug }}
           reason: ${{ steps.reason.outputs.reason }}
-          restart-command: "Re-dispatch the tasks stage for this specification once the cause above is resolved."
+          # FR-015: resume-oriented wording when the agent ran and a step
+          # after it is what stalled the job -- not a from-scratch restart.
+          restart-command: ${{ needs.tasks.outputs.agent-ran == 'true' && 'The tasks agent step ran to completion; a step after it did not. Re-dispatch the tasks stage for this specification once the cause above is resolved.' || 'Re-dispatch the tasks stage for this specification once the cause above is resolved.' }}
 
   # Survivor job for mode: approved — same shape as the mode: generate job
   # above, against tasks-approved.

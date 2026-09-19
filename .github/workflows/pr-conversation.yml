@@ -3044,8 +3044,12 @@ jobs:
         env:
           IMAGE_RESULT: ${{ needs.verify-image-prerequisites.result }}
           JOB_RESULT: ${{ needs.classify-and-announce.result }}
+          AGENT_RAN: ${{ needs.classify-and-announce.outputs.agent-ran }}
+          AGENT_CONCLUSION: ${{ needs.classify-and-announce.outputs.agent-conclusion }}
         run: |
-          if [ "$IMAGE_RESULT" = "failure" ]; then
+          if [ "$AGENT_RAN" = "true" ]; then
+            reason="the agent step ran (concluded: $AGENT_CONCLUSION) and a step after it did not complete"
+          elif [ "$IMAGE_RESULT" = "failure" ]; then
             reason="the verify-image-prerequisites job failed, so the pr-conversation stage never started"
           elif [ "$JOB_RESULT" = "skipped" ]; then
             reason="the pr-conversation stage was skipped because a dependency it needs did not run"
@@ -3067,4 +3071,6 @@ jobs:
           spec-dir: ${{ steps.identity.outputs.spec-dir }}
           spec-branch: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug }}
           reason: ${{ steps.reason.outputs.reason }}
-          restart-command: "Re-dispatch the pr-conversation stage for this pull request once the cause above is resolved."
+          # FR-015: resume-oriented wording when the agent ran and a step
+          # after it is what stalled the job -- not a from-scratch restart.
+          restart-command: ${{ needs.classify-and-announce.outputs.agent-ran == 'true' && 'The classify agent step ran to completion; a step after it did not. Re-dispatch the pr-conversation stage for this pull request once the cause above is resolved.' || 'Re-dispatch the pr-conversation stage for this pull request once the cause above is resolved.' }}
