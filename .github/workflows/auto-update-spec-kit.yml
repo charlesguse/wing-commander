@@ -2028,6 +2028,7 @@ jobs:
 
       - name: Re-establish Wing Commander context (post-agent)
         if: always()
+        continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.speckit-app-id }}
@@ -2040,6 +2041,7 @@ jobs:
       # var at push time), so only the relay needs refreshing, not a remote.
       - name: Re-mint scratch-repository App token (post-agent)
         if: always()
+        continue-on-error: true
         id: scratch-token-post-agent
         uses: ./.wing-commander-pipeline/.github/actions/_shared/scoped-app-token
         with:
@@ -2050,6 +2052,7 @@ jobs:
 
       - name: Relay scratch token to the job environment (post-agent)
         if: always()
+        continue-on-error: true
         shell: bash
         env:
           TOKEN: ${{ steps.scratch-token-post-agent.outputs.token }}

@@ -944,6 +944,7 @@ jobs:
 
       - name: Re-establish Wing Commander context (post-agent, cycle)
         if: always()
+        continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.speckit-app-id }}
@@ -951,6 +952,7 @@ jobs:
 
       - name: Refresh authenticated spec-branch remote (post-agent, cycle)
         if: always()
+        continue-on-error: true
         shell: bash
         run: |
           git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/${{ github.repository }}.git"
@@ -1503,6 +1505,7 @@ jobs:
 
       - name: Re-establish Wing Commander context (post-agent, retry)
         if: always()
+        continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.speckit-app-id }}
@@ -1510,6 +1513,7 @@ jobs:
 
       - name: Refresh authenticated spec-branch remote (post-agent, retry)
         if: always()
+        continue-on-error: true
         shell: bash
         run: |
           git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/${{ github.repository }}.git"
@@ -1985,6 +1989,7 @@ jobs:
 
       - name: Re-establish Wing Commander context (post-agent, progress)
         if: always()
+        continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.speckit-app-id }}
@@ -1992,6 +1997,7 @@ jobs:
 
       - name: Refresh authenticated spec-branch remote (post-agent, progress)
         if: always()
+        continue-on-error: true
         shell: bash
         run: |
           git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/${{ github.repository }}.git"
