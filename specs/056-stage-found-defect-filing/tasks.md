@@ -643,3 +643,13 @@ barely, and only for one release").
 - [ ] Fix GITHUB_OUTPUT delimiter forgery in `.github/actions/wing-commander-stage-findings/action.yml:289-290,313-319`: use a randomly generated heredoc delimiter per write (e.g. `uuid.uuid4().hex`) instead of one derived from the key name, or (preferred) stop writing agent-authored `title`/`what` to `GITHUB_OUTPUT` entirely and pass them via files under `RUNNER_TEMP` instead.
 - [ ] Add `maxLength`/single-line `pattern` constraints for `title` and `what` in `.github/schemas/stage-finding.schema.json` (currently only `minLength: 1`).
 - [ ] Add a fixture to `tests/run_fixtures.py`: a finding whose `what` contains the delimiter line plus a forged `survivor-0-body-file=` must leave every other survivor's outputs unchanged; confirm the gate fails against the pre-fix writer.
+
+---
+
+## Maintainer Feedback
+
+- [ ] `intake.yml:888-889`: key the filing step's `if:` on intake's own agent-result validity signal, not just non-`skipped` outcome.
+- [ ] `implement.yml:1919-1920`: key on `steps.final.outputs.ok == 'true'` so an exhausted-but-converged-via-retry cycle still files while a not-ok run does not.
+- [ ] `finalize.yml:897-898`: key on `steps.summarize-verdict.outputs.verdict == 'healthy'` (covers the `subtype: success` + `is_error: true` case from spec 037 research R3).
+- [ ] Update `contracts/wing-commander-stage-findings.md:87-92` so its "does not reach this step at all" claim matches the corrected gating on all six stages.
+- [ ] Add the FR-030 fixture: a well-formed transcript with a non-healthy verdict must file nothing.
