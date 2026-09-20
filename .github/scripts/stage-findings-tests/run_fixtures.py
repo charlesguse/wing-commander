@@ -320,6 +320,7 @@ def case_fingerprint_ignores_punctuation_case_and_spacing():
             "gate_or_artifact": "Principle IV: Test-First (NON-NEGOTIABLE)"}),
     ]
     rc, outputs, state, out = run_prepare(tmp, "structured-array", findings=findings)
+    check(case + ": exit 0", rc == 0, out)
     check(case + ": three survivors", outputs.get("survivor-count") == "3", out)
     m0, m1, m2 = (outputs.get(f"survivor-{i}-marker", "") for i in range(3))
     check(case + ": punctuation/case/spacing variants share one fingerprint", m0 and m0 == m1, (m0, m1))
