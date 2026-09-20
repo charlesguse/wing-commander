@@ -668,3 +668,7 @@ barely, and only for one release").
 ## Maintainer Feedback
 
 - [ ] `lint-workflows.yml:21-69`: add `.github/schemas/**` to Gate 71's `pull_request` `paths:` filter, with the same one-line comment convention the five contract documents carry.
+
+## Maintainer Feedback
+
+- [ ] **Item 10** (PR conversation, in-scope fix): `.github/actions/wing-commander-durable-failure-issue/action.yml`'s "Look up, then report or close" step does not tolerate an API failure at the `gh issue create` report call. Gate 71's checked-in fixture `case_api_failure_preserves_finding_text_and_exits_zero` (`.github/actions/wing-commander-stage-findings/tests/run_fixtures.py`) fails on CI (run 35490652234) with `[FAIL] an API failure at the report call is caught locally, finding text preserved in the log: the lookup step itself still exits 0: HTTP 403: Forbidden` — the step exits non-zero instead of degrading gracefully. Fix the report path so a `gh issue create` failure is caught locally (the step itself still exits 0, `issue-number` left empty, `action-taken` reflecting the failure) so `wing-commander-stage-findings`'s "Record finding N outcome" step can count it as `dropped-api-failure` with the finding's title/what preserved verbatim in the log (FR-022, FR-025). Keep the existing fixture as the regression proof; do not weaken its assertions to make it pass.
