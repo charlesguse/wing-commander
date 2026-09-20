@@ -3161,7 +3161,10 @@ jobs:
       # leg — the defect that cancelled leg 4 and iteration 3 against each
       # other on PR #240), and a leg that dies without folding is reported
       # by name, distinguishing "not folded" from "partly folded", derived
-      # only from signals a dead leg never had to publish itself.
+      # only from signals a dead leg never had to publish itself. The leg's
+      # job is matched by its caller-prefixed API name ("pr-conversation /
+      # act (leg-0)"); the fixtures carry that shape, and a mutation that
+      # matches the bare name again must fail (#416).
       - name: Gate 34 — a review folds every leg once and dispatches once, and a dead leg says so
         run: python3 .github/scripts/verify-fold-dispatch-once.py
 
