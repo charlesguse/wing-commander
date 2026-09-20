@@ -266,6 +266,9 @@ runs:
             lines.append("<!-- wing-commander-finding: fingerprint={0} -->".format(fingerprint))
             return "\n".join(lines) + "\n"
 
+        def normalize_basis(value):
+            return " ".join(re.sub(r"[^0-9a-z]+", " ", str(value).lower()).split())
+
         def compose_recap():
             return "Seen again in run {0}.\n".format(RUN_URL)
 
@@ -274,8 +277,16 @@ runs:
             if i < len(kept):
                 finding = kept[i]
                 basis = finding["fingerprint_basis"]
+                # #424: both basis fields are agent prose. Two runs meeting
+                # the same defect wrote "Principle III: Test-First" and
+                # "Principle III. Test-First" and filed a twin. Hash a
+                # normalized form -- lowercase, every run of non-alphanumerics
+                # collapsed to one space, trimmed -- so punctuation, case and
+                # spacing cannot move the dedup key; a different WORD still can.
+                # Markers filed before this normalization no longer match.
                 fp = hashlib.sha256("{0}|{1}|{2}".format(
-                    STAGE, basis["file_path"], basis["gate_or_artifact"]
+                    STAGE, normalize_basis(basis["file_path"]),
+                    normalize_basis(basis["gate_or_artifact"])
                 ).encode("utf-8")).hexdigest()
                 marker = "<!-- wing-commander-finding: fingerprint={0} -->".format(fp)
                 label = "{0}:{1}".format(LABEL_PREFIX, STAGE)

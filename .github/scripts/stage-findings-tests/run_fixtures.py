@@ -305,6 +305,27 @@ def case_forged_delimiter_in_what_cannot_override_other_outputs():
           and len(state["dropped_malformed"]) == 1, out)
 
 
+def case_fingerprint_ignores_punctuation_case_and_spacing():
+    case = "the fingerprint normalizes gate_or_artifact/file_path: punctuation, case, spacing cannot move it; a word can (#424)"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-fpnorm-")
+    findings = [
+        valid_finding(title="a", fingerprint_basis={
+            "file_path": ".specify/memory/constitution.md",
+            "gate_or_artifact": "Principle III: Test-First (NON-NEGOTIABLE)"}),
+        valid_finding(title="b", fingerprint_basis={
+            "file_path": ".SPECIFY/memory/constitution.md",
+            "gate_or_artifact": "  principle iii.  test-first  (non-negotiable) "}),
+        valid_finding(title="c", fingerprint_basis={
+            "file_path": ".specify/memory/constitution.md",
+            "gate_or_artifact": "Principle IV: Test-First (NON-NEGOTIABLE)"}),
+    ]
+    rc, outputs, state, out = run_prepare(tmp, "structured-array", findings=findings)
+    check(case + ": three survivors", outputs.get("survivor-count") == "3", out)
+    m0, m1, m2 = (outputs.get(f"survivor-{i}-marker", "") for i in range(3))
+    check(case + ": punctuation/case/spacing variants share one fingerprint", m0 and m0 == m1, (m0, m1))
+    check(case + ": a different word gives a different fingerprint", m2 and m2 != m0, (m0, m2))
+
+
 # --- dedup / API-failure cases (stub `gh`, exercise the shipped lookup) ----
 STUB_GH_TEMPLATE = """#!/usr/bin/env bash
 set -uo pipefail
@@ -586,6 +607,7 @@ CASES = [
     case_fenced_block_absent_is_zero_not_failure,
     case_instruction_shaped_detail_is_quoted_as_data,
     case_forged_delimiter_in_what_cannot_override_other_outputs,
+    case_fingerprint_ignores_punctuation_case_and_spacing,
     case_dedup_hit_open_comments_not_duplicates,
     case_dedup_hit_closed_creates_and_links,
     case_no_dedup_match_creates,
