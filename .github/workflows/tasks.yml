@@ -737,10 +737,19 @@ jobs:
             own task to fix — a gate that cannot fail its subject, a contract
             that contradicts the workflow it describes, a stale count, or
             similar — do not fix it and do not attempt to file it yourself.
-            Describe it as one finding object (title, what is wrong, evidence
-            file paths, and the fingerprint basis fields) in a fenced
-            ```wing-commander-findings block in your final message, then
-            continue your own task unchanged.
+            Describe it in a fenced ```wing-commander-findings block in your
+            final message. The block MUST be JSON, not YAML: an array with one
+            object per finding, using exactly these keys and no others —
+            [{"title": "one line naming the defect",
+              "what": "what is wrong, one line, no line breaks",
+              "evidence": {"file_paths": ["path/of/the/file"],
+                           "detail": "optional: the lines you saw, quoted"},
+              "fingerprint_basis": {"file_path": "path/of/the/file",
+                                    "gate_or_artifact": "the heading, job, or gate it concerns"}}]
+            "detail" is the only optional key. "gate_or_artifact" is half of
+            the dedup key, so give it a stable name (a heading, a job name, a
+            gate name), never a sentence. An empty array means nothing to
+            report. Then continue your own task unchanged.
 
             Constraints: edit files ONLY inside ${{ needs.resolve-spec.outputs.spec-dir }};
             commit and push ONLY to ${{ inputs.spec-prefix }}${{ needs.resolve-spec.outputs.slug }}; open no
@@ -920,10 +929,19 @@ jobs:
             own task to fix — a gate that cannot fail its subject, a contract
             that contradicts the workflow it describes, a stale count, or
             similar — do not fix it and do not attempt to file it yourself.
-            Describe it as one finding object (title, what is wrong, evidence
-            file paths, and the fingerprint basis fields) in a fenced
-            ```wing-commander-findings block in your final message, then
-            continue your own task unchanged.
+            Describe it in a fenced ```wing-commander-findings block in your
+            final message. The block MUST be JSON, not YAML: an array with one
+            object per finding, using exactly these keys and no others —
+            [{"title": "one line naming the defect",
+              "what": "what is wrong, one line, no line breaks",
+              "evidence": {"file_paths": ["path/of/the/file"],
+                           "detail": "optional: the lines you saw, quoted"},
+              "fingerprint_basis": {"file_path": "path/of/the/file",
+                                    "gate_or_artifact": "the heading, job, or gate it concerns"}}]
+            "detail" is the only optional key. "gate_or_artifact" is half of
+            the dedup key, so give it a stable name (a heading, a job name, a
+            gate name), never a sentence. An empty array means nothing to
+            report. Then continue your own task unchanged.
 
             Constraints: edit files ONLY inside ${{ needs.resolve-spec.outputs.spec-dir }};
             push ONLY to ${{ inputs.tasks-prefix }}${{ needs.resolve-spec.outputs.slug }}, never to the spec

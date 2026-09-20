@@ -59,6 +59,20 @@ string `"false"` instead of the boolean `false` — it cannot disable a
 default-on stage (FR-029). A regression back to the bare form would strand
 that repository variable silently, since the composite still runs (just
 with the wrong effective default) rather than erroring.
+
+Also checks (#420, found by the spec 056 quickstart §3 drill): every agent
+prompt that carries the paragraph also names every REQUIRED key of
+.github/schemas/stage-finding.schema.json, quoted exactly as the schema
+spells it, and the two structured-array stages (intake, clarify) declare
+the same required keys, with additionalProperties closed, under
+`findings.items` in their inline `--json-schema`. The first live run
+with filing enabled proved why: the paragraph as first shipped described
+the object in prose ("title, what is wrong, evidence file paths, and the
+fingerprint basis fields"), the agent wrote a YAML block with invented
+keys, and the composite dropped a real finding as "not valid JSON" —
+while every harness fixture, written in the right shape, kept passing.
+The schema file is the single home for the shape; this gate reads it
+rather than carrying a second copy of the key list.
 """
 import argparse
 import json
@@ -84,6 +98,20 @@ STAGE_WORKFLOWS = (
 
 PARAGRAPH_SUBSTRING = "do not attempt to file it yourself"
 FILING_STEP_NEEDLE = "wing-commander-stage-findings"
+
+# #420: the finding's shape has exactly one home. The prompt check and the
+# structured-schema check below both derive their expectations from it.
+SCHEMA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "..", "schemas", "stage-finding.schema.json")
+# The two stages whose agent returns a schema-validated result (channel
+# mode structured-array) — their `--json-schema` must carry the shape.
+STRUCTURED_STAGES = (
+    ".github/workflows/intake.yml",
+    ".github/workflows/clarify.yml",
+)
+# Same extraction verify-clarification-gating.py uses: the one inline
+# `--json-schema '{...}'` argument, alone on its line.
+JSON_SCHEMA_ARG = re.compile(r"--json-schema '(\{.*?\})'\s*$", re.M)
 
 # Maintainer review, post-merge fix: the stage-health signal each of these
 # three stages' filing step's `if:` must name (FR-024) — see
@@ -146,6 +174,106 @@ def filing_step_if_condition(doc):
     return None
 
 
+def _required_tree(schema):
+    """{key: subtree-or-None} for every REQUIRED key of an object schema,
+    recursively — the part of the shape an agent cannot leave out."""
+    if not isinstance(schema, dict) or schema.get("type") != "object":
+        return None
+    props = schema.get("properties") or {}
+    return {key: _required_tree(props.get(key)) for key in (schema.get("required") or [])}
+
+
+def _tree_keys(tree, out=None):
+    out = [] if out is None else out
+    for key, sub in (tree or {}).items():
+        out.append(key)
+        if sub:
+            _tree_keys(sub, out)
+    return out
+
+
+def _open_objects(schema, at="findings.items", out=None):
+    """Dotted paths of every object in `schema` whose additionalProperties
+    is not literally false."""
+    out = [] if out is None else out
+    if isinstance(schema, dict) and schema.get("type") == "object":
+        if schema.get("additionalProperties") is not False:
+            out.append(at)
+        for key, sub in (schema.get("properties") or {}).items():
+            _open_objects(sub, f"{at}.{key}", out)
+    return out
+
+
+_finding_schema_cache = {}
+
+
+def finding_schema():
+    if "doc" not in _finding_schema_cache:
+        with open(SCHEMA_FILE, encoding="utf-8") as fh:
+            _finding_schema_cache["doc"] = json.load(fh)
+    return _finding_schema_cache["doc"]
+
+
+def prompts_with_paragraph(doc):
+    out = []
+    for _job_id, steps in _step_lists(doc):
+        for step in steps:
+            prompt = str(((step or {}).get("with") or {}).get("prompt") or "")
+            if PARAGRAPH_SUBSTRING in prompt:
+                out.append(prompt)
+    return out
+
+
+def check_prompt_names_keys(path, doc):
+    """#420: a prompt that asks for a finding must show the agent the keys."""
+    required = _tree_keys(_required_tree(finding_schema()))
+    for prompt in prompts_with_paragraph(doc):
+        missing = [k for k in required if f'"{k}"' not in prompt]
+        if missing:
+            fail(f"{path}: an agent prompt carries the FR-003 findings paragraph "
+                f"but does not name the finding's required key(s) {missing} "
+                f"(quoted, exactly as .github/schemas/stage-finding.schema.json "
+                f"spells them) — an agent left to guess the shape writes one the "
+                f"composite drops as malformed, and the finding is lost (#420).")
+            return
+    note(f"{path}: every prompt carrying the paragraph names the finding's required keys.")
+
+
+def check_structured_schema(path, text):
+    """#420: the structured-array stages' result schema carries the shape."""
+    found = JSON_SCHEMA_ARG.findall(text)
+    if len(found) != 1:
+        fail(f"{path}: expected exactly one inline --json-schema argument to "
+            f"check the findings item shape in, found {len(found)}.")
+        return
+    try:
+        parsed = json.loads(found[0])
+    except ValueError as exc:
+        fail(f"{path}: its inline --json-schema is not valid JSON ({exc}).")
+        return
+    items = ((parsed.get("properties") or {}).get("findings") or {}).get("items")
+    if not isinstance(items, dict):
+        fail(f"{path}: its --json-schema declares no findings.items object, so "
+            f"the action enforces nothing about a finding's shape (#420).")
+        return
+    want = _required_tree(finding_schema())
+    have = _required_tree(items)
+    if have != want:
+        fail(f"{path}: the findings.items shape in its --json-schema requires "
+            f"{have} but .github/schemas/stage-finding.schema.json requires "
+            f"{want} — a finding the action accepts would be dropped as "
+            f"malformed afterwards (#420).")
+        return
+    open_objects = _open_objects(items)
+    if open_objects:
+        fail(f"{path}: findings.items leaves additionalProperties open at "
+            f"{open_objects} — the schema file closes every object, so an "
+            f"extra key the action lets through is dropped as malformed "
+            f"afterwards (#420).")
+        return
+    note(f"{path}: --json-schema's findings.items matches the finding schema's required shape.")
+
+
 def check_stage(root, path):
     full = os.path.join(root, *path.split("/"))
     if not os.path.isfile(full):
@@ -178,6 +306,11 @@ def check_stage(root, path):
     else:
         fail(f"{path} carries neither the FR-003 findings paragraph nor a "
             f"wing-commander-stage-findings step.")
+
+    if has_paragraph:
+        check_prompt_names_keys(path, doc)
+    if path in STRUCTURED_STAGES:
+        check_structured_schema(path, text)
 
     expected_signal = HEALTH_SIGNALS.get(path)
     if expected_signal and has_step:
@@ -264,39 +397,84 @@ def _write(root, rel, content):
         fh.write(content)
 
 
-PARAGRAPH_ONLY = (
-    "on:\n  workflow_call: {}\njobs:\n  x:\n    runs-on: ubuntu-latest\n    "
-    "steps:\n      - uses: anthropics/claude-code-action@v1\n        with:\n"
-    "          prompt: |\n            do not attempt to file it yourself\n")
-STEP_ONLY = (
-    "on:\n  workflow_call: {}\njobs:\n  x:\n    runs-on: ubuntu-latest\n    "
-    "steps:\n      - uses: ./.wing-commander-pipeline/.github/actions/"
-    "wing-commander-stage-findings\n")
-BOTH = (
-    "on:\n  workflow_call: {}\njobs:\n  x:\n    runs-on: ubuntu-latest\n    "
-    "steps:\n      - uses: anthropics/claude-code-action@v1\n        with:\n"
-    "          prompt: |\n            do not attempt to file it yourself\n"
-    "      - uses: ./.wing-commander-pipeline/.github/actions/"
-    "wing-commander-stage-findings\n")
+# #420: the finding's required keys, quoted the way the schema spells them —
+# every fixture prompt that carries the paragraph carries these too, so the
+# self-tests below keep testing the co-occurrence they were written for
+# rather than tripping the key check.
+KEYS_CLAUSE = ('"title" "what" "evidence" "file_paths" "fingerprint_basis" '
+               '"file_path" "gate_or_artifact"')
+# A --json-schema whose findings.items is the real shape (#420). Harmless on
+# a fixture for a fenced-block stage: the structured check only reads
+# STRUCTURED_STAGES paths.
+GOOD_ITEMS = ('{"type":"object","properties":{"title":{"type":"string"},'
+              '"what":{"type":"string"},"evidence":{"type":"object","properties":'
+              '{"file_paths":{"type":"array","items":{"type":"string"}},'
+              '"detail":{"type":"string"}},"required":["file_paths"],'
+              '"additionalProperties":false},"fingerprint_basis":{"type":"object",'
+              '"properties":{"file_path":{"type":"string"},"gate_or_artifact":'
+              '{"type":"string"}},"required":["file_path","gate_or_artifact"],'
+              '"additionalProperties":false}},"required":["title","what","evidence",'
+              '"fingerprint_basis"],"additionalProperties":false}')
+# The shape the two structured stages shipped with (#420): array of untyped
+# objects — the action enforces nothing about a finding's keys.
+UNTYPED_ITEMS = '{"type":"object"}'
+# Right required keys, but the object left open: an extra key gets through
+# the action and is dropped as malformed afterwards.
+OPEN_ITEMS = GOOD_ITEMS.replace(',"additionalProperties":false}', '}', 1)
+
+
+def _schema_arg(items):
+    return ("--json-schema '{\"type\":\"object\",\"properties\":{\"findings\":"
+            "{\"type\":\"array\",\"items\":" + items + "}}}'")
+
+
+def _agent_step(prompt_tail=KEYS_CLAUSE, items=GOOD_ITEMS):
+    lines = ["      - uses: anthropics/claude-code-action@v1",
+             "        with:",
+             "          prompt: |",
+             "            do not attempt to file it yourself"]
+    if prompt_tail:
+        lines.append("            " + prompt_tail)
+    if items is not None:
+        lines += ["          claude_args: |",
+                  "            " + _schema_arg(items)]
+    return "\n".join(lines) + "\n"
+
+
+def _filing_step(if_expr=None):
+    s = ("      - uses: ./.wing-commander-pipeline/.github/actions/"
+         "wing-commander-stage-findings\n")
+    if if_expr:
+        s += "        if: ${{ !cancelled() && " + if_expr + " }}\n"
+    return s
+
+
+HEADER = "on:\n  workflow_call: {}\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+
+PARAGRAPH_ONLY = HEADER + _agent_step()
+STEP_ONLY = HEADER + _filing_step()
+BOTH = HEADER + _agent_step() + _filing_step()
 # Nit #8 regression fixture: the phrase sits in a YAML COMMENT, never in any
 # step's `with.prompt` — proves the scoped check no longer treats that as
 # satisfying the paragraph requirement the way a whole-file substring scan
 # would.
 COMMENT_ONLY_PARAGRAPH_WITH_STEP = (
-    "on:\n  workflow_call: {}\njobs:\n  x:\n    runs-on: ubuntu-latest\n    "
-    "steps:\n      # do not attempt to file it yourself (stale comment, not a prompt)\n"
-    "      - uses: ./.wing-commander-pipeline/.github/actions/"
-    "wing-commander-stage-findings\n")
+    HEADER
+    + "      # do not attempt to file it yourself (stale comment, not a prompt)\n"
+    + _filing_step())
+# #420 regression fixtures.
+PROMPT_MISSING_KEY = HEADER + _agent_step(
+    prompt_tail=KEYS_CLAUSE.replace(' "gate_or_artifact"', "")) + _filing_step()
+UNTYPED_ITEMS_STRUCTURED = HEADER + _agent_step(items=UNTYPED_ITEMS) + _filing_step(
+    HEALTH_SIGNALS[".github/workflows/intake.yml"])
+OPEN_ITEMS_STRUCTURED = HEADER + _agent_step(items=OPEN_ITEMS) + _filing_step(
+    HEALTH_SIGNALS[".github/workflows/intake.yml"])
+NO_SCHEMA_STRUCTURED = HEADER + _agent_step(items=None) + _filing_step(
+    HEALTH_SIGNALS[".github/workflows/intake.yml"])
 
 
 def _both_with_if(expected_signal):
-    return (
-        "on:\n  workflow_call: {{}}\njobs:\n  x:\n    runs-on: ubuntu-latest\n    "
-        "steps:\n      - uses: anthropics/claude-code-action@v1\n        with:\n"
-        "          prompt: |\n            do not attempt to file it yourself\n"
-        "      - uses: ./.wing-commander-pipeline/.github/actions/"
-        "wing-commander-stage-findings\n"
-        "        if: ${{{{ !cancelled() && {0} }}}}\n").format(expected_signal)
+    return HEADER + _agent_step() + _filing_step(expected_signal)
 
 
 def _default_both_for(path):
@@ -374,6 +552,64 @@ def selftest_missing_health_signal_fails():
         hit = [f for f in found if STAGE_WORKFLOWS[0] in f and expected in f]
         if not hit:
             fail(f"[{case}] expected a finding for {STAGE_WORKFLOWS[0]}, got: {found}")
+        else:
+            note(f"[{case}] passed")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def selftest_prompt_missing_key_fails():
+    case = "a prompt carrying the paragraph but not every required key fails, naming the key (#420)"
+    tmp = _tmp_with_stages({2: PROMPT_MISSING_KEY})
+    try:
+        found = evaluate(tmp)
+        hit = [f for f in found if STAGE_WORKFLOWS[2] in f and "gate_or_artifact" in f
+               and "required key" in f]
+        if not hit:
+            fail(f"[{case}] expected a finding for {STAGE_WORKFLOWS[2]}, got: {found}")
+        else:
+            note(f"[{case}] passed")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def selftest_structured_untyped_items_fails():
+    case = "a structured stage whose --json-schema leaves findings.items untyped fails (#420, the shipped shape)"
+    tmp = _tmp_with_stages({0: UNTYPED_ITEMS_STRUCTURED})
+    try:
+        found = evaluate(tmp)
+        hit = [f for f in found if STAGE_WORKFLOWS[0] in f and "findings.items" in f
+               and "requires" in f]
+        if not hit:
+            fail(f"[{case}] expected a finding for {STAGE_WORKFLOWS[0]}, got: {found}")
+        else:
+            note(f"[{case}] passed")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def selftest_structured_open_items_fails():
+    case = "a structured stage whose findings.items leaves additionalProperties open fails (#420)"
+    tmp = _tmp_with_stages({0: OPEN_ITEMS_STRUCTURED})
+    try:
+        found = evaluate(tmp)
+        hit = [f for f in found if STAGE_WORKFLOWS[0] in f and "additionalProperties" in f]
+        if not hit:
+            fail(f"[{case}] expected a finding for {STAGE_WORKFLOWS[0]}, got: {found}")
+        else:
+            note(f"[{case}] passed")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def selftest_structured_no_schema_fails():
+    case = "a structured stage with no inline --json-schema fails (#420)"
+    tmp = _tmp_with_stages({1: NO_SCHEMA_STRUCTURED})
+    try:
+        found = evaluate(tmp)
+        hit = [f for f in found if STAGE_WORKFLOWS[1] in f and "--json-schema" in f]
+        if not hit:
+            fail(f"[{case}] expected a finding for {STAGE_WORKFLOWS[1]}, got: {found}")
         else:
             note(f"[{case}] passed")
     finally:
@@ -476,6 +712,10 @@ def run_selftest():
     selftest_step_without_paragraph_fails()
     selftest_comment_only_paragraph_does_not_satisfy()
     selftest_missing_health_signal_fails()
+    selftest_prompt_missing_key_fails()
+    selftest_structured_untyped_items_fails()
+    selftest_structured_open_items_fails()
+    selftest_structured_no_schema_fails()
     selftest_missing_workflow_fails_loud()
     selftest_wrapper_missing_fromjson_fails()
     selftest_literal_string_false_coerces_off_via_fromjson()

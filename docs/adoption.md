@@ -1408,6 +1408,10 @@ code deciding what gets filed: the agent only proposes a finding in its
 own final message or structured result; validation, deduplication,
 capping, filing, and cross-linking to the run's lifecycle issue all
 happen in the `wing-commander-stage-findings` composite, never the agent.
+The proposal is JSON in the shape of
+`.github/schemas/stage-finding.schema.json`; each stage's prompt shows the
+agent that exact object, and `verify-stage-findings-wiring.py` fails a
+prompt that stops naming its keys.
 
 Every filed issue carries the label `<findings-label-prefix>:<stage>`
 (default prefix `found-by`, e.g. `found-by:implement`), created on first

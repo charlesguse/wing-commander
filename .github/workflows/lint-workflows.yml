@@ -3699,10 +3699,16 @@ jobs:
       # verify-single-home-idioms.py's module docstring for the precedent
       # of a gate being renumbered as a branch's own earlier work takes a
       # number first.
+      # Also (#420): every prompt carrying the paragraph names the
+      # finding's required keys as .github/schemas/stage-finding.schema.json
+      # spells them, and intake/clarify's --json-schema requires the same
+      # keys, closed, under findings.items — the first live run with
+      # filing enabled lost a real finding because the agent, told the
+      # shape only in prose, wrote YAML with invented keys.
       - name: Gate 72 — the FR-003 findings paragraph and the filing step travel together on every stage
         if: "!cancelled()"
         run: python3 .github/scripts/verify-stage-findings-wiring.py
-      - name: Gate 72 self-test — a paragraph without a step, a step without a paragraph, and a missing workflow each fail loudly
+      - name: Gate 72 self-test — a paragraph without a step, a step without a paragraph, a prompt that does not name the finding's keys, an untyped findings.items, and a missing workflow each fail loudly
         if: "!cancelled()"
         run: python3 .github/scripts/verify-stage-findings-wiring.py --self-test
 
