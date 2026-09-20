@@ -21,6 +21,15 @@ per-leg reply step no longer calls `gh workflow run` at all) — together
 these are what make "fold all, dispatch once" and "a dead leg says so" true
 by construction rather than by convention.
 
+Job names (#416): the jobs API names a called workflow's jobs with the
+caller's job as a prefix -- "pr-conversation / act (leg-0)" in this
+repository -- and the report step matches that name by suffix. This
+gate's fixtures carry the prefixed shape (ACT_JOB_NAME), because the
+bare-name fixture it shipped with let the bare-name equality the report
+originally used pass here while it matched nothing in production, and
+every clean leg was reported "partly folded". A mutation that restores
+the bare equality must fail against the prefixed fixture.
+
 Adaptation note (contracts/gate-coverage-042.md): that contract's two
 "collapse to job-conclusion-only" / "collapse to fold-evidence-only"
 mutations are paired, in the contract's own prose, with scenarios whose
@@ -58,6 +67,11 @@ REPLY_STEP = "Reply confirming fold-in (no dispatch)"
 ACT_AGENT_STEP = "Act on this classification"
 
 REPO = "charlesguse/wing-commander"
+# The shape the jobs API actually reports for a called workflow's matrix
+# job: "<caller job> / <job name> (<matrix id>)". Fixtures MUST use it,
+# or a report that only matches the bare "act (<id>)" passes here and
+# fails in production (#416).
+ACT_JOB_NAME = "pr-conversation / act ({})"
 SPEC_DIR = "specs/042-post-review-fold-loop"
 ISSUE = "250"
 PR_NUMBER = "999"
@@ -227,7 +241,8 @@ def scenario_three_clean_legs(steps, root):
     jobs_jsonl = os.path.join(work, "jobs.jsonl")
     with open(jobs_jsonl, "w", encoding="utf-8") as fh:
         for leg_id in ("leg-0", "leg-1", "leg-2"):
-            fh.write('{"name": "act (%s)", "conclusion": "success"}\n' % leg_id)
+            fh.write('{"name": "%s", "conclusion": "success"}\n'
+                     % ACT_JOB_NAME.format(leg_id))
     rc, out, _, summary = run_step(
         BASH, steps[REPORT_STEP], repo,
         {"GH_TOKEN": "x", "ACTIONS_TOKEN": "x", "PR_NUMBER": PR_NUMBER, "RUN_ID": "1",
@@ -291,7 +306,8 @@ def _report_single_leg_scenario(steps, root, where, conclusion, fold_commits,
     jobs_jsonl = os.path.join(work, "jobs.jsonl")
     with open(jobs_jsonl, "w", encoding="utf-8") as fh:
         if conclusion is not None:
-            fh.write('{"name": "act (leg-0)", "conclusion": "%s"}\n' % conclusion)
+            fh.write('{"name": "%s", "conclusion": "%s"}\n'
+                     % (ACT_JOB_NAME.format("leg-0"), conclusion))
         # conclusion is None -> the job never appears at all (missing case).
 
     rc, out, _, _ = run_step(
@@ -406,8 +422,10 @@ def scenario_held_leg_timeout(steps, root):
     ]
     jobs_jsonl = os.path.join(work, "jobs.jsonl")
     with open(jobs_jsonl, "w", encoding="utf-8") as fh:
-        fh.write('{"name": "act (leg-0)", "conclusion": "success"}\n')
-        fh.write('{"name": "act (leg-1)", "conclusion": "cancelled"}\n')
+        fh.write('{"name": "%s", "conclusion": "success"}\n'
+                 % ACT_JOB_NAME.format("leg-0"))
+        fh.write('{"name": "%s", "conclusion": "cancelled"}\n'
+                 % ACT_JOB_NAME.format("leg-1"))
 
     open(calls, "w").close()
     open(last_comment, "w").close()
@@ -574,9 +592,22 @@ def _mut_collapse_to_fold_evidence_only(steps):
         'if [ "$folded" = "true" ]; then')
 
 
+def _mut_bare_job_name_equality(steps):
+    """The report matches the job by bare `act (<id>)` equality again --
+    the #416 defect. Against the prefixed name the jobs API really
+    reports, the conclusion reads "missing" and a clean leg is
+    reported "partly folded".
+    """
+    steps[REPORT_STEP] = steps[REPORT_STEP].replace(
+        'select((.name == "act (" + $id + ")") or (.name | endswith(" / act (" + $id + ")")))',
+        'select(.name == "act (" + $id + ")")')
+
+
 MUTATIONS = [
     ("D1 reverted: per-leg dispatch restored",
      _mut_revert_d1_restore_per_leg_dispatch),
+    ("job name matched by bare equality (#416)",
+     _mut_bare_job_name_equality),
     ("D6 collapsed to job-conclusion-only",
      _mut_collapse_to_conclusion_only),
     ("D6 collapsed to fold-evidence-only",
@@ -625,6 +656,15 @@ def run_mutation(label, apply_mutation, steps, root):
                  runner_temp)
         return gh_call_count(calls, "workflow run") > 1
 
+    if label.startswith("job name matched by bare equality"):
+        # One clean leg: success conclusion under the prefixed API name,
+        # fold commit present. Correct behaviour posts nothing; the
+        # mutation cannot find the job, reads "missing", and must now
+        # (incorrectly) post a "partly folded" warning.
+        return _mutation_now_says_unhealthy(
+            mutated, root, conclusion="success",
+            fold_commits=[("leg-0", "the item")])
+
     if label.startswith("D6 collapsed to job-conclusion-only"):
         # Spurious success: the job's conclusion is success, but no
         # fold(<id>) commit actually landed. Correct behavior reports "not
@@ -644,10 +684,19 @@ def run_mutation(label, apply_mutation, steps, root):
     return False
 
 
-def _mutation_now_says_healthy(steps, root, conclusion, fold_commits):
+def _mutation_now_says_unhealthy(steps, root, conclusion, fold_commits):
     """True if, under `steps`, a single leg with the given conclusion/fold
-    evidence is now (incorrectly) reported as healthy — i.e. no PR comment.
+    evidence is now (incorrectly) reported as NOT healthy -- i.e. a PR
+    comment was posted for a leg that folded cleanly.
     """
+    rc, calls = _report_single_leg_raw(steps, root, conclusion, fold_commits)
+    if rc != 0:
+        return False
+    return gh_call_count(calls, "pr", "comment") == 1
+
+
+def _report_single_leg_raw(steps, root, conclusion, fold_commits):
+    """Run the report step for one leg-0; returns (rc, calls_path)."""
     repo, base_sha, tip_sha = make_repo(root, 1, fold_commits)
     work = os.path.dirname(repo)
     runner_temp = os.path.join(work, "runner_temp")
@@ -658,8 +707,9 @@ def _mutation_now_says_healthy(steps, root, conclusion, fold_commits):
                         "summary": "the item"}]
     jobs_jsonl = os.path.join(work, "jobs.jsonl")
     with open(jobs_jsonl, "w", encoding="utf-8") as fh:
-        fh.write('{"name": "act (leg-0)", "conclusion": "%s"}\n' % conclusion)
-    rc, out, _, _ = run_step(
+        fh.write('{"name": "%s", "conclusion": "%s"}\n'
+                 % (ACT_JOB_NAME.format("leg-0"), conclusion))
+    rc, _, _, _ = run_step(
         BASH, steps[REPORT_STEP], repo,
         {"GH_TOKEN": "x", "ACTIONS_TOKEN": "x", "PR_NUMBER": PR_NUMBER, "RUN_ID": "1",
          "GITHUB_REPOSITORY": REPO,
@@ -668,6 +718,14 @@ def _mutation_now_says_healthy(steps, root, conclusion, fold_commits):
          "GH_CALLS": calls, "GH_LAST_COMMENT": last_comment,
          "GH_JOBS_JSONL": jobs_jsonl, "PATH": path},
         runner_temp)
+    return rc, calls
+
+
+def _mutation_now_says_healthy(steps, root, conclusion, fold_commits):
+    """True if, under `steps`, a single leg with the given conclusion/fold
+    evidence is now (incorrectly) reported as healthy — i.e. no PR comment.
+    """
+    rc, calls = _report_single_leg_raw(steps, root, conclusion, fold_commits)
     if rc != 0:
         return False
     return gh_call_count(calls, "pr", "comment") == 0
