@@ -3,7 +3,7 @@
   "spec_dir": "specs/056-stage-found-defect-filing",
   "feature_num": "056",
   "stage": "implement",
-  "iteration": 1,
+  "iteration": 2,
   "spec_branch": "spec/056-stage-found-defect-filing",
   "pending_re_review_from": ["charlesguse"]
 }
