@@ -513,15 +513,7 @@ runs:
               jq '.appended += 1' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
               ;;
             comment-failed)
-              # The issue exists and is open -- it carries this finding's
-              # fingerprint -- and only the recap comment onto it failed.
-              # Still a dropped finding for this run (nothing new was
-              # recorded), but named for what actually happened instead of
-              # being reported as a finding that was never filed, which
-              # sends a maintainer looking for something that is not lost
-              # (code review of #423). $ISSUE_NUMBER is the composite's own
-              # output, a number, so it is safe in an annotation where
-              # $TITLE/$WHAT are not (FR-026, see above).
+              # comment-failed -- see Record finding 0 outcome.
               echo "::warning::wing-commander-stage-findings: the recap comment on issue #$ISSUE_NUMBER failed for stage $STAGE — counted as dropped-api-failure; the issue itself is open, see the step summary for the finding text."
               jq --arg n "$ISSUE_NUMBER" --arg title "$TITLE" --arg what "$WHAT" \
                 '.dropped_api_failure += 1 | .notes += ["dropped (API failure) while recording " + $title + " on existing issue #" + $n + ": " + $what]' \
@@ -621,15 +613,7 @@ runs:
               jq '.appended += 1' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
               ;;
             comment-failed)
-              # The issue exists and is open -- it carries this finding's
-              # fingerprint -- and only the recap comment onto it failed.
-              # Still a dropped finding for this run (nothing new was
-              # recorded), but named for what actually happened instead of
-              # being reported as a finding that was never filed, which
-              # sends a maintainer looking for something that is not lost
-              # (code review of #423). $ISSUE_NUMBER is the composite's own
-              # output, a number, so it is safe in an annotation where
-              # $TITLE/$WHAT are not (FR-026, see above).
+              # comment-failed -- see Record finding 0 outcome.
               echo "::warning::wing-commander-stage-findings: the recap comment on issue #$ISSUE_NUMBER failed for stage $STAGE — counted as dropped-api-failure; the issue itself is open, see the step summary for the finding text."
               jq --arg n "$ISSUE_NUMBER" --arg title "$TITLE" --arg what "$WHAT" \
                 '.dropped_api_failure += 1 | .notes += ["dropped (API failure) while recording " + $title + " on existing issue #" + $n + ": " + $what]' \
