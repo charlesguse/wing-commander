@@ -2333,14 +2333,11 @@ jobs:
       # from GitHub when the agent omitted one, and fails the leg loudly
       # (after replying on the PR) when neither source produces one. An
       # unrecorded spin-off can therefore no longer pass silently.
-      - name: Post outstanding task item on the lifecycle issue
+      - name: Determine outstanding item phrase
+        id: phrase
         shell: bash
         if: steps.act-result.outputs.artifact-url != ''
         env:
-          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
-          ISSUE_NUMBER: ${{ needs.classify-and-announce.outputs.issue-number }}
-          PR_NUMBER: ${{ inputs.pr-number }}
-          ARTIFACT_URL: ${{ steps.act-result.outputs.artifact-url }}
           EFFECTIVE_CATEGORY: ${{ steps.route.outputs.effective-category }}
           EFFECTIVE_FOLD_TARGET: ${{ steps.route.outputs.effective-fold-target }}
         run: |
@@ -2354,7 +2351,21 @@ jobs:
             manual-step-permission) phrase="a permission-request PR was opened" ;;
             *) exit 0 ;;
           esac
-          gh issue comment "$ISSUE_NUMBER" --body "- [ ] $phrase — $ARTIFACT_URL (from PR #$PR_NUMBER)"
+          echo "phrase=$phrase" >> "$GITHUB_OUTPUT"
+
+      # specs/056-stage-found-defect-filing (research.md D9): this call
+      # moved out of an inline `gh issue comment` step into the single
+      # home every SpinOffArtifact-posting caller now shares --
+      # see wing-commander-outstanding-task-item/action.yml.
+      - name: Post outstanding task item on the lifecycle issue
+        if: steps.phrase.outputs.phrase != ''
+        uses: ./.github/actions/wing-commander-outstanding-task-item
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          issue-number: ${{ needs.classify-and-announce.outputs.issue-number }}
+          phrase: ${{ steps.phrase.outputs.phrase }}
+          artifact-url: ${{ steps.act-result.outputs.artifact-url }}
+          context: (from PR #${{ inputs.pr-number }})
 
       # T022/T023/T033 (FR-009/FR-010/FR-025): no mutation, no artifact — the
       # content was already fully drafted by classify (T006).

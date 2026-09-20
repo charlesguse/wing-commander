@@ -1,0 +1,48 @@
+# The outstanding-task-item idiom, in one home: append one unchecked
+# checklist line to a lifecycle issue naming what a run spun off.
+#
+# Extracted from pr-conversation.yml's "Post outstanding task item on the
+# lifecycle issue" step -- its own header comment calls this "the ONE
+# shared mechanism every SpinOffArtifact posts through" -- so that
+# wing-commander-stage-findings (specs/056-stage-found-defect-filing) can
+# become a second caller without pasting the same
+# `gh issue comment ... "- [ ] ..."` literal a second time
+# (CLAUDE.md's shared-logic rule). See
+# contracts/wing-commander-outstanding-task-item.md.
+name: wing-commander-outstanding-task-item
+description: >
+  Appends one unchecked checklist line to a lifecycle issue naming what a
+  run spun off and linking it.
+
+inputs:
+  token:
+    description: Token to comment with
+    required: true
+  issue-number:
+    description: The lifecycle issue to post to
+    required: true
+  phrase:
+    description: 'The sentence fragment naming what happened, e.g. "a new lifecycle issue was opened"'
+    required: true
+  artifact-url:
+    description: The URL of the thing spun off
+    required: true
+  context:
+    description: 'Optional trailing parenthetical, e.g. "(from PR #123)" or "(run https://...)"'
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Post outstanding task item on the lifecycle issue
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        ISSUE_NUMBER: ${{ inputs.issue-number }}
+        PHRASE: ${{ inputs.phrase }}
+        ARTIFACT_URL: ${{ inputs.artifact-url }}
+        CONTEXT: ${{ inputs.context }}
+      run: |
+        set -uo pipefail
+        gh issue comment "$ISSUE_NUMBER" --body "- [ ] $PHRASE — $ARTIFACT_URL${CONTEXT:+ $CONTEXT}"
