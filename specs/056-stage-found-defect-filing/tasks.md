@@ -635,3 +635,11 @@ barely, and only for one release").
 - Per FR-001a, do not let User Story 1's inputs/wiring reach only some of
   the six stages "for now" — the published surface moves exactly once, so
   T022-T036 must land for all six stages in the same change.
+
+---
+
+## Maintainer Feedback
+
+- [ ] Fix GITHUB_OUTPUT delimiter forgery in `.github/actions/wing-commander-stage-findings/action.yml:289-290,313-319`: use a randomly generated heredoc delimiter per write (e.g. `uuid.uuid4().hex`) instead of one derived from the key name, or (preferred) stop writing agent-authored `title`/`what` to `GITHUB_OUTPUT` entirely and pass them via files under `RUNNER_TEMP` instead.
+- [ ] Add `maxLength`/single-line `pattern` constraints for `title` and `what` in `.github/schemas/stage-finding.schema.json` (currently only `minLength: 1`).
+- [ ] Add a fixture to `tests/run_fixtures.py`: a finding whose `what` contains the delimiter line plus a forged `survivor-0-body-file=` must leave every other survivor's outputs unchanged; confirm the gate fails against the pre-fix writer.

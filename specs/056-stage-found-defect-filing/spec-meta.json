@@ -2,8 +2,8 @@
   "issue": 412,
   "spec_dir": "specs/056-stage-found-defect-filing",
   "feature_num": "056",
-  "stage": "review",
+  "stage": "implement",
   "iteration": 1,
   "spec_branch": "spec/056-stage-found-defect-filing",
-  "pending_re_review_from": []
+  "pending_re_review_from": ["charlesguse"]
 }
