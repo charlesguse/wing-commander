@@ -257,34 +257,34 @@ issue exists afterwards carrying the description, evidence paths, run
 URL, and stage-and-spec attribution line — with the stage's own output
 unchanged from a run without the planted defect (quickstart.md §3).
 
-- [ ] T022 [P] [US1] Add the FR-003 findings paragraph (the stable
+- [X] T022 [P] [US1] Add the FR-003 findings paragraph (the stable
   substring "do not attempt to file it yourself", worded once per
   `contracts/stage-wiring.md` and reused verbatim across all six prompts,
   parameterized only by channel-mode) to `intake.yml`'s "Create spec from
   issue" (`id: agent`) prompt, using the structured-array clause ("the
   findings array of your structured result").
-- [ ] T023 [P] [US1] Add the same paragraph, structured-array clause, to
+- [X] T023 [P] [US1] Add the same paragraph, structured-array clause, to
   `clarify.yml`'s clarify agent step's prompt.
-- [ ] T024 [P] [US1] Add the same paragraph, fenced-block clause (a fenced
+- [X] T024 [P] [US1] Add the same paragraph, fenced-block clause (a fenced
   ` ```wing-commander-findings ` block in the final message), to both
   `plan.yml` agent steps (`agent-auto`, `agent-pr`).
-- [ ] T025 [P] [US1] Add the same fenced-block-clause paragraph to both
+- [X] T025 [P] [US1] Add the same fenced-block-clause paragraph to both
   `tasks.yml` agent steps (`agent-auto`, `agent-pr`).
-- [ ] T026 [P] [US1] Add the same fenced-block-clause paragraph to
+- [X] T026 [P] [US1] Add the same fenced-block-clause paragraph to
   `implement.yml`'s "Implement and converge (cycle)" and "Implement and
   converge (retry at escalation model)" agent steps.
-- [ ] T027 [P] [US1] Add the same fenced-block-clause paragraph to
+- [X] T027 [P] [US1] Add the same fenced-block-clause paragraph to
   `finalize.yml`'s "Summarize changes and remaining work" (`id: summarize`)
   agent step.
-- [ ] T028 [US1] Add an optional `findings` array property to `intake.yml`'s
+- [X] T028 [US1] Add an optional `findings` array property to `intake.yml`'s
   inline `--json-schema` literal, default/absent meaning zero findings,
   leaving the existing required `specified`/`clarifications` properties and
   their validation unchanged (FR-007).
-- [ ] T029 [US1] Add an optional `findings` array property to `clarify.yml`'s
+- [X] T029 [US1] Add an optional `findings` array property to `clarify.yml`'s
   inline `--json-schema` literal, leaving the existing required
   `answered`/`clarifications` properties and their validation unchanged
   (FR-007).
-- [ ] T030 [US1] Add three `workflow_call.inputs` to each of `intake.yml`,
+- [X] T030 [US1] Add three `workflow_call.inputs` to each of `intake.yml`,
   `clarify.yml`, `plan.yml`, `tasks.yml` (`findings-filing-enabled`
   boolean default `false`, `findings-label-prefix` string default
   `found-by`, `findings-cap` number default `3`) and the same three inputs
@@ -292,7 +292,7 @@ unchanged from a run without the planted defect (quickstart.md §3).
   `finalize.yml`, per `data-model.md`'s "Stage Filing Configuration" and
   FR-001a (identical shape across all six, differing only in that one
   default).
-- [ ] T031 [US1] Add a "File findings from this run" step to `intake.yml`'s
+- [X] T031 [US1] Add a "File findings from this run" step to `intake.yml`'s
   job immediately after the "Resolve created spec" (`id: created`) step:
   `if: ${{ !cancelled() && steps.created.outcome != 'skipped' }}`,
   `continue-on-error: true`, `uses: ./.github/actions/wing-commander-stage-findings`,
@@ -300,38 +300,38 @@ unchanged from a run without the planted defect (quickstart.md §3).
   `contracts/wing-commander-stage-findings.md`'s call-site wiring (token,
   stage, enabled, findings-json, spec-dir, run-url, lifecycle-issue-number,
   label-prefix, cap). (depends on T011, T028, T030)
-- [ ] T032 [US1] Same step, after `clarify.yml`'s "Determine clarification
+- [X] T032 [US1] Same step, after `clarify.yml`'s "Determine clarification
   follow-up outcome" (`id: clarification`) step, `channel-mode:
   structured-array`. (depends on T011, T029, T030)
-- [ ] T033 [US1] Same step, after whichever of `plan.yml`'s "Verify plan
+- [X] T033 [US1] Same step, after whichever of `plan.yml`'s "Verify plan
   committed (auto)" / "Verify plan PR and flip stage label" steps ran,
   `channel-mode: fenced-block`, `execution-output-path` pointed at plan's
   `claude-execution-output.json`. (depends on T011, T030)
-- [ ] T034 [US1] Same step, after whichever of `tasks.yml`'s "Verify tasks
+- [X] T034 [US1] Same step, after whichever of `tasks.yml`'s "Verify tasks
   committed (auto)" / "Verify tasks PR (pr)" steps ran, `channel-mode:
   fenced-block`. (depends on T011, T030)
-- [ ] T035 [US1] Same step, after `implement.yml`'s "Consolidate final
+- [X] T035 [US1] Same step, after `implement.yml`'s "Consolidate final
   outcome" (`id: final`) step, `channel-mode: fenced-block` (research.md
   D1: the one attribution surface for the combined implement⟲converge
   turn). (depends on T011, T030)
-- [ ] T036 [US1] Same step, after `finalize.yml`'s "Verify agent output"
+- [X] T036 [US1] Same step, after `finalize.yml`'s "Verify agent output"
   (`id: verify-agent-output`) step, `channel-mode: fenced-block`. (depends
   on T011, T030)
-- [ ] T037 [P] [US1] Pass the three new inputs through as declared `with:`
+- [X] T037 [P] [US1] Pass the three new inputs through as declared `with:`
   values in `wing-commander-1-intake.yml`'s call into `intake.yml`.
   (depends on T030)
-- [ ] T038 [P] [US1] Same pass-through in `wing-commander-2-clarify.yml`'s
+- [X] T038 [P] [US1] Same pass-through in `wing-commander-2-clarify.yml`'s
   call into `clarify.yml`. (depends on T030)
-- [ ] T039 [P] [US1] Same pass-through in `wing-commander-3-plan.yml`'s
+- [X] T039 [P] [US1] Same pass-through in `wing-commander-3-plan.yml`'s
   call into `plan.yml`. (depends on T030)
-- [ ] T040 [P] [US1] Same pass-through in both call sites of
+- [X] T040 [P] [US1] Same pass-through in both call sites of
   `wing-commander-4-tasks.yml` (generate and approved modes) into
   `tasks.yml`. (depends on T030)
-- [ ] T041 [P] [US1] Same pass-through in `wing-commander-5-implement.yml`'s
+- [X] T041 [P] [US1] Same pass-through in `wing-commander-5-implement.yml`'s
   call into `implement.yml`. (depends on T030)
-- [ ] T042 [P] [US1] Same pass-through in `wing-commander-6-finalize.yml`'s
+- [X] T042 [P] [US1] Same pass-through in `wing-commander-6-finalize.yml`'s
   call into `finalize.yml`. (depends on T030)
-- [ ] T043 [US1] Create `.github/scripts/verify-stage-findings-wiring.py`
+- [X] T043 [US1] Create `.github/scripts/verify-stage-findings-wiring.py`
   (FR-031): for each of the six stage workflows named in
   `contracts/stage-wiring.md`, fail loudly — naming the stage and which
   side is missing — if exactly one of {the
@@ -341,14 +341,16 @@ unchanged from a run without the planted defect (quickstart.md §3).
   `findings-filing-enabled` default (FR-001a); fail loudly, not
   vacuously, if a named workflow file cannot be found at all. (depends on
   T022-T027, T031-T036)
-- [ ] T044 [P] [US1] Add fixtures for `verify-stage-findings-wiring.py`
+- [X] T044 [P] [US1] Add fixtures for `verify-stage-findings-wiring.py`
   (FR-030): a checked-in copy of one stage workflow with the step present
   and the paragraph absent, and the mirror case, each asserted to fail;
   assert the real six workflows pass post-implementation. (depends on
   T043)
-- [ ] T045 [US1] Register `verify-stage-findings-wiring.py` as a new
-  PR-time gate step in `lint-workflows.yml` (Gate 71, the next free
-  number, mirroring Gate 60's registration shape) so
+- [X] T045 [US1] Register `verify-stage-findings-wiring.py` as a new
+  PR-time gate step in `lint-workflows.yml` (Gate 72 — Gate 71 was taken
+  by this branch's own earlier registration of the
+  wing-commander-stage-findings fixture harness; renumbered the same way
+  Gate 60 documents, mirroring Gate 60's registration shape) so
   `run-local-gates.py` picks it up automatically. (depends on T043)
 
 **Checkpoint**: A real dispatched stage run now proposes, files, and

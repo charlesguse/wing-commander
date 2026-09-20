@@ -3671,6 +3671,23 @@ jobs:
         if: "!cancelled()"
         run: bash .github/actions/wing-commander-stage-findings/tests/run-tests.sh
 
+      # Gate 72 — specs/056-stage-found-defect-filing (FR-031): the FR-003
+      # findings paragraph and the wing-commander-stage-findings filing
+      # step travel together across all six published stage workflows,
+      # regardless of that stage's own findings-filing-enabled default
+      # (FR-001a) — the mechanism's presence is not conditional on it.
+      # Numbered 72, not 71 as tasks.md calls it: this branch's own Gate 71
+      # (the stage-findings fixture harness) claimed 71 first — see
+      # verify-single-home-idioms.py's module docstring for the precedent
+      # of a gate being renumbered as a branch's own earlier work takes a
+      # number first.
+      - name: Gate 72 — the FR-003 findings paragraph and the filing step travel together on every stage
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-stage-findings-wiring.py
+      - name: Gate 72 self-test — a paragraph without a step, a step without a paragraph, and a missing workflow each fail loudly
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-stage-findings-wiring.py --self-test
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when
