@@ -331,12 +331,14 @@ exit 1
 
 
 # Mirrors the API (#422): a label description over 100 characters is a
-# 422, so a caller that passes one cannot pass this stub either. Braces are
-# doubled because the template goes through str.format.
+# 422, so a caller that passes one cannot pass this stub either. This text
+# is inserted into STUB_GH_TEMPLATE as a str.format VALUE, so its braces
+# are single: a doubled `${{#desc}}` reaches bash literally and rejects
+# every call (finder, PR #423 round 1).
 LABEL_CREATE_FAITHFUL = (
     'desc=""; prev=""\n'
     '  for a in "$@"; do if [ "$prev" = "--description" ]; then desc="$a"; fi; prev="$a"; done\n'
-    '  if [ "${{#desc}}" -gt 100 ]; then\n'
+    '  if [ "${#desc}" -gt 100 ]; then\n'
     '    echo "HTTP 422: Validation Failed (https://api.github.com/repos/o/r/labels)" >&2\n'
     '    echo "description is too long (maximum is 100 characters)" >&2\n'
     '    exit 1\n'
@@ -546,11 +548,25 @@ def case_over_long_label_description_fails_the_stub():
         calls = fh.read()
     check(case + ": the label call was made with the over-long description",
           "label create" in calls and ("x" * 101) in calls, calls)
+    check(case + ": the stub rejected it for LENGTH, with the API's own message",
+          "description is too long (maximum is 100 characters)" in out, out)
     check(case + ": the lookup step still exits 0 (the label call is guarded)", rc == 0, out)
     check(case + ": the warning names the label call",
           "gh label create failed for label" in out, out)
-    check(case + ": with the label already present the create still succeeds",
+    check(case + ": the guarded label failure does not stop the create (the stub does not model label existence)",
           outputs.get("action-taken") == "created", outputs)
+
+
+def case_short_label_description_passes_the_stub():
+    case = "a label description within the cap is accepted by the stub: no label warning, created"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-labelok-")
+    marker = "<!-- wing-commander-finding: fingerprint=len0 -->"
+    rc, outputs, out, log = run_lookup(
+        tmp, marker, "all", "[]", label_description="x" * 100)
+    check(case + ": exit 0", rc == 0, out)
+    check(case + ": no label warning (a stub that rejects every call would print one)",
+          "gh label create failed" not in out and "bad substitution" not in out, out)
+    check(case + ": action-taken=created", outputs.get("action-taken") == "created", outputs)
 
 
 def case_label_create_failure_with_missing_label_is_create_failed():
@@ -684,6 +700,7 @@ CASES = [
     case_api_failure_preserves_finding_text_and_exits_zero,
     case_label_description_fits_github_cap,
     case_over_long_label_description_fails_the_stub,
+    case_short_label_description_passes_the_stub,
     case_label_create_failure_with_missing_label_is_create_failed,
     case_comment_failure_on_existing_issue_is_caught,
     case_filed_with_lifecycle_issue_posts_filed_phrase,
