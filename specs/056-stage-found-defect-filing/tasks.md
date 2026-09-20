@@ -664,3 +664,7 @@ barely, and only for one release").
 
 - [ ] Add `invalid-*.json` fixtures under `.github/scripts/fixtures/stage-finding-schema/` (missing required field, extra property, empty `file_paths`, non-string title, unreadable file) exercising `.github/scripts/verify-stage-finding-schema.py:16-18,125-128`'s failure branches.
 - [ ] Add a `--self-test` mode to `verify-stage-finding-schema.py`, wired into `lint-workflows.yml` beside Gate 71, matching the `verify-metrics-record-schema.py` pattern.
+
+## Maintainer Feedback
+
+- [ ] `lint-workflows.yml:21-69`: add `.github/schemas/**` to Gate 71's `pull_request` `paths:` filter, with the same one-line comment convention the five contract documents carry.
