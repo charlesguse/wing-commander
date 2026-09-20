@@ -244,9 +244,12 @@ runs:
             if SPEC_DIR:
                 base = SPEC_DIR.rstrip("/").split("/")[-1]
                 spec_num = base.split("-", 1)[0]
-            lines = [finding["title"], "",
-                     "Found by the {0} stage of spec {1}, run {2}".format(
-                         STAGE, spec_num, RUN_URL),
+            if spec_num:
+                attribution = "Found by the {0} stage of spec {1}, run {2}".format(
+                    STAGE, spec_num, RUN_URL)
+            else:
+                attribution = "Found by the {0} stage, run {1}".format(STAGE, RUN_URL)
+            lines = [finding["title"], "", attribution,
                      "", "## What is wrong", "", finding["what"], "",
                      "## Evidence", ""]
             for p in finding["evidence"]["file_paths"]:
@@ -320,7 +323,7 @@ runs:
       id: report-0
       if: steps.gate.outputs.do-run == 'true' && steps.prepare.outputs.survivor-0-present == 'true'
       continue-on-error: true
-      uses: ./.github/actions/wing-commander-durable-failure-issue
+      uses: ./.wing-commander-pipeline/.github/actions/wing-commander-durable-failure-issue
       with:
         token: ${{ inputs.token }}
         operation: report
@@ -389,7 +392,7 @@ runs:
     - name: Post outstanding task item for finding 0
       if: steps.gate.outputs.do-run == 'true' && steps.record-0.outputs.post-outstanding == 'true' && inputs.lifecycle-issue-number != ''
       continue-on-error: true
-      uses: ./.github/actions/wing-commander-outstanding-task-item
+      uses: ./.wing-commander-pipeline/.github/actions/wing-commander-outstanding-task-item
       with:
         token: ${{ inputs.token }}
         issue-number: ${{ inputs.lifecycle-issue-number }}
@@ -401,7 +404,7 @@ runs:
       id: report-1
       if: steps.gate.outputs.do-run == 'true' && steps.prepare.outputs.survivor-1-present == 'true'
       continue-on-error: true
-      uses: ./.github/actions/wing-commander-durable-failure-issue
+      uses: ./.wing-commander-pipeline/.github/actions/wing-commander-durable-failure-issue
       with:
         token: ${{ inputs.token }}
         operation: report
@@ -470,7 +473,7 @@ runs:
     - name: Post outstanding task item for finding 1
       if: steps.gate.outputs.do-run == 'true' && steps.record-1.outputs.post-outstanding == 'true' && inputs.lifecycle-issue-number != ''
       continue-on-error: true
-      uses: ./.github/actions/wing-commander-outstanding-task-item
+      uses: ./.wing-commander-pipeline/.github/actions/wing-commander-outstanding-task-item
       with:
         token: ${{ inputs.token }}
         issue-number: ${{ inputs.lifecycle-issue-number }}
@@ -482,7 +485,7 @@ runs:
       id: report-2
       if: steps.gate.outputs.do-run == 'true' && steps.prepare.outputs.survivor-2-present == 'true'
       continue-on-error: true
-      uses: ./.github/actions/wing-commander-durable-failure-issue
+      uses: ./.wing-commander-pipeline/.github/actions/wing-commander-durable-failure-issue
       with:
         token: ${{ inputs.token }}
         operation: report
@@ -551,7 +554,7 @@ runs:
     - name: Post outstanding task item for finding 2
       if: steps.gate.outputs.do-run == 'true' && steps.record-2.outputs.post-outstanding == 'true' && inputs.lifecycle-issue-number != ''
       continue-on-error: true
-      uses: ./.github/actions/wing-commander-outstanding-task-item
+      uses: ./.wing-commander-pipeline/.github/actions/wing-commander-outstanding-task-item
       with:
         token: ${{ inputs.token }}
         issue-number: ${{ inputs.lifecycle-issue-number }}
