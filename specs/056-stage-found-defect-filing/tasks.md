@@ -653,3 +653,9 @@ barely, and only for one release").
 - [ ] `finalize.yml:897-898`: key on `steps.summarize-verdict.outputs.verdict == 'healthy'` (covers the `subtype: success` + `is_error: true` case from spec 037 research R3).
 - [ ] Update `contracts/wing-commander-stage-findings.md:87-92` so its "does not reach this step at all" claim matches the corrected gating on all six stages.
 - [ ] Add the FR-030 fixture: a well-formed transcript with a non-healthy verdict must file nothing.
+
+---
+
+## Maintainer Feedback
+
+- [ ] `wing-commander-stage-findings/action.yml:359,377,440,458` (and finding-2 twins): stop echoing raw `$TITLE`/`$WHAT` into `::warning::` lines; annotate only deterministic fields (stage, slot, reason) and write the finding text to `$GITHUB_STEP_SUMMARY` in a fenced block, or strip `\r\n` before echoing.
