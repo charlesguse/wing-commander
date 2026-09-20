@@ -67,6 +67,10 @@ on:
       # grant here - the one edit that can invalidate every App-token call
       # site the gate approves - ran no gate at all until this entry.
       - "docs/setup.md"
+      # Gate 71's subject: a PR that only loosens stage-finding.schema.json
+      # (no code change) must still trigger the gate that checks
+      # verify-stage-finding-schema.py's fixtures against it.
+      - ".github/schemas/**"
   # Gate 1 only — it reads how GitHub actually registered the workflows on
   # the default branch, which a PR's files cannot tell us.
   push:
@@ -3669,7 +3673,7 @@ jobs:
       # live network, no `uses:` invocation.
       - name: Gate 71 — wing-commander-stage-findings behaves per contract for every required branch
         if: "!cancelled()"
-        run: bash .github/actions/wing-commander-stage-findings/tests/run-tests.sh
+        run: bash .github/scripts/stage-findings-tests/run-tests.sh
       # verify-stage-finding-schema.py's validate_finding() is exercised as
       # a Python import by both the composite above and Gate 71's own
       # run-tests.sh -- neither counts as this script being invoked BY A
@@ -3678,6 +3682,9 @@ jobs:
       - name: Gate 71 — verify-stage-finding-schema.py validates its own checked-in fixture
         if: "!cancelled()"
         run: python3 .github/scripts/verify-stage-finding-schema.py .github/scripts/fixtures/stage-finding-schema/valid.json
+      - name: Gate 71 self-test — verify-stage-finding-schema.py rejects every negative fixture for the reason it exists to demonstrate
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-stage-finding-schema.py --self-test
 
       # Gate 72 — specs/056-stage-found-defect-filing (FR-031): the FR-003
       # findings paragraph and the wing-commander-stage-findings filing

@@ -882,11 +882,18 @@ jobs:
       # specs/056-stage-found-defect-filing (FR-003/FR-023): runs after this
       # stage's own deterministic read-back, never gated on filing being
       # enabled — the composite's own enable check makes that decision
-      # (research.md D12). `!cancelled() && steps.created.outcome !=
-      # 'skipped'` excludes a cancelled run and a run whose read-back never
-      # executed (FR-024) without treating either as "zero findings filed".
+      # (research.md D12). Maintainer review: `steps.created.outcome !=
+      # 'skipped'` alone does not gate on stage health (FR-024) — "Resolve
+      # created spec" runs whenever the lifecycle gate is open, regardless
+      # of whether the agent run itself failed or exhausted its budget
+      # before ever producing a valid structured result. Keyed instead on
+      # `steps.agent-result.outputs.valid` — the one signal that is
+      # 'true' only when the agent's terminal result was actually parsed
+      # and validated — which also subsumes the lifecycle-gate/cancelled
+      # checks (agent-result itself only runs when the gate is open and
+      # the verdict is healthy).
       - name: File findings from this run
-        if: ${{ !cancelled() && steps.created.outcome != 'skipped' }}
+        if: ${{ !cancelled() && steps.agent-result.outputs.valid == 'true' }}
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-stage-findings
         with:

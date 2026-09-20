@@ -889,13 +889,18 @@ jobs:
       # specs/056-stage-found-defect-filing (FR-003/FR-023): runs after this
       # stage's own deterministic read-back, never gated on filing being
       # enabled — the composite's own enable check makes that decision
-      # (research.md D12). `!cancelled() && steps.verify-agent-output.outcome
-      # != 'skipped'` excludes a cancelled run and a run whose agent step
-      # never reached its own read-back (FR-024) — a read-back that ran and
-      # FAILED its own validation still counts as having run, since the
-      # transcript this reads from is independent of that validation outcome.
+      # (research.md D12). Maintainer review: `steps.verify-agent-output.
+      # outcome != 'skipped'` alone does not gate on stage health (FR-024)
+      # — that step FAILS LOUDLY (exit 1) on a non-healthy verdict, so its
+      # outcome is 'failure', not 'skipped', and the old condition let
+      # filing proceed anyway. Keyed instead on
+      # `steps.summarize-verdict.outputs.verdict == 'healthy'` — the same
+      # verdict "Verify agent output" itself checks, and the one signal
+      # that already accounts for the `subtype: success` + `is_error:
+      # true` edge case (spec 037 research R3) rather than re-deriving it
+      # from a step outcome.
       - name: File findings from this run
-        if: ${{ !cancelled() && steps.verify-agent-output.outcome != 'skipped' }}
+        if: ${{ !cancelled() && steps.summarize-verdict.outputs.verdict == 'healthy' }}
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-stage-findings
         with:

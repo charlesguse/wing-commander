@@ -1,0 +1,7 @@
+{
+  "title": "Gate 71 cannot fail its own subject",
+  "what": "verify-stage-findings-wiring.py exits 0 even when the subject workflow is missing.",
+  "evidence": {
+    "file_paths": [".github/scripts/verify-stage-findings-wiring.py"]
+  }
+}

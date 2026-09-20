@@ -640,52 +640,52 @@ barely, and only for one release").
 
 ## Maintainer Feedback
 
-- [ ] Fix GITHUB_OUTPUT delimiter forgery in `.github/actions/wing-commander-stage-findings/action.yml:289-290,313-319`: use a randomly generated heredoc delimiter per write (e.g. `uuid.uuid4().hex`) instead of one derived from the key name, or (preferred) stop writing agent-authored `title`/`what` to `GITHUB_OUTPUT` entirely and pass them via files under `RUNNER_TEMP` instead.
-- [ ] Add `maxLength`/single-line `pattern` constraints for `title` and `what` in `.github/schemas/stage-finding.schema.json` (currently only `minLength: 1`).
-- [ ] Add a fixture to `tests/run_fixtures.py`: a finding whose `what` contains the delimiter line plus a forged `survivor-0-body-file=` must leave every other survivor's outputs unchanged; confirm the gate fails against the pre-fix writer.
+- [X] Fix GITHUB_OUTPUT delimiter forgery in `.github/actions/wing-commander-stage-findings/action.yml:289-290,313-319`: use a randomly generated heredoc delimiter per write (e.g. `uuid.uuid4().hex`) instead of one derived from the key name, or (preferred) stop writing agent-authored `title`/`what` to `GITHUB_OUTPUT` entirely and pass them via files under `RUNNER_TEMP` instead. Fixed via `secrets.token_hex(16)` per write.
+- [X] Add `maxLength`/single-line `pattern` constraints for `title` and `what` in `.github/schemas/stage-finding.schema.json` (currently only `minLength: 1`). Added `maxLength`/`pattern: "^[^\r\n]*$"` to both; validator extended to check them.
+- [X] Add a fixture to `tests/run_fixtures.py`: a finding whose `what` contains the delimiter line plus a forged `survivor-0-body-file=` must leave every other survivor's outputs unchanged; confirm the gate fails against the pre-fix writer. `case_forged_delimiter_in_what_cannot_override_other_outputs` added to `stage-findings-tests/run_fixtures.py` (moved per item 11 below).
 
 ---
 
 ## Maintainer Feedback
 
-- [ ] `intake.yml:888-889`: key the filing step's `if:` on intake's own agent-result validity signal, not just non-`skipped` outcome.
-- [ ] `implement.yml:1919-1920`: key on `steps.final.outputs.ok == 'true'` so an exhausted-but-converged-via-retry cycle still files while a not-ok run does not.
-- [ ] `finalize.yml:897-898`: key on `steps.summarize-verdict.outputs.verdict == 'healthy'` (covers the `subtype: success` + `is_error: true` case from spec 037 research R3).
-- [ ] Update `contracts/wing-commander-stage-findings.md:87-92` so its "does not reach this step at all" claim matches the corrected gating on all six stages.
-- [ ] Add the FR-030 fixture: a well-formed transcript with a non-healthy verdict must file nothing.
+- [X] `intake.yml:888-889`: key the filing step's `if:` on intake's own agent-result validity signal, not just non-`skipped` outcome. Now `steps.agent-result.outputs.valid == 'true'`.
+- [X] `implement.yml:1919-1920`: key on `steps.final.outputs.ok == 'true'` so an exhausted-but-converged-via-retry cycle still files while a not-ok run does not.
+- [X] `finalize.yml:897-898`: key on `steps.summarize-verdict.outputs.verdict == 'healthy'` (covers the `subtype: success` + `is_error: true` case from spec 037 research R3).
+- [X] Update `contracts/wing-commander-stage-findings.md:87-92` so its "does not reach this step at all" claim matches the corrected gating on all six stages. Added a per-stage `<stage-health-signal>` table.
+- [X] Add the FR-030 fixture: a well-formed transcript with a non-healthy verdict must file nothing. Implemented as a structural regression guard in `verify-stage-findings-wiring.py` (`HEALTH_SIGNALS`/`filing_step_if_condition`, plus `selftest_missing_health_signal_fails`) rather than a full `if:`-expression simulator: the gate now fails loudly if any of the three fixed stages' filing step's shipped `if:` text stops naming the required stage-health signal, catching a regression back to the old bare non-skipped check.
 
 ---
 
 ## Maintainer Feedback
 
-- [ ] `wing-commander-stage-findings/action.yml:359,377,440,458` (and finding-2 twins): stop echoing raw `$TITLE`/`$WHAT` into `::warning::` lines; annotate only deterministic fields (stage, slot, reason) and write the finding text to `$GITHUB_STEP_SUMMARY` in a fenced block, or strip `\r\n` before echoing.
+- [X] `wing-commander-stage-findings/action.yml:359,377,440,458` (and finding-2 twins): stop echoing raw `$TITLE`/`$WHAT` into `::warning::` lines; annotate only deterministic fields (stage, slot, reason) and write the finding text to `$GITHUB_STEP_SUMMARY` in a fenced block, or strip `\r\n` before echoing. `::warning::` lines are now deterministic-only; the finding text still reaches `$GITHUB_STEP_SUMMARY` verbatim via `$STATE_FILE`'s existing `.notes` mechanism (FR-025).
 
 ## Maintainer Feedback
 
-- [ ] Add `invalid-*.json` fixtures under `.github/scripts/fixtures/stage-finding-schema/` (missing required field, extra property, empty `file_paths`, non-string title, unreadable file) exercising `.github/scripts/verify-stage-finding-schema.py:16-18,125-128`'s failure branches.
-- [ ] Add a `--self-test` mode to `verify-stage-finding-schema.py`, wired into `lint-workflows.yml` beside Gate 71, matching the `verify-metrics-record-schema.py` pattern.
+- [X] Add `invalid-*.json` fixtures under `.github/scripts/fixtures/stage-finding-schema/` (missing required field, extra property, empty `file_paths`, non-string title, unreadable file) exercising `.github/scripts/verify-stage-finding-schema.py:16-18,125-128`'s failure branches. Also added title-too-long and multiline-what fixtures for the new maxLength/pattern branches (8 fixtures total, pinned).
+- [X] Add a `--self-test` mode to `verify-stage-finding-schema.py`, wired into `lint-workflows.yml` beside Gate 71, matching the `verify-metrics-record-schema.py` pattern.
 
 ## Maintainer Feedback
 
-- [ ] `lint-workflows.yml:21-69`: add `.github/schemas/**` to Gate 71's `pull_request` `paths:` filter, with the same one-line comment convention the five contract documents carry.
+- [X] `lint-workflows.yml:21-69`: add `.github/schemas/**` to Gate 71's `pull_request` `paths:` filter, with the same one-line comment convention the five contract documents carry.
 
 ## Maintainer Feedback
 
-- [ ] **Item 10** (PR conversation, in-scope fix): `.github/actions/wing-commander-durable-failure-issue/action.yml`'s "Look up, then report or close" step does not tolerate an API failure at the `gh issue create` report call. Gate 71's checked-in fixture `case_api_failure_preserves_finding_text_and_exits_zero` (`.github/actions/wing-commander-stage-findings/tests/run_fixtures.py`) fails on CI (run 35490652234) with `[FAIL] an API failure at the report call is caught locally, finding text preserved in the log: the lookup step itself still exits 0: HTTP 403: Forbidden` — the step exits non-zero instead of degrading gracefully. Fix the report path so a `gh issue create` failure is caught locally (the step itself still exits 0, `issue-number` left empty, `action-taken` reflecting the failure) so `wing-commander-stage-findings`'s "Record finding N outcome" step can count it as `dropped-api-failure` with the finding's title/what preserved verbatim in the log (FR-022, FR-025). Keep the existing fixture as the regression proof; do not weaken its assertions to make it pass.
+- [X] **Item 10** (PR conversation, in-scope fix): `.github/actions/wing-commander-durable-failure-issue/action.yml`'s "Look up, then report or close" step does not tolerate an API failure at the `gh issue create` report call. Gate 71's checked-in fixture `case_api_failure_preserves_finding_text_and_exits_zero` (`.github/actions/wing-commander-stage-findings/tests/run_fixtures.py`) fails on CI (run 35490652234) with `[FAIL] an API failure at the report call is caught locally, finding text preserved in the log: the lookup step itself still exits 0: HTTP 403: Forbidden` — the step exits non-zero instead of degrading gracefully. Fix the report path so a `gh issue create` failure is caught locally (the step itself still exits 0, `issue-number` left empty, `action-taken` reflecting the failure) so `wing-commander-stage-findings`'s "Record finding N outcome" step can count it as `dropped-api-failure` with the finding's title/what preserved verbatim in the log (FR-022, FR-025). Keep the existing fixture as the regression proof; do not weaken its assertions to make it pass. Fixed via `if url="$(gh issue create ...)"; then ... else action-taken=create-failed ...`; fixture kept (now asserts `action-taken=create-failed` too).
 
 ## Maintainer Feedback
 
-- [ ] **Item 11** (PR conversation, in-scope fix): Move `.github/actions/wing-commander-stage-findings/tests/run-tests.sh` (and its `run_fixtures.py`/fixtures) to `.github/scripts/stage-findings-tests/run-tests.sh`, matching the `.github/scripts/<name>-tests/run-tests.sh` convention `wc_gate_registry.py` documents and that `auto-update-spec-kit-tests` and `e2e-provisioning-tests` already follow — `gate_scripts()` (wc_gate_registry.py:139) only discovers `.github/scripts/*/run-tests.sh`, so the harness at its current `.github/actions/...` path is invisible to `run-local-gates.py`, which is why CLAUDE.md's "run the full PR-time gate suite locally, it is the same set CI runs" was false for this PR and item 10 was invisible locally. Repoint `lint-workflows.yml`'s Gate 71 step (currently `run: bash .github/actions/wing-commander-stage-findings/tests/run-tests.sh`, around line 3670-3672) at the new path. Re-run `python .github/scripts/run-local-gates.py` afterward and confirm it now lists a third `run-tests.sh` gate and reproduces item 10's failure before that fix lands. Per the review, item 7's per-case isolation / native temp paths fix is also needed for this local run to finish on this repository's Windows toolchain.
+- [X] **Item 11** (PR conversation, in-scope fix): Move `.github/actions/wing-commander-stage-findings/tests/run-tests.sh` (and its `run_fixtures.py`/fixtures) to `.github/scripts/stage-findings-tests/run-tests.sh`, matching the `.github/scripts/<name>-tests/run-tests.sh` convention `wc_gate_registry.py` documents and that `auto-update-spec-kit-tests` and `e2e-provisioning-tests` already follow — `gate_scripts()` (wc_gate_registry.py:139) only discovers `.github/scripts/*/run-tests.sh`, so the harness at its current `.github/actions/...` path is invisible to `run-local-gates.py`, which is why CLAUDE.md's "run the full PR-time gate suite locally, it is the same set CI runs" was false for this PR and item 10 was invisible locally. Repoint `lint-workflows.yml`'s Gate 71 step (currently `run: bash .github/actions/wing-commander-stage-findings/tests/run-tests.sh`, around line 3670-3672) at the new path. Re-run `python .github/scripts/run-local-gates.py` afterward and confirm it now lists a third `run-tests.sh` gate and reproduces item 10's failure before that fix lands. Per the review, item 7's per-case isolation / native temp paths fix is also needed for this local run to finish on this repository's Windows toolchain. Moved (via Write + `git rm`, `git mv` not in this run's allowlist); `lint-workflows.yml`'s Gate 71 step repointed.
 
 ## Maintainer Feedback
 
-- [ ] `wing-commander-stage-findings/tests/run_fixtures.py:364` / `run-tests.sh`: isolate each fixture case (catch, report FAIL, continue) so one case's `FileNotFoundError` doesn't abort the remaining cases, exiting non-zero overall if any failed.
-- [ ] Have the composite create its temp files under `${RUNNER_TEMP:-/tmp}` so the logged path is native on every platform, not an MSYS-mangled path.
+- [X] `wing-commander-stage-findings/tests/run_fixtures.py:364` / `run-tests.sh`: isolate each fixture case (catch, report FAIL, continue) so one case's `FileNotFoundError` doesn't abort the remaining cases, exiting non-zero overall if any failed. `main()` now wraps each case in try/except.
+- [X] Have the composite create its temp files under `${RUNNER_TEMP:-/tmp}` so the logged path is native on every platform, not an MSYS-mangled path. Fixed both the "Record finding N outcome" steps' `mktemp` and `wing-commander-durable-failure-issue`'s `create_body_file` `mktemp`.
 
 ## Maintainer Feedback
 
-- [ ] `verify-stage-findings-wiring.py:26-33`: scope the FR-003 paragraph substring check to the workflow's `prompt:` block rather than the whole file, so a comment can't satisfy it after the paragraph is removed from the prompt.
+- [X] `verify-stage-findings-wiring.py:26-33`: scope the FR-003 paragraph substring check to the workflow's `prompt:` block rather than the whole file, so a comment can't satisfy it after the paragraph is removed from the prompt. `has_paragraph_in_prompt()` now scans each step's `with.prompt` field only; `selftest_comment_only_paragraph_does_not_satisfy` proves a stale comment no longer passes.
 
 ## Maintainer Feedback
 
-- [ ] `docs/adoption.md:1097-1099`: add the `WING_COMMANDER_*` repository-variable name this repository's wrappers read for `findings-filing-enabled`, matching the sibling rows in the same table (FR-033).
+- [X] `docs/adoption.md:1097-1099`: add the `WING_COMMANDER_*` repository-variable name this repository's wrappers read for `findings-filing-enabled`, matching the sibling rows in the same table (FR-033). Added to all six per-stage "Findings filing:" paragraphs and to the canonical "Three inputs" table in the "Stage-found defect filing" section.

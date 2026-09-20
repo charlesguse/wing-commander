@@ -67,7 +67,7 @@ step each stage's call follows):
 
 ```yaml
 - name: File findings from this run
-  if: ${{ !cancelled() && steps.<read-back-id>.outcome != 'skipped' }}
+  if: ${{ !cancelled() && <stage-health-signal> }}
   continue-on-error: true
   uses: ./.github/actions/wing-commander-stage-findings
   with:
@@ -90,6 +90,23 @@ reach this step at all — it is not converted into "zero findings filed",
 it simply never runs, which is what "does not strand or alter the stage's
 existing failure reporting" requires (a run that never attempts to file
 is indistinguishable, from the outside, from one where filing is off).
+
+`<stage-health-signal>` is deliberately NOT a bare `steps.<read-back-id>.
+outcome != 'skipped'` check (maintainer review, post-merge fix): a
+read-back step commonly runs whenever the lifecycle gate is open,
+regardless of whether the agent run underneath it actually produced a
+healthy, valid result — a bare non-skipped check lets a failed/exhausted
+run's read-back step still "run" and reach the filing step. Each stage
+instead names the specific signal that is only true on a healthy run:
+
+| stage | `<stage-health-signal>` |
+|---|---|
+| `intake` | `steps.agent-result.outputs.valid == 'true'` |
+| `clarify` | `steps.<read-back-id>.outcome != 'skipped'` (unchanged) |
+| `plan` | `steps.<read-back-id>.outcome != 'skipped'` (unchanged) |
+| `tasks` | `steps.<read-back-id>.outcome != 'skipped'` (unchanged) |
+| `implement` | `steps.final.outputs.ok == 'true'` |
+| `finalize` | `steps.summarize-verdict.outputs.verdict == 'healthy'` |
 
 ## Gate coverage
 

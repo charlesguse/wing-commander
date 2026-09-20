@@ -145,6 +145,7 @@ runs:
         import json
         import os
         import re
+        import secrets
 
         _schema_validator = os.path.join(
             os.environ["GITHUB_ACTION_PATH"], "..", "..", "scripts",
@@ -313,7 +314,17 @@ runs:
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
             for key, value in outputs:
                 if "\n" in value:
-                    delim = "WC_SF_{0}_EOF".format(key.replace("-", "_").upper())
+                    # A delimiter derived from the key name is guessable by
+                    # whatever produced `value` -- and title/what are
+                    # agent-authored (FR-026: treat as data, not
+                    # instruction). A value containing that guessed
+                    # delimiter on a line of its own would terminate the
+                    # heredoc early and let the following line(s) be parsed
+                    # as forged key=value output pairs (e.g. overriding a
+                    # later survivor's body-file). A fresh random delimiter
+                    # per write cannot be predicted in advance, closing that
+                    # off regardless of what any single finding's text says.
+                    delim = "WC_SF_EOF_{0}".format(secrets.token_hex(16))
                     fh.write("{0}<<{1}\n{2}\n{1}\n".format(key, delim, value))
                 else:
                     fh.write("{0}={1}\n".format(key, value))
@@ -354,9 +365,18 @@ runs:
         post_outstanding=false
         phrase=""
         issue_url=""
-        tmp="$(mktemp)"
+        tmp="$(mktemp "${RUNNER_TEMP:-/tmp}/wc-sf-record.XXXXXX")"
         if [ -z "$ISSUE_NUMBER" ]; then
-          echo "::warning::wing-commander-stage-findings: filing failed for '$TITLE' ($STAGE) — treating as dropped-api-failure. what: $WHAT"
+          # Deterministic fields only in the annotation itself -- $TITLE/
+          # $WHAT are agent-authored (FR-026) and a `what` containing a
+          # newline plus a workflow-command sequence
+          # (::add-mask::/::error::/::stop-commands::) would otherwise be
+          # interpreted as a real command by the runner the moment it's
+          # echoed raw. The finding text still reaches a maintainer
+          # verbatim (FR-025) via $STATE_FILE's `.notes`, which "Emit
+          # summary" below writes to $GITHUB_STEP_SUMMARY -- a markdown
+          # file the runner never parses as commands.
+          echo "::warning::wing-commander-stage-findings: filing failed for stage $STAGE — treating as dropped-api-failure; see the step summary for the finding text."
           jq --arg title "$TITLE" --arg what "$WHAT" \
             '.dropped_api_failure += 1 | .notes += ["dropped (API failure) while filing " + $title + ": " + $what]' \
             "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
@@ -374,7 +394,7 @@ runs:
               jq '.appended += 1' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
               ;;
             *)
-              echo "::warning::wing-commander-stage-findings: unexpected action-taken '$ACTION_TAKEN' filing '$TITLE' ($STAGE) — treating as dropped-api-failure. what: $WHAT"
+              echo "::warning::wing-commander-stage-findings: unexpected action-taken '$ACTION_TAKEN' filing for stage $STAGE — treating as dropped-api-failure; see the step summary for the finding text."
               jq --arg at "$ACTION_TAKEN" --arg title "$TITLE" --arg what "$WHAT" \
                 '.dropped_api_failure += 1 | .notes += ["dropped (API failure) while filing " + $title + " (action-taken=" + $at + "): " + $what]' \
                 "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
@@ -435,9 +455,18 @@ runs:
         post_outstanding=false
         phrase=""
         issue_url=""
-        tmp="$(mktemp)"
+        tmp="$(mktemp "${RUNNER_TEMP:-/tmp}/wc-sf-record.XXXXXX")"
         if [ -z "$ISSUE_NUMBER" ]; then
-          echo "::warning::wing-commander-stage-findings: filing failed for '$TITLE' ($STAGE) — treating as dropped-api-failure. what: $WHAT"
+          # Deterministic fields only in the annotation itself -- $TITLE/
+          # $WHAT are agent-authored (FR-026) and a `what` containing a
+          # newline plus a workflow-command sequence
+          # (::add-mask::/::error::/::stop-commands::) would otherwise be
+          # interpreted as a real command by the runner the moment it's
+          # echoed raw. The finding text still reaches a maintainer
+          # verbatim (FR-025) via $STATE_FILE's `.notes`, which "Emit
+          # summary" below writes to $GITHUB_STEP_SUMMARY -- a markdown
+          # file the runner never parses as commands.
+          echo "::warning::wing-commander-stage-findings: filing failed for stage $STAGE — treating as dropped-api-failure; see the step summary for the finding text."
           jq --arg title "$TITLE" --arg what "$WHAT" \
             '.dropped_api_failure += 1 | .notes += ["dropped (API failure) while filing " + $title + ": " + $what]' \
             "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
@@ -455,7 +484,7 @@ runs:
               jq '.appended += 1' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
               ;;
             *)
-              echo "::warning::wing-commander-stage-findings: unexpected action-taken '$ACTION_TAKEN' filing '$TITLE' ($STAGE) — treating as dropped-api-failure. what: $WHAT"
+              echo "::warning::wing-commander-stage-findings: unexpected action-taken '$ACTION_TAKEN' filing for stage $STAGE — treating as dropped-api-failure; see the step summary for the finding text."
               jq --arg at "$ACTION_TAKEN" --arg title "$TITLE" --arg what "$WHAT" \
                 '.dropped_api_failure += 1 | .notes += ["dropped (API failure) while filing " + $title + " (action-taken=" + $at + "): " + $what]' \
                 "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
@@ -516,9 +545,18 @@ runs:
         post_outstanding=false
         phrase=""
         issue_url=""
-        tmp="$(mktemp)"
+        tmp="$(mktemp "${RUNNER_TEMP:-/tmp}/wc-sf-record.XXXXXX")"
         if [ -z "$ISSUE_NUMBER" ]; then
-          echo "::warning::wing-commander-stage-findings: filing failed for '$TITLE' ($STAGE) — treating as dropped-api-failure. what: $WHAT"
+          # Deterministic fields only in the annotation itself -- $TITLE/
+          # $WHAT are agent-authored (FR-026) and a `what` containing a
+          # newline plus a workflow-command sequence
+          # (::add-mask::/::error::/::stop-commands::) would otherwise be
+          # interpreted as a real command by the runner the moment it's
+          # echoed raw. The finding text still reaches a maintainer
+          # verbatim (FR-025) via $STATE_FILE's `.notes`, which "Emit
+          # summary" below writes to $GITHUB_STEP_SUMMARY -- a markdown
+          # file the runner never parses as commands.
+          echo "::warning::wing-commander-stage-findings: filing failed for stage $STAGE — treating as dropped-api-failure; see the step summary for the finding text."
           jq --arg title "$TITLE" --arg what "$WHAT" \
             '.dropped_api_failure += 1 | .notes += ["dropped (API failure) while filing " + $title + ": " + $what]' \
             "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
@@ -536,7 +574,7 @@ runs:
               jq '.appended += 1' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
               ;;
             *)
-              echo "::warning::wing-commander-stage-findings: unexpected action-taken '$ACTION_TAKEN' filing '$TITLE' ($STAGE) — treating as dropped-api-failure. what: $WHAT"
+              echo "::warning::wing-commander-stage-findings: unexpected action-taken '$ACTION_TAKEN' filing for stage $STAGE — treating as dropped-api-failure; see the step summary for the finding text."
               jq --arg at "$ACTION_TAKEN" --arg title "$TITLE" --arg what "$WHAT" \
                 '.dropped_api_failure += 1 | .notes += ["dropped (API failure) while filing " + $title + " (action-taken=" + $at + "): " + $what]' \
                 "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"

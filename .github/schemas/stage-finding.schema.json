@@ -6,8 +6,8 @@
   "required": ["title", "what", "evidence", "fingerprint_basis"],
   "additionalProperties": false,
   "properties": {
-    "title": { "type": "string", "minLength": 1 },
-    "what": { "type": "string", "minLength": 1 },
+    "title": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^\r\n]*$" },
+    "what": { "type": "string", "minLength": 1, "maxLength": 4000, "pattern": "^[^\r\n]*$" },
     "evidence": {
       "type": "object",
       "required": ["file_paths"],

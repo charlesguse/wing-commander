@@ -1094,9 +1094,12 @@ Common to every stage below:
 | Side effects | `spec-draft/NNN-slug` branch (prefix configurable via `WING_COMMANDER_SPEC_DRAFT_PREFIX`, default `spec-draft/`) + draft spec PR to your default branch; `specs/NNN-slug/` with `spec.md`, `spec-meta.json`; `spec:NNN-slug` + `stage:spec` labels; clarification-questions or ready-for-review comment |
 | Outputs | `spec-dir`, `feature-num` |
 
-Findings filing: `findings-filing-enabled` (boolean, default `false`),
-`findings-label-prefix` (string, `found-by`), `findings-cap` (number, `3`)
-— see [Stage-found defect filing](#stage-found-defect-filing).
+Findings filing: `findings-filing-enabled` (boolean, default `false`;
+this repository's wrappers read it from
+`WING_COMMANDER_INTAKE_FINDINGS_FILING_ENABLED`), `findings-label-prefix`
+(string, `found-by`; `WING_COMMANDER_FINDINGS_LABEL_PREFIX`),
+`findings-cap` (number, `3`; `WING_COMMANDER_FINDINGS_CAP`) — see
+[Stage-found defect filing](#stage-found-defect-filing).
 
 Single-stage example — spec PRs from a manual dispatch instead of a label:
 
@@ -1129,9 +1132,11 @@ jobs:
 | Side effects | commits to the draft branch (PR updates automatically); 👀 reaction on the comment; updated PR body; status comment on the issue |
 | Outputs | none |
 
-Findings filing: `findings-filing-enabled` (boolean, default `false`),
-`findings-label-prefix` (string, `found-by`), `findings-cap` (number, `3`)
-— see [Stage-found defect filing](#stage-found-defect-filing).
+Findings filing: `findings-filing-enabled` (boolean, default `false`;
+`WING_COMMANDER_CLARIFY_FINDINGS_FILING_ENABLED`), `findings-label-prefix`
+(string, `found-by`; `WING_COMMANDER_FINDINGS_LABEL_PREFIX`),
+`findings-cap` (number, `3`; `WING_COMMANDER_FINDINGS_CAP`) — see
+[Stage-found defect filing](#stage-found-defect-filing).
 
 The wrapper owns the commenter-authorization gate — see wrapper 2 above.
 
@@ -1144,9 +1149,11 @@ The wrapper owns the commenter-authorization gate — see wrapper 2 above.
 | Side effects | `spec/NNN-slug` persistent branch (prefix configurable via `WING_COMMANDER_SPEC_PREFIX`, default `spec/`), created if absent; `plan/NNN-slug` branch (prefix configurable via `WING_COMMANDER_PLAN_PREFIX`, default `plan/`) + plan PR into the spec branch; lifecycle issue created for hand-submitted specs; `spec-meta.json` → `plan`; label flip |
 | Outputs | `spec-branch`, `spec-dir` |
 
-Findings filing: `findings-filing-enabled` (boolean, default `false`),
-`findings-label-prefix` (string, `found-by`), `findings-cap` (number, `3`)
-— see [Stage-found defect filing](#stage-found-defect-filing).
+Findings filing: `findings-filing-enabled` (boolean, default `false`;
+`WING_COMMANDER_PLAN_FINDINGS_FILING_ENABLED`), `findings-label-prefix`
+(string, `found-by`; `WING_COMMANDER_FINDINGS_LABEL_PREFIX`),
+`findings-cap` (number, `3`; `WING_COMMANDER_FINDINGS_CAP`) — see
+[Stage-found defect filing](#stage-found-defect-filing).
 
 Single-stage example — plan a hand-written spec via manual dispatch:
 
@@ -1179,9 +1186,11 @@ jobs:
 | Side effects | `auto`: `tasks.md` + stage flip committed to the spec branch, implement dispatched if configured. `pr`: `tasks/NNN-slug` branch (prefix configurable via `WING_COMMANDER_TASKS_PREFIX`, default `tasks/`) + review PR, no dispatch. `approved`: dispatch only |
 | Outputs | `spec-dir` |
 
-Findings filing: `findings-filing-enabled` (boolean, default `false`),
-`findings-label-prefix` (string, `found-by`), `findings-cap` (number, `3`)
-— see [Stage-found defect filing](#stage-found-defect-filing).
+Findings filing: `findings-filing-enabled` (boolean, default `false`;
+`WING_COMMANDER_TASKS_FINDINGS_FILING_ENABLED`), `findings-label-prefix`
+(string, `found-by`; `WING_COMMANDER_FINDINGS_LABEL_PREFIX`),
+`findings-cap` (number, `3`; `WING_COMMANDER_FINDINGS_CAP`) — see
+[Stage-found defect filing](#stage-found-defect-filing).
 
 `mode: approved` is agent-free (no Claude credential needed) — it exists so
 your wrapper's `pull_request: closed` trigger for merged tasks PRs can hand
@@ -1197,9 +1206,11 @@ itself.
 | Side effects | ONE implement ⟲ converge cycle committed to the spec branch; per-cycle progress comment; tier-up retry on failure (→ `claude-opus-5`); stall marking + runbook comment on exhausted retry; dispatches `self-workflow` (next iteration) or `next-workflow` (finalize) when configured, otherwise reports to the issue and stops |
 | Outputs | `converged` (boolean; empty on failure/skip) |
 
-Findings filing: `findings-filing-enabled` (boolean, default `true`),
-`findings-label-prefix` (string, `found-by`), `findings-cap` (number, `3`)
-— see [Stage-found defect filing](#stage-found-defect-filing).
+Findings filing: `findings-filing-enabled` (boolean, default `true`;
+`WING_COMMANDER_IMPLEMENT_FINDINGS_FILING_ENABLED`), `findings-label-prefix`
+(string, `found-by`; `WING_COMMANDER_FINDINGS_LABEL_PREFIX`),
+`findings-cap` (number, `3`; `WING_COMMANDER_FINDINGS_CAP`) — see
+[Stage-found defect filing](#stage-found-defect-filing).
 
 One call = one cycle. The loop exists only through `self-workflow`
 re-dispatch, so you decide whether iteration is automatic (wrapper 5 above)
@@ -1214,9 +1225,11 @@ or one-cycle-at-a-time manual.
 | Side effects | final PR `spec/NNN-slug` → default branch (summary, changed files, remaining-manual-work); same remaining-work list commented on the issue; `spec-meta.json` → `review`; `stage:review` label |
 | Outputs | `pr-number` |
 
-Findings filing: `findings-filing-enabled` (boolean, default `true`),
-`findings-label-prefix` (string, `found-by`), `findings-cap` (number, `3`)
-— see [Stage-found defect filing](#stage-found-defect-filing).
+Findings filing: `findings-filing-enabled` (boolean, default `true`;
+`WING_COMMANDER_FINALIZE_FINDINGS_FILING_ENABLED`), `findings-label-prefix`
+(string, `found-by`; `WING_COMMANDER_FINDINGS_LABEL_PREFIX`),
+`findings-cap` (number, `3`; `WING_COMMANDER_FINDINGS_CAP`) — see
+[Stage-found defect filing](#stage-found-defect-filing).
 
 ### cleanup
 
@@ -1405,11 +1418,11 @@ closed one, never reopening a settled thread.
 
 Three inputs control this per stage, identically named on all six:
 
-| Input | Type | Default |
-|---|---|---|
-| `findings-filing-enabled` | boolean | `true` for `implement` and `finalize`; `false` for `intake`, `clarify`, `plan`, `tasks` |
-| `findings-label-prefix` | string | `found-by` |
-| `findings-cap` | number | `3` (also the practical ceiling — see below) |
+| Input | Type | Default | This repository's wrapper repository variable |
+|---|---|---|---|
+| `findings-filing-enabled` | boolean | `true` for `implement` and `finalize`; `false` for `intake`, `clarify`, `plan`, `tasks` | `WING_COMMANDER_<STAGE>_FINDINGS_FILING_ENABLED` (e.g. `WING_COMMANDER_IMPLEMENT_FINDINGS_FILING_ENABLED`) |
+| `findings-label-prefix` | string | `found-by` | `WING_COMMANDER_FINDINGS_LABEL_PREFIX` |
+| `findings-cap` | number | `3` (also the practical ceiling — see below) | `WING_COMMANDER_FINDINGS_CAP` |
 
 `implement` and `finalize` file by default; the other four do not. Set
 `findings-filing-enabled` in the relevant wrapper to turn a stage's filing

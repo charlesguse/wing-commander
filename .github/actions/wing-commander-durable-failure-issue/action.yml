@@ -164,17 +164,32 @@ runs:
               # caller's own body is not "templating a body" in the sense
               # this composite's own contract forbids; the caller still
               # supplies 100% of the finding's own description.
-              create_body_file="$(mktemp)"
+              create_body_file="$(mktemp "${RUNNER_TEMP:-/tmp}/wc-durable-failure-issue.XXXXXX")"
               cat "$BODY_FILE" > "$create_body_file"
               printf '\n\nRelated: a previous occurrence of this was closed as #%s.\n' "$matched_closed" >> "$create_body_file"
             fi
-            url="$(gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --label "$LABEL" --body-file "$create_body_file")"
-            echo "issue-number=${url##*/}" >> "$GITHUB_OUTPUT"
-            if [ -n "$matched_closed" ]; then
-              echo "action-taken=created-linked-closed" >> "$GITHUB_OUTPUT"
-              echo "matched-closed-issue=$matched_closed" >> "$GITHUB_OUTPUT"
+            # A `gh issue create` failure (rate limit, permission, outage)
+            # must not propagate out of this step: `shell: bash` steps run
+            # under the runner's default `-e`, so an unguarded failing
+            # command here would fail the WHOLE lookup step non-zero --
+            # exactly what wing-commander-stage-findings relies on this
+            # composite never doing (FR-022). Caught locally: empty
+            # issue-number, action-taken=create-failed, the caller's own
+            # "Record finding N outcome" step turns that into
+            # dropped-api-failure.
+            if url="$(gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --label "$LABEL" --body-file "$create_body_file")"; then
+              echo "issue-number=${url##*/}" >> "$GITHUB_OUTPUT"
+              if [ -n "$matched_closed" ]; then
+                echo "action-taken=created-linked-closed" >> "$GITHUB_OUTPUT"
+                echo "matched-closed-issue=$matched_closed" >> "$GITHUB_OUTPUT"
+              else
+                echo "action-taken=created" >> "$GITHUB_OUTPUT"
+                echo "matched-closed-issue=" >> "$GITHUB_OUTPUT"
+              fi
             else
-              echo "action-taken=created" >> "$GITHUB_OUTPUT"
+              echo "::warning::wing-commander-durable-failure-issue: gh issue create failed for label $LABEL"
+              echo "issue-number=" >> "$GITHUB_OUTPUT"
+              echo "action-taken=create-failed" >> "$GITHUB_OUTPUT"
               echo "matched-closed-issue=" >> "$GITHUB_OUTPUT"
             fi
           fi

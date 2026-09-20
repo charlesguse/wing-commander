@@ -1913,11 +1913,17 @@ jobs:
       # turn — runs after "Consolidate final outcome", the one point that
       # exists regardless of whether the cycle or the retry-at-escalation-
       # model path ran, never gated on filing being enabled (research.md
-      # D12). `!cancelled() && steps.final.outcome != 'skipped'` excludes a
-      # cancelled run and a run whose agent step never reached its own
-      # read-back (FR-024) without treating either as "zero findings filed".
+      # D12). Maintainer review: `steps.final.outcome != 'skipped'` alone
+      # does not gate on stage health (FR-024) — "Consolidate final
+      # outcome" itself runs whenever the lifecycle gate is open and the
+      # job wasn't told to skip, regardless of whether the cycle actually
+      # succeeded. Keyed instead on `steps.final.outputs.ok == 'true'`,
+      # which "Consolidate final outcome" already computes from whichever
+      # of the primary/retry attempts actually ran — an
+      # exhausted-but-converged-via-retry cycle still files (ok can be
+      # true while truncated is true), while a not-ok run does not.
       - name: File findings from this run
-        if: ${{ !cancelled() && steps.final.outcome != 'skipped' }}
+        if: ${{ !cancelled() && steps.final.outputs.ok == 'true' }}
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-stage-findings
         with:
