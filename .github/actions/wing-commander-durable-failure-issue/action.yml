@@ -27,6 +27,12 @@
 # rather than by label alone. Every existing caller (auto-release.yml,
 # auto-update-spec-kit.yml) omits `marker` and sees byte-identical
 # behavior -- the branch below only activates when a caller opts in.
+#
+# That byte-identical promise covers the FAILURE paths too, which is what
+# `fail-on-api-error` (default true) is for: catching a `gh` failure
+# locally so an opted-in caller can read the outcome must not also mean
+# swallowing it for the callers that read nothing and relied on a red job
+# as the notification (code review of #423).
 name: wing-commander-durable-failure-issue
 description: >
   Looks up an open issue by label (optionally narrowed by a body marker);
@@ -87,13 +93,37 @@ inputs:
     description: Comment to leave when closing (close only)
     required: false
     default: ""
+  fail-on-api-error:
+    description: >
+      true (the default) | false. Decides what a DEGRADED report does --
+      one where `gh issue comment` or `gh issue create` failed, the
+      outputs below say so (`comment-failed` / `create-failed`), and the
+      report the caller asked for never landed. true re-raises it as a
+      step failure once the outputs are written; false leaves the step
+      green and hands the caller the outcome to read.
+
+      The default is true because the two callers that predate
+      specs/056-stage-found-defect-filing -- auto-release.yml's "File or
+      update the failure issue" and auto-update-spec-kit.yml's "File or
+      update the auto-update:failed issue (rollback)" -- neither read
+      `action-taken` nor carry `continue-on-error`. Before the failure
+      paths here were caught locally, an API failure turned those jobs
+      red, which IS the notification those sites exist to produce;
+      swallowing it leaves a green run and no record of the failure the
+      site was called to report (code review of #423). Catching a failure
+      locally and telling nobody is not the same as tolerating it.
+
+      wing-commander-stage-findings passes false: FR-022 requires it never
+      fail its stage, and it does read `action-taken`.
+    required: false
+    default: "true"
 
 outputs:
   issue-number:
     description: The found-or-created (report) / found-or-none (close) issue number, may be empty
     value: ${{ steps.act.outputs.issue-number }}
   action-taken:
-    description: commented | created | created-linked-closed | create-failed | closed | none
+    description: commented | created | created-linked-closed | create-failed | comment-failed | closed | none
     value: ${{ steps.act.outputs.action-taken }}
   matched-closed-issue:
     description: >
@@ -120,8 +150,13 @@ runs:
         MARKER: ${{ inputs.marker }}
         STATE_SCOPE: ${{ inputs.state-scope }}
         CLOSE_COMMENT: ${{ inputs.close-comment }}
+        FAIL_ON_API_ERROR: ${{ inputs.fail-on-api-error }}
       run: |
         set -uo pipefail
+
+        # Set by either report path that failed its API call, read by
+        # the fail-on-api-error check at the bottom of this step.
+        degraded=""
 
         if [ -n "$MARKER" ]; then
           scope="$STATE_SCOPE"
@@ -158,19 +193,39 @@ runs:
               echo "action-taken=commented" >> "$GITHUB_OUTPUT"
             else
               echo "::warning::wing-commander-durable-failure-issue: gh issue comment failed on #$existing for label $LABEL"
-              echo "issue-number=" >> "$GITHUB_OUTPUT"
-              echo "action-taken=create-failed" >> "$GITHUB_OUTPUT"
+              # Nothing was being CREATED on this path: #$existing exists
+              # and is open, and only the comment onto it failed. Say so,
+              # and keep the number -- the lookup above already resolved
+              # it, and a caller told "create-failed, issue-number empty"
+              # reports a finding as lost while the issue holding it sits
+              # open (code review of #423).
+              echo "issue-number=$existing" >> "$GITHUB_OUTPUT"
+              echo "action-taken=comment-failed" >> "$GITHUB_OUTPUT"
+              degraded="gh issue comment on #$existing"
             fi
             echo "matched-closed-issue=" >> "$GITHUB_OUTPUT"
           else
-            # Guarded (#422): the first live filing died here -- GitHub caps a
-            # label description at 100 characters and the caller's ran over --
-            # and under `-e` the step exited before action-taken was written.
-            # A label that already exists still lets the create below succeed;
+            # GitHub caps a label description at 100 characters. The cap is
+            # enforced HERE, at the one site that makes the call, and not
+            # only in a caller's own fixture -- #422 was exactly that hole:
+            # a description nothing measured, 422 on first use, no label,
+            # the create below failing, the report silently dropped. A
+            # description is cosmetic, so an over-long one is truncated and
+            # announced rather than being allowed to cost a report, and
+            # every caller present and future is covered (code review of
+            # #423).
+            label_description="$LABEL_DESCRIPTION"
+            if [ "${#label_description}" -gt 100 ]; then
+              echo "::warning::wing-commander-durable-failure-issue: label-description for $LABEL is ${#label_description} characters; GitHub caps a label description at 100 -- truncating"
+              label_description="${label_description:0:100}"
+            fi
+            # Guarded (#422): the first live filing died on this call, and
+            # under `-e` the step exited before action-taken was written. A
+            # label that already exists still lets the create below succeed;
             # a label that does not exist makes it fail into create-failed,
-            # where the finding text is preserved (FR-025) and the step still
-            # exits 0 (FR-022).
-            if ! gh label create "$LABEL" --color "$LABEL_COLOR" --description "$LABEL_DESCRIPTION" --force; then
+            # where the finding text is preserved (FR-025) and the step
+            # still exits 0 (FR-022) for a caller that asked for that.
+            if ! gh label create "$LABEL" --color "$LABEL_COLOR" --description "$label_description" --force; then
               echo "::warning::wing-commander-durable-failure-issue: gh label create failed for label $LABEL -- the create below succeeds only if the label already exists"
             fi
             create_body_file="$BODY_FILE"
@@ -209,6 +264,7 @@ runs:
               echo "issue-number=" >> "$GITHUB_OUTPUT"
               echo "action-taken=create-failed" >> "$GITHUB_OUTPUT"
               echo "matched-closed-issue=" >> "$GITHUB_OUTPUT"
+              degraded="gh issue create for label $LABEL"
             fi
           fi
         else
@@ -221,4 +277,15 @@ runs:
             echo "action-taken=none" >> "$GITHUB_OUTPUT"
           fi
           echo "matched-closed-issue=" >> "$GITHUB_OUTPUT"
+        fi
+
+        # Last, so the outputs above are written either way: a caller that
+        # reads `action-taken` (wing-commander-stage-findings) passes
+        # fail-on-api-error: false and handles the degraded outcome
+        # itself; a caller that does not gets its API failure back as a
+        # step failure rather than a green run reporting nothing. See the
+        # fail-on-api-error input for why that is the default.
+        if [ -n "$degraded" ] && [ "$FAIL_ON_API_ERROR" != "false" ]; then
+          echo "::error::wing-commander-durable-failure-issue: $degraded failed and fail-on-api-error is not false -- failing the step so this run is not green for a report that never landed."
+          exit 1
         fi
