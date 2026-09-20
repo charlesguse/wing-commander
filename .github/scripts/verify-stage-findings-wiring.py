@@ -133,6 +133,22 @@ def fail(msg):
     print(f"::error::verify-stage-findings-wiring: {msg}")
 
 
+# Maintainer review of #420: `failures` is the per-evaluate() tally, and
+# evaluate() clears it on entry — so a self-test case that recorded its
+# own failure through fail() had it wiped by the NEXT case's evaluate(),
+# and run_selftest()'s count read 0 (exit 0, step green) no matter how
+# many regression fixtures had stopped firing. The ::error:: annotation
+# does not fail a step on its own. Harness failures therefore go here,
+# which nothing clears; the fixture failures evaluate() collects stay in
+# `failures`, since a self-test EXPECTS those.
+selftest_failures = []
+
+
+def selftest_fail(msg):
+    selftest_failures.append(msg)
+    print(f"::error::verify-stage-findings-wiring: {msg}")
+
+
 def note(msg):
     print(f"note: {msg}")
 
@@ -529,7 +545,7 @@ def selftest_real_six_pass():
     case = "the real six stage workflows pass post-implementation"
     found = evaluate(".")
     if found:
-        fail(f"[{case}] real tree failed: {found}")
+        selftest_fail(f"[{case}] real tree failed: {found}")
     else:
         note(f"[{case}] passed")
 
@@ -541,7 +557,7 @@ def selftest_paragraph_without_step_fails():
         found = evaluate(tmp)
         hit = [f for f in found if STAGE_WORKFLOWS[0] in f and "nothing to read it" in f]
         if not hit:
-            fail(f"[{case}] expected a finding for {STAGE_WORKFLOWS[0]}, got: {found}")
+            selftest_fail(f"[{case}] expected a finding for {STAGE_WORKFLOWS[0]}, got: {found}")
         else:
             note(f"[{case}] passed")
     finally:
@@ -555,7 +571,7 @@ def selftest_step_without_paragraph_fails():
         found = evaluate(tmp)
         hit = [f for f in found if STAGE_WORKFLOWS[1] in f and "nothing to propose to it" in f]
         if not hit:
-            fail(f"[{case}] expected a finding for {STAGE_WORKFLOWS[1]}, got: {found}")
+            selftest_fail(f"[{case}] expected a finding for {STAGE_WORKFLOWS[1]}, got: {found}")
         else:
             note(f"[{case}] passed")
     finally:
@@ -569,7 +585,7 @@ def selftest_comment_only_paragraph_does_not_satisfy():
         found = evaluate(tmp)
         hit = [f for f in found if STAGE_WORKFLOWS[1] in f and "nothing to propose to it" in f]
         if not hit:
-            fail(f"[{case}] expected a finding for {STAGE_WORKFLOWS[1]}, got: {found}")
+            selftest_fail(f"[{case}] expected a finding for {STAGE_WORKFLOWS[1]}, got: {found}")
         else:
             note(f"[{case}] passed")
     finally:
@@ -584,7 +600,7 @@ def selftest_missing_health_signal_fails():
         expected = HEALTH_SIGNALS[STAGE_WORKFLOWS[0]]
         hit = [f for f in found if STAGE_WORKFLOWS[0] in f and expected in f]
         if not hit:
-            fail(f"[{case}] expected a finding for {STAGE_WORKFLOWS[0]}, got: {found}")
+            selftest_fail(f"[{case}] expected a finding for {STAGE_WORKFLOWS[0]}, got: {found}")
         else:
             note(f"[{case}] passed")
     finally:
@@ -599,7 +615,7 @@ def selftest_prompt_missing_key_fails():
         hit = [f for f in found if STAGE_WORKFLOWS[2] in f and "gate_or_artifact" in f
                and "required key" in f]
         if not hit:
-            fail(f"[{case}] expected a finding for {STAGE_WORKFLOWS[2]}, got: {found}")
+            selftest_fail(f"[{case}] expected a finding for {STAGE_WORKFLOWS[2]}, got: {found}")
         else:
             note(f"[{case}] passed")
     finally:
@@ -614,7 +630,7 @@ def selftest_structured_untyped_items_fails():
         hit = [f for f in found if STAGE_WORKFLOWS[0] in f and "findings.items" in f
                and "requires" in f]
         if not hit:
-            fail(f"[{case}] expected a finding for {STAGE_WORKFLOWS[0]}, got: {found}")
+            selftest_fail(f"[{case}] expected a finding for {STAGE_WORKFLOWS[0]}, got: {found}")
         else:
             note(f"[{case}] passed")
     finally:
@@ -628,7 +644,7 @@ def selftest_structured_open_items_fails():
         found = evaluate(tmp)
         hit = [f for f in found if STAGE_WORKFLOWS[0] in f and "additionalProperties" in f]
         if not hit:
-            fail(f"[{case}] expected a finding for {STAGE_WORKFLOWS[0]}, got: {found}")
+            selftest_fail(f"[{case}] expected a finding for {STAGE_WORKFLOWS[0]}, got: {found}")
         else:
             note(f"[{case}] passed")
     finally:
@@ -643,7 +659,7 @@ def selftest_structured_extra_property_fails():
         hit = [f for f in found if STAGE_WORKFLOWS[0] in f and "priority" in f
                and "property name" in f]
         if not hit:
-            fail(f"[{case}] expected a finding for {STAGE_WORKFLOWS[0]}, got: {found}")
+            selftest_fail(f"[{case}] expected a finding for {STAGE_WORKFLOWS[0]}, got: {found}")
         else:
             note(f"[{case}] passed")
     finally:
@@ -657,7 +673,7 @@ def selftest_structured_no_schema_fails():
         found = evaluate(tmp)
         hit = [f for f in found if STAGE_WORKFLOWS[1] in f and "--json-schema" in f]
         if not hit:
-            fail(f"[{case}] expected a finding for {STAGE_WORKFLOWS[1]}, got: {found}")
+            selftest_fail(f"[{case}] expected a finding for {STAGE_WORKFLOWS[1]}, got: {found}")
         else:
             note(f"[{case}] passed")
     finally:
@@ -675,7 +691,7 @@ def selftest_missing_workflow_fails_loud():
         found = evaluate(tmp)
         hit = [f for f in found if STAGE_WORKFLOWS[2] in f and "does not exist" in f]
         if not hit:
-            fail(f"[{case}] expected a finding for missing {STAGE_WORKFLOWS[2]}, got: {found}")
+            selftest_fail(f"[{case}] expected a finding for missing {STAGE_WORKFLOWS[2]}, got: {found}")
         else:
             note(f"[{case}] passed")
     finally:
@@ -688,7 +704,7 @@ def selftest_clean_fixture_passes():
     try:
         found = evaluate(tmp)
         if found:
-            fail(f"[{case}] unexpected finding(s): {found}")
+            selftest_fail(f"[{case}] unexpected finding(s): {found}")
         else:
             note(f"[{case}] passed")
     finally:
@@ -717,7 +733,7 @@ def selftest_wrapper_missing_fromjson_fails():
         found = failures[before:]
         hit = [f for f in found if target in f and "fromJSON parity form" in f]
         if not hit:
-            fail(f"[{case}] expected a finding for {target}, got: {found}")
+            selftest_fail(f"[{case}] expected a finding for {target}, got: {found}")
         else:
             note(f"[{case}] passed")
     finally:
@@ -735,10 +751,10 @@ def selftest_literal_string_false_coerces_off_via_fromjson():
     `findings-cap` already relies on for its own numeric default."""
     case = "fromJSON('false')/fromJSON('true') coerce the literal strings to real booleans"
     if json.loads("false") is not False:
-        fail(f"[{case}] json.loads('false') did not produce boolean False — "
+        selftest_fail(f"[{case}] json.loads('false') did not produce boolean False — "
             f"the coercion this fix relies on does not hold.")
     elif json.loads("true") is not True:
-        fail(f"[{case}] json.loads('true') did not produce boolean True — "
+        selftest_fail(f"[{case}] json.loads('true') did not produce boolean True — "
             f"the coercion this fix relies on does not hold.")
     else:
         note(f"[{case}] passed")
@@ -748,7 +764,7 @@ def selftest_wrapper_real_six_pass():
     case = "the real six wrapper workflows' findings-filing-enabled all match the fromJSON parity form"
     found = evaluate_wrapper_filing_enabled(".")
     if found:
-        fail(f"[{case}] real tree failed: {found}")
+        selftest_fail(f"[{case}] real tree failed: {found}")
     else:
         note(f"[{case}] passed")
 
@@ -770,8 +786,9 @@ def run_selftest():
     selftest_literal_string_false_coerces_off_via_fromjson()
     selftest_real_six_pass()
     selftest_wrapper_real_six_pass()
-    print(f"verify-stage-findings-wiring --self-test: {len(failures)} failure(s).")
-    return 1 if failures else 0
+    print(f"verify-stage-findings-wiring --self-test: "
+          f"{len(selftest_failures)} failure(s).")
+    return 1 if selftest_failures else 0
 
 
 def main():
