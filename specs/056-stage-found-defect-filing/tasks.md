@@ -676,3 +676,8 @@ barely, and only for one release").
 ## Maintainer Feedback
 
 - [ ] **Item 11** (PR conversation, in-scope fix): Move `.github/actions/wing-commander-stage-findings/tests/run-tests.sh` (and its `run_fixtures.py`/fixtures) to `.github/scripts/stage-findings-tests/run-tests.sh`, matching the `.github/scripts/<name>-tests/run-tests.sh` convention `wc_gate_registry.py` documents and that `auto-update-spec-kit-tests` and `e2e-provisioning-tests` already follow — `gate_scripts()` (wc_gate_registry.py:139) only discovers `.github/scripts/*/run-tests.sh`, so the harness at its current `.github/actions/...` path is invisible to `run-local-gates.py`, which is why CLAUDE.md's "run the full PR-time gate suite locally, it is the same set CI runs" was false for this PR and item 10 was invisible locally. Repoint `lint-workflows.yml`'s Gate 71 step (currently `run: bash .github/actions/wing-commander-stage-findings/tests/run-tests.sh`, around line 3670-3672) at the new path. Re-run `python .github/scripts/run-local-gates.py` afterward and confirm it now lists a third `run-tests.sh` gate and reproduces item 10's failure before that fix lands. Per the review, item 7's per-case isolation / native temp paths fix is also needed for this local run to finish on this repository's Windows toolchain.
+
+## Maintainer Feedback
+
+- [ ] `wing-commander-stage-findings/tests/run_fixtures.py:364` / `run-tests.sh`: isolate each fixture case (catch, report FAIL, continue) so one case's `FileNotFoundError` doesn't abort the remaining cases, exiting non-zero overall if any failed.
+- [ ] Have the composite create its temp files under `${RUNNER_TEMP:-/tmp}` so the logged path is native on every platform, not an MSYS-mangled path.
