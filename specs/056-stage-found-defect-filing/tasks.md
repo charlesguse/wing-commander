@@ -685,3 +685,7 @@ barely, and only for one release").
 ## Maintainer Feedback
 
 - [ ] `verify-stage-findings-wiring.py:26-33`: scope the FR-003 paragraph substring check to the workflow's `prompt:` block rather than the whole file, so a comment can't satisfy it after the paragraph is removed from the prompt.
+
+## Maintainer Feedback
+
+- [ ] `docs/adoption.md:1097-1099`: add the `WING_COMMANDER_*` repository-variable name this repository's wrappers read for `findings-filing-enabled`, matching the sibling rows in the same table (FR-033).
