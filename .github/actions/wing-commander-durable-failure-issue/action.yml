@@ -93,7 +93,7 @@ outputs:
     description: The found-or-created (report) / found-or-none (close) issue number, may be empty
     value: ${{ steps.act.outputs.issue-number }}
   action-taken:
-    description: commented | created | created-linked-closed | closed | none
+    description: commented | created | created-linked-closed | create-failed | closed | none
     value: ${{ steps.act.outputs.action-taken }}
   matched-closed-issue:
     description: >
@@ -149,12 +149,30 @@ runs:
           if [ -n "$existing" ]; then
             comment_file="$BODY_FILE"
             [ -n "$COMMENT_BODY_FILE" ] && comment_file="$COMMENT_BODY_FILE"
-            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body-file "$comment_file"
-            echo "issue-number=$existing" >> "$GITHUB_OUTPUT"
-            echo "action-taken=commented" >> "$GITHUB_OUTPUT"
+            # Guarded for the same reason `gh issue create` below is (#422):
+            # under the runner's `-e` an unguarded failure here would exit
+            # the whole step before action-taken is written, and the caller
+            # would see a generic "filing failed" instead of this call.
+            if gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body-file "$comment_file"; then
+              echo "issue-number=$existing" >> "$GITHUB_OUTPUT"
+              echo "action-taken=commented" >> "$GITHUB_OUTPUT"
+            else
+              echo "::warning::wing-commander-durable-failure-issue: gh issue comment failed on #$existing for label $LABEL"
+              echo "issue-number=" >> "$GITHUB_OUTPUT"
+              echo "action-taken=create-failed" >> "$GITHUB_OUTPUT"
+            fi
             echo "matched-closed-issue=" >> "$GITHUB_OUTPUT"
           else
-            gh label create "$LABEL" --color "$LABEL_COLOR" --description "$LABEL_DESCRIPTION" --force
+            # Guarded (#422): the first live filing died here -- GitHub caps a
+            # label description at 100 characters and the caller's ran over --
+            # and under `-e` the step exited before action-taken was written.
+            # A label that already exists still lets the create below succeed;
+            # a label that does not exist makes it fail into create-failed,
+            # where the finding text is preserved (FR-025) and the step still
+            # exits 0 (FR-022).
+            if ! gh label create "$LABEL" --color "$LABEL_COLOR" --description "$LABEL_DESCRIPTION" --force; then
+              echo "::warning::wing-commander-durable-failure-issue: gh label create failed for label $LABEL -- the create below succeeds only if the label already exists"
+            fi
             create_body_file="$BODY_FILE"
             if [ -n "$matched_closed" ]; then
               # FR-012: the caller's body cannot name a closed match it did
