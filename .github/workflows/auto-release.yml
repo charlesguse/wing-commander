@@ -1853,7 +1853,7 @@ jobs:
 
       - name: File or update the failure issue
         if: steps.outcome.outputs.action == 'report'
-        uses: ./.github/actions/_shared/durable-failure-issue
+        uses: ./.github/actions/wing-commander-durable-failure-issue
         with:
           token: ${{ github.token }}
           operation: report
@@ -1865,7 +1865,7 @@ jobs:
 
       - name: Close the failure issue on success
         if: steps.outcome.outputs.action == 'close'
-        uses: ./.github/actions/_shared/durable-failure-issue
+        uses: ./.github/actions/wing-commander-durable-failure-issue
         with:
           token: ${{ github.token }}
           operation: close

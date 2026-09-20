@@ -14,12 +14,12 @@
 # one via wing-commander-callout keep doing so and simply hand this
 # composite the resulting `body-file`.
 #
-# Promoted from .github/actions/_shared/durable-failure-issue/ and given
-# the wing-commander- prefix every other non-underscore composite already
+# Promoted out of the internal shared-composites directory and given the
+# wing-commander- prefix every other non-underscore composite already
 # carries (specs/056-stage-found-defect-filing, research.md D8): a
 # published composite is now a second, deliberate caller
-# (wing-commander-stage-findings), so this can no longer live under
-# _shared/ without tripping Gate 60's own promotion-prevention check.
+# (wing-commander-stage-findings), so this can no longer live under the
+# internal path without tripping Gate 60's own promotion-prevention check.
 #
 # specs/056-stage-found-defect-filing (research.md D7) extends this with
 # an opt-in marker/state-scope lookup, used by wing-commander-stage-findings

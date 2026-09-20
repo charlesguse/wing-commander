@@ -141,7 +141,12 @@ VERDICT_SCRIPT = ".github/actions/_shared/auto-release-verdict.sh"
 
 DECLARED_HOMES = {
     "orphan-reset": ".github/actions/_shared/orphan-branch-reset/action.yml",
-    "failure-issue": ".github/actions/_shared/durable-failure-issue/action.yml",
+    # specs/056-stage-found-defect-filing, research.md D8: promoted out of
+    # _shared/ and given the wing-commander- prefix because a published
+    # composite (wing-commander-stage-findings) is now a second, deliberate
+    # caller -- Gate 60's own promotion-prevention check already forbids a
+    # published composite from resolving a _shared/ path.
+    "failure-issue": ".github/actions/wing-commander-durable-failure-issue/action.yml",
     "verdict-shape": ".github/actions/_shared/auto-release-verdict.sh",
     "token-mint": ".github/actions/_shared/scoped-app-token/action.yml",
     "mode-tag-shape": ".github/actions/_shared/auto-release-verdict.sh",
