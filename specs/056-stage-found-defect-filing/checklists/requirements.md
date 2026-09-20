@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,28 +31,31 @@
 
 ## Notes
 
-- **Three `[NEEDS CLARIFICATION]` markers remain open**, at the limit the
-  specify skill allows. They are the three decisions on lifecycle issue
-  #412 that carry a genuine trade-off rather than a defensible default:
-  - **FR-001 (which stages)** — all seven agent stages at once, or implement
-    and finalize first with the rest following. This is a scope decision:
-    it sets how much of the published surface moves in this release and how
-    many prompts, fixtures, and gate rows the feature carries.
-  - **FR-006 (where the agent writes)** — a fenced block in the agent's
-    final message, which every stage already captures and which the
-    read-only stages can produce with no write tool, versus a
-    `findings/*.json` file, which is easier to validate but which only the
-    write-capable stages can produce. This one interacts with FR-001: the
-    file channel cannot cover the read-only stages, so choosing it narrows
-    the eligible stage set rather than merely changing the parsing.
-  - **FR-016 (single home for the filing idiom)** — promote the existing
-    internal composite to the published surface and repoint the current
-    consumers, or introduce a new published composite and retire the
-    internal one. Constitution Principle VII makes promotion a deliberate
-    release act rather than a rename, so this is the owner's call, not the
-    plan stage's.
-  These are posted to #412 as the intake questionnaire; they are left in
-  the spec rather than guessed, per the CI deviation in the intake prompt.
+- **All three `[NEEDS CLARIFICATION]` markers are resolved** by the owner's
+  reply on lifecycle issue #412. The three decisions and their answers:
+  - **FR-001 (which stages)** — *all seven agent stages, behind the enable
+    input, switched on for implement and finalize first*. Scope covers
+    intake, clarify, plan, tasks, implement, converge and finalize; the
+    rollout risk sits in configuration rather than in scope, and the
+    published surface moves once (FR-001a, FR-029). The accepted
+    consequence — five stages shipping code that is off by default — is
+    covered by extending FR-030's fixtures and FR-031's gate to all seven.
+  - **FR-006 (where the agent writes)** — *a fenced block in the agent's
+    final message, plus a `findings` array in the structured result of every
+    stage that already returns a schema-validated one*. A bare fenced block
+    alone would break intake, whose terminal result is a JSON object a
+    schema validates; a `findings/*.json` file alone would exclude the
+    read-only stages that FR-001's answer puts in scope. Each stage has one
+    authoritative shape, fixed by what its terminal result already is, and
+    FR-007 keeps the added array optional so existing validation is
+    undisturbed.
+  - **FR-016 (single home for the filing idiom)** — *promote the existing
+    internal `durable-failure-issue` composite and repoint auto-release and
+    auto-update at the promoted path in the same change*. Its interface is
+    already a general find-or-create-under-a-dedup-label filer, so the
+    promotion is a move rather than a reshaping, and no second copy of the
+    idiom is ever created. FR-032 additionally fails CI on a caller left
+    behind on the retired internal path.
 - The lifecycle issue's two remaining decision points are **not** markers,
   because each has a defensible default recorded in the spec instead:
   - **Dedup key** — already settled by the issue itself ("a fingerprint over
@@ -66,12 +69,13 @@
     question; where exactly that line appears is a plan-stage detail, not a
     spec decision.
 - A fourth question the issue does not raise — **whether filing is on by
-  default for adopters** — is answered in the spec rather than deferred. The
-  Assumptions section takes "enabled by default, wrapper can disable"
-  (FR-029) and pairs it with FR-033's documentation requirement, so an
-  adopter learns before adoption that a stage may open labelled issues in
-  their repository. It is reversible by one input and did not warrant
-  spending one of the three markers.
+  default for adopters** — is answered in the spec rather than deferred, and
+  FR-001's answer sharpened it: filing is on by default for implement and
+  finalize and off for the other five, with the wrapper able to set either
+  way (FR-029). FR-033 pairs that with a documentation requirement naming
+  which stages file by default, so an adopter learns before adoption that a
+  stage may open labelled issues in their repository. It is reversible by
+  one input and did not warrant spending one of the three markers.
 - **Content Quality — "no implementation details"**: this repository's
   product is CI workflow behaviour, so the spec necessarily names stages,
   labels, lifecycle issues, and run summaries. It names no job, step, file,
@@ -85,9 +89,10 @@
   (nothing about the stage's own work changes), and FR-022 through FR-024
   bound it at the job level (filing can never change a stage's outcome).
   FR-029 bounds what widens on the published surface.
-- **Feature Readiness** — the open markers do not block the acceptance
-  scenarios: every user story is testable under either answer to FR-001,
-  FR-006 and FR-016, because each story asserts observable outcomes (an
+- **Feature Readiness** — every user story asserts observable outcomes (an
   issue exists, a duplicate does not, the stage's outcome is unchanged)
-  rather than the channel or the composite path. Planning, however, needs
-  all three answered before it can name a contract.
+  rather than the channel or the composite path, so the stories stood
+  unchanged under either answer and stand unchanged now. With FR-001,
+  FR-006 and FR-016 settled, planning can name the contract: seven stages,
+  two channel shapes decided per stage by its existing terminal result, and
+  one promoted composite.

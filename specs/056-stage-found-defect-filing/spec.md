@@ -279,21 +279,31 @@ framing treats a body carrying the pipeline's finding label as untrusted.
 - **The API refuses the filing** (rate limit, permission, outage): no issue,
   a loud log line carrying the finding's text, and an unchanged stage
   outcome.
+- **A stage whose enable input is off** (the five discovery stages, by
+  default): the mechanism is present but inert. Nothing is filed, the
+  agent's proposals survive only in the execution-output artifact, and the
+  run reports no problem — being switched off is not a failure.
 - **An adopter does not want the pipeline opening issues in their
   repository**: the behaviour is controlled by the stage's declared input
-  surface, which their wrapper sets.
+  surface, which their wrapper sets — per stage, so an adopter can leave
+  implement filing and silence the rest, or the reverse.
 
 ## Requirements *(mandatory)*
 
 ### Scope
 
-- **FR-001**: The stages in scope for this feature are
-  [NEEDS CLARIFICATION: all seven agent stages at once (intake, clarify,
-  plan, tasks, implement, converge, finalize), or implement and finalize
-  first — the two that read the most code — with the rest following in a
-  later feature?]. Whichever set is chosen, every stage in it MUST get the
+- **FR-001**: All seven agent stages — intake, clarify, plan, tasks,
+  implement, converge, finalize — are in scope, and each MUST receive the
   complete mechanism (proposal channel, validation, dedup, filing,
-  cross-link), and every stage outside it MUST be unchanged.
+  cross-link) in this feature. No stage may carry a partial mechanism.
+  Which stages actually file is a matter of configuration, not of scope:
+  the enable input of FR-029 MUST default to on for implement and finalize
+  — the two that read the most code — and to off for the other five, so
+  that turning a discovery stage on later is a wrapper change rather than
+  a second move of the published surface.
+- **FR-001a**: Because activation is configuration, the published surface
+  MUST move exactly once for this feature: every in-scope stage declares the
+  same filing inputs in the same release, whether or not its default is on.
 - **FR-002**: The watchdog's `pipeline-defect` route, stage 10's
   `spec-request` and `permission-request` spin-offs, auto-update's and
   auto-release's failure filings MUST be unchanged. This feature adds a
@@ -304,8 +314,9 @@ framing treats a body carrying the pipeline's finding label as untrusted.
 
 - **FR-003**: Each in-scope stage's prompt MUST gain one paragraph
   instructing the agent that, on meeting a defect outside its own task, it
-  describes the defect in the feature's findings channel and carries on —
-  it does not fix the defect, and it does not file it.
+  describes the defect in that stage's findings channel — in the shape
+  FR-006 gives that stage — and carries on: it does not fix the defect, and
+  it does not file it.
 - **FR-004**: No in-scope stage MAY gain the ability to create a GitHub
   issue for this feature. The agent's proposal is the only thing it
   produces; the filing is entirely deterministic code (Constitution
@@ -314,18 +325,29 @@ framing treats a body carrying the pipeline's finding label as untrusted.
   stage's declared outputs, its artifacts, its lifecycle transition, and the
   scope of the work it performs are all unaffected by whether it proposed a
   finding.
-- **FR-006**: The agent MUST propose findings through
-  [NEEDS CLARIFICATION: a fenced block in the agent's final message — which
-  every stage already captures in its execution-output artifact (#312) and
-  which the read-only stages under spec 051's inspection policy can produce
-  with no write tool — or a `findings/*.json` file, which only the
-  write-capable stages can produce but which is easier to validate. One of
-  them is the contract.].
-- **FR-007**: Whichever channel FR-006 settles on, it MUST NOT disturb any
-  stage's existing structured result or the validation that stage already
-  performs on it. A stage whose terminal result is today validated against a
-  schema MUST still pass that validation when the agent also proposes
-  findings.
+- **FR-006**: The findings channel is the agent's final message, in one of
+  two shapes decided by what that stage's final message already is:
+  - a stage whose final message is free-form prose MUST carry findings in a
+    fenced block in that message — the channel every stage already captures
+    in its execution-output artifact (#312), and the only one the read-only
+    stages under spec 051's inspection policy can produce with no write
+    tool;
+  - a stage whose terminal result is already a schema-validated structured
+    object MUST carry findings as a `findings` array inside that result,
+    because a fenced block cannot be added to such a message without
+    breaking the schema that validates it.
+  A `findings/*.json` file is NOT the channel: only the write-capable stages
+  could produce one, which would exclude the read-only stages FR-001 puts in
+  scope. Each stage has exactly one authoritative channel — the structured
+  result where the stage has one, the fenced block otherwise — and the
+  filing step MUST read that one.
+- **FR-007**: The channel MUST NOT disturb any stage's existing structured
+  result or the validation that stage already performs on it. The `findings`
+  array MUST be an addition to each such schema that leaves the existing
+  required fields and their validation unchanged, and MUST be optional: a
+  result that omits it, or carries it empty, means no findings and MUST
+  still validate. A stage whose terminal result is schema-validated MUST NOT
+  be asked to emit a fenced block as well.
 
 ### Code files
 
@@ -362,12 +384,15 @@ framing treats a body carrying the pipeline's finding label as untrusted.
   one home in the repository. The existing internal
   `durable-failure-issue` composite is that idiom, and reaching it from a
   published stage crosses the boundary Constitution Principle VII draws
-  around underscore-prefixed directories. The resolution MUST be
-  [NEEDS CLARIFICATION: promote the existing internal composite to the
-  published surface and repoint auto-release and auto-update at the promoted
-  path, or introduce a new published composite that auto-release and
-  auto-update then adopt, retiring the internal one?]. A second copy of the
-  idiom is forbidden either way.
+  around underscore-prefixed directories. The resolution is promotion: the
+  existing internal composite MUST be promoted to the published surface,
+  and auto-release and auto-update MUST be repointed at the promoted path
+  in the same change, leaving no consumer on the internal path and no
+  second copy of the idiom anywhere. Its interface is already a general
+  find-or-create-under-a-dedup-label filer, so the promotion MUST NOT
+  reshape that interface for this feature's sake; any behaviour filing
+  needs and the composite lacks is an addition that the existing consumers
+  can ignore.
 
 ### Legibility
 
@@ -420,22 +445,32 @@ framing treats a body carrying the pipeline's finding label as untrusted.
 - **FR-029**: The published stages' `workflow_call` input surface MUST widen
   by exactly the knobs filing needs — at minimum the finding label prefix,
   the per-run cap, and whether filing is enabled — each a declared, typed
-  input passed by the wrapper, never ambient repository state. This is a
-  MINOR change at the next release (Constitution Principle VII).
+  input passed by the wrapper, never ambient repository state. The enable
+  input MUST default per FR-001 (on for implement and finalize, off for the
+  other five), so an adopter changes a stage's filing behaviour by setting
+  an input rather than by waiting for another release. This widening, and
+  the composite promotion FR-016 requires, are a MINOR change at the next
+  release (Constitution Principle VII).
 - **FR-030**: Every failure branch the filing step ships MUST be exercised
   by a checked-in fixture: a malformed proposal, a dedup hit against an open
   issue, a match against a closed issue, a cap overflow, an API failure, and
-  the no-findings case (Constitution Principle VIII).
+  the no-findings case (Constitution Principle VIII). Both channel shapes of
+  FR-006 — the fenced block and the structured result's `findings` array —
+  MUST be covered, including a structured result that omits the array.
 - **FR-031**: A gate MUST fail CI when an in-scope stage carries the
   findings paragraph in its prompt without the filing step in its job, or
   the filing step without the paragraph — the rule's single home, added to
-  the nearest existing gate rather than left as prose.
+  the nearest existing gate rather than left as prose. Because FR-001 puts
+  all seven stages in scope regardless of their enable default, the gate
+  MUST check every one of them, not only the stages whose default is on.
 - **FR-032**: A gate MUST fail CI if a second copy of the FR-016 filing
   idiom appears, the way the metrics cost-line formatter is already
-  protected.
+  protected, and likewise if any caller still reaches the composite at its
+  retired internal path after the promotion.
 - **FR-033**: Documentation for adopters MUST state that an in-scope stage
-  may open issues in their repository, under which label, and which input
-  turns it off.
+  may open issues in their repository, under which label, which stages file
+  by default and which do not, and which input turns filing on or off for a
+  given stage.
 
 ### Key Entities
 
@@ -443,8 +478,10 @@ framing treats a body carrying the pipeline's finding label as untrusted.
   by the agent as a proposal. Carries a title, what is wrong, evidence (file
   paths and the run URL) and the deterministic fields that form its
   fingerprint basis. A proposal, never an issue.
-- **Findings channel**: the single agreed place an agent writes its
-  proposals so the deterministic step can read them — settled by FR-006.
+- **Findings channel**: the one place a given stage's agent writes its
+  proposals so the deterministic step can read them — a fenced block in a
+  free-form final message, or the `findings` array of a schema-validated
+  terminal result, per FR-006. Never a file.
 - **Finding schema**: the checked-in definition of a well-formed finding.
   The sole authority on whether a proposal is filed; not the agent's
   judgment.
@@ -503,12 +540,19 @@ framing treats a body carrying the pipeline's finding label as untrusted.
 - The per-run cap defaults to **three** findings, the number the lifecycle
   issue proposes. It is a declared input, so the value is a reviewed change
   and an adopter may lower it.
-- Filing is **enabled by default** in the published stages, with the wrapper
-  able to turn it off (FR-029). The label is pipeline-owned and the cap is
-  small, so the default behaviour is a bounded, clearly-attributed handful
-  of issues rather than a surprise; an adopter who does not want them sets
-  the input. FR-033 makes the default discoverable before adoption rather
-  than after.
+- Filing ships to all seven stages but is **enabled by default only for
+  implement and finalize**, with the wrapper able to turn any stage on or
+  off (FR-001, FR-029). The label is pipeline-owned and the cap is small,
+  so the default behaviour is a bounded, clearly-attributed handful of
+  issues from the two stages that read the most code rather than a surprise
+  from all seven at once; an adopter who wants the discovery stages filing
+  too sets the input. FR-033 makes both the default and the switch
+  discoverable before adoption rather than after.
+- Putting every stage behind one input rather than shipping a subset now and
+  the rest later moves the published surface once. The consequence accepted
+  here is that five stages ship code that is off by default: FR-030's
+  fixtures and FR-031's gate therefore cover all seven, so a stage that has
+  never filed in anger is still exercised.
 - The dedup scope is open issues carrying the pipeline's finding label in
   the consuming repository. This feature introduces no cross-repository
   search.
@@ -524,8 +568,11 @@ framing treats a body carrying the pipeline's finding label as untrusted.
   wrapper-owns-the-knobs division are unchanged: the new inputs are declared
   on the stage and supplied by the wrapper.
 - The agent's execution output is already captured as an artifact (#312), so
-  whichever channel FR-006 settles on, the proposal is durably recorded even
-  when filing fails.
+  under either shape of the FR-006 channel the proposal is durably recorded
+  even when filing fails.
+- Each stage's terminal result shape is known and stable, so which of the
+  two FR-006 shapes applies to a stage is a fact about that stage rather
+  than a runtime choice: the filing step does not have to sniff both.
 - #408 (the board loop) is the consumer and is not a dependency: findings
   accumulate usefully on the board whether or not a loop is reading them.
   #409 (Principle X) is likewise not a dependency — the pipeline already
@@ -537,5 +584,10 @@ framing treats a body carrying the pipeline's finding label as untrusted.
   scope from prose.
 - `specs/033-pr-conversation-commands`' outstanding-task-item mechanism is
   reused as-is for FR-017 rather than reimplemented.
+- The `durable-failure-issue` composite's promotion (FR-016) is a move, not
+  a rewrite: its interface is already a general
+  find-or-create-under-a-dedup-label filer, so auto-release's and
+  auto-update's behaviour after being repointed is expected to be identical
+  to before. Their existing coverage is what demonstrates that.
 - The `review-step-gating` skill's shape governs FR-022 through FR-024, and
   the change will be run past it, per this repository's working rules.
