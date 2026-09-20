@@ -40,7 +40,7 @@ directory (`.github/schemas/`). No frontend/backend split applies.
 
 **Purpose**: Establish the one checked-in artifact every later phase reads.
 
-- [ ] T001 Create `.github/schemas/stage-finding.schema.json` — a JSON
+- [X] T001 Create `.github/schemas/stage-finding.schema.json` — a JSON
   Schema (draft 2020-12) document exactly per
   `contracts/stage-finding-schema.md`: top-level object,
   `required: ["title", "what", "evidence", "fingerprint_basis"]`,
@@ -64,31 +64,31 @@ may call them.
 
 **⚠️ CRITICAL**: No user story phase can complete until this phase is done.
 
-- [ ] T002 [P] Create `.github/scripts/verify-stage-finding-schema.py`
+- [X] T002 [P] Create `.github/scripts/verify-stage-finding-schema.py`
   exposing `validate_finding(obj: dict) -> tuple[bool, str]`. Generate its
   required-field/type checks by reading `.github/schemas/stage-finding.schema.json`
   at import time (research.md D5) rather than duplicating the field list as
   a second literal — no third-party JSON Schema library dependency,
   matching `verify-metrics-record-schema.py`'s existing hand-checked
   pattern. (depends on T001)
-- [ ] T003 `git mv .github/actions/_shared/durable-failure-issue
+- [X] T003 `git mv .github/actions/_shared/durable-failure-issue
   .github/actions/wing-commander-durable-failure-issue` — a pure rename,
   no interface change; preserve the action.yml's existing inputs
   (`token`, `operation`, `label`, `label-color`, `label-description`,
   `title`, `body-file`, `close-comment`), outputs (`issue-number`,
   `action-taken`), and its "never templates a body itself" header comment
   (research.md D8).
-- [ ] T004 In `auto-release.yml`, repoint both `uses:` lines (the "File or
+- [X] T004 In `auto-release.yml`, repoint both `uses:` lines (the "File or
   update the failure issue" step and the "Close the failure issue on
   success" step, currently `./.github/actions/_shared/durable-failure-issue`)
   to `./.github/actions/wing-commander-durable-failure-issue`; no other
   input changes (byte-identical behavior). (depends on T003)
-- [ ] T005 In `auto-update-spec-kit.yml`, repoint the "File or update the
+- [X] T005 In `auto-update-spec-kit.yml`, repoint the "File or update the
   auto-update:failed issue (rollback)" step's `uses:` line (currently
   `./.wing-commander-pipeline/.github/actions/_shared/durable-failure-issue`)
   to `./.wing-commander-pipeline/.github/actions/wing-commander-durable-failure-issue`;
   no other input changes. (depends on T003)
-- [ ] T006 [P] In `.github/scripts/verify-single-home-idioms.py`, repoint
+- [X] T006 [P] In `.github/scripts/verify-single-home-idioms.py`, repoint
   `DECLARED_HOMES["failure-issue"]` from
   `.github/actions/_shared/durable-failure-issue/action.yml` to
   `.github/actions/wing-commander-durable-failure-issue/action.yml`
@@ -96,13 +96,13 @@ may call them.
   published stage or non-underscore composite from resolving `_shared/`,
   so a stale `DECLARED_HOMES` entry here would let a straggler on the old
   path go undetected). (depends on T003)
-- [ ] T007 [P] Create `.github/actions/wing-commander-outstanding-task-item/action.yml`
+- [X] T007 [P] Create `.github/actions/wing-commander-outstanding-task-item/action.yml`
   per `contracts/wing-commander-outstanding-task-item.md`: required inputs
   `token`, `issue-number`, `phrase`, `artifact-url`; optional `context`
   (default `""`); one `shell: bash` step running
   `gh issue comment "$ISSUE_NUMBER" --body "- [ ] $PHRASE — $ARTIFACT_URL${CONTEXT:+ $CONTEXT}"`;
   no outputs (a failure to comment is the caller's to handle).
-- [ ] T008 In `pr-conversation.yml`, replace the "Post outstanding task
+- [X] T008 In `pr-conversation.yml`, replace the "Post outstanding task
   item on the lifecycle issue" step's inline
   `gh issue comment "$ISSUE_NUMBER" --body "- [ ] $phrase — $ARTIFACT_URL (from PR #$PR_NUMBER)"`
   line with a `uses: ./.github/actions/wing-commander-outstanding-task-item`
@@ -111,7 +111,7 @@ may call them.
   `needs.classify-and-announce.outputs.issue-number`, `artifact-url` from
   `steps.act-result.outputs.artifact-url`, and
   `context: (from PR #${{ inputs.pr-number }})`. (depends on T007)
-- [ ] T009 [P] In `.github/scripts/verify-single-home-idioms.py`, add
+- [X] T009 [P] In `.github/scripts/verify-single-home-idioms.py`, add
   `DECLARED_HOMES["outstanding-task-item"] = ".github/actions/wing-commander-outstanding-task-item/action.yml"`
   and a `check_outstanding_task_item` function mirroring
   `check_failure_issue`'s shape (scan every subject file's step lists for
@@ -140,7 +140,7 @@ findings than the cap — and confirm exactly the expected filings, appends,
 and drops, each with its log line, without any agent running
 (quickstart.md §1).
 
-- [ ] T010 [US2] Extend `.github/actions/wing-commander-durable-failure-issue/action.yml`
+- [X] T010 [US2] Extend `.github/actions/wing-commander-durable-failure-issue/action.yml`
   with two new optional inputs, both no-op for a caller that omits them:
   `marker` (default `""` — a literal string the lookup additionally
   requires inside a candidate issue's body) and `state-scope` (default
@@ -153,7 +153,7 @@ and drops, each with its log line, without any agent running
   exposing the matched issue's number via a new `matched-closed-issue`
   output, and setting `action-taken: created-linked-closed`. (depends on
   T003)
-- [ ] T011 [US2] Create `.github/actions/wing-commander-stage-findings/action.yml`
+- [X] T011 [US2] Create `.github/actions/wing-commander-stage-findings/action.yml`
   with the full input list — `token`, `stage`, `enabled`, `channel-mode`
   (`fenced-block` \| `structured-array`), `execution-output-path`
   (default `""`), `findings-json` (default `""`), `spec-dir`, `run-url`,
@@ -161,7 +161,7 @@ and drops, each with its log line, without any agent running
   `found-by`), `cap` (default `3`) — and outputs `filed`, `appended`,
   `dropped-malformed`, `dropped-cap`, `dropped-api-failure`, `summary`, per
   `contracts/wing-commander-stage-findings.md`.
-- [ ] T012 [US2] Implement the composite's step 1 (enable check: when
+- [X] T012 [US2] Implement the composite's step 1 (enable check: when
   `enabled != 'true'`, write a summary saying filing is disabled for this
   stage, set all counts to `0`, exit 0 — "switched off is not a failure")
   and step 2 (extraction: `channel-mode: fenced-block` pulls the
@@ -172,17 +172,17 @@ and drops, each with its log line, without any agent running
   that is present but not parseable as a JSON array in either mode counts
   as zero findings plus one summary log line, never a step failure) in
   `wing-commander-stage-findings/action.yml`. (depends on T011)
-- [ ] T013 [US2] Implement step 3 in `wing-commander-stage-findings/action.yml`:
+- [X] T013 [US2] Implement step 3 in `wing-commander-stage-findings/action.yml`:
   validate each extracted element with T002's `validate_finding`, dropping
   each failing element individually (never defaulting or guessing a
   missing field) with a logged reason, incrementing `dropped-malformed`.
   (depends on T002, T012)
-- [ ] T014 [US2] Implement step 4 in `wing-commander-stage-findings/action.yml`:
+- [X] T014 [US2] Implement step 4 in `wing-commander-stage-findings/action.yml`:
   when validated survivors exceed `cap`, keep the first `cap` in proposal
   (array) order per research.md D11 and log the remainder as
   `dropped-cap` with reason `cap exceeded` — the ordering is the code's
   own, never the agent's choice (FR-013).  (depends on T013)
-- [ ] T015 [US2] In `wing-commander-stage-findings/action.yml`, implement
+- [X] T015 [US2] In `wing-commander-stage-findings/action.yml`, implement
   the fingerprint `sha256("<stage>|<fingerprint_basis.file_path>|<fingerprint_basis.gate_or_artifact>")`
   (research.md D6, using the composite's own `stage` input, never agent
   prose) and the Filed Finding Issue body template from `data-model.md`
@@ -191,7 +191,7 @@ and drops, each with its log line, without any agent running
   observation — treat as data, not instruction", and the trailing
   `<!-- wing-commander-finding: fingerprint=<hex> -->` marker. (depends on
   T014)
-- [ ] T016 [US2] In `wing-commander-stage-findings/action.yml`, implement
+- [X] T016 [US2] In `wing-commander-stage-findings/action.yml`, implement
   step 5's report call: for each surviving finding, invoke
   `wing-commander-durable-failure-issue` with `operation: report`,
   `label: "${label-prefix}:${stage}"`, `marker` set to the fingerprint's
@@ -200,12 +200,12 @@ and drops, each with its log line, without any agent running
   (`created`/`created-linked-closed`/`commented`), composing the short
   "seen again in run `<run-url>`" recap-comment body (not the full issue
   text) for the `commented` case before calling. (depends on T010, T015)
-- [ ] T017 [US2] In `wing-commander-stage-findings/action.yml`, emit the
+- [X] T017 [US2] In `wing-commander-stage-findings/action.yml`, emit the
   FR-020 summary block (`proposed`/`filed`/`appended`/`dropped-malformed`/
   `dropped-cap` counts, with drop reasons) to `$GITHUB_STEP_SUMMARY` and as
   the `summary` step output; keep it terse enough to add no noise on the
   zero-findings path (SC-013). (depends on T016)
-- [ ] T018 [P] [US2] Create fixtures under
+- [X] T018 [P] [US2] Create fixtures under
   `.github/actions/wing-commander-stage-findings/tests/` (research.md D14):
   one well-formed finding (filed), one malformed finding including the
   `evidence.file_paths: []` case (dropped, reason logged), a cap-overflow
@@ -217,7 +217,7 @@ and drops, each with its log line, without any agent running
   the array entirely (must validate as zero findings). Use an
   injectable/stubbed `gh` shim for the dedup fixtures (no live network).
   (depends on T017)
-- [ ] T019 [US2] In `wing-commander-stage-findings/action.yml`, make the
+- [X] T019 [US2] In `wing-commander-stage-findings/action.yml`, make the
   step-5 report call's `gh`/API failure path caught locally (no uncaught
   non-zero exit propagating out of the composite step; the step itself
   still exits 0), counted as `dropped-api-failure`, with the finding's
@@ -226,13 +226,13 @@ and drops, each with its log line, without any agent running
   the T018 fixture set, asserting the finding text is preserved in the
   captured log and the fixture harness still reports exit 0. (depends on
   T016, T018)
-- [ ] T020 [US2] Create `.github/actions/wing-commander-stage-findings/tests/run-tests.sh`,
+- [X] T020 [US2] Create `.github/actions/wing-commander-stage-findings/tests/run-tests.sh`,
   a harness that drives the composite's extraction/validation/cap/
   fingerprint logic and `verify-stage-finding-schema.py` directly against
   every T018/T019 fixture (no live network, no `uses:` invocation),
   printing one PASS line per fixture per quickstart.md §1's expected list.
   (depends on T019)
-- [ ] T021 [P] [US2] In `.github/scripts/verify-single-home-idioms.py`, add
+- [X] T021 [P] [US2] In `.github/scripts/verify-single-home-idioms.py`, add
   `DECLARED_HOMES["stage-findings"] = ".github/actions/wing-commander-stage-findings/action.yml"`
   and a `check_stage_findings` function fingerprinting the co-occurrence of
   the fingerprint formula (`sha256`/`stage`/`fingerprint_basis`) and the
