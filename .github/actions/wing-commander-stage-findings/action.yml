@@ -340,7 +340,12 @@ runs:
         operation: report
         label: ${{ steps.prepare.outputs.survivor-0-label }}
         label-color: "5319E7"
-        label-description: "Filed automatically by the wing-commander pipeline when the ${{ inputs.stage }} stage met a defect outside its own task"
+        # Under 100 characters for every stage name: GitHub caps a label
+        # description at 100, and the sentence this shipped with ran 104-109,
+        # so `gh label create` returned HTTP 422 on first use and no
+        # found-by:* label could ever be created (#422). The harness
+        # measures it for all six stage names.
+        label-description: "Filed by the wing-commander pipeline: the ${{ inputs.stage }} stage met a defect outside its own task"
         title: ${{ steps.prepare.outputs.survivor-0-title }}
         body-file: ${{ steps.prepare.outputs.survivor-0-body-file }}
         comment-body-file: ${{ steps.prepare.outputs.survivor-0-recap-file }}
@@ -430,7 +435,8 @@ runs:
         operation: report
         label: ${{ steps.prepare.outputs.survivor-1-label }}
         label-color: "5319E7"
-        label-description: "Filed automatically by the wing-commander pipeline when the ${{ inputs.stage }} stage met a defect outside its own task"
+        # label-description length -- see Report finding 0.
+        label-description: "Filed by the wing-commander pipeline: the ${{ inputs.stage }} stage met a defect outside its own task"
         title: ${{ steps.prepare.outputs.survivor-1-title }}
         body-file: ${{ steps.prepare.outputs.survivor-1-body-file }}
         comment-body-file: ${{ steps.prepare.outputs.survivor-1-recap-file }}
@@ -520,7 +526,8 @@ runs:
         operation: report
         label: ${{ steps.prepare.outputs.survivor-2-label }}
         label-color: "5319E7"
-        label-description: "Filed automatically by the wing-commander pipeline when the ${{ inputs.stage }} stage met a defect outside its own task"
+        # label-description length -- see Report finding 0.
+        label-description: "Filed by the wing-commander pipeline: the ${{ inputs.stage }} stage met a defect outside its own task"
         title: ${{ steps.prepare.outputs.survivor-2-title }}
         body-file: ${{ steps.prepare.outputs.survivor-2-body-file }}
         comment-body-file: ${{ steps.prepare.outputs.survivor-2-recap-file }}

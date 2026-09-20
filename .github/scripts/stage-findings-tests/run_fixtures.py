@@ -317,7 +317,7 @@ JSON
   exit 0
 fi
 if [ "$1 $2" = "label create" ]; then
-  exit 0
+  {label_behavior}
 fi
 if [ "$1 $2" = "issue create" ]; then
   {create_behavior}
@@ -330,7 +330,22 @@ exit 1
 """
 
 
-def make_gh_stub(tmp, list_json, create_behavior='echo "https://github.com/o/r/issues/999"; exit 0'):
+# Mirrors the API (#422): a label description over 100 characters is a
+# 422, so a caller that passes one cannot pass this stub either. Braces are
+# doubled because the template goes through str.format.
+LABEL_CREATE_FAITHFUL = (
+    'desc=""; prev=""\n'
+    '  for a in "$@"; do if [ "$prev" = "--description" ]; then desc="$a"; fi; prev="$a"; done\n'
+    '  if [ "${{#desc}}" -gt 100 ]; then\n'
+    '    echo "HTTP 422: Validation Failed (https://api.github.com/repos/o/r/labels)" >&2\n'
+    '    echo "description is too long (maximum is 100 characters)" >&2\n'
+    '    exit 1\n'
+    '  fi\n'
+    '  exit 0')
+
+
+def make_gh_stub(tmp, list_json, create_behavior='echo "https://github.com/o/r/issues/999"; exit 0',
+                 label_behavior=LABEL_CREATE_FAITHFUL):
     bindir = os.path.join(tmp, "bin")
     os.makedirs(bindir, exist_ok=True)
     log = os.path.join(tmp, "gh.log")
@@ -338,21 +353,32 @@ def make_gh_stub(tmp, list_json, create_behavior='echo "https://github.com/o/r/i
     path = os.path.join(bindir, "gh")
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(STUB_GH_TEMPLATE.format(log=log, list_json=list_json,
-                                         create_behavior=create_behavior))
+                                         create_behavior=create_behavior,
+                                         label_behavior=label_behavior))
     os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     return bindir, log
 
 
-def run_lookup(tmp, marker, state_scope, list_json, create_behavior=None, comment_body_file=""):
+def run_lookup(tmp, marker, state_scope, list_json, create_behavior=None, comment_body_file="",
+               label_behavior=None, label_description="desc", comment_behavior=None):
     bindir, log = make_gh_stub(
         tmp, list_json,
-        create_behavior=create_behavior or 'echo "https://github.com/o/r/issues/999"; exit 0')
+        create_behavior=create_behavior or 'echo "https://github.com/o/r/issues/999"; exit 0',
+        label_behavior=label_behavior or LABEL_CREATE_FAITHFUL)
+    if comment_behavior is not None:
+        stub = os.path.join(bindir, "gh")
+        with open(stub, encoding="utf-8") as fh:
+            text = fh.read()
+        text = text.replace('if [ "$1 $2" = "issue comment" ]; then\n  exit 0\nfi\n',
+                            'if [ "$1 $2" = "issue comment" ]; then\n  ' + comment_behavior + '\nfi\n')
+        with open(stub, "w", encoding="utf-8") as fh:
+            fh.write(text)
     body_file = os.path.join(tmp, "body.md")
     with open(body_file, "w", encoding="utf-8") as fh:
         fh.write("full body\n")
     env = {
         "GH_TOKEN": "stub", "OPERATION": "report", "LABEL": "found-by:implement",
-        "LABEL_COLOR": "5319E7", "LABEL_DESCRIPTION": "desc", "TITLE": "a title",
+        "LABEL_COLOR": "5319E7", "LABEL_DESCRIPTION": label_description, "TITLE": "a title",
         "BODY_FILE": body_file, "COMMENT_BODY_FILE": comment_body_file,
         "MARKER": marker, "STATE_SCOPE": state_scope, "CLOSE_COMMENT": "",
         "GITHUB_REPOSITORY": "o/r",
@@ -491,6 +517,71 @@ def case_api_failure_preserves_finding_text_and_exits_zero():
           "a title that must survive" not in out2 and "what text that must survive" not in out2, out2)
 
 
+# --- #422: the label description fits GitHub's cap; label/comment failures are caught
+STAGE_NAMES = ("intake", "clarify", "plan", "tasks", "implement", "finalize")
+
+
+def case_label_description_fits_github_cap():
+    case = "the label-description stage-findings passes fits GitHub's 100-character cap for every stage"
+    with open(STAGE_FINDINGS_ACTION, encoding="utf-8") as fh:
+        text = fh.read()
+    values = re.findall(r'^\s*label-description:\s*"(.*)"\s*$', text, re.M)
+    check(case + ": three report sites carry one identical description",
+          len(values) == 3 and len(set(values)) == 1, values)
+    template = values[0] if values else ""
+    check(case + ": the description names the stage",
+          "${{ inputs.stage }}" in template, template)
+    lengths = {s: len(template.replace("${{ inputs.stage }}", s)) for s in STAGE_NAMES}
+    check(case + ": every rendered description is at most 100 characters (#422 shipped 104-109)",
+          bool(lengths) and max(lengths.values()) <= 100, lengths)
+
+
+def case_over_long_label_description_fails_the_stub():
+    case = "the gh stub refuses a label description over 100 characters, like the API (Principle VIII)"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-labellen-")
+    marker = "<!-- wing-commander-finding: fingerprint=len1 -->"
+    rc, outputs, out, log = run_lookup(
+        tmp, marker, "all", "[]", label_description="x" * 101)
+    with open(log, encoding="utf-8") as fh:
+        calls = fh.read()
+    check(case + ": the label call was made with the over-long description",
+          "label create" in calls and ("x" * 101) in calls, calls)
+    check(case + ": the lookup step still exits 0 (the label call is guarded)", rc == 0, out)
+    check(case + ": the warning names the label call",
+          "gh label create failed for label" in out, out)
+    check(case + ": with the label already present the create still succeeds",
+          outputs.get("action-taken") == "created", outputs)
+
+
+def case_label_create_failure_with_missing_label_is_create_failed():
+    case = "a label-create failure followed by a create failure is create-failed, finding text preserved"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-labelfail-")
+    marker = "<!-- wing-commander-finding: fingerprint=len2 -->"
+    rc, outputs, out, log = run_lookup(
+        tmp, marker, "all", "[]",
+        label_behavior='echo "HTTP 403: Forbidden" >&2; exit 1',
+        create_behavior='echo "could not add label: found-by:implement not found" >&2; exit 1')
+    check(case + ": the lookup step exits 0", rc == 0, out)
+    check(case + ": action-taken=create-failed", outputs.get("action-taken") == "create-failed", outputs)
+    check(case + ": issue-number empty", outputs.get("issue-number", "") in ("", None), outputs)
+    check(case + ": both failures are named in the log",
+          "gh label create failed" in out and "gh issue create failed" in out, out)
+
+
+def case_comment_failure_on_existing_issue_is_caught():
+    case = "a comment failure on the existing-issue path is caught: exit 0, create-failed"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-commentfail-")
+    marker = "<!-- wing-commander-finding: fingerprint=cf1 -->"
+    list_json = json.dumps([{"number": 7, "state": "OPEN", "body": "seen " + marker}])
+    rc, outputs, out, log = run_lookup(
+        tmp, marker, "all", list_json,
+        comment_behavior='echo "HTTP 502: Bad Gateway" >&2; exit 1')
+    check(case + ": the lookup step exits 0", rc == 0, out)
+    check(case + ": action-taken=create-failed", outputs.get("action-taken") == "create-failed", outputs)
+    check(case + ": the warning names the comment call and the issue",
+          "gh issue comment failed on #7" in out, out)
+
+
 # --- outstanding-task-item cross-link phrasing (T049) ----------------------
 def run_record(tmp, issue_number, action_taken, lifecycle_issue_number,
               title="t", what="w", stage="implement"):
@@ -591,6 +682,10 @@ CASES = [
     case_no_dedup_match_creates,
     case_existing_no_marker_caller_is_byte_identical,
     case_api_failure_preserves_finding_text_and_exits_zero,
+    case_label_description_fits_github_cap,
+    case_over_long_label_description_fails_the_stub,
+    case_label_create_failure_with_missing_label_is_create_failed,
+    case_comment_failure_on_existing_issue_is_caught,
     case_filed_with_lifecycle_issue_posts_filed_phrase,
     case_deduped_with_lifecycle_issue_posts_recorded_phrase,
     case_filed_without_lifecycle_issue_records_absence_not_failure,
