@@ -422,8 +422,10 @@ def scenario_held_leg_timeout(steps, root):
     ]
     jobs_jsonl = os.path.join(work, "jobs.jsonl")
     with open(jobs_jsonl, "w", encoding="utf-8") as fh:
-        fh.write('{"name": "act (leg-0)", "conclusion": "success"}\n')
-        fh.write('{"name": "act (leg-1)", "conclusion": "cancelled"}\n')
+        fh.write('{"name": "%s", "conclusion": "success"}\n'
+                 % ACT_JOB_NAME.format("leg-0"))
+        fh.write('{"name": "%s", "conclusion": "cancelled"}\n'
+                 % ACT_JOB_NAME.format("leg-1"))
 
     open(calls, "w").close()
     open(last_comment, "w").close()
@@ -597,7 +599,7 @@ def _mut_bare_job_name_equality(steps):
     reported "partly folded".
     """
     steps[REPORT_STEP] = steps[REPORT_STEP].replace(
-        'select(.name | endswith("act (" + $id + ")"))',
+        'select((.name == "act (" + $id + ")") or (.name | endswith(" / act (" + $id + ")")))',
         'select(.name == "act (" + $id + ")")')
 
 
@@ -723,27 +725,7 @@ def _mutation_now_says_healthy(steps, root, conclusion, fold_commits):
     """True if, under `steps`, a single leg with the given conclusion/fold
     evidence is now (incorrectly) reported as healthy — i.e. no PR comment.
     """
-    repo, base_sha, tip_sha = make_repo(root, 1, fold_commits)
-    work = os.path.dirname(repo)
-    runner_temp = os.path.join(work, "runner_temp")
-    os.makedirs(runner_temp, exist_ok=True)
-    bindir, calls, last_comment = new_stub_dir(work)
-    path = bindir + os.pathsep + os.environ["PATH"]
-    classifications = [{"id": "leg-0", "category": "in-scope-change",
-                        "summary": "the item"}]
-    jobs_jsonl = os.path.join(work, "jobs.jsonl")
-    with open(jobs_jsonl, "w", encoding="utf-8") as fh:
-        fh.write('{"name": "%s", "conclusion": "%s"}\n'
-                 % (ACT_JOB_NAME.format("leg-0"), conclusion))
-    rc, out, _, _ = run_step(
-        BASH, steps[REPORT_STEP], repo,
-        {"GH_TOKEN": "x", "ACTIONS_TOKEN": "x", "PR_NUMBER": PR_NUMBER, "RUN_ID": "1",
-         "GITHUB_REPOSITORY": REPO,
-         "CLASSIFICATIONS": _json(classifications),
-         "BASE_SHA": base_sha, "TIP_SHA": tip_sha,
-         "GH_CALLS": calls, "GH_LAST_COMMENT": last_comment,
-         "GH_JOBS_JSONL": jobs_jsonl, "PATH": path},
-        runner_temp)
+    rc, calls = _report_single_leg_raw(steps, root, conclusion, fold_commits)
     if rc != 0:
         return False
     return gh_call_count(calls, "pr", "comment") == 0

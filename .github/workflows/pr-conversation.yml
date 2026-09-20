@@ -2878,12 +2878,14 @@ jobs:
             # job as a prefix -- this repository's wrapper yields
             # "pr-conversation / act (leg-0)", an adopter's whatever its
             # calling job is called -- so match the suffix. The closing
-            # paren keeps leg-1 from matching leg-10. Bare equality never
+            # paren keeps leg-1 from matching leg-10, and anchoring on the
+            # " / " separator keeps a job that merely ends in the same text
+            # ("redact (leg-0)") from matching. Bare equality never
             # matched anything, so `conclusion` was always "missing" and
             # every leg whose fold commit had landed was reported "partly
             # folded" (#416); Gate 34 now seeds its fixtures with the
             # prefixed shape and fails a mutation that restores equality.
-            conclusion=$(printf '%s' "$jobs" | jq -r --arg id "$id" '[.[] | select(.name | endswith("act (" + $id + ")"))] | .[0].conclusion // "missing"')
+            conclusion=$(printf '%s' "$jobs" | jq -r --arg id "$id" '[.[] | select((.name == "act (" + $id + ")") or (.name | endswith(" / act (" + $id + ")")))] | .[0].conclusion // "missing"')
 
             folded=false
             if [ -n "$range" ] && git log --grep "^fold($id):" --format='%H' "$range" 2>/dev/null | grep -q .; then
