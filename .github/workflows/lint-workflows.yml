@@ -3654,6 +3654,23 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-watchdog-self-skip-guard.py
 
+      # Gate 71 — specs/056-stage-found-defect-filing: the shipped
+      # extraction/validation/cap/fingerprint/body-compose logic in
+      # wing-commander-stage-findings/action.yml, and the dedup lookup it
+      # reports through in wing-commander-durable-failure-issue/action.yml,
+      # actually behave per contracts/wing-commander-stage-findings.md and
+      # data-model.md for every required branch (FR-030): a well-formed
+      # finding, a malformed one, a cap-overflow set, a dedup hit against
+      # an open issue, a dedup hit against a closed issue, an API failure,
+      # the no-findings path, both channel shapes, and the untrusted-
+      # content framing (FR-026). Runs the shipped `run:` blocks directly
+      # (research.md D14, the same technique Gate 11/the metrics-summary
+      # gate use) with a stubbed `gh` for the dedup/API-failure cases — no
+      # live network, no `uses:` invocation.
+      - name: Gate 71 — wing-commander-stage-findings behaves per contract for every required branch
+        if: "!cancelled()"
+        run: bash .github/actions/wing-commander-stage-findings/tests/run-tests.sh
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

@@ -164,6 +164,10 @@ DECLARED_HOMES = {
     # stage-findings) makes a structural one-home check worth having, the
     # same way check_failure_issue already protects durable-failure-issue.
     "outstanding-task-item": ".github/actions/wing-commander-outstanding-task-item/action.yml",
+    # specs/056-stage-found-defect-filing, research.md D10/D13: the
+    # proposal-validate-fingerprint-file-cross-link sequence must not be
+    # re-pasted into a stage workflow directly -- FR-032.
+    "stage-findings": ".github/actions/wing-commander-stage-findings/action.yml",
 }
 CHECK_NAMES = tuple(DECLARED_HOMES) + ("promotion",)
 
@@ -365,6 +369,25 @@ def check_outstanding_task_item(root="."):
 
 
 # --------------------------------------------------------------------------
+# Check: stage-findings (file-wide co-occurrence of the fingerprint formula
+# and the schema-validation call -- research.md D13)
+# --------------------------------------------------------------------------
+def check_stage_findings(root="."):
+    home = DECLARED_HOMES["stage-findings"]
+    findings = []
+    for path in all_subject_files(root):
+        if path == home:
+            continue
+        text = read(root, path)
+        if "sha256" in text and "fingerprint_basis" in text and "validate_finding" in text:
+            offset = text.find("fingerprint_basis")
+            findings.append(Finding(
+                path, "stage-findings", line_of(text, offset),
+                "sha256(...) + fingerprint_basis + validate_finding co-occurrence"))
+    return findings
+
+
+# --------------------------------------------------------------------------
 # Check 3: verdict-shape (file-wide, all six field names near a jq call)
 # --------------------------------------------------------------------------
 def check_verdict_shape(root="."):
@@ -485,6 +508,7 @@ ALL_CHECKS = {
     "extraheader-refresh": check_extraheader_refresh,
     "failure-issue": check_failure_issue,
     "outstanding-task-item": check_outstanding_task_item,
+    "stage-findings": check_stage_findings,
     "verdict-shape": check_verdict_shape,
     "token-mint": check_token_mint,
     "mode-tag-shape": check_mode_tag_shape,
@@ -782,6 +806,13 @@ def _clean_tree(root):
           "    - shell: bash\n      run: |\n"
           "        gh issue comment \"$ISSUE_NUMBER\" --body \"- [ ] "
           "$PHRASE — $ARTIFACT_URL\"\n")
+    _write(root, DECLARED_HOMES["stage-findings"],
+          "runs:\n  using: composite\n  steps:\n"
+          "    - shell: bash\n      run: |\n"
+          "        python3 - <<'PYEOF'\n"
+          "        fp = sha256(stage + fingerprint_basis['file_path'])\n"
+          "        ok, reason = validate_finding(item)\n"
+          "        PYEOF\n")
     _write(root, DECLARED_HOMES["verdict-shape"],
           "#!/usr/bin/env bash\n"
           "jq -n '{outcome:$outcome, verified_head:$head, "
@@ -976,6 +1007,14 @@ def run_selftest():
         "      - shell: bash\n        run: |\n"
         "          gh issue comment \"$N\" --body \"- [ ] a third paste "
         "\u2014 $URL\"\n")
+    selftest_third_paste_fails(
+        "stage-findings", ".github/workflows/third-stage-findings.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          python3 - <<'PYEOF'\n"
+        "          fp = sha256(stage + fingerprint_basis['file_path'])\n"
+        "          ok, reason = validate_finding(item)\n"
+        "          PYEOF\n")
     selftest_third_paste_fails(
         "verdict-shape", ".github/workflows/third-verdict.yml",
         "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"

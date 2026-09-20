@@ -126,8 +126,8 @@ runs:
         if [ -n "$MARKER" ]; then
           scope="$STATE_SCOPE"
           [ "$scope" = "open" ] || [ "$scope" = "all" ] || scope="open"
-          match_json="$(gh issue list --repo "$GITHUB_REPOSITORY" --label "$LABEL" --state "$scope" --json number,state,body --jq \
-            --arg marker "$MARKER" \
+          match_json="$(gh issue list --repo "$GITHUB_REPOSITORY" --label "$LABEL" --state "$scope" --json number,state,body 2>/dev/null | \
+            jq -c --arg marker "$MARKER" \
             '[.[] | select(.body != null and (.body | contains($marker)))] | first // empty' 2>/dev/null || true)"
           existing=""
           matched_closed=""
