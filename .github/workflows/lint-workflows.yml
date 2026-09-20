@@ -3708,7 +3708,7 @@ jobs:
       - name: Gate 72 — the FR-003 findings paragraph and the filing step travel together on every stage
         if: "!cancelled()"
         run: python3 .github/scripts/verify-stage-findings-wiring.py
-      - name: Gate 72 self-test — a paragraph without a step, a step without a paragraph, a prompt that does not name the finding's keys, an untyped findings.items, and a missing workflow each fail loudly
+      - name: Gate 72 self-test — a paragraph without a step, a step without a paragraph, a prompt that does not name the finding's keys, an untyped or widened findings.items, and a missing workflow each fail loudly
         if: "!cancelled()"
         run: python3 .github/scripts/verify-stage-findings-wiring.py --self-test
 

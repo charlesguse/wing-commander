@@ -64,8 +64,9 @@ Also checks (#420, found by the spec 056 quickstart §3 drill): every agent
 prompt that carries the paragraph also names every REQUIRED key of
 .github/schemas/stage-finding.schema.json, quoted exactly as the schema
 spells it, and the two structured-array stages (intake, clarify) declare
-the same required keys, with additionalProperties closed, under
-`findings.items` in their inline `--json-schema`. The first live run
+the same required keys, no property name the schema file lacks, and
+additionalProperties closed, under `findings.items` in their inline
+`--json-schema`. The first live run
 with filing enabled proved why: the paragraph as first shipped described
 the object in prose ("title, what is wrong, evidence file paths, and the
 fingerprint basis fields"), the agent wrote a YAML block with invented
@@ -192,6 +193,24 @@ def _tree_keys(tree, out=None):
     return out
 
 
+def _extra_properties(schema, reference, at="findings.items", out=None):
+    """Dotted paths of property names `schema` declares that `reference`
+    (the schema file) does not, per object, recursively. An extra optional
+    key is not a REQUIRED-tree difference, but the action would let the
+    agent emit it and the schema file would then drop the finding as
+    malformed -- #420's failure shape from the other side."""
+    out = [] if out is None else out
+    if isinstance(schema, dict) and schema.get("type") == "object":
+        have = schema.get("properties") or {}
+        want = (reference or {}).get("properties") or {} if isinstance(reference, dict) else {}
+        for key in have:
+            if key not in want:
+                out.append(f"{at}.{key}")
+            else:
+                _extra_properties(have[key], want[key], f"{at}.{key}", out)
+    return out
+
+
 def _open_objects(schema, at="findings.items", out=None):
     """Dotted paths of every object in `schema` whose additionalProperties
     is not literally false."""
@@ -263,6 +282,13 @@ def check_structured_schema(path, text):
             f"{have} but .github/schemas/stage-finding.schema.json requires "
             f"{want} — a finding the action accepts would be dropped as "
             f"malformed afterwards (#420).")
+        return
+    extra = _extra_properties(items, finding_schema())
+    if extra:
+        fail(f"{path}: findings.items declares property name(s) {extra} that "
+            f".github/schemas/stage-finding.schema.json does not — the action "
+            f"would let the agent emit them and the schema gate would then "
+            f"drop the finding as malformed (#420).")
         return
     open_objects = _open_objects(items)
     if open_objects:
@@ -406,15 +432,20 @@ KEYS_CLAUSE = ('"title" "what" "evidence" "file_paths" "fingerprint_basis" '
 # A --json-schema whose findings.items is the real shape (#420). Harmless on
 # a fixture for a fenced-block stage: the structured check only reads
 # STRUCTURED_STAGES paths.
-GOOD_ITEMS = ('{"type":"object","properties":{"title":{"type":"string"},'
-              '"what":{"type":"string"},"evidence":{"type":"object","properties":'
-              '{"file_paths":{"type":"array","items":{"type":"string"}},'
+GOOD_ITEMS = ('{"type":"object","properties":{"title":{"type":"string","minLength":1},'
+              '"what":{"type":"string","minLength":1},"evidence":{"type":"object","properties":'
+              '{"file_paths":{"type":"array","items":{"type":"string","minLength":1},"minItems":1},'
               '"detail":{"type":"string"}},"required":["file_paths"],'
               '"additionalProperties":false},"fingerprint_basis":{"type":"object",'
-              '"properties":{"file_path":{"type":"string"},"gate_or_artifact":'
-              '{"type":"string"}},"required":["file_path","gate_or_artifact"],'
+              '"properties":{"file_path":{"type":"string","minLength":1},"gate_or_artifact":'
+              '{"type":"string","minLength":1}},"required":["file_path","gate_or_artifact"],'
               '"additionalProperties":false}},"required":["title","what","evidence",'
               '"fingerprint_basis"],"additionalProperties":false}')
+# Right required keys, closed, but one property name the schema file does
+# not have: the action lets `priority` through, the schema gate drops it.
+EXTRA_PROPERTY_ITEMS = GOOD_ITEMS.replace(
+    '"what":{"type":"string","minLength":1},',
+    '"what":{"type":"string","minLength":1},"priority":{"type":"string"},', 1)
 # The shape the two structured stages shipped with (#420): array of untyped
 # objects — the action enforces nothing about a finding's keys.
 UNTYPED_ITEMS = '{"type":"object"}'
@@ -468,6 +499,8 @@ PROMPT_MISSING_KEY = HEADER + _agent_step(
 UNTYPED_ITEMS_STRUCTURED = HEADER + _agent_step(items=UNTYPED_ITEMS) + _filing_step(
     HEALTH_SIGNALS[".github/workflows/intake.yml"])
 OPEN_ITEMS_STRUCTURED = HEADER + _agent_step(items=OPEN_ITEMS) + _filing_step(
+    HEALTH_SIGNALS[".github/workflows/intake.yml"])
+EXTRA_PROPERTY_STRUCTURED = HEADER + _agent_step(items=EXTRA_PROPERTY_ITEMS) + _filing_step(
     HEALTH_SIGNALS[".github/workflows/intake.yml"])
 NO_SCHEMA_STRUCTURED = HEADER + _agent_step(items=None) + _filing_step(
     HEALTH_SIGNALS[".github/workflows/intake.yml"])
@@ -602,6 +635,21 @@ def selftest_structured_open_items_fails():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def selftest_structured_extra_property_fails():
+    case = "a structured stage whose findings.items declares a property the schema file lacks fails, naming it (#420)"
+    tmp = _tmp_with_stages({0: EXTRA_PROPERTY_STRUCTURED})
+    try:
+        found = evaluate(tmp)
+        hit = [f for f in found if STAGE_WORKFLOWS[0] in f and "priority" in f
+               and "property name" in f]
+        if not hit:
+            fail(f"[{case}] expected a finding for {STAGE_WORKFLOWS[0]}, got: {found}")
+        else:
+            note(f"[{case}] passed")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def selftest_structured_no_schema_fails():
     case = "a structured stage with no inline --json-schema fails (#420)"
     tmp = _tmp_with_stages({1: NO_SCHEMA_STRUCTURED})
@@ -715,6 +763,7 @@ def run_selftest():
     selftest_prompt_missing_key_fails()
     selftest_structured_untyped_items_fails()
     selftest_structured_open_items_fails()
+    selftest_structured_extra_property_fails()
     selftest_structured_no_schema_fails()
     selftest_missing_workflow_fails_loud()
     selftest_wrapper_missing_fromjson_fails()
