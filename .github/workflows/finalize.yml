@@ -155,6 +155,28 @@ on:
         type: string
         required: false
         default: ""
+      findings-filing-enabled:
+        description: >
+          Whether a defect this stage's agent meets outside its own task is
+          filed as a GitHub issue (specs/056-stage-found-defect-filing). On
+          by default for this stage (FR-001) — the wrapper can turn it off.
+        type: boolean
+        required: false
+        default: true
+      findings-label-prefix:
+        description: >
+          Label prefix a filed finding carries, as "<prefix>:<stage>"
+          (specs/056-stage-found-defect-filing).
+        type: string
+        required: false
+        default: found-by
+      findings-cap:
+        description: >
+          Maximum findings filed from one run of this stage
+          (specs/056-stage-found-defect-filing, FR-013).
+        type: number
+        required: false
+        default: 3
     secrets:
       claude-code-oauth-token:
         description: "Claude OAuth token (claude setup-token) — one of the two credentials"
@@ -692,6 +714,15 @@ jobs:
                that no agent can complete. Leave the file empty if none
                remain. Do not invent items that aren't in tasks.md.
 
+            If, while doing your own task, you notice a defect that is not your
+            own task to fix — a gate that cannot fail its subject, a contract
+            that contradicts the workflow it describes, a stale count, or
+            similar — do not fix it and do not attempt to file it yourself.
+            Describe it as one finding object (title, what is wrong, evidence
+            file paths, and the fingerprint basis fields) in a fenced
+            ```wing-commander-findings block in your final message, then
+            continue your own task unchanged.
+
             Constraints: read-only — do not run git commit, git push, or any
             gh command; do not edit any file other than the two temp files
             above.
@@ -854,6 +885,35 @@ jobs:
             echo "failed=true" >> "$GITHUB_OUTPUT"
             exit 1
           fi
+
+      # specs/056-stage-found-defect-filing (FR-003/FR-023): runs after this
+      # stage's own deterministic read-back, never gated on filing being
+      # enabled — the composite's own enable check makes that decision
+      # (research.md D12). Maintainer review: `steps.verify-agent-output.
+      # outcome != 'skipped'` alone does not gate on stage health (FR-024)
+      # — that step FAILS LOUDLY (exit 1) on a non-healthy verdict, so its
+      # outcome is 'failure', not 'skipped', and the old condition let
+      # filing proceed anyway. Keyed instead on
+      # `steps.summarize-verdict.outputs.verdict == 'healthy'` — the same
+      # verdict "Verify agent output" itself checks, and the one signal
+      # that already accounts for the `subtype: success` + `is_error:
+      # true` edge case (spec 037 research R3) rather than re-deriving it
+      # from a step outcome.
+      - name: File findings from this run
+        if: ${{ !cancelled() && steps.summarize-verdict.outputs.verdict == 'healthy' }}
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-stage-findings
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          stage: finalize
+          enabled: ${{ inputs.findings-filing-enabled }}
+          channel-mode: fenced-block
+          execution-output-path: ${{ runner.temp }}/claude-execution-output.json
+          spec-dir: ${{ steps.spec.outputs.spec-dir }}
+          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          lifecycle-issue-number: ${{ inputs.issue-number }}
+          label-prefix: ${{ inputs.findings-label-prefix }}
+          cap: ${{ inputs.findings-cap }}
 
       - name: Announce finalize failure (agent output)
         if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.verify-agent-output.outputs.failed == 'true'

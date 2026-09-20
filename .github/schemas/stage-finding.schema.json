@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wing-commander/schemas/stage-finding.schema.json",
+  "title": "StageFinding",
+  "type": "object",
+  "required": ["title", "what", "evidence", "fingerprint_basis"],
+  "additionalProperties": false,
+  "properties": {
+    "title": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^\r\n]*$" },
+    "what": { "type": "string", "minLength": 1, "maxLength": 4000, "pattern": "^[^\r\n]*$" },
+    "evidence": {
+      "type": "object",
+      "required": ["file_paths"],
+      "additionalProperties": false,
+      "properties": {
+        "file_paths": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        },
+        "detail": { "type": "string" }
+      }
+    },
+    "fingerprint_basis": {
+      "type": "object",
+      "required": ["file_path", "gate_or_artifact"],
+      "additionalProperties": false,
+      "properties": {
+        "file_path": { "type": "string", "minLength": 1 },
+        "gate_or_artifact": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

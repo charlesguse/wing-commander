@@ -2732,7 +2732,7 @@ jobs:
       # to create (FR-007's no-regression rule).
       - name: File or update the auto-update:failed issue (rollback)
         if: steps.rollback.outputs.action == 'report'
-        uses: ./.wing-commander-pipeline/.github/actions/_shared/durable-failure-issue
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-durable-failure-issue
         with:
           token: ${{ steps.ctx.outputs.token }}
           operation: report

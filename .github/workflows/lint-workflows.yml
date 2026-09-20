@@ -67,6 +67,10 @@ on:
       # grant here - the one edit that can invalidate every App-token call
       # site the gate approves - ran no gate at all until this entry.
       - "docs/setup.md"
+      # Gate 71's subject: a PR that only loosens stage-finding.schema.json
+      # (no code change) must still trigger the gate that checks
+      # verify-stage-finding-schema.py's fixtures against it.
+      - ".github/schemas/**"
   # Gate 1 only — it reads how GitHub actually registered the workflows on
   # the default branch, which a PR's files cannot tell us.
   push:
@@ -3653,6 +3657,51 @@ jobs:
       - name: Gate 70 — 8b stands down only for a stage-8 run that declined a skipped source
         if: "!cancelled()"
         run: python3 .github/scripts/verify-watchdog-self-skip-guard.py
+
+      # Gate 71 — specs/056-stage-found-defect-filing: the shipped
+      # extraction/validation/cap/fingerprint/body-compose logic in
+      # wing-commander-stage-findings/action.yml, and the dedup lookup it
+      # reports through in wing-commander-durable-failure-issue/action.yml,
+      # actually behave per contracts/wing-commander-stage-findings.md and
+      # data-model.md for every required branch (FR-030): a well-formed
+      # finding, a malformed one, a cap-overflow set, a dedup hit against
+      # an open issue, a dedup hit against a closed issue, an API failure,
+      # the no-findings path, both channel shapes, and the untrusted-
+      # content framing (FR-026). Runs the shipped `run:` blocks directly
+      # (research.md D14, the same technique Gate 11/the metrics-summary
+      # gate use) with a stubbed `gh` for the dedup/API-failure cases — no
+      # live network, no `uses:` invocation.
+      - name: Gate 71 — wing-commander-stage-findings behaves per contract for every required branch
+        if: "!cancelled()"
+        run: bash .github/scripts/stage-findings-tests/run-tests.sh
+      # verify-stage-finding-schema.py's validate_finding() is exercised as
+      # a Python import by both the composite above and Gate 71's own
+      # run-tests.sh -- neither counts as this script being invoked BY A
+      # WORKFLOW (verify-gate-wiring.py's wiring rule), so this checked-in
+      # positive fixture gives it that direct invocation too.
+      - name: Gate 71 — verify-stage-finding-schema.py validates its own checked-in fixture
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-stage-finding-schema.py .github/scripts/fixtures/stage-finding-schema/valid.json
+      - name: Gate 71 self-test — verify-stage-finding-schema.py rejects every negative fixture for the reason it exists to demonstrate
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-stage-finding-schema.py --self-test
+
+      # Gate 72 — specs/056-stage-found-defect-filing (FR-031): the FR-003
+      # findings paragraph and the wing-commander-stage-findings filing
+      # step travel together across all six published stage workflows,
+      # regardless of that stage's own findings-filing-enabled default
+      # (FR-001a) — the mechanism's presence is not conditional on it.
+      # Numbered 72, not 71 as tasks.md calls it: this branch's own Gate 71
+      # (the stage-findings fixture harness) claimed 71 first — see
+      # verify-single-home-idioms.py's module docstring for the precedent
+      # of a gate being renumbered as a branch's own earlier work takes a
+      # number first.
+      - name: Gate 72 — the FR-003 findings paragraph and the filing step travel together on every stage
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-stage-findings-wiring.py
+      - name: Gate 72 self-test — a paragraph without a step, a step without a paragraph, and a missing workflow each fail loudly
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-stage-findings-wiring.py --self-test
 
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and

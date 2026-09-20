@@ -1,0 +1,11 @@
+{
+  "title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx (this title is exactly 250 'x' characters plus this trailing note, deliberately over the 200-character maxLength to exercise that branch alone)",
+  "what": "verify-stage-findings-wiring.py exits 0 even when the subject workflow is missing.",
+  "evidence": {
+    "file_paths": [".github/scripts/verify-stage-findings-wiring.py"]
+  },
+  "fingerprint_basis": {
+    "file_path": ".github/scripts/verify-stage-findings-wiring.py",
+    "gate_or_artifact": "Gate 71"
+  }
+}

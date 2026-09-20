@@ -1,0 +1,11 @@
+{
+  "title": "Gate 71 cannot fail its own subject",
+  "what": "line one of a forged multi-line what\nline two, which the single-line pattern must reject",
+  "evidence": {
+    "file_paths": [".github/scripts/verify-stage-findings-wiring.py"]
+  },
+  "fingerprint_basis": {
+    "file_path": ".github/scripts/verify-stage-findings-wiring.py",
+    "gate_or_artifact": "Gate 71"
+  }
+}

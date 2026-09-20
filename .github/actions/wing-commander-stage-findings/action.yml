@@ -1,0 +1,667 @@
+# The stage-found defect filing idiom, in one home (specs/056-stage-found-
+# defect-filing, research.md D10): each of the six published stage
+# workflows calls this once, after its own deterministic read-back, to
+# turn an agent's structured finding proposal into a filed (or
+# cross-linked) GitHub issue -- never the agent itself (Constitution
+# Principle IX). See contracts/wing-commander-stage-findings.md.
+#
+# Pipeline, in order: enable check -> extract raw findings per channel
+# shape (fenced-block or structured-array) -> validate each against
+# .github/schemas/stage-finding.schema.json -> cap survivors -> per
+# survivor, fingerprint + compose body + report through
+# wing-commander-durable-failure-issue (dedup by a marker embedded in the
+# issue body) -> cross-link onto the lifecycle issue via
+# wing-commander-outstanding-task-item -> emit a summary. Every step after
+# "extract" that can fail (a bad gh call, a malformed proposal) is caught
+# locally; this composite always exits 0 (FR-022) -- the calling stage's
+# own `continue-on-error: true` on its "File findings from this run" step
+# is a second, redundant safety net, never the only one.
+#
+# STATIC 3-SLOT UNROLLING: GitHub Actions composite actions cannot invoke
+# a dynamically-sized list of nested `uses:` steps -- there is no loop
+# construct for steps, only a fixed list evaluated at parse time. Calling
+# wing-commander-durable-failure-issue (a nested composite, itself the
+# single home for the dedup/create/comment idiom -- re-implementing that
+# logic inline here would be exactly the second copy FR-016/FR-032 forbid)
+# once per surviving finding therefore means a fixed number of repeated
+# report/record/cross-link step groups, gated by `if:` on whether that
+# slot has a survivor. Three slots are provided, matching the Assumptions
+# section's default cap of 3; `cap` is clamped to 3 in the "prepare" step
+# regardless of what a caller configures, and the clamp is recorded in the
+# run summary rather than silently dropping the excess.
+name: wing-commander-stage-findings
+description: >
+  Validates, dedups, caps, files, and cross-links the findings a stage's
+  agent proposed during its own run -- deterministic code decides what
+  gets filed, never the agent.
+
+inputs:
+  token:
+    description: The pipeline's existing GitHub App identity token (FR-028)
+    required: true
+  stage:
+    description: One of intake, clarify, plan, tasks, implement, finalize
+    required: true
+  enabled:
+    description: Wired from the stage's own findings-filing-enabled input
+    required: true
+  channel-mode:
+    description: fenced-block | structured-array
+    required: true
+  execution-output-path:
+    description: Path to claude-execution-output.json; required when channel-mode is fenced-block
+    required: false
+    default: ""
+  findings-json:
+    description: The stage's own already-parsed findings array (or [] / absent), as a JSON string; required when channel-mode is structured-array
+    required: false
+    default: ""
+  spec-dir:
+    description: e.g. specs/056-stage-found-defect-filing, for the attribution line
+    required: true
+  run-url:
+    description: This run's URL, for the attribution line and dedup comments
+    required: true
+  lifecycle-issue-number:
+    description: Empty when the run has no lifecycle issue (FR-019)
+    required: false
+    default: ""
+  label-prefix:
+    description: Wired from findings-label-prefix
+    required: false
+    default: "found-by"
+  cap:
+    description: Wired from findings-cap (clamped to 3 -- see this file's own header comment)
+    required: false
+    default: "3"
+
+outputs:
+  filed:
+    description: Count of findings that resulted in a new issue
+    value: ${{ steps.summary.outputs.filed }}
+  appended:
+    description: Count routed to an already-open issue
+    value: ${{ steps.summary.outputs.appended }}
+  dropped-malformed:
+    description: Count that failed schema validation
+    value: ${{ steps.summary.outputs.dropped-malformed }}
+  dropped-cap:
+    description: Count dropped for exceeding the per-run cap
+    value: ${{ steps.summary.outputs.dropped-cap }}
+  dropped-api-failure:
+    description: Count that could not be filed due to an API error
+    value: ${{ steps.summary.outputs.dropped-api-failure }}
+  summary:
+    description: A markdown block for FR-020/FR-021, also folded into the step summary
+    value: ${{ steps.summary.outputs.summary }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check whether filing is enabled for this stage
+      id: gate
+      shell: bash
+      env:
+        ENABLED: ${{ inputs.enabled }}
+        STATE_FILE: ${{ runner.temp }}/wc-stage-findings/state.json
+      run: |
+        set -uo pipefail
+        mkdir -p "$(dirname "$STATE_FILE")"
+        if [ "$ENABLED" = "true" ]; then
+          echo "do-run=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "do-run=false" >> "$GITHUB_OUTPUT"
+          cat > "$STATE_FILE" <<'EOF'
+        {"disabled": true, "proposed": 0, "dropped_malformed": [], "dropped_cap": 0, "filed": 0, "appended": 0, "dropped_api_failure": 0, "outstanding_skipped": 0, "notes": []}
+        EOF
+        fi
+
+    # Extraction (D2/D3) -> validation (verify-stage-finding-schema.py) ->
+    # cap (D11) -> fingerprint (D6) -> body compose (data-model.md), all in
+    # one deterministic pass so the report steps below only need to read
+    # this step's own outputs. No `gh`/network calls happen here.
+    - name: Extract, validate, cap, and prepare findings
+      id: prepare
+      if: steps.gate.outputs.do-run == 'true'
+      continue-on-error: true
+      shell: bash
+      env:
+        STAGE: ${{ inputs.stage }}
+        SPEC_DIR: ${{ inputs.spec-dir }}
+        RUN_URL: ${{ inputs.run-url }}
+        LABEL_PREFIX: ${{ inputs.label-prefix }}
+        CHANNEL_MODE: ${{ inputs.channel-mode }}
+        CAP: ${{ inputs.cap }}
+        FINDINGS_JSON: ${{ inputs.findings-json }}
+        EXECUTION_OUTPUT_PATH: ${{ inputs.execution-output-path }}
+        OUT_DIR: ${{ runner.temp }}/wc-stage-findings
+        STATE_FILE: ${{ runner.temp }}/wc-stage-findings/state.json
+      run: |
+        set -uo pipefail
+        mkdir -p "$OUT_DIR"
+        python3 - <<'PYEOF'
+        import hashlib
+        import importlib.util
+        import json
+        import os
+        import re
+        import secrets
+
+        _schema_validator = os.path.join(
+            os.environ["GITHUB_ACTION_PATH"], "..", "..", "scripts",
+            "verify-stage-finding-schema.py")
+        _spec = importlib.util.spec_from_file_location(
+            "verify_stage_finding_schema", _schema_validator)
+        _vsfs = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_vsfs)
+        validate_finding = _vsfs.validate_finding
+
+        STAGE = os.environ["STAGE"]
+        SPEC_DIR = os.environ["SPEC_DIR"]
+        RUN_URL = os.environ["RUN_URL"]
+        LABEL_PREFIX = os.environ["LABEL_PREFIX"]
+        CHANNEL_MODE = os.environ["CHANNEL_MODE"]
+        OUT_DIR = os.environ["OUT_DIR"]
+        STATE_FILE = os.environ["STATE_FILE"]
+        MAX_SLOTS = 3
+
+        notes = []
+
+        def load_raw_findings():
+            if CHANNEL_MODE == "structured-array":
+                raw = os.environ.get("FINDINGS_JSON", "")
+                if not raw.strip():
+                    return []
+                try:
+                    parsed = json.loads(raw)
+                except ValueError:
+                    notes.append("findings-json was not valid JSON; treated as zero findings.")
+                    return []
+                if not isinstance(parsed, list):
+                    notes.append("findings-json was not a JSON array; treated as zero findings.")
+                    return []
+                return parsed
+            path = os.environ.get("EXECUTION_OUTPUT_PATH", "")
+            if not path or not os.path.isfile(path):
+                notes.append("execution-output-path was missing or unreadable; treated as zero findings.")
+                return []
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    transcript = json.load(fh)
+            except ValueError:
+                notes.append("execution-output-path did not contain valid JSON; treated as zero findings.")
+                return []
+            entries = transcript if isinstance(transcript, list) else [transcript]
+            result_entries = [e for e in entries if isinstance(e, dict) and e.get("type") == "result"]
+            if not result_entries:
+                notes.append("no type==result entry in the transcript; treated as zero findings.")
+                return []
+            text = result_entries[-1].get("result") or ""
+            m = re.search(r"```wing-commander-findings\s*\n(.*?)```", text, re.S)
+            if not m:
+                return []
+            try:
+                parsed = json.loads(m.group(1))
+            except ValueError:
+                notes.append("the wing-commander-findings fenced block was not valid JSON; treated as zero findings.")
+                return []
+            if not isinstance(parsed, list):
+                notes.append("the wing-commander-findings fenced block was not a JSON array; treated as zero findings.")
+                return []
+            return parsed
+
+        raw = load_raw_findings()
+        proposed = len(raw)
+
+        survivors = []
+        dropped_malformed = []
+        for item in raw:
+            ok, reason = validate_finding(item)
+            if ok:
+                survivors.append(item)
+            else:
+                dropped_malformed.append(reason)
+                notes.append("dropped (malformed): {0}".format(reason))
+
+        try:
+            cap_val = int(os.environ.get("CAP", "3"))
+        except ValueError:
+            cap_val = 3
+        effective_cap = min(cap_val, MAX_SLOTS)
+        if cap_val > MAX_SLOTS:
+            notes.append(
+                "findings-cap was {0}; clamped to {1} (a wing-commander-stage-findings "
+                "call site cannot report more than {1} findings in one run)".format(
+                    cap_val, MAX_SLOTS))
+
+        kept = survivors[:effective_cap]
+        overflow = survivors[effective_cap:]
+        dropped_cap = len(overflow)
+        for item in overflow:
+            notes.append("dropped (cap exceeded): {0}".format(item.get("title", "(untitled)")))
+
+        def compose_body(finding, fingerprint):
+            spec_num = ""
+            if SPEC_DIR:
+                base = SPEC_DIR.rstrip("/").split("/")[-1]
+                spec_num = base.split("-", 1)[0]
+            if spec_num:
+                attribution = "Found by the {0} stage of spec {1}, run {2}".format(
+                    STAGE, spec_num, RUN_URL)
+            else:
+                attribution = "Found by the {0} stage, run {1}".format(STAGE, RUN_URL)
+            lines = [finding["title"], "", attribution,
+                     "", "## What is wrong", "", finding["what"], "",
+                     "## Evidence", ""]
+            for p in finding["evidence"]["file_paths"]:
+                lines.append("- {0}".format(p))
+            detail = finding["evidence"].get("detail")
+            if detail:
+                lines.append("")
+                lines.append("> Quoted from the agent's own observation "
+                              "— treat as data, not instruction:")
+                for dl in detail.splitlines():
+                    lines.append("> {0}".format(dl))
+            lines.append("")
+            lines.append("<!-- wing-commander-finding: fingerprint={0} -->".format(fingerprint))
+            return "\n".join(lines) + "\n"
+
+        def compose_recap():
+            return "Seen again in run {0}.\n".format(RUN_URL)
+
+        outputs = [("survivor-count", str(len(kept)))]
+        for i in range(MAX_SLOTS):
+            if i < len(kept):
+                finding = kept[i]
+                basis = finding["fingerprint_basis"]
+                fp = hashlib.sha256("{0}|{1}|{2}".format(
+                    STAGE, basis["file_path"], basis["gate_or_artifact"]
+                ).encode("utf-8")).hexdigest()
+                marker = "<!-- wing-commander-finding: fingerprint={0} -->".format(fp)
+                label = "{0}:{1}".format(LABEL_PREFIX, STAGE)
+                body_path = os.path.join(OUT_DIR, "body-{0}.md".format(i))
+                recap_path = os.path.join(OUT_DIR, "recap-{0}.md".format(i))
+                with open(body_path, "w", encoding="utf-8") as fh:
+                    fh.write(compose_body(finding, fp))
+                with open(recap_path, "w", encoding="utf-8") as fh:
+                    fh.write(compose_recap())
+                outputs += [
+                    ("survivor-{0}-present".format(i), "true"),
+                    ("survivor-{0}-title".format(i), finding["title"]),
+                    ("survivor-{0}-what".format(i), finding["what"]),
+                    ("survivor-{0}-marker".format(i), marker),
+                    ("survivor-{0}-label".format(i), label),
+                    ("survivor-{0}-body-file".format(i), body_path),
+                    ("survivor-{0}-recap-file".format(i), recap_path),
+                ]
+            else:
+                outputs.append(("survivor-{0}-present".format(i), "false"))
+
+        state = {
+            "disabled": False,
+            "proposed": proposed,
+            "dropped_malformed": dropped_malformed,
+            "dropped_cap": dropped_cap,
+            "filed": 0,
+            "appended": 0,
+            "dropped_api_failure": 0,
+            "outstanding_skipped": 0,
+            "notes": notes,
+        }
+        with open(STATE_FILE, "w", encoding="utf-8") as fh:
+            json.dump(state, fh)
+
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+            for key, value in outputs:
+                if "\n" in value:
+                    # A delimiter derived from the key name is guessable by
+                    # whatever produced `value` -- and title/what are
+                    # agent-authored (FR-026: treat as data, not
+                    # instruction). A value containing that guessed
+                    # delimiter on a line of its own would terminate the
+                    # heredoc early and let the following line(s) be parsed
+                    # as forged key=value output pairs (e.g. overriding a
+                    # later survivor's body-file). A fresh random delimiter
+                    # per write cannot be predicted in advance, closing that
+                    # off regardless of what any single finding's text says.
+                    delim = "WC_SF_EOF_{0}".format(secrets.token_hex(16))
+                    fh.write("{0}<<{1}\n{2}\n{1}\n".format(key, delim, value))
+                else:
+                    fh.write("{0}={1}\n".format(key, value))
+        PYEOF
+
+    - name: Report finding 0
+      id: report-0
+      if: steps.gate.outputs.do-run == 'true' && steps.prepare.outputs.survivor-0-present == 'true'
+      continue-on-error: true
+      uses: ./.wing-commander-pipeline/.github/actions/wing-commander-durable-failure-issue
+      with:
+        token: ${{ inputs.token }}
+        operation: report
+        label: ${{ steps.prepare.outputs.survivor-0-label }}
+        label-color: "5319E7"
+        label-description: "Filed automatically by the wing-commander pipeline when the ${{ inputs.stage }} stage met a defect outside its own task"
+        title: ${{ steps.prepare.outputs.survivor-0-title }}
+        body-file: ${{ steps.prepare.outputs.survivor-0-body-file }}
+        comment-body-file: ${{ steps.prepare.outputs.survivor-0-recap-file }}
+        marker: ${{ steps.prepare.outputs.survivor-0-marker }}
+        state-scope: all
+
+    - name: Record finding 0 outcome
+      id: record-0
+      if: steps.gate.outputs.do-run == 'true' && steps.prepare.outputs.survivor-0-present == 'true'
+      continue-on-error: true
+      shell: bash
+      env:
+        STATE_FILE: ${{ runner.temp }}/wc-stage-findings/state.json
+        STAGE: ${{ inputs.stage }}
+        ISSUE_NUMBER: ${{ steps.report-0.outputs.issue-number }}
+        ACTION_TAKEN: ${{ steps.report-0.outputs.action-taken }}
+        TITLE: ${{ steps.prepare.outputs.survivor-0-title }}
+        WHAT: ${{ steps.prepare.outputs.survivor-0-what }}
+        LIFECYCLE_ISSUE_NUMBER: ${{ inputs.lifecycle-issue-number }}
+      run: |
+        set -uo pipefail
+        post_outstanding=false
+        phrase=""
+        issue_url=""
+        tmp="$(mktemp "${RUNNER_TEMP:-/tmp}/wc-sf-record.XXXXXX")"
+        if [ -z "$ISSUE_NUMBER" ]; then
+          # Deterministic fields only in the annotation itself -- $TITLE/
+          # $WHAT are agent-authored (FR-026) and a `what` containing a
+          # newline plus a workflow-command sequence
+          # (::add-mask::/::error::/::stop-commands::) would otherwise be
+          # interpreted as a real command by the runner the moment it's
+          # echoed raw. The finding text still reaches a maintainer
+          # verbatim (FR-025) via $STATE_FILE's `.notes`, which "Emit
+          # summary" below writes to $GITHUB_STEP_SUMMARY -- a markdown
+          # file the runner never parses as commands.
+          echo "::warning::wing-commander-stage-findings: filing failed for stage $STAGE — treating as dropped-api-failure; see the step summary for the finding text."
+          jq --arg title "$TITLE" --arg what "$WHAT" \
+            '.dropped_api_failure += 1 | .notes += ["dropped (API failure) while filing " + $title + ": " + $what]' \
+            "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+        else
+          issue_url="https://github.com/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER"
+          case "$ACTION_TAKEN" in
+            created|created-linked-closed)
+              phrase="a defect was filed by the $STAGE stage"
+              post_outstanding=true
+              jq '.filed += 1' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+              ;;
+            commented)
+              phrase="a defect met by the $STAGE stage was recorded on an existing issue"
+              post_outstanding=true
+              jq '.appended += 1' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+              ;;
+            *)
+              echo "::warning::wing-commander-stage-findings: unexpected action-taken '$ACTION_TAKEN' filing for stage $STAGE — treating as dropped-api-failure; see the step summary for the finding text."
+              jq --arg at "$ACTION_TAKEN" --arg title "$TITLE" --arg what "$WHAT" \
+                '.dropped_api_failure += 1 | .notes += ["dropped (API failure) while filing " + $title + " (action-taken=" + $at + "): " + $what]' \
+                "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+              ;;
+          esac
+          if [ "$post_outstanding" = "true" ] && [ -z "$LIFECYCLE_ISSUE_NUMBER" ]; then
+            post_outstanding=false
+            jq '.outstanding_skipped += 1' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+          fi
+        fi
+        echo "post-outstanding=$post_outstanding" >> "$GITHUB_OUTPUT"
+        echo "phrase=$phrase" >> "$GITHUB_OUTPUT"
+        echo "issue-url=$issue_url" >> "$GITHUB_OUTPUT"
+
+    - name: Post outstanding task item for finding 0
+      if: steps.gate.outputs.do-run == 'true' && steps.record-0.outputs.post-outstanding == 'true' && inputs.lifecycle-issue-number != ''
+      continue-on-error: true
+      uses: ./.wing-commander-pipeline/.github/actions/wing-commander-outstanding-task-item
+      with:
+        token: ${{ inputs.token }}
+        issue-number: ${{ inputs.lifecycle-issue-number }}
+        phrase: ${{ steps.record-0.outputs.phrase }}
+        artifact-url: ${{ steps.record-0.outputs.issue-url }}
+        context: (run ${{ inputs.run-url }})
+
+    - name: Report finding 1
+      id: report-1
+      if: steps.gate.outputs.do-run == 'true' && steps.prepare.outputs.survivor-1-present == 'true'
+      continue-on-error: true
+      uses: ./.wing-commander-pipeline/.github/actions/wing-commander-durable-failure-issue
+      with:
+        token: ${{ inputs.token }}
+        operation: report
+        label: ${{ steps.prepare.outputs.survivor-1-label }}
+        label-color: "5319E7"
+        label-description: "Filed automatically by the wing-commander pipeline when the ${{ inputs.stage }} stage met a defect outside its own task"
+        title: ${{ steps.prepare.outputs.survivor-1-title }}
+        body-file: ${{ steps.prepare.outputs.survivor-1-body-file }}
+        comment-body-file: ${{ steps.prepare.outputs.survivor-1-recap-file }}
+        marker: ${{ steps.prepare.outputs.survivor-1-marker }}
+        state-scope: all
+
+    - name: Record finding 1 outcome
+      id: record-1
+      if: steps.gate.outputs.do-run == 'true' && steps.prepare.outputs.survivor-1-present == 'true'
+      continue-on-error: true
+      shell: bash
+      env:
+        STATE_FILE: ${{ runner.temp }}/wc-stage-findings/state.json
+        STAGE: ${{ inputs.stage }}
+        ISSUE_NUMBER: ${{ steps.report-1.outputs.issue-number }}
+        ACTION_TAKEN: ${{ steps.report-1.outputs.action-taken }}
+        TITLE: ${{ steps.prepare.outputs.survivor-1-title }}
+        WHAT: ${{ steps.prepare.outputs.survivor-1-what }}
+        LIFECYCLE_ISSUE_NUMBER: ${{ inputs.lifecycle-issue-number }}
+      run: |
+        set -uo pipefail
+        post_outstanding=false
+        phrase=""
+        issue_url=""
+        tmp="$(mktemp "${RUNNER_TEMP:-/tmp}/wc-sf-record.XXXXXX")"
+        if [ -z "$ISSUE_NUMBER" ]; then
+          # Deterministic fields only in the annotation itself -- $TITLE/
+          # $WHAT are agent-authored (FR-026) and a `what` containing a
+          # newline plus a workflow-command sequence
+          # (::add-mask::/::error::/::stop-commands::) would otherwise be
+          # interpreted as a real command by the runner the moment it's
+          # echoed raw. The finding text still reaches a maintainer
+          # verbatim (FR-025) via $STATE_FILE's `.notes`, which "Emit
+          # summary" below writes to $GITHUB_STEP_SUMMARY -- a markdown
+          # file the runner never parses as commands.
+          echo "::warning::wing-commander-stage-findings: filing failed for stage $STAGE — treating as dropped-api-failure; see the step summary for the finding text."
+          jq --arg title "$TITLE" --arg what "$WHAT" \
+            '.dropped_api_failure += 1 | .notes += ["dropped (API failure) while filing " + $title + ": " + $what]' \
+            "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+        else
+          issue_url="https://github.com/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER"
+          case "$ACTION_TAKEN" in
+            created|created-linked-closed)
+              phrase="a defect was filed by the $STAGE stage"
+              post_outstanding=true
+              jq '.filed += 1' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+              ;;
+            commented)
+              phrase="a defect met by the $STAGE stage was recorded on an existing issue"
+              post_outstanding=true
+              jq '.appended += 1' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+              ;;
+            *)
+              echo "::warning::wing-commander-stage-findings: unexpected action-taken '$ACTION_TAKEN' filing for stage $STAGE — treating as dropped-api-failure; see the step summary for the finding text."
+              jq --arg at "$ACTION_TAKEN" --arg title "$TITLE" --arg what "$WHAT" \
+                '.dropped_api_failure += 1 | .notes += ["dropped (API failure) while filing " + $title + " (action-taken=" + $at + "): " + $what]' \
+                "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+              ;;
+          esac
+          if [ "$post_outstanding" = "true" ] && [ -z "$LIFECYCLE_ISSUE_NUMBER" ]; then
+            post_outstanding=false
+            jq '.outstanding_skipped += 1' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+          fi
+        fi
+        echo "post-outstanding=$post_outstanding" >> "$GITHUB_OUTPUT"
+        echo "phrase=$phrase" >> "$GITHUB_OUTPUT"
+        echo "issue-url=$issue_url" >> "$GITHUB_OUTPUT"
+
+    - name: Post outstanding task item for finding 1
+      if: steps.gate.outputs.do-run == 'true' && steps.record-1.outputs.post-outstanding == 'true' && inputs.lifecycle-issue-number != ''
+      continue-on-error: true
+      uses: ./.wing-commander-pipeline/.github/actions/wing-commander-outstanding-task-item
+      with:
+        token: ${{ inputs.token }}
+        issue-number: ${{ inputs.lifecycle-issue-number }}
+        phrase: ${{ steps.record-1.outputs.phrase }}
+        artifact-url: ${{ steps.record-1.outputs.issue-url }}
+        context: (run ${{ inputs.run-url }})
+
+    - name: Report finding 2
+      id: report-2
+      if: steps.gate.outputs.do-run == 'true' && steps.prepare.outputs.survivor-2-present == 'true'
+      continue-on-error: true
+      uses: ./.wing-commander-pipeline/.github/actions/wing-commander-durable-failure-issue
+      with:
+        token: ${{ inputs.token }}
+        operation: report
+        label: ${{ steps.prepare.outputs.survivor-2-label }}
+        label-color: "5319E7"
+        label-description: "Filed automatically by the wing-commander pipeline when the ${{ inputs.stage }} stage met a defect outside its own task"
+        title: ${{ steps.prepare.outputs.survivor-2-title }}
+        body-file: ${{ steps.prepare.outputs.survivor-2-body-file }}
+        comment-body-file: ${{ steps.prepare.outputs.survivor-2-recap-file }}
+        marker: ${{ steps.prepare.outputs.survivor-2-marker }}
+        state-scope: all
+
+    - name: Record finding 2 outcome
+      id: record-2
+      if: steps.gate.outputs.do-run == 'true' && steps.prepare.outputs.survivor-2-present == 'true'
+      continue-on-error: true
+      shell: bash
+      env:
+        STATE_FILE: ${{ runner.temp }}/wc-stage-findings/state.json
+        STAGE: ${{ inputs.stage }}
+        ISSUE_NUMBER: ${{ steps.report-2.outputs.issue-number }}
+        ACTION_TAKEN: ${{ steps.report-2.outputs.action-taken }}
+        TITLE: ${{ steps.prepare.outputs.survivor-2-title }}
+        WHAT: ${{ steps.prepare.outputs.survivor-2-what }}
+        LIFECYCLE_ISSUE_NUMBER: ${{ inputs.lifecycle-issue-number }}
+      run: |
+        set -uo pipefail
+        post_outstanding=false
+        phrase=""
+        issue_url=""
+        tmp="$(mktemp "${RUNNER_TEMP:-/tmp}/wc-sf-record.XXXXXX")"
+        if [ -z "$ISSUE_NUMBER" ]; then
+          # Deterministic fields only in the annotation itself -- $TITLE/
+          # $WHAT are agent-authored (FR-026) and a `what` containing a
+          # newline plus a workflow-command sequence
+          # (::add-mask::/::error::/::stop-commands::) would otherwise be
+          # interpreted as a real command by the runner the moment it's
+          # echoed raw. The finding text still reaches a maintainer
+          # verbatim (FR-025) via $STATE_FILE's `.notes`, which "Emit
+          # summary" below writes to $GITHUB_STEP_SUMMARY -- a markdown
+          # file the runner never parses as commands.
+          echo "::warning::wing-commander-stage-findings: filing failed for stage $STAGE — treating as dropped-api-failure; see the step summary for the finding text."
+          jq --arg title "$TITLE" --arg what "$WHAT" \
+            '.dropped_api_failure += 1 | .notes += ["dropped (API failure) while filing " + $title + ": " + $what]' \
+            "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+        else
+          issue_url="https://github.com/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER"
+          case "$ACTION_TAKEN" in
+            created|created-linked-closed)
+              phrase="a defect was filed by the $STAGE stage"
+              post_outstanding=true
+              jq '.filed += 1' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+              ;;
+            commented)
+              phrase="a defect met by the $STAGE stage was recorded on an existing issue"
+              post_outstanding=true
+              jq '.appended += 1' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+              ;;
+            *)
+              echo "::warning::wing-commander-stage-findings: unexpected action-taken '$ACTION_TAKEN' filing for stage $STAGE — treating as dropped-api-failure; see the step summary for the finding text."
+              jq --arg at "$ACTION_TAKEN" --arg title "$TITLE" --arg what "$WHAT" \
+                '.dropped_api_failure += 1 | .notes += ["dropped (API failure) while filing " + $title + " (action-taken=" + $at + "): " + $what]' \
+                "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+              ;;
+          esac
+          if [ "$post_outstanding" = "true" ] && [ -z "$LIFECYCLE_ISSUE_NUMBER" ]; then
+            post_outstanding=false
+            jq '.outstanding_skipped += 1' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+          fi
+        fi
+        echo "post-outstanding=$post_outstanding" >> "$GITHUB_OUTPUT"
+        echo "phrase=$phrase" >> "$GITHUB_OUTPUT"
+        echo "issue-url=$issue_url" >> "$GITHUB_OUTPUT"
+
+    - name: Post outstanding task item for finding 2
+      if: steps.gate.outputs.do-run == 'true' && steps.record-2.outputs.post-outstanding == 'true' && inputs.lifecycle-issue-number != ''
+      continue-on-error: true
+      uses: ./.wing-commander-pipeline/.github/actions/wing-commander-outstanding-task-item
+      with:
+        token: ${{ inputs.token }}
+        issue-number: ${{ inputs.lifecycle-issue-number }}
+        phrase: ${{ steps.record-2.outputs.phrase }}
+        artifact-url: ${{ steps.record-2.outputs.issue-url }}
+        context: (run ${{ inputs.run-url }})
+
+    # Always runs, regardless of enabled/disabled or any earlier step's own
+    # outcome (FR-020/FR-021): the one step whose outputs the composite's
+    # own `outputs:` block reads from, and the one place $GITHUB_STEP_SUMMARY
+    # is written, so a disabled run and a zero-findings run each get exactly
+    # one, terse block (SC-013) instead of one per step that happened to run.
+    - name: Emit summary
+      id: summary
+      if: always()
+      shell: bash
+      env:
+        STAGE: ${{ inputs.stage }}
+        STATE_FILE: ${{ runner.temp }}/wc-stage-findings/state.json
+      run: |
+        set -uo pipefail
+        if [ ! -f "$STATE_FILE" ]; then
+          mkdir -p "$(dirname "$STATE_FILE")"
+          cat > "$STATE_FILE" <<'EOF'
+        {"disabled": false, "proposed": 0, "dropped_malformed": [], "dropped_cap": 0, "filed": 0, "appended": 0, "dropped_api_failure": 0, "outstanding_skipped": 0, "notes": ["wing-commander-stage-findings: no state was recorded for this run (an earlier step in this composite did not complete) — reporting zero findings rather than failing the stage."]}
+        EOF
+        fi
+
+        disabled="$(jq -r '.disabled' "$STATE_FILE")"
+        proposed="$(jq -r '.proposed' "$STATE_FILE")"
+        filed="$(jq -r '.filed' "$STATE_FILE")"
+        appended="$(jq -r '.appended' "$STATE_FILE")"
+        dropped_malformed_count="$(jq -r '.dropped_malformed | length' "$STATE_FILE")"
+        dropped_cap="$(jq -r '.dropped_cap' "$STATE_FILE")"
+        dropped_api_failure="$(jq -r '.dropped_api_failure' "$STATE_FILE")"
+
+        echo "filed=$filed" >> "$GITHUB_OUTPUT"
+        echo "appended=$appended" >> "$GITHUB_OUTPUT"
+        echo "dropped-malformed=$dropped_malformed_count" >> "$GITHUB_OUTPUT"
+        echo "dropped-cap=$dropped_cap" >> "$GITHUB_OUTPUT"
+        echo "dropped-api-failure=$dropped_api_failure" >> "$GITHUB_OUTPUT"
+
+        {
+          echo "### wing-commander findings — $STAGE"
+          echo ""
+          if [ "$disabled" = "true" ]; then
+            echo "Filing is disabled for this stage."
+          elif [ "$proposed" = "0" ] && [ "$filed" = "0" ] && [ "$appended" = "0" ] && \
+               [ "$dropped_malformed_count" = "0" ] && [ "$dropped_cap" = "0" ] && \
+               [ "$dropped_api_failure" = "0" ]; then
+            echo "No findings proposed this run."
+          else
+            echo "- proposed: $proposed"
+            echo "- filed: $filed"
+            echo "- appended (existing issue): $appended"
+            echo "- dropped (malformed): $dropped_malformed_count"
+            echo "- dropped (cap exceeded): $dropped_cap"
+            echo "- dropped (API failure): $dropped_api_failure"
+            notes="$(jq -r '.notes[]?' "$STATE_FILE")"
+            if [ -n "$notes" ]; then
+              echo ""
+              echo "$notes" | sed 's/^/- /'
+            fi
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        summary_text="$(jq -r '"proposed=\(.proposed) filed=\(.filed) appended=\(.appended) dropped_malformed=\(.dropped_malformed|length) dropped_cap=\(.dropped_cap) dropped_api_failure=\(.dropped_api_failure)"' "$STATE_FILE")"
+        {
+          echo "summary<<WC_STAGE_FINDINGS_SUMMARY_EOF"
+          echo "$summary_text"
+          echo "WC_STAGE_FINDINGS_SUMMARY_EOF"
+        } >> "$GITHUB_OUTPUT"

@@ -42,8 +42,13 @@ argument is a single JSON literal with no `$ref` resolution assumed
 the item shape is inlined directly:
 
 ```json
-{"type":"object","properties":{"specified":{"type":"boolean"},"clarifications":{"type":"array","items":{"type":"object","properties":{"question":{"type":"string"},"context":{"type":["string","null"]},"options":{"type":"array","items":{"type":"object","properties":{"answer":{"type":"string"},"implications":{"type":["string","null"]}},"required":["answer"]}}},"required":["question"]}}},"required":["specified","clarifications"]}
+{"type":"object","properties":{"specified":{"type":"boolean"},"clarifications":{"type":"array","items":{"type":"object","properties":{"question":{"type":"string"},"context":{"type":["string","null"]},"options":{"type":"array","items":{"type":"object","properties":{"answer":{"type":"string"},"implications":{"type":["string","null"]}},"required":["answer"]}}},"required":["question"]}},"findings":{"type":"array","items":{"type":"object"}}},"required":["specified","clarifications"]}
 ```
+
+specs/056-stage-found-defect-filing (FR-007) adds the optional `findings`
+property present here: an array, default/absent meaning zero findings,
+carrying the agent's stage-found-defect proposals — validated separately
+by `.github/schemas/stage-finding.schema.json`, never by this schema.
 
 `specified` is intake's discriminator, the counterpart to clarify's
 `answered`: `false` means the agent took the prompt's step 2 STOP ("the
@@ -68,8 +73,11 @@ precedent's quoting rationale (`research.md`).
 Adds the `answered` discriminator (FR-009 decision, `research.md`):
 
 ```json
-{"type":"object","properties":{"answered":{"type":"boolean"},"clarifications":{"type":"array","items":{"type":"object","properties":{"question":{"type":"string"},"context":{"type":["string","null"]},"options":{"type":"array","items":{"type":"object","properties":{"answer":{"type":"string"},"implications":{"type":["string","null"]}},"required":["answer"]}}},"required":["question"]}}},"required":["answered","clarifications"]}
+{"type":"object","properties":{"answered":{"type":"boolean"},"clarifications":{"type":"array","items":{"type":"object","properties":{"question":{"type":"string"},"context":{"type":["string","null"]},"options":{"type":"array","items":{"type":"object","properties":{"answer":{"type":"string"},"implications":{"type":["string","null"]}},"required":["answer"]}}},"required":["question"]}},"findings":{"type":"array","items":{"type":"object"}}},"required":["answered","clarifications"]}
 ```
+
+specs/056-stage-found-defect-filing (FR-007) adds the same optional
+`findings` property here as intake's schema above.
 
 ## Agent-facing framing (prompt instructions, both steps)
 

@@ -78,7 +78,7 @@ remote_refs() { # remote_refs <ref-pattern> -> match count
 }
 
 ROLLBACK_STEP='auto-update-spec-kit__act__*rollback*.sh'
-FAILURE_ISSUE_STEP='actions__durable-failure-issue__*'
+FAILURE_ISSUE_STEP='actions__wing-commander-durable-failure-issue__*'
 
 # specs/049-single-home-release-idioms: the rollback step now only decides
 # WHETHER to file/update the auto-update:failed issue (writing action/title
@@ -98,7 +98,8 @@ run_rollback_and_file() { # run_rollback_and_file <log-suffix> -> echoes the rol
     # own note on this).
     export OPERATION=report LABEL=auto-update:failed LABEL_COLOR=E99695 \
       LABEL_DESCRIPTION="Spec Kit upgrade blocked or rolled back; needs maintainer attention" \
-      TITLE="$(out title)" BODY_FILE="$RUNNER_TEMP/rollback-issue-body.md"
+      TITLE="$(out title)" BODY_FILE="$RUNNER_TEMP/rollback-issue-body.md" \
+      COMMENT_BODY_FILE="" MARKER="" STATE_SCOPE=open
     GHA_SUBST=()
     run_step "$FAILURE_ISSUE_STEP" >>"$WORK/act-rollback-$1.log" 2>&1
   fi

@@ -152,6 +152,29 @@ on:
         type: string
         required: false
         default: ""
+      findings-filing-enabled:
+        description: >
+          Whether a defect this stage's agent meets outside its own task is
+          filed as a GitHub issue (specs/056-stage-found-defect-filing).
+          Off by default for this stage (FR-001) — the wrapper can turn it
+          on.
+        type: boolean
+        required: false
+        default: false
+      findings-label-prefix:
+        description: >
+          Label prefix a filed finding carries, as "<prefix>:<stage>"
+          (specs/056-stage-found-defect-filing).
+        type: string
+        required: false
+        default: found-by
+      findings-cap:
+        description: >
+          Maximum findings filed from one run of this stage
+          (specs/056-stage-found-defect-filing, FR-013).
+        type: number
+        required: false
+        default: 3
     secrets:
       claude-code-oauth-token:
         description: "Claude OAuth token (claude setup-token) — one of the two credentials"
@@ -624,11 +647,20 @@ jobs:
                deterministic step renders and posts from this array when
                questions remain.
 
+            If, while doing your own task, you notice a defect that is not your
+            own task to fix — a gate that cannot fail its subject, a contract
+            that contradicts the workflow it describes, a stale count, or
+            similar — do not fix it and do not attempt to file it yourself.
+            Describe it as one finding object (title, what is wrong, evidence
+            file paths, and the fingerprint basis fields) in the findings
+            array of your structured result, then continue your own task
+            unchanged.
+
             Never merge, approve, close, or relabel anything except as stated.
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ steps.agent-ceiling.outputs.ceiling }}
-            --json-schema '{"type":"object","properties":{"answered":{"type":"boolean"},"clarifications":{"type":"array","items":{"type":"object","properties":{"question":{"type":"string"},"context":{"type":["string","null"]},"options":{"type":"array","items":{"type":"object","properties":{"answer":{"type":"string"},"implications":{"type":["string","null"]}},"required":["answer"]}}},"required":["question"]}}},"required":["answered","clarifications"]}'
+            --json-schema '{"type":"object","properties":{"answered":{"type":"boolean"},"clarifications":{"type":"array","items":{"type":"object","properties":{"question":{"type":"string"},"context":{"type":["string","null"]},"options":{"type":"array","items":{"type":"object","properties":{"answer":{"type":"string"},"implications":{"type":["string","null"]}},"required":["answer"]}}},"required":["question"]}},"findings":{"type":"array","items":{"type":"object"}}},"required":["answered","clarifications"]}'
             --allowedTools "${{ steps.tool-args-clarify.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-clarify.outputs.disallowed-tools }}"
 
@@ -804,6 +836,17 @@ jobs:
         run: |
           f="$RUNNER_TEMP/claude-execution-output.json"
           raw="$(jq -r '[.[] | select(.type=="result")] | last | .result // empty' "$f" 2>/dev/null || true)"
+          # specs/056-stage-found-defect-filing: the agent's structured
+          # result may carry an optional `findings` array (FR-007) alongside
+          # `answered`/`clarifications` — extracted here, at this stage's one
+          # deterministic read-back point, never taken from the agent's
+          # prose directly by the filing composite (FR-010).
+          findings_json="$(printf '%s' "$raw" | jq -c 'if type=="object" and (.findings|type)=="array" then .findings else [] end' 2>/dev/null || echo '[]')"
+          {
+            echo "findings-json<<WC_CLARIFY_FINDINGS_EOF"
+            echo "$findings_json"
+            echo "WC_CLARIFY_FINDINGS_EOF"
+          } >> "$GITHUB_OUTPUT"
           answered="$(printf '%s' "$raw" | jq -r 'if type=="object" and (.answered|type)=="boolean" then .answered else false end' 2>/dev/null || echo false)"
           if [ "$answered" != "true" ]; then
             echo "outcome=none" >> "$GITHUB_OUTPUT"
@@ -873,6 +916,28 @@ jobs:
               fi
             fi
           fi
+
+      # specs/056-stage-found-defect-filing (FR-003/FR-023): runs after this
+      # stage's own deterministic read-back, never gated on filing being
+      # enabled — the composite's own enable check makes that decision
+      # (research.md D12). `!cancelled() && steps.clarification.outcome !=
+      # 'skipped'` excludes a cancelled run and a run whose read-back never
+      # executed (FR-024) without treating either as "zero findings filed".
+      - name: File findings from this run
+        if: ${{ !cancelled() && steps.clarification.outcome != 'skipped' }}
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-stage-findings
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          stage: clarify
+          enabled: ${{ inputs.findings-filing-enabled }}
+          channel-mode: structured-array
+          findings-json: ${{ steps.clarification.outputs.findings-json }}
+          spec-dir: ${{ steps.ctx.outputs.spec-dir }}
+          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          lifecycle-issue-number: ${{ inputs.issue-number }}
+          label-prefix: ${{ inputs.findings-label-prefix }}
+          cap: ${{ inputs.findings-cap }}
 
       # Deterministic render (contracts/clarification-schema.md): same
       # algorithm as intake's, turning the structured `clarifications` array

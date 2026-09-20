@@ -141,7 +141,12 @@ VERDICT_SCRIPT = ".github/actions/_shared/auto-release-verdict.sh"
 
 DECLARED_HOMES = {
     "orphan-reset": ".github/actions/_shared/orphan-branch-reset/action.yml",
-    "failure-issue": ".github/actions/_shared/durable-failure-issue/action.yml",
+    # specs/056-stage-found-defect-filing, research.md D8: promoted out of
+    # _shared/ and given the wing-commander- prefix because a published
+    # composite (wing-commander-stage-findings) is now a second, deliberate
+    # caller -- Gate 60's own promotion-prevention check already forbids a
+    # published composite from resolving a _shared/ path.
+    "failure-issue": ".github/actions/wing-commander-durable-failure-issue/action.yml",
     "verdict-shape": ".github/actions/_shared/auto-release-verdict.sh",
     "token-mint": ".github/actions/_shared/scoped-app-token/action.yml",
     "mode-tag-shape": ".github/actions/_shared/auto-release-verdict.sh",
@@ -153,6 +158,16 @@ DECLARED_HOMES = {
     # this gate does, so a rogue THIRD paste (e.g. a "fix" applied directly
     # at a call site instead of to the shared composite) is caught.
     "extraheader-refresh": ".github/actions/wing-commander-refresh-remote/action.yml",
+    # specs/056-stage-found-defect-filing, research.md D9: pr-conversation.yml's
+    # own header comment calls this "the ONE shared mechanism every
+    # SpinOffArtifact posts through" -- a second caller (wing-commander-
+    # stage-findings) makes a structural one-home check worth having, the
+    # same way check_failure_issue already protects durable-failure-issue.
+    "outstanding-task-item": ".github/actions/wing-commander-outstanding-task-item/action.yml",
+    # specs/056-stage-found-defect-filing, research.md D10/D13: the
+    # proposal-validate-fingerprint-file-cross-link sequence must not be
+    # re-pasted into a stage workflow directly -- FR-032.
+    "stage-findings": ".github/actions/wing-commander-stage-findings/action.yml",
 }
 CHECK_NAMES = tuple(DECLARED_HOMES) + ("promotion",)
 
@@ -180,6 +195,7 @@ LABEL_CREATE_RE = re.compile(r"gh label create\b[^\n]*--force")
 ISSUE_LOOKUP_RE = re.compile(
     r"gh issue list\b[^\n]*--label\b[^\n]*--state open\b[^\n]*"
     r"--json number\b[^\n]*--jq\b[^\n]*\.\[0\]\.number // empty")
+OUTSTANDING_TASK_RE = re.compile(r'gh issue comment\b[^\n]*"- \[ \] ')
 VERDICT_FIELDS = ("outcome", "verified_head", "failing_check", "expected",
                   "observed", "evidence_url")
 MODE_TAG_FRAGMENT_RE = re.compile(r"\{\s*mode\s*:\s*\$mode\s*\}")
@@ -326,6 +342,52 @@ def check_failure_issue(root="."):
 
 
 # --------------------------------------------------------------------------
+# Check: outstanding-task-item (per-step, single-fragment)
+# --------------------------------------------------------------------------
+def check_outstanding_task_item(root="."):
+    home = DECLARED_HOMES["outstanding-task-item"]
+    findings = []
+    for path in all_subject_files(root):
+        if path == home:
+            continue
+        doc = load_yaml(root, path)
+        if doc is None:
+            continue
+        text = read(root, path)
+        for _ctx, steps in _step_lists(doc):
+            for step in steps:
+                run = str((step or {}).get("run") or "")
+                if not run:
+                    continue
+                if OUTSTANDING_TASK_RE.search(run):
+                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
+                    findings.append(Finding(
+                        path, "outstanding-task-item",
+                        line_of(text, max(offset, 0)),
+                        'gh issue comment ... "- [ ] ..."'))
+    return findings
+
+
+# --------------------------------------------------------------------------
+# Check: stage-findings (file-wide co-occurrence of the fingerprint formula
+# and the schema-validation call -- research.md D13)
+# --------------------------------------------------------------------------
+def check_stage_findings(root="."):
+    home = DECLARED_HOMES["stage-findings"]
+    findings = []
+    for path in all_subject_files(root):
+        if path == home:
+            continue
+        text = read(root, path)
+        if "sha256" in text and "fingerprint_basis" in text and "validate_finding" in text:
+            offset = text.find("fingerprint_basis")
+            findings.append(Finding(
+                path, "stage-findings", line_of(text, offset),
+                "sha256(...) + fingerprint_basis + validate_finding co-occurrence"))
+    return findings
+
+
+# --------------------------------------------------------------------------
 # Check 3: verdict-shape (file-wide, all six field names near a jq call)
 # --------------------------------------------------------------------------
 def check_verdict_shape(root="."):
@@ -445,6 +507,8 @@ ALL_CHECKS = {
     "orphan-reset": check_orphan_reset,
     "extraheader-refresh": check_extraheader_refresh,
     "failure-issue": check_failure_issue,
+    "outstanding-task-item": check_outstanding_task_item,
+    "stage-findings": check_stage_findings,
     "verdict-shape": check_verdict_shape,
     "token-mint": check_token_mint,
     "mode-tag-shape": check_mode_tag_shape,
@@ -737,6 +801,18 @@ def _clean_tree(root):
           "        gh label create \"$L\" --force\n"
           "        gh issue list --label \"$L\" --state open --json number "
           "--jq '.[0].number // empty'\n")
+    _write(root, DECLARED_HOMES["outstanding-task-item"],
+          "runs:\n  using: composite\n  steps:\n"
+          "    - shell: bash\n      run: |\n"
+          "        gh issue comment \"$ISSUE_NUMBER\" --body \"- [ ] "
+          "$PHRASE — $ARTIFACT_URL\"\n")
+    _write(root, DECLARED_HOMES["stage-findings"],
+          "runs:\n  using: composite\n  steps:\n"
+          "    - shell: bash\n      run: |\n"
+          "        python3 - <<'PYEOF'\n"
+          "        fp = sha256(stage + fingerprint_basis['file_path'])\n"
+          "        ok, reason = validate_finding(item)\n"
+          "        PYEOF\n")
     _write(root, DECLARED_HOMES["verdict-shape"],
           "#!/usr/bin/env bash\n"
           "jq -n '{outcome:$outcome, verified_head:$head, "
@@ -925,6 +1001,20 @@ def run_selftest():
         "          gh label create \"third:failed\" --color B60205 --force\n"
         "          gh issue list --label \"third:failed\" --state open "
         "--json number --jq '.[0].number // empty'\n")
+    selftest_third_paste_fails(
+        "outstanding-task-item", ".github/workflows/third-outstanding-task.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          gh issue comment \"$N\" --body \"- [ ] a third paste "
+        "\u2014 $URL\"\n")
+    selftest_third_paste_fails(
+        "stage-findings", ".github/workflows/third-stage-findings.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          python3 - <<'PYEOF'\n"
+        "          fp = sha256(stage + fingerprint_basis['file_path'])\n"
+        "          ok, reason = validate_finding(item)\n"
+        "          PYEOF\n")
     selftest_third_paste_fails(
         "verdict-shape", ".github/workflows/third-verdict.yml",
         "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"

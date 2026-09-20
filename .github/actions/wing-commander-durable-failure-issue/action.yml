@@ -1,0 +1,206 @@
+# The durable failure issue idiom, in one home: dedup by label, create if
+# absent / comment if present, and close on recovery.
+#
+# Extracted from auto-release.yml's `report` job (three report sites, one
+# close site) and auto-update-spec-kit.yml's four report sites -- both
+# workflows look up an open issue by a `<workflow>:failed`-shaped label,
+# comment on it if found or create-and-label it if not, and (auto-release
+# only) close it when a subsequent run succeeds. See
+# specs/049-single-home-release-idioms/contracts/durable-failure-issue.md
+# and research.md D4/D5/D6.
+#
+# `wing-commander-callout`'s comment-rendering stays separate (D6): this
+# composite never templates a body itself -- callers that already build
+# one via wing-commander-callout keep doing so and simply hand this
+# composite the resulting `body-file`.
+#
+# Promoted out of the internal shared-composites directory and given the
+# wing-commander- prefix every other non-underscore composite already
+# carries (specs/056-stage-found-defect-filing, research.md D8): a
+# published composite is now a second, deliberate caller
+# (wing-commander-stage-findings), so this can no longer live under the
+# internal path without tripping Gate 60's own promotion-prevention check.
+#
+# specs/056-stage-found-defect-filing (research.md D7) extends this with
+# an opt-in marker/state-scope lookup, used by wing-commander-stage-findings
+# to dedup a filed finding by a fingerprint embedded in the issue body
+# rather than by label alone. Every existing caller (auto-release.yml,
+# auto-update-spec-kit.yml) omits `marker` and sees byte-identical
+# behavior -- the branch below only activates when a caller opts in.
+name: wing-commander-durable-failure-issue
+description: >
+  Looks up an open issue by label (optionally narrowed by a body marker);
+  on operation "report", comments on it if found or creates (and labels)
+  it if not; on operation "close", closes it if found or no-ops if not.
+
+inputs:
+  token:
+    description: Token to act with (usually GITHUB_TOKEN, scoped to this repository)
+    required: true
+  operation:
+    description: report | close
+    required: true
+  label:
+    description: "The dedup label, e.g. auto-release:failed"
+    required: true
+  label-color:
+    description: Hex color, no leading '#' (matches `gh label create --color`)
+    required: true
+  label-description:
+    description: Label description
+    required: true
+  title:
+    description: Issue title (report only)
+    required: false
+    default: ""
+  body-file:
+    description: Path to a file the caller has already written with the issue/comment body (report only)
+    required: false
+    default: ""
+  comment-body-file:
+    description: >
+      Optional path to a file the caller has already written with a SHORTER
+      body to use instead of body-file specifically for the "commented on an
+      existing OPEN issue" outcome (report only). Empty (the default) means
+      "use body-file for the comment too", today's behavior for every
+      caller that predates specs/056-stage-found-defect-filing. Exists
+      because a caller cannot know in advance of this one call whether the
+      lookup will find an existing open issue or not, so it cannot compose
+      a recap-only comment body itself after the fact without this
+      composite still being the one place that decides which file to use.
+    required: false
+    default: ""
+  marker:
+    description: >
+      A literal string (e.g. an HTML-comment fingerprint marker) the lookup
+      additionally requires inside a candidate issue's body. Empty (the
+      default) means "match on label alone" -- today's behavior.
+    required: false
+    default: ""
+  state-scope:
+    description: >
+      open | all. Only meaningful when `marker` is set; ignored (label-only
+      lookups stay open-scoped) when `marker` is empty.
+    required: false
+    default: "open"
+  close-comment:
+    description: Comment to leave when closing (close only)
+    required: false
+    default: ""
+
+outputs:
+  issue-number:
+    description: The found-or-created (report) / found-or-none (close) issue number, may be empty
+    value: ${{ steps.act.outputs.issue-number }}
+  action-taken:
+    description: commented | created | created-linked-closed | closed | none
+    value: ${{ steps.act.outputs.action-taken }}
+  matched-closed-issue:
+    description: >
+      Set only when `marker` matched a closed issue on a "report" operation
+      (action-taken=created-linked-closed) -- the closed issue's number, so
+      the caller can compose a body line linking it. Empty otherwise.
+    value: ${{ steps.act.outputs.matched-closed-issue }}
+
+runs:
+  using: composite
+  steps:
+    - name: Look up, then report or close
+      id: act
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        OPERATION: ${{ inputs.operation }}
+        LABEL: ${{ inputs.label }}
+        LABEL_COLOR: ${{ inputs.label-color }}
+        LABEL_DESCRIPTION: ${{ inputs.label-description }}
+        TITLE: ${{ inputs.title }}
+        BODY_FILE: ${{ inputs.body-file }}
+        COMMENT_BODY_FILE: ${{ inputs.comment-body-file }}
+        MARKER: ${{ inputs.marker }}
+        STATE_SCOPE: ${{ inputs.state-scope }}
+        CLOSE_COMMENT: ${{ inputs.close-comment }}
+      run: |
+        set -uo pipefail
+
+        if [ -n "$MARKER" ]; then
+          scope="$STATE_SCOPE"
+          [ "$scope" = "open" ] || [ "$scope" = "all" ] || scope="open"
+          match_json="$(gh issue list --repo "$GITHUB_REPOSITORY" --label "$LABEL" --state "$scope" --json number,state,body 2>/dev/null | \
+            jq -c --arg marker "$MARKER" \
+            '[.[] | select(.body != null and (.body | contains($marker)))] | first // empty' 2>/dev/null || true)"
+          existing=""
+          matched_closed=""
+          if [ -n "$match_json" ]; then
+            match_state="$(printf '%s' "$match_json" | jq -r '.state')"
+            match_number="$(printf '%s' "$match_json" | jq -r '.number')"
+            if [ "$match_state" = "OPEN" ] || [ "$match_state" = "open" ]; then
+              existing="$match_number"
+            else
+              matched_closed="$match_number"
+            fi
+          fi
+        else
+          existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --label "$LABEL" --state open --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+          matched_closed=""
+        fi
+
+        if [ "$OPERATION" = "report" ]; then
+          if [ -n "$existing" ]; then
+            comment_file="$BODY_FILE"
+            [ -n "$COMMENT_BODY_FILE" ] && comment_file="$COMMENT_BODY_FILE"
+            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body-file "$comment_file"
+            echo "issue-number=$existing" >> "$GITHUB_OUTPUT"
+            echo "action-taken=commented" >> "$GITHUB_OUTPUT"
+            echo "matched-closed-issue=" >> "$GITHUB_OUTPUT"
+          else
+            gh label create "$LABEL" --color "$LABEL_COLOR" --description "$LABEL_DESCRIPTION" --force
+            create_body_file="$BODY_FILE"
+            if [ -n "$matched_closed" ]; then
+              # FR-012: the caller's body cannot name a closed match it did
+              # not yet know about at compose time -- the marker lookup
+              # above is the first point that fact is known. Appending this
+              # one mechanical fact (a number, not prose) to a copy of the
+              # caller's own body is not "templating a body" in the sense
+              # this composite's own contract forbids; the caller still
+              # supplies 100% of the finding's own description.
+              create_body_file="$(mktemp "${RUNNER_TEMP:-/tmp}/wc-durable-failure-issue.XXXXXX")"
+              cat "$BODY_FILE" > "$create_body_file"
+              printf '\n\nRelated: a previous occurrence of this was closed as #%s.\n' "$matched_closed" >> "$create_body_file"
+            fi
+            # A `gh issue create` failure (rate limit, permission, outage)
+            # must not propagate out of this step: `shell: bash` steps run
+            # under the runner's default `-e`, so an unguarded failing
+            # command here would fail the WHOLE lookup step non-zero --
+            # exactly what wing-commander-stage-findings relies on this
+            # composite never doing (FR-022). Caught locally: empty
+            # issue-number, action-taken=create-failed, the caller's own
+            # "Record finding N outcome" step turns that into
+            # dropped-api-failure.
+            if url="$(gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --label "$LABEL" --body-file "$create_body_file")"; then
+              echo "issue-number=${url##*/}" >> "$GITHUB_OUTPUT"
+              if [ -n "$matched_closed" ]; then
+                echo "action-taken=created-linked-closed" >> "$GITHUB_OUTPUT"
+                echo "matched-closed-issue=$matched_closed" >> "$GITHUB_OUTPUT"
+              else
+                echo "action-taken=created" >> "$GITHUB_OUTPUT"
+                echo "matched-closed-issue=" >> "$GITHUB_OUTPUT"
+              fi
+            else
+              echo "::warning::wing-commander-durable-failure-issue: gh issue create failed for label $LABEL"
+              echo "issue-number=" >> "$GITHUB_OUTPUT"
+              echo "action-taken=create-failed" >> "$GITHUB_OUTPUT"
+              echo "matched-closed-issue=" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+        else
+          if [ -n "$existing" ]; then
+            gh issue close "$existing" --repo "$GITHUB_REPOSITORY" --comment "$CLOSE_COMMENT"
+            echo "issue-number=$existing" >> "$GITHUB_OUTPUT"
+            echo "action-taken=closed" >> "$GITHUB_OUTPUT"
+          else
+            echo "issue-number=" >> "$GITHUB_OUTPUT"
+            echo "action-taken=none" >> "$GITHUB_OUTPUT"
+          fi
+          echo "matched-closed-issue=" >> "$GITHUB_OUTPUT"
+        fi
