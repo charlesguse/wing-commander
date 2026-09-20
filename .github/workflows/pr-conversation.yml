@@ -2355,8 +2355,8 @@ jobs:
 
       # specs/056-stage-found-defect-filing (research.md D9): this call
       # moved out of an inline `gh issue comment` step into the single
-      # home every SpinOffArtifact-posting caller now shares --
-      # see wing-commander-outstanding-task-item/action.yml.
+      # home every SpinOffArtifact-posting caller now shares, the
+      # wing-commander-outstanding-task-item composite.
       - name: Post outstanding task item on the lifecycle issue
         if: steps.phrase.outputs.phrase != ''
         uses: ./.github/actions/wing-commander-outstanding-task-item

@@ -3670,6 +3670,14 @@ jobs:
       - name: Gate 71 — wing-commander-stage-findings behaves per contract for every required branch
         if: "!cancelled()"
         run: bash .github/actions/wing-commander-stage-findings/tests/run-tests.sh
+      # verify-stage-finding-schema.py's validate_finding() is exercised as
+      # a Python import by both the composite above and Gate 71's own
+      # run-tests.sh -- neither counts as this script being invoked BY A
+      # WORKFLOW (verify-gate-wiring.py's wiring rule), so this checked-in
+      # positive fixture gives it that direct invocation too.
+      - name: Gate 71 — verify-stage-finding-schema.py validates its own checked-in fixture
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-stage-finding-schema.py .github/scripts/fixtures/stage-finding-schema/valid.json
 
       # Gate 72 — specs/056-stage-found-defect-filing (FR-031): the FR-003
       # findings paragraph and the wing-commander-stage-findings filing

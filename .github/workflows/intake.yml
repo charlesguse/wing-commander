@@ -855,11 +855,21 @@ jobs:
             echo "spec-dir=" >> "$GITHUB_OUTPUT"
             echo "No $SPEC_DRAFT_PREFIX$NUM-* branch found — intake produced no spec." >> "$GITHUB_STEP_SUMMARY"
           fi
-          # specs/056-stage-found-defect-filing: the agent's structured
-          # result may carry an optional `findings` array (FR-007) alongside
-          # `specified`/`clarifications` — extracted here, at this stage's
-          # one deterministic read-back point, never taken from the agent's
-          # prose directly by the filing composite (FR-010).
+
+      # specs/056-stage-found-defect-filing: the agent's structured result
+      # may carry an optional `findings` array (FR-007) alongside
+      # `specified`/`clarifications` — extracted here, at this stage's one
+      # deterministic read-back point, never taken from the agent's prose
+      # directly by the filing composite (FR-010). Kept OUT of "Resolve
+      # created spec" deliberately (Gate 49): that step's own `spec-dir`
+      # output feeds this job's declared `spec-dir` output, and mixing a
+      # prose-derived value into the same step risks a masked-secret
+      # substring anywhere in the agent's finding text silently dropping
+      # spec-dir too (#287) — a risk `spec-dir` alone never carried.
+      - name: Extract findings from agent result
+        id: findings
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        run: |
           f="$RUNNER_TEMP/claude-execution-output.json"
           raw="$(jq -r '[.[] | select(.type=="result")] | last | .result // empty' "$f" 2>/dev/null || true)"
           findings_json="$(printf '%s' "$raw" | jq -c 'if type=="object" and (.findings|type)=="array" then .findings else [] end' 2>/dev/null || echo '[]')"
@@ -884,7 +894,7 @@ jobs:
           stage: intake
           enabled: ${{ inputs.findings-filing-enabled }}
           channel-mode: structured-array
-          findings-json: ${{ steps.created.outputs.findings-json }}
+          findings-json: ${{ steps.findings.outputs.findings-json }}
           spec-dir: ${{ steps.created.outputs.spec-dir }}
           run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           lifecycle-issue-number: ${{ inputs.issue-number }}
