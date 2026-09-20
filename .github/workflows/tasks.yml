@@ -220,6 +220,29 @@ on:
         type: string
         required: false
         default: ""
+      findings-filing-enabled:
+        description: >
+          Whether a defect this stage's agent meets outside its own task is
+          filed as a GitHub issue (specs/056-stage-found-defect-filing).
+          Off by default for this stage (FR-001) — the wrapper can turn it
+          on.
+        type: boolean
+        required: false
+        default: false
+      findings-label-prefix:
+        description: >
+          Label prefix a filed finding carries, as "<prefix>:<stage>"
+          (specs/056-stage-found-defect-filing).
+        type: string
+        required: false
+        default: found-by
+      findings-cap:
+        description: >
+          Maximum findings filed from one run of this stage
+          (specs/056-stage-found-defect-filing, FR-013).
+        type: number
+        required: false
+        default: 3
     secrets:
       claude-code-oauth-token:
         description: "Claude OAuth token (claude setup-token) — one of the two credentials"
@@ -710,6 +733,15 @@ jobs:
                happens next (implementation is dispatched automatically when an
                implement workflow is configured).
 
+            If, while doing your own task, you notice a defect that is not your
+            own task to fix — a gate that cannot fail its subject, a contract
+            that contradicts the workflow it describes, a stale count, or
+            similar — do not fix it and do not attempt to file it yourself.
+            Describe it as one finding object (title, what is wrong, evidence
+            file paths, and the fingerprint basis fields) in a fenced
+            ```wing-commander-findings block in your final message, then
+            continue your own task unchanged.
+
             Constraints: edit files ONLY inside ${{ needs.resolve-spec.outputs.spec-dir }};
             commit and push ONLY to ${{ inputs.spec-prefix }}${{ needs.resolve-spec.outputs.slug }}; open no
             PRs; never merge or approve anything.
@@ -883,6 +915,15 @@ jobs:
             6. Comment on issue #${{ steps.meta.outputs.issue }}: the same task
                summary, the tasks PR link, and that implementation starts only
                after a maintainer merges the tasks PR.
+
+            If, while doing your own task, you notice a defect that is not your
+            own task to fix — a gate that cannot fail its subject, a contract
+            that contradicts the workflow it describes, a stale count, or
+            similar — do not fix it and do not attempt to file it yourself.
+            Describe it as one finding object (title, what is wrong, evidence
+            file paths, and the fingerprint basis fields) in a fenced
+            ```wing-commander-findings block in your final message, then
+            continue your own task unchanged.
 
             Constraints: edit files ONLY inside ${{ needs.resolve-spec.outputs.spec-dir }};
             push ONLY to ${{ inputs.tasks-prefix }}${{ needs.resolve-spec.outputs.slug }}, never to the spec
@@ -1096,6 +1137,29 @@ jobs:
             gh pr edit "$pr" --add-label "$labels" || true
           fi
           echo "Tasks PR #$pr opened for review." >> "$GITHUB_STEP_SUMMARY"
+
+      # specs/056-stage-found-defect-filing (FR-003/FR-023): runs after
+      # whichever of the two mode-specific read-backs above ran, never
+      # gated on filing being enabled — the composite's own enable check
+      # makes that decision (research.md D12). `!cancelled()` plus "neither
+      # read-back was skipped" excludes a cancelled run and a run whose
+      # agent step never reached its own read-back (FR-024) without
+      # treating either as "zero findings filed".
+      - name: File findings from this run
+        if: ${{ !cancelled() && (steps.verify-tasks-auto.outcome != 'skipped' || steps.verify-tasks-pr.outcome != 'skipped') }}
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-stage-findings
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          stage: tasks
+          enabled: ${{ inputs.findings-filing-enabled }}
+          channel-mode: fenced-block
+          execution-output-path: ${{ runner.temp }}/claude-execution-output.json
+          spec-dir: ${{ needs.resolve-spec.outputs.spec-dir }}
+          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          lifecycle-issue-number: ${{ steps.meta.outputs.issue }}
+          label-prefix: ${{ inputs.findings-label-prefix }}
+          cap: ${{ inputs.findings-cap }}
 
       # Flip the stage label only after the mode-appropriate verification
       # passed (the verify steps above fail the job otherwise).
