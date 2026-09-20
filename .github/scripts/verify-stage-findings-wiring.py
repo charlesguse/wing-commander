@@ -47,9 +47,23 @@ shipped `if:` condition still names that signal. A regression back to
 the old, weaker `steps.<read-back>.outcome != 'skipped'` form would let a
 failed/exhausted agent run reach the filing step again — silently, since
 the paragraph/step co-occurrence check above cannot see it.
+
+Also checks (maintainer review, Item 6, post-merge fix): each of the six
+`wing-commander-<N>-<stage>.yml` wrapper workflows' `findings-filing-enabled:`
+value is wrapped in `fromJSON(vars.<VAR> || '<default>')`, exactly matching
+the parity pattern the adjacent `findings-cap` input already uses one line
+below. A repository variable literally set to the string `false` is a
+truthy operand to GitHub Actions' `||`, so a bare `vars.X || true/false`
+form (without `fromJSON`) hands a `type: boolean` `workflow_call` input the
+string `"false"` instead of the boolean `false` — it cannot disable a
+default-on stage (FR-029). A regression back to the bare form would strand
+that repository variable silently, since the composite still runs (just
+with the wrong effective default) rather than erroring.
 """
 import argparse
+import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -183,6 +197,61 @@ def evaluate(root="."):
     for path in STAGE_WORKFLOWS:
         check_stage(root, path)
     return list(failures)
+
+
+# Maintainer review, Item 6: path -> (repository-variable name, the
+# fromJSON(...) fallback literal that stage's default-on/default-off
+# posture requires). implement/finalize default on ('true'); the other
+# four default off ('false').
+WRAPPER_FILING_ENABLED = {
+    ".github/workflows/wing-commander-1-intake.yml": ("WING_COMMANDER_INTAKE_FINDINGS_FILING_ENABLED", "false"),
+    ".github/workflows/wing-commander-2-clarify.yml": ("WING_COMMANDER_CLARIFY_FINDINGS_FILING_ENABLED", "false"),
+    ".github/workflows/wing-commander-3-plan.yml": ("WING_COMMANDER_PLAN_FINDINGS_FILING_ENABLED", "false"),
+    ".github/workflows/wing-commander-4-tasks.yml": ("WING_COMMANDER_TASKS_FINDINGS_FILING_ENABLED", "false"),
+    ".github/workflows/wing-commander-5-implement.yml": ("WING_COMMANDER_IMPLEMENT_FINDINGS_FILING_ENABLED", "true"),
+    ".github/workflows/wing-commander-6-finalize.yml": ("WING_COMMANDER_FINALIZE_FINDINGS_FILING_ENABLED", "true"),
+}
+
+FILING_ENABLED_LINE = re.compile(r"findings-filing-enabled:\s*(.+)")
+
+
+def check_wrapper_coercion(root, path, var_name, default_literal):
+    full = os.path.join(root, *path.split("/"))
+    if not os.path.isfile(full):
+        fail(f"{path} does not exist — cannot check its "
+            f"findings-filing-enabled coercion.")
+        return
+    with open(full, encoding="utf-8") as fh:
+        text = fh.read()
+    lines = [m.group(1).strip() for m in FILING_ENABLED_LINE.finditer(text)]
+    if not lines:
+        fail(f"{path} has no findings-filing-enabled: line to check.")
+        return
+    expected = f"${{{{ fromJSON(vars.{var_name} || '{default_literal}') }}}}"
+    bad = sorted({line for line in lines if line != expected})
+    if bad:
+        fail(f"{path}'s findings-filing-enabled value(s) {bad} do not match "
+            f"the fromJSON parity form {expected!r} the adjacent "
+            f"findings-cap input uses one line below — a repository "
+            f"variable literally set to the string {default_literal!r} "
+            f"would not coerce to the boolean it names (FR-029).")
+    else:
+        note(f"{path}: findings-filing-enabled coerced via fromJSON, "
+            f"matching findings-cap's parity pattern.")
+
+
+def evaluate_wrapper_filing_enabled(root="."):
+    """Standalone from evaluate(): the existing STAGE_WORKFLOWS self-tests
+    build tmp fixtures containing only the six *published* workflows, and
+    were never exercising the six *wrapper* workflows this check reads —
+    folding this into evaluate() would make every one of those fixtures
+    also need six wrapper files they don't otherwise test."""
+    added = []
+    for path, (var_name, default_literal) in WRAPPER_FILING_ENABLED.items():
+        before = len(failures)
+        check_wrapper_coercion(root, path, var_name, default_literal)
+        added.extend(failures[before:])
+    return added
 
 
 # --------------------------------------------------------------------------
@@ -342,6 +411,64 @@ def selftest_clean_fixture_passes():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# Item 6 regression fixture: the pre-fix bare `vars.X || true/false` form,
+# missing the fromJSON(...) wrap the findings-cap input one line below
+# already relies on.
+BROKEN_FILING_ENABLED_WRAPPER = (
+    "on:\n  workflow_call: {}\njobs:\n  x:\n    uses: ./.github/workflows/implement.yml\n"
+    "    with:\n"
+    "      findings-filing-enabled: ${{ vars.WING_COMMANDER_IMPLEMENT_FINDINGS_FILING_ENABLED || true }}\n"
+    "      findings-cap: ${{ fromJSON(vars.WING_COMMANDER_FINDINGS_CAP || '3') }}\n"
+)
+
+
+def selftest_wrapper_missing_fromjson_fails():
+    case = "a wrapper's findings-filing-enabled without fromJSON() fails, naming the stage and the coercion gap"
+    tmp = tempfile.mkdtemp(prefix="wc-stage-findings-wiring-")
+    try:
+        target = ".github/workflows/wing-commander-5-implement.yml"
+        _write(tmp, target, BROKEN_FILING_ENABLED_WRAPPER)
+        before = len(failures)
+        check_wrapper_coercion(tmp, target, *WRAPPER_FILING_ENABLED[target])
+        found = failures[before:]
+        hit = [f for f in found if target in f and "fromJSON parity form" in f]
+        if not hit:
+            fail(f"[{case}] expected a finding for {target}, got: {found}")
+        else:
+            note(f"[{case}] passed")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def selftest_literal_string_false_coerces_off_via_fromjson():
+    """Item 6's actual ask: prove the literal repository-variable string
+    "false" turns filing off through fromJSON, where the pre-fix bare `||`
+    form could not. GitHub Actions' `||` returns its first truthy operand,
+    and a non-empty string ("false") is truthy — so `vars.X || true` (the
+    old form) evaluates to the *string* "false", which a `type: boolean`
+    workflow_call input cannot rely on coercing to `false`. `fromJSON`
+    parses that same string as JSON instead, the same coercion
+    `findings-cap` already relies on for its own numeric default."""
+    case = "fromJSON('false')/fromJSON('true') coerce the literal strings to real booleans"
+    if json.loads("false") is not False:
+        fail(f"[{case}] json.loads('false') did not produce boolean False — "
+            f"the coercion this fix relies on does not hold.")
+    elif json.loads("true") is not True:
+        fail(f"[{case}] json.loads('true') did not produce boolean True — "
+            f"the coercion this fix relies on does not hold.")
+    else:
+        note(f"[{case}] passed")
+
+
+def selftest_wrapper_real_six_pass():
+    case = "the real six wrapper workflows' findings-filing-enabled all match the fromJSON parity form"
+    found = evaluate_wrapper_filing_enabled(".")
+    if found:
+        fail(f"[{case}] real tree failed: {found}")
+    else:
+        note(f"[{case}] passed")
+
+
 def run_selftest():
     use_utf8_stdout()
     selftest_clean_fixture_passes()
@@ -350,7 +477,10 @@ def run_selftest():
     selftest_comment_only_paragraph_does_not_satisfy()
     selftest_missing_health_signal_fails()
     selftest_missing_workflow_fails_loud()
+    selftest_wrapper_missing_fromjson_fails()
+    selftest_literal_string_false_coerces_off_via_fromjson()
     selftest_real_six_pass()
+    selftest_wrapper_real_six_pass()
     print(f"verify-stage-findings-wiring --self-test: {len(failures)} failure(s).")
     return 1 if failures else 0
 
@@ -366,6 +496,7 @@ def main():
         sys.exit(run_selftest())
 
     found = evaluate(".")
+    found += evaluate_wrapper_filing_enabled(".")
     print(f"verify-stage-findings-wiring: {len(found)} failure(s).")
     sys.exit(1 if found else 0)
 
