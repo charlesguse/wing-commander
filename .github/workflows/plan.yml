@@ -212,6 +212,29 @@ on:
         type: string
         required: false
         default: ""
+      findings-filing-enabled:
+        description: >
+          Whether a defect this stage's agent meets outside its own task is
+          filed as a GitHub issue (specs/056-stage-found-defect-filing).
+          Off by default for this stage (FR-001) — the wrapper can turn it
+          on.
+        type: boolean
+        required: false
+        default: false
+      findings-label-prefix:
+        description: >
+          Label prefix a filed finding carries, as "<prefix>:<stage>"
+          (specs/056-stage-found-defect-filing).
+        type: string
+        required: false
+        default: found-by
+      findings-cap:
+        description: >
+          Maximum findings filed from one run of this stage
+          (specs/056-stage-found-defect-filing, FR-013).
+        type: number
+        required: false
+        default: 3
     secrets:
       claude-code-oauth-token:
         description: "Claude OAuth token (claude setup-token) — one of the two credentials"
@@ -722,6 +745,15 @@ jobs:
                to the spec branch and the tasks stage was dispatched
                automatically because Gate 3 (plan review) is disabled.
 
+            If, while doing your own task, you notice a defect that is not your
+            own task to fix — a gate that cannot fail its subject, a contract
+            that contradicts the workflow it describes, a stale count, or
+            similar — do not fix it and do not attempt to file it yourself.
+            Describe it as one finding object (title, what is wrong, evidence
+            file paths, and the fingerprint basis fields) in a fenced
+            ```wing-commander-findings block in your final message, then
+            continue your own task unchanged.
+
             Constraints: edit files ONLY inside ${{ needs.resolve-spec.outputs.spec-dir }}
             (plus the agent context file maintained by the skill's update
             script); commit and push ONLY to
@@ -903,6 +935,15 @@ jobs:
                a short plan summary, the plan PR link, and that merging the plan
                PR advances the pipeline to task generation.
 
+            If, while doing your own task, you notice a defect that is not your
+            own task to fix — a gate that cannot fail its subject, a contract
+            that contradicts the workflow it describes, a stale count, or
+            similar — do not fix it and do not attempt to file it yourself.
+            Describe it as one finding object (title, what is wrong, evidence
+            file paths, and the fingerprint basis fields) in a fenced
+            ```wing-commander-findings block in your final message, then
+            continue your own task unchanged.
+
             Constraints: edit files ONLY inside ${{ needs.resolve-spec.outputs.spec-dir }}
             (plus the agent context file maintained by the skill's update
             script); open exactly one PR; never merge or approve anything; push
@@ -1065,6 +1106,7 @@ jobs:
       # (deterministic — no agent turns spent on labels). Pr mode only — it
       # only makes sense when a plan PR was opened.
       - name: Verify plan PR and flip stage label
+        id: verify-pr
         if: steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'pr'
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
@@ -1107,6 +1149,7 @@ jobs:
 
       # Auto mode: plan.md and the stage flip must be on the spec branch.
       - name: Verify plan committed (auto)
+        id: verify-auto
         if: steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto'
         env:
           SLUG: ${{ needs.resolve-spec.outputs.slug }}
@@ -1133,6 +1176,29 @@ jobs:
             echo "::error::Plan run finished but spec-meta.json stage is '$stage', expected 'plan'."
             exit 1
           fi
+
+      # specs/056-stage-found-defect-filing (FR-003/FR-023): runs after
+      # whichever of the two mode-specific read-backs above ran, never
+      # gated on filing being enabled — the composite's own enable check
+      # makes that decision (research.md D12). `!cancelled()` plus "neither
+      # read-back was skipped" excludes a cancelled run and a run whose
+      # agent step never reached its own read-back (FR-024) without
+      # treating either as "zero findings filed".
+      - name: File findings from this run
+        if: ${{ !cancelled() && (steps.verify-pr.outcome != 'skipped' || steps.verify-auto.outcome != 'skipped') }}
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-stage-findings
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          stage: plan
+          enabled: ${{ inputs.findings-filing-enabled }}
+          channel-mode: fenced-block
+          execution-output-path: ${{ runner.temp }}/claude-execution-output.json
+          spec-dir: ${{ needs.resolve-spec.outputs.spec-dir }}
+          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          lifecycle-issue-number: ${{ steps.meta.outputs.issue || steps.newissue.outputs.issue }}
+          label-prefix: ${{ inputs.findings-label-prefix }}
+          cap: ${{ inputs.findings-cap }}
 
       # Auto mode: flip the stage label once T008's verification passed. No
       # PR-labeling step here — auto mode opens no PR.
