@@ -681,3 +681,7 @@ barely, and only for one release").
 
 - [ ] `wing-commander-stage-findings/tests/run_fixtures.py:364` / `run-tests.sh`: isolate each fixture case (catch, report FAIL, continue) so one case's `FileNotFoundError` doesn't abort the remaining cases, exiting non-zero overall if any failed.
 - [ ] Have the composite create its temp files under `${RUNNER_TEMP:-/tmp}` so the logged path is native on every platform, not an MSYS-mangled path.
+
+## Maintainer Feedback
+
+- [ ] `verify-stage-findings-wiring.py:26-33`: scope the FR-003 paragraph substring check to the workflow's `prompt:` block rather than the whole file, so a comment can't satisfy it after the paragraph is removed from the prompt.
