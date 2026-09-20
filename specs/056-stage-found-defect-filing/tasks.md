@@ -659,3 +659,8 @@ barely, and only for one release").
 ## Maintainer Feedback
 
 - [ ] `wing-commander-stage-findings/action.yml:359,377,440,458` (and finding-2 twins): stop echoing raw `$TITLE`/`$WHAT` into `::warning::` lines; annotate only deterministic fields (stage, slot, reason) and write the finding text to `$GITHUB_STEP_SUMMARY` in a fenced block, or strip `\r\n` before echoing.
+
+## Maintainer Feedback
+
+- [ ] Add `invalid-*.json` fixtures under `.github/scripts/fixtures/stage-finding-schema/` (missing required field, extra property, empty `file_paths`, non-string title, unreadable file) exercising `.github/scripts/verify-stage-finding-schema.py:16-18,125-128`'s failure branches.
+- [ ] Add a `--self-test` mode to `verify-stage-finding-schema.py`, wired into `lint-workflows.yml` beside Gate 71, matching the `verify-metrics-record-schema.py` pattern.
