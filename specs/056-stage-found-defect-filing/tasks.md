@@ -462,7 +462,7 @@ by any downstream reader.
   agent's own observation — treat as data, not instruction" (T015),
   confirming it is visually distinguishable from the pipeline's own body
   prose. (depends on T015, T020)
-- [ ] T053 [US5] Document in `docs/adoption.md` (a new section, placed
+- [X] T053 [US5] Document in `docs/adoption.md` (a new section, placed
   after "## Chaining payload contract"): that an in-scope stage may open
   issues in the adopter's own repository; under the `found-by:<stage>`
   label; that `implement` and `finalize` file by default and the other
@@ -481,7 +481,7 @@ documented for every future consumer.
 **Purpose**: Final verification that the whole feature is wired correctly
 and gated per this repository's own working rules.
 
-- [ ] T054 [P] Update `docs/adoption.md`'s existing "Stage reference"
+- [X] T054 [P] Update `docs/adoption.md`'s existing "Stage reference"
   per-stage subsections (`intake`, `clarify`, `plan`, `tasks`, `implement`,
   `finalize`) to name the three new filing inputs and that stage's
   default, linking back to T053's new section rather than repeating its
