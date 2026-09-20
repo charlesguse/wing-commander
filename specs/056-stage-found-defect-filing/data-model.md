@@ -44,7 +44,7 @@ the computation:
 
 ```
 fingerprint = sha256("<stage>|<norm(fingerprint_basis.file_path)>|<norm(fingerprint_basis.gate_or_artifact)>")
-norm(s)     = lowercase(s), every run of non-alphanumeric characters -> one space, trimmed
+norm(s)     = lowercase(s), every run of non-word characters or underscores -> one space, trimmed (letters and digits in any script survive)
 ```
 
 `<stage>` is the filing composite's own `stage` input, not agent prose
@@ -52,8 +52,11 @@ norm(s)     = lowercase(s), every run of non-alphanumeric characters -> one spac
 prose (#424): two runs meeting one defect wrote `Principle III: Test-First
 (NON-NEGOTIABLE)` and `Principle III. Test-First (NON-NEGOTIABLE)` and
 filed a twin. Punctuation, case and spacing no longer move the key; a
-different word still does, and markers filed before the normalization
-no longer match afterwards. Embedded in a filed issue's body as an HTML comment
+different word still does (a third run wrote `Constitution Principle III
+(Test-First (NON-NEGOTIABLE))` and filed another twin), and markers filed
+before the normalization no longer match afterwards. Whether the key
+should stop depending on agent wording at all is an open design
+question on #424. Embedded in a filed issue's body as an HTML comment
 marker: `<!-- wing-commander-finding: fingerprint=<hex> -->`, the same
 marker-in-body idiom the watchdog already uses, read back by
 `wing-commander-durable-failure-issue`'s marker-mode lookup (D7).

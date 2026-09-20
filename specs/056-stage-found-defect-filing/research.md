@@ -119,7 +119,7 @@ is caught.
 
 ## D6: Fingerprint formula
 
-**Decision**: `fingerprint = sha256("<stage>|<file_path>|<gate_or_artifact_name>")`
+**Decision**: `fingerprint = sha256("<stage>|<norm(file_path)>|<norm(gate_or_artifact_name)>") — `norm` per data-model.md "Fingerprint" (#424)`
 over the three deterministic fields FR-010 names, lower-hex digest,
 mirroring the watchdog's own `sha256sum` fingerprint idiom
 (`fp=$(printf '%s|...' ... | sha256sum | cut -d' ' -f1)`). The finding
