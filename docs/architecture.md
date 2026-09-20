@@ -299,7 +299,10 @@ through the same `model` inputs, with no new model-mapping mechanism and no
 change to the tiering above.
 
 ### Security (constitution V)
-- Pipeline entry = maintainer-applied `spec-request` label.
+- Pipeline entry = maintainer-applied `spec-request` label for the feature
+  lifecycle. The board loop (constitution X) acts on an issue a maintainer
+  authored or labeled, or one the pipeline filed under a label only it
+  applies; anything else gets a read-only triage proposal.
 - Comment triggers: commenter must be OWNER/MEMBER/COLLABORATOR **or** the
   original issue author; `Bot`-type users never trigger. Stage 10
   (`pr-conversation`) is the one exception to the author carve-out —
@@ -329,7 +332,15 @@ change to the tiering above.
   [stage-interfaces.md](../specs/010-reusable-pipeline/contracts/stage-interfaces.md#per-stage-default-tool-lists).
 - Only trusted refs are checked out (main, repo-local `spec*/` branches) — never
   fork PR heads.
-- Humans merge every PR into main. The bot cannot approve or merge.
+- Humans merge every spec, plan and final PR into main, and every
+  constitution amendment; the bot cannot approve those or merge one. The bot
+  merges two classes only (constitution X): the bounded fix PR, behind a
+  deterministic gate — checks green on the exact head SHA (no checks is not
+  green, and the gate suite must have run on that SHA), zero open findings
+  from an independent review, the size-and-path backstop on the final diff,
+  and a clear `WING_COMMANDER_*_PAUSED` switch — and the Spec Kit upgrade PR
+  the auto-update stage opened, after the verification that stage assigns
+  to the jump passed and the gate suite ran green on the exact head.
 
 ---
 
