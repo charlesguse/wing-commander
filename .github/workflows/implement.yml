@@ -205,6 +205,28 @@ on:
         type: string
         required: false
         default: ""
+      findings-filing-enabled:
+        description: >
+          Whether a defect this stage's agent meets outside its own task is
+          filed as a GitHub issue (specs/056-stage-found-defect-filing). On
+          by default for this stage (FR-001) — the wrapper can turn it off.
+        type: boolean
+        required: false
+        default: true
+      findings-label-prefix:
+        description: >
+          Label prefix a filed finding carries, as "<prefix>:<stage>"
+          (specs/056-stage-found-defect-filing).
+        type: string
+        required: false
+        default: found-by
+      findings-cap:
+        description: >
+          Maximum findings filed from one run of this stage
+          (specs/056-stage-found-defect-filing, FR-013).
+        type: number
+        required: false
+        default: 3
     secrets:
       claude-code-oauth-token:
         description: "Claude OAuth token (claude setup-token) — one of the two credentials"
@@ -886,6 +908,15 @@ jobs:
                commit nothing further.
             4. Push the current branch (${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}).
 
+            If, while doing your own task, you notice a defect that is not your
+            own task to fix — a gate that cannot fail its subject, a contract
+            that contradicts the workflow it describes, a stale count, or
+            similar — do not fix it and do not attempt to file it yourself.
+            Describe it as one finding object (title, what is wrong, evidence
+            file paths, and the fingerprint basis fields) in a fenced
+            ```wing-commander-findings block in your final message, then
+            continue your own task unchanged.
+
             Constraints: commit and push ONLY to
             ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}; open no PRs; never merge or
             approve anything; do not edit files under .github/workflows
@@ -1453,6 +1484,15 @@ jobs:
                commit nothing further.
             5. Push the current branch (${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}).
 
+            If, while doing your own task, you notice a defect that is not your
+            own task to fix — a gate that cannot fail its subject, a contract
+            that contradicts the workflow it describes, a stale count, or
+            similar — do not fix it and do not attempt to file it yourself.
+            Describe it as one finding object (title, what is wrong, evidence
+            file paths, and the fingerprint basis fields) in a fenced
+            ```wing-commander-findings block in your final message, then
+            continue your own task unchanged.
+
             Constraints: commit and push ONLY to
             ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}; open no PRs; never merge or
             approve anything; do not edit files under .github/workflows
@@ -1867,6 +1907,30 @@ jobs:
             printf '%s\n' "$remaining"
             echo "WING_COMMANDER_REMAINING_EOF"
           } >> "$GITHUB_OUTPUT"
+
+      # specs/056-stage-found-defect-filing (FR-003/FR-023, research.md D1):
+      # the single attribution surface for the combined implement⟲converge
+      # turn — runs after "Consolidate final outcome", the one point that
+      # exists regardless of whether the cycle or the retry-at-escalation-
+      # model path ran, never gated on filing being enabled (research.md
+      # D12). `!cancelled() && steps.final.outcome != 'skipped'` excludes a
+      # cancelled run and a run whose agent step never reached its own
+      # read-back (FR-024) without treating either as "zero findings filed".
+      - name: File findings from this run
+        if: ${{ !cancelled() && steps.final.outcome != 'skipped' }}
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-stage-findings
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          stage: implement
+          enabled: ${{ inputs.findings-filing-enabled }}
+          channel-mode: fenced-block
+          execution-output-path: ${{ runner.temp }}/claude-execution-output.json
+          spec-dir: ${{ steps.spec.outputs.spec-dir }}
+          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          lifecycle-issue-number: ${{ inputs.issue-number }}
+          label-prefix: ${{ inputs.findings-label-prefix }}
+          cap: ${{ inputs.findings-cap }}
 
       # When the cycle is judged failed, the most useful diagnostic is usually
       # the agent's own final message (e.g. "push rejected — the App lacks the
