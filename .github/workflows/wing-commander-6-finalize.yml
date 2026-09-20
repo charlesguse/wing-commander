@@ -41,6 +41,9 @@ jobs:
       spec-prefix: ${{ vars.WING_COMMANDER_SPEC_PREFIX || 'spec/' }}
       runner: ${{ vars.WING_COMMANDER_RUNNER || 'ubuntu-latest' }}
       container-image: ${{ vars.WING_COMMANDER_CONTAINER_IMAGE || '' }}
+      findings-filing-enabled: ${{ vars.WING_COMMANDER_FINALIZE_FINDINGS_FILING_ENABLED || true }}
+      findings-label-prefix: ${{ vars.WING_COMMANDER_FINDINGS_LABEL_PREFIX || 'found-by' }}
+      findings-cap: ${{ vars.WING_COMMANDER_FINDINGS_CAP || 3 }}
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
