@@ -19,6 +19,7 @@ Invoked via the thin run-tests.sh wrapper beside this file.
 """
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -354,6 +355,16 @@ def case_dedup_hit_closed_creates_and_links():
         calls = fh.read()
     check(case + ": no issue close/reopen call", "issue close" not in calls
           and "issue reopen" not in calls, calls)
+    # FR-012: the created issue's body must actually link the closed match,
+    # not just report matched-closed-issue as an output nothing reads.
+    create_call = next((line for line in calls.splitlines() if line.startswith("issue create")), "")
+    m = re.search(r"--body-file (\S+)", create_call)
+    check(case + ": issue create call captured a body-file", bool(m), calls)
+    if m:
+        with open(m.group(1), encoding="utf-8") as fh:
+            created_body = fh.read()
+        check(case + ": created issue body links the closed issue number",
+              "closed as #7" in created_body, created_body)
 
 
 def case_no_dedup_match_creates():

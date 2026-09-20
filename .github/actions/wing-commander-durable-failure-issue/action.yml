@@ -155,7 +155,20 @@ runs:
             echo "matched-closed-issue=" >> "$GITHUB_OUTPUT"
           else
             gh label create "$LABEL" --color "$LABEL_COLOR" --description "$LABEL_DESCRIPTION" --force
-            url="$(gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --label "$LABEL" --body-file "$BODY_FILE")"
+            create_body_file="$BODY_FILE"
+            if [ -n "$matched_closed" ]; then
+              # FR-012: the caller's body cannot name a closed match it did
+              # not yet know about at compose time -- the marker lookup
+              # above is the first point that fact is known. Appending this
+              # one mechanical fact (a number, not prose) to a copy of the
+              # caller's own body is not "templating a body" in the sense
+              # this composite's own contract forbids; the caller still
+              # supplies 100% of the finding's own description.
+              create_body_file="$(mktemp)"
+              cat "$BODY_FILE" > "$create_body_file"
+              printf '\n\nRelated: a previous occurrence of this was closed as #%s.\n' "$matched_closed" >> "$create_body_file"
+            fi
+            url="$(gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --label "$LABEL" --body-file "$create_body_file")"
             echo "issue-number=${url##*/}" >> "$GITHUB_OUTPUT"
             if [ -n "$matched_closed" ]; then
               echo "action-taken=created-linked-closed" >> "$GITHUB_OUTPUT"
