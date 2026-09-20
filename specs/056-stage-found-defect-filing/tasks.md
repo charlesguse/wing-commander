@@ -372,7 +372,7 @@ outputs, and lifecycle transition are identical to a run where filing
 succeeded — and that the failure is visible in the run's own summary
 (quickstart.md §4).
 
-- [ ] T046 [US4] Run the `review-step-gating` skill over the six "File
+- [X] T046 [US4] Run the `review-step-gating` skill over the six "File
   findings from this run" steps added in T031-T036, confirming: the
   `if: ${{ !cancelled() && steps.<read-back>.outcome != 'skipped' }}`
   condition correctly distinguishes a cancelled run (must not file) from
@@ -380,7 +380,14 @@ succeeded — and that the failure is visible in the run's own summary
   the read-back (must not be converted into a filing) per FR-024; the
   step's own `continue-on-error: true` cannot strand any reporter that
   reads `always()` downstream. Fix any findings the skill surfaces in the
-  same six steps. (depends on T031-T036)
+  same six steps. (depends on T031-T036) Gate 24 and a manual trace of
+  the full step chain (this run's tool allowlist excludes the skill's
+  stranded-steps.py detector) found no stranding: every step in the
+  chain either carries its own continue-on-error or degrades to a safe
+  empty/skipped state when an upstream dependency fails or never runs.
+  Found and fixed one real defect along the way — see the gate-suite-fix
+  commit's note on the durable-failure-issue `gh issue list --jq`/`--arg`
+  bug.
 - [ ] T047 [US4] Execute quickstart.md §4's failure-tolerance drill against
   a disposable/test repository (pass a token with no issue-creation
   permission to `wing-commander-stage-findings` for one run) and confirm:
@@ -388,7 +395,13 @@ succeeded — and that the failure is visible in the run's own summary
   identical to a run where filing succeeded; the failure and the unfiled
   finding's title/what are visible in the run's log and summary (FR-025);
   the stage is not reported red because of it (FR-022). Record the
-  result. (depends on T019, T045)
+  result. (depends on T019, T045) NOT RUN in this session: needs a
+  disposable/test repository and a live `gh workflow run` dispatch,
+  neither available to an implement-stage agent run. Left for the human
+  to execute before this ships in anger, per the plan's own "Suggested
+  MVP scope" note that this drill "should not be skipped before this
+  ships in anger." Fixture T019/case_api_failure_preserves_finding_text_and_exits_zero
+  already covers the equivalent unit-level assertion.
 
 **Checkpoint**: Filing failure is provably inert to every in-scope stage's
 own outcome.
@@ -486,14 +499,23 @@ and gated per this repository's own working rules.
   `finalize`) to name the three new filing inputs and that stage's
   default, linking back to T053's new section rather than repeating its
   prose.
-- [ ] T055 Run `python .github/scripts/run-local-gates.py` (the full
+- [X] T055 Run `python .github/scripts/run-local-gates.py` (the full
   PR-time gate suite, per this repository's CLAUDE.md) and fix any
   failures, including the extended Gate 60 (`verify-single-home-idioms.py`
   --self-test) and the new Gate 71 (`verify-stage-findings-wiring.py`).
+  113/113 gates pass (Gate 71 is the stage-findings fixture harness;
+  the wiring gate registered per T045 is Gate 72 — see T045's note).
+  Five real defects surfaced and fixed on the first full run; see the
+  gate-suite-fix commit.
 - [ ] T056 Execute quickstart.md's full validation sequence (§1–§5) end to
   end against a disposable/test repository and record the results,
   including the second-run dedup drill (§3 step 4) and the
-  planted-defect-removed no-op drill (§3 step 5).
+  planted-defect-removed no-op drill (§3 step 5). PARTIALLY RUN in this
+  session: §1 (`run-tests.sh`) and §2 (`verify-stage-findings-wiring.py`,
+  `verify-single-home-idioms.py`, the full local gate suite) pass against
+  the real tree. §3-§5 need a real dispatched run against a
+  disposable/test repository this session has no access to — left for
+  the human, together with T047, before this ships in anger.
 
 ---
 
