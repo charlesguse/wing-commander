@@ -92,9 +92,10 @@ runs an agent step by design):
    check 1's direct `steps.<id>.outputs.token` reference pattern. Also
    matches `env.WC_BOT_TOKEN`/`env.WC_SCRATCH_TOKEN` re-relayed under a
    second name, and a bare `toJSON(steps.<id>)` / `toJSON(steps)` dump
-   (broader than check 1's `toJSON(...outputs)` -- the whole step result,
-   not just its outputs, still carries the token when the step IS the
-   mint).
+   (the whole step result, not just its outputs, still carries the token
+   when the step IS the mint; since #410 check 1 catches that dump too,
+   so `fromJSON(toJSON(steps.ctx)).outputs.token` in a post-agent step
+   no longer passes).
 
 Static structure only (`yaml.safe_load`) -- this gate's subject is step
 *ordering and reference shape*, not step *behaviour*, so no
@@ -140,14 +141,20 @@ AGENT_ACTION_RE = re.compile(r"^anthropics/claude-code-action@")
 # literal "token" substring to match on its own, but equivalent to reading
 # the token since the dumped object carries it) -- second maintainer
 # review of PR #407, FR-020 care point 1 hole (b): an earlier version of
-# this regex missed all of these spellings.
+# this regex missed all of these spellings. Since #410 (item 2) also a
+# bare toJSON(steps.<id>) / toJSON(steps) dump of a whole step or of the
+# whole steps context: `fromJSON(toJSON(steps.ctx)).outputs.token` read
+# the token from a whole-step dump and passed check 1, because the only
+# toJSON form it knew was the `.outputs` one.
 _STEP_REF = r"steps(?:\.[\w-]+|\[[\'\"][\w-]+[\'\"]\])"
 _OUTPUTS_REF = r"(?:\.outputs|\[[\'\"]outputs[\'\"]\])"
 _TOKEN_KEY = r"(?:\.[\w-]*token[\w-]*|\[[\'\"][\w-]*token[\w-]*[\'\"]\])"
 TOKEN_REF_RE = re.compile(
     rf"{_STEP_REF}{_OUTPUTS_REF}{_TOKEN_KEY}"
     rf"|fromJSON\((?:[^()]|\([^()]*\))*\){_TOKEN_KEY}"
-    rf"|toJSON\({_STEP_REF}{_OUTPUTS_REF}\)",
+    rf"|toJSON\({_STEP_REF}{_OUTPUTS_REF}\)"
+    rf"|toJSON\({_STEP_REF}\)"
+    r"|toJSON\(steps\)",
     re.IGNORECASE)
 RELAY_STEP_NAME_RE = re.compile(r"^Relay\b.*token to the job environment", re.IGNORECASE)
 
@@ -163,10 +170,9 @@ RELAY_STEP_NAME_RE = re.compile(r"^Relay\b.*token to the job environment", re.IG
 # write immediately feeding a `$GITHUB_ENV` append; SHADOW_TOKEN_SOURCE_RE
 # extends TOKEN_REF_RE with env.WC_BOT_TOKEN/env.WC_SCRATCH_TOKEN
 # (re-relaying an already-relayed token under a second name is just as
-# much a shadow copy) and a bare toJSON(steps.<id>) / toJSON(steps) dump
-# (broader than TOKEN_REF_RE's toJSON(....outputs) -- the whole step
-# result, not just its outputs, still carries the token when the step IS
-# the mint).
+# much a shadow copy). The bare toJSON(steps.<id>) / toJSON(steps) dump
+# it used to add on its own is in TOKEN_REF_RE since #410, so check 1
+# and check 9 see the same set of token-carrying spellings.
 ALLOWED_RELAY_VARS = {"WC_BOT_TOKEN", "WC_SCRATCH_TOKEN"}
 GITHUB_ENV_ASSIGN_RE = re.compile(
     r'([A-Za-z_][A-Za-z0-9_]*)\s*=.*>>\s*"?\$GITHUB_ENV"?')
@@ -175,9 +181,7 @@ _ENV_TOKEN_VAR_RE = (
     r"|\[[\'\"](?:WC_BOT_TOKEN|WC_SCRATCH_TOKEN)[\'\"]\])")
 SHADOW_TOKEN_SOURCE_RE = re.compile(
     TOKEN_REF_RE.pattern
-    + rf"|{_ENV_TOKEN_VAR_RE}"
-    + rf"|toJSON\({_STEP_REF}\)"
-    + r"|toJSON\(steps\)",
+    + rf"|{_ENV_TOKEN_VAR_RE}",
     re.IGNORECASE)
 MINT_USES_MARKERS = ("wing-commander-context", "scoped-app-token")
 # Matches the base name and every "(cycle)"/"(retry)"/"(progress comment)"/
@@ -641,6 +645,28 @@ def mut_bare_tojson_outputs_dump(loaded):
     step["with"]["token"] = "${{ toJSON(steps.ctx.outputs) }}"
 
 
+def mut_whole_step_dump_credential_reference(loaded):
+    """#410 item 2: fromJSON(toJSON(steps.ctx)).outputs.token -- the token
+    read out of a WHOLE-STEP dump, which carries `.outputs.token` with it.
+    Reproduced on ff45ce7 against 'Announce remaining clarification
+    questions' in clarify.yml: the gate reported 0 failures."""
+    job = loaded[".github/workflows/clarify.yml"]["jobs"]["clarify"]
+    step = _find_step(job, "Announce remaining clarification questions")
+    assert step is not None, "fixture assumption broken: step renamed"
+    assert step["with"]["token"] == "${{ env.WC_BOT_TOKEN }}", \
+        "fixture assumption broken: token form changed"
+    step["with"]["token"] = "${{ fromJSON(toJSON(steps.ctx)).outputs.token }}"
+
+
+def mut_whole_steps_context_dump(loaded):
+    """#410 item 2, the wider form: toJSON(steps) dumps every step's
+    result, the mint's outputs included."""
+    job = loaded[".github/workflows/clarify.yml"]["jobs"]["clarify"]
+    step = _find_step(job, "Announce spec PR ready for review")
+    assert step is not None, "fixture assumption broken: step renamed"
+    step["with"]["token"] = "${{ fromJSON(toJSON(steps)).ctx.outputs.token }}"
+
+
 def mut_full_bracket_credential_reference(loaded):
     """should-fix (second review of PR #407):
     steps['ctx']['outputs']['token'] -- bracket notation on every segment,
@@ -860,6 +886,12 @@ SIMPLE_MUTATIONS = [
      "toJSON(steps.ctx.outputs)", mut_bare_tojson_outputs_dump),
     ("a post-agent step's credential reference spelled "
      "steps['ctx']['outputs']['token']", mut_full_bracket_credential_reference),
+    ("a post-agent step's credential reference spelled "
+     "fromJSON(toJSON(steps.ctx)).outputs.token -- a whole-step dump (#410)",
+     mut_whole_step_dump_credential_reference),
+    ("a post-agent step's credential reference spelled "
+     "fromJSON(toJSON(steps)).ctx.outputs.token -- the whole steps context (#410)",
+     mut_whole_steps_context_dump),
     ("the refresh step between implement.yml's retry and progress agent "
      "steps deleted", mut_drop_retry_progress_refresh),
     ("continue-on-error: true stripped from clarify.yml's canonical "
