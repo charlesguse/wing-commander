@@ -118,10 +118,12 @@ READ_CAPABLE_LABELS = {
     "implement.cycle", "implement.retry",
 }
 
-# A grant of a Spec Kit helper script, in either spelling the call sites
-# use. The captured path is checked against the working tree (#426).
+# A grant of a Spec Kit helper script: the two spellings the call sites use
+# (bare, and `bash `-prefixed), plus `sh ` and a `./` path prefix so a
+# re-spelled grant cannot walk around the check. The captured path is
+# checked against the working tree (#426).
 SCRIPT_GRANT = re.compile(
-    r"^Bash\((?:bash )?(\.specify/scripts/bash/[^:\s)]+)(?::\*)?\)$")
+    r"^Bash\((?:(?:bash|sh) )?(?:\./)?(\.specify/scripts/bash/[^:\s)]+)(?::\*)?\)$")
 
 # What repository guidance (CLAUDE.md's "Before pushing" section) mandates a
 # stage run - hand-maintained alongside CLAUDE.md edits, same as TABLE_DOC/
