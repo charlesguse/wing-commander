@@ -182,6 +182,28 @@ CASES = [
      {"w.yml": wf([("a", [], None),
                    ("b", ["a"], "needs.a.result == 'skipped'")])},
      True, ("'b'",)),
+
+    # --- spec 058: the newly-broadened ~30-job population ----------------
+    #
+    # T002-T014 gave ~30 jobs across the 13 published stages the shape
+    # `!cancelled() && needs.verify-image-prerequisites.result != 'failure'`
+    # — a status-function-guarded job like any other. Gate 15 needed no
+    # code change for this: its walk already treats any status-guarded job
+    # as an ancestor a downstream dependent must not silently rely on
+    # ordinary success() propagation past. This case proves that is true
+    # of the new shape specifically, not just asserted by the plan.
+    ("058: a downstream dependent of a rewritten entry job "
+     "(!cancelled() && needs.X.result != 'failure') is still caught by "
+     "Gate 15's ordinary walk when it carries no status function of its "
+     "own",
+     {"w.yml": wf([
+         ("verify-image-prerequisites", [], None),
+         ("entry", ["verify-image-prerequisites"],
+          '"!cancelled() && '
+          "needs.verify-image-prerequisites.result != 'failure'\""),
+         ("downstream", ["entry"], "needs.entry.result == 'success'"),
+     ])},
+     True, ("'downstream'", "'entry'")),
 ]
 
 

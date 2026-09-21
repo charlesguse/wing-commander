@@ -1,20 +1,32 @@
 # Stage 8 — Watchdog (thin wrapper).
 # Reacts to the completion of any of this pipeline's other stage wrappers and
-# to manual workflow_dispatch re-inspection (FR-025). This wrapper only
-# resolves the inspected run's identity (run-id/run-name); every
-# detection/triage/act job lives in watchdog.yml (docs/architecture.md),
-# called by local path.
+# to manual workflow_dispatch re-inspection (FR-025). This wrapper only gates
+# and forwards the inspected run's id; every detection/triage/act job lives
+# in watchdog.yml (docs/architecture.md), called by local path.
 #
-# run-name here is the inspected run's WORKFLOW name -- its declared
-# `name:` -- read from the event payload's `workflow.name` on the event
-# path and from `gh run view --json workflowName` on the dispatch path.
-# Never the run's own `name` field, and never the payload's workflow_run
-# name: once a workflow sets `run-name:` (as this one does, below), the
-# Actions API reports that title in `name`, and watchdog.yml's
-# `case "$RUN_NAME"` arms and its FR-018 self-dispatch cap
-# (`inputs.run-name == 'Wing Commander · 8 watchdog'`) would silently stop
-# matching. Gate 70 (verify-watchdog-self-skip-guard.py) holds this and
-# fails a mutation that reads the title instead.
+# run-name on the workflow_run (completion) path is
+# github.event.workflow.name (MF-05) -- free, already on the event payload,
+# no `gh run view` call needed, and it survives a `collect` failure that
+# happens before collect's own run-meta step would otherwise be the only
+# source (watchdog.yml's report-unhandled-failure safety net reads
+# inputs.run-name || needs.collect.outputs.run-name for exactly that
+# reason). On workflow_dispatch there is no workflow_run payload to read it
+# from (spec 058, FR-020) -- the stage's input stays '' and watchdog.yml's
+# `collect` job resolves the name itself, from the same `gh run view --json
+# workflowName` call this file's since-removed `resolve` job used to make.
+# That job existed only to turn one event payload into two strings, and a
+# wrapper job is a whole billed runner minute however short it runs -- the
+# same argument that removed wing-commander-metrics-persist.yml's own
+# resolve job (spec 043).
+#
+# The name the stage resolves is the inspected run's WORKFLOW name -- its
+# declared `name:` -- never the run's own `name` field: once a workflow
+# sets `run-name:` (as this one does, below), the Actions API reports that
+# title in `name`, and watchdog.yml's `case "$RUN_NAME"` arms and its
+# FR-018 self-dispatch cap (`collect`'s resolved run-name ==
+# 'Wing Commander · 8 watchdog') would silently stop matching. Gate 70
+# (verify-watchdog-self-skip-guard.py) holds this on watchdog.yml's
+# resolution step and fails a mutation that reads the title instead.
 #
 # Self-inspection (FR-021/US4) is NOT wired here: GitHub rejects the entire
 # file — "failed to parse workflow: Workflow '<name>' cannot listen to
@@ -64,10 +76,13 @@ on:
 permissions: {}
 
 jobs:
-  # Resolve run-id/run-name from whichever trigger fired — the event path
-  # reads the workflow_run payload directly; the dispatch path resolves the
-  # display name via the Actions API (contracts/watchdog-workflow.md).
-  resolve:
+  # One job, with no resolve job in front of it. The run-id is a one-line
+  # expression (the dispatch input, else the workflow_run payload) and the
+  # run-name is resolved stage-side, so a wrapper job would exist only to
+  # gate and forward — and every job a wrapper declares is a runner
+  # allocation GitHub counts as a whole minute however short it runs. Same
+  # fold as wing-commander-metrics-persist.yml's (spec 043).
+  watchdog:
     # Kill switch, wrapper-side (constitution VII: the wrapper owns triggers,
     # gates, and every vars.* read). watchdog.yml used to honour the same
     # variable, but only in its `act` job — that suppressed WRITES while
@@ -85,54 +100,13 @@ jobs:
     # Second clause, the skipped-source guard: a completed run whose
     # conclusion is 'skipped' executed nothing, and FR-026
     # (specs/015-pipeline-watchdog/spec.md) binds every collector to emit no
-    # signal about such a run -- so inspecting one is five job-minutes
-    # (resolve, verify-image-prerequisites, collect, diagnose,
-    # report-unhandled-failure) plus a diagnose agent call for a verdict
-    # fixed before the first job starts, and it was the common case: every
-    # pipeline comment on a spec issue wakes the clarify wrapper, which
+    # signal about such a run -- so inspecting one is job-minutes (collect,
+    # diagnose, report-unhandled-failure) plus a diagnose agent call for a
+    # verdict fixed before the first job starts, and it was the common case:
+    # every pipeline comment on a spec issue wakes the clarify wrapper, which
     # skips. The rationale for gating at the wrapper -- see
     # wing-commander-metrics-persist.yml. Dispatch carries no workflow_run
     # payload; '' != 'skipped' keeps that path open.
-    if: >-
-      vars.WING_COMMANDER_WATCHDOG_PAUSED != 'true' &&
-      github.event.workflow_run.conclusion != 'skipped'
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-    outputs:
-      run-id: ${{ steps.resolve.outputs.run-id }}
-      run-name: ${{ steps.resolve.outputs.run-name }}
-    steps:
-      - name: Resolve inspected run identity
-        id: resolve
-        env:
-          GH_TOKEN: ${{ github.token }}
-          EVENT_NAME: ${{ github.event_name }}
-          EVENT_RUN_ID: ${{ github.event.workflow_run.id }}
-          # The workflow's declared name, not the run's title (see the file
-          # header): `workflow` is the workflow that ran, `workflow_run` the
-          # run, and only the former is what watchdog.yml keys on.
-          EVENT_RUN_NAME: ${{ github.event.workflow.name }}
-          DISPATCH_RUN_ID: ${{ inputs.run-id }}
-        run: |
-          set -euo pipefail
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            run_id="$DISPATCH_RUN_ID"
-            # workflowName, never name: a run's `name` is its run-name title
-            # when the workflow sets one (stage 8 does; so does release.yml).
-            run_name="$(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json workflowName --jq .workflowName)"
-          else
-            run_id="$EVENT_RUN_ID"
-            run_name="$EVENT_RUN_NAME"
-          fi
-          echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
-          echo "run-name=$run_name" >> "$GITHUB_OUTPUT"
-
-  watchdog:
-    needs: resolve
-    # Redundant with resolve's gate (a job needing a skipped job is skipped),
-    # but stated explicitly so the kill switch and the skipped-source guard
-    # are visible at the job that actually spends money.
     if: >-
       vars.WING_COMMANDER_WATCHDOG_PAUSED != 'true' &&
       github.event.workflow_run.conclusion != 'skipped'
@@ -152,8 +126,18 @@ jobs:
       checks: read
     uses: ./.github/workflows/watchdog.yml
     with:
-      run-id: ${{ needs.resolve.outputs.run-id }}
-      run-name: ${{ needs.resolve.outputs.run-name }}
+      # The dispatch input when present, else the completed run this event
+      # announces. `inputs` is empty, not an error, under workflow_run --
+      # the resolve job read it the same way on every event-driven run.
+      # format() because workflow_run.id is a number and the input is typed
+      # string; the resolve job's output was always a string.
+      run-id: ${{ format('{0}', inputs.run-id || github.event.workflow_run.id) }}
+      # MF-05: the completion path's event payload already names the
+      # inspected workflow -- free to pass, and a fallback for
+      # report-unhandled-failure if collect fails before resolving its own
+      # copy. Empty on workflow_dispatch (no workflow_run payload); the
+      # stage resolves it there instead (see the file header, FR-020).
+      run-name: ${{ github.event_name == 'workflow_run' && github.event.workflow.name || '' }}
       runner: ${{ vars.WING_COMMANDER_RUNNER || 'ubuntu-latest' }}
       container-image: ${{ vars.WING_COMMANDER_CONTAINER_IMAGE || '' }}
     secrets:

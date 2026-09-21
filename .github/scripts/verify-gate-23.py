@@ -405,11 +405,14 @@ STEP_PREFIX = "Gate 23 — every published stage"
 
 # ---------------------------------------------------------------- fixtures
 
-# Post-#224: verify-image-prerequisites never skips, so there is no
-# skipped result to tolerate. A status-guarded job still has to check the
-# check's result explicitly — its status function is what defeats ordinary
-# skip-propagation — and an unguarded job must NOT restate it.
-RESULT_GUARD = "needs.verify-image-prerequisites.result == 'success'"
+# Post-spec-058: verify-image-prerequisites now skips cleanly (billing
+# nothing) when no image is configured, so every direct dependent's if:
+# must explicitly tolerate that skip — checking != 'failure', never the
+# old == 'success' (which a legitimate skip would now fail). A
+# status-guarded job still has to check the check's result explicitly —
+# its status function is what defeats ordinary skip-propagation — and an
+# unguarded, non-entry job must NOT restate it.
+RESULT_GUARD = "needs.verify-image-prerequisites.result != 'failure'"
 STALE_TOLERANT = ("(needs.verify-image-prerequisites.result == 'success' || "
            "needs.verify-image-prerequisites.result == 'skipped')")
 
@@ -479,11 +482,17 @@ def contract_md(tools):
             "\nKept in agreement with reality by Gate 23.\n")
 
 
-def vip_job(if_expr=None, step_if="inputs.container-image != ''",
+EXPECTED_VIP_IF = "inputs.container-image != ''"
+
+
+def vip_job(if_expr=EXPECTED_VIP_IF, step_if="inputs.container-image != ''",
             with_container=False, tools=CANONICAL, quote='"'):
-    """The check job. `if_expr` is the DEFECT case (#224): a job-level
-    condition here skips the job, and a skipped job takes its whole
-    descendant closure with it. The healthy shape conditions the step."""
+    """The check job. Post-spec-058, `if_expr` defaults to the required
+    job-level literal (EXPECTED_VIP_IF) so the job skips cleanly, billing
+    nothing, when no image is configured. Passing `if_expr=None` (or any
+    other value) models the DEFECT: a missing or wrong job-level if:
+    either never skips (billing a job on every no-op run) or skips on a
+    condition no dependent job's guard was written to tolerate."""
     lines = ["  verify-image-prerequisites:"]
     if if_expr is not None:
         lines.append(f"    if: {yaml_str(if_expr)}")
@@ -544,7 +553,8 @@ CALLER_JOB = """\
     uses: ./.github/workflows/other.yml
 """
 
-HEALTHY_ENTRY = job("entry", needs="verify-image-prerequisites")
+HEALTHY_ENTRY = job("entry", needs="verify-image-prerequisites",
+                     if_expr=f"!cancelled() && {RESULT_GUARD}")
 
 WIRING_CASES = [
     # name, files, expect_fail, must_mention
@@ -562,9 +572,11 @@ WIRING_CASES = [
                              if_expr=STALE_TOLERANT))},
      True, ("'entry'", "never read")),
 
-    ("no false positive: an entry job may carry an unrelated condition",
+    ("no false positive: an entry job may carry an unrelated condition "
+     "alongside the required tolerant clause",
      {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
-                             if_expr="inputs.trigger == 'scheduled'"))},
+                             if_expr=f"!cancelled() && {RESULT_GUARD} && "
+                                     "inputs.trigger == 'scheduled'"))},
      False, ()),
 
     ("a downstream job with no status-check function inherits automatically "
@@ -603,11 +615,29 @@ WIRING_CASES = [
                     "jobs:\n" + job("only", needs="verify-image-prerequisites"))},
      True, ("no verify-image-prerequisites job",)),
 
-    ("the other half of #224: the check job is skip-conditioned, which "
-     "silently suppresses the whole stage",
+    ("FR-007 reversion: the check job has no job-level if: at all, so it "
+     "never skips and bills a job on every no-op run",
+     {"stage.yml": stage(HEALTHY_ENTRY, vip=vip_job(if_expr=None))},
+     True, ("not the required",)),
+
+    ("the check job's job-level if: is present but differs from the "
+     "required literal",
      {"stage.yml": stage(HEALTHY_ENTRY,
-                         vip=vip_job(if_expr="inputs.container-image != ''"))},
-     True, ("must never skip",)),
+                         vip=vip_job(if_expr="github.event_name != 'pull_request'"))},
+     True, ("not the required",)),
+
+    ("FR-007 reversion: an entry job with needs: naming the check but no "
+     "if: at all silently relies on implicit success(), which a legitimate "
+     "skip now fails",
+     {"stage.yml": stage(job("entry", needs="verify-image-prerequisites"))},
+     True, ("'entry'", "is an entry job")),
+
+    ("FR-007 reversion: an entry job's if: narrowed back to == 'success' "
+     "no longer tolerates a legitimate skip",
+     {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
+                             if_expr="!cancelled() && "
+                                     "needs.verify-image-prerequisites.result == 'success'"))},
+     True, ("'entry'", "is an entry job")),
 
     ("the check job runs unconditionally but its step is not conditioned, "
      "so a run naming no image would try to pull nothing",
@@ -637,7 +667,7 @@ DRIFT_CASES = [
     ("no false positive: canonical tools (git, gh, jq, curl, python3, bash, "
      "node, timeout)",
      {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
-                             
+                             if_expr=f"!cancelled() && {RESULT_GUARD}",
                              run="git status && gh pr list && jq '.' f.json && "
                                  "curl -s url && python3 x.py && bash y.sh && "
                                  "node z.js && timeout 4 gh issue view 1"))},
@@ -645,7 +675,7 @@ DRIFT_CASES = [
 
     ("no false positive: POSIX/coreutils/bash-builtin commands",
      {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
-                             
+                             if_expr=f"!cancelled() && {RESULT_GUARD}",
                              run="echo hi && mkdir -p /tmp/x && sed -n 1p f && "
                                  "grep foo f | sort | uniq"))},
      False, ()),
@@ -653,13 +683,14 @@ DRIFT_CASES = [
     ("no false positive: a maintenance-only tool this repo's own CI uses, "
      "never a published stage's adopter-facing image",
      {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
+                             if_expr=f"!cancelled() && {RESULT_GUARD}",
                              run="docker build -t x ."))},
      False, ()),
 
     ("heredoc bodies are not scanned for command tokens — a look-alike word "
      "inside an embedded python/jq/js script must not be flagged",
      {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
-                             
+                             if_expr=f"!cancelled() && {RESULT_GUARD}",
                              run="python3 - <<'PYEOF'\n"
                                  "somefancytool --this-is-python-source-not-shell\n"
                                  "PYEOF"))},
@@ -768,14 +799,14 @@ DRIFT_CASES = [
     ("no false positive: a statement starting with a command substitution "
      "is not reported as an invocation of 'dollarsubst'",
      {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
-                             
+                             if_expr=f"!cancelled() && {RESULT_GUARD}",
                              run="$(command -v git) --version"))},
      False, ()),
 
     ("no false positive: a statement starting with an Actions expression "
      "is not reported as an invocation of 'ghexpr'",
      {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
-                             
+                             if_expr=f"!cancelled() && {RESULT_GUARD}",
                              run="${{ inputs.runner }} --version"))},
      False, ()),
 ]

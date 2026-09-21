@@ -175,15 +175,19 @@ BOUND_MATRIX_LEG = """\
 
 # The one job Gate 22 special-cases: no container: of its own (it invokes
 # Docker directly on the runner, before any other job's container exists),
-# but the runner ternary like every other job, and a zero permission grant
+# but the runner ternary like every other job, a zero permission grant
 # DECLARED rather than inherited from whatever the file's top-level
-# permissions happen to be.
+# permissions happen to be, and (spec 058, EXPECTED_VIP_IF) the exact
+# job-level if: that makes the job skip cleanly, billing nothing, when no
+# image is configured.
 PREREQ_OK = """\
     permissions: {}
+    if: inputs.container-image != ''
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
 """
 
 PREREQ_NO_PERMISSIONS = """\
+    if: inputs.container-image != ''
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
 """
 
@@ -191,12 +195,21 @@ PREREQ_WIDE_PERMISSIONS = """\
     permissions:
       contents: write
       issues: write
+    if: inputs.container-image != ''
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
 """
 
 PREREQ_PINNED_RUNNER = """\
     permissions: {}
+    if: inputs.container-image != ''
     runs-on: ubuntu-latest
+"""
+
+# spec 058 defect: the job-level if: line is missing entirely — a reversion
+# to the pre-058 shape that never skips and bills a job on every no-op run.
+PREREQ_NO_VIP_IF = """\
+    permissions: {}
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
 """
 
 
@@ -317,6 +330,12 @@ CASES = [
      {"stage.yml": stage(job("first", BOUND),
                          job("verify-image-prerequisites", PREREQ_OK))},
      False, ()),
+
+    ("spec 058: verify-image-prerequisites missing its required job-level "
+     "if: fails by naming the stage",
+     {"stage.yml": stage(job("first", BOUND),
+                         job("verify-image-prerequisites", PREREQ_NO_VIP_IF))},
+     True, ("verify-image-prerequisites", "job-level if")),
 
     ("verify-image-prerequisites with no permissions: block silently "
      "inherits the file's top-level grants",
