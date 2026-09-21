@@ -242,9 +242,9 @@ def make_workspace(work, seed_files=None, reject_pushes=0):
 # The pipeline targets ubuntu-latest, so nothing shipped changes: this shim is
 # written only where the local jq is observed to emit a CR, and strips it.
 JQ_SHIM = """#!/usr/bin/env bash
-# jq that never emits a carriage return (#446); the real jq is {real}.
-set -o pipefail
-"{real}" "$@" | tr -d '\\r'
+# jq whose lines never end in a carriage return (#446); the real jq is {real}.
+# Only a CR at the end of a line goes: one inside a value is data.
+"{real}" "$@" | sed 's/\\r$//'
 exit "${{PIPESTATUS[0]}}"
 """
 
