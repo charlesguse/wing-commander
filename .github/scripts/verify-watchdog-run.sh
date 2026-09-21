@@ -105,12 +105,20 @@ hist="$(api "actions/workflows/$workflow_id/runs?status=success&per_page=21" \
 count="$(wc -l <<<"$hist" | tr -d ' ')"
 if [ -n "$hist" ] && [ "$count" -ge 3 ]; then
   median="$(sort -n <<<"$hist" | awk -v n="$count" 'NR == int((n+1)/2)')"
-  # Clamps per the 2026-07-24 run audit: floor 40s sits 37% under the
-  # slowest-to-die observed crash shapes' healthy floor (64s min genuine
-  # success) while staying above collect-crash (27-33s) and instant-death
-  # territory; ceiling 900s is ~7x the worst healthy findings-bearing run
-  # (128s) yet catches the observed 2689s hang three times over.
-  floor=$(( median * 2 / 5 )); [ "$floor" -lt 40 ] && floor=40
+  # Clamps per the 2026-07-24 run audit, re-scaled for spec 058: the healthy
+  # run is no longer "collect + diagnose + report". An inspection whose
+  # aggregate signal set is empty decides in `collect` and skips the diagnose
+  # agent entirely (FR-011), so the cheapest genuine success is now collect
+  # (~25s) plus report-unhandled-failure (~8s) run sequentially — ~33s. The
+  # old 40s absolute floor would have failed every one of those as "too fast
+  # to have done real work". 20s leaves ~40% headroom under that measured
+  # minimum while still catching instant-death territory (an agent that dies
+  # in seconds, and the zero-job shapes check 1 already owns). The floor
+  # exists only for the bootstrap window of fewer than 3 prior runs the
+  # median term cannot cover — do not remove it. Ceiling 900s is ~7x the
+  # worst healthy findings-bearing run (128s) yet catches the observed 2689s
+  # hang three times over.
+  floor=$(( median * 2 / 5 )); [ "$floor" -lt 20 ] && floor=20
   ceiling=$(( median * 6 )); [ "$ceiling" -lt 900 ] && ceiling=900
   note "duration band from $count runs: median=${median}s floor=${floor}s ceiling=${ceiling}s"
   if [ "$duration" -lt "$floor" ]; then
@@ -130,20 +138,33 @@ fi
 failed_jobs="$(jq -r '[.jobs[] | select(.conclusion != null and .conclusion != "success" and .conclusion != "skipped") | .name] | join(", ")' <<<"$jobs_json")"
 [ -n "$failed_jobs" ] && reason "failed jobs: $failed_jobs"
 
+# The diagnose job is skipped on two healthy paths: collect could not gather
+# evidence (check 5 owns that one) and, since spec 058, collect gathered
+# evidence and found no signal at all, deciding the inspection itself
+# (FR-011). Checks 3, 4 and the duration ceiling below all presuppose an
+# agent that ran, so they are scoped to a diagnose that did.
+diagnose_conclusion="$(jq -r '[.jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose"))) | .conclusion] | first // empty' <<<"$jobs_json")"
+
 # Diagnose-job duration ceiling — much tighter than the run-level band,
 # because this job's cost is bounded by --max-turns, not by finding count
 # (healthy max observed 74s). This is the check that would have flagged the
 # 44-minute hang at the 5-minute mark.
-d_secs="$(jq -r '[.jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose")))
-  | select(.started_at != null and .completed_at != null)
-  | ((.completed_at | fromdateiso8601) - (.started_at | fromdateiso8601))] | first // empty' <<<"$jobs_json")"
-if [ -n "$d_secs" ] && [ "$d_secs" -gt 300 ]; then
-  reason "the diagnose job ran ${d_secs}s (normal is under 75s; hard ceiling 300s) — the agent stalled"
+if [ "$diagnose_conclusion" = "skipped" ]; then
+  # A skipped diagnose has no duration to bound, and is a valid healthy
+  # shape in its own right — not merely "ran under the ceiling". Stated as
+  # its own passing branch so a future reader does not read the silence
+  # here as an unchecked gap.
+  note "diagnose skipped — no agent ran, so no agent-duration ceiling applies"
+else
+  d_secs="$(jq -r '[.jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose")))
+    | select(.started_at != null and .completed_at != null)
+    | ((.completed_at | fromdateiso8601) - (.started_at | fromdateiso8601))] | first // empty' <<<"$jobs_json")"
+  if [ -n "$d_secs" ] && [ "$d_secs" -gt 300 ]; then
+    reason "the diagnose job ran ${d_secs}s (normal is under 75s; hard ceiling 300s) — the agent stalled"
+  fi
 fi
 
-# 3 + 4 only apply when the diagnose job actually ran (it is skipped when
-# collect could not gather evidence — check 5 owns that case).
-diagnose_conclusion="$(jq -r '[.jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose"))) | .conclusion] | first // empty' <<<"$jobs_json")"
+# 3 + 4 only apply when the diagnose job actually ran.
 if [ -n "$diagnose_conclusion" ] && [ "$diagnose_conclusion" != "skipped" ]; then
   # 3. The diagnose agent crashed (continue-on-error hid it from the job).
   c="$(step diagnose 'Report "diagnose failed" to lifecycle issue')"
