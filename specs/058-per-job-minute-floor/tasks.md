@@ -866,3 +866,7 @@ change is stated in terms of "after" B's record-emission change.
 ## Maintainer Feedback
 
 - [ ] MF-07 (docs, FR-021) Add a short subsection under `docs/adoption.md`'s metrics-persist wrapper notes, pointing at the reference wrapper, telling an adopter who bumps the pin to: (a) remove `Wing Commander · 8 watchdog` from their persist wrapper's `workflow_run.workflows`; (b) add the `schedule:` trigger and `sweep` job; (c) pass the workflow-list input introduced for MF-02.
+
+## Maintainer Feedback
+
+- [ ] MF-08 `.github/scripts/wc_gha_expr.py` lines ~147-167: fix `unary()`/`cmp()` precedence so `!a == b` evaluates as GitHub does — `(!a) == b`, not `!(a == b)`. Add the two-line self-test demonstrating `evaluate('!a == b', {'a': 'skipped', 'b': 'failure'})` now matches GitHub's actual evaluation.
