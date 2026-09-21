@@ -854,3 +854,7 @@ change is stated in terms of "after" B's record-emission change.
 - [ ] MF-04 (docs) Amend `research.md` R-A2 and `contracts/image-check-shape-delta.md` (drop "needs no rewrite"/"governs direct dependents only") and `data-model.md`'s "Chain ... unchanged" row to the shipped rule: every job in the check's closure carries a status function plus explicit guards (commit fec7b6a; Gate 23 enforces it; verified 45 jobs in closure, 0 without a status function).
 - [ ] MF-04b (#443) `contracts/watchdog-clean-path-delta.md`'s versioning paragraph: state that `run-name` both gains a default AND loses `required: true` (dropping `required` is what lets the wrapper omit it), not just "gains a default".
 - [ ] MF-04c (#444) `contracts/metrics-persist-sweep-delta.md`: describe the shipped shape — the wrapper's `sweep` job is a bare `uses:` with `sweep: true`, and the stage (not the wrapper) reads `sweep-state.json` — rather than the wrapper reading it directly.
+
+## Maintainer Feedback
+
+- [ ] MF-05 (US2, FR-017) `wing-commander-8-watchdog.yml`: pass `run-name: ${{ github.event.workflow.name }}` on the completion path (dispatch stays empty and resolves in `collect`). `watchdog.yml`'s `report-unhandled-failure` → "Resolve inspected run's lifecycle issue": read `inputs.run-name || needs.collect.outputs.run-name` instead of only the latter. Add a Gate 36/harness case where `collect` fails before `run-meta` and confirm the identity step still receives a name.
