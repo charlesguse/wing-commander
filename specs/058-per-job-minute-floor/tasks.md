@@ -848,3 +848,9 @@ change is stated in terms of "after" B's record-emission change.
 ## Maintainer Feedback
 
 - [ ] MF-03 (US3, FR-022/FR-027/FR-028) `.github/actions/wing-commander-metrics-persist/action.yml` lines ~148-172 and ~409-414: treat an artifact with `expired: true` (per the artifacts listing) as the ledger case and advance the mark past it; treat a non-expired artifact whose download failed as "not retrieved this sweep" — no `unpersisted.jsonl` line, and hold `hwm` at the latest `concluded_at` among runs fully retrieved or genuinely expired (reuse the existing `not-retrieved.txt`). Add a fixture: a live artifact whose download is made to fail — assert no `artifact_expired` line is written, the mark does not pass that run, and the next sweep picks it up.
+
+## Maintainer Feedback
+
+- [ ] MF-04 (docs) Amend `research.md` R-A2 and `contracts/image-check-shape-delta.md` (drop "needs no rewrite"/"governs direct dependents only") and `data-model.md`'s "Chain ... unchanged" row to the shipped rule: every job in the check's closure carries a status function plus explicit guards (commit fec7b6a; Gate 23 enforces it; verified 45 jobs in closure, 0 without a status function).
+- [ ] MF-04b (#443) `contracts/watchdog-clean-path-delta.md`'s versioning paragraph: state that `run-name` both gains a default AND loses `required: true` (dropping `required` is what lets the wrapper omit it), not just "gains a default".
+- [ ] MF-04c (#444) `contracts/metrics-persist-sweep-delta.md`: describe the shipped shape — the wrapper's `sweep` job is a bare `uses:` with `sweep: true`, and the stage (not the wrapper) reads `sweep-state.json` — rather than the wrapper reading it directly.
