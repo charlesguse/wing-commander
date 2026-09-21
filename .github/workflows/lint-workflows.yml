@@ -3712,6 +3712,22 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-stage-findings-wiring.py --self-test
 
+      # Gate 80 — every job that can push (a `git push` in its own run:
+      # steps, an agent granted Bash(git push:*), or a local composite that
+      # pushes) is in the per-spec concurrency group wing-commander-<spec-dir>,
+      # or waived in .github/scripts/spec-branch-push-waivers.json with what
+      # it pushes and why. specs/013 wrote the rule into its contract and
+      # nothing held the fleet to it: cleanup.yml's mark-stalled pushed onto
+      # the spec branch from a head-ref-keyed group (#397), and tasks.yml's
+      # two survivor jobs from no group at all. Numbered 80 because spec
+      # 058 (#434) reserves 73-79 for its own gates.
+      - name: Gate 80 — every spec-branch pusher shares the per-spec concurrency group or carries a waiver
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-spec-branch-push-concurrency.py
+      - name: Gate 80 self-test — a pusher outside the group, a near-miss group, an agent grant, a composite pusher, a stale waiver and a malformed waiver each fail loudly
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-spec-branch-push-concurrency.py --self-test
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

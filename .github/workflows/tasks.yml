@@ -1523,6 +1523,12 @@ jobs:
   # refusal-reporting step performs.
   stalled:
     needs: [verify-image-prerequisites, resolve-spec, tasks]
+    # Marks spec-meta stalled on the spec branch through the chain-stop
+    # notice, so it joins the per-spec group the way implement.yml's and
+    # finalize.yml's survivor jobs already do (#397, found by Gate 80).
+    concurrency:
+      group: wing-commander-${{ needs.resolve-spec.outputs.spec-dir }}
+      cancel-in-progress: false
     if: |
       needs.verify-image-prerequisites.result == 'success' &&
       inputs.mode == 'generate' &&
@@ -1661,6 +1667,12 @@ jobs:
   # above, against tasks-approved.
   stalled-approved:
     needs: [verify-image-prerequisites, resolve-spec, tasks-approved]
+    # Marks spec-meta stalled on the spec branch through the chain-stop
+    # notice, so it joins the per-spec group the way implement.yml's and
+    # finalize.yml's survivor jobs already do (#397, found by Gate 80).
+    concurrency:
+      group: wing-commander-${{ needs.resolve-spec.outputs.spec-dir }}
+      cancel-in-progress: false
     if: |
       needs.verify-image-prerequisites.result == 'success' &&
       inputs.mode == 'approved' &&

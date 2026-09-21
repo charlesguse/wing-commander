@@ -1,0 +1,83 @@
+{
+  "$comment": [
+    "Registered exceptions to the rule that every job which can push shares",
+    "the per-spec concurrency group `wing-commander-<spec-dir>` (specs/013",
+    "contract), enforced by .github/scripts/verify-spec-branch-push-concurrency.py",
+    "(Gate 80) at pull-request time.",
+    "",
+    "A waiver names the file and job, what the job pushes, and why that is",
+    "not a write to a spec branch that needs ordering against the stage runs",
+    "and the rebase. Every waiver is stale-checked: one naming a job that no",
+    "longer exists, or no longer pushes, fails the gate, so a waiver cannot",
+    "outlive its reason. A residual the waiver accepts is written down here,",
+    "in the open, with the issue that tracks it."
+  ],
+  "waivers": [
+    {
+      "file": ".github/workflows/intake.yml",
+      "job": "intake",
+      "pushes": "spec-draft/<NNN-slug>, through the agent's Bash(git push:*) grant",
+      "reason": "No spec branch exists yet (specs/013 FR-005); the group is wing-commander-intake, one intake at a time."
+    },
+    {
+      "file": ".github/workflows/intake.yml",
+      "job": "stalled",
+      "pushes": "nothing: it passes spec-dir \"\" to wing-commander-chain-stop-notice, whose mark-and-push branch is skipped when spec-dir is empty",
+      "reason": "Same group as intake; no spec branch exists at this stage (specs/013 FR-005)."
+    },
+    {
+      "file": ".github/workflows/clarify.yml",
+      "job": "clarify",
+      "pushes": "spec-draft/<NNN-slug>, through the agent's Bash(git push:*) grant",
+      "reason": "The group is keyed to the lifecycle issue, not a spec branch (specs/013 FR-005); the spec branch spec/<NNN-slug> does not exist until the plan stage creates it."
+    },
+    {
+      "file": ".github/workflows/clarify.yml",
+      "job": "stalled",
+      "pushes": "a spec-meta stalled mark on spec/<NNN-slug> through wing-commander-chain-stop-notice, which cannot land: that branch does not exist until the plan stage creates it, so the composite reports the record unwritable",
+      "reason": "Same issue-keyed group as clarify (specs/013 FR-005)."
+    },
+    {
+      "file": ".github/workflows/pr-conversation.yml",
+      "job": "act",
+      "pushes": "fold commits onto spec/<NNN-slug>, through the agent's Bash(git push:*) grant",
+      "reason": "The group is computed by classify-and-announce: the per-spec group wing-commander-<spec-dir> for any run with a mutating leg, and a stop-only group for runs whose legs are all `stop` (specs/042 research.md D6, FR-015). A job-level expression that names a needs.* output is what the gate cannot read; the per-spec form is what it resolves to."
+    },
+    {
+      "file": ".github/workflows/pr-conversation.yml",
+      "job": "stalled",
+      "pushes": "a spec-meta stalled mark on spec/<NNN-slug> through wing-commander-chain-stop-notice, when the stage's own classify-and-announce job did not start",
+      "reason": "The spec directory is resolved inside this job (steps.identity), which a job-level concurrency group cannot read, and the job that would publish it is the one that did not start. Residual: the mark is unordered against a rebase on the same branch. Tracked on #437."
+    },
+    {
+      "file": ".github/workflows/metrics-persist.yml",
+      "job": "persist",
+      "pushes": "the metrics branch (inputs.destination-branch) through wing-commander-metrics-persist",
+      "reason": "Not a spec branch; the composite serialises itself with fetch-rebase-push retries."
+    },
+    {
+      "file": ".github/workflows/auto-release.yml",
+      "job": "verify-e2e",
+      "pushes": "a scaffold onto the E2E test repository's default branch",
+      "reason": "A different repository; no spec branch of this one is written."
+    },
+    {
+      "file": ".github/workflows/auto-update-spec-kit.yml",
+      "job": "e2e-stage",
+      "pushes": "the candidate scaffold and an agent-produced spec.md into the scratch repository",
+      "reason": "A different repository; no spec branch of this one is written."
+    },
+    {
+      "file": ".github/workflows/auto-update-spec-kit.yml",
+      "job": "act",
+      "pushes": "this repository's auto-update-spec-kit/<version> branch (the version-bump PR and its rollback)",
+      "reason": "Its own branch, never a spec branch; one candidate at a time by the workflow's own tracking issue."
+    },
+    {
+      "file": ".github/workflows/release.yml",
+      "job": "release",
+      "pushes": "release tags (refs/tags/<version>)",
+      "reason": "Tags, not a spec branch."
+    }
+  ]
+}
