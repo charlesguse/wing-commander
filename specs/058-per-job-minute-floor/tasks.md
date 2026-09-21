@@ -858,3 +858,7 @@ change is stated in terms of "after" B's record-emission change.
 ## Maintainer Feedback
 
 - [ ] MF-05 (US2, FR-017) `wing-commander-8-watchdog.yml`: pass `run-name: ${{ github.event.workflow.name }}` on the completion path (dispatch stays empty and resolves in `collect`). `watchdog.yml`'s `report-unhandled-failure` → "Resolve inspected run's lifecycle issue": read `inputs.run-name || needs.collect.outputs.run-name` instead of only the latter. Add a Gate 36/harness case where `collect` fails before `run-meta` and confirm the identity step still receives a name.
+
+## Maintainer Feedback
+
+- [ ] MF-06 (US2, CLAUDE.md single-home rule) Build the passed-inspection message body (full pass and the "passed inspection on N of M evidence collectors..." wording, including the `COLLECTORS_TOTAL` fallback) in one place both `collect`'s new step and `diagnose`'s existing step call — a `_shared` script or composite — or at minimum register the two strings with the single-home/comment-canonical-pointer gate so a drifted copy fails.
