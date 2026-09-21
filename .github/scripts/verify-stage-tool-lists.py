@@ -57,6 +57,14 @@ written down - are still compared in order. Widening every row to a set
 comparison would have been the easy fix and would have thrown away a real
 assertion on the thirteen rows that can hold it.
 
+  3. Every `Bash(.specify/scripts/bash/<script>:*)` grant, in either
+     spelling (with or without a leading `bash `), names a script that
+     exists. Spec Kit stopped shipping `update-agent-context.sh` and
+     both plan sites kept granting it, with the prompt still describing
+     the step it ran (#426). A granted command that does not exist
+     cannot be abused, but it is a stale entry in a load-bearing list,
+     and the next Spec Kit rename would leave the same hole.
+
 WHAT IT DOES NOT CHECK
 ----------------------
 Whether a default list is the RIGHT list. Gate 12 answers that for `gh`
@@ -66,9 +74,10 @@ gate only answers whether the documentation says what the workflows do.
 SELF-TEST
 ---------
 `--self-test` mutates the real inputs in memory - dropping a row, adding a
-row for no call site, reordering one list, editing a single tool, and
-breaking a `same as` reference - and asserts each is caught, and caught for
-the right reason. A gate that cannot fail its own subject is worthless; this
+row for no call site, reordering one list, editing a single tool,
+breaking a `same as` reference, and granting a `.specify` script that
+does not exist - and asserts each is caught, and caught for the right
+reason. A gate that cannot fail its own subject is worthless; this
 repository has three recorded instances of shipping one (#169).
 """
 import argparse
@@ -108,6 +117,11 @@ READ_CAPABLE_LABELS = {
     "tasks.direct-commit", "tasks.pr",
     "implement.cycle", "implement.retry",
 }
+
+# A grant of a Spec Kit helper script, in either spelling the call sites
+# use. The captured path is checked against the working tree (#426).
+SCRIPT_GRANT = re.compile(
+    r"^Bash\((?:bash )?(\.specify/scripts/bash/[^:\s)]+)(?::\*)?\)$")
 
 # What repository guidance (CLAUDE.md's "Before pushing" section) mandates a
 # stage run - hand-maintained alongside CLAUDE.md edits, same as TABLE_DOC/
@@ -359,12 +373,35 @@ def check_mandated_commands(table):
     return failures
 
 
+def check_script_grants(sites, root="."):
+    """-> list of failure strings.
+
+    Every granted `.specify/scripts/bash/<script>` must exist in the
+    working tree. Read off the CALL SITES, not the table: the table is
+    held to the sites by `compare()`, and the grant that reaches the
+    agent is the site's literal (#426).
+    """
+    failures = []
+    for label in sorted(sites):
+        for tool in sites[label][0]:
+            m = SCRIPT_GRANT.match(tool)
+            if m and not os.path.isfile(os.path.join(root, m.group(1))):
+                failures.append(
+                    "{0!r} grants {1!r}, but {2} does not exist in this "
+                    "repository - a stale entry in a load-bearing list; "
+                    "drop the grant and any prompt text that describes "
+                    "the step it ran (#426).".format(
+                        label, tool, m.group(1)))
+    return failures
+
+
 def run(root="."):
     with io.open(os.path.join(root, TABLE_DOC), encoding="utf-8") as fh:
         table, errors, relative = parse_table(fh.read())
     sites, site_errors = collect_sites(root)
     return (site_errors + errors + compare(sites, table, relative) +
-            check_inspection_set(table) + check_mandated_commands(table))
+            check_inspection_set(table) + check_mandated_commands(table) +
+            check_script_grants(sites, root))
 
 
 # --------------------------------------------------------------------------
@@ -525,6 +562,45 @@ def self_test(root="."):
     else:
         print("[ok] baseline: every mandated command is permitted where "
               "required")
+
+    baseline_scripts = check_script_grants(sites, root)
+    if baseline_scripts:
+        print("[FAIL] baseline: every granted .specify script should exist, "
+              "got: " + " | ".join(baseline_scripts))
+        bad += 1
+    else:
+        print("[ok] baseline: every granted .specify script exists")
+
+    # The shipped defect (#426), replayed: both spellings of a grant for a
+    # script Spec Kit no longer ships, on the site that carried them.
+    ghost = ".specify/scripts/bash/update-agent-context.sh"
+    m_sites = dict(sites)
+    allowed, disallowed = m_sites["plan.direct-commit"]
+    m_sites["plan.direct-commit"] = (
+        allowed + ["Bash({0}:*)".format(ghost), "Bash(bash {0}:*)".format(ghost)],
+        disallowed)
+    found = check_script_grants(m_sites, root)
+    if len(found) == 2 and all(ghost in f and "plan.direct-commit" in f
+                               for f in found):
+        print("[ok] mutation caught: a grant for a .specify script that does "
+              "not exist, in both spellings")
+    else:
+        bad += 1
+        print("[FAIL] a grant for a nonexistent .specify script was not caught "
+              "in both spellings (expected 2 failures naming it): {0}".format(found))
+
+    # A grant for a script that DOES exist is not a failure: the check
+    # reads the working tree, not a list of names.
+    real = [t for t in sites["plan.direct-commit"][0] if SCRIPT_GRANT.match(t)]
+    if real and not check_script_grants(
+            {"plan.direct-commit": (real, [])}, root):
+        print("[ok] the {0} shipped script grant(s) on plan.direct-commit "
+              "pass".format(len(real)))
+    else:
+        bad += 1
+        print("[FAIL] the shipped script grants should pass, got: {0} for "
+              "{1}".format(check_script_grants(
+                  {"plan.direct-commit": (real, [])}, root), real))
 
     for name, m_sites, m_table, expect in _mutations(sites, table):
         found = compare(m_sites, m_table, relative)
