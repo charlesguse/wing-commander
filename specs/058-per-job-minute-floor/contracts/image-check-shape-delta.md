@@ -25,15 +25,20 @@ With an image configured, the job's behavior is unchanged — it still
 runs before any dependent job's container is created, and still fails
 fast on a bad image or rejected credential (FR-003).
 
-Every job in the same workflow whose `needs:` names
-`verify-image-prerequisites` MUST carry an explicit `if:` containing the
-literal comparison `needs.verify-image-prerequisites.result !=
-'failure'`, combined with `!cancelled()` and, for every other named
-dependency, an explicit `needs.<X>.result == 'success'` clause — see
-`data-model.md`'s dependent-job condition table for the exact shape per
-job type. A job that reaches the check only transitively, through
-another job that already carries this condition, is unchanged (research.md
-R-A2) — this clause governs direct dependents only.
+Every job in the check's closure — not just its direct dependents — MUST
+carry an explicit `if:` containing the literal comparison
+`needs.verify-image-prerequisites.result != 'failure'`, combined with
+`!cancelled()` and, for every other named dependency, an explicit
+`needs.<X>.result == 'success'` clause — see `data-model.md`'s
+dependent-job condition table for the exact shape per job type. A job
+that reaches the check only transitively, through a job that already
+carries this condition, is NOT exempt (research.md R-A2, corrected):
+adding a status-function `if:` anywhere upstream in a chain switches off
+GitHub's implicit `success()` protection for every job downstream of it
+too, so `verify-image-prerequisites` must be named directly in `needs:`
+and the comparison restated at every subsequent link. Gate 23 enforces
+this across the whole closure, not just direct dependents; verified
+empirically at 45 jobs in the closure, 0 without a status function.
 
 This clause applies uniformly to all 13 published stages named in
 FR-002. A stage-binding tool that iterates the published stage set

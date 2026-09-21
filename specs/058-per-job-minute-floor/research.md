@@ -57,23 +57,40 @@ reads as and is one comparison instead of two; both are acceptable, this
 plan picks the shorter form uniformly so Gate 23's amendment (R-A3) has
 one literal shape to check for, not two.
 
-### R-A2: A chain job (check → middle → late) needs no rewrite when its own direct dependency already absorbed the tolerance
+### R-A2: A chain job (check → middle → late) also needs a rewrite, because adding ANY status function upstream disables GitHub's implicit protection for the whole closure
 
-**Decision**: only jobs that name `verify-image-prerequisites` directly
-in `needs:` are rewritten (R-A1). A job whose only path to the check is
-transitive — it depends on a *middle* job that already carries the R-A1
-condition — keeps its current `needs:`/`if:` unchanged, because the
-middle job's own `result` is now an ordinary `success`/`failure`
-outcome regardless of whether the check beneath it skipped or
-succeeded; the late job was never making a decision about the check
-itself.
+**Decision, corrected from this document's original sketch** (MF-04;
+commit fec7b6a): every job in the check's closure carries a status
+function plus explicit guards — not just the jobs naming
+`verify-image-prerequisites` directly in `needs:`. Gate 23 enforces it;
+verified empirically across the shipped tree: 45 jobs in the closure, 0
+without a status function.
 
-**Rationale**: this is spec.md's own edge case ("a stage whose jobs
-form a chain through the image check") stated as a requirement, not a
-new mechanism — GitHub's default skip-propagation already does the
-right thing for a job depending only on `middle`, once `middle` is no
-longer skip-fragile. Rewriting the late job too would be inert
-duplication of a check that already holds one level up.
+**Why the original sketch was wrong**: GitHub's implicit `success()`
+default only protects a job whose `if:` is entirely absent. The moment
+ANY job upstream in a chain gains an explicit status-function `if:` (R-A1's
+`!cancelled() && needs.verify-image-prerequisites.result != 'failure'`,
+added to the *middle* job so it tolerates a skipped check), GitHub's
+automatic "skip if any transitive dependency failed" behavior stops
+applying to jobs downstream of it too — not because the *late* job's own
+`if:` changed, but because `middle`'s `result` becoming `success` no
+longer implies every one of ITS OWN dependencies also succeeded. A late
+job reading only `needs.middle.result == 'success'` — with no `if:` at
+all, relying on the implicit default — silently loses the protection the
+implicit default used to give it, because the implicit default itself
+requires the immediate dependency to have no `if:`, and `middle` now
+does. `plan.yml`'s `plan` job is the shipped example: it depends on
+`resolve-spec` (which now carries `!cancelled()`), and needed its OWN
+explicit `!cancelled() && needs.verify-image-prerequisites.result !=
+'failure' && needs.resolve-spec.result == 'success'` — naming
+`verify-image-prerequisites` in `needs:` directly, restated at every
+subsequent link — to keep the protection GitHub used to give it for free.
+
+**Rationale**: this is still spec.md's own edge case ("a stage whose jobs
+form a chain through the image check"), but the shipped mechanism is
+"restate the guard at every link," not "GitHub's default skip-propagation
+already does the right thing" — that default is precisely what a
+status-function `if:` anywhere in the chain switches off.
 
 ### R-A3: Gate amendments — 22 and 23 change, 15 grows for free
 

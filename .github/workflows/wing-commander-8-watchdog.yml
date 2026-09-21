@@ -4,13 +4,20 @@
 # and forwards the inspected run's id; every detection/triage/act job lives
 # in watchdog.yml (docs/architecture.md), called by local path.
 #
-# run-name is NOT passed from here (spec 058, FR-020): the stage's input
-# defaults to '' and watchdog.yml's `collect` job resolves the name itself,
-# from the same `gh run view --json workflowName` call this file's
-# since-removed `resolve` job used to make. That job existed only to turn
-# one event payload into two strings, and a wrapper job is a whole billed
-# runner minute however short it runs -- the same argument that removed
-# wing-commander-metrics-persist.yml's own resolve job (spec 043).
+# run-name on the workflow_run (completion) path is
+# github.event.workflow.name (MF-05) -- free, already on the event payload,
+# no `gh run view` call needed, and it survives a `collect` failure that
+# happens before collect's own run-meta step would otherwise be the only
+# source (watchdog.yml's report-unhandled-failure safety net reads
+# inputs.run-name || needs.collect.outputs.run-name for exactly that
+# reason). On workflow_dispatch there is no workflow_run payload to read it
+# from (spec 058, FR-020) -- the stage's input stays '' and watchdog.yml's
+# `collect` job resolves the name itself, from the same `gh run view --json
+# workflowName` call this file's since-removed `resolve` job used to make.
+# That job existed only to turn one event payload into two strings, and a
+# wrapper job is a whole billed runner minute however short it runs -- the
+# same argument that removed wing-commander-metrics-persist.yml's own
+# resolve job (spec 043).
 #
 # The name the stage resolves is the inspected run's WORKFLOW name -- its
 # declared `name:` -- never the run's own `name` field: once a workflow
@@ -125,7 +132,12 @@ jobs:
       # format() because workflow_run.id is a number and the input is typed
       # string; the resolve job's output was always a string.
       run-id: ${{ format('{0}', inputs.run-id || github.event.workflow_run.id) }}
-      # No run-name: -- the stage resolves it (see the file header, FR-020).
+      # MF-05: the completion path's event payload already names the
+      # inspected workflow -- free to pass, and a fallback for
+      # report-unhandled-failure if collect fails before resolving its own
+      # copy. Empty on workflow_dispatch (no workflow_run payload); the
+      # stage resolves it there instead (see the file header, FR-020).
+      run-name: ${{ github.event_name == 'workflow_run' && github.event.workflow.name || '' }}
       runner: ${{ vars.WING_COMMANDER_RUNNER || 'ubuntu-latest' }}
       container-image: ${{ vars.WING_COMMANDER_CONTAINER_IMAGE || '' }}
     secrets:

@@ -45,6 +45,20 @@ on:
         type: boolean
         required: false
         default: false
+      sweep-workflow-paths:
+        description: >
+          MF-02 — a JSON array of workflow file paths (each run's `.path`
+          from the Actions API, e.g. [".github/workflows/wing-commander-1-
+          intake.yml", ...]) a sweep is allowed to discover records from.
+          Owned by the caller (constitution VI/VII: the stage does not
+          hardcode which workflows in the consumer repository can carry a
+          record) — the reference wrapper passes its nine completion-trigger
+          workflows plus wing-commander-8-watchdog.yml. Empty (the default)
+          applies no restriction, so a caller that has not yet adopted this
+          input keeps today's unfiltered sweep. Ignored outside sweep mode.
+        type: string
+        required: false
+        default: ""
       destination-branch:
         description: "Branch records.jsonl lives on. No default (FR-013) — the caller must choose one explicitly."
         type: string
@@ -230,6 +244,20 @@ jobs:
       persisted-count: ${{ steps.persist.outputs.persisted-count }}
       unpersisted-record-keys: ${{ steps.persist.outputs.unpersisted-record-keys }}
     steps:
+      # MF-10: a workflow_dispatch with both `run-id` and `since` left blank
+      # used to route here anyway (single-run mode, run-id '') and report
+      # success having discovered zero artifacts for a run that never
+      # existed -- indistinguishable from a legitimately empty completion.
+      # This job is shared by every workflow_run-triggered call (which
+      # always carries a real run-id) and workflow_dispatch, so the guard
+      # is scoped to the single-run path only.
+      - name: Validate run-id or since was supplied
+        shell: bash
+        if: inputs.since == '' && !inputs.sweep && inputs.run-id == ''
+        run: |
+          echo "::error::wing-commander metrics-persist stage: workflow_dispatch supplied neither run-id nor since -- supply run-id (a single run to persist) or since (a sweep window) so a dispatch with nothing to do fails loudly instead of succeeding with zero records."
+          exit 1
+
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v5
         with:
@@ -284,6 +312,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SINCE_INPUT: ${{ inputs.since }}
           BRANCH: ${{ inputs.destination-branch }}
+          WORKFLOW_PATHS: ${{ inputs.sweep-workflow-paths }}
         run: |
           set -uo pipefail
           since="$SINCE_INPUT"
@@ -300,10 +329,11 @@ jobs:
           fi
           if [ -z "$since" ]; then
             # No mark yet (first sweep, or a fresh destination branch). A
-            # bounded bootstrap window, not the repository's whole history:
-            # anything older than this is past the 90-day artifact retention
-            # these records come from anyway.
-            since="$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)"
+            # bounded 48h bootstrap (MF-02(c)) rather than spec 058's
+            # original seven days -- narrow enough that a fresh destination
+            # branch's first sweep candidate list stays small, wide enough
+            # to cover a weekend gap before the first scheduled sweep runs.
+            since="$(jq -nr '((now - 48 * 3600) | floor) | todate')"
             echo "No sweep-state.json on $BRANCH — bootstrapping the sweep from $since." >> "$GITHUB_STEP_SUMMARY"
           fi
           # Fixed one-hour overlap (research.md R-C3): a run can conclude
@@ -311,7 +341,16 @@ jobs:
           # otherwise fall in the gap between two windows forever.
           # Re-listing is free — record_key idempotence (spec 043) is what
           # makes the overlap safe rather than duplicative.
-          window_start="$(date -u -d "$since - 1 hour" +%Y-%m-%dT%H:%M:%SZ)"
+          #
+          # jq, not `date -d` (MF-09): `date -d` is GNU-only and this step
+          # runs inside the adopter-supplied container image (Gate 45,
+          # container-shell-safety) -- a BusyBox or macOS `date` rejects the
+          # syntax outright, and under `set -uo pipefail` with no `-e` the
+          # resulting empty window_start/list_from silently listed the
+          # repository's ENTIRE run history rather than failing loudly. jq
+          # is already a checked prerequisite of this stage; `date -d` never
+          # was.
+          window_start="$(jq -nr --arg s "$since" '(($s | fromdate) - 3600) | todate')"
           # Server-side `created` bound so --paginate does not walk the
           # repository's entire run history; one extra day of slack because
           # a long run can be created before the window and conclude inside
@@ -319,15 +358,35 @@ jobs:
           # streamed result, never per page — Gate 18: `--paginate --jq`
           # resolves an array-collecting filter PER PAGE, so the filter
           # below is per-item and the selection happens in the jq -s after.
-          list_from="$(date -u -d "$window_start - 1 day" +%Y-%m-%d)"
+          list_from="$(jq -nr --arg s "$window_start" '((($s | fromdate) - 86400) | todate)[0:10]')"
+          # Empty means no restriction (MF-02(b) below), so a caller on an
+          # older pin that has not set the input keeps today's unfiltered
+          # sweep.
+          workflow_paths="${WORKFLOW_PATHS:-}"
+          [ -n "$workflow_paths" ] || workflow_paths='[]'
           cand="$RUNNER_TEMP/sweep-candidates.ndjson"
+          # MF-02(d): `.path` (the workflow FILE), not `.name` -- a caller
+          # that sets `run-name:` on its wrapper overrides `.name` with that
+          # run's title, not the workflow's identity. `.conclusion` rides
+          # along unfiltered here (server-side `--jq` runs once per PAGE,
+          # not once over the whole result -- Gate 18 -- so every selection
+          # that spans pages happens below, over the whole streamed file).
           if ! gh api "repos/${GITHUB_REPOSITORY}/actions/runs?status=completed&per_page=100&created=%3E%3D${list_from}" \
-            --paginate --jq '.workflow_runs[] | {run_id: (.id|tostring), workflow: (.name // ""), concluded_at: (.updated_at // "")}' \
+            --paginate --jq '.workflow_runs[] | {run_id: (.id|tostring), workflow: (.path // ""), concluded_at: (.updated_at // ""), conclusion: (.conclusion // "")}' \
             > "$cand" 2>"$RUNNER_TEMP/sweep-list-err.txt"; then
             echo "::error::wing-commander metrics-persist stage: could not list runs for the sweep window from $window_start -- $(cat "$RUNNER_TEMP/sweep-list-err.txt" 2>/dev/null). Reporting as not-collected rather than sweeping an empty window and advancing the mark over it."
             exit 1
           fi
-          runs="$(jq -s -c --arg w "$window_start" '[.[] | select(.concluded_at >= $w)]' "$cand" 2>/dev/null || echo '[]')"
+          # MF-02(a): a run whose OWN `if:` skipped it end to end carries no
+          # metrics-record artifact and never will -- dropped here, before
+          # the composite's discover step would otherwise spend two API
+          # calls (jobs + artifacts) confirming exactly that per run.
+          # MF-02(b): restricted to the workflows the CALLER says can carry
+          # a record (constitution VI/VII — the stage does not hardcode
+          # this list itself).
+          runs="$(jq -s -c --arg w "$window_start" --argjson wf "$workflow_paths" \
+            '[.[] | select(.concluded_at >= $w) | select(.conclusion != "skipped") | select(($wf | length) == 0 or ((.workflow as $cw | $wf | index($cw)) != null))]' \
+            "$cand" 2>/dev/null || echo '[]')"
           echo "Sweep window from $window_start: $(printf '%s' "$runs" | jq 'length') completed run(s)." >> "$GITHUB_STEP_SUMMARY"
           echo "since=$since" >> "$GITHUB_OUTPUT"
           echo "sweep-runs=$runs" >> "$GITHUB_OUTPUT"

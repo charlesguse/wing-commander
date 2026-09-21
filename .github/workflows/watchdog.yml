@@ -3850,7 +3850,15 @@ jobs:
           token: ${{ steps.ctx.outputs.token }}
           actions-token: ${{ github.token }}
           run-id: ${{ inputs.run-id }}
-          run-name: ${{ needs.collect.outputs.run-name }}
+          # MF-05: needs.collect.outputs.run-name alone regresses when
+          # collect fails before its run-meta step runs -- the safety net
+          # this whole job exists to be would then have no name for the
+          # inspected run either. inputs.run-name (the wrapper-supplied
+          # value on the workflow_run path, since MF-05) survives a collect
+          # failure that empties the other side; on the workflow_dispatch
+          # path inputs.run-name is empty by design (FR-020, file header)
+          # and this falls through to collect's own resolution unchanged.
+          run-name: ${{ inputs.run-name || needs.collect.outputs.run-name }}
           spec-draft-prefix: ${{ vars.WING_COMMANDER_SPEC_DRAFT_PREFIX }}
           spec-prefix: ${{ vars.WING_COMMANDER_SPEC_PREFIX }}
           plan-prefix: ${{ vars.WING_COMMANDER_PLAN_PREFIX }}

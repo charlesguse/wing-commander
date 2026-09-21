@@ -12,26 +12,37 @@ job, which was already calling `gh run view` for five other fields.
 
 The fold is only safe while both halves hold, and each can regress alone:
 
-  * the wrapper must not grow a second job back, must call the stage
-    directly (`uses:`), and must NOT pass `run-name:` -- passing an empty
-    string explicitly is the same as passing nothing today, but passing a
-    WRONG one (the run's title rather than its workflow name) is the defect
-    Gate 70 exists for, and the cheapest way to keep it impossible here is
-    for the wrapper not to speak about run-name at all;
-  * the stage must actually resolve the name when the input is empty. A
-    silently-empty run-name is not a visible failure: watchdog.yml's
-    `case "$RUN_NAME"` arms simply match nothing, every stage-scoped
-    collector skips itself as "not the right stage", and the inspection
-    reports a clean pass having looked at almost nothing.
+  * the wrapper must not grow a second job back and must call the stage
+    directly (`uses:`). It DOES pass `run-name:` now (MF-05, revising
+    FR-020's original "not at all"): the completion path's event payload
+    already names the inspected workflow for free
+    (`github.event.workflow.name`), and passing it gives
+    `report-unhandled-failure`'s identity step a fallback for a `collect`
+    that fails before resolving its own copy. What must never happen is
+    passing the WRONG field -- `github.event.workflow_run.name`, the run's
+    own TITLE rather than its workflow's declared name -- which is the
+    defect Gate 70 exists for; the wrapper's `run-name:` expression is
+    checked against the exact correct shape, not merely for presence or
+    absence;
+  * on `workflow_dispatch` there is no `workflow_run` payload to read a
+    name from at all, so the wrapper's expression resolves to `''` there
+    (unchanged from before MF-05) and the stage must still resolve the
+    name itself when the input is empty. A silently-empty run-name is not
+    a visible failure: watchdog.yml's `case "$RUN_NAME"` arms simply match
+    nothing, every stage-scoped collector skips itself as "not the right
+    stage", and the inspection reports a clean pass having looked at
+    almost nothing.
 
 So this gate reads the wrapper's shape from YAML and EXECUTES the stage's
 shipped resolution block twice -- once with the input empty (the wrapper's
-own invocation), once with a caller-supplied value (the compatibility case
-FR-020 promises is unchanged) -- against a `gh` stub.
+own dispatch-path invocation), once with a caller-supplied value (both the
+wrapper's own completion-path invocation and the compatibility case FR-020
+promises is unchanged) -- against a `gh` stub.
 
-Four mutations (the wrapper passes run-name again, the wrapper regains a
-second job, the wrapper stops calling the stage directly, the stage's
-empty-input fallback dropped) must each break an assertion.
+Five mutations (the wrapper passes the WRONG run-name field, the wrapper
+drops run-name entirely, the wrapper regains a second job, the wrapper
+stops calling the stage directly, the stage's empty-input fallback
+dropped) must each break an assertion.
 
 Wiring: lint-workflows.yml, Gate 75.
 """
@@ -56,6 +67,10 @@ COLLECT_JOB = "collect"
 RUN_ID = "17712345678"
 WORKFLOW_NAME = "Wing Commander · 5 implement"
 CALLER_SUPPLIED = "Wing Commander · 8 watchdog"
+# MF-05's exact shape: the workflow's own declared name on the completion
+# path, '' on dispatch (no workflow_run payload to read it from).
+CORRECT_RUN_NAME_EXPR = ("${{ github.event_name == 'workflow_run' && "
+                         "github.event.workflow.name || '' }}")
 
 GH_STUB = """#!/usr/bin/env bash
 # `gh run view <id> --repo <r> --json <fields>` -> the fields the shipped
@@ -105,11 +120,19 @@ def wrapper_failures(subject):
                      f"job that runs its own steps is the resolve job under "
                      f"another name")
     with_ = dict(job.get("with") or {})
-    if "run-name" in with_:
-        broke.append(f"the wrapper still passes `run-name:` ({with_['run-name']!r}). "
-                     f"FR-020 hands that resolution to the stage; a wrapper "
-                     f"that supplies it can supply the run TITLE by mistake, "
-                     f"which is the defect Gate 70 exists for")
+    run_name = with_.get("run-name")
+    if run_name is None:
+        broke.append(f"the wrapper does not pass `run-name:` -- MF-05: the "
+                     f"completion path's event payload already names the "
+                     f"inspected workflow for free, and "
+                     f"report-unhandled-failure's identity step needs it as "
+                     f"a fallback for a collect that fails before resolving "
+                     f"its own copy")
+    elif str(run_name).strip() != CORRECT_RUN_NAME_EXPR:
+        broke.append(f"the wrapper passes `run-name: {run_name!r}`, not "
+                     f"{CORRECT_RUN_NAME_EXPR!r} -- a wrong field here (the "
+                     f"run's own TITLE rather than its workflow's declared "
+                     f"name) is the defect Gate 70 exists for")
     if not str(with_.get("run-id") or "").strip():
         broke.append("the wrapper passes no `run-id:` -- the stage has no way "
                      "to know what it is inspecting")
@@ -151,9 +174,14 @@ def _write_exec(path, content):
 def resolution_failures(subject, bash):
     """Run the shipped resolution block for both invocation shapes."""
     broke = []
-    # (label, the run-name input the caller supplied, what must come out)
-    cases = [("the wrapper's own invocation (no run-name supplied)", "", WORKFLOW_NAME),
-             ("an adopter still supplying run-name (FR-020 compatibility)",
+    # (label, the run-name input the caller supplied, what must come out).
+    # The wrapper's own COMPLETION-path invocation is not a separate case
+    # here: it supplies a non-empty run-name (MF-05), which is the exact
+    # same stage-side mechanics as an adopter's override below -- the stage
+    # neither knows nor cares which caller supplied it.
+    cases = [("the wrapper's own dispatch-path invocation (no run-name supplied)", "", WORKFLOW_NAME),
+             ("a caller supplying run-name (the wrapper's completion path, or "
+              "an adopter's FR-020 compatibility override)",
               CALLER_SUPPLIED, CALLER_SUPPLIED)]
     for label, supplied, want in cases:
         tmp = tempfile.mkdtemp(prefix="wc-gate75-")
@@ -194,12 +222,26 @@ def suite(subject, bash):
 # --------------------------------------------------------------------------
 # Mutations
 # --------------------------------------------------------------------------
-def mut_wrapper_passes_run_name(subject):
+def mut_wrapper_passes_the_wrong_run_name(subject):
     s = dict(subject)
     jobs = {k: dict(v) for k, v in subject["wrapper:jobs"].items()}
     job = jobs.get(WRAPPER_JOB, {})
+    # The run's own TITLE, not its workflow's declared name -- exactly the
+    # defect Gate 70 exists for.
     job["with"] = dict(job.get("with") or {},
                        **{"run-name": "${{ github.event.workflow_run.name }}"})
+    jobs[WRAPPER_JOB] = job
+    s["wrapper:jobs"] = jobs
+    return s
+
+
+def mut_wrapper_drops_run_name(subject):
+    s = dict(subject)
+    jobs = {k: dict(v) for k, v in subject["wrapper:jobs"].items()}
+    job = jobs.get(WRAPPER_JOB, {})
+    with_ = dict(job.get("with") or {})
+    with_.pop("run-name", None)
+    job["with"] = with_
     jobs[WRAPPER_JOB] = job
     s["wrapper:jobs"] = jobs
     return s
@@ -231,7 +273,8 @@ def mut_stage_drops_the_empty_input_fallback(subject):
 
 
 MUTATIONS = [
-    ("the wrapper passes run-name again", mut_wrapper_passes_run_name),
+    ("the wrapper passes the wrong run-name field", mut_wrapper_passes_the_wrong_run_name),
+    ("the wrapper drops run-name entirely", mut_wrapper_drops_run_name),
     ("the wrapper regains a resolve job", mut_wrapper_regains_a_resolve_job),
     ("the wrapper stops calling the stage directly",
      mut_wrapper_stops_calling_the_stage),

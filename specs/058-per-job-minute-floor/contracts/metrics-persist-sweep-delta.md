@@ -101,14 +101,22 @@ on:
 `persist`'s existing job is unchanged for the `workflow_run`/manual
 single-run `workflow_dispatch` path. A new `sweep` job, gated
 `if: github.event_name == 'schedule' || (github.event_name ==
-'workflow_dispatch' && inputs.since != '')`, calls the same
-`metrics-persist.yml` with `since: ${{ inputs.since ||
-<computed-high-water-mark-minus-overlap> }}` — the wrapper reads
-`sweep-state.json` itself (a plain `git show`/`gh api` read, no checkout
-of the pipeline repo needed for this one field) to compute the default
-when `schedule:` fired with no explicit `since`. No `concurrency:` group
-gates either job against the other (FR-030(d), research.md R-C7,
-explicit non-decision).
+'workflow_dispatch' && inputs.since != '')`, is a BARE `uses:
+./.github/workflows/metrics-persist.yml` call — `since: ${{ inputs.since
+}}` (empty on the schedule path) and `sweep: true`. As shipped, the
+wrapper itself never reads `sweep-state.json`: a `uses:` job runs no
+steps of its own, so it cannot. The STAGE's own already-allocated
+`persist` job — which has already checked out and already holds the
+token every read needs — does the `git show` of `sweep-state.json` on
+`destination-branch` and computes `since || <mark-minus-overlap>` itself
+when `sweep: true` and `since` is empty (deviation from this document's
+original sketch, recorded rather than silently smoothed over: the
+sketch had the wrapper doing this read, which GitHub does not allow a
+`uses:`-only job to do). The wrapper also passes a `sweep-workflow-paths`
+JSON array — the workflow file paths a sweep is allowed to discover
+records from (MF-02; owned by the wrapper per constitution VI/VII, not
+hardcoded stage-side). No `concurrency:` group gates either job against
+the other (FR-030(d), research.md R-C7, explicit non-decision).
 
 ## What does not change
 

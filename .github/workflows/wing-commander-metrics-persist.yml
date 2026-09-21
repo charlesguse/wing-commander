@@ -146,6 +146,21 @@ jobs:
       run-id: ""
       since: ${{ inputs.since }}
       sweep: true
+      # MF-02: the wrapper, not the stage, owns which workflows in THIS
+      # repository can carry a record (constitution VI/VII) -- the nine
+      # completion-trigger workflows above plus the watchdog, whose healthy
+      # (agent-free) inspections this sweep exists to pick up (FR-030(b)).
+      sweep-workflow-paths: >-
+        [".github/workflows/wing-commander-1-intake.yml",
+         ".github/workflows/wing-commander-2-clarify.yml",
+         ".github/workflows/wing-commander-3-plan.yml",
+         ".github/workflows/wing-commander-4-tasks.yml",
+         ".github/workflows/wing-commander-5-implement.yml",
+         ".github/workflows/wing-commander-6-finalize.yml",
+         ".github/workflows/wing-commander-7-cleanup.yml",
+         ".github/workflows/wing-commander-rebase.yml",
+         ".github/workflows/wing-commander-9-pr-conversation.yml",
+         ".github/workflows/wing-commander-8-watchdog.yml"]
       destination-branch: ${{ vars.WING_COMMANDER_METRICS_BRANCH || 'metrics' }}
       destination-path: ${{ vars.WING_COMMANDER_METRICS_PATH || 'records.jsonl' }}
       runner: ${{ vars.WING_COMMANDER_RUNNER || 'ubuntu-latest' }}

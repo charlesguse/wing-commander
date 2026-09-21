@@ -145,26 +145,30 @@ class Parser:
         return v
 
     def and_(self):
-        v = self.unary()
+        v = self.cmp()
         while self.peek() == ("op", "&&"):
             self.take()
-            rhs = self.unary()
+            rhs = self.cmp()
             v = rhs if truthy(v) else v
+        return v
+
+    def cmp(self):
+        # `!` binds tighter than `==`/`!=` in GitHub's grammar -- `!a == b`
+        # is `(!a) == b`, not `!(a == b)` -- so unary() must be resolved
+        # before an equality operator is looked for, not the other way
+        # around (MF-08).
+        v = self.unary()
+        if self.peek() in (("op", "=="), ("op", "!=")):
+            op = self.take()[1]
+            eq = loose_eq(v, self.unary())
+            return eq if op == "==" else not eq
         return v
 
     def unary(self):
         if self.peek() == ("op", "!"):
             self.take()
             return not truthy(self.unary())
-        return self.cmp()
-
-    def cmp(self):
-        v = self.primary()
-        if self.peek() in (("op", "=="), ("op", "!=")):
-            op = self.take()[1]
-            eq = loose_eq(v, self.primary())
-            return eq if op == "==" else not eq
-        return v
+        return self.primary()
 
     def call(self, name):
         """A `name(...)`: a string function, else a status function the
@@ -218,3 +222,10 @@ def interpolate(template, ctx):
     """A string field like run-name -> the string GitHub would render."""
     return re.sub(r"\$\{\{(.*?)\}\}", lambda m: to_str(Parser(m.group(1), ctx).parse()),
                   template, flags=re.S)
+
+
+if __name__ == "__main__":
+    # MF-08: `!` binds tighter than `==` -- `!a == b` is `(!a) == b`, never
+    # `!(a == b)`. `!a` is `False`; `False == 'failure'` is `False`.
+    assert evaluate("!a == b", {"a": "skipped", "b": "failure"}) is False
+    print("wc_gha_expr self-test: ok")

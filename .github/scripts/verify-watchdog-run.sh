@@ -90,6 +90,14 @@ c="$(step diagnose 'Report "rate-limited" to lifecycle issue')"
 rate_limited=false
 [ -n "$c" ] && [ "$c" != "skipped" ] && rate_limited=true
 
+# The diagnose job is skipped on two healthy paths: collect could not gather
+# evidence and, since spec 058, collect gathered evidence and found no
+# signal at all, deciding the inspection itself (FR-011). Computed here
+# (ahead of check 2) because MF-01's floor arm below needs it: a clean
+# no-agent inspection is legitimately faster than any agent-bearing run
+# the floor was scaled from.
+diagnose_conclusion="$(jq -r '[.jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose"))) | .conclusion] | first // empty' <<<"$jobs_json")"
+
 # ── Check 2: runtime anomaly vs. this workflow's own successful history ────
 # Median of the last 20 successful runs (excluding this one). Bounds are
 # deliberately loose — this gates issue creation, and a run with real
@@ -121,7 +129,14 @@ if [ -n "$hist" ] && [ "$count" -ge 3 ]; then
   floor=$(( median * 2 / 5 )); [ "$floor" -lt 20 ] && floor=20
   ceiling=$(( median * 6 )); [ "$ceiling" -lt 900 ] && ceiling=900
   note "duration band from $count runs: median=${median}s floor=${floor}s ceiling=${ceiling}s"
-  if [ "$duration" -lt "$floor" ]; then
+  # MF-01: the floor arm (and its 20s bootstrap guard) is scaled from
+  # agent-bearing history and only means something when THIS run also ran
+  # the agent -- a clean collect-only inspection (diagnose skipped) is
+  # legitimately faster than any run the median was computed over. The
+  # ceiling arm stays unconditional: a stall is a stall whether or not the
+  # agent ran.
+  if [ -n "$diagnose_conclusion" ] && [ "$diagnose_conclusion" != "skipped" ] \
+     && [ "$duration" -lt "$floor" ]; then
     if [ "$rate_limited" = "true" ]; then
       note "run finished in ${duration}s, under the ${floor}s floor — expected, rate-limited run (one-turn rejection)"
     else
@@ -138,12 +153,9 @@ fi
 failed_jobs="$(jq -r '[.jobs[] | select(.conclusion != null and .conclusion != "success" and .conclusion != "skipped") | .name] | join(", ")' <<<"$jobs_json")"
 [ -n "$failed_jobs" ] && reason "failed jobs: $failed_jobs"
 
-# The diagnose job is skipped on two healthy paths: collect could not gather
-# evidence (check 5 owns that one) and, since spec 058, collect gathered
-# evidence and found no signal at all, deciding the inspection itself
-# (FR-011). Checks 3, 4 and the duration ceiling below all presuppose an
-# agent that ran, so they are scoped to a diagnose that did.
-diagnose_conclusion="$(jq -r '[.jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose"))) | .conclusion] | first // empty' <<<"$jobs_json")"
+# Checks 3, 4 and the duration ceiling below all presuppose an agent that
+# ran, so they are scoped to a diagnose that did (diagnose_conclusion is
+# computed above, ahead of check 2).
 
 # Diagnose-job duration ceiling — much tighter than the run-level band,
 # because this job's cost is bounded by --max-turns, not by finding count

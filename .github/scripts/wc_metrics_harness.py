@@ -250,24 +250,35 @@ def write_fixtures(work, runs):
         rdir = os.path.join(fix, rid)
         os.makedirs(rdir, exist_ok=True)
         records = run.get("records") or []
-        with open(os.path.join(rdir, "jobs.ndjson"), "w", encoding="utf-8") as fh:
+        with open(os.path.join(rdir, "jobs.ndjson"), "w", encoding="utf-8", newline="\n") as fh:
             for i, rec in enumerate(records):
                 fh.write(json.dumps({"id": fixture_job_id(rid, i),
                                      "name": rec["run"]["job_key"]}) + "\n")
         names = run.get("artifact_names")
         if names is None:
             names = [f"metrics-record-{r['run']['job_key']}" for r in records]
-        with open(os.path.join(rdir, "artifacts.ndjson"), "w", encoding="utf-8") as fh:
-            for name in names:
-                fh.write(json.dumps({"name": name}) + "\n")
         # An "expired" run lists its artifact but has no directory to serve,
         # so `gh run download` fails exactly as it does against an artifact
-        # past its retention window.
-        if run.get("expired"):
+        # past its retention window -- and (MF-03) the listing itself says
+        # so via `expired: true`, the real API's own field this fixture
+        # mirrors so the shipped step can tell that apart from a live
+        # artifact whose download merely failed (`download_fails`, below).
+        run_expired = bool(run.get("expired"))
+        with open(os.path.join(rdir, "artifacts.ndjson"), "w", encoding="utf-8", newline="\n") as fh:
+            for name in names:
+                fh.write(json.dumps({"name": name, "expired": run_expired}) + "\n")
+        if run_expired:
             continue
+        download_fails = set(run.get("download_fails") or [])
         for rec in records:
-            adir = os.path.join(rdir, "artifacts",
-                                f"metrics-record-{rec['run']['job_key']}")
+            name = f"metrics-record-{rec['run']['job_key']}"
+            if name in download_fails:
+                # MF-03: listed, not expired, but its directory is withheld
+                # so `gh run download` fails against it exactly as it would
+                # on a transient retrieval error -- a DIFFERENT outcome from
+                # the whole-run `expired` case above.
+                continue
+            adir = os.path.join(rdir, "artifacts", name)
             os.makedirs(adir, exist_ok=True)
             write_pretty(os.path.join(adir, "wing-commander-metrics-record.json"), rec)
     return fix
@@ -372,14 +383,20 @@ def read_branch_state(repo):
 # Driver: the stage's own window resolution
 # --------------------------------------------------------------------------
 def run_window(work, candidates, mark=None, since_input="", bash=None,
-               mutate=None):
+               mutate=None, workflow_paths=None):
     """Execute metrics-persist.yml's window step against a destination
     branch that does (or does not) already carry a high-water mark.
 
     `candidates` is what the Actions API would stream back:
     [{"run_id", "workflow", "concluded_at"}, ...] — every completed run in
     the server-side `created` bound, before the client-side window filter
-    the step applies.
+    the step applies. A candidate may also carry "conclusion" (MF-02(a) —
+    "skipped" is dropped before it ever reaches the composite); absent
+    means non-skipped, matching a real API response's usual shape.
+
+    `workflow_paths`, when given, is a list of workflow file paths passed
+    through as the step's WORKFLOW_PATHS input (MF-02(b)) -- None means
+    "no restriction", the same as an unset input in production.
     """
     bash = bash or resolve_bash()
     ensure_jq()
@@ -389,7 +406,7 @@ def run_window(work, candidates, mark=None, since_input="", bash=None,
     _origin, repo = make_workspace(work, seed)
     fix = os.path.join(work, "fixtures")
     os.makedirs(fix, exist_ok=True)
-    with open(os.path.join(fix, "candidates.ndjson"), "w", encoding="utf-8") as fh:
+    with open(os.path.join(fix, "candidates.ndjson"), "w", encoding="utf-8", newline="\n") as fh:
         for c in candidates:
             fh.write(json.dumps(c) + "\n")
     tmp = os.path.join(work, "wtmp")
@@ -399,6 +416,7 @@ def run_window(work, candidates, mark=None, since_input="", bash=None,
         script = mutate(WINDOW, script)
     env = {"GH_TOKEN": "stub-token", "SINCE_INPUT": since_input,
            "BRANCH": BRANCH, "GITHUB_REPOSITORY": REPO, "WC_FIX": fix,
+           "WORKFLOW_PATHS": json.dumps(workflow_paths) if workflow_paths is not None else "",
            "PATH": _bindir(work) + os.pathsep + os.environ.get("PATH", "")}
     rc, out, outputs, summary = run_step(bash, script, repo, env, tmp)
     listed = []

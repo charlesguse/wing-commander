@@ -596,6 +596,35 @@ actions, because each stage checks out its own repository at the running
 workflow's exact commit (`github.job_workflow_sha`). There is no path by
 which a pinned adopter receives newer internal logic.
 
+### A wrapper-owned feature needs a wrapper change too
+
+A pin bump only updates the *stage*. Your wrapper file — checked into your
+own repository, never overwritten by an upgrade — is what owns triggers,
+gates, and the values it passes in `with:` (constitution VI/VII), so a
+feature that adds a new trigger shape or a new wrapper-supplied input
+arrives inert until you copy the change into your own wrapper.
+`metrics-persist` (spec 058) is the concrete example: bumping the pin
+alone gets you the stage's new sweep mode, but not the daily sweep itself.
+To adopt it, diff your wrapper against the reference
+[`wing-commander-metrics-persist.yml`](../.github/workflows/wing-commander-metrics-persist.yml)
+and carry over:
+
+(a) **remove** `"Wing Commander · 8 watchdog"` from your `workflow_run:
+workflows:` list — after this feature, a healthy (agent-free) watchdog
+inspection emits no record, so that trigger fires and finds nothing on
+every completion;
+
+(b) **add** the `schedule:` trigger and the `sweep` job (and, if you pass
+`since` explicitly to your own `persist`-equivalent job today, note that
+`run-id` becomes optional and a `since`-only dispatch now routes to
+`sweep`, not `persist`);
+
+(c) **pass the workflow-list input** the sweep needs to restrict its own
+discovery (`sweep-workflow-paths` — MF-02): the reference wrapper's copy
+lists its nine completion-trigger workflows plus
+`wing-commander-8-watchdog.yml`; substitute your own repository's wrapper
+filenames.
+
 ## Migrating to `@v2`
 
 The product's rename from "speckit-action" to "Wing Commander" ships its

@@ -129,7 +129,10 @@ ones.
 
 ## Versioning
 
-Additive and non-breaking: `run-name` gains a default rather than losing
-its requirement; no output or secret changes. Per `contracts/
-versioning.md`, this ships as part of this feature's overall minor
-release.
+Additive and non-breaking: `run-name` both gains a default AND loses
+`required: true` — GitHub still demands a value for a `required: true`
+input even when a default is declared, so dropping `required` is what
+actually lets the wrapper omit it; no output or secret changes. A caller
+still passing `run-name` explicitly sees no behavior change (Gate 75).
+Per `contracts/versioning.md`, this ships as part of this feature's
+overall minor release.

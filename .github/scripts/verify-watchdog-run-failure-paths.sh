@@ -331,6 +331,63 @@ JSON
   mv "$work/jobs.json.bak_rl" "$work/fixtures/jobs.json"
   mv "$work/artifact.json.bak_rl" "$work/fixtures/artifact.json"
 
+  # ── MF-01: the floor arm must key off THIS run's own diagnose_conclusion,
+  # not just the median, against history that still predates the clean path
+  # (fixtures/history.json here is the file-top old-shape set: four ~120s
+  # agent-bearing runs, median 120s, floor 48s) -- the exact transition
+  # window fold(leg-0) flagged: for the first runs after merge, the "last 20
+  # successful runs" history is still all agent-bearing.
+  cp "$work/fixtures/run.json" "$work/run.json.bak_mf01"
+  cp "$work/fixtures/jobs.json" "$work/jobs.json.bak_mf01"
+  cp "$work/fixtures/artifact.json" "$work/artifact.json.bak_mf01"
+
+  # s14: a 33s clean-path run (diagnose skipped, pass posted from collect)
+  # against the OLD-shape history (floor=48s from that history alone) must
+  # still PASS -- the floor arm does not apply when diagnose didn't run.
+  sed -i 's/"updated_at": "2026-08-25T01:02:00Z"/"updated_at": "2026-08-25T01:00:33Z"/' "$work/fixtures/run.json"
+  cat > "$work/fixtures/jobs.json" <<'JSON'
+{"total_count": 3, "jobs": [
+  {"id": 1, "name": "watchdog / collect", "conclusion": "success",
+   "started_at": "2026-08-25T01:00:03Z", "completed_at": "2026-08-25T01:00:28Z",
+   "steps": [
+     {"name": "Report \"could not inspect\" to lifecycle issue", "conclusion": "skipped"},
+     {"name": "Report \"passed inspection\" to lifecycle issue (empty signal set, no agent)", "conclusion": "success"}
+   ]},
+  {"id": 2, "name": "watchdog / diagnose", "conclusion": "skipped",
+   "started_at": null, "completed_at": null, "steps": []},
+  {"id": 3, "name": "watchdog / report-unhandled-failure", "conclusion": "success",
+   "started_at": "2026-08-25T01:00:29Z", "completed_at": "2026-08-25T01:00:33Z",
+   "steps": [
+     {"name": "Determine failed jobs", "conclusion": "success"},
+     {"name": "Report unhandled job failure", "conclusion": "skipped"},
+     {"name": "Report unhandled job failure to run summary", "conclusion": "skipped"}
+   ]}
+]}
+JSON
+  rm -f "$work/fixtures/artifact.json"
+  run_scenario "$script" '' false
+  if [ "$rc" = "0" ] && ! grep -q "too fast to have done real work" <<<"$out"; then
+    ok "$tag s14: a 33s clean-path run against old-shape (agent-bearing) history still passes -- the floor arm is scoped to diagnose having run"
+  else
+    fail "$tag s14: expected exit 0 with no floor breach, got rc=$rc: $(tail -5 <<<"$out")"
+  fi
+
+  # s15: the SAME 33s duration and the SAME old-shape history, but diagnose
+  # actually ran (the base fixture's shape) -- must still FAIL the floor,
+  # proving MF-01 scoped the exemption to the clean path and did not just
+  # widen the floor for everyone.
+  cp "$work/jobs.json.bak_mf01" "$work/fixtures/jobs.json"
+  cp "$work/artifact.json.bak_mf01" "$work/fixtures/artifact.json"
+  run_scenario "$script" '' false
+  if [ "$rc" = "1" ] && grep -q "too fast to have done real work" <<<"$out"; then
+    ok "$tag s15: the same 33s duration still fails when diagnose actually ran -- the floor exemption never widened"
+  else
+    fail "$tag s15: expected exit 1 + 'too fast to have done real work', got rc=$rc: $(tail -5 <<<"$out")"
+  fi
+
+  mv "$work/run.json.bak_mf01" "$work/fixtures/run.json"
+  rm -f "$work/jobs.json.bak_mf01" "$work/artifact.json.bak_mf01"
+
   # ── specs/058-per-job-minute-floor: the clean-path healthy shape ──────────
   # An inspection whose aggregate signal set is empty now skips diagnose
   # entirely and posts the pass from collect (FR-011). The whole run is
@@ -391,15 +448,18 @@ JSON
     fail "$tag s11: expected exit 0 with no issue filed, got rc=$rc create=$created: $(tail -5 <<<"$out")"
   fi
 
-  # s12: the same clean shape, but 15s -- under the re-scaled absolute
-  # floor. The floor was lowered for the clean path, not removed, and this
-  # is the scenario that says so.
+  # s12 (revised by MF-01): the same clean shape, but 15s -- under what
+  # USED to be the re-scaled absolute floor. MF-01 scopes the floor arm to
+  # runs where diagnose actually ran, so a clean-path run this fast now
+  # passes too; s14/s15 (below the fixtures reset) are what prove the
+  # floor still bites an AGENT-BEARING run this fast, so removing it
+  # entirely is still caught.
   sed -i 's/"updated_at": "2026-08-25T01:00:33Z"/"updated_at": "2026-08-25T01:00:15Z"/' "$work/fixtures/run.json"
   run_scenario "$script" '' false
-  if [ "$rc" = "1" ] && grep -q "too fast to have done real work" <<<"$out"; then
-    ok "$tag s12: a clean-path run under the absolute floor still fails -- the floor was lowered, not removed"
+  if [ "$rc" = "0" ] && ! grep -q "too fast to have done real work" <<<"$out"; then
+    ok "$tag s12: a 15s clean-path run passes -- MF-01 the floor arm does not apply when diagnose was skipped, at any duration"
   else
-    fail "$tag s12: expected exit 1 + 'too fast to have done real work', got rc=$rc: $(tail -5 <<<"$out")"
+    fail "$tag s12: expected exit 0 with no floor breach, got rc=$rc: $(tail -5 <<<"$out")"
   fi
   sed -i 's/"updated_at": "2026-08-25T01:00:15Z"/"updated_at": "2026-08-25T01:00:33Z"/' "$work/fixtures/run.json"
 
@@ -470,13 +530,16 @@ sed 's/if existing="$(gh issue list/existing="$(gh issue list/; s/--jq '"'"'.\[0
   "$SCRIPT" > "$mut"
 run_mutation "$mut" "m2" "s5" "reverting the search-failure guard files a duplicate again"
 
-# m3 (spec 058): the absolute duration floor is removed, leaving only the
-# median-derived term. On a clean-path history that term lands at 13s, so a
-# 15s run -- too fast to have collected anything -- would pass. s12 is the
-# scenario that must catch it.
-sed 's/floor=$(( median \* 2 \/ 5 )); \[ "$floor" -lt 20 \] \&\& floor=20/floor=$(( median * 2 \/ 5 ))/' \
-  "$SCRIPT" > "$mut"
-run_mutation "$mut" "m3" "s12" "removing the absolute floor lets a too-fast clean-path run pass"
+# m3 retired (MF-01): it proved the absolute duration floor's 20s clamp
+# still bit a fast CLEAN-PATH run (s12) once the median-scaled term alone
+# would have let a 15s run pass. MF-01 scopes the whole floor arm --
+# clamp included -- to runs where diagnose actually ran, so a clean-path
+# run is no longer subject to it at any duration (s12, revised, now
+# asserts exactly that); there is no longer a clean-path scenario for
+# this specific mutation to be caught by. No replacement mutation: the
+# floor arm itself (not just its clamp) is what m4 immediately below,
+# and s14/s15 above, already hold load-bearing for the shapes that still
+# apply it.
 
 # m4 (spec 058): the skipped-diagnose branch stops requiring that one of
 # collect's reporters actually ran, so a run that skipped the agent and said
@@ -485,5 +548,5 @@ sed 's/reason "diagnose was skipped but neither of collect'"'"'s reporters ran �
   "$SCRIPT" > "$mut"
 run_mutation "$mut" "m4" "s13" "a skipped agent that recorded nothing must not read as healthy"
 
-echo "Gate 36: 13 scenario(s) x 5 runs + 4 mutation(s); $bad failure(s)."
+echo "Gate 36: 15 scenario(s) x 5 runs + 3 mutation(s); $bad failure(s)."
 exit $([ "$bad" -eq 0 ] && echo 0 || echo 1)

@@ -135,6 +135,14 @@ runs:
         if [ -n "${SWEEP_RUNS:-}" ]; then
           run_ids="$(printf '%s' "$SWEEP_RUNS" | jq -r '.[].run_id' 2>/dev/null)"
           : > "$base/unpersisted.jsonl"
+          # MF-03: runs this sweep must NOT advance the high-water mark
+          # past -- a live artifact whose download merely failed, not a
+          # durable fact like expiry. The append step's mark computation
+          # reads this file; absent/empty means every run counts, so a
+          # sweep that never needed to hold anything back (including the
+          # steps.discover.outputs.count == '0' case, which skips this
+          # step entirely) is unaffected.
+          : > "$base/mark-hold-back.txt"
         else
           run_ids="$RUN_ID"
         fi
@@ -156,19 +164,33 @@ runs:
           done)"
           if [ -n "$not_retrieved" ]; then
             echo "::warning::wing-commander-metrics-persist: artifact(s) discovered but not retrieved (expired or download failed): $(printf '%s' "$not_retrieved" | tr '\n' ' ')"
-            # FR-028 (spec 058): in sweep mode that outcome becomes a durable
-            # ledger line rather than a warning nobody reads later. The
-            # high-water mark still advances past this run — it is accounted
-            # for, not retried — so this file is the only record it existed.
-            if [ -n "${SWEEP_RUNS:-}" ]; then
-              printf '%s' "$SWEEP_RUNS" | jq -c --arg rid "$rid" --arg at "$discovered_at" \
-                '.[] | select((.run_id|tostring) == $rid)
-                     | {run_id: (.run_id|tostring), workflow: (.workflow // ""),
-                        reason: "artifact_expired", discovered_at: $at}' \
-                >> "$base/unpersisted.jsonl"
-            fi
           fi
           printf '%s' "$not_retrieved" > "$dir/not-retrieved.txt"
+
+          # MF-03: "not retrieved" is two different outcomes, and only one
+          # of them is durable. `expired: true` on the artifacts LISTING
+          # (not a download failure -- the listing itself says so) means
+          # the artifact is gone for good: a ledger line, and the mark is
+          # safe to advance past this run (FR-028). A download failure
+          # against an artifact the listing still calls live is transient
+          # (a rate limit, a network blip) -- no ledger line for a fact
+          # that may not be true, and the mark holds back so the next
+          # sweep's overlap window tries again.
+          if [ -n "$not_retrieved" ] && [ -n "${SWEEP_RUNS:-}" ]; then
+            while IFS= read -r name; do
+              [ -n "$name" ] || continue
+              expired="$(jq -r --arg n "$name" '.[] | select(.name == $n) | .expired // false' "$dir/artifacts.json" 2>/dev/null)"
+              if [ "$expired" = "true" ]; then
+                printf '%s' "$SWEEP_RUNS" | jq -c --arg rid "$rid" --arg at "$discovered_at" \
+                  '.[] | select((.run_id|tostring) == $rid)
+                       | {run_id: (.run_id|tostring), workflow: (.workflow // ""),
+                          reason: "artifact_expired", discovered_at: $at}' \
+                  >> "$base/unpersisted.jsonl"
+              else
+                printf '%s\n' "$rid" >> "$base/mark-hold-back.txt"
+              fi
+            done <<<"$not_retrieved"
+          fi
         done
 
     - name: Validate records and build the new-records batch
@@ -408,7 +430,11 @@ runs:
           # subsequent sweep re-lists the same window forever (FR-027).
           sweep_dirty=false
           if [ -n "${SWEEP_RUNS:-}" ]; then
-            hwm="$(printf '%s' "$SWEEP_RUNS" | jq -r '[.[].concluded_at] | max // empty' 2>/dev/null)"
+            # MF-03: exclude any run the retrieve step held back (a live
+            # artifact whose download merely failed) -- absent/empty means
+            # every run counts, unchanged from before this file existed.
+            hold_back="$(jq -R -s -c 'split("\n") | map(select(length > 0))' "$dir/mark-hold-back.txt" 2>/dev/null || echo '[]')"
+            hwm="$(printf '%s' "$SWEEP_RUNS" | jq -r --argjson hb "$hold_back" '[.[] | select((.run_id|tostring) as $rid | ($hb | index($rid)) == null) | .concluded_at] | max // empty' 2>/dev/null)"
             if [ -n "$hwm" ]; then
               printf '{"high_water_mark":"%s"}\n' "$hwm" > sweep-state.json
               git add sweep-state.json

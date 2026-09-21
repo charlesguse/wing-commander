@@ -54,7 +54,7 @@ RUNS = [
 ]
 
 
-def suite(bash, mutate=None):
+def expired_run_suite(bash, mutate=None):
     broke = []
     work = tempfile.mkdtemp(prefix="wc-gate78-")
     try:
@@ -109,6 +109,82 @@ def suite(bash, mutate=None):
     return broke
 
 
+# MF-03: a LIVE artifact (the listing says expired: false) whose download
+# merely fails is a DIFFERENT outcome from the GONE_ID case above -- not a
+# durable fact, so no ledger line, and the mark must hold back so the next
+# sweep's overlap window retries it.
+# LIVE_ID is deliberately the LATER-concluding run of the two: a bug that
+# ignores the hold-back list and takes the max over every SWEEP_RUNS entry
+# regardless would then produce the SAME mark as the correct behavior if
+# LIVE_ID concluded earliest, proving nothing. Concluding it latest means
+# "the mark advanced past it" and "the mark correctly stayed at the other
+# run" are two different, distinguishable timestamps.
+LIVE_ID = "8101"
+LIVE_WORKFLOW = "Wing Commander · 5 implement"
+LIVE_CONCLUDED = "2026-09-20T06:00:00Z"
+OTHER_CONCLUDED = "2026-09-20T02:00:00Z"
+LIVE_RUNS = [
+    {"run_id": LIVE_ID, "workflow": LIVE_WORKFLOW,
+     "concluded_at": LIVE_CONCLUDED,
+     "records": [metrics_record(LIVE_ID, "implement")],
+     "download_fails": ["metrics-record-implement"]},
+    {"run_id": "8102", "workflow": "Wing Commander · 6 finalize",
+     "concluded_at": OTHER_CONCLUDED,
+     "records": [metrics_record("8102", "finalize")]},
+]
+# The same two runs, one sweep later, once the transient failure has
+# resolved -- LIVE_ID's artifact is retrievable this time.
+LIVE_RUNS_RETRY = [
+    {"run_id": LIVE_ID, "workflow": LIVE_WORKFLOW,
+     "concluded_at": LIVE_CONCLUDED,
+     "records": [metrics_record(LIVE_ID, "implement")]},
+    {"run_id": "8102", "workflow": "Wing Commander · 6 finalize",
+     "concluded_at": OTHER_CONCLUDED,
+     "records": [metrics_record("8102", "finalize")]},
+]
+
+
+def live_download_failure_suite(bash, mutate=None):
+    broke = []
+    work = tempfile.mkdtemp(prefix="wc-gate78-live-")
+    try:
+        first = run_sweep(work, LIVE_RUNS, bash=bash, mutate=mutate)
+        if first["rc"] != 0:
+            broke.append(f"a sweep containing a live-but-failed download "
+                         f"failed outright: {first['steps'][-1][2].strip()[:300]}")
+            return broke
+
+        ledger = first["unpersisted"]
+        if any(ln.get("run_id") == LIVE_ID for ln in ledger):
+            broke.append(f"a live artifact's failed download wrote an "
+                         f"unpersisted.jsonl line: {ledger} -- expired is a "
+                         f"durable fact this run's own listing never asserted")
+
+        if first["sweep_state"] != {"high_water_mark": OTHER_CONCLUDED}:
+            broke.append(f"the mark is {first['sweep_state']!r}, expected it "
+                         f"held at {OTHER_CONCLUDED!r} (run 8102's, the one "
+                         f"fully retrieved) -- run {LIVE_ID}'s live artifact "
+                         f"was never retrieved, so the mark must not pass it")
+
+        second = resweep(work, first, LIVE_RUNS_RETRY, bash=bash, mutate=mutate)
+        if second["rc"] != 0:
+            broke.append(f"the re-sweep failed: "
+                         f"{second['steps'][-1][2].strip()[:300]}")
+        else:
+            keys = record_keys(second["records"])
+            if resolved_key(LIVE_ID) not in keys:
+                broke.append(f"the re-sweep did not pick up run {LIVE_ID} once "
+                             f"its artifact became retrievable -- a held-back "
+                             f"mark must still be re-listed: {keys}")
+    finally:
+        cleanup(work)
+    return broke
+
+
+def suite(bash, mutate=None):
+    return expired_run_suite(bash, mutate) + live_download_failure_suite(bash, mutate)
+
+
 # --------------------------------------------------------------------------
 # Mutations
 # --------------------------------------------------------------------------
@@ -124,8 +200,18 @@ def mut_mark_held_back_to_the_last_retrieved(name, script):
         return script
     # The mark stops at the newest run that actually yielded a record, so
     # the lost one is re-listed by every subsequent sweep.
-    return script.replace("[.[].concluded_at] | max // empty",
-                          "[.[].concluded_at] | min // empty")
+    return script.replace(
+        "[.[] | select((.run_id|tostring) as $rid | ($hb | index($rid)) == null) | .concluded_at] | max // empty",
+        "[.[] | select((.run_id|tostring) as $rid | ($hb | index($rid)) == null) | .concluded_at] | min // empty")
+
+
+def mut_hold_back_ignored(name, script):
+    if name != APPEND:
+        return script
+    # MF-03: the hold-back list is read but not applied -- the mark
+    # advances past a run whose live artifact was never actually retrieved.
+    return script.replace(
+        "select((.run_id|tostring) as $rid | ($hb | index($rid)) == null)", "select(true)")
 
 
 def mut_ledger_dedup_dropped(name, script):
@@ -142,6 +228,8 @@ MUTATIONS = [
      mut_mark_held_back_to_the_last_retrieved),
     ("the ledger is appended without its per-run dedup",
      mut_ledger_dedup_dropped),
+    ("the mark-hold-back list is read but not applied (MF-03)",
+     mut_hold_back_ignored),
 ]
 
 
@@ -168,9 +256,10 @@ def main():
         else:
             print(f"::error::MUTATION SURVIVED - {label} broke nothing in this gate.")
             mutation_failures += 1
-    print(f"Gate 78: 2 sweep pass(es) over {len(RUNS)} run(s), one of them "
-          f"unretrievable, {len(MUTATIONS)} mutation(s); {len(failures)} "
-          f"failure(s), {mutation_failures} mutation failure(s).")
+    print(f"Gate 78: 4 sweep pass(es) over {len(RUNS) + len(LIVE_RUNS)} run(s), "
+          f"one expired and one live-but-failed, {len(MUTATIONS)} "
+          f"mutation(s); {len(failures)} failure(s), "
+          f"{mutation_failures} mutation failure(s).")
     return 1 if failures or mutation_failures else 0
 
 

@@ -38,6 +38,12 @@ network call.
 
 Wiring: lint-workflows.yml, Gate 73. Fixtures are inline (the aggregate
 state is five small dicts, not a file tree).
+
+MF-05 adds one more case in the same spirit, sharing this file's tooling
+rather than a new gate for one expression: `report-unhandled-failure`'s
+"Resolve inspected run's lifecycle issue" step reads
+`inputs.run-name || needs.collect.outputs.run-name` so a `collect` that
+fails before its own run-meta step still hands the safety net a name.
 """
 import os
 import shutil
@@ -61,6 +67,16 @@ COULD_NOT_STEP = 'Report "could not inspect" to lifecycle issue'
 # wordings are the ones PASS_STEP relocates, so they must stay byte-identical.
 AGENT_PASS_STEP = 'Report "passed inspection" to lifecycle issue'
 AGENT_ACTION = "anthropics/claude-code-action"
+# MF-05
+IDENTITY_STEP = "Resolve inspected run's lifecycle issue"
+IDENTITY_CASES = [
+    dict(label="collect resolved a name normally",
+         run_name_input="", collect_run_name="Wing Commander · 1 intake",
+         expect="Wing Commander · 1 intake"),
+    dict(label="collect fails before its run-meta step (MF-05)",
+         run_name_input="Wing Commander · 1 intake", collect_run_name="",
+         expect="Wing Commander · 1 intake"),
+]
 
 ISSUE = "4321"
 RUN_URL = "https://example.invalid/runs/9001"
@@ -69,10 +85,15 @@ RUN_URL = "https://example.invalid/runs/9001"
 # --------------------------------------------------------------------------
 # The subject: the real expressions and the real shell, lifted from the file
 # --------------------------------------------------------------------------
-def body_lines(run_text):
-    """Every `body=` assignment in a shipped run: block, in file order."""
+def executable_lines(run_text):
+    """Every executable (non-comment, non-blank) line of a shipped run:
+    block, in file order (MF-06). Comments and indentation are stripped so
+    the comparison survives cosmetic drift; this is the single-home check
+    for the WHOLE passed-inspection body-building idiom -- the
+    COLLECTORS_TOTAL/COLLECTORS_FAILED fallback defaults and the full/
+    partial branch structure, not just the two `body=` strings themselves."""
     return [line.strip() for line in run_text.splitlines()
-            if line.strip().startswith("body=")]
+            if line.strip() and not line.strip().startswith("#")]
 
 
 def load_subject():
@@ -99,6 +120,11 @@ def load_subject():
         sys.exit(f"::error file={WF}::the {PASS_STEP!r} step declares no env: -- "
                  f"this gate builds the step's environment from that block so a "
                  f"renamed variable cannot pass unnoticed.")
+    identity_step = find_step(WF, IDENTITY_STEP) or {}
+    subject["identity:run-name"] = str((identity_step.get("with") or {}).get("run-name") or "")
+    if not subject["identity:run-name"].strip():
+        sys.exit(f"::error file={WF}::{IDENTITY_STEP!r}'s run-name input is empty -- "
+                 f"nothing to evaluate (MF-05).")
     return subject
 
 
@@ -210,10 +236,25 @@ def suite(subject, bash):
 
     # Relocated, not reworded (contracts/watchdog-clean-path-delta.md): the
     # two wordings in collect's new reporter are the two from diagnose's.
-    if body_lines(subject["pass:run"]) != body_lines(subject["agent-pass:run"]):
-        broke.append("collect's passed-inspection wording has drifted from "
-                     "diagnose's -- spec 058 relocates those two strings, it "
-                     "does not reword them; one copy was edited alone")
+    if executable_lines(subject["pass:run"]) != executable_lines(subject["agent-pass:run"]):
+        broke.append("collect's passed-inspection body-building logic has "
+                     "drifted from diagnose's -- spec 058 relocates the "
+                     "wording, it does not reword it, and MF-06 keeps the "
+                     "whole idiom (including the COLLECTORS_TOTAL/"
+                     "COLLECTORS_FAILED fallback defaults) in this one "
+                     "shape; one copy was edited alone")
+
+    for case in IDENTITY_CASES:
+        ctx = {"inputs.run-name": case["run_name_input"],
+               "needs.collect.outputs.run-name": case["collect_run_name"]}
+        try:
+            got = evaluate(subject["identity:run-name"], ctx)
+        except (ValueError, IndexError) as exc:
+            broke.append(f"{case['label']}: run-name did not evaluate: {exc}")
+            continue
+        if got != case["expect"]:
+            broke.append(f"{case['label']}: {IDENTITY_STEP!r} resolved "
+                         f"run-name={got!r}, expected {case['expect']!r}")
 
     for fx in FIXTURES:
         where = fx["label"]
@@ -305,6 +346,22 @@ def mut_full_pass_reworded(subject):
     return s
 
 
+def mut_pass_fallback_drifts(subject):
+    # MF-06: a drift outside the two `body=` strings themselves -- the
+    # COLLECTORS_TOTAL fallback default -- must still be caught now that
+    # the comparison covers the whole idiom, not just the wording.
+    s = dict(subject)
+    s["pass:run"] = subject["pass:run"].replace(
+        'total="${COLLECTORS_TOTAL:-9}"', 'total="${COLLECTORS_TOTAL:-10}"')
+    return s
+
+
+def mut_identity_loses_run_name_fallback(subject):
+    s = dict(subject)
+    s["identity:run-name"] = "needs.collect.outputs.run-name"
+    return s
+
+
 MUTATIONS = [
     ("diagnose stops keying on the signal set", mut_diagnose_ignores_signals),
     ("the reporter stops gating on aggregate's outcome",
@@ -314,6 +371,10 @@ MUTATIONS = [
     ("the reporter stops requiring readable evidence",
      mut_pass_ignores_evidence_available),
     ("the full-pass wording is reworded in collect alone", mut_full_pass_reworded),
+    ("collect's COLLECTORS_TOTAL fallback drifts from diagnose's (MF-06)",
+     mut_pass_fallback_drifts),
+    ("report-unhandled-failure's identity step drops the inputs.run-name "
+     "fallback (MF-05)", mut_identity_loses_run_name_fallback),
 ]
 
 

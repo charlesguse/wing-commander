@@ -137,8 +137,52 @@ def read_failures(bash, mutate=None):
     return broke
 
 
+# MF-02(a)/(b): a run whose OWN `if:` skipped it, and a run outside the
+# wrapper-supplied workflow-path allowlist, must never reach the
+# composite -- each would otherwise cost two API calls (jobs + artifacts)
+# confirming what this step already knew.
+FILTER_CANDIDATES = [
+    {"run_id": "7101", "workflow": ".github/workflows/wing-commander-1-intake.yml",
+     "concluded_at": "2026-09-20T18:00:00Z", "conclusion": "success"},
+    {"run_id": "7102", "workflow": ".github/workflows/wing-commander-2-clarify.yml",
+     "concluded_at": "2026-09-20T18:05:00Z", "conclusion": "skipped"},
+    {"run_id": "7103", "workflow": ".github/workflows/wing-commander-e2e-reference-image.yml",
+     "concluded_at": "2026-09-20T18:10:00Z", "conclusion": "success"},
+]
+FILTER_ALLOWED = [".github/workflows/wing-commander-1-intake.yml",
+                  ".github/workflows/wing-commander-2-clarify.yml"]
+
+
+def filter_failures(bash, mutate=None):
+    """MF-02: a skipped run and a run outside the allowlist never reach
+    sweep-runs, regardless of concluding inside the window."""
+    broke = []
+    work = tempfile.mkdtemp(prefix="wc-gate77-f-")
+    try:
+        got = run_window(work, FILTER_CANDIDATES, mark=EARLY,
+                         workflow_paths=FILTER_ALLOWED, bash=bash, mutate=mutate)
+        if got["rc"] != 0:
+            broke.append(f"the window step failed on the filter fixture: "
+                         f"{got['out'].strip()[:300]}")
+            return broke
+        ids = got["listed_ids"]
+        if "7101" not in ids:
+            broke.append(f"7101 (allowed workflow, not skipped) was dropped: {ids}")
+        if "7102" in ids:
+            broke.append(f"7102 (conclusion=skipped) reached sweep-runs: {ids} -- "
+                         f"MF-02(a): a skipped run carries no metrics-record "
+                         f"artifact and never will")
+        if "7103" in ids:
+            broke.append(f"7103 (outside the workflow-path allowlist) reached "
+                         f"sweep-runs: {ids} -- MF-02(b): the caller's allowlist "
+                         f"must actually restrict discovery")
+    finally:
+        cleanup(work)
+    return broke
+
+
 def suite(bash, mutate=None):
-    return write_failures(bash, mutate) + read_failures(bash, mutate)
+    return write_failures(bash, mutate) + read_failures(bash, mutate) + filter_failures(bash, mutate)
 
 
 # --------------------------------------------------------------------------
@@ -158,14 +202,18 @@ def mut_mark_committed_separately(name, script):
 def mut_mark_taken_from_the_first_run(name, script):
     if name != APPEND:
         return script
-    return script.replace("[.[].concluded_at] | max // empty",
-                          "[.[].concluded_at] | first // empty")
+    return script.replace(
+        "[.[] | select((.run_id|tostring) as $rid | ($hb | index($rid)) == null) | .concluded_at] | max // empty",
+        "[.[] | select((.run_id|tostring) as $rid | ($hb | index($rid)) == null) | .concluded_at] | first // empty")
 
 
 def mut_overlap_dropped(name, script):
     if name != WINDOW:
         return script
-    return script.replace('date -u -d "$since - 1 hour"', 'date -u -d "$since"')
+    # MF-09: window_start is jq-derived, not `date -d`, so the overlap this
+    # mutation drops is the `- 3600` (one hour, in seconds) term.
+    return script.replace("(($s | fromdate) - 3600) | todate",
+                          "($s | fromdate) | todate")
 
 
 def mut_mark_ignored(name, script):
@@ -174,12 +222,29 @@ def mut_mark_ignored(name, script):
     return script.replace("jq -r '.high_water_mark // empty'", "jq -r 'empty'")
 
 
+def mut_skipped_conclusion_not_dropped(name, script):
+    if name != WINDOW:
+        return script
+    return script.replace(' | select(.conclusion != "skipped")', "")
+
+
+def mut_workflow_allowlist_not_applied(name, script):
+    if name != WINDOW:
+        return script
+    return script.replace(
+        ' | select(($wf | length) == 0 or ((.workflow as $cw | $wf | index($cw)) != null))', "")
+
+
 MUTATIONS = [
     ("the mark advances in its own commit", mut_mark_committed_separately),
     ("the mark is taken from the first run, not the latest",
      mut_mark_taken_from_the_first_run),
     ("the fixed one-hour overlap is dropped", mut_overlap_dropped),
     ("the durable mark is read and then ignored", mut_mark_ignored),
+    ("a skipped run is not dropped before the composite (MF-02(a))",
+     mut_skipped_conclusion_not_dropped),
+    ("the caller's workflow-path allowlist is not applied (MF-02(b))",
+     mut_workflow_allowlist_not_applied),
 ]
 
 
@@ -209,7 +274,7 @@ def main():
         else:
             print(f"::error::MUTATION SURVIVED - {label} broke nothing in this gate.")
             mutation_failures += 1
-    print(f"Gate 77: 1 contended sweep + 2 window shape(s), "
+    print(f"Gate 77: 1 contended sweep + 3 window shape(s), "
           f"{len(MUTATIONS)} mutation(s); {len(failures)} failure(s), "
           f"{mutation_failures} mutation failure(s).")
     return 1 if failures or mutation_failures else 0

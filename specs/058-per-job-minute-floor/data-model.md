@@ -27,7 +27,7 @@ keyed by whether it has other dependencies:
 | Entry, no other deps | `verify-image-prerequisites` | `!cancelled() && needs.verify-image-prerequisites.result != 'failure'` |
 | Entry, N other deps | `[verify-image-prerequisites, X1, ..., XN]` | `!cancelled() && needs.verify-image-prerequisites.result != 'failure' && needs.X1.result == 'success' && ... && needs.XN.result == 'success'` |
 | Survivor (pre-existing status-function `if:`) | unchanged | the clause referencing `verify-image-prerequisites.result` narrows from `== 'success'` to `!= 'failure'`; every other clause is byte-for-byte unchanged |
-| Chain (depends only on a rewritten job, never on the check directly) | unchanged | unchanged (research.md R-A2 — no rewrite needed) |
+| Chain (depends only on a rewritten job, never on the check directly) | gains `verify-image-prerequisites` alongside its existing dependency(ies) | `!cancelled() && needs.verify-image-prerequisites.result != 'failure' && needs.<existing>.result == 'success'` — rewritten too (research.md R-A2, corrected: a status-function `if:` anywhere upstream switches off GitHub's implicit `success()` protection for the whole closure downstream of it, so the comparison must be restated at every link, not just the direct dependent) |
 
 Applies identically across all 13 published stages (FR-002); the
 ~40-job count is this table's population, not a new count this feature
