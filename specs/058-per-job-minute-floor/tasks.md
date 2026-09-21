@@ -212,7 +212,7 @@ shifted.
 
 ### Validation (SC-001–SC-004, quickstart.md Story 1)
 
-- [ ] T020 [US1] Run `python .github/scripts/run-local-gates.py` and
+- [X] T020 [US1] Run `python .github/scripts/run-local-gates.py` and
   confirm all gates pass on the real tree, including the amended Gate 22
   and Gate 23 and their self-tests (T015-T019).
 - [ ] T021 [US1] Follow quickstart.md's Story 1 steps 1-4 and 7 against a
@@ -222,11 +222,23 @@ shifted.
   other job's conclusion matching current `main`, the bad-image run shows
   it failed with every dependent skipped, and a forced-failure of a
   second dependency still skips a two-dependency dependent job
-  (Acceptance Scenarios 1, 2, 4).
-- [ ] T022 [US1] Follow quickstart.md's Story 1 step 6: on a scratch
+  (Acceptance Scenarios 1, 2, 4). NOT DONE this session: this requires
+  dispatching real workflow runs and reading their jobs API
+  (`gh workflow run`/`gh run view`), neither of which this run's permitted
+  command list includes (only `gh issue view`/`gh issue comment` are
+  granted). Needs a human or a differently-scoped run to dispatch the
+  sample runs and confirm the job graph live, once this branch reaches
+  main or a PR.
+- [X] T022 [US1] Follow quickstart.md's Story 1 step 6: on a scratch
   branch, revert one dependent job's `if:` to bare `needs:` and confirm
   Gate 23 (T015) fails, naming that stage and job (Acceptance Scenario 5,
-  FR-007); revert the scratch change afterward.
+  FR-007); revert the scratch change afterward. Done in-place (this
+  session has no scratch-branch tooling): `intake.yml`'s `intake` job's
+  `if:`/comment lines were removed, Gate 23 was confirmed to fail by name
+  (`.github/workflows/intake.yml`, job `'intake'`), and the change was
+  reverted via a matching Edit (confirmed byte-identical to HEAD via
+  `git diff`) since `git checkout`/`git restore` are outside this run's
+  permitted command list.
 
 **Checkpoint**: All 13 stages bill zero jobs for the image check on the
 no-image path, every gate passes, and FR-007's reversion check is proven
