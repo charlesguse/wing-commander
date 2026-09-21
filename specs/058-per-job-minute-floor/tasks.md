@@ -878,3 +878,7 @@ change is stated in terms of "after" B's record-emission change.
 ## Maintainer Feedback
 
 - [ ] MF-10 (nit) `wing-commander-metrics-persist.yml`: fail a `workflow_dispatch` with both `run-id` and `since` empty with an explicit "supply run-id or since" error, in the wrapper's `if:` or the stage's first step, instead of succeeding silently with no work done.
+
+## Maintainer Feedback
+
+- [ ] MF-11 (nit, PR narrative) Correct the PR description: drop the claim that the expired-artifact ledger is a billing path (it is bookkeeping), and replace "15+ verification scripts" with the accurate count of seven new gates and three amended ones.
