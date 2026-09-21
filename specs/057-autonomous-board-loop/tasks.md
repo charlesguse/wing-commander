@@ -47,7 +47,7 @@ plan.md's Project Structure and this repository's existing layout.
 **Purpose**: The workflow skeleton and the one documentation change that
 every later phase's fixtures/labels reference.
 
-- [ ] T001 [P] Create `.github/workflows/board-loop.yml` skeleton: header
+- [X] T001 [P] Create `.github/workflows/board-loop.yml` skeleton: header
   comment stating why this workflow is not a published stage (FR-062/
   FR-063, mirroring `auto-release.yml`'s own "it releases THIS repository,
   not an adopter's" wording), `on: schedule` (a PR-reviewed cron
@@ -55,7 +55,7 @@ every later phase's fixtures/labels reference.
   `pull_request: types: [closed]` triggers, and
   `concurrency: { group: wing-commander-board-loop, cancel-in-progress: false }`
   (FR-048) — no jobs yet (contracts/board-loop-workflow.md).
-- [ ] T002 [P] Add a `board:stalled` row to `docs/setup.md`'s existing
+- [X] T002 [P] Add a `board:stalled` row to `docs/setup.md`'s existing
   manual label table: applied by the loop on round-budget exhaustion
   (FR-030), a post-push backstop breach (FR-021), or an already-fixed
   hand-over (FR-012); cleared only by a human removing the label
@@ -75,21 +75,21 @@ it can act.
 **⚠️ CRITICAL**: No user story's job wiring can be added to
 `board-loop.yml` until this phase is complete.
 
-- [ ] T003 Add the entry-gate kill-switch check to `board-loop.yml`: the
+- [X] T003 Add the entry-gate kill-switch check to `board-loop.yml`: the
   exact `if: vars.WING_COMMANDER_BOARD_LOOP_PAUSED != 'true'` idiom
   `auto-release.yml` already uses at every durable-action boundary
   (research.md D2), gating the `select` job.
-- [ ] T004 [P] Create `.github/scripts/board_stand_down.py` implementing
+- [X] T004 [P] Create `.github/scripts/board_stand_down.py` implementing
   the "an implement cycle is in flight" check named in
   contracts/board-loop-workflow.md's entry gate 2: `gh run list
   --workflow=implement.yml --status=in_progress --json databaseId`
   returning non-empty (research.md D16, FR-049).
-- [ ] T005 Wire entry gates 1 (T003) and 2 (T004) into `board-loop.yml`'s
+- [X] T005 Wire entry gates 1 (T003) and 2 (T004) into `board-loop.yml`'s
   `select` job: on a pause, stand down and record the pause as a pause,
   not a failure (FR-046, SC-006); on an in-flight implement cycle, stand
   down and record it (FR-049); either way no agent is invoked and the run
   ends.
-- [ ] T006 [P] Create `.github/scripts/board_eligibility.py` with
+- [X] T006 [P] Create `.github/scripts/board_eligibility.py` with
   `classify_issue(issue, labeled_events)`, `is_excluded(issue)`, and
   `select(open_issues, labeled_events_by_issue)` exactly as specified in
   contracts/eligibility-and-selection.md (FR-006/FR-008/FR-009/FR-010):
@@ -101,7 +101,7 @@ it can act.
   regardless of actor, and exclusion on `state == closed`, any
   `disposition:*` settled marker, `board:stalled`, or any `stage:*`/
   `spec:*` label.
-- [ ] T007 Create `.github/scripts/verify-board-eligibility.py` with the
+- [X] T007 Create `.github/scripts/verify-board-eligibility.py` with the
   four FR-064-bullet-2 fixtures under
   `.github/scripts/tests/board-eligibility/` (maintainer-authored, no
   label → admitted `maintainer-authored`; maintainer-applied entry label →
@@ -110,24 +110,24 @@ it can act.
   (`pipeline-defect`) → admitted `pipeline-labeled` regardless of actor),
   asserting `classify_issue()`'s exact return value and failing loudly if
   any fixture file is missing.
-- [ ] T008 Register `verify-board-eligibility.py` as the next sequential
+- [X] T008 Register `verify-board-eligibility.py` as the next sequential
   `Gate N — board eligibility` step in `.github/workflows/lint-workflows.yml`
   (research.md D24) so `run-local-gates.py` picks it up automatically.
-- [ ] T009 Wire the `select` job in `board-loop.yml` to call
+- [X] T009 Wire the `select` job in `board-loop.yml` to call
   `board_eligibility.py`'s `select()` against `gh issue list --json
   number,author,authorAssociation,labels,state,createdAt` and the
   per-candidate `labeled` timeline events; on no eligible issue, the job
   summary states "nothing to do", no further job runs, and no agent is
   invoked (SC-009); on a hit, the selected issue number is passed to every
   downstream job.
-- [ ] T010 [P] Create `.github/scripts/board_item_marker.py` with
+- [X] T010 [P] Create `.github/scripts/board_item_marker.py` with
   `read_marker(issue_comments) -> dict | None` and
   `write_marker(step, round, pr, branch, base_sha) -> str` implementing
   the HTML-comment shape
   (`<!-- wing-commander-board-item: {"step":...,"round":...,"pr":...,"branch":...,"base_sha":...} -->`)
   and edit-most-recent-status-comment semantics of
   contracts/board-item-marker.md.
-- [ ] T011 Wire the marker's read side into `board-loop.yml`: a resuming
+- [X] T011 Wire the marker's read side into `board-loop.yml`: a resuming
   run reads the marker (T010) on the selected issue's most recent bot
   comment as a fast path only, then re-derives `branch` (`git ls-remote
   origin refs/heads/<branch>`), `pr` (`gh pr list --search "<issue_number>

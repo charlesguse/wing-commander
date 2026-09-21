@@ -3883,6 +3883,17 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-spec-branch-push-concurrency.py --self-test
 
+      # Gate 81 — specs/057-autonomous-board-loop (FR-008/FR-064 bullet 2):
+      # board_eligibility.py's classify_issue() must decide a maintainer-
+      # applied label from the `labeled` timeline event's own actor, never
+      # from the label's mere presence — the branch a bot-applied entry
+      # label (the pr-conversation stage's own spec-request spin-off, for
+      # instance) exists to prove is NOT admitted on that ground. Numbered
+      # 81 because Gate 80 (#397/#438) landed first.
+      - name: Gate 81 — board loop eligibility resolves every FR-064 bullet-2 branch
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-eligibility.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when
