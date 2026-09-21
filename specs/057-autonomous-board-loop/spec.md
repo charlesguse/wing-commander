@@ -39,7 +39,7 @@ them:
 | route | the pr-conversation stage's `small-unrelated-change` size backstop and its `new-functionality` spin-off to a `spec-request` issue, which a bot-applied label already hands to intake | the route is only ever taken from a *PR comment*, never from an open issue |
 | fix | the pr-conversation stage opens a PR to the default branch; implement pushes to a spec branch | no stage opens a fix PR *from an issue* |
 | review | `pr-conversation` folds a *human's* review into `tasks.md` | no agent reviews a fix PR and posts findings on it; out-of-scope findings never become issues |
-| merge | `auto-release`'s end-to-end leg merges inside a disposable test repository (spec 055) | Constitution V forbade every bot merge to this repository's `main` until PR #409 |
+| merge | `auto-release`'s end-to-end leg merges inside a disposable test repository (spec 055) | Constitution V forbade every bot merge to this repository's `main` until PR #409 — and FR-003 leaves this step to a human anyway, so what is missing here is the handover, not the merge |
 | prove | `wing-commander-watchdog-test.yml`; `gh workflow run` on a wrapper | nothing re-drives a run after a merge and records the evidence |
 
 **Constitution dependency, already satisfied.** Constitution 2.0.0 (PR #409,
@@ -47,8 +47,8 @@ commit `560a6ae`) added Principle X, *Bounded Autonomy — The Pipeline Works
 Its Own Board*, and amended V to carve out exactly two bot merge classes. X
 is what makes this feature legal, and X is also its hardest constraint: *the
 bound is the shape of the change, never the confidence of the model.* Every
-durable action this loop takes — a close, a route, a push, a merge — stands
-behind deterministic code, not a prompt (IX).
+durable action this loop takes — a close, a route, a push, a readiness
+claim — stands behind deterministic code, not a prompt (IX).
 
 **The feed is three sources**: issues a maintainer files, the watchdog's
 `pipeline-defect` findings, and — from spec 056 (#412) — the defects every
@@ -58,7 +58,9 @@ consumer that gives that feed somewhere to go.
 **What this is not.** This is not a second implement loop and it does not
 touch the feature lifecycle. Its only exits into that lifecycle are a
 `spec-request` issue (which intake already picks up) and a closed issue. The
-spec, plan and final PR merges stay human, as V and X both say.
+spec, plan and final PR merges stay human, as V and X both say — and under
+FR-003, answered from #408, so does the fix PR's own merge: this feature
+stops at "ready to merge" and hands over.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -110,9 +112,11 @@ design trade-off. The loop routes it to a fix. Another asks for a change to a
 published stage's inputs across three stages. The loop files it as a
 `spec-request` and stops — it never writes a line of it. A third looks
 fix-shaped to the agent, but the change the fixer actually produced touches
-nine files. Code re-checks the finished diff, withdraws the fix, and converts
-it to a `spec-request`, exactly as the pr-conversation stage's size backstop
-overrides its classify step's own "very small" judgment.
+nine files. Code re-checks the finished diff, withdraws the fix — leaving the
+branch and PR open under a notice that points at what supersedes them, rather
+than deleting work — and converts it to a `spec-request`, exactly as the
+pr-conversation stage's size backstop overrides its classify step's own "very
+small" judgment.
 
 **Why this priority**: The route is the boundary Principle X draws. If the
 agent's own classification were the last word, "fix-shaped" would mean
@@ -185,8 +189,10 @@ the fix→review cycle spends its round budget without reaching zero findings,
 the PR stays open for a human and the issue gets a stall notice.
 
 **Why this priority**: Principle X makes the review a gating input to the
-merge, not a courtesy. It also fixes the specific legibility gap this feature
-was filed over.
+handover, not a courtesy — and under FR-003's answer it is *more*
+load-bearing, not less, because the review object is what the human reads
+before merging by hand. It also fixes the specific legibility gap this
+feature was filed over.
 
 **Independent Test**: Drive a fixture PR carrying one in-scope defect and one
 out-of-scope defect. Confirm a PR review object exists on GitHub carrying
@@ -206,61 +212,76 @@ out-of-scope fix.
 3. **Given** a review returning an out-of-scope finding, **When** the loop
    continues, **Then** a new issue exists carrying
    `Found by the code review of #N`, the PR is not widened, and the finding
-   does not block the merge gate.
+   does not hold the PR back from being reported ready.
 4. **Given** the round budget is spent with findings still open, **When** the
    loop stops, **Then** the PR is left open and unmerged, the issue carries a
-   stall notice naming the remaining findings, and no merge is attempted.
+   stall notice naming the remaining findings and the `board:stalled` label
+   whose removal clears it, and nothing is reported ready.
 
 ---
 
-### User Story 5 - The merge gate refuses anything it cannot prove (Priority: P1)
+### User Story 5 - The loop never calls a PR ready unless it can prove it (Priority: P1)
 
-Every condition is checked in code against the exact head SHA about to be
-merged: checks green on *that* SHA (right after a push the PR's check summary
-still shows the previous head's run, so the gate compares `headSha`, never
+*(The merge half of this story moved to the follow-on feature with FR-003's
+answer. What remains is the handover: the same conditions, read the same way,
+reported rather than acted on.)*
+
+Every condition is checked in code against the exact head SHA the report
+names: checks green on *that* SHA (right after a push the PR's check summary
+still shows the previous head's run, so the report compares `headSha`, never
 the summary); zero open findings from the review; the size-and-path backstop
 holding on the final diff; the kill switch clear. A head with no checks at
 all is not green. Anything that fails leaves the PR open with the reason on
-the issue. The merge, when it happens, is a squash commit one human action
-reverts.
+the issue and the item picked up again later. When everything holds, the loop
+marks the PR ready, posts the readiness report, and records on the issue that
+it is waiting for a human to merge. It never merges.
 
-**Why this priority**: This is the one irreversible-ish action the feature
-adds, and the one V had to be amended for. Every other step can be undone by
-closing something.
+**Why this priority**: This is what a maintainer reads before spending their
+one irreversible action. A readiness claim that was never actually derived
+from the head SHA is worse than no claim, because it invites a merge on
+evidence that does not exist.
 
-**Independent Test**: Run the gate against a checked-in fixture per refusal
-branch — stale check summary over a newer head, a head with no checks at all,
-a nonzero open-finding count, a final diff over the backstop, kill switch set
-— and confirm each refuses with its own named reason, plus one fixture where
-all conditions hold and the gate permits.
+**Independent Test**: Run the readiness check against a checked-in fixture
+per refusal branch — stale check summary over a newer head, a head with no
+checks at all, a nonzero open-finding count, a final diff over the backstop,
+kill switch set — and confirm each refuses with its own named reason, plus
+one fixture where all conditions hold and the check reports ready without
+merging.
 
 **Acceptance Scenarios**:
 
 1. **Given** a PR whose checks are green on an older head and whose current
-   head has no completed checks, **When** the gate runs, **Then** it refuses,
-   naming the SHA mismatch.
-2. **Given** a PR whose head has no checks at all, **When** the gate runs,
-   **Then** it refuses — absence of checks is not green (VIII).
-3. **Given** a PR with one open review finding, **When** the gate runs,
-   **Then** it refuses, naming the finding count.
+   head has no completed checks, **When** the readiness check runs, **Then**
+   it reports not ready, naming the SHA mismatch.
+2. **Given** a PR whose head has no checks at all, **When** the readiness
+   check runs, **Then** it reports not ready — absence of checks is not green
+   (VIII).
+3. **Given** a PR with one open review finding, **When** the readiness check
+   runs, **Then** it reports not ready, naming the finding count.
 4. **Given** a final diff that breaches the size-and-path backstop, **When**
-   the gate runs, **Then** it refuses and the loop routes the work to a
-   `spec-request` instead.
-5. **Given** the kill switch set mid-loop, **When** the gate runs, **Then**
-   it refuses and the issue records the stand-down.
-6. **Given** every condition holding, **When** the gate runs, **Then** the PR
-   is squash-merged using the App token and the issue records the merge
-   commit.
+   the readiness check runs, **Then** the loop routes the work to a
+   `spec-request` instead, and the pushed branch and PR are left open under a
+   notice pointing at it (FR-021).
+5. **Given** the kill switch set mid-loop, **When** the readiness check runs,
+   **Then** nothing is reported ready and the issue records the stand-down.
+6. **Given** every condition holding, **When** the readiness check runs,
+   **Then** the PR is marked ready, the report naming the evaluated head SHA
+   is posted, the issue records that a human merge is awaited, and no merge,
+   approval or auto-merge is performed.
 
 ---
 
 ### User Story 6 - Behaviour that only runs in Actions is proven before the issue closes (Priority: P2)
 
-The merged fix changes something that only ever executes inside a GitHub
-Actions run. The loop re-drives one run through the wrapper that can dispatch
-it, waits for a terminal outcome, and records the run URL and result on the
-PR or the issue. Only then does the issue close. If the proof run fails or
-cannot be dispatched, the issue stays open carrying the evidence.
+A human merges the PR the loop reported ready, and the `pull_request: closed`
+event brings the item back to the loop at the prove step — that is this
+story's entry under FR-003's answer. The merged fix changes something that
+only ever executes inside a GitHub Actions run. The loop re-drives one run
+through the wrapper that can dispatch it, waits for a terminal outcome, and
+records the run URL and result on the PR or the issue. Only then does the
+issue close. If the proof run fails or cannot be dispatched, the issue stays
+open carrying the evidence. A PR closed *without* being merged is recorded
+and proves nothing.
 
 **Why this priority**: A merged change to Actions-only behaviour that was
 never re-driven is exactly the "green check that means nothing" VIII warns
@@ -269,20 +290,28 @@ on it: without proof, the issue simply stays open for a human, which is
 today's status quo.
 
 **Independent Test**: Merge a fixture fix that declares itself Actions-only,
-confirm a dispatched run URL and its outcome appear on the PR or issue and
-the issue closes; then repeat with a proof run that fails and confirm the
-issue stays open.
+confirm the `pull_request: closed` resume path picks the item up, a
+dispatched run URL and its outcome appear on the PR or issue and the issue
+closes; then repeat with a proof run that fails and confirm the issue stays
+open; then repeat with a PR closed unmerged and confirm no proof run is
+dispatched.
 
 **Acceptance Scenarios**:
 
-1. **Given** a merged Actions-only fix, **When** the prove step runs,
+1. **Given** a fix PR the loop reported ready and a human merged, **When**
+   the `pull_request: closed` event arrives, **Then** the loop resumes that
+   item at the prove step rather than re-selecting it from the top.
+2. **Given** a merged Actions-only fix, **When** the prove step runs,
    **Then** a run URL and its terminal outcome are recorded and the issue
    closes citing them.
-2. **Given** a proof run that ends in failure, **When** the prove step
+3. **Given** a proof run that ends in failure, **When** the prove step
    finishes, **Then** the issue stays open carrying the failing run URL.
-3. **Given** a merged fix that changes nothing that runs only in Actions,
+4. **Given** a merged fix that changes nothing that runs only in Actions,
    **When** the prove step runs, **Then** it records why no re-drive was
    needed and the issue closes on the merge evidence alone.
+5. **Given** a fix PR closed without being merged, **When** the resume path
+   fires, **Then** the closure is recorded on the issue, no proof run is
+   dispatched, and the issue stays open.
 
 ---
 
@@ -327,7 +356,8 @@ confirm the item halts without merging.
   not a failure and not an agent invocation.
 - **The oldest eligible issue is one the loop already failed on.** It must
   not be picked up forever. An item that has exhausted its round budget
-  carries a marker that makes it ineligible until a human touches it.
+  carries the `board:stalled` label (FR-030) and stays ineligible until a
+  human removes that label.
 - **Two issues describe the same defect.** The loop takes the older one; the
   second is caught at its own triage as already fixed on `main`.
 - **The cited run's execution-output artifact has expired or is missing.**
@@ -340,16 +370,18 @@ confirm the item halts without merging.
   data, never instructions, and never reaches the fixer as a directive.
 - **The issue is closed by a human mid-loop.** The loop stops at its next
   durable action and records where it stopped.
-- **The fix PR's checks are still running** when the gate reaches it. Not
-  green yet is not green; the gate refuses this round and the item is picked
-  up again later rather than polled indefinitely.
+- **The fix PR's checks are still running** when the readiness check reaches
+  it. Not green yet is not green; the check reports not ready this round and
+  the item is picked up again later rather than polled indefinitely.
 - **A docs-only PR gets no checks** under `lint-workflows.yml`'s path filter.
-  The gate treats "no checks" as not green (VIII), so such a PR is never
-  auto-merged; it waits for a human.
-- **A merge that touches `.github/workflows/`.** The App token carries the
-  `workflows` permission a classic PAT lacks — the bot already pushes
-  workflow files to spec branches — but the gate must prove it on a fixture
-  rather than assume it.
+  The readiness check treats "no checks" as not green (VIII), so such a PR is
+  never reported ready; it waits for a human to judge it.
+- **A merge that touches `.github/workflows/`.** Deferred with the merge
+  block (FR-039): the App token's `workflows` permission matters only once
+  the loop merges, and the fixture that proves it belongs with that feature.
+  Under FR-003's answer the human doing the merge carries their own scope.
+- **The human closes the fix PR without merging it.** The loop records the
+  closure, dispatches no proof run, and leaves the issue open (US6).
 - **The fix→review cycle outlives the agent credential** (over an hour). Spec
   052's credential-lifetime work applies unchanged and must be exercised, not
   assumed.
@@ -362,25 +394,62 @@ confirm the item halts without merging.
 - **An issue eligible only for a read-only triage proposal** (not maintainer
   authored or labeled, not pipeline-filed). The loop posts the proposal and
   takes no durable action — no close, no branch, no label that would make it
-  eligible on the next pass.
+  eligible on the next pass. Whether this case exists at all is FR-007's open
+  question: selection as drafted (FR-009) never reaches it.
+
+## Clarifications
+
+### Session 2026-09-21 — answered on [#408](https://github.com/charlesguse/wing-commander/issues/408)
+
+- **FR-003 — how far autonomy goes**: **stop at "ready to merge"**. The loop
+  performs triage, route, fix, review and prove; a human merges, and a
+  `pull_request: closed` trigger resumes the item at prove. The autonomous
+  merge Principle X permits is deferred as one block (FR-034, FR-035, FR-038,
+  FR-039 and, with it, FR-040) to a follow-on feature — deferred because
+  three holes in the entry and selection model is a poor moment to also hand
+  the loop its one irreversible action, not because X forbids it. What the
+  merge gate would have checked survives as a readiness report
+  (FR-066–FR-068); FR-036 and FR-037 stay in scope, because both are about
+  reading GitHub correctly rather than about merging.
+- **FR-040 — the second merge class** (the Spec Kit upgrade PR): **deferred
+  entirely**. It is orthogonal to the six board steps, and moot while there
+  is no autonomous merge for it to be a second class of. It revisits with the
+  merge block, as its own feature.
+- **FR-062 — published stage or repository-only**: **repository-only**, an
+  unnumbered workflow in the `auto-release.yml` shape. Each convention the
+  loop encodes — the 429 triage evidence, the `Found by the code review of
+  #N` line, this repository's gate-suite entry point — would have to become a
+  typed input to publish, which buys adopters a stage they cannot use without
+  also adopting the conventions. This feature moves no adopter-pinned
+  surface; FR-063's second branch applies.
+
+Three questions opened in the same round and are carried forward: FR-012
+(what code must re-derive before closing on "already fixed on `main`"),
+FR-008 (whether eligibility may read the `labeled` event's actor) and FR-007
+(whether the read-only proposal path ships at all). New requirements added
+here take fresh numbers (FR-066+) so the deferred numbers stay unambiguous
+for the follow-on.
 
 ## Requirements *(mandatory)*
 
 ### Scope
 
-- **FR-001**: The feature MUST deliver one scheduled loop that performs the
-  six board steps in order — triage, route, fix, review, merge, prove — for
-  exactly one issue per run.
-- **FR-002**: The loop MUST be triggerable on a schedule and on demand, and
-  MUST be gated by a repository-level kill switch in the existing
-  `WING_COMMANDER_*_PAUSED` family.
-- **FR-003**: [NEEDS CLARIFICATION: Does this feature ship the autonomous
-  merge (Principle X's step 5), or stop at "ready to merge" with a human
-  merging and a `pull_request: closed` trigger resuming at prove? Both are
-  constitution-legal; (b) is strictly narrower than X permits, (a) is what
-  "see it through" means.] Until this is settled, the spec states the full
-  loop and marks the merge step's requirements so they can be deferred as one
-  block without disturbing steps 1–4 or 6.
+- **FR-001**: The feature MUST deliver one scheduled loop that walks the six
+  board steps in order — triage, route, fix, review, merge, prove — for
+  exactly one issue per run, performing five of them and handing the merge to
+  a human (FR-003).
+- **FR-002**: The loop MUST be triggerable on a schedule and on demand, MUST
+  additionally resume an item at the prove step when the fix PR it opened is
+  closed (FR-003's handover), and MUST be gated by a repository-level kill
+  switch in the existing `WING_COMMANDER_*_PAUSED` family.
+- **FR-003**: The loop MUST stop at "ready to merge". It MUST perform triage,
+  route, fix, review and prove, and MUST NOT merge: when the fix→review cycle
+  reaches zero open findings the loop reports the PR ready (FR-066–FR-068)
+  and hands it to a human, who merges. The autonomous merge Principle X's
+  step 5 permits is deferred as one block — FR-034, FR-035, FR-038, FR-039
+  and FR-040 — to a follow-on feature. Deferred, not rejected: X names the
+  bounded merge as something the pipeline MAY do, and the follow-on takes it
+  up once the loop has a track record.
 - **FR-004**: The feature MUST NOT change the feature lifecycle. Intake,
   clarify, plan, tasks, implement, converge, finalize, cleanup and their
   gates are out of scope; the loop's only exits into that lifecycle are a
@@ -399,19 +468,42 @@ confirm the item halts without merging.
   the watchdog's finding classes, `auto-update:*`, `auto-release:failed`, and
   spec 056's `found-by:*`. No label is required of a maintainer-authored
   issue (Constitution X).
-- **FR-007**: Any other issue MUST receive at most a read-only triage
-  proposal posted as a comment. The loop MUST NOT close it, branch from it,
-  label it, or open anything for it.
-- **FR-008**: Eligibility MUST be decided in code from the issue's author
-  association and labels, never from the issue's text.
+- **FR-007**: [NEEDS CLARIFICATION: Does the read-only triage proposal path
+  ship at all? FR-009 selects only *eligible* issues, so as drafted this
+  requirement and its edge case are unreachable. (a) Drop FR-007 and its edge
+  case — Principle X permits the proposal, it does not require it; (b) give
+  the path its own selection pass with its own bound, its own SC-009 wording
+  (since a pass that reaches ineligible issues contradicts "invokes no
+  agent"), and an exclusion that a posted proposal sets, without which the
+  loop re-proposes on the same issue every run.] Until this is settled the
+  requirement stands as drafted: any other issue MUST receive at most a
+  read-only triage proposal posted as a comment, and the loop MUST NOT close
+  it, branch from it, label it, or open anything for it. Raised by the review
+  posted on #408 and tracked as #433.
+- **FR-008**: [NEEDS CLARIFICATION: What may eligibility be decided from?
+  FR-006 turns on *who* applied a label, which author association and the
+  label set cannot recover — that fact lives in the `labeled` timeline
+  event's actor. The bot itself applies `spec-request` on a pr-conversation
+  spin-off, and that label is not in FR-006's pipeline-only list, so such an
+  issue would be admitted under "a maintainer labeled it", which is false.
+  (a) Widen this requirement to permit the `labeled` event's actor, keeping
+  FR-006's distinction and making it decidable; (b) drop the who-applied-it
+  distinction for an explicit allowlist of entry labels checked against the
+  label set alone — simpler and readable straight off the issue, but a
+  bot-applied entry label then admits the issue.] Until this is settled the
+  requirement stands as drafted: eligibility MUST be decided in code from the
+  issue's author association and labels, never from the issue's text. Raised
+  by the review posted on #408 and tracked as #431.
 - **FR-009**: The loop MUST select the oldest eligible open issue that is not
   excluded by FR-010, so the board drains in filing order rather than by an
   agent's sense of importance.
 - **FR-010**: An issue MUST be excluded from selection when it is closed,
   when it carries a disposition marking it settled (such as
-  `disposition:false-positive`), or when it carries the exhausted-budget
-  marker FR-030 sets. Exclusion MUST be a code-level check on labels and
-  state.
+  `disposition:false-positive`), when it carries the `board:stalled` label
+  FR-030 applies, or when the feature lifecycle already owns it — any issue
+  carrying a `stage:*` or `spec:*` label, which FR-004 puts out of scope and
+  which this feature's own lifecycle issue would otherwise match on the
+  loop's first run. Exclusion MUST be a code-level check on labels and state.
 
 ### Triage
 
@@ -424,6 +516,23 @@ confirm the item halts without merging.
   upstream action bump, or a commit already on `main` that fixes the
   described defect. The agent MAY propose the verdict; the close MUST be
   gated by code that re-derived the evidence (Principle IX).
+  [NEEDS CLARIFICATION: What must code re-derive before closing on "the
+  fixing commit is already on `main`"? (a) the agent names a SHA and code
+  verifies it is an ancestor of `main`, postdates the issue, and touches at
+  least one path the issue names — deterministic, but "touches a path" is not
+  "fixes the defect", so it is close to a rubber stamp; (b) the issue must
+  cite a failing gate or run, and the close requires that same check to pass
+  at the merge-base — strong evidence, but it costs a run per triage and only
+  covers gate-shaped defects; (c) drop the ground, leaving the 429 and
+  action-bump records as triage's only autonomous closes and the rest to a
+  human. X names this ground as valid close evidence, so (c) is narrower than
+  X permits but legal, the same shape as FR-003's (b).] Until this is
+  settled, the spec states the ground and marks it as deferrable without
+  disturbing the other two. The 429 ground is fully specified above — four
+  named fields a gate reads — and the upstream-action-bump ground is a
+  comparison of the run's pinned action versions against `main`'s; only the
+  already-fixed ground lacks a decidable rule, and FR-064 cannot enumerate
+  its failure branches until it has one.
 - **FR-013**: Every close MUST quote the evidence it acted on — the record's
   own fields, or the commit — in a comment on the issue.
 - **FR-014**: When the cited run's record cannot be read (expired artifact,
@@ -442,7 +551,7 @@ confirm the item halts without merging.
   spec-shaped proposal is never overridden into a fix.
 - **FR-018**: The backstop MUST be a size-and-path check with thresholds that
   are a checked-in, PR-reviewed constant, applied both before anything is
-  pushed and again on the final diff before any merge.
+  pushed and again on the final diff before the PR is reported ready.
 - **FR-019**: A change that would widen or break the published contract (VII)
   MUST route to `spec-request` regardless of its size.
 - **FR-020**: When the backstop re-routes a proposal, the recorded reason
@@ -450,7 +559,16 @@ confirm the item halts without merging.
   stage's size backstop does.
 - **FR-021**: A `spec-request` route MUST leave the work for the feature
   lifecycle: the `spec-request` artifact is created, the originating issue is
-  cross-linked to it, and no branch is cut.
+  cross-linked to it, and no branch is cut. When the re-route instead happens
+  *after* a push — the final-diff application of the backstop (FR-018), which
+  stays in scope because it is a route decision and not a merge decision —
+  the loop MUST NOT delete work: the fix branch and its PR are left open
+  under a notice naming the breached threshold and pointing at the
+  `spec-request` that supersedes them, the originating issue records the
+  breach and both links, and the item takes the `board:stalled` label
+  (FR-030) so no later run re-opens it. FR-054's "no second branch or PR"
+  binds the loop only; it MUST NOT be read as preventing the feature
+  lifecycle from opening its own spec branch for that `spec-request`.
 
 ### Fix
 
@@ -474,59 +592,91 @@ confirm the item halts without merging.
 - **FR-028**: The review MUST be a separate agent invocation that shares no
   context with the fixer — not a continuation of the fixer's session.
 - **FR-029**: The reviewer's findings MUST be posted on the PR as a review
-  object visible in GitHub (Constitution III). Prose belongs in the review
-  body; the findings the merge gate counts MUST also exist as a
-  schema-validated structure the gate reads without parsing prose.
+  object visible in GitHub (Constitution III), and that review MUST use the
+  `COMMENT` event. The loop's PR and its review come from the same App
+  identity (FR-060), and GitHub rejects `APPROVE` and `REQUEST_CHANGES` on a
+  PR the acting identity authored — the only reason this has not bitten is
+  that the recent fix PRs were human-authored. Prose belongs in the review
+  body; the findings the readiness report counts MUST also exist as a
+  schema-validated structure read without parsing prose.
 - **FR-030**: The fix→review cycle MUST repeat until the review returns zero
   open findings or a bounded number of rounds is spent. On exhaustion the PR
   MUST be left open and unmerged, the issue MUST carry a stall notice naming
-  the remaining findings, and the item MUST become ineligible for re-selection
-  until a human touches it.
+  the remaining findings, and the loop MUST apply one named label —
+  `board:stalled` — to the originating issue, which is the exhausted-budget
+  marker FR-010 excludes on. Removing that label MUST be the sole condition
+  that makes the item eligible again, and the stall notice MUST say so: a
+  timeline event alone is not a label-or-state check and would leave FR-010
+  undecidable.
 - **FR-031**: In-scope findings MUST be fixed by further commits on the same
   PR and re-reviewed against the new head.
 - **FR-032**: Out-of-scope findings MUST become new issues carrying the line
   `Found by the code review of #N`, MUST NOT become commits on the PR, and
-  MUST NOT block the merge gate. Each MUST be cross-linked from the
-  originating issue.
+  MUST NOT hold the PR back from being reported ready. Each MUST be
+  cross-linked from the originating issue.
 - **FR-033**: Whether a finding is in scope MUST be recorded per finding in
-  the structure FR-029 defines, so the gate's open-finding count is
-  computable without reading prose.
+  the structure FR-029 defines, so the readiness report's open-finding count
+  is computable without reading prose.
 
-### Merge
+### Readiness and handover
 
-*(Deferrable as one block — see FR-003.)*
+*(FR-003, answered: the loop stops here. FR-034, FR-035, FR-038, FR-039 and
+FR-040 leave scope as one block and are recorded below rather than deleted,
+so the follow-on feature picks them up unchanged. Their numbers are retired,
+not reused. FR-036 and FR-037 stay in scope — both are about reading GitHub
+correctly, not about merging — and the conditions the merge gate would have
+enforced become the readiness report of FR-066–FR-068.)*
 
-- **FR-034**: The merge MUST be a squash merge performed with the App token,
-  producing a single commit on `main` that one human action reverts.
-- **FR-035**: The gate MUST refuse the merge unless every one of these holds,
-  each checked in code: checks are green on the exact head SHA being merged;
-  the gate suite ran on that same SHA; the open-finding count from FR-033 is
-  zero; the size-and-path backstop holds on the final diff; the kill switch
-  is clear.
+- **FR-034**: *Deferred with the merge block* — the squash merge under the
+  App token, producing a single commit on `main` that one human action
+  reverts.
+- **FR-035**: *Deferred with the merge block* — the merge gate's five
+  conditions. Four survive here as the readiness conditions FR-066 requires
+  and the fifth, the kill switch, is FR-051's already; what defers is acting
+  on them.
 - **FR-036**: Green MUST be evaluated against the head SHA, never against the
   PR's check summary, which after a push still reflects the previous head.
 - **FR-037**: A head with no checks MUST be treated as not green (Principle
   VIII), including the docs-only case that `lint-workflows.yml`'s path filter
   produces.
-- **FR-038**: A refusal MUST leave the PR open and record the named reason on
-  the issue. Refusal is a normal outcome, not a run failure.
-- **FR-039**: A merge whose diff touches `.github/workflows/` MUST be proven
-  to succeed under the App token by a checked-in fixture, not assumed from
-  the fact that the App pushes workflow files to spec branches.
-- **FR-040**: [NEEDS CLARIFICATION: Does the second merge class Principle X
-  permits — the Spec Kit upgrade PR the auto-update stage opened — ship in
-  this feature, and does a patch-level jump qualify? X requires "the
-  verification that stage assigns to the jump has passed"; a patch jump's
-  assigned tier verifies without the end-to-end stage, so whether that counts
-  is the owner's call.] If it ships, the size-and-path backstop does not apply
-  to it — a vendored upgrade is measured by its verification, not its line
-  count — and spec 027's rule that the upgrade stage never merges its own PR
-  stands: the loop merges it, the stage does not.
+- **FR-038**: *Deferred with the merge block* — merge-refusal handling. Its
+  in-scope counterpart is FR-067.
+- **FR-039**: *Deferred with the merge block* — the fixture proving a diff
+  that touches `.github/workflows/` merges under the App token belongs with
+  the merge it proves.
+- **FR-040**: *Deferred entirely* — the second merge class Principle X
+  permits (the Spec Kit upgrade PR the auto-update stage opened, and whether
+  a patch-level jump qualifies). It is orthogonal to the six board steps and
+  moot while the loop performs no merge at all. When it is revisited with the
+  merge block, two things recorded here still apply: the size-and-path
+  backstop does not apply to a vendored upgrade — it is measured by its
+  verification, not its line count — and spec 027's rule that the upgrade
+  stage never merges its own PR stands.
+- **FR-066**: When the fix→review cycle reaches zero open findings, the loop
+  MUST post a readiness report on the PR and record it on the issue. The
+  report MUST name the exact head SHA it was derived from and state,
+  condition by condition, what code verified on that SHA: checks green
+  (FR-036, FR-037), the gate suite green on that same SHA, an open-finding
+  count of zero (FR-033), and the size-and-path backstop holding on the final
+  diff. It is a statement of what was checked, never a recommendation to
+  merge.
+- **FR-067**: A condition that does not hold MUST be a normal outcome, not a
+  run failure: the PR is left open, the unmet condition is named on the
+  issue, nothing is reported ready, and the item is picked up again on a
+  later run rather than polled.
+- **FR-068**: The loop MUST NOT merge a PR, approve one, or enable
+  auto-merge on one. The handover MUST be explicit: the PR is marked ready
+  for review and the issue records that it is waiting for a human merge.
 
 ### Prove
 
-- **FR-041**: After a merge, the loop MUST decide whether the fixed behaviour
-  runs only inside Actions, and MUST record that decision either way.
+- **FR-041**: The prove step MUST be entered when the fix PR is closed as
+  merged — under FR-003 that is a human's merge, reaching the loop through
+  the `pull_request: closed` trigger of FR-002 — and the loop MUST resume the
+  item rather than re-select it from the top. A PR closed without being
+  merged MUST be recorded on the issue and MUST NOT start the prove step.
+  Once entered, the loop MUST decide whether the fixed behaviour runs only
+  inside Actions, and MUST record that decision either way.
 - **FR-042**: For Actions-only behaviour, the loop MUST re-drive one run
   through a wrapper that can dispatch it, wait for a terminal outcome, and
   record the run URL and outcome on the PR or the issue.
@@ -538,8 +688,9 @@ confirm the item halts without merging.
 
 - **FR-044**: Every step MUST post what it did on the originating issue
   (Constitution III): the triage verdict and its evidence, the route and its
-  reason, the PR, each review round's outcome, the merge or the refusal
-  reason, and the proof run.
+  reason, the PR, each review round's outcome, the readiness report or the
+  condition that was not met, the human merge when it lands, and the proof
+  run.
 - **FR-045**: Every artifact the loop creates outside the issue — the fix PR,
   a review-finding issue, a `spec-request` issue — MUST be cross-linked from
   the issue in the way the existing outstanding-task-item mechanism does it,
@@ -598,26 +749,28 @@ confirm the item halts without merging.
 
 ### Published surface and coverage
 
-- **FR-062**: [NEEDS CLARIFICATION: Does the loop ship as a published,
-  `workflow_call`-only stage plus a thin wrapper (VII), or as an unnumbered
-  repository-only workflow in the `auto-release.yml` shape? The loop encodes
-  this repository's own conventions — 429 triage evidence, the
+- **FR-062**: The loop MUST ship as an unnumbered, repository-only workflow
+  in the `auto-release.yml` shape, not as a published `workflow_call` stage.
+  It encodes this repository's own conventions — the 429 triage evidence, the
   `Found by the code review of #N` line, this repository's gate-suite entry
-  point — which argues for repository-only unless each convention becomes a
-  typed input.] The answer decides whether this feature moves the
-  adopter-pinned surface at all.
-- **FR-063**: If published, the stage MUST read no `vars.*` and no
-  `github.event.*`; the kill switch, cadence, entry rule and thresholds
-  arrive as declared typed inputs, and the wrapper owns the triggers and the
-  security gates. If repository-only, the workflow MUST carry no
+  point — each of which would have to become a typed input to publish, which
+  would hand adopters a stage they cannot use without also adopting the
+  conventions. Principle I's "the repo is its own first example" is already
+  satisfied by the stages that are published. This feature MUST move no
+  adopter-pinned surface.
+- **FR-063**: Following from FR-062, the workflow MUST carry no
   `workflow_call` trigger and MUST state in its own header why it is not a
   published stage.
 - **FR-064**: Every gate this feature ships MUST have a checked-in fixture
   for each failure branch (Principle VIII) — at minimum: the triage close
-  gate (evidence present, evidence absent, evidence unreadable), the route
-  backstop (under threshold, over threshold, contract-widening), and the
-  merge gate (stale check summary, no checks, open findings, backstop breach,
-  kill switch set, all-clear).
+  gate, branch by branch — 429 evidence present, 429 evidence absent, the
+  record unreadable or expired, the upstream-action-bump ground in both
+  directions, and, for the already-fixed-on-`main` ground, the branches
+  FR-012's answer produces (at minimum evidence satisfying the rule, evidence
+  failing it, and no candidate commit at all); the route backstop (under
+  threshold, over threshold, contract-widening, and the post-push final-diff
+  breach of FR-021); and the readiness report (stale check summary, no
+  checks, open findings, backstop breach, kill switch set, all-clear).
 - **FR-065**: Every gate MUST be reachable through the gate registry and MUST
   run the same subject with the same arguments locally as in CI.
 
@@ -630,10 +783,11 @@ confirm the item halts without merging.
 - **Route decision**: fix-shaped or spec-shaped, the agent's proposal, the
   backstop's verdict, and the measured values behind a re-route.
 - **Review finding**: a defect the reviewer found on the fix PR, with an
-  in-scope/out-of-scope classification, used by the merge gate as a count and
-  by the filing step as issue content.
-- **Merge decision**: permit or refuse, the exact head SHA it was evaluated
-  against, and the named reason for a refusal.
+  in-scope/out-of-scope classification, used by the readiness report as a
+  count and by the filing step as issue content.
+- **Readiness decision**: ready or not ready, the exact head SHA it was
+  evaluated against, the condition-by-condition result, and the named reason
+  when a condition did not hold.
 - **Proof record**: the dispatched run's URL and terminal outcome, or the
   recorded reason no re-drive was required.
 
@@ -642,24 +796,27 @@ confirm the item halts without merging.
 ### Measurable Outcomes
 
 - **SC-001**: A maintainer can read an item's entire history — triage
-  evidence, route and reason, PR, each review round, merge or refusal, proof
-  run — from the originating issue alone, without opening a terminal.
+  evidence, route and reason, PR, each review round, the readiness report or
+  the unmet condition, the merge, proof run — from the originating issue
+  alone, without opening a terminal.
 - **SC-002**: 100% of fix PRs the loop opens carry a review object visible on
   GitHub, closing the gap #401 and #403 demonstrate.
-- **SC-003**: No issue is closed, no branch pushed, and no PR merged except
-  through a check that a fixture exercises in both its passing and its
+- **SC-003**: No issue is closed, no branch pushed, and no PR reported ready
+  except through a check that a fixture exercises in both its passing and its
   failing direction.
-- **SC-004**: Zero merges occur on a head whose checks are absent, stale, or
-  failing — verified by a fixture per refusal branch, not by observation of
-  production runs.
+- **SC-004**: Zero PRs are reported ready on a head whose checks are absent,
+  stale, or failing — verified by a fixture per not-ready branch, not by
+  observation of production runs. The loop performs no merges at all
+  (FR-068), which a fixture asserts rather than an absence of observed ones.
 - **SC-005**: At most one board item is in flight repository-wide at any
   moment, and the loop never starts while an implement cycle is running.
 - **SC-006**: Setting the kill switch stops all durable action by the next
   scheduled run, and the pause is visible as a pause rather than as a
   failure.
 - **SC-007**: An item that exhausts its round budget leaves exactly one open
-  PR and one stall notice — never a second branch or a second PR for the same
-  issue on a later run.
+  PR, one stall notice and one `board:stalled` label — never a second branch
+  or a second PR for the same issue on a later run — and becomes selectable
+  again only once that label is removed.
 - **SC-008**: Out-of-scope review findings appear only as issues carrying
   `Found by the code review of #N`; the fix PR's diff never contains them.
 - **SC-009**: A run with no eligible issue completes as a no-op that invokes
@@ -670,7 +827,8 @@ confirm the item halts without merging.
 ## Assumptions
 
 Recorded where the issue left a choice with a defensible default, so that
-clarify spends its questions on FR-003, FR-040 and FR-062 rather than these.
+clarify spent its questions on FR-003, FR-040 and FR-062 — all three now
+answered, see Clarifications — rather than on these.
 
 - **Cadence**: a schedule interval in the same spirit as `auto-release`'s —
   a one-line, PR-reviewed knob rather than a repository variable — with
@@ -682,9 +840,11 @@ clarify spends its questions on FR-003, FR-040 and FR-062 rather than these.
   default, with the existing `model:opus` escalation honoured, rather than
   hard-coding a more expensive second pair of eyes. Constitution II's
   cost-tiering argues for the cheaper default until evidence says otherwise.
-- **Findings format**: not optional and not an assumption — X requires the
-  merge gate to count open findings in code, so a schema-validated structure
-  is required (FR-029) and prose is confined to the review body.
+- **Findings format**: not optional and not an assumption — the open-finding
+  count has to be computed in code, so a schema-validated structure is
+  required (FR-029) and prose is confined to the review body. Under FR-003's
+  answer that count feeds the readiness report rather than a merge gate; the
+  requirement is unchanged.
 - **Settled dispositions stop the loop**: an issue carrying
   `disposition:false-positive`, or a closed lifecycle, is skipped rather than
   re-triaged (FR-010). This is the safe reading; clarify may narrow it.
@@ -698,15 +858,16 @@ clarify spends its questions on FR-003, FR-040 and FR-062 rather than these.
   constant with the same *shape* and the same "narrow only" property.
 - **Stand-down detection**: "an implement cycle is in flight" is read from
   the pipeline's own run state, not inferred from usage metrics.
-- **The App token carries the `workflows` permission** the merge needs — the
-  bot already pushes workflow files to spec branches — but FR-039 requires
-  this to be demonstrated by a fixture rather than relied on.
+- **The App token carries the `workflows` permission** a merge would need —
+  the bot already pushes workflow files to spec branches. Under FR-003's
+  answer nothing here relies on it: the merge is a human's, and FR-039's
+  fixture defers with the merge block.
 
 ## Dependencies
 
 - **Constitution 2.0.0, Principle X** (PR #409, commit `560a6ae`) —
-  satisfied. Without it, the merge step and the entry rule have no
-  authorization.
+  satisfied. Without it, the entry rule has no authorization, and the merge
+  block FR-003 defers would have none either when the follow-on takes it up.
 - **Spec 056 / #412**, stage-found defect filing — one of the loop's three
   feed sources. The loop functions without it on the other two; the feed is
   simply thinner.
