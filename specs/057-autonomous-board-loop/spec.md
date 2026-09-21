@@ -71,20 +71,26 @@ failed. The run's execution-output record shows one turn, zero cost, and an
 API 429. Nothing is broken; the run was rate-limited. Today a scheduled run
 picks that issue up, reads the record it cites, and closes the issue with the
 429 quoted — because code read the record, not because an agent concluded it
-had. A second issue, filed against a bug whose fixing commit landed on `main`
-yesterday, is closed citing that commit.
+had. A second issue, whose run pinned an action version that `main` has since
+bumped past, is closed the same way. A third, filed against a bug whose
+fixing commit landed on `main` yesterday, is *not* closed: "a commit fixes
+this defect" is a judgment no gate can re-derive, so triage records what it
+saw and hands that issue to a human (FR-012).
 
 **Why this priority**: Triage is the cheapest step and the one that most
 often ends the work. An issue closed here costs no fix, no review, and no
 merge. It is also the step where the "agent proposes, code decides" split is
-sharpest — the evidence is machine-readable, so the close needs no judgment
-at all.
+sharpest — the two grounds that remain are machine-readable, so the close
+needs no judgment at all, and the ground that needed judgment is the one that
+left.
 
 **Independent Test**: Point the loop at a fixture issue citing a run whose
 execution-output record carries a `rate_limit_event` with
 `api_error_status: 429`, one turn and zero cost, and confirm the issue is
 closed with that evidence quoted and no branch, PR or commit created. Repeat
 with a record that shows a real failure and confirm the issue stays open.
+Repeat with a fixture whose only evidence is a commit on `main` that the
+agent proposes as the fix, and confirm nothing is closed.
 
 **Acceptance Scenarios**:
 
@@ -92,13 +98,18 @@ with a record that shows a real failure and confirm the issue stays open.
    rate-limit 429, one turn and zero cost, **When** the loop triages it,
    **Then** the issue is closed with the record's own fields quoted and a
    comment naming the run, and nothing else is created.
-2. **Given** an open issue whose described defect is already fixed by a
-   commit on current `main`, **When** the loop triages it, **Then** the issue
-   is closed citing that commit.
-3. **Given** an open issue whose cited run shows a genuine failure, **When**
+2. **Given** an open issue whose cited run pinned an action version that
+   `main` has since bumped past, **When** the loop triages it, **Then** the
+   issue is closed citing the two versions code compared.
+3. **Given** an open issue the agent proposes is already fixed by a commit on
+   current `main`, **When** the loop triages it, **Then** the issue is NOT
+   closed: the proposal and the named commit are recorded on the issue, the
+   item is handed to a human, and the loop takes no further step on it
+   (FR-012).
+4. **Given** an open issue whose cited run shows a genuine failure, **When**
    the loop triages it, **Then** the issue stays open and the loop proceeds
    to route it.
-4. **Given** an agent that proposes "close this, it's just a rate limit" for
+5. **Given** an agent that proposes "close this, it's just a rate limit" for
    a run whose record contains no rate-limit evidence, **When** the close
    gate runs, **Then** nothing is closed and the disagreement is recorded on
    the issue.
@@ -358,14 +369,18 @@ confirm the item halts without merging.
   not be picked up forever. An item that has exhausted its round budget
   carries the `board:stalled` label (FR-030) and stays ineligible until a
   human removes that label.
-- **Two issues describe the same defect.** The loop takes the older one; the
-  second is caught at its own triage as already fixed on `main`.
+- **Two issues describe the same defect.** The loop takes the older one. The
+  second is not auto-closed — the already-fixed ground left scope with
+  FR-012's answer — so when its turn comes triage records that the defect
+  appears fixed, names the commit, and hands it to a human under FR-012's
+  hand-over marker.
 - **The cited run's execution-output artifact has expired or is missing.**
   Triage cannot read evidence it does not have, so it refuses to close and
   says the artifact was unavailable — never closes on the agent's
   reconstruction of what the run probably did.
-- **The issue cites no run at all** (a maintainer-filed issue). Triage checks
-  only the "already fixed on `main`" branch and proceeds.
+- **The issue cites no run at all** (a maintainer-filed issue). Neither
+  remaining close ground can apply, so triage records that and proceeds to
+  route the issue — it never closes an issue for want of a cited run.
 - **A non-maintainer comments on an eligible issue** mid-loop. The comment is
   data, never instructions, and never reaches the fixer as a directive.
 - **The issue is closed by a human mid-loop.** The loop stops at its next
@@ -391,11 +406,16 @@ confirm the item halts without merging.
   the PR, or after the PR but before the review. The next run must find the
   item in a legible state and either resume or leave it for a human, never
   silently start a second branch for the same issue.
-- **An issue eligible only for a read-only triage proposal** (not maintainer
-  authored or labeled, not pipeline-filed). The loop posts the proposal and
-  takes no durable action — no close, no branch, no label that would make it
-  eligible on the next pass. Whether this case exists at all is FR-007's open
-  question: selection as drafted (FR-009) never reaches it.
+- **An issue the loop is not authorized for** (not maintainer authored, not
+  maintainer labeled, not pipeline-filed). Selection never reaches it
+  (FR-009): no comment, no proposal, no durable action. It waits for a human
+  entirely. The courtesy read-only proposal Principle X permits is deferred
+  with FR-007.
+- **An entry label applied by the bot rather than by a maintainer** — the
+  `spec-request` the pr-conversation stage spins off, for instance. The
+  `labeled` event's actor is a bot, so the issue is not admitted under "a
+  maintainer labeled it" (FR-008); it enters only if a pipeline-only label
+  from FR-006's list or a maintainer's own action makes it eligible.
 
 ## Clarifications
 
@@ -423,12 +443,46 @@ confirm the item halts without merging.
   also adopting the conventions. This feature moves no adopter-pinned
   surface; FR-063's second branch applies.
 
-Three questions opened in the same round and are carried forward: FR-012
-(what code must re-derive before closing on "already fixed on `main`"),
-FR-008 (whether eligibility may read the `labeled` event's actor) and FR-007
-(whether the read-only proposal path ships at all). New requirements added
-here take fresh numbers (FR-066+) so the deferred numbers stay unambiguous
-for the follow-on.
+This round opened three further questions — FR-012, FR-008 and FR-007 — which
+the round below answers. New requirements added here take fresh numbers
+(FR-066+) so the deferred numbers stay unambiguous for the follow-on.
+
+### Session 2026-09-21 (round 2) — answered on [#408](https://github.com/charlesguse/wing-commander/issues/408)
+
+- **FR-012 — the "already fixed on `main`" close ground**: **dropped**.
+  Triage's autonomous closes are the two grounds that name the fields a gate
+  reads — the run's rate-limit record and the upstream action bump. The third
+  had no decidable rule: verifying a SHA is an ancestor that touches a named
+  path is close to a rubber stamp on the agent's verdict, and re-running the
+  cited check at the merge-base costs a run per triage while covering only
+  gate-shaped defects. Same shape as FR-003 and FR-040: narrower than
+  Principle X permits, legal, revisited once the loop has a track record. An
+  issue the loop believes is already fixed goes to a human. Folded: FR-012
+  lists two grounds and records the third as deferred; FR-064 enumerates the
+  two remaining grounds' branches; US1 scenario 3 asserts the refusal.
+- **FR-008 — what eligibility may be decided from**: **the `labeled`
+  timeline event's actor may be read**. FR-006's distinction between a
+  maintainer-applied label and a pipeline-applied one is worth keeping, and
+  only the actor recovers it. An entry-label allowlist read off the label set
+  alone would let a bot-applied label admit an issue — the loop feeding
+  itself work, which is the opposite of what bounded autonomy is for. The
+  extra API read per candidate and the extra fixture are the price. Folded:
+  the bot's `spec-request` spin-off label no longer admits an issue as "a
+  maintainer labeled it", and FR-064 gains the bot-applied-label fixture
+  beside the maintainer-applied one.
+- **FR-007 — the read-only triage proposal path**: **dropped**. Principle X
+  permits the proposal and does not require it. Selection is only of eligible
+  issues (FR-009), so the loop touches only issues it is authorized for and
+  every other issue waits for a human untouched. This removes a second
+  selection rule, a second agent invocation on otherwise-idle runs, and a
+  marker whose lifecycle would need its own fixtures. Folded: FR-007 and its
+  edge case leave scope — deferred to a follow-on, not rejected — and
+  SC-009's "invokes no agent" stands as written.
+
+Answering FR-008 and FR-007 closes the review findings tracked as
+[#431](https://github.com/charlesguse/wing-commander/issues/431) and
+[#433](https://github.com/charlesguse/wing-commander/issues/433). No
+`[NEEDS CLARIFICATION]` marker remains.
 
 ## Requirements *(mandatory)*
 
@@ -463,45 +517,38 @@ for the follow-on.
 ### Entry and authorization
 
 - **FR-006**: An issue MUST be eligible for durable action only when a
-  maintainer authored it, a maintainer labeled it, or the pipeline itself
-  filed it under a label only the pipeline applies — `pipeline-defect` and
-  the watchdog's finding classes, `auto-update:*`, `auto-release:failed`, and
-  spec 056's `found-by:*`. No label is required of a maintainer-authored
-  issue (Constitution X).
-- **FR-007**: [NEEDS CLARIFICATION: Does the read-only triage proposal path
-  ship at all? FR-009 selects only *eligible* issues, so as drafted this
-  requirement and its edge case are unreachable. (a) Drop FR-007 and its edge
-  case — Principle X permits the proposal, it does not require it; (b) give
-  the path its own selection pass with its own bound, its own SC-009 wording
-  (since a pass that reaches ineligible issues contradicts "invokes no
-  agent"), and an exclusion that a posted proposal sets, without which the
-  loop re-proposes on the same issue every run.] Until this is settled the
-  requirement stands as drafted: any other issue MUST receive at most a
-  read-only triage proposal posted as a comment, and the loop MUST NOT close
-  it, branch from it, label it, or open anything for it. Raised by the review
-  posted on #408 and tracked as #433.
-- **FR-008**: [NEEDS CLARIFICATION: What may eligibility be decided from?
-  FR-006 turns on *who* applied a label, which author association and the
-  label set cannot recover — that fact lives in the `labeled` timeline
-  event's actor. The bot itself applies `spec-request` on a pr-conversation
-  spin-off, and that label is not in FR-006's pipeline-only list, so such an
-  issue would be admitted under "a maintainer labeled it", which is false.
-  (a) Widen this requirement to permit the `labeled` event's actor, keeping
-  FR-006's distinction and making it decidable; (b) drop the who-applied-it
-  distinction for an explicit allowlist of entry labels checked against the
-  label set alone — simpler and readable straight off the issue, but a
-  bot-applied entry label then admits the issue.] Until this is settled the
-  requirement stands as drafted: eligibility MUST be decided in code from the
-  issue's author association and labels, never from the issue's text. Raised
-  by the review posted on #408 and tracked as #431.
+  maintainer authored it, a maintainer applied one of its labels, or the
+  pipeline itself filed it under a label only the pipeline applies —
+  `pipeline-defect` and the watchdog's finding classes, `auto-update:*`,
+  `auto-release:failed`, and spec 056's `found-by:*`. "A maintainer applied
+  it" means the `labeled` event's actor is a maintainer (FR-008), not merely
+  that the label is present: a label the bot applied — the pr-conversation
+  stage's `spec-request` spin-off, for one — MUST NOT admit an issue on this
+  ground. No label is required of a maintainer-authored issue
+  (Constitution X).
+- **FR-007**: *Dropped* — the read-only triage proposal on an issue the loop
+  is not authorized for. Selection reaches only eligible issues (FR-009), so
+  an ineligible issue receives nothing at all: no comment, no proposal, no
+  label. Deferred rather than rejected — Principle X permits the courtesy
+  proposal, and a follow-on that wants it must bring its own selection pass,
+  its own SC-009 wording, and an exclusion a posted proposal sets so the loop
+  does not re-propose every run. Its number is retired, not reused.
+- **FR-008**: Eligibility MUST be decided in code from the issue's author
+  association, its labels, and the actor on the `labeled` timeline event that
+  applied each label — never from the issue's text. Reading the actor is what
+  makes FR-006's distinction between a maintainer-applied and a
+  pipeline-applied label decidable; an allowlist checked against the label
+  set alone would admit an issue the bot labeled, which is the loop feeding
+  itself work.
 - **FR-009**: The loop MUST select the oldest eligible open issue that is not
   excluded by FR-010, so the board drains in filing order rather than by an
   agent's sense of importance.
 - **FR-010**: An issue MUST be excluded from selection when it is closed,
   when it carries a disposition marking it settled (such as
   `disposition:false-positive`), when it carries the `board:stalled` label
-  FR-030 applies, or when the feature lifecycle already owns it — any issue
-  carrying a `stage:*` or `spec:*` label, which FR-004 puts out of scope and
+  FR-012, FR-021 and FR-030 apply, or when the feature lifecycle already owns
+  it — any issue carrying a `stage:*` or `spec:*` label, which FR-004 puts
+  out of scope and
   which this feature's own lifecycle issue would otherwise match on the
   loop's first run. Exclusion MUST be a code-level check on labels and state.
 
@@ -509,32 +556,27 @@ for the follow-on.
 
 - **FR-011**: Triage MUST be read-only until its verdict. It MUST read the
   issue, the commits on current `main` since the issue was filed, and the run
-  the issue cites, if any.
+  the issue cites, if any. The commits are read so the verdict is informed
+  and so a suspected already-fixed issue can be handed over with the commit
+  named (FR-012), never as a close ground.
 - **FR-012**: An issue MUST be closed at triage only on evidence the code
-  itself read: a rate-limit event in the cited run's execution-output record
-  (a `rate_limit_event`, `api_error_status: 429`, one turn, zero cost), an
-  upstream action bump, or a commit already on `main` that fixes the
-  described defect. The agent MAY propose the verdict; the close MUST be
-  gated by code that re-derived the evidence (Principle IX).
-  [NEEDS CLARIFICATION: What must code re-derive before closing on "the
-  fixing commit is already on `main`"? (a) the agent names a SHA and code
-  verifies it is an ancestor of `main`, postdates the issue, and touches at
-  least one path the issue names — deterministic, but "touches a path" is not
-  "fixes the defect", so it is close to a rubber stamp; (b) the issue must
-  cite a failing gate or run, and the close requires that same check to pass
-  at the merge-base — strong evidence, but it costs a run per triage and only
-  covers gate-shaped defects; (c) drop the ground, leaving the 429 and
-  action-bump records as triage's only autonomous closes and the rest to a
-  human. X names this ground as valid close evidence, so (c) is narrower than
-  X permits but legal, the same shape as FR-003's (b).] Until this is
-  settled, the spec states the ground and marks it as deferrable without
-  disturbing the other two. The 429 ground is fully specified above — four
-  named fields a gate reads — and the upstream-action-bump ground is a
-  comparison of the run's pinned action versions against `main`'s; only the
-  already-fixed ground lacks a decidable rule, and FR-064 cannot enumerate
-  its failure branches until it has one.
+  itself read, and there are exactly two such grounds: a rate-limit event in
+  the cited run's execution-output record (a `rate_limit_event`,
+  `api_error_status: 429`, one turn, zero cost), and an upstream action bump
+  (a comparison of the run's pinned action versions against `main`'s). Each
+  names the fields a gate reads. The agent MAY propose the verdict; the close
+  MUST be gated by code that re-derived the evidence (Principle IX).
+  A third ground — a commit already on `main` that fixes the described defect
+  — is *deferred, not rejected*: Principle X names it as valid close
+  evidence, but no rule code can re-derive distinguishes it from a rubber
+  stamp on the agent's verdict, so the loop MUST NOT close on it. When the
+  agent proposes that an issue is already fixed, the loop MUST record the
+  proposal and the named commit on the issue, apply the `board:stalled` label
+  so the item waits for a human rather than being re-proposed on every later
+  run (FR-010, FR-030), and end the run for that item.
 - **FR-013**: Every close MUST quote the evidence it acted on — the record's
-  own fields, or the commit — in a comment on the issue.
+  own fields, or the two action versions compared — in a comment on the
+  issue.
 - **FR-014**: When the cited run's record cannot be read (expired artifact,
   missing run, API refusal), triage MUST NOT close the issue, and MUST record
   that the evidence was unavailable.
@@ -603,11 +645,12 @@ for the follow-on.
   open findings or a bounded number of rounds is spent. On exhaustion the PR
   MUST be left open and unmerged, the issue MUST carry a stall notice naming
   the remaining findings, and the loop MUST apply one named label —
-  `board:stalled` — to the originating issue, which is the exhausted-budget
-  marker FR-010 excludes on. Removing that label MUST be the sole condition
-  that makes the item eligible again, and the stall notice MUST say so: a
-  timeline event alone is not a label-or-state check and would leave FR-010
-  undecidable.
+  `board:stalled` — to the originating issue. That label is the loop's single
+  hand-to-human marker, applied here on an exhausted budget and also by
+  FR-012 and FR-021, and it is what FR-010 excludes on. Removing it MUST be
+  the sole condition that makes the item eligible again, and every notice
+  that applies it MUST say so: a timeline event alone is not a
+  label-or-state check and would leave FR-010 undecidable.
 - **FR-031**: In-scope findings MUST be fixed by further commits on the same
   PR and re-reviewed against the new head.
 - **FR-032**: Out-of-scope findings MUST become new issues carrying the line
@@ -762,15 +805,21 @@ enforced become the readiness report of FR-066–FR-068.)*
   `workflow_call` trigger and MUST state in its own header why it is not a
   published stage.
 - **FR-064**: Every gate this feature ships MUST have a checked-in fixture
-  for each failure branch (Principle VIII) — at minimum: the triage close
-  gate, branch by branch — 429 evidence present, 429 evidence absent, the
-  record unreadable or expired, the upstream-action-bump ground in both
-  directions, and, for the already-fixed-on-`main` ground, the branches
-  FR-012's answer produces (at minimum evidence satisfying the rule, evidence
-  failing it, and no candidate commit at all); the route backstop (under
-  threshold, over threshold, contract-widening, and the post-push final-diff
-  breach of FR-021); and the readiness report (stale check summary, no
-  checks, open findings, backstop breach, kill switch set, all-clear).
+  for each failure branch (Principle VIII) — at minimum:
+  - the triage close gate, branch by branch — 429 evidence present, 429
+    evidence absent, the record unreadable or expired, the
+    upstream-action-bump ground in both directions (`main` ahead of the run's
+    pin, and the pins equal), and an agent proposal of "already fixed on
+    `main`" naming a real commit, which MUST NOT close (FR-012);
+  - the eligibility check — a maintainer-authored issue with no label
+    (admitted), a maintainer-applied entry label (admitted), the same entry
+    label applied by the bot (not admitted), and a pipeline-only label from
+    FR-006's list (admitted) — the bot-applied branch being the one FR-008's
+    answer exists for;
+  - the route backstop (under threshold, over threshold, contract-widening,
+    and the post-push final-diff breach of FR-021);
+  - the readiness report (stale check summary, no checks, open findings,
+    backstop breach, kill switch set, all-clear).
 - **FR-065**: Every gate MUST be reachable through the gate registry and MUST
   run the same subject with the same arguments locally as in CI.
 
@@ -778,8 +827,9 @@ enforced become the readiness report of FR-066–FR-068.)*
 
 - **Board item**: one open issue the loop has selected, with its eligibility
   basis, the run it cites, its round count, and its current step.
-- **Triage verdict**: close or proceed, plus the evidence the code read —
-  record fields, commit SHA, or the reason evidence was unavailable.
+- **Triage verdict**: close, hand to a human, or proceed, plus the evidence
+  the code read — record fields, the action versions compared, the commit the
+  agent named on a hand-over, or the reason evidence was unavailable.
 - **Route decision**: fix-shaped or spec-shaped, the agent's proposal, the
   backstop's verdict, and the measured values behind a re-route.
 - **Review finding**: a defect the reviewer found on the fix PR, with an
@@ -827,8 +877,9 @@ enforced become the readiness report of FR-066–FR-068.)*
 ## Assumptions
 
 Recorded where the issue left a choice with a defensible default, so that
-clarify spent its questions on FR-003, FR-040 and FR-062 — all three now
-answered, see Clarifications — rather than on these.
+clarify spent its questions on FR-003, FR-040 and FR-062, and its second
+round on FR-012, FR-008 and FR-007 — all six now answered, see
+Clarifications — rather than on these.
 
 - **Cadence**: a schedule interval in the same spirit as `auto-release`'s —
   a one-line, PR-reviewed knob rather than a repository variable — with

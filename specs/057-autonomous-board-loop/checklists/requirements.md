@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -44,27 +44,34 @@
     feature moves no adopter-pinned surface.
   - **FR-040 — the second merge class**: deferred entirely with the merge
     block, as its own feature.
-- **Three `[NEEDS CLARIFICATION]` markers are open, all opened in this
-  round** rather than carried from intake, so the spec is not ready to merge
-  and the questions go back to #408:
+- **The three markers this round opened are now resolved too** (clarify
+  round 2, 2026-09-21, answered on #408 — recorded in the spec's
+  Clarifications section). No `[NEEDS CLARIFICATION]` marker remains:
   - **FR-012 — what code must re-derive before closing on "already fixed on
-    `main`".** Raised in the answer itself. The 429 ground names four fields a
-    gate reads; this ground names no decidable rule, so FR-064 cannot
-    enumerate its failure branches, and it sits exactly where Principle IX's
-    "code decides" either holds or degrades into a rubber stamp on the
-    agent's verdict. No defensible default — the same test the other three
-    markers passed.
-  - **FR-008 — may eligibility read the `labeled` event's actor?** FR-006
-    turns on *who* applied a label; author association plus the label set
-    cannot recover that, and the bot's own `spec-request` spin-off label would
-    be read as "a maintainer labeled it". Widening FR-008 and replacing the
-    distinction with an entry-label allowlist are both coherent and differ in
-    what they admit, so this is the owner's call. Tracked as #431.
-  - **FR-007 — does the read-only proposal path ship at all?** FR-009 selects
-    only eligible issues, so FR-007 and its edge case are currently
-    unreachable; making them reachable needs its own selection pass, its own
-    SC-009 wording and an exclusion a posted proposal sets, while dropping
-    them is permitted by X. Tracked as #433.
+    `main`"**: the ground is dropped. Triage's autonomous closes are the two
+    that name the fields a gate reads — the 429 record and the upstream
+    action bump. The third is recorded as deferred, not rejected; an issue
+    the loop believes is already fixed is handed to a human under the
+    `board:stalled` marker so it is not re-proposed every run. FR-013 no
+    longer quotes a commit, FR-011 reads `main`'s commits for the hand-over
+    rather than for a close, US1 gained a scenario asserting the refusal, and
+    the two edge cases that leaned on the ground ("two issues describe the
+    same defect", "the issue cites no run at all") were rewritten.
+  - **FR-008 — may eligibility read the `labeled` event's actor?**: yes.
+    FR-006's maintainer-applied/pipeline-applied distinction is kept and made
+    decidable by the actor; an allowlist read off the label set alone would
+    let the bot's own `spec-request` spin-off admit an issue. FR-006 now says
+    a bot-applied label does not admit on that ground, and a new edge case
+    records it. Closes #431.
+  - **FR-007 — does the read-only proposal path ship at all?**: dropped,
+    deferred rather than rejected, its number retired. Selection reaches only
+    eligible issues, so an ineligible one receives nothing at all; the edge
+    case was rewritten to say so and SC-009 stands unchanged. Closes #433.
+- **`board:stalled` is now the loop's single hand-to-human marker**, applied
+  by FR-012 (suspected already-fixed), FR-021 (post-push backstop breach) and
+  FR-030 (exhausted round budget), with removal the sole condition that
+  re-admits the item. FR-010 excludes on it in all three cases, which keeps
+  the exclusion a label check rather than three different pieces of state.
 - **Findings from the same review that were folded in rather than asked
   about**, because each had one defensible resolution: the lifecycle-owned
   exclusion FR-010 was missing (#432, keyed on `stage:*` / `spec:*` — without
@@ -105,17 +112,19 @@
   board's own thresholds deliberately do not inherit).
 - **Requirement Completeness — bounded scope**: FR-001 bounds the feature to
   one loop over one issue per run; FR-004 keeps the feature lifecycle out;
-  FR-005 leaves every existing filing route untouched; FR-007 bounds what the
-  loop may do to an issue it is not authorized for; FR-048–FR-054 bound
+  FR-005 leaves every existing filing route untouched; FR-006/FR-008/FR-009
+  bound the loop to issues it is authorized for and leave every other issue
+  untouched (FR-007's answer); FR-048–FR-054 bound
   concurrency, budget and stopping; FR-068 bounds the loop out of merging at
   all. FR-062/FR-063 settle the published surface: nothing widens on it.
 - **Requirement Completeness — testability**: every requirement that gates a
   durable action is paired with a fixture obligation in FR-064, which
-  enumerates the failure branches for the three gates (triage close, route
-  backstop, readiness report) rather than leaving "has fixtures" as prose.
-  One entry there is knowingly incomplete: the already-fixed-on-`main`
-  branches cannot be enumerated until FR-012 is answered, and FR-064 says so
-  instead of implying coverage it cannot yet have.
+  enumerates the failure branches for the four gates (triage close,
+  eligibility, route backstop, readiness report) rather than leaving "has
+  fixtures" as prose. The list is now complete: FR-012's answer replaced the
+  branch it could not enumerate with a single fixture asserting that an
+  already-fixed proposal closes nothing, and FR-008's answer added the
+  bot-applied entry label beside the maintainer-applied one.
 - **Feature Readiness** — the seven user stories are ordered as the loop runs
   and each asserts observable outcomes (an issue is closed with quoted
   evidence, a review object exists on the PR, a readiness claim is refused
