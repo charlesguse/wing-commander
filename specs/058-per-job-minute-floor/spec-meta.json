@@ -2,7 +2,7 @@
   "issue": 434,
   "spec_dir": "specs/058-per-job-minute-floor",
   "feature_num": "058",
-  "stage": "spec",
+  "stage": "plan",
   "iteration": 0,
-  "spec_branch": null
+  "spec_branch": "spec/058-per-job-minute-floor"
 }
