@@ -725,8 +725,9 @@ things to know before you bind one:
      `classify-and-announce` job and **not** the job that actually
      writes — the inverse of what you probably intend. To gate mutations
      here, set `confirm-categories` (and `confirm-environment`) instead.
-  2. **Every stage's `verify-image-prerequisites` job**, which runs on
-     every stage call and does nothing unless you set `container-image` (see
+  2. **Every stage's `verify-image-prerequisites` job**, which runs only
+     when you set `container-image` and is otherwise reported `skipped`,
+     billing nothing (see
      [Runners and container images](#runners-and-container-images)). It is
      deliberately unbound, so it costs you **no** approval prompt. Binding it would not buy you
      anything: its entire body is a `docker login` and `docker pull` of the
@@ -755,7 +756,8 @@ things to know before you bind one:
   `finalize`), and `auto-update-spec-kit` is the most expensive by an order of
   magnitude — seven serial approvals, each blocking the next. Every row of
   that table also carries a `verify-image-prerequisites` job, but no prompt
-  for it, per exception 2 above.
+  for it, per exception 2 above — and no job at all when you set no
+  `container-image`.
 - **Approval is also per run, not per feature.** A required reviewer prompts
   on every iteration of a looping stage (`implement`, once per cycle) — there
   is no pipeline-side dedup or memory of a prior approval. For a single

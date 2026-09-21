@@ -669,28 +669,73 @@ now bills only the jobs it actually runs.
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T049 Update `docs/architecture.md` (or wherever this repository's
+- [X] T049 Update `docs/architecture.md` (or wherever this repository's
   published-stage/watchdog/metrics-persist diagrams and job counts live —
   grep for "verify-image-prerequisites", "5 job" watchdog references, and
   the metrics-persist job count) so any prose or diagram citing the old
   per-stage/per-watchdog/per-persistence job counts reflects this
-  feature's new counts.
-- [ ] T050 Record the three delta contracts' versioning as a minor
+  feature's new counts. Four sites, found by the greps this task names:
+  `docs/architecture.md`'s stage-9 trigger paragraph (the wrapper is one
+  job now, and does not pass `run-name`), its "**Design** — four sequential
+  jobs" line (the image check skips with no image; `diagnose` onward skip
+  on an empty signal set, so the common inspection is two billed jobs), its
+  `collect` bullet (the empty-but-successful signal set no longer "still
+  proceeds to `diagnose`"), and its auto-release container-leg note (the
+  image check is now *skipped* rather than *vacuously succeeding* when no
+  image is set — the conclusion it draws is unchanged either way). Plus two
+  in `docs/adoption.md`'s environment-binding exception 2 and its
+  approval-cost table note, which told adopters the check "runs on every
+  stage call". No "5 job" string exists anywhere, and no document in
+  `docs/` describes metrics-persist's job count at all (spec 043 documented
+  it in its own directory), so there was nothing to re-count there.
+- [X] T050 Record the three delta contracts' versioning as a minor
   release per `specs/010-reusable-pipeline/contracts/versioning.md` and
   `specs/043-durable-metrics-record`'s own precedent — confirm no output,
   secret, or required-input name changed anywhere (image-check-shape-
   delta.md, watchdog-clean-path-delta.md, metrics-persist-sweep-delta.md
   each already state this; this task is the final cross-check before the
-  implementation PR, not new prose).
-- [ ] T051 Run the full quickstart.md gate-regression pass: all gates on
+  implementation PR, not new prose). Cross-check done, and it holds:
+  **minor**. No input, secret or output was removed or renamed in any
+  published stage. What changed on the published surface is additive —
+  `metrics-persist.yml` gains optional `since` and `sweep` (both default
+  to the pre-feature behavior) — plus one requirement RELAXED:
+  `watchdog.yml`'s `run-name` went `required: true` ->
+  `required: false, default: ""`. versioning.md's breaking list is
+  "removing/renaming an input, secret, or output; changing a default in a
+  behavior-altering way; changing a stage's preconditions incompatibly";
+  a relaxed precondition is compatible in the direction that matters (a
+  caller still passing `run-name` is unaffected — Gate 75 asserts that
+  case), so this is minor, and the floating `vX` tag advances. One wording
+  nuance for the release notes, recorded rather than silently smoothed
+  over: watchdog-clean-path-delta.md says `run-name` "gains a default
+  rather than losing its requirement". As shipped it does both, because
+  GitHub still demands a value for a `required: true` input even when a
+  default is declared — dropping `required` is what actually lets the
+  wrapper omit it. The conclusion (non-breaking, minor) is unchanged.
+- [X] T051 Run the full quickstart.md gate-regression pass: all gates on
   the real tree (SC-012), each new/amended gate's own negative fixture in
   turn, and confirm `verify-gate-wiring.py` catches a `run:` line removed
-  from `lint-workflows.yml`.
-- [ ] T052 Final `grep -rn "anthropics/claude-code-action" .github/
+  from `lint-workflows.yml`. All three done. (a) 122/122 gates pass on the
+  real tree. (b) Each new/amended gate carries its negative fixtures as
+  in-process mutations that run on every invocation and fail the gate if
+  any survives, so the suite run in (a) IS the negative pass: Gate 73 five
+  mutations, 74 three, 75 four, 76 two, 77 four, 78 three, 79 five, Gate
+  36 four (two pre-existing plus m3/m4 from T032), Gate 70 four. (c)
+  Proven in place, the way T022 was: Gate 79's `run:` line was repointed
+  at another script, the suite was re-run, and `verify-gate-wiring.py`
+  failed by name — "verify-metrics-wrapper-trigger-drops-watchdog.py is
+  not invoked by any workflow" — then the line was restored and
+  `git diff .github/workflows/lint-workflows.yml` confirmed byte-identical
+  to HEAD. (`git checkout`/`git restore` are outside this run's permitted
+  command list, so the restore was a matching Edit.)
+- [X] T052 Final `grep -rn "anthropics/claude-code-action" .github/
   workflows .github/actions` diff against pre-feature `main`, confirming
   zero new agent invocations across the whole feature (SC-013,
   constitution IX) — the single cross-cutting check that spans all three
-  stories.
+  stories. Done as a per-file match count on both trees
+  (`git grep -c ... origin/main` vs `... HEAD`): identical — 13 files, 22
+  references, `watchdog.yml`'s single one included. Zero new agent
+  invocations across all three stories.
 
 ---
 
