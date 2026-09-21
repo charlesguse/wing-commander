@@ -882,3 +882,7 @@ change is stated in terms of "after" B's record-emission change.
 ## Maintainer Feedback
 
 - [ ] MF-11 (nit, PR narrative) Correct the PR description: drop the claim that the expired-artifact ledger is a billing path (it is bookkeeping), and replace "15+ verification scripts" with the accurate count of seven new gates and three amended ones.
+
+## Maintainer Feedback
+
+- [ ] MF-12 (nit, local tooling only) `wc_metrics_harness.py` lines ~253, ~260, ~392: pass `newline=` to the `jobs.ndjson`/`artifacts.ndjson`/`candidates.ndjson` writers, matching the other writers (lines ~91, ~198, ~229), so Windows-local runs of `verify-metrics-sweep-idempotence.py`, `verify-metrics-sweep-high-water-mark.py` and `verify-metrics-expired-artifact-outcome.py` don't feed a CR-suffixed run id into `jq`.
