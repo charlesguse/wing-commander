@@ -388,8 +388,10 @@ jobs:
           # keyed on. Derived here because a job-level `concurrency:` can
           # read `needs.*` outputs but not a step of its own. Same prefix
           # stripping as mark-stalled's "Resolve spec" step, which repeats
-          # it with validation and still refuses to guess. An unrecognised
-          # ref leaves this empty; `outcome` is then `none` and no job runs.
+          # it with validation and still refuses to guess. A ref with no
+          # known prefix leaves this empty and `outcome` is `none`, so no
+          # job runs; a ref whose slug does not validate still runs its
+          # outcome job, which fails at that step before any push.
           slug=""
           case "$HEAD_REF" in
             "${SPEC_PREFIX}"*)       slug="${HEAD_REF#"$SPEC_PREFIX"}" ;;

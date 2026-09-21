@@ -25,9 +25,10 @@ WHAT IT CHECKS
 --------------
 For every job in `.github/workflows/*.yml` that can push, i.e. one that
 
-  (a) runs `git push` in one of its own `run:` steps (comment, `echo` and
-      `printf` lines stripped first, so a runbook that prints the command
-      for a human is not a pusher),
+  (a) runs `git push` in one of its own `run:` steps (comment lines and
+      print-only `echo`/`printf` lines stripped first, so a runbook that
+      prints the command for a human is not a pusher; a print line that
+      continues into another command with `&&`, `;` or `|` is kept),
   (b) grants its agent `Bash(git push:*)` through `wing-commander-tool-args`
       (the agent stages push through the agent, not a `run:` step), or
   (c) calls a local composite whose own `run:` steps push,
@@ -89,20 +90,29 @@ PER_SPEC_GROUP_RE = re.compile(
     r"(?:inputs\.spec-dir|needs\.[\w-]+\.outputs\.spec-dir|matrix\.spec_dir)"
     r"\s*\}\}$")
 LOCAL_COMPOSITE_RE = re.compile(r"(?:^|/)\.github/actions/([\w-]+)/?$")
-NOISE_LINE_RE = re.compile(r"^\s*(?:#|echo\b|printf\b)")
+COMMENT_LINE_RE = re.compile(r"^\s*#")
+PRINT_LINE_RE = re.compile(r"^\s*(?:echo|printf)\b")
+# A print line that continues into another command (`echo x && git push`,
+# `echo x; git push`, `printf x | git push`) is not noise: the push runs.
+CONTINUES_RE = re.compile(r"&&|\|\||;|\|")
 
 
 def _rel(path):
     return path.replace(os.sep, "/")
 
 
+def _is_noise(line):
+    if COMMENT_LINE_RE.match(line):
+        return True
+    return bool(PRINT_LINE_RE.match(line)) and not CONTINUES_RE.search(line)
+
+
 def _run_text(step):
-    """A step's `run:` with comment/echo/printf lines dropped."""
+    """A step's `run:` with comment lines and print-only lines dropped."""
     run = (step or {}).get("run")
     if not isinstance(run, str):
         return ""
-    return "\n".join(line for line in run.splitlines()
-                     if not NOISE_LINE_RE.match(line))
+    return "\n".join(line for line in run.splitlines() if not _is_noise(line))
 
 
 def _composite_name(uses):
@@ -247,6 +257,9 @@ RUN_ECHO_ONLY = ("      - name: Runbook" + _NL +
                  "        run: |" + _NL +
                  "          # git push origin --delete x" + _NL +
                  "          echo \"git push origin --delete x\"" + _NL)
+RUN_ECHO_THEN_PUSH = ("      - name: Publish" + _NL +
+                      "        run: |" + _NL +
+                      "          echo publishing && git push origin HEAD" + _NL)
 AGENT_GRANT = ("      - uses: ./.github/actions/wing-commander-tool-args" + _NL +
                "        with:" + _NL +
                "          step-label: \"x\"" + _NL +
@@ -295,11 +308,13 @@ def self_test():
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
         joined = " | ".join(failures)
-        named = sorted({m for m in re.findall(r"\[([\w-]+)\]", joined)})
+        # Only "<file> [<job>] can push" lines name a failing job; a stale
+        # waiver's message names the job it waives, which is not one.
+        named = sorted({m.group(1) for m in
+                        (re.match(r"\S+ \[([\w-]+)\] can push", f) for f in failures)
+                        if m})
         ok = named == sorted(expect_failing_jobs) and all(
             s in joined for s in expect_substrings)
-        if expect_failing_jobs == [] and expect_substrings:
-            ok = all(s in joined for s in expect_substrings)
         if ok:
             print("[ok] {0}".format(label))
         else:
@@ -327,6 +342,8 @@ def self_test():
          _job("a", GOOD_GROUP, COMPOSITE_CALL), [])
     case("a runbook that only echoes or comments `git push` is not a pusher",
          _job("a", None, RUN_ECHO_ONLY), [])
+    case("a print line that continues into `git push` is a pusher",
+         _job("a", None, RUN_ECHO_THEN_PUSH), ["a"])
     case("a waiver naming the job suppresses exactly that job",
          _job("a", None, RUN_PUSH) + _job("b", None, RUN_PUSH), ["b"],
          waivers=[{"file": ".github/workflows/stage.yml", "job": "a",
