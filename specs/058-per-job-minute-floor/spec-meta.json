@@ -2,7 +2,7 @@
   "issue": 434,
   "spec_dir": "specs/058-per-job-minute-floor",
   "feature_num": "058",
-  "stage": "tasks",
-  "iteration": 0,
+  "stage": "implement",
+  "iteration": 1,
   "spec_branch": "spec/058-per-job-minute-floor"
 }
