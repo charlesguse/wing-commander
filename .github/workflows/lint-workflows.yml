@@ -1759,10 +1759,9 @@ jobs:
       # was not meant to change.
       - name: implement.yml's exhausted-retry stall notice reads exactly as before
         run: python3 .github/scripts/verify-implement-stall-notice-unchanged.py
-      # #410 item 3: the gate above had no self-test. This reintroduces
-      # what it exists to catch -- a pinned step reworded, deleted or
-      # reshaped, a pin missing from the fixture, and a dependency-reason
-      # script drifting on either branch -- and asserts each fails.
+      # #410 item 3: the gate above had no self-test. The regressions it
+      # reintroduces are listed once, in the script's own SELF-TEST
+      # section -- see verify-implement-stall-notice-unchanged.py.
       - name: The exhausted-retry stall-notice gate detects a reworded, deleted or reshaped pinned step, a missing pin, and a dependency-reason script that drifts on either branch
         run: python3 .github/scripts/verify-implement-stall-notice-unchanged.py --self-test
 
