@@ -874,3 +874,7 @@ change is stated in terms of "after" B's record-emission change.
 ## Maintainer Feedback
 
 - [ ] MF-09 (US3) `metrics-persist.yml` "Resolve the sweep window" step (runs inside the `persist` job's `container:`): replace `date -u -d '7 days ago'` / `date -u -d "$since - 1 hour"` / `date -u -d "$window_start - 1 day"` with `jq`-based arithmetic (`now`, `todate`) since `jq` is already a checked prerequisite and `date` is not, or fail loudly when `date -d` syntax is unavailable rather than silently listing an unbounded window.
+
+## Maintainer Feedback
+
+- [ ] MF-10 (nit) `wing-commander-metrics-persist.yml`: fail a `workflow_dispatch` with both `run-id` and `since` empty with an explicit "supply run-id or since" error, in the wrapper's `if:` or the stage's first step, instead of succeeding silently with no work done.
