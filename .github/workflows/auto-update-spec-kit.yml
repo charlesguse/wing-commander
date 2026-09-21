@@ -211,8 +211,12 @@ concurrency:
 
 jobs:
   verify-image-prerequisites:
-    # this job must NEVER skip, or the whole needs-closure silently no-ops every stage (#224)
-    # -- see specs/038-runner-container-passthrough/contracts/runner-container-passthrough.md.
+    # This job now carries `if: inputs.container-image != ''` and reports
+    # `skipped` (billing nothing) when no image is configured -- #224's old
+    # "must never skip" invariant no longer holds, because every direct
+    # dependent's `if:` now tolerates that skip explicitly -- see
+    # specs/058-per-job-minute-floor/contracts/image-check-shape-delta.md.
+    if: inputs.container-image != ''
     permissions: {}
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     steps:
@@ -296,16 +300,14 @@ jobs:
   # straight to its rollback branch and short-circuits detect/settle/
   # evaluate-path/prepare/verify entirely for this run (T006).
   health-check:
-    # The `if:` below gates on this run's trigger and nothing else.
-    # Ordinary needs: skip-propagation is what gates the image check: a
-    # failed check skips this job and everything behind it.
-    # verify-image-prerequisites never skips, so there is no skipped
-    # result to tolerate here -- and the clause that used to say
-    # otherwise was never evaluated at all, because a job with no
-    # status-check function is suppressed before its `if:` is read
-    # (#224).
+    # The status-function clauses below replace the implicit success()
+    # GitHub used to add: adding !cancelled() disables that implicit
+    # check, so it must be restated explicitly, tolerating a skipped
+    # (not just successful) image check (#224) -- see clarify.yml.
     needs: verify-image-prerequisites
     if: >-
+      !cancelled() &&
+      needs.verify-image-prerequisites.result != 'failure' &&
       (inputs.trigger == 'scheduled' || inputs.trigger == 'dispatch')
     # container-image no-op and the runs-on JSON-array branch stay unverified (D2, D3) -- see
     # specs/038-runner-container-passthrough/research.md.
@@ -823,7 +825,7 @@ jobs:
     needs: [settle, comment-reply, verify-image-prerequisites]
     if: >-
       always() &&
-      needs.verify-image-prerequisites.result == 'success' &&
+      needs.verify-image-prerequisites.result != 'failure' &&
       ((needs.settle.result == 'success' && needs.settle.outputs.settled == 'true') ||
        (needs.comment-reply.result == 'success' && needs.comment-reply.outputs.resumed == 'true'))
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
@@ -1427,7 +1429,7 @@ jobs:
     # cancelled run leaves result=cancelled.
     if: >-
       always() &&
-      needs.verify-image-prerequisites.result == 'success' &&
+      needs.verify-image-prerequisites.result != 'failure' &&
       needs.evaluate-path.result == 'success' &&
       needs.evaluate-path.outputs.outcome == 'clean-bump'
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
@@ -1652,7 +1654,7 @@ jobs:
     # is TRUE — the stage would scaffold a candidate that was never prepared.
     if: >-
       always() &&
-      needs.verify-image-prerequisites.result == 'success' &&
+      needs.verify-image-prerequisites.result != 'failure' &&
       needs.prepare.result == 'success' &&
       needs.prepare.outputs.release-type != 'patch'
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
@@ -2221,7 +2223,7 @@ jobs:
     # moved the silence one job down instead of ending it.
     if: >-
       always() &&
-      needs.verify-image-prerequisites.result == 'success' &&
+      needs.verify-image-prerequisites.result != 'failure' &&
       needs.prepare.result == 'success'
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
@@ -2565,7 +2567,7 @@ jobs:
     # on a real minor/major jump.
     if: >-
       always() &&
-      needs.verify-image-prerequisites.result == 'success' &&
+      needs.verify-image-prerequisites.result != 'failure' &&
       (needs.health-check.outputs.pinned-ok == 'false' ||
        needs.prepare.result == 'failure' ||
        needs.verify.result == 'success' ||
@@ -2977,9 +2979,12 @@ jobs:
   # feature's own marker is a no-op — never assume any other PR belongs to
   # this feature.
   pr-merged:
-    # no `if:` of its own -- `needs:` skip-propagation is the image gate (#224).
+    # if: tolerates a skipped image check without widening to run merely
+    # because the workflow was not cancelled (#224) -- see clarify.yml.
     needs: verify-image-prerequisites
     if: >-
+      !cancelled() &&
+      needs.verify-image-prerequisites.result != 'failure' &&
       inputs.trigger == 'pr-merged' &&
       inputs.pr-merged
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
@@ -3121,9 +3126,12 @@ jobs:
   # to an untrusted commenter). evaluate-path's `needs.comment-reply` gate
   # then sees a skipped (non-success) result and does not re-enter.
   comment-reply:
-    # no `if:` of its own -- `needs:` skip-propagation is the image gate (#224).
+    # if: tolerates a skipped image check without widening to run merely
+    # because the workflow was not cancelled (#224) -- see clarify.yml.
     needs: verify-image-prerequisites
     if: >-
+      !cancelled() &&
+      needs.verify-image-prerequisites.result != 'failure' &&
       inputs.trigger == 'comment-reply' &&
       (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), inputs.commenter-association) || inputs.commenter-id == inputs.issue-author-id)
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}

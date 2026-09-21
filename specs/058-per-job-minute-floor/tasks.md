@@ -33,7 +33,7 @@ path below is relative to the repository root.
 
 ## Phase 1: Setup
 
-- [ ] T001 Confirm the gate-number reservation above is still accurate:
+- [X] T001 Confirm the gate-number reservation above is still accurate:
   `grep -n "Gate 7[0-9]" .github/workflows/lint-workflows.yml` must show
   nothing above Gate 72. If it does, shift every "Gate 7x" reference in
   this file and in contracts/gate-coverage-058.md by the same offset before
@@ -81,7 +81,7 @@ numbers below are current as of this branch; re-grep
 (`needs:.*verify-image-prerequisites`) before editing since they will have
 shifted.
 
-- [ ] T002 [P] [US1] `.github/workflows/intake.yml`: job-level `if:` on
+- [X] T002 [P] [US1] `.github/workflows/intake.yml`: job-level `if:` on
   `verify-image-prerequisites` (~line 244); entry job `intake` (~line 347,
   bare `needs: verify-image-prerequisites`, carries the `#224` comment —
   update or remove that comment since the job-level skip is now
@@ -91,36 +91,36 @@ shifted.
   `needs.verify-image-prerequisites.result == 'failure'`, is a distinct
   clause identifying *why* `stalled` fired and must stay `== 'failure'`
   unchanged).
-- [ ] T003 [P] [US1] `.github/workflows/clarify.yml`: job-level `if:` on
+- [X] T003 [P] [US1] `.github/workflows/clarify.yml`: job-level `if:` on
   `verify-image-prerequisites` (~line 204); entry job `clarify` (~line
   306, bare `needs:`); survivor job `stalled` (~line 1157-1162, one other
   dependency `clarify`).
-- [ ] T004 [P] [US1] `.github/workflows/plan.yml`: job-level `if:` on
+- [X] T004 [P] [US1] `.github/workflows/plan.yml`: job-level `if:` on
   `verify-image-prerequisites` (~line 271); entry job `resolve-spec`
   (~line 371, bare `needs:`). The `plan` job (~line 395) depends only on
   `resolve-spec`, not on the check directly — no rewrite (R-A2).
-- [ ] T005 [P] [US1] `.github/workflows/tasks.yml`: job-level `if:` on
+- [X] T005 [P] [US1] `.github/workflows/tasks.yml`: job-level `if:` on
   `verify-image-prerequisites` (~line 276); entry job `resolve-spec`
   (~line 378, bare `needs:`); survivor jobs `stalled` (~line 1524-1530,
   other deps `resolve-spec`, `tasks`) and `stalled-approved` (~line
   1662-1668, other deps `resolve-spec`, `tasks-approved`).
-- [ ] T006 [P] [US1] `.github/workflows/implement.yml`: job-level `if:`
+- [X] T006 [P] [US1] `.github/workflows/implement.yml`: job-level `if:`
   on `verify-image-prerequisites` (~line 260); entry job `implement`
   (~line 363, bare `needs:`); survivor job `stalled` (~line 2662-2667,
   other dep `implement`).
-- [ ] T007 [P] [US1] `.github/workflows/finalize.yml`: job-level `if:`
+- [X] T007 [P] [US1] `.github/workflows/finalize.yml`: job-level `if:`
   on `verify-image-prerequisites` (~line 210); entry job `finalize`
   (~line 310, bare `needs:`); survivor job `stalled` (~line 1402-1407,
   other dep `finalize`).
-- [ ] T008 [P] [US1] `.github/workflows/cleanup.yml`: job-level `if:` on
+- [X] T008 [P] [US1] `.github/workflows/cleanup.yml`: job-level `if:` on
   `verify-image-prerequisites` (~line 238); entry job `select` (~line
   337, bare `needs:`). `teardown-done`, `teardown-rejected`,
   `mark-stalled` depend only on `select` — no rewrite (R-A2).
-- [ ] T009 [P] [US1] `.github/workflows/rebase.yml`: job-level `if:` on
+- [X] T009 [P] [US1] `.github/workflows/rebase.yml`: job-level `if:` on
   `verify-image-prerequisites` (~line 186); entry job `discover` (~line
   284, bare `needs:`). `rebase` depends only on `discover` — no rewrite
   (R-A2).
-- [ ] T010 [P] [US1] `.github/workflows/watchdog.yml`: job-level `if:`
+- [X] T010 [P] [US1] `.github/workflows/watchdog.yml`: job-level `if:`
   on `verify-image-prerequisites` (~line 238); entry job `collect`
   (~line 321, bare `needs:`); survivor jobs `act` (~line 3080-3118,
   other deps `collect`, `diagnose`, `triage`), `findings-dropped` (~line
@@ -130,7 +130,7 @@ shifted.
   (Phase 4) — land this task's changes first so Phase 4 rewrites
   `collect`/`diagnose` against the already-amended job-graph, not the old
   one.
-- [ ] T011 [P] [US1] `.github/workflows/pr-conversation.yml`: job-level
+- [X] T011 [P] [US1] `.github/workflows/pr-conversation.yml`: job-level
   `if:` on `verify-image-prerequisites` (~line 245); entry job
   `classify-and-announce` (~line 330, bare `needs:` at ~346); survivor
   jobs `dispatch-once` (~line 2559-2563, other deps
@@ -139,11 +139,11 @@ shifted.
   `classify-and-announce`), `stalled` (~line 3018-3023, same other dep,
   plus an `image-result` output reference at ~line 3136 that stays
   unchanged).
-- [ ] T012 [P] [US1] `.github/workflows/metrics-persist.yml`: job-level
+- [X] T012 [P] [US1] `.github/workflows/metrics-persist.yml`: job-level
   `if:` on `verify-image-prerequisites` (~line 111); entry job `persist`
   (~line 165, bare `needs:` at ~166). This file is also rewritten by User
   Story 3 (Phase 5) for the `since` input — land this task first.
-- [ ] T013 [P] [US1] `.github/workflows/auto-update-spec-kit.yml`:
+- [X] T013 [P] [US1] `.github/workflows/auto-update-spec-kit.yml`:
   job-level `if:` on `verify-image-prerequisites` (~line 213); entry jobs
   `health-check` (~line 298, bare `needs:` at ~307), `pr-merged` (~line
   2979, bare `needs:` at ~2981), `comment-reply` (~line 3123, bare
@@ -154,7 +154,7 @@ shifted.
   (~line 2555-2568, other deps `health-check`, `evaluate-path`,
   `prepare`, `verify`). Largest single-file rewrite in this story — eight
   dependent jobs.
-- [ ] T014 [P] [US1] `.github/workflows/private-image-dogfood.yml`:
+- [X] T014 [P] [US1] `.github/workflows/private-image-dogfood.yml`:
   job-level `if:` on `verify-image-prerequisites` (~line 76); entry job
   `dogfood` (~line 130, bare `needs:` at ~131).
 
