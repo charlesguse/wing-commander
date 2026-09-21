@@ -836,3 +836,7 @@ Foundational is done," this feature's own file-overlap argument (plan.md's
 Structure Decision) means Phases 3→4→5 must land **in that order**, even
 across separate PRs — B and C both edit files A rewrites, and C's wrapper
 change is stated in terms of "after" B's record-emission change.
+
+## Maintainer Feedback
+
+- [ ] MF-01 (US2, FR-032/SC-014) `verify-watchdog-run.sh` check 2: apply the floor arm (`floor=$(( median * 2 / 5 )); [ "$floor" -lt 20 ] && floor=20`) only when the diagnose job ran (`diagnose_conclusion` set and not `skipped`); keep the ceiling arm unconditional; keep 20 as the bootstrap guard for agent-bearing runs only. Add two scenarios to `verify-watchdog-run-failure-paths.sh`: (a) a 33s run with diagnose skipped, pass posted from collect, against the ORIGINAL (old-shape) history fixture — must PASS; (b) the same duration with diagnose having run, same history — must still FAIL.
