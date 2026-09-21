@@ -261,7 +261,7 @@ shape first).
 
 ### `watchdog.yml` changes (research.md R-B1/R-B2/R-B4/R-B5, contracts/watchdog-clean-path-delta.md)
 
-- [ ] T023 [US2] `.github/workflows/watchdog.yml`: widen `diagnose`'s
+- [X] T023 [US2] `.github/workflows/watchdog.yml`: widen `diagnose`'s
   `if:` (~line 1946, currently
   `needs.collect.outputs.evidence-available != 'false'`) to additionally
   require a non-empty signal set:
@@ -270,7 +270,7 @@ shape first).
   (research.md R-B1). The existing all-failed branch
   (`evidence-available == 'false'`, ~line 1927's "could not inspect"
   step) is untouched — FR-013.
-- [ ] T024 [US2] `.github/workflows/watchdog.yml`: add a new
+- [X] T024 [US2] `.github/workflows/watchdog.yml`: add a new
   deterministic step to the `collect` job, immediately after the
   `aggregate` step (~line 1880-1925), gated:
   `steps.aggregate.outcome == 'success' &&
@@ -287,7 +287,7 @@ shape first).
   zero jobs — FR-018's "collection job plus at most one guaranteed-report
   job" comes from placement inside `collect`, not a new job (research.md
   R-B2's rejected alternative).
-- [ ] T025 [US2] `.github/workflows/watchdog.yml`: confirm (no code
+- [X] T025 [US2] `.github/workflows/watchdog.yml`: confirm (no code
   change expected, verify only) that the existing "Report 'passed
   inspection'" step inside `diagnose` (~line 2599-2618) and its
   downstream `stalled`/`report-unhandled-failure` conditions referencing
@@ -295,7 +295,7 @@ shape first).
   3114) are unaffected by T023/T024 — this is a different event (the
   agent ran and found nothing actionable after weighing real signals),
   reached only when `diagnose` actually ran (FR-012).
-- [ ] T026 [US2] `.github/workflows/watchdog.yml`: make `run-name`
+- [X] T026 [US2] `.github/workflows/watchdog.yml`: make `run-name`
   optional (default `''`) on the published `workflow_call` input block;
   when empty, resolve it inside `collect`'s existing inspected-run lookup
   via the same `gh run view --repo ... --json workflowName --jq

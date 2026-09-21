@@ -31,9 +31,13 @@ on:
         description: >
           Display name of the workflow the inspected run belongs to (e.g.
           "Wing Commander · 5 implement", or "Wing Commander · 8 watchdog"
-          itself for self-inspection).
+          itself for self-inspection). Optional, default '' — when empty,
+          `collect` resolves it itself via `gh run view --json
+          workflowName` (research.md R-B4); a caller that still supplies
+          it explicitly sees no behavior change.
         type: string
-        required: true
+        required: false
+        default: ""
       diagnose-model:
         description: "Model for the read-only diagnose agent (constitution II tiering: evidence-weight analysis)"
         type: string
@@ -350,6 +354,7 @@ jobs:
     # 'cancelled'.
     timeout-minutes: 10
     outputs:
+      run-name: ${{ steps.run-meta.outputs.run-name }}
       evidence-available: ${{ steps.aggregate.outputs.evidence-available }}
       signals: ${{ steps.aggregate.outputs.signals }}
       collectors-failed: ${{ steps.aggregate.outputs.collectors-failed }}
@@ -424,6 +429,7 @@ jobs:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ACTIONS_TOKEN: ${{ github.token }}
           RUN_ID: ${{ inputs.run-id }}
+          RUN_NAME_INPUT: ${{ inputs.run-name }}
         run: |
           set -euo pipefail
           # Gate 12: `gh run view` needs Actions:read, which the App token
@@ -431,7 +437,14 @@ jobs:
           # top-level permissions: block grants it). This step has no
           # fallback: under `set -e` a 403 here used to kill the whole
           # collect job before any evidence was gathered.
-          json=$(GH_TOKEN="$ACTIONS_TOKEN" gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json headBranch,headSha,conclusion,url,event,createdAt,updatedAt,databaseId)
+          #
+          # workflowName added (spec 058, research.md R-B4): the wrapper
+          # no longer resolves run-name for us when it drops its `resolve`
+          # job, so this is now the ONLY place it is computed, whichever
+          # trigger fired the wrapper. workflowName, never name: a run's
+          # `name` is its run-name title when the workflow sets one (this
+          # one does; see wing-commander-8-watchdog.yml's own header).
+          json=$(GH_TOKEN="$ACTIONS_TOKEN" gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json headBranch,headSha,conclusion,url,event,createdAt,updatedAt,databaseId,workflowName)
           {
             echo "head-branch=$(printf '%s' "$json" | jq -r '.headBranch // empty')"
             echo "head-sha=$(printf '%s' "$json" | jq -r '.headSha // empty')"
@@ -441,6 +454,12 @@ jobs:
             echo "created-at=$(printf '%s' "$json" | jq -r '.createdAt // empty')"
             echo "updated-at=$(printf '%s' "$json" | jq -r '.updatedAt // empty')"
           } >> "$GITHUB_OUTPUT"
+          if [ -n "$RUN_NAME_INPUT" ]; then
+            run_name="$RUN_NAME_INPUT"
+          else
+            run_name="$(printf '%s' "$json" | jq -r '.workflowName // empty')"
+          fi
+          echo "run-name=$run_name" >> "$GITHUB_OUTPUT"
 
       # Best-effort, read-only spec identity resolution (contract's collect
       # job step 2) — never a refusal gate, unlike every write-capable
@@ -463,7 +482,7 @@ jobs:
           token: ${{ steps.ctx.outputs.token }}
           actions-token: ${{ github.token }}
           run-id: ${{ inputs.run-id }}
-          run-name: ${{ inputs.run-name }}
+          run-name: ${{ steps.run-meta.outputs.run-name }}
           head-branch: ${{ steps.run-meta.outputs.head-branch }}
           spec-draft-prefix: ${{ vars.WING_COMMANDER_SPEC_DRAFT_PREFIX }}
           spec-prefix: ${{ vars.WING_COMMANDER_SPEC_PREFIX }}
@@ -644,7 +663,7 @@ jobs:
           HEAD_BRANCH: ${{ steps.run-meta.outputs.head-branch }}
           HEAD_SHA: ${{ steps.run-meta.outputs.head-sha }}
           RUN_CREATED_AT: ${{ steps.run-meta.outputs.created-at }}
-          RUN_NAME: ${{ inputs.run-name }}
+          RUN_NAME: ${{ steps.run-meta.outputs.run-name }}
           RUN_CONCLUSION: ${{ steps.run-meta.outputs.conclusion }}
           META_STAGE: ${{ steps.spec-slug.outputs.meta-stage }}
           STALLED_LABEL: ${{ steps.spec-slug.outputs.stalled-label }}
@@ -928,7 +947,7 @@ jobs:
         shell: bash
         continue-on-error: true
         env:
-          RUN_NAME: ${{ inputs.run-name }}
+          RUN_NAME: ${{ steps.run-meta.outputs.run-name }}
           RUN_CONCLUSION: ${{ steps.run-meta.outputs.conclusion }}
           META_STAGE: ${{ steps.spec-slug.outputs.meta-stage }}
           SLUG: ${{ steps.spec-slug.outputs.slug }}
@@ -1580,7 +1599,7 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
-          RUN_NAME: ${{ inputs.run-name }}
+          RUN_NAME: ${{ steps.run-meta.outputs.run-name }}
           RUN_CONCLUSION: ${{ steps.run-meta.outputs.conclusion }}
           SLUG: ${{ steps.spec-slug.outputs.slug }}
           SPEC_DIR: ${{ steps.spec-slug.outputs.spec-dir }}
@@ -1704,7 +1723,7 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
-          RUN_NAME: ${{ inputs.run-name }}
+          RUN_NAME: ${{ steps.run-meta.outputs.run-name }}
           RUN_CONCLUSION: ${{ steps.run-meta.outputs.conclusion }}
           SLUG: ${{ steps.spec-slug.outputs.slug }}
           SPEC_DRAFT_PREFIX: ${{ vars.WING_COMMANDER_SPEC_DRAFT_PREFIX }}
@@ -1944,6 +1963,47 @@ jobs:
             echo "$body" >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      # FR-011/FR-018/FR-019 (spec 058, research.md R-B1/R-B2): at least
+      # one collector reported (evidence-available != 'false') but the
+      # aggregate signal set is empty -- nothing for diagnose to weigh, so
+      # this deterministic step records the pass instead of invoking the
+      # agent. Full wording when every collector reported; partial
+      # wording, naming both counts, when some failed (spec.md's explicit
+      # edge case) -- the same two strings diagnose's own "Report 'passed
+      # inspection'" step below uses, relocated rather than reworded
+      # (contracts/watchdog-clean-path-delta.md). Gated on
+      # steps.aggregate.outcome == 'success' (not just its outputs) so a
+      # failed aggregate step never yields a false "passed". No issue is
+      # filed or updated (FR-009); placing this inside collect rather than
+      # a new job is what keeps this path at "collection job plus at most
+      # one guaranteed-report job" (FR-018) instead of adding a job.
+      - name: Report "passed inspection" to lifecycle issue (empty signal set, no agent)
+        shell: bash
+        if: >-
+          steps.aggregate.outcome == 'success' &&
+          steps.aggregate.outputs.evidence-available != 'false' &&
+          (steps.aggregate.outputs.signals == '' || steps.aggregate.outputs.signals == '[]')
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ISSUE: ${{ steps.spec-slug.outputs.lifecycle-issue }}
+          RUN_URL: ${{ steps.run-meta.outputs.url }}
+          COLLECTORS_FAILED: ${{ steps.aggregate.outputs.collectors-failed }}
+          COLLECTORS_TOTAL: ${{ steps.aggregate.outputs.collectors-total }}
+        run: |
+          set -uo pipefail
+          failed="${COLLECTORS_FAILED:-0}"
+          total="${COLLECTORS_TOTAL:-9}"
+          if [ "$failed" -gt 0 ]; then
+            body="🐕 **Wing Commander · watchdog** — run passed inspection on $((total - failed)) of $total evidence collectors ($failed collector(s) errored; their evidence classes were not examined). _[Inspected run]($RUN_URL)_"
+          else
+            body="🐕 **Wing Commander · watchdog** — run passed inspection. No problems detected. _[Inspected run]($RUN_URL)_"
+          fi
+          if [ -n "$ISSUE" ]; then
+            gh issue comment "$ISSUE" --body "$body"
+          else
+            echo "$body" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   # Single haiku-tier, read-only, structured-output step turning signals into
   # zero or more Findings. Skipped when collect could not gather any evidence
   # at all (FR-005).
@@ -1955,7 +2015,13 @@ jobs:
     # needs-closure -- !cancelled() && needs.collect.result == 'success'
     # restates that protection explicitly, and a status-guarded job must
     # directly depend on verify-image-prerequisites too (Gate 23).
-    if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure' && needs.collect.result == 'success' && needs.collect.outputs.evidence-available != 'false'"
+    # research.md R-B1 (spec 058): an empty aggregate signal set alone --
+    # not "zero signals AND zero failed collectors" -- now skips diagnose
+    # too. A pass with one or more failed collectors but nothing left to
+    # weigh is a partial pass posted by collect's new deterministic step
+    # below, not a reason to invoke the agent (FR-019). The all-failed
+    # case (evidence-available == 'false') is untouched -- FR-013.
+    if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure' && needs.collect.result == 'success' && needs.collect.outputs.evidence-available != 'false' && needs.collect.outputs.signals != '' && needs.collect.outputs.signals != '[]'"
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -2232,7 +2298,7 @@ jobs:
           prompt: |
             You are the diagnose step of this repository's pipeline
             watchdog, inspecting the just-completed run of
-            "${{ inputs.run-name }}" (run ID ${{ inputs.run-id }}).
+            "${{ needs.collect.outputs.run-name }}" (run ID ${{ inputs.run-id }}).
 
             Read ${{ runner.temp }}/watchdog-signals.json — this is a
             normalized array of signals gathered by deterministic
@@ -3316,17 +3382,20 @@ jobs:
       # walked backward from the inspected run whose own trigger was itself
       # workflow_run (never a human-initiated workflow_dispatch link, which
       # would break the chain). watchdog.yml never reads github.event.*
-      # directly; inputs.run-name already carries the inspected run's own
-      # display name, so "== 'Wing Commander · 8 watchdog'" here means
-      # self-inspection — the ONLY place this stage special-cases its own
-      # name anywhere in this file (T028 desk-check: detection/fingerprint/
-      # dedup/report are identical for a watchdog-inspecting-watchdog run).
-      # The run being inspected is always stage 8's, never stage 8b's:
-      # 8b is what listens to 8, and nothing listens to 8b.
+      # directly; needs.collect.outputs.run-name (spec 058: resolved in
+      # collect itself, from `inputs.run-name` when the caller supplies
+      # it, otherwise via `gh run view --json workflowName`) already
+      # carries the inspected run's own display name, so
+      # "== 'Wing Commander · 8 watchdog'" here means self-inspection —
+      # the ONLY place this stage special-cases its own name anywhere in
+      # this file (T028 desk-check: detection/fingerprint/dedup/report are
+      # identical for a watchdog-inspecting-watchdog run). The run being
+      # inspected is always stage 8's, never stage 8b's: 8b is what
+      # listens to 8, and nothing listens to 8b.
       - name: Self-dispatch depth
         id: self-dispatch-depth
         shell: bash
-        if: inputs.run-name == 'Wing Commander · 8 watchdog'
+        if: needs.collect.outputs.run-name == 'Wing Commander · 8 watchdog'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ACTIONS_TOKEN: ${{ github.token }}
@@ -3781,7 +3850,7 @@ jobs:
           token: ${{ steps.ctx.outputs.token }}
           actions-token: ${{ github.token }}
           run-id: ${{ inputs.run-id }}
-          run-name: ${{ inputs.run-name }}
+          run-name: ${{ needs.collect.outputs.run-name }}
           spec-draft-prefix: ${{ vars.WING_COMMANDER_SPEC_DRAFT_PREFIX }}
           spec-prefix: ${{ vars.WING_COMMANDER_SPEC_PREFIX }}
           plan-prefix: ${{ vars.WING_COMMANDER_PLAN_PREFIX }}
