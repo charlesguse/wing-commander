@@ -19,7 +19,7 @@ overwhelming majority of runs — the bill is set by the number of jobs, not
 by the work done.
 
 `Insights → Actions usage metrics`, 1–19 Sep 2026: 21,213 minutes across
-18,858 job runs. Spec 057 / PR #403 (merged 2026-09-19) removed the largest
+18,858 job runs. PR #403 (merged 2026-09-19) removed the largest
 structural waste — wrappers reacting to source runs that had executed
 nothing, and the metrics-persist wrapper's separate resolve job — worth
 roughly 12,000 of those minutes at this month's volume. What #403 could not
@@ -69,8 +69,9 @@ the value is the usage metric itself, any adopter running the pipeline on a
 private repository, and — for sub-problem B — the diagnose agent's token
 spend on the usage window this repository's pipeline shares with its
 maintainers' own sessions. And the pipeline's volume is bursty: a single
-spec lifecycle drives dozens of completions in an hour, which is exactly
-what makes coalescing pay and what makes a fixed schedule a poor fit alone.
+spec lifecycle drives dozens of completions in an hour, and those records
+are read back mid-lifecycle, which is what makes a fixed schedule a poor fit
+on its own for the completions that carry a record.
 
 **Why this is not a cost-target spec.** Every outcome below is stated per
 run and is verifiable from the jobs API of a single run — how many jobs
@@ -84,6 +85,29 @@ contract), VIII (every gate this spec ships or amends carries a checked-in
 fixture for each failure branch), IX (the passed-inspection record and the
 persistence high-water mark are written by deterministic code, never by an
 agent).
+
+## Clarifications
+
+### Session 2026-09-21 — answered on [#434](https://github.com/charlesguse/wing-commander/issues/434)
+
+- Q: Does the watchdog's agent-skip condition key on "zero signals" alone, or
+  on "zero signals and zero failed collectors"? → A: zero signals alone; the
+  deterministic record states whether the pass was full or partial (FR-019).
+- Q: Is folding the watchdog wrapper's run resolution into the stage — a
+  versioned published-input change — in scope here or deferred? → A: in
+  scope; `run-name` becomes optional and the decision is recorded in the
+  watchdog stage's contract as a minor version (FR-020).
+- Q: Which persistence model does sub-problem C adopt? → A: none of the three
+  listed. Keep per-completion persistence for the nine stage workflows whose
+  records are read back promptly, drop the watchdog from the completion
+  trigger because sub-problem B empties it, add a daily scheduled sweep over
+  a high-water mark, and use no concurrency-based coalescing (FR-030).
+
+Four corrections the same reply raised are folded in: PR #403 is cited
+without the unrelated spec 057; sub-problem B gains FR-031 for the record a
+healthy inspection no longer emits; SC-004 is restated as a count a jobs
+listing can actually show; and User Story 2's Independent Test says the
+diagnose job is *skipped* rather than absent.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -139,14 +163,14 @@ shows the check successful (or failed, with every dependent skipped).
 
 ### User Story 2 - A clean watchdog inspection is decided by code, not by an agent (Priority: P2)
 
-The watchdog inspects a run that executed. Every collector ran, and none of
-them emitted a signal. The watchdog records "passed inspection" on the
-lifecycle issue from a deterministic step, files nothing, invokes no agent,
-and bills only the collection job plus whatever guaranteed-report minute
-cannot be folded away. A run with any signal — or with a failed collector —
-reaches the diagnose agent and behaves exactly as it does today, including
-the weaker "passed inspection on N of M collectors" wording when a collector
-errored.
+The watchdog inspects a run that executed. The collectors emitted no signal.
+The watchdog records "passed inspection" on the lifecycle issue from a
+deterministic step, files nothing, invokes no agent, and bills only the
+collection job plus the guaranteed unhandled-failure report. An empty signal
+set is enough on its own: when a collector errored, the same deterministic
+step records the weaker "passed inspection on N of M collectors" wording it
+posts today, and still invokes no agent. A run with at least one signal
+reaches the diagnose agent and behaves exactly as it does today.
 
 **Why this priority**: it removes an agent call from the common path, which
 is the part of this spec that returns real budget on the usage window the
@@ -155,70 +179,88 @@ edits `watchdog.yml`, which User Story 1 also rewrites.
 
 **Independent Test**: drive one watchdog inspection over a healthy run and
 one over a run carrying a known signal. Read both runs' jobs APIs: the first
-shows no diagnose job and a passed-inspection comment on the issue; the
-second shows diagnose running and the same behaviour as today.
+shows the diagnose job skipped, no agent step executed, and a
+passed-inspection comment on the issue; the second shows diagnose running
+and the same behaviour as today.
 
 **Acceptance Scenarios**:
 
 1. **Given** a watchdog inspection where every collector ran and the
    aggregate signal set is empty, **When** the run completes, **Then** no
-   agent step executed anywhere in the run, a "passed inspection" record was
-   posted by a deterministic step, and no issue was filed or updated.
-2. **Given** a watchdog inspection whose aggregate signal set is non-empty,
+   agent step executed anywhere in the run, a full "passed inspection" record
+   was posted by a deterministic step, and no issue was filed or updated.
+2. **Given** a watchdog inspection where at least one collector ran, one or
+   more collectors errored, and the aggregate signal set is empty, **When**
+   the run completes, **Then** no agent step executed, and the deterministic
+   record posted is the partial one naming how many collectors reported and
+   how many errored.
+3. **Given** a watchdog inspection whose aggregate signal set is non-empty,
    **When** the run completes, **Then** the diagnose agent ran and the run's
    filing, triage and action behaviour is byte-for-byte what current `main`
    produces for the same evidence.
-3. **Given** a watchdog inspection where every collector failed, **When** the
+4. **Given** a watchdog inspection where every collector failed, **When** the
    run completes, **Then** the existing "could not inspect" path runs
    unchanged, and no passed-inspection record is posted.
-4. **Given** any watchdog run, including one inspecting the watchdog's own
+5. **Given** a watchdog inspection that found nothing, **When** the run
+   completes, **Then** it uploaded no metrics record, and nothing downstream
+   reports that run as a record that could not be retrieved.
+6. **Given** any watchdog run, including one inspecting the watchdog's own
    runs, **When** the inspection is selected, **Then** it is neither skipped
    nor softened — the watchdog's own runs stay unexempted.
-5. **Given** any watchdog run at all, including one where every other job
+7. **Given** any watchdog run at all, including one where every other job
    died, **When** the run completes, **Then** the unhandled-failure report
    still executed.
 
 ---
 
-### User Story 3 - Metrics persistence pays per burst, not per completion (Priority: P3)
+### User Story 3 - Metrics persistence pays only for completions that emitted a record (Priority: P3)
 
-A spec lifecycle drives dozens of stage completions in an hour. Instead of
-one persistence run per completion, the pipeline's persistence work
-collapses: a day of that traffic yields on the order of tens of persistence
-runs, not hundreds. Every executed stage run is still persisted exactly
-once, identified by its record key, and its record lands within minutes of
-the run concluding. A maintainer can still re-drive persistence for one
-named run by hand.
+A spec lifecycle drives dozens of stage completions in an hour. Each of the
+nine stage workflows whose records are read back promptly still gets its own
+persistence run on completion, so its record lands within minutes — that
+latency is what the watchdog's cross-run collectors and the lifecycle rollup
+depend on. What stops is spending a run on a completion that emitted no
+record at all: once sub-problem B skips the diagnose job, a healthy watchdog
+inspection uploads nothing, so the watchdog leaves the completion trigger
+entirely. A daily scheduled sweep picks up the rest — the signal-bearing
+watchdog inspections and any stage completion a per-run persistence missed —
+from a durable high-water mark. A maintainer can still re-drive persistence
+for one named run by hand.
 
 **Why this priority**: it is the largest single consumer, but it is last
 because it is the only sub-problem that changes *when* a durable write
-happens rather than *whether* an idle job is billed, and because its shape
-depends on a decision the owner has not made (see the open questions).
+happens rather than *whether* an idle job is billed, and because the
+completions it stops reacting to are exactly the ones sub-problem B empties.
 
-**Independent Test**: drive a burst of stage completions and count the
-persistence runs created, then read the records file: every executed run
-appears exactly once, and the record count matches the completions.
+**Independent Test**: drive a burst of stage completions plus a healthy
+watchdog inspection, then list the persistence runs created and read the
+records file: one run per record-bearing completion, none for the healthy
+inspection, and every executed run appearing exactly once.
 
 **Acceptance Scenarios**:
 
 1. **Given** a burst of stage completions inside one short window, **When**
-   the burst has settled, **Then** the number of persistence workflow runs
-   created is far smaller than the number of completions, and every executed
-   run in the burst has exactly one record.
+   the burst has settled, **Then** exactly one persistence run was created
+   per record-bearing completion, none was created for a completion that
+   emitted no record, and every executed run in the burst has exactly one
+   record.
 2. **Given** a stage run that concluded and whose metrics artifacts exist,
    **When** persistence next runs, **Then** its record is appended within
    minutes of the run concluding.
-3. **Given** a run that has already been persisted, **When** persistence
+3. **Given** a signal-bearing watchdog inspection, which the completion
+   trigger no longer reacts to, **When** the next scheduled sweep runs,
+   **Then** its record is persisted exactly once.
+4. **Given** a run that has already been persisted, **When** persistence
    processes it again for any reason, **Then** no duplicate record is
    appended — idempotence by record key holds.
-4. **Given** a maintainer who wants one named run persisted now, **When**
+5. **Given** a maintainer who wants one named run persisted now, **When**
    they trigger the single-run re-drive by hand, **Then** that run is
-   persisted, and it is safe to do so while a coalescing or scheduled
-   persistence run is already in flight.
-5. **Given** a persistence path that fails for any reason, **When** it fails,
+   persisted, and it is safe to do so while a scheduled sweep is already in
+   flight.
+6. **Given** a persistence path that fails for any reason, **When** it fails,
    **Then** it fails only itself — it never touches, marks or fails the
    origin run it is collecting from.
-6. **Given** a run whose metrics artifacts have expired before persistence
+7. **Given** a run whose metrics artifacts have expired before persistence
    reached it, **When** persistence processes it, **Then** the outcome is
    recorded explicitly rather than silently dropped, and the run is not
    retried forever.
@@ -244,16 +286,16 @@ appears exactly once, and the record count matches the completions.
 - **A watchdog inspection where the aggregate step itself fails.** No
   passed-inspection record may be posted on the strength of an aggregate
   that did not complete.
-- **A persistence run that is superseded while pending.** If coalescing
-  replaces a queued run, that run concludes as cancelled in the run list;
-  nothing may treat that cancellation as a persistence failure, and no
-  completion it was queued for may be lost.
-- **Two persistence runs overlapping** — a coalesced or scheduled sweep and
-  a hand-driven single-run re-drive. Both must be safe, with no duplicate
-  record and no lost record.
-- **A completion that arrives while the previous persistence run is already
-  past the point where it would have seen it.** It must be picked up by the
-  next run, not stranded between two.
+- **A healthy watchdog inspection, which now emits no metrics record.**
+  Nothing downstream may report it as a record that existed and could not be
+  retrieved, and the rollup's "every agent run appears exactly once" must
+  stay true — such a run is no longer an agent run.
+- **Two persistence runs overlapping** — a scheduled sweep and a hand-driven
+  single-run re-drive. Both must be safe, with no duplicate record and no
+  lost record.
+- **A run that concludes while a scheduled sweep is already past the point
+  where it would have seen it.** It must be picked up by its own completion
+  run or the next sweep, never stranded between two.
 
 ## Requirements *(mandatory)*
 
@@ -289,8 +331,8 @@ appears exactly once, and the record count matches the completions.
 
 ### Functional Requirements — B. The watchdog's clean path (P2)
 
-- **FR-009**: A watchdog inspection whose collectors all ran and whose
-  aggregate signal set is empty MUST record "passed inspection"
+- **FR-009**: A watchdog inspection whose aggregate signal set is empty and
+  whose aggregate step completed MUST record "passed inspection"
   deterministically and MUST NOT execute any agent step.
 - **FR-010**: The passed-inspection record MUST be written by deterministic
   code, never by an agent, and MUST be produced beside the aggregate that
@@ -316,26 +358,42 @@ appears exactly once, and the record count matches the completions.
   watchdog run, including one in which every other job died.
 - **FR-018**: On the no-finding path, the run's billed job count MUST be the
   collection job plus at most one guaranteed-report job.
-- **FR-019**: [NEEDS CLARIFICATION: does the agent-skip condition key on
-  "zero signals" alone, or on "zero signals AND zero failed collectors"? A
-  run with one failed collector and no signals is today a weaker pass; under
-  the first reading it skips the agent and records a partial pass, under the
-  second it still pays the agent call.]
-- **FR-020**: [NEEDS CLARIFICATION: is folding the watchdog wrapper's run
-  resolution into the stage — which makes the published `run-name` input
-  optional and is therefore a versioned contract change under Constitution
-  VII — in scope for this spec, or deferred to a later one? Deferring keeps
-  one wrapper job (one billed minute) per inspection.]
+- **FR-019**: The agent-skip condition MUST key on an empty aggregate signal
+  set alone, not on "zero signals AND zero failed collectors". A run with no
+  signals, one or more failed collectors and at least one collector that
+  reported MUST skip the agent and record a partial pass — the all-failed
+  case stays with FR-013's "could not inspect" path. The agent weighs
+  pre-computed signals, so an empty signal set
+  leaves it nothing to weigh, and an evidence class no collector examined is
+  not one the agent can examine either. The untrusted-collector set MUST stay
+  an input to the agent on the signal-bearing path, unchanged.
+- **FR-020**: Folding the watchdog wrapper's run resolution into the stage IS
+  in scope for this feature. The published `run-name` input MUST become
+  optional, resolved inside the stage's existing inspected-run lookup when it
+  is empty, so the wrapper reduces to a single `uses:` job that allocates no
+  runner of its own. The change MUST be additive, with a default that
+  preserves current behaviour, and MUST be recorded as a versioned decision
+  in the watchdog stage's contract (a minor version and a release note, not a
+  breaking change).
+- **FR-031**: After FR-009, a watchdog inspection that finds nothing MUST
+  emit no metrics record at all — the diagnose job held the only run-summary
+  call site. The lifecycle rollup's "every agent run appears exactly once"
+  MUST stay correct on that basis, and no consumer may report such a run as a
+  record that existed and could not be retrieved.
 
 ### Functional Requirements — C. Metrics persistence (P3)
 
-- **FR-021**: Persistence MUST cost per burst of completions rather than per
-  completion: a day of ordinary pipeline traffic yields on the order of tens
-  of persistence runs, not hundreds.
-- **FR-022**: Every executed stage run MUST still be persisted exactly once,
-  identified by its record key; the existing idempotence and
-  write-contention retry behaviour MUST be preserved.
-- **FR-023**: A record MUST land within minutes of its run concluding.
+- **FR-021**: No persistence run may be spent on a completion that emitted no
+  record; a record-bearing completion costs at most one persistence run.
+- **FR-022**: Every executed run that emitted a metrics record MUST still be
+  persisted exactly once, identified by its record key, whichever path
+  reaches it; the existing idempotence and write-contention retry behaviour
+  MUST be preserved.
+- **FR-023**: A record belonging to one of the nine stage workflows that
+  keeps its completion trigger MUST land within minutes of its run
+  concluding — the watchdog's cross-run collectors and the lifecycle rollup
+  read that history mid-flight, and a record landing hours late blinds both.
+  A record the scheduled sweep owns MUST land within one sweep interval.
 - **FR-024**: The single-run re-drive triggered by hand MUST be preserved,
   and MUST be safe to use while another persistence run is in flight.
 - **FR-025**: The persistence path MUST stay isolated: it never touches the
@@ -343,26 +401,31 @@ appears exactly once, and the record count matches the completions.
 - **FR-026**: Persistence MUST NOT be moved inside the watchdog run —
   isolation is why it is a separate workflow, and conversation-stage
   completions are not watched.
-- **FR-027**: Work MUST NOT be lost at a boundary: a completion arriving
-  while a persistence run is already past the point it would have seen it
-  MUST be picked up by the next run.
+- **FR-027**: Coverage MUST NOT depend on a single path: any record-bearing
+  run that no completion-triggered persistence reached — every signal-bearing
+  watchdog inspection, and any stage completion whose own run failed or never
+  fired — MUST be picked up by the next scheduled sweep, which resumes from a
+  durable high-water mark rather than from a fixed lookback.
 - **FR-028**: A run whose metrics artifacts have expired before persistence
   reached it MUST be recorded with an explicit outcome rather than silently
   dropped or retried indefinitely.
-- **FR-029**: Any change to a published stage input that this sub-problem
-  requires (for example making the single-run identifier optional) MUST be
-  recorded as a versioned decision in that stage's contract.
-- **FR-030**: [NEEDS CLARIFICATION: which persistence model — (a) coalescing
-  on completion: keep the completion trigger, have each run persist
-  everything outstanding since a high-water mark under a concurrency group
-  that does not cancel in progress, so a burst collapses to at most one
-  running and one pending run, with a daily scheduled backstop; (b) a
-  periodic scheduled sweep only, and at what cadence; or (c) accept
-  per-completion persistence once sub-problem A has removed its second job?
-  (a) keeps per-completion latency and pays per burst but makes the
-  single-run identifier optional and leaves replaced pending runs concluding
-  as cancelled; (b) is the simplest shape but trades latency for cadence;
-  (c) ships nothing here.]
+- **FR-029**: The sweep-style input the metrics-persist stage gains MUST be
+  additive, with a default that preserves today's single-run behaviour, and
+  MUST be recorded as a versioned decision in that stage's contract.
+- **FR-030**: The persistence model MUST be per-record-bearing-completion
+  plus a daily scheduled sweep, composed of exactly these four parts:
+  (a) the persistence wrapper keeps its completion trigger for the nine stage
+  workflows whose records are read back promptly (`intake`, `clarify`,
+  `plan`, `tasks`, `implement`, `finalize`, `cleanup`, `rebase`,
+  `pr-conversation`); (b) the wrapper drops the watchdog from that trigger,
+  because after FR-031 a healthy inspection emits no record and a run
+  reacting to it would bill a minute to find nothing; (c) the wrapper owns a
+  daily scheduled sweep that lists runs concluded since the high-water mark
+  and persists every record-bearing run not already in the records file; and
+  (d) no `concurrency`-based coalescing — at this pipeline's rhythm the
+  pending-slot replacement would fire rarely, for the cost of cancelled runs
+  in the run list and the same contract change. The hand-driven single-run
+  re-drive stays (FR-024).
 
 ### Out of Scope
 
@@ -389,11 +452,12 @@ appears exactly once, and the record count matches the completions.
 - **Passed-inspection record**: the deterministic statement posted to the
   lifecycle issue when an inspection found nothing, carrying whether the
   pass was full or partial.
-- **Persistence high-water mark**: the durable marker describing which
-  concluded runs have already been persisted, so the next persistence run
-  knows where to resume.
-- **Metrics record**: one line per executed pipeline run, keyed so that
-  appending it twice is a no-op.
+- **Persistence high-water mark**: the durable marker, kept beside the
+  records, describing how far the last sweep got, so the next scheduled sweep
+  knows where to resume instead of scanning a fixed lookback.
+- **Metrics record**: one line per pipeline run that emitted one — after
+  FR-031 a healthy watchdog inspection does not — keyed so that appending it
+  twice is a no-op.
 
 ## Success Criteria *(mandatory)*
 
@@ -412,10 +476,13 @@ records file. None depends on the usage page.
 - **SC-003**: Across all 13 published stages, every job's run/skip outcome
   for every combination of its dependencies' outcomes matches current
   `main`, except for the new "image check skipped" case.
-- **SC-004**: A no-op stage run (nothing to do, no image configured) bills at
-  most one job more than the number of jobs that actually performed work.
-- **SC-005**: A watchdog inspection that finds nothing lists no agent step in
-  any job, and posts exactly one passed-inspection record.
+- **SC-004**: For each of the 13 published stages, a no-op run with no image
+  configured bills exactly one job fewer than the same no-op run on current
+  `main`, and matches the concrete per-stage job count the plan records.
+- **SC-005**: A watchdog inspection that finds nothing lists the diagnose job
+  as skipped, lists no agent step in any job, and posts exactly one
+  passed-inspection record — the full one when every collector reported, the
+  partial one when some errored.
 - **SC-006**: A watchdog inspection that finds nothing bills at most two
   jobs.
 - **SC-007**: A watchdog inspection carrying at least one signal produces the
@@ -424,12 +491,15 @@ records file. None depends on the usage page.
 - **SC-008**: Every watchdog run lists an executed unhandled-failure report,
   including runs in which every other job failed.
 - **SC-009**: Over a 24-hour window of ordinary pipeline traffic, the number
-  of persistence workflow runs created is at most one tenth of the number of
-  stage completions in that window.
-- **SC-010**: For that same window, every executed stage run appears in the
-  records file exactly once.
-- **SC-011**: The interval between a stage run concluding and its record
-  appearing is under ten minutes for every run in that window.
+  of persistence workflow runs created is at most the number of
+  record-bearing completions plus the number of scheduled sweeps, and zero
+  persistence runs were created for completions that emitted no record.
+- **SC-010**: For that same window, every executed run that emitted a metrics
+  record appears in the records file exactly once.
+- **SC-011**: For that same window, the interval between a run concluding and
+  its record appearing is under ten minutes for every stage run on the
+  completion trigger, and within one sweep interval for every record the
+  sweep owns.
 - **SC-012**: Every gate this feature ships or amends fails on a purpose-built
   fixture for each of its failure branches, and passes on the real tree.
 - **SC-013**: No workflow in the repository gains an agent invocation as a
@@ -458,9 +528,8 @@ records file. None depends on the usage page.
   is derived from those, not from new collection.
 - **Existing machinery is reused, not re-typed**: the persistence
   composite's idempotence and write-contention retry, the run-listing
-  capability used for a high-water-mark scan, the per-spec and intake
-  concurrency groups as the coalescing precedent, and the scheduled wrappers
-  as the schedule precedent.
+  capability used for a high-water-mark scan, and the scheduled wrappers as
+  the precedent for the daily sweep's trigger.
 - **Completion events only fire for workflows on the default branch**, and a
   hand-driven dispatch exists for re-drives; any sweep shape must live with
   both facts.
