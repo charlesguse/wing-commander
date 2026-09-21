@@ -3,7 +3,7 @@
   "spec_dir": "specs/058-per-job-minute-floor",
   "feature_num": "058",
   "stage": "implement",
-  "iteration": 1,
+  "iteration": 2,
   "spec_branch": "spec/058-per-job-minute-floor",
   "pending_re_review_from": ["charlesguse"]
 }
