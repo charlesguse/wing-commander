@@ -862,3 +862,7 @@ change is stated in terms of "after" B's record-emission change.
 ## Maintainer Feedback
 
 - [ ] MF-06 (US2, CLAUDE.md single-home rule) Build the passed-inspection message body (full pass and the "passed inspection on N of M evidence collectors..." wording, including the `COLLECTORS_TOTAL` fallback) in one place both `collect`'s new step and `diagnose`'s existing step call — a `_shared` script or composite — or at minimum register the two strings with the single-home/comment-canonical-pointer gate so a drifted copy fails.
+
+## Maintainer Feedback
+
+- [ ] MF-07 (docs, FR-021) Add a short subsection under `docs/adoption.md`'s metrics-persist wrapper notes, pointing at the reference wrapper, telling an adopter who bumps the pin to: (a) remove `Wing Commander · 8 watchdog` from their persist wrapper's `workflow_run.workflows`; (b) add the `schedule:` trigger and `sweep` job; (c) pass the workflow-list input introduced for MF-02.
