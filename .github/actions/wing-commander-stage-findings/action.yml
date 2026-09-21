@@ -266,6 +266,11 @@ runs:
             lines.append("<!-- wing-commander-finding: fingerprint={0} -->".format(fingerprint))
             return "\n".join(lines) + "\n"
 
+        def normalize_basis(value):
+            # \W keeps letters and digits in any script (an accented letter
+            # survives); underscores go with the punctuation.
+            return " ".join(re.sub(r"[\W_]+", " ", str(value).lower()).split())
+
         def compose_recap():
             return "Seen again in run {0}.\n".format(RUN_URL)
 
@@ -274,8 +279,13 @@ runs:
             if i < len(kept):
                 finding = kept[i]
                 basis = finding["fingerprint_basis"]
+                # #424: both basis fields are agent prose, so the key is hashed
+                # from a normalized form -- see data-model.md "Fingerprint" for
+                # the rule, the twin it stops, and the word-level variance it
+                # cannot stop.
                 fp = hashlib.sha256("{0}|{1}|{2}".format(
-                    STAGE, basis["file_path"], basis["gate_or_artifact"]
+                    STAGE, normalize_basis(basis["file_path"]),
+                    normalize_basis(basis["gate_or_artifact"])
                 ).encode("utf-8")).hexdigest()
                 marker = "<!-- wing-commander-finding: fingerprint={0} -->".format(fp)
                 label = "{0}:{1}".format(LABEL_PREFIX, STAGE)

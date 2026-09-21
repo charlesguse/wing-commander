@@ -119,13 +119,22 @@ is caught.
 
 ## D6: Fingerprint formula
 
-**Decision**: `fingerprint = sha256("<stage>|<file_path>|<gate_or_artifact_name>")`
-over the three deterministic fields FR-010 names, lower-hex digest,
-mirroring the watchdog's own `sha256sum` fingerprint idiom
+**Decision**: `fingerprint = sha256("<stage>|<norm(file_path)>|<norm(gate_or_artifact_name)>")`
+over the three fields FR-010 names, lower-hex digest, with `norm` as
+data-model.md "Fingerprint" defines it (#424), mirroring the watchdog's
+own `sha256sum` fingerprint idiom
 (`fp=$(printf '%s|...' ... | sha256sum | cut -d' ' -f1)`). The finding
 schema requires these three fields (plus title/what/evidence, which are
-not part of the basis) so the fingerprint is computable without touching
-the agent's prose.
+not part of the basis).
+
+**Amended (#424)**: this decision originally read the whole basis as
+prose-free. That holds only for `<stage>`, the filing composite's own
+input: `file_path` and `gate_or_artifact` are proposed by the agent, and
+drift between two runs' wording of one defect filed a twin. `norm` is the
+response to the drift; whether the key should depend on agent wording at
+all — the FR-010 question this reopens — is the open design call on #424.
+The rule, the twin it stops and the variance it cannot stop live in
+data-model.md "Fingerprint".
 
 **Rationale**: Reuses a formula shape this repository already has one
 working, reviewed instance of (the watchdog), rather than inventing a
