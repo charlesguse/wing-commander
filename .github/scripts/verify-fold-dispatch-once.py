@@ -523,12 +523,14 @@ def test_structural():
                             f"contain always() — a died/cancelled `act` "
                             f"could suppress this job (FR-005a/FR-006). "
                             f"if: {job_if!r}")
-        if "needs.verify-image-prerequisites.result == 'success'" not in " ".join(job_if.split()):
+        if "needs.verify-image-prerequisites.result != 'failure'" not in " ".join(job_if.split()):
             failures.append(f"structural: {job_id!r}'s `if:` does not check "
-                            f"needs.verify-image-prerequisites.result == "
-                            f"'success' — always() defeats ordinary "
+                            f"needs.verify-image-prerequisites.result != "
+                            f"'failure' — always() defeats ordinary "
                             f"skip-propagation, so a real image-prerequisite "
-                            f"failure would run this job unchecked (Gate 23).")
+                            f"failure would run this job unchecked (Gate 23), "
+                            f"or a legitimate skip (spec 058) would be "
+                            f"treated as a failure.")
 
     dispatch_group = str((jobs.get("dispatch-once") or {})
                          .get("concurrency", {}).get("group", ""))

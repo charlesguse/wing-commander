@@ -48,6 +48,12 @@ def evaluate(expr, ctx):
         return repr(lookup(name, ctx))
 
     e = re.sub(r"\balways\(\)", "True", e)
+    # spec 058: entry jobs gained !cancelled() so they explicitly tolerate
+    # a skipped verify-image-prerequisites (Gate 15). No scenario in this
+    # file models an actually-cancelled workflow run, so cancelled() reads
+    # False here -- the same ungated-baseline assumption always() -> True
+    # already makes above.
+    e = re.sub(r"\bcancelled\(\)", "False", e)
     # contains(fromJSON('[...]'), X) -> (X in [...])
     def _contains(m):
         return "(%s in %s)" % (_ref(m.group(2).strip()), m.group(1))
@@ -74,17 +80,17 @@ def lookup(ref, ctx):
     if ref in ctx:
         return ctx[ref]
     if ref == "needs.verify-image-prerequisites.result":
-        # specs/038-runner-container-passthrough, as corrected by #224: the
-        # check job runs unconditionally and skips its own STEP when no
-        # image is named, so on the default no-container-image path every
-        # scenario in this file sees it 'success' — not 'skipped'. It was
-        # skip-conditioned when it shipped, and this default said so, and
-        # every scenario here still passed: this simulator reads each job's
-        # `if:` in isolation and has no model of GitHub suppressing a job
-        # whose needs-CLOSURE contains a skipped one. That is the blind spot
-        # #224 came through; Gate 15 and Gate 23 cover the shape now, and a
-        # scenario here proves nothing about it either way.
-        return "success"
+        # spec 058: the check job now carries a job-level
+        # `if: inputs.container-image != ''`, so on the default
+        # no-container-image path every scenario in this file sees it
+        # 'skipped' — every real dependent's `if:` checks `!= 'failure'`
+        # (never `== 'success'`), so 'skipped' and 'success' evaluate
+        # identically here and no scenario needs to distinguish them. This
+        # simulator reads each job's `if:` in isolation and has no model of
+        # GitHub suppressing a job whose needs-CLOSURE contains a skipped
+        # one (the #224 blind spot); Gate 15 and Gate 23 cover that shape,
+        # and a scenario here proves nothing about it either way.
+        return "skipped"
     # unset needs.*.outputs.* / inputs.* render as empty string
     return ""
 

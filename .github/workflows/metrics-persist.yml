@@ -12,9 +12,53 @@ on:
   workflow_call:
     inputs:
       run-id:
-        description: "The already-concluded pipeline workflow run to collect metrics-record artifacts for."
+        description: >
+          The already-concluded pipeline workflow run to collect
+          metrics-record artifacts for. Ignored in sweep mode (a non-empty
+          `since`, or `sweep: true`), which discovers its own runs from the
+          Actions API — pass '' there.
         type: string
         required: true
+      since:
+        description: >
+          specs/058-per-job-minute-floor — sweep mode. An ISO-8601
+          timestamp: collect every run in this repository that concluded at
+          or after it (minus a fixed one-hour overlap, research.md R-C3),
+          batching every discovered record into ONE append commit. Empty
+          (the default) is the unchanged single-`run-id` behavior. When set,
+          `run-id` is ignored.
+        type: string
+        required: false
+        default: ""
+      sweep:
+        description: >
+          specs/058-per-job-minute-floor — sweep mode, resuming from the
+          durable high-water mark rather than an explicit timestamp. true
+          with an empty `since` reads `sweep-state.json` from
+          destination-branch and sweeps from the mark it records (FR-027),
+          bootstrapping to a seven-day window when no mark exists yet. This
+          is what a scheduled sweep uses: the caller is a reusable-workflow
+          `uses:` job, which cannot run the shell that read would need, and
+          adding a wrapper job to do it would cost the daily job-minute this
+          whole feature exists to stop spending. Ignored when `since` is
+          set, and a true no-op when both are unset.
+        type: boolean
+        required: false
+        default: false
+      sweep-workflow-paths:
+        description: >
+          MF-02 — a JSON array of workflow file paths (each run's `.path`
+          from the Actions API, e.g. [".github/workflows/wing-commander-1-
+          intake.yml", ...]) a sweep is allowed to discover records from.
+          Owned by the caller (constitution VI/VII: the stage does not
+          hardcode which workflows in the consumer repository can carry a
+          record) — the reference wrapper passes its nine completion-trigger
+          workflows plus wing-commander-8-watchdog.yml. Empty (the default)
+          applies no restriction, so a caller that has not yet adopted this
+          input keeps today's unfiltered sweep. Ignored outside sweep mode.
+        type: string
+        required: false
+        default: ""
       destination-branch:
         description: "Branch records.jsonl lives on. No default (FR-013) — the caller must choose one explicitly."
         type: string
@@ -109,6 +153,12 @@ jobs:
   # (Gate 7/22/23), and a container-image input with nothing to check it
   # against would silently accept a broken image reference.
   verify-image-prerequisites:
+    # This job now carries `if: inputs.container-image != ''` and reports
+    # `skipped` (billing nothing) when no image is configured -- #224's old
+    # "must never skip" invariant no longer holds, because every direct
+    # dependent's `if:` now tolerates that skip explicitly -- see
+    # specs/058-per-job-minute-floor/contracts/image-check-shape-delta.md.
+    if: inputs.container-image != ''
     permissions: {}
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     steps:
@@ -164,6 +214,9 @@ jobs:
 
   persist:
     needs: verify-image-prerequisites
+    # if: tolerates a skipped image check without widening to run merely
+    # because the workflow was not cancelled (#224) -- see clarify.yml.
+    if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure'"
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -191,6 +244,20 @@ jobs:
       persisted-count: ${{ steps.persist.outputs.persisted-count }}
       unpersisted-record-keys: ${{ steps.persist.outputs.unpersisted-record-keys }}
     steps:
+      # MF-10: a workflow_dispatch with both `run-id` and `since` left blank
+      # used to route here anyway (single-run mode, run-id '') and report
+      # success having discovered zero artifacts for a run that never
+      # existed -- indistinguishable from a legitimately empty completion.
+      # This job is shared by every workflow_run-triggered call (which
+      # always carries a real run-id) and workflow_dispatch, so the guard
+      # is scoped to the single-run path only.
+      - name: Validate run-id or since was supplied
+        shell: bash
+        if: inputs.since == '' && !inputs.sweep && inputs.run-id == ''
+        run: |
+          echo "::error::wing-commander metrics-persist stage: workflow_dispatch supplied neither run-id nor since -- supply run-id (a single run to persist) or since (a sweep window) so a dispatch with nothing to do fails loudly instead of succeeding with zero records."
+          exit 1
+
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v5
         with:
@@ -226,6 +293,104 @@ jobs:
           path: .wing-commander-pipeline
           persist-credentials: false
 
+      # specs/058-per-job-minute-floor (FR-022/FR-027, research.md
+      # R-C1/R-C3). Skipped entirely on the completion-triggered path, so
+      # that path is byte-for-byte what spec 043 shipped: the composite
+      # below then reads an empty `sweep-runs` and processes `run-id` alone.
+      # No new job — this runs inside the one `persist` job already
+      # allocated, which has already checked out and already holds the
+      # token every read below needs.
+      - name: Resolve the sweep window and list its runs
+        id: sweep
+        if: inputs.since != '' || inputs.sweep
+        # Pinned, not inherited: this job's container image is
+        # caller-supplied, and `set -uo pipefail` below is "Illegal option
+        # -o pipefail" on any image whose default shell is not bash
+        # (Gate 45, container-shell-safety).
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SINCE_INPUT: ${{ inputs.since }}
+          BRANCH: ${{ inputs.destination-branch }}
+          WORKFLOW_PATHS: ${{ inputs.sweep-workflow-paths }}
+        run: |
+          set -uo pipefail
+          since="$SINCE_INPUT"
+          if [ -z "$since" ]; then
+            # The durable mark (research.md R-C2) — one file on the
+            # destination branch, read without checking it out.
+            git fetch --no-tags --depth=1 origin "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}" >/dev/null 2>&1 || true
+            # `|| true` inside the substitution, deliberately: on the first
+            # sweep there is no sweep-state.json, `git show` exits 128, and
+            # under `pipefail` the assignment itself would then fail the
+            # step -- turning "no mark yet" into a red run instead of the
+            # bootstrap below.
+            since="$(git show "origin/${BRANCH}:sweep-state.json" 2>/dev/null | jq -r '.high_water_mark // empty' 2>/dev/null || true)"
+          fi
+          if [ -z "$since" ]; then
+            # No mark yet (first sweep, or a fresh destination branch). A
+            # bounded 48h bootstrap (MF-02(c)) rather than spec 058's
+            # original seven days -- narrow enough that a fresh destination
+            # branch's first sweep candidate list stays small, wide enough
+            # to cover a weekend gap before the first scheduled sweep runs.
+            since="$(jq -nr '((now - 48 * 3600) | floor) | todate')"
+            echo "No sweep-state.json on $BRANCH — bootstrapping the sweep from $since." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # Fixed one-hour overlap (research.md R-C3): a run can conclude
+          # moments after the previous sweep read its last page, and would
+          # otherwise fall in the gap between two windows forever.
+          # Re-listing is free — record_key idempotence (spec 043) is what
+          # makes the overlap safe rather than duplicative.
+          #
+          # jq, not `date -d` (MF-09): `date -d` is GNU-only and this step
+          # runs inside the adopter-supplied container image (Gate 45,
+          # container-shell-safety) -- a BusyBox or macOS `date` rejects the
+          # syntax outright, and under `set -uo pipefail` with no `-e` the
+          # resulting empty window_start/list_from silently listed the
+          # repository's ENTIRE run history rather than failing loudly. jq
+          # is already a checked prerequisite of this stage; `date -d` never
+          # was.
+          window_start="$(jq -nr --arg s "$since" '(($s | fromdate) - 3600) | todate')"
+          # Server-side `created` bound so --paginate does not walk the
+          # repository's entire run history; one extra day of slack because
+          # a long run can be created before the window and conclude inside
+          # it. The window itself is applied client-side over the whole
+          # streamed result, never per page — Gate 18: `--paginate --jq`
+          # resolves an array-collecting filter PER PAGE, so the filter
+          # below is per-item and the selection happens in the jq -s after.
+          list_from="$(jq -nr --arg s "$window_start" '((($s | fromdate) - 86400) | todate)[0:10]')"
+          # Empty means no restriction (MF-02(b) below), so a caller on an
+          # older pin that has not set the input keeps today's unfiltered
+          # sweep.
+          workflow_paths="${WORKFLOW_PATHS:-}"
+          [ -n "$workflow_paths" ] || workflow_paths='[]'
+          cand="$RUNNER_TEMP/sweep-candidates.ndjson"
+          # MF-02(d): `.path` (the workflow FILE), not `.name` -- a caller
+          # that sets `run-name:` on its wrapper overrides `.name` with that
+          # run's title, not the workflow's identity. `.conclusion` rides
+          # along unfiltered here (server-side `--jq` runs once per PAGE,
+          # not once over the whole result -- Gate 18 -- so every selection
+          # that spans pages happens below, over the whole streamed file).
+          if ! gh api "repos/${GITHUB_REPOSITORY}/actions/runs?status=completed&per_page=100&created=%3E%3D${list_from}" \
+            --paginate --jq '.workflow_runs[] | {run_id: (.id|tostring), workflow: (.path // ""), concluded_at: (.updated_at // ""), conclusion: (.conclusion // "")}' \
+            > "$cand" 2>"$RUNNER_TEMP/sweep-list-err.txt"; then
+            echo "::error::wing-commander metrics-persist stage: could not list runs for the sweep window from $window_start -- $(cat "$RUNNER_TEMP/sweep-list-err.txt" 2>/dev/null). Reporting as not-collected rather than sweeping an empty window and advancing the mark over it."
+            exit 1
+          fi
+          # MF-02(a): a run whose OWN `if:` skipped it end to end carries no
+          # metrics-record artifact and never will -- dropped here, before
+          # the composite's discover step would otherwise spend two API
+          # calls (jobs + artifacts) confirming exactly that per run.
+          # MF-02(b): restricted to the workflows the CALLER says can carry
+          # a record (constitution VI/VII — the stage does not hardcode
+          # this list itself).
+          runs="$(jq -s -c --arg w "$window_start" --argjson wf "$workflow_paths" \
+            '[.[] | select(.concluded_at >= $w) | select(.conclusion != "skipped") | select(($wf | length) == 0 or ((.workflow as $cw | $wf | index($cw)) != null))]' \
+            "$cand" 2>/dev/null || echo '[]')"
+          echo "Sweep window from $window_start: $(printf '%s' "$runs" | jq 'length') completed run(s)." >> "$GITHUB_STEP_SUMMARY"
+          echo "since=$since" >> "$GITHUB_OUTPUT"
+          echo "sweep-runs=$runs" >> "$GITHUB_OUTPUT"
+
       - name: Persist this run's metrics records
         id: persist
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-persist
@@ -233,3 +398,6 @@ jobs:
           run-id: ${{ inputs.run-id }}
           destination-branch: ${{ inputs.destination-branch }}
           destination-path: ${{ inputs.destination-path }}
+          # Empty whenever the step above was skipped — i.e. on every
+          # completion-triggered run, which is single-run mode unchanged.
+          sweep-runs: ${{ steps.sweep.outputs.sweep-runs }}

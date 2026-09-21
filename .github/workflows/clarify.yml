@@ -202,8 +202,12 @@ permissions: {}
 
 jobs:
   verify-image-prerequisites:
-    # this job must NEVER skip, or the whole needs-closure silently no-ops every stage (#224)
-    # -- see specs/038-runner-container-passthrough/contracts/runner-container-passthrough.md.
+    # This job now carries `if: inputs.container-image != ''` and reports
+    # `skipped` (billing nothing) when no image is configured -- #224's old
+    # "must never skip" invariant no longer holds, because every direct
+    # dependent's `if:` now tolerates that skip explicitly -- see
+    # specs/058-per-job-minute-floor/contracts/image-check-shape-delta.md.
+    if: inputs.container-image != ''
     permissions: {}
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     steps:
@@ -298,12 +302,16 @@ jobs:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
     # (canonical copy; do not condense)
-    # No `if:` of its own -- ordinary needs: skip-propagation is the
-    # gate here: a failed image check skips this job and everything
-    # behind it. verify-image-prerequisites never skips, so there is no
-    # skipped result to tolerate; the `if:` that used to say otherwise
-    # was never evaluated at all (#224).
+    # verify-image-prerequisites now carries its own job-level `if:` and
+    # reports `skipped` when no image is configured (#224's old
+    # never-skip invariant is gone -- see specs/058-per-job-minute-floor/
+    # contracts/image-check-shape-delta.md). Ordinary needs: skip-
+    # propagation would treat that skip as a reason to skip this job too,
+    # so the explicit `!= 'failure'` clause below tolerates a skipped
+    # image check while `!cancelled()` keeps this job from running when
+    # the workflow itself was cancelled.
     needs: verify-image-prerequisites
+    if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure'"
     permissions:
       contents: write
       pull-requests: write
@@ -1157,7 +1165,7 @@ jobs:
   stalled:
     needs: [verify-image-prerequisites, clarify]
     if: |
-      needs.verify-image-prerequisites.result == 'success' &&
+      needs.verify-image-prerequisites.result != 'failure' &&
       !cancelled() &&
       ( needs.verify-image-prerequisites.result == 'failure' ||
         needs.clarify.result == 'failure' ||

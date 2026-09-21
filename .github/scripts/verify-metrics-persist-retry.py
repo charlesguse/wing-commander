@@ -57,6 +57,12 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# The valid schema-version-1 record and its pretty-printed writer moved to
+# wc_metrics_harness when spec 058's three sweep gates needed the same
+# fixture: a record that drifts from the emitter is a fixture that proves
+# nothing, and two copies drift on the first schema change.
+from wc_metrics_harness import (  # noqa: E402
+    metrics_record as _reusable_workflow_record, write_pretty as _write_pretty)
 from wc_shell_harness import (  # noqa: E402
     ensure_jq, find_step, resolve_bash, run_step, use_utf8_stdout)
 
@@ -437,41 +443,8 @@ def case_idempotent_repeat_persistence_is_byte_for_byte_unchanged():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def _reusable_workflow_record(run_id, job_key, step_index=0):
-    """A schema-version-1 record exactly as wing-commander-metrics-summary
-    emits it for a reusable-workflow job: job_id null, record_key in its
-    emission-time run_id:job_key:step_index form. Shape mirrors the
-    metrics-record-diagnose artifact of run 34562449781."""
-    return {
-        "schema_version": 1, "record_available": True,
-        "run": {"workflow_run_id": run_id, "job_key": job_key,
-                "job_id": None, "step_index": step_index,
-                "record_key": f"{run_id}:{job_key}:{step_index}"},
-        "stage": "watchdog", "stage_available": True, "run_label": job_key,
-        "spec": {"spec_dir": None, "issue": None, "identity_available": False},
-        "model": "claude-opus-5", "model_available": True,
-        "turns": {"counted": 2, "reported": 4, "intended_budget": 30,
-                  "enforced_ceiling": 75, "available": True},
-        "tokens": {"input": 4, "output": 663, "cache_read": 21730,
-                   "cache_creation": 21978, "available": True},
-        "cost_usd": 0.24724, "cost_available": True,
-        "duration_ms": 58418, "duration_available": True,
-        "outcome": "healthy",
-        "per_model": [{"model": "claude-opus-5", "input_tokens": 4,
-                       "output_tokens": 663, "cache_read_tokens": 21730,
-                       "cache_creation_tokens": 21978, "cost_usd": 0.24724}],
-        "per_model_available": True,
-        "emitted_at": "2026-09-11T04:32:29Z",
-    }
-
-
-def _write_pretty(path, record):
-    # indent=2, deliberately: the emitter writes its record pretty-printed
-    # (`jq -n` without -c), and a compact fixture here would pass against
-    # the exact validate step that shipped broken.
-    with open(path, "w", encoding="utf-8", newline="\n") as f:
-        json.dump(record, f, indent=2)
-        f.write("\n")
+# _reusable_workflow_record / _write_pretty: see the import at the top of
+# this file. They live in wc_metrics_harness now.
 
 
 def case_validate_then_append_persists_reusable_workflow_records():
