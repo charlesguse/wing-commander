@@ -451,12 +451,19 @@ terms of "after FR-031").
 
 ### `metrics-persist.yml` stage — `since` input and sweep mode (research.md R-C1, contracts/metrics-persist-sweep-delta.md)
 
-- [ ] T036 [US3] `.github/workflows/metrics-persist.yml`: add optional
+- [X] T036 [US3] `.github/workflows/metrics-persist.yml`: add optional
   input `since` (string, ISO-8601 timestamp, default `''`) to the
   `workflow_call` inputs block (~line 13-76, alongside `run-id`). Update
   the input's own description and `run-id`'s description to note it is
-  ignored when `since` is set.
-- [ ] T037 [US3] `.github/workflows/metrics-persist.yml`: in the
+  ignored when `since` is set. Added, plus a second optional input the
+  contract's own wrapper sketch turns out to require: `sweep` (boolean,
+  default false). See T041 for why — in short, a `uses:` job runs no shell,
+  so the wrapper cannot read `sweep-state.json` to compute a `since` for
+  the scheduled path, and the only place that read can happen without
+  adding a billed job is the stage's own already-allocated `persist` job.
+  `sweep: true` with an empty `since` means "sweep from the durable mark";
+  both unset is the unchanged single-run path.
+- [X] T037 [US3] `.github/workflows/metrics-persist.yml`: in the
   `persist` job (~line 158 onward), branch on whether `inputs.since` is
   empty. Empty (today's only value): unchanged single-`run-id` behavior.
   Non-empty: list every workflow run in the repository concluded at or
@@ -467,8 +474,16 @@ terms of "after FR-031").
   (`.github/actions/wing-commander-metrics-persist/action.yml`) once per
   discovered run-id, batching every run's records into one
   append-with-retry commit rather than one push per run (research.md
-  R-C1).
-- [ ] T038 [US3] `.github/actions/wing-commander-metrics-persist/
+  R-C1). Shape note: a composite action cannot be invoked in a loop from
+  a workflow, so the batching lives inside it — a new `sweep-runs` JSON
+  input, and one `for rid in $run_ids` loop in each of discover/retrieve/
+  validate. Single-run mode is that loop with exactly one iteration whose
+  working directory IS the old flat `$RUNNER_TEMP/wc-metrics-persist`, so
+  every path spec 043 established, and every fixture Gate 40 writes into
+  one, is untouched. The new step in the stage lists the window and hands
+  the composite that JSON; it is skipped entirely on the
+  completion-triggered path.
+- [X] T038 [US3] `.github/actions/wing-commander-metrics-persist/
   action.yml`: extend the "Append records with retry" step (~line 265
   onward) so a sweep-mode invocation (batched multi-run input) also
   writes, in the **same** commit as any `records.jsonl` append:
@@ -480,16 +495,31 @@ terms of "after FR-031").
   — FR-028, research.md R-C4). A completion-triggered (non-sweep) run
   writes neither file — only `records.jsonl`, unchanged. The high-water
   mark still advances past an expired-artifact run so it is not
-  rediscovered on every subsequent sweep.
-- [ ] T039 [US3] Confirm (verify only, no code change expected per
+  rediscovered on every subsequent sweep. Both files are staged inside the
+  contention loop and BEFORE the nothing-new shortcut, so they ride the
+  same commit and the same push as any records append — and so a sweep
+  that found no new record still advances its mark instead of re-listing
+  the same window forever. `unpersisted.jsonl` is deduplicated by run_id:
+  the fixed one-hour overlap re-lists the tail of the previous window, and
+  a ledger growing one line per sweep for the same dead artifact is noise
+  rather than evidence.
+- [X] T039 [US3] Confirm (verify only, no code change expected per
   research.md R-B3) that `.github/actions/wing-commander-metrics-persist/
   action.yml`'s existing "no `metrics-record*` artifact found" tolerance
   (`persisted-count: 0`, not an error) already covers T024's no-record
-  healthy-inspection case with zero changes needed.
+  healthy-inspection case with zero changes needed. Confirmed, and no
+  change made. The chain is: `discover` finds zero `metrics-record*`
+  artifacts and writes `count=0`; `retrieve` is gated
+  `if: steps.discover.outputs.count != '0'` and skips; `validate` builds an
+  empty batch; `append`'s `[ ! -s "$to_append" ]` shortcut breaks with
+  `success=true`, `persisted-count=0`, `unpersisted-record-keys=` and exit
+  0; `rollup` is gated on `persisted-spec-dirs != ''` and skips. Nothing on
+  that path distinguishes "this run ran no agent" from "this run's agents
+  all skipped", which is exactly R-B3's point.
 
 ### Wrapper — sweep trigger, dropped watchdog trigger (research.md R-C5/R-C6/R-C7)
 
-- [ ] T040 [US3] `.github/workflows/wing-commander-metrics-persist.yml`:
+- [X] T040 [US3] `.github/workflows/wing-commander-metrics-persist.yml`:
   remove `"Wing Commander · 8 watchdog"` from the `workflow_run.workflows`
   list (~line 28, FR-030(b)). Add
   `schedule: - cron: "37 6 * * *"` alongside the existing
@@ -500,7 +530,12 @@ terms of "after FR-031").
   `wing-commander-auto-update-spec-kit.yml` (`13 7`)). Add a `since`
   input to the existing `workflow_dispatch.inputs` block
   (`required: false`) rather than a second `workflow_dispatch:` block.
-- [ ] T041 [US3] `.github/workflows/wing-commander-metrics-persist.yml`:
+  Done; `run-id` also relaxed to `required: false`, as the delta contract's
+  amended block states. `persist`'s own `if:` gained a third clause so a
+  schedule event (which carries no run to persist) and a sweep dispatch
+  reach only the `sweep` job — without it a scheduled run would have
+  persisted `run-id ''`.
+- [X] T041 [US3] `.github/workflows/wing-commander-metrics-persist.yml`:
   add a new `sweep` job, gated
   `if: github.event_name == 'schedule' || (github.event_name ==
   'workflow_dispatch' && inputs.since != '')`, calling the same
@@ -511,52 +546,103 @@ terms of "after FR-031").
   pipeline-repo checkout needed) to compute the default when `schedule:`
   fired with no explicit `since`. No `concurrency:` group gates `sweep`
   against the existing `persist` job or against itself (FR-030(d),
-  research.md R-C7, explicit non-decision — do not add one).
+  research.md R-C7, explicit non-decision — do not add one). DEVIATION,
+  and the only design decision this phase had to make on its own. This
+  task's sketch has the WRAPPER read `sweep-state.json` ("a plain `git
+  show`/`gh api` read of that one file") to compute the default `since`.
+  A wrapper job cannot: it is a reusable-workflow `uses:` call, which runs
+  no steps of its own, and GitHub rejects `steps:` on a job carrying
+  `uses:`. The only ways to honour the sketch literally are a second
+  wrapper job that resolves the mark — a billed runner minute a day, spent
+  on exactly the gate-and-forward job FR-020 just deleted from the
+  watchdog wrapper — or moving the read into the stage. This
+  implementation moves the read: the `sweep` job is a bare `uses:` passing
+  `since: ${{ inputs.since }}` (empty on the schedule path) and
+  `sweep: true` (T036), and the stage's own already-allocated `persist`
+  job, which has checked out and holds the token, does the `git show`.
+  Nothing changes for a caller passing an explicit `since`; what moved is
+  where the default comes from. No `concurrency:` group was added, as
+  instructed.
 
 ### Gates (contracts/gate-coverage-058.md)
 
-- [ ] T042 [US3] New Gate 76 — `verify-metrics-sweep-idempotence`
+- [X] T042 [US3] New Gate 76 — `verify-metrics-sweep-idempotence`
   (`.github/scripts/verify-metrics-sweep-idempotence.sh`), wired into
   `lint-workflows.yml`. Fixture: one run already persisted via the
   completion trigger, one run reachable only by the sweep — after a
   sweep pass, each appears in `records.jsonl` exactly once, and
   re-running the sweep a second time over the same window adds nothing
-  new (FR-022, FR-027).
-- [ ] T043 [US3] New Gate 77 — `verify-metrics-sweep-high-water-mark`
+  new (FR-022, FR-027). Shipped as `.py`, not `.sh` (T042-T044 all are):
+  the three sweep gates drive the same four shipped steps against the
+  same local git remote and `gh` stub, and a shell implementation could
+  not share `wc_metrics_harness.py` — it would need its own copy of that
+  driver, which is the pasted second copy CLAUDE.md's "shared logic has
+  exactly one home" exists to prevent. The neighbouring metrics gates
+  (`verify-metrics-persist-retry.py`,
+  `verify-metrics-rollup-idempotent.py`) are Python for the same reason.
+- [X] T043 [US3] New Gate 77 — `verify-metrics-sweep-high-water-mark`
   (`.github/scripts/verify-metrics-sweep-high-water-mark.sh`), wired into
   `lint-workflows.yml`. Asserts the mark advances to the latest
   concluded-run timestamp processed, in the same commit as any records
   append (a fixture forcing a push rejection proves both files retry
   together — research.md R-C2); a second sweep from the advanced mark
   does not re-list runs the first already accounted for except within
-  the fixed one-hour overlap (research.md R-C3).
-- [ ] T044 [US3] New Gate 78 — `verify-metrics-expired-artifact-outcome`
+  the fixed one-hour overlap (research.md R-C3). The push rejection is
+  injected by an `update` hook on the fixture's own bare `origin`, so the
+  retry path really is the one under test. This gate found a real defect
+  in T037's window step while being written: `since="$(git show ... | jq
+  ...)"` under `pipefail` made "no mark yet" a red run instead of the
+  bootstrap window — fixed with a `|| true` inside the substitution.
+- [X] T044 [US3] New Gate 78 — `verify-metrics-expired-artifact-outcome`
   (`.github/scripts/verify-metrics-expired-artifact-outcome.sh`), wired
   into `lint-workflows.yml`. Fixture: a discovered run whose artifact
   fixture returns expired/404 produces exactly one `unpersisted.jsonl`
   line naming it, the high-water mark advances past it, and a subsequent
   sweep does not re-list or re-log it (FR-028).
-- [ ] T045 [US3] New Gate 79 — `verify-metrics-wrapper-trigger-drops-
+- [X] T045 [US3] New Gate 79 — `verify-metrics-wrapper-trigger-drops-
   watchdog` (`.github/scripts/verify-metrics-wrapper-trigger-drops-
   watchdog.py`), wired into `lint-workflows.yml`. Asserts
   `"Wing Commander · 8 watchdog"` is absent from
   `wing-commander-metrics-persist.yml`'s `workflow_run.workflows` list,
   and `schedule:` is present with exactly one cron entry that does not
   collide (same minute+hour) with any other scheduled workflow in the
-  repository (FR-030(b), FR-030(c)).
-- [ ] T046 [US3] Add each of T042-T045's `run:` lines to
+  repository (FR-030(b), FR-030(c)). Also evaluates both wrapper job
+  guards against all four trigger shapes (completion, schedule, single-run
+  dispatch, sweep dispatch) so exactly one job owns each, and asserts both
+  read the pause variable — and compares the shipped trigger block against
+  the one `contracts/metrics-persist-sweep-delta.md` publishes, which is
+  what an adopter forking the wrapper actually reads.
+- [X] T046 [US3] Add each of T042-T045's `run:` lines to
   `.github/workflows/lint-workflows.yml`'s PR-triggered gate job, with
   `!cancelled()` (not bare `always()`) and a `paths:` filter covering the
   files each gate actually reads — including this feature's contract
   documents and data-model.md, so a documented shape that drifts from
   the code it describes is caught (contracts/gate-coverage-058.md's
   "Wiring assertions" section). Confirm `verify-gate-wiring.py` picks up
-  all four automatically.
+  all four automatically. All four wired with `!cancelled()`;
+  `verify-gate-wiring.py` picks them up with no manifest edit, as stated.
+  On `paths:`: every code path these gates read
+  (`.github/workflows/**`, `.github/actions/**`, `.github/scripts/**`) is
+  already covered by the existing globs, so only one entry was added —
+  `specs/058-per-job-minute-floor/contracts/metrics-persist-sweep-delta.md`,
+  because Gate 79 now genuinely opens it. `data-model.md` and the other
+  two delta documents are deliberately NOT listed: no gate opens them, and
+  the comment above that list (and `verify-gate-wiring.py`, which derives
+  the required paths from the files gates actually open) says why — a
+  `specs/**` path no gate reads fires the whole suite on every plan PR the
+  pipeline opens, for files no gate can read. The task's intent, catching
+  a documented shape that drifts from its code, is met by making the gate
+  read the document rather than by widening the trigger.
 
 ### Validation (SC-009–SC-012, quickstart.md Story 3)
 
-- [ ] T047 [US3] Run `python .github/scripts/run-local-gates.py` and
+- [X] T047 [US3] Run `python .github/scripts/run-local-gates.py` and
   confirm Gates 76-79 pass alongside every gate from Phases 3 and 4.
+  Run: 122/122 passed (118 before this phase; the four new gates are the
+  difference), including the amended `verify-metrics-persist-retry.py`,
+  `verify-metrics-rollup-idempotent.py` and
+  `verify-metrics-persist-no-writeback.py` — the three existing gates that
+  drive the same composite steps sweep mode now loops.
 - [ ] T048 [US3] Follow quickstart.md's Story 3 steps 1-9: a burst of
   completions produces at most one persistence run per completion and
   zero for the watchdog completion; every record-bearing run in the
@@ -567,7 +653,14 @@ terms of "after FR-031").
   sweep is in flight; a persistence failure never touches the origin run;
   an expired-artifact fixture produces exactly one `unpersisted.jsonl`
   line and the mark still advances; two overlapping sweep dispatches
-  neither lose a record nor strand the mark.
+  neither lose a record nor strand the mark. NOT DONE this session, for
+  the same reason T021 and T034 are not: every step needs `gh workflow
+  run`/`gh run view` against live runs and a real `metrics` branch, and
+  this run's permitted command list grants only `gh issue view`/`gh issue
+  comment`. Needs a human or a differently-scoped run once this branch
+  reaches main. The deterministic half of each claim — idempotence, the
+  mark, the expired-artifact ledger, the trigger surface — is covered by
+  Gates 76-79 against checked-in fixtures and a real local git remote.
 
 **Checkpoint**: All three sub-problems land. Every no-op and healthy path
 now bills only the jobs it actually runs.

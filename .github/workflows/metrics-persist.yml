@@ -12,9 +12,39 @@ on:
   workflow_call:
     inputs:
       run-id:
-        description: "The already-concluded pipeline workflow run to collect metrics-record artifacts for."
+        description: >
+          The already-concluded pipeline workflow run to collect
+          metrics-record artifacts for. Ignored in sweep mode (a non-empty
+          `since`, or `sweep: true`), which discovers its own runs from the
+          Actions API — pass '' there.
         type: string
         required: true
+      since:
+        description: >
+          specs/058-per-job-minute-floor — sweep mode. An ISO-8601
+          timestamp: collect every run in this repository that concluded at
+          or after it (minus a fixed one-hour overlap, research.md R-C3),
+          batching every discovered record into ONE append commit. Empty
+          (the default) is the unchanged single-`run-id` behavior. When set,
+          `run-id` is ignored.
+        type: string
+        required: false
+        default: ""
+      sweep:
+        description: >
+          specs/058-per-job-minute-floor — sweep mode, resuming from the
+          durable high-water mark rather than an explicit timestamp. true
+          with an empty `since` reads `sweep-state.json` from
+          destination-branch and sweeps from the mark it records (FR-027),
+          bootstrapping to a seven-day window when no mark exists yet. This
+          is what a scheduled sweep uses: the caller is a reusable-workflow
+          `uses:` job, which cannot run the shell that read would need, and
+          adding a wrapper job to do it would cost the daily job-minute this
+          whole feature exists to stop spending. Ignored when `since` is
+          set, and a true no-op when both are unset.
+        type: boolean
+        required: false
+        default: false
       destination-branch:
         description: "Branch records.jsonl lives on. No default (FR-013) — the caller must choose one explicitly."
         type: string
@@ -235,6 +265,73 @@ jobs:
           path: .wing-commander-pipeline
           persist-credentials: false
 
+      # specs/058-per-job-minute-floor (FR-022/FR-027, research.md
+      # R-C1/R-C3). Skipped entirely on the completion-triggered path, so
+      # that path is byte-for-byte what spec 043 shipped: the composite
+      # below then reads an empty `sweep-runs` and processes `run-id` alone.
+      # No new job — this runs inside the one `persist` job already
+      # allocated, which has already checked out and already holds the
+      # token every read below needs.
+      - name: Resolve the sweep window and list its runs
+        id: sweep
+        if: inputs.since != '' || inputs.sweep
+        # Pinned, not inherited: this job's container image is
+        # caller-supplied, and `set -uo pipefail` below is "Illegal option
+        # -o pipefail" on any image whose default shell is not bash
+        # (Gate 45, container-shell-safety).
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SINCE_INPUT: ${{ inputs.since }}
+          BRANCH: ${{ inputs.destination-branch }}
+        run: |
+          set -uo pipefail
+          since="$SINCE_INPUT"
+          if [ -z "$since" ]; then
+            # The durable mark (research.md R-C2) — one file on the
+            # destination branch, read without checking it out.
+            git fetch --no-tags --depth=1 origin "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}" >/dev/null 2>&1 || true
+            # `|| true` inside the substitution, deliberately: on the first
+            # sweep there is no sweep-state.json, `git show` exits 128, and
+            # under `pipefail` the assignment itself would then fail the
+            # step -- turning "no mark yet" into a red run instead of the
+            # bootstrap below.
+            since="$(git show "origin/${BRANCH}:sweep-state.json" 2>/dev/null | jq -r '.high_water_mark // empty' 2>/dev/null || true)"
+          fi
+          if [ -z "$since" ]; then
+            # No mark yet (first sweep, or a fresh destination branch). A
+            # bounded bootstrap window, not the repository's whole history:
+            # anything older than this is past the 90-day artifact retention
+            # these records come from anyway.
+            since="$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)"
+            echo "No sweep-state.json on $BRANCH — bootstrapping the sweep from $since." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # Fixed one-hour overlap (research.md R-C3): a run can conclude
+          # moments after the previous sweep read its last page, and would
+          # otherwise fall in the gap between two windows forever.
+          # Re-listing is free — record_key idempotence (spec 043) is what
+          # makes the overlap safe rather than duplicative.
+          window_start="$(date -u -d "$since - 1 hour" +%Y-%m-%dT%H:%M:%SZ)"
+          # Server-side `created` bound so --paginate does not walk the
+          # repository's entire run history; one extra day of slack because
+          # a long run can be created before the window and conclude inside
+          # it. The window itself is applied client-side over the whole
+          # streamed result, never per page — Gate 18: `--paginate --jq`
+          # resolves an array-collecting filter PER PAGE, so the filter
+          # below is per-item and the selection happens in the jq -s after.
+          list_from="$(date -u -d "$window_start - 1 day" +%Y-%m-%d)"
+          cand="$RUNNER_TEMP/sweep-candidates.ndjson"
+          if ! gh api "repos/${GITHUB_REPOSITORY}/actions/runs?status=completed&per_page=100&created=%3E%3D${list_from}" \
+            --paginate --jq '.workflow_runs[] | {run_id: (.id|tostring), workflow: (.name // ""), concluded_at: (.updated_at // "")}' \
+            > "$cand" 2>"$RUNNER_TEMP/sweep-list-err.txt"; then
+            echo "::error::wing-commander metrics-persist stage: could not list runs for the sweep window from $window_start -- $(cat "$RUNNER_TEMP/sweep-list-err.txt" 2>/dev/null). Reporting as not-collected rather than sweeping an empty window and advancing the mark over it."
+            exit 1
+          fi
+          runs="$(jq -s -c --arg w "$window_start" '[.[] | select(.concluded_at >= $w)]' "$cand" 2>/dev/null || echo '[]')"
+          echo "Sweep window from $window_start: $(printf '%s' "$runs" | jq 'length') completed run(s)." >> "$GITHUB_STEP_SUMMARY"
+          echo "since=$since" >> "$GITHUB_OUTPUT"
+          echo "sweep-runs=$runs" >> "$GITHUB_OUTPUT"
+
       - name: Persist this run's metrics records
         id: persist
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-persist
@@ -242,3 +339,6 @@ jobs:
           run-id: ${{ inputs.run-id }}
           destination-branch: ${{ inputs.destination-branch }}
           destination-path: ${{ inputs.destination-path }}
+          # Empty whenever the step above was skipped — i.e. on every
+          # completion-triggered run, which is single-run mode unchanged.
+          sweep-runs: ${{ steps.sweep.outputs.sweep-runs }}

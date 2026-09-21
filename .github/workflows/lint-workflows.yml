@@ -71,6 +71,11 @@ on:
       # (no code change) must still trigger the gate that checks
       # verify-stage-finding-schema.py's fixtures against it.
       - ".github/schemas/**"
+      # Gate 79's subject: the delta document publishes the metrics
+      # wrapper's amended trigger block literally, as the contract an
+      # adopter forking that wrapper reads. Editing the document alone is
+      # the one change that can make it disagree with the file it describes.
+      - "specs/058-per-job-minute-floor/contracts/metrics-persist-sweep-delta.md"
   # Gate 1 only — it reads how GitHub actually registered the workflows on
   # the default branch, which a PR's files cannot tell us.
   push:
@@ -3800,6 +3805,59 @@ jobs:
       - name: Gate 75 — the watchdog wrapper is one job and the stage resolves its own run-name
         if: "!cancelled()"
         run: python3 .github/scripts/verify-watchdog-wrapper-resolve-fold.py
+
+      # Gate 76 — specs/058-per-job-minute-floor (FR-022, FR-027): sweep
+      # mode gives persistence a second way in, and the two overlap
+      # deliberately — the sweep's window reaches back over runs the
+      # completion trigger already persisted, and a hand-driven re-drive
+      # can run while a sweep is in flight. "Each record lands exactly
+      # once" therefore rests entirely on record_key idempotence under
+      # inputs that never occurred before this feature. Drives the shipped
+      # discover/retrieve/validate/append steps twice over a real local
+      # git remote.
+      - name: Gate 76 — a sweep persists each run exactly once, and re-sweeping adds nothing
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-metrics-sweep-idempotence.py
+
+      # Gate 77 — specs/058-per-job-minute-floor (FR-027, research.md
+      # R-C2/R-C3): the high-water mark is the only thing that makes a
+      # daily sweep bounded, and both ways it can be wrong look fine in a
+      # green run. A mark committed separately from the records can land
+      # while the records push is still losing the contention race, and the
+      # next sweep resumes past records nobody persisted — which are not
+      # late but gone, because their artifacts expire. A mark read but
+      # never applied costs more every day and fails nothing. Drives the
+      # write half through a push the destination repository's own hook
+      # rejects, and the read half against a branch that does and does not
+      # already carry a mark.
+      - name: Gate 77 — the sweep mark advances in the records commit, and the next window resumes from it
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-metrics-sweep-high-water-mark.py
+
+      # Gate 78 — specs/058-per-job-minute-floor (FR-028): the sweep trades
+      # latency for cost, so sometimes an artifact will expire before it is
+      # reached. Both wrong answers are quiet: retry it forever (the mark
+      # can never advance past it, and every later sweep drags the window
+      # back) or drop it silently (the spend history gets a hole with
+      # nothing saying why). One durable ledger line, the mark advancing
+      # regardless, and no re-logging on the next sweep.
+      - name: Gate 78 — an expired artifact is logged once, accounted for, and not chased again
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-metrics-expired-artifact-outcome.py
+
+      # Gate 79 — specs/058-per-job-minute-floor (FR-030(b)/(c)): two
+      # one-line facts in a trigger block that a later edit restores
+      # without noticing. Re-adding the watchdog to workflow_run.workflows
+      # silently reinstates a whole persistence run per inspection; a
+      # `schedule:` sharing its minute AND hour with another scheduled
+      # workflow queues behind it, which is a self-inflicted delay on the
+      # one job this feature deliberately added. Also evaluates both job
+      # guards against all four trigger shapes, so a schedule cannot reach
+      # the single-run job (it would persist run-id '') and a completion
+      # cannot reach the sweep.
+      - name: Gate 79 — the metrics wrapper drops the watchdog trigger and its sweep cron stands alone
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-metrics-wrapper-trigger-drops-watchdog.py
 
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and

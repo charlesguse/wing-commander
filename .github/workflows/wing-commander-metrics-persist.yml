@@ -25,14 +25,35 @@ on:
       - "Wing Commander · 6 finalize"
       - "Wing Commander · 7 cleanup"
       - "Wing Commander · rebase"
-      - "Wing Commander · 8 watchdog"
       - "Wing Commander · 9 pr conversation"
+      # "Wing Commander · 8 watchdog" is deliberately ABSENT
+      # (specs/058-per-job-minute-floor FR-030(b)). After FR-031 a healthy
+      # inspection runs no agent and so emits no record at all, and this
+      # trigger fired for every one of them: a whole persistence run, per
+      # inspection, to discover zero artifacts. A signal-bearing
+      # inspection does emit, and the daily sweep below is what collects
+      # it -- minutes later instead of seconds, which is the trade this
+      # feature's own evidence table says is worth ~2,800 minutes a month.
     types: [completed]
+  schedule:
+    # Daily sweep (FR-030(c)). The minute/hour carry no meaning beyond
+    # not colliding with this repository's other scheduled wrappers --
+    # lint-workflows (43 5), wing-commander-rebase (17 4),
+    # wing-commander-7-cleanup (53 6), wing-commander-auto-update-spec-kit
+    # (13 7), auto-release (9 9), wing-commander-private-image-dogfood
+    # (37 8) -- so a burst of scheduled runs does not queue behind itself
+    # (research.md R-C6). Gate 79 holds the no-collision property.
+    - cron: "37 6 * * *"
   workflow_dispatch:
     inputs:
       run-id:
         description: "An already-concluded workflow run to collect metrics for"
-        required: true
+        # Optional since spec 058: a sweep dispatch supplies `since`
+        # instead, and the sweep discovers its own runs.
+        required: false
+      since:
+        description: "ISO-8601 timestamp — sweep mode; overrides run-id when set"
+        required: false
 
 permissions: {}
 
@@ -54,9 +75,16 @@ jobs:
     # skip. The other wrappers that react to completed runs point here for
     # the rationale. On workflow_dispatch there is no workflow_run payload,
     # the comparison is against '', and the guard stays open.
+    #
+    # Third clause (spec 058): this job owns the SINGLE-run path only. A
+    # schedule event carries no run to persist, and a dispatch that
+    # supplied `since` is asking for a sweep — both belong to the `sweep`
+    # job below, and letting this one also fire would persist run-id ''.
     if: >-
       vars.WING_COMMANDER_METRICS_PAUSED != 'true' &&
-      github.event.workflow_run.conclusion != 'skipped'
+      github.event.workflow_run.conclusion != 'skipped' &&
+      (github.event_name == 'workflow_run' ||
+       (github.event_name == 'workflow_dispatch' && inputs.since == ''))
     permissions:
       contents: write
       issues: write
@@ -77,6 +105,51 @@ jobs:
     # Explicit, like every other stage wrapper: `inherit` handed the Claude
     # credentials into the one chain that deliberately runs no agent
     # (PR #267 re-review, follow-up 3).
+    secrets:
+      pipeline-repo-token: ${{ secrets.PIPELINE_REPO_TOKEN }}
+      container-registry-username: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME }}
+      container-registry-password: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD }}
+
+  # specs/058-per-job-minute-floor (FR-030(c)/FR-030(d)). The daily sweep,
+  # and the hand-driven `since` dispatch that re-drives an arbitrary window.
+  # It calls the SAME stage as `persist` above: sweep mode is an input, not
+  # a second implementation, so discovery, validation, idempotence and the
+  # retry loop are shared line for line.
+  #
+  # `since: ''` on the schedule path is deliberate, not an omission -- the
+  # stage resolves the window from the durable high-water mark it wrote last
+  # time (sweep-state.json on destination-branch). A wrapper job cannot read
+  # that file: it is a `uses:` call, which runs no shell of its own, and
+  # adding a job that could would spend exactly the daily job-minute this
+  # whole feature exists to stop spending.
+  #
+  # No `concurrency:` group gates this job against `persist` or against
+  # itself (FR-030(d), research.md R-C7 -- an explicit non-decision). Two
+  # overlapping sweeps cannot lose a record: record_key idempotence and the
+  # append-with-retry contention loop already cover it, and a concurrency
+  # group would instead cancel or queue a sweep that had already discovered
+  # runs, stranding the mark behind them.
+  sweep:
+    if: >-
+      vars.WING_COMMANDER_METRICS_PAUSED != 'true' &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_dispatch' && inputs.since != ''))
+    permissions:
+      contents: write
+      issues: write
+      actions: read
+      id-token: write
+    uses: ./.github/workflows/metrics-persist.yml
+    with:
+      # Ignored in sweep mode; the stage's input is typed required, so it is
+      # passed explicitly rather than left off.
+      run-id: ""
+      since: ${{ inputs.since }}
+      sweep: true
+      destination-branch: ${{ vars.WING_COMMANDER_METRICS_BRANCH || 'metrics' }}
+      destination-path: ${{ vars.WING_COMMANDER_METRICS_PATH || 'records.jsonl' }}
+      runner: ${{ vars.WING_COMMANDER_RUNNER || 'ubuntu-latest' }}
+      container-image: ${{ vars.WING_COMMANDER_CONTAINER_IMAGE || '' }}
     secrets:
       pipeline-repo-token: ${{ secrets.PIPELINE_REPO_TOKEN }}
       container-registry-username: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME }}

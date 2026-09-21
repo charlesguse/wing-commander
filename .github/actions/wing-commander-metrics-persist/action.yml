@@ -30,6 +30,20 @@ inputs:
       repository only (list jobs/artifacts, download, fetch, push).
     required: false
     default: ${{ github.token }}
+  sweep-runs:
+    description: >
+      specs/058-per-job-minute-floor — the runs a SWEEP invocation is
+      batching, as a JSON array:
+      [{"run_id": "...", "workflow": "...", "concluded_at": "<ISO-8601>"}].
+      Empty (the default) is single-run mode: `run-id` alone, byte-for-byte
+      the behavior spec 043 shipped. When set, `run-id` is ignored for
+      discovery — every listed run is discovered, retrieved and validated
+      into ONE batch that the append step commits once (research.md R-C1:
+      one push per sweep, not one per run), and that same commit carries
+      sweep-state.json (the high-water mark) and unpersisted.jsonl (runs
+      whose artifacts had already expired).
+    required: false
+    default: ""
 
 outputs:
   persisted-count:
@@ -57,35 +71,55 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.token }}
         RUN_ID: ${{ inputs.run-id }}
+        SWEEP_RUNS: ${{ inputs.sweep-runs }}
       run: |
         set -uo pipefail
-        dir="$RUNNER_TEMP/wc-metrics-persist"
-        mkdir -p "$dir"
+        base="$RUNNER_TEMP/wc-metrics-persist"
+        mkdir -p "$base"
 
-        # A total Actions-API failure (bad token, outage, deleted run-id)
-        # must be reported as not-collected, not as a clean zero-artifact
-        # run (FR-019/FR-021, MF-F5) — a legitimately empty `.jobs`/
-        # `.artifacts` array still exits 0 with no output, so checking the
-        # real exit status (rather than swallowing it with `|| true`)
-        # tells the two apart.
-        if ! gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/jobs" --paginate --jq '.jobs[]' \
-          > "$dir/jobs.ndjson" 2>"$dir/jobs-err.txt"; then
-          echo "::error::wing-commander-metrics-persist: could not list jobs for run $RUN_ID -- $(cat "$dir/jobs-err.txt" 2>/dev/null) -- reporting as not-collected rather than a zero-artifact run."
-          exit 1
+        # specs/058-per-job-minute-floor: one loop serves both modes.
+        # Single-run mode is this loop with exactly one iteration whose
+        # working directory IS $base — so every path the steps below (and
+        # every harness that fixtures one) read stays exactly where spec
+        # 043 put it. Sweep mode gives each discovered run its own
+        # subdirectory and accumulates into the one shared batch.
+        if [ -n "${SWEEP_RUNS:-}" ]; then
+          run_ids="$(printf '%s' "$SWEEP_RUNS" | jq -r '.[].run_id' 2>/dev/null)"
+        else
+          run_ids="$RUN_ID"
         fi
-        jq -s '.' "$dir/jobs.ndjson" > "$dir/jobs.json" 2>/dev/null || echo '[]' > "$dir/jobs.json"
 
-        if ! gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts" --paginate --jq '.artifacts[]' \
-          > "$dir/artifacts.ndjson" 2>"$dir/artifacts-err.txt"; then
-          echo "::error::wing-commander-metrics-persist: could not list artifacts for run $RUN_ID -- $(cat "$dir/artifacts-err.txt" 2>/dev/null) -- reporting as not-collected rather than a zero-artifact run."
-          exit 1
-        fi
-        jq -s '[.[] | select(.name | startswith("metrics-record"))]' "$dir/artifacts.ndjson" \
-          > "$dir/artifacts.json" 2>/dev/null || echo '[]' > "$dir/artifacts.json"
+        total=0
+        for rid in $run_ids; do
+          if [ -n "${SWEEP_RUNS:-}" ]; then dir="$base/runs/$rid"; else dir="$base"; fi
+          mkdir -p "$dir"
 
-        count="$(jq 'length' "$dir/artifacts.json" 2>/dev/null || echo 0)"
-        echo "Discovered $count metrics-record* artifact(s) for run $RUN_ID." >> "$GITHUB_STEP_SUMMARY"
-        echo "count=$count" >> "$GITHUB_OUTPUT"
+          # A total Actions-API failure (bad token, outage, deleted run-id)
+          # must be reported as not-collected, not as a clean zero-artifact
+          # run (FR-019/FR-021, MF-F5) — a legitimately empty `.jobs`/
+          # `.artifacts` array still exits 0 with no output, so checking the
+          # real exit status (rather than swallowing it with `|| true`)
+          # tells the two apart.
+          if ! gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${rid}/jobs" --paginate --jq '.jobs[]' \
+            > "$dir/jobs.ndjson" 2>"$dir/jobs-err.txt"; then
+            echo "::error::wing-commander-metrics-persist: could not list jobs for run $rid -- $(cat "$dir/jobs-err.txt" 2>/dev/null) -- reporting as not-collected rather than a zero-artifact run."
+            exit 1
+          fi
+          jq -s '.' "$dir/jobs.ndjson" > "$dir/jobs.json" 2>/dev/null || echo '[]' > "$dir/jobs.json"
+
+          if ! gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${rid}/artifacts" --paginate --jq '.artifacts[]' \
+            > "$dir/artifacts.ndjson" 2>"$dir/artifacts-err.txt"; then
+            echo "::error::wing-commander-metrics-persist: could not list artifacts for run $rid -- $(cat "$dir/artifacts-err.txt" 2>/dev/null) -- reporting as not-collected rather than a zero-artifact run."
+            exit 1
+          fi
+          jq -s '[.[] | select(.name | startswith("metrics-record"))]' "$dir/artifacts.ndjson" \
+            > "$dir/artifacts.json" 2>/dev/null || echo '[]' > "$dir/artifacts.json"
+
+          count="$(jq 'length' "$dir/artifacts.json" 2>/dev/null || echo 0)"
+          echo "Discovered $count metrics-record* artifact(s) for run $rid." >> "$GITHUB_STEP_SUMMARY"
+          total=$(( total + count ))
+        done
+        echo "count=$total" >> "$GITHUB_OUTPUT"
 
     - name: Retrieve metrics-record artifacts
       id: retrieve
@@ -94,38 +128,72 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.token }}
         RUN_ID: ${{ inputs.run-id }}
+        SWEEP_RUNS: ${{ inputs.sweep-runs }}
       run: |
         set -uo pipefail
-        dir="$RUNNER_TEMP/wc-metrics-persist"
-        dl_dir="$dir/downloaded"
-        mkdir -p "$dl_dir"
-
-        gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -p 'metrics-record*' -D "$dl_dir" \
-          > "$dir/download.log" 2>&1 || true
-
-        # FR-022: an artifact discovered above but not landed here (expired,
-        # or the download call itself failed outright) is reported by name,
-        # never silently skipped or treated as complete.
-        not_retrieved="$(jq -r '.[].name' "$dir/artifacts.json" | while IFS= read -r name; do
-          [ -d "$dl_dir/$name" ] || printf '%s\n' "$name"
-        done)"
-        if [ -n "$not_retrieved" ]; then
-          echo "::warning::wing-commander-metrics-persist: artifact(s) discovered but not retrieved (expired or download failed): $(printf '%s' "$not_retrieved" | tr '\n' ' ')"
+        base="$RUNNER_TEMP/wc-metrics-persist"
+        if [ -n "${SWEEP_RUNS:-}" ]; then
+          run_ids="$(printf '%s' "$SWEEP_RUNS" | jq -r '.[].run_id' 2>/dev/null)"
+          : > "$base/unpersisted.jsonl"
+        else
+          run_ids="$RUN_ID"
         fi
-        printf '%s' "$not_retrieved" > "$dir/not-retrieved.txt"
+        discovered_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+        for rid in $run_ids; do
+          if [ -n "${SWEEP_RUNS:-}" ]; then dir="$base/runs/$rid"; else dir="$base"; fi
+          dl_dir="$dir/downloaded"
+          mkdir -p "$dl_dir"
+
+          gh run download "$rid" --repo "$GITHUB_REPOSITORY" -p 'metrics-record*' -D "$dl_dir" \
+            > "$dir/download.log" 2>&1 || true
+
+          # FR-022: an artifact discovered above but not landed here (expired,
+          # or the download call itself failed outright) is reported by name,
+          # never silently skipped or treated as complete.
+          not_retrieved="$(jq -r '.[].name' "$dir/artifacts.json" | while IFS= read -r name; do
+            [ -d "$dl_dir/$name" ] || printf '%s\n' "$name"
+          done)"
+          if [ -n "$not_retrieved" ]; then
+            echo "::warning::wing-commander-metrics-persist: artifact(s) discovered but not retrieved (expired or download failed): $(printf '%s' "$not_retrieved" | tr '\n' ' ')"
+            # FR-028 (spec 058): in sweep mode that outcome becomes a durable
+            # ledger line rather than a warning nobody reads later. The
+            # high-water mark still advances past this run — it is accounted
+            # for, not retried — so this file is the only record it existed.
+            if [ -n "${SWEEP_RUNS:-}" ]; then
+              printf '%s' "$SWEEP_RUNS" | jq -c --arg rid "$rid" --arg at "$discovered_at" \
+                '.[] | select((.run_id|tostring) == $rid)
+                     | {run_id: (.run_id|tostring), workflow: (.workflow // ""),
+                        reason: "artifact_expired", discovered_at: $at}' \
+                >> "$base/unpersisted.jsonl"
+            fi
+          fi
+          printf '%s' "$not_retrieved" > "$dir/not-retrieved.txt"
+        done
 
     - name: Validate records and build the new-records batch
       id: validate
       shell: bash
       env:
         RUN_ID: ${{ inputs.run-id }}
+        SWEEP_RUNS: ${{ inputs.sweep-runs }}
       run: |
         set -uo pipefail
-        dir="$RUNNER_TEMP/wc-metrics-persist"
-        dl_dir="$dir/downloaded"
-        batch="$dir/new-records.jsonl"
+        base="$RUNNER_TEMP/wc-metrics-persist"
+        batch="$base/new-records.jsonl"
         : > "$batch"
         rejected=""
+        # One batch for however many runs this invocation covers (spec 058);
+        # single-run mode is one iteration over $base itself.
+        if [ -n "${SWEEP_RUNS:-}" ]; then
+          run_ids="$(printf '%s' "$SWEEP_RUNS" | jq -r '.[].run_id' 2>/dev/null)"
+        else
+          run_ids="$RUN_ID"
+        fi
+
+        for rid in $run_ids; do
+        if [ -n "${SWEEP_RUNS:-}" ]; then dir="$base/runs/$rid"; else dir="$base"; fi
+        dl_dir="$dir/downloaded"
 
         # job_key -> numeric job_id (R6). The record carries github.job —
         # the callee workflow's job KEY (`diagnose`) — but the jobs API
@@ -256,6 +324,7 @@ runs:
             done
           done
         fi
+        done
 
         if [ -n "$rejected" ]; then
           echo "::warning::wing-commander-metrics-persist: rejected record(s) failing schema-version-1 validation:$rejected"
@@ -270,6 +339,7 @@ runs:
         BRANCH: ${{ inputs.destination-branch }}
         DEST_PATH: ${{ inputs.destination-path }}
         RUN_ID: ${{ inputs.run-id }}
+        SWEEP_RUNS: ${{ inputs.sweep-runs }}
       run: |
         set -uo pipefail
         git config user.name  "github-actions[bot]"
@@ -327,7 +397,44 @@ runs:
             printf '%s\n' "$line" >> "$to_append"
           done < "$batch"
 
-          if [ ! -s "$to_append" ] && [ "$branch_is_new" != "true" ]; then
+          # specs/058-per-job-minute-floor (research.md R-C2): a sweep's two
+          # bookkeeping files are staged HERE, inside the contention loop and
+          # before the nothing-new shortcut, so they ride the SAME commit and
+          # the SAME push as any records append. A mark advanced in its own
+          # commit could land while the records push was still losing the
+          # race, and the next sweep would resume past runs nobody persisted.
+          # They are also why an empty batch is not always a no-op: a sweep
+          # that found nothing new must still advance its mark, or every
+          # subsequent sweep re-lists the same window forever (FR-027).
+          sweep_dirty=false
+          if [ -n "${SWEEP_RUNS:-}" ]; then
+            hwm="$(printf '%s' "$SWEEP_RUNS" | jq -r '[.[].concluded_at] | max // empty' 2>/dev/null)"
+            if [ -n "$hwm" ]; then
+              printf '{"high_water_mark":"%s"}\n' "$hwm" > sweep-state.json
+              git add sweep-state.json
+            fi
+            if [ -s "$dir/unpersisted.jsonl" ]; then
+              [ -f unpersisted.jsonl ] || : > unpersisted.jsonl
+              # Deduplicated by run_id: the fixed one-hour overlap
+              # (research.md R-C3) re-lists the tail of the previous window,
+              # and a ledger that grows one line per sweep for the same dead
+              # artifact is noise rather than evidence (FR-028).
+              while IFS= read -r uline; do
+                [ -n "$uline" ] || continue
+                urid="$(printf '%s' "$uline" | jq -r '.run_id // empty')"
+                if [ -n "$urid" ] && grep -qF "\"run_id\":\"$urid\"" unpersisted.jsonl 2>/dev/null; then
+                  continue
+                fi
+                printf '%s\n' "$uline" >> unpersisted.jsonl
+              done < "$dir/unpersisted.jsonl"
+              git add unpersisted.jsonl
+            fi
+            if ! git diff --cached --quiet 2>/dev/null; then
+              sweep_dirty=true
+            fi
+          fi
+
+          if [ ! -s "$to_append" ] && [ "$branch_is_new" != "true" ] && [ "$sweep_dirty" != "true" ]; then
             # Nothing new — either everything was already persisted
             # (idempotent repeat, FR-018) or there was nothing to persist
             # in the first place (FR-021). A brand-new branch still falls
@@ -341,7 +448,10 @@ runs:
           cat "$to_append" >> "$DEST_PATH"
           git add "$DEST_PATH"
           n="$(wc -l < "$to_append" | tr -d ' ')"
-          if [ "$branch_is_new" = "true" ]; then
+          if [ -n "${SWEEP_RUNS:-}" ]; then
+            sweep_n="$(printf '%s' "$SWEEP_RUNS" | jq -r 'length' 2>/dev/null || echo 0)"
+            git commit -m "metrics: sweep appended $n record(s) across $sweep_n run(s)" --allow-empty >/dev/null
+          elif [ "$branch_is_new" = "true" ]; then
             git commit -m "metrics: initialize $DEST_PATH with $n record(s) from run ${RUN_ID}" --allow-empty >/dev/null
           else
             git commit -m "metrics: append $n record(s) from run ${RUN_ID}" >/dev/null
