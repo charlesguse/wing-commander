@@ -20,6 +20,7 @@ Invoked via the thin run-tests.sh wrapper beside this file. Lives under
 .github/actions/wing-commander-stage-findings/tests/ where it first
 shipped -- see run-tests.sh's own header comment.
 """
+import glob
 import json
 import os
 import re
@@ -362,7 +363,8 @@ def make_gh_stub(tmp, list_json, create_behavior='echo "https://github.com/o/r/i
 
 
 def run_lookup(tmp, marker, state_scope, list_json, create_behavior=None, comment_body_file="",
-               label_behavior=None, label_description="desc", comment_behavior=None):
+               label_behavior=None, label_description="desc", comment_behavior=None,
+               fail_on_api_error="false"):
     bindir, log = make_gh_stub(
         tmp, list_json,
         create_behavior=create_behavior or 'echo "https://github.com/o/r/issues/999"; exit 0',
@@ -383,6 +385,12 @@ def run_lookup(tmp, marker, state_scope, list_json, create_behavior=None, commen
         "LABEL_COLOR": "5319E7", "LABEL_DESCRIPTION": label_description, "TITLE": "a title",
         "BODY_FILE": body_file, "COMMENT_BODY_FILE": comment_body_file,
         "MARKER": marker, "STATE_SCOPE": state_scope, "CLOSE_COMMENT": "",
+        # The value wing-commander-stage-findings passes (FR-022). The
+        # composite's own DEFAULT is "true"; the fixtures that assert the
+        # default's behavior pass it explicitly, and
+        # case_stage_findings_opts_out_of_fail_on_api_error below is what
+        # keeps this fixture default honest about what the caller ships.
+        "FAIL_ON_API_ERROR": fail_on_api_error,
         "GITHUB_REPOSITORY": "o/r",
         "PATH": bindir + os.pathsep + os.environ["PATH"],
     }
@@ -520,7 +528,24 @@ def case_api_failure_preserves_finding_text_and_exits_zero():
 
 
 # --- #422: the label description fits GitHub's cap; label/comment failures are caught
-STAGE_NAMES = ("intake", "clarify", "plan", "tasks", "implement", "finalize")
+def shipped_stage_names():
+    """The `stage:` every workflow actually hands wing-commander-stage-findings.
+
+    Read off the call sites rather than typed here as a tuple (code review
+    of #423): a hardcoded list of today's six names cannot measure a
+    SEVENTH stage's description, and the rendered description is 82
+    characters plus the stage name -- a 19-character stage reproduces #422
+    with this fixture green. Grounded in the filesystem, the way Gate 47's
+    own `(see NAME.yml)` check is.
+    """
+    names = set()
+    pattern = re.compile(
+        r"uses:\s*\S*wing-commander-stage-findings\s*\n(?:.*\n)*?\s*stage:\s*(\S+)")
+    for path in sorted(glob.glob(os.path.join(REPO_ROOT, ".github", "workflows", "*.yml"))):
+        with open(path, encoding="utf-8") as fh:
+            for match in pattern.finditer(fh.read()):
+                names.add(match.group(1).strip().strip('"' + "'"))
+    return sorted(names)
 
 
 def case_label_description_fits_github_cap():
@@ -533,28 +558,71 @@ def case_label_description_fits_github_cap():
     template = values[0] if values else ""
     check(case + ": the description names the stage",
           "${{ inputs.stage }}" in template, template)
-    lengths = {s: len(template.replace("${{ inputs.stage }}", s)) for s in STAGE_NAMES}
+    stages = shipped_stage_names()
+    check(case + ": the stage names are read off the call sites, and all six are there",
+          len(stages) >= 6 and "implement" in stages and "finalize" in stages, stages)
+    lengths = {s: len(template.replace("${{ inputs.stage }}", s)) for s in stages}
     check(case + ": every rendered description is at most 100 characters (#422 shipped 104-109)",
           bool(lengths) and max(lengths.values()) <= 100, lengths)
 
 
-def case_over_long_label_description_fails_the_stub():
+def case_stage_findings_opts_out_of_fail_on_api_error():
+    case = "every report site opts out of fail-on-api-error, so a degraded report cannot fail the stage (FR-022)"
+    with open(STAGE_FINDINGS_ACTION, encoding="utf-8") as fh:
+        text = fh.read()
+    sites = len(re.findall(r"uses:\s*\S*wing-commander-durable-failure-issue", text))
+    opted_out = re.findall(r'^\s*fail-on-api-error:\s*"?false"?\s*$', text, re.M)
+    check(case + ": every durable-failure-issue call site passes it",
+          sites == 3 and len(opted_out) == sites, (sites, opted_out))
+    with open(FAILURE_ISSUE_ACTION, encoding="utf-8") as fh:
+        composite = fh.read()
+    check(case + ": and the composite's own default is the strict one, for the callers that read nothing",
+          re.search(r"fail-on-api-error:(?:.|\n)*?default:\s*\"true\"", composite) is not None,
+          "no `fail-on-api-error` input defaulting to \"true\" in the composite")
+
+
+def case_gh_stub_refuses_an_over_long_label_description():
     case = "the gh stub refuses a label description over 100 characters, like the API (Principle VIII)"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-stubfidelity-")
+    # Driven directly, not through the shipped step: the step now truncates
+    # before it calls (code review of #423), so a fixture that reached the
+    # stub THROUGH it could no longer prove the stub models the cap at all,
+    # and the truncation case below would pass against a stub that accepts
+    # anything.
+    bindir, _log = make_gh_stub(tmp, "[]")
+    stub = os.path.join(bindir, "gh").replace("\\", "/")
+
+    def label_call(description):
+        return subprocess.run(
+            [BASH, stub, "label", "create", "l", "--description", description, "--force"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace")
+
+    over, under = label_call("x" * 101), label_call("x" * 100)
+    check(case + ": 101 characters is rejected for LENGTH, with the API's own message",
+          over.returncode != 0
+          and "description is too long (maximum is 100 characters)" in (over.stdout + over.stderr),
+          over.stdout + over.stderr)
+    check(case + ": 100 characters is accepted, so it rejects for length and not for everything",
+          under.returncode == 0, under.stdout + under.stderr)
+
+
+def case_over_long_label_description_is_truncated_at_the_call_site():
+    case = "a label description over the cap is truncated where the call is made, not left to 422 (#422)"
     tmp = tempfile.mkdtemp(prefix="wc-sf-labellen-")
     marker = "<!-- wing-commander-finding: fingerprint=len1 -->"
     rc, outputs, out, log = run_lookup(
-        tmp, marker, "all", "[]", label_description="x" * 101)
+        tmp, marker, "all", "[]", label_description="x" * 140)
     with open(log, encoding="utf-8") as fh:
         calls = fh.read()
-    check(case + ": the label call was made with the over-long description",
-          "label create" in calls and ("x" * 101) in calls, calls)
-    check(case + ": the stub rejected it for LENGTH, with the API's own message",
-          "description is too long (maximum is 100 characters)" in out, out)
-    check(case + ": the lookup step still exits 0 (the label call is guarded)", rc == 0, out)
-    check(case + ": the warning names the label call",
-          "gh label create failed for label" in out, out)
-    check(case + ": the guarded label failure does not stop the create (the stub does not model label existence)",
-          outputs.get("action-taken") == "created", outputs)
+    check(case + ": the call carries 100 characters, not the 140 it was handed",
+          ("x" * 100) in calls and ("x" * 101) not in calls, calls)
+    check(case + ": the truncation is announced, naming the real length",
+          "is 140 characters" in out and "truncating" in out, out)
+    check(case + ": the stub (which models the API's cap) never 422s",
+          "description is too long" not in out, out)
+    check(case + ": no label failure, so the label exists and the create lands",
+          "gh label create failed" not in out and outputs.get("action-taken") == "created", outputs)
+    check(case + ": the lookup step exits 0", rc == 0, out)
 
 
 def case_short_label_description_passes_the_stub():
@@ -585,7 +653,7 @@ def case_label_create_failure_with_missing_label_is_create_failed():
 
 
 def case_comment_failure_on_existing_issue_is_caught():
-    case = "a comment failure on the existing-issue path is caught: exit 0, create-failed"
+    case = "a comment failure on the existing-issue path is caught: exit 0, comment-failed, issue kept"
     tmp = tempfile.mkdtemp(prefix="wc-sf-commentfail-")
     marker = "<!-- wing-commander-finding: fingerprint=cf1 -->"
     list_json = json.dumps([{"number": 7, "state": "OPEN", "body": "seen " + marker}])
@@ -593,9 +661,74 @@ def case_comment_failure_on_existing_issue_is_caught():
         tmp, marker, "all", list_json,
         comment_behavior='echo "HTTP 502: Bad Gateway" >&2; exit 1')
     check(case + ": the lookup step exits 0", rc == 0, out)
-    check(case + ": action-taken=create-failed", outputs.get("action-taken") == "create-failed", outputs)
+    check(case + ": action-taken=comment-failed, not create-failed -- nothing was being created",
+          outputs.get("action-taken") == "comment-failed", outputs)
+    check(case + ": issue-number still names the open issue the lookup found",
+          outputs.get("issue-number") == "7", outputs)
     check(case + ": the warning names the comment call and the issue",
           "gh issue comment failed on #7" in out, out)
+
+
+def case_degraded_report_fails_the_step_unless_the_caller_opts_out():
+    case = "a degraded report fails the step by default, and the outputs are written anyway"
+    marker = "<!-- wing-commander-finding: fingerprint=strict1 -->"
+    list_json = json.dumps([{"number": 7, "state": "OPEN", "body": "seen " + marker}])
+    # The default the two callers that read nothing get: an API failure
+    # comes back as a red step instead of a green run reporting nothing
+    # (code review of #423).
+    tmp = tempfile.mkdtemp(prefix="wc-sf-strict-")
+    rc, outputs, out, _log = run_lookup(
+        tmp, marker, "all", list_json, fail_on_api_error="true",
+        comment_behavior='echo "HTTP 502: Bad Gateway" >&2; exit 1')
+    check(case + ": a failed comment fails the step", rc != 0, out)
+    check(case + ": and says why, as an error the run surfaces",
+          "::error::" in out and "gh issue comment on #7" in out, out)
+    check(case + ": the outputs are still written, so a caller that DOES read them can",
+          outputs.get("action-taken") == "comment-failed" and outputs.get("issue-number") == "7",
+          outputs)
+
+    tmp2 = tempfile.mkdtemp(prefix="wc-sf-strict-create-")
+    rc2, outputs2, out2, _ = run_lookup(
+        tmp2, marker, "all", "[]", fail_on_api_error="true",
+        create_behavior='echo "HTTP 403: Forbidden" >&2; exit 1')
+    check(case + ": a failed create fails it the same way", rc2 != 0, out2)
+    check(case + ": action-taken=create-failed is still published",
+          outputs2.get("action-taken") == "create-failed", outputs2)
+
+    # And the opt-out still holds: same failure, green step (FR-022).
+    tmp3 = tempfile.mkdtemp(prefix="wc-sf-lenient-")
+    rc3, outputs3, out3, _ = run_lookup(
+        tmp3, marker, "all", "[]", fail_on_api_error="false",
+        create_behavior='echo "HTTP 403: Forbidden" >&2; exit 1')
+    check(case + ": fail-on-api-error=false keeps the step green", rc3 == 0, out3)
+    check(case + ": with the same outcome to read",
+          outputs3.get("action-taken") == "create-failed", outputs3)
+    check(case + ": and no ::error:: annotation on the opted-out path",
+          "::error::" not in out3, out3)
+
+    # A report that LANDED is never failed by the strict default.
+    tmp4 = tempfile.mkdtemp(prefix="wc-sf-strict-ok-")
+    rc4, outputs4, out4, _ = run_lookup(
+        tmp4, marker, "all", "[]", fail_on_api_error="true")
+    check(case + ": a report that landed exits 0 under the strict default",
+          rc4 == 0 and outputs4.get("action-taken") == "created", out4)
+
+
+def case_comment_failed_is_recorded_as_dropped_naming_the_open_issue():
+    case = "a comment-failed outcome is recorded as dropped, naming the issue that is still open"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-record-cf-")
+    rc, outputs, state, out = run_record(tmp, "7", "comment-failed", "999",
+                                         title="a title", what="what text")
+    check(case + ": exit 0", rc == 0, out)
+    check(case + ": counted as dropped, not as appended",
+          state["dropped_api_failure"] == 1 and state["appended"] == 0, state)
+    check(case + ": nothing is cross-linked onto the lifecycle issue",
+          outputs.get("post-outstanding") == "false", outputs)
+    check(case + ": the note names the open issue AND preserves the finding text (FR-025)",
+          any("#7" in n and "a title" in n and "what text" in n for n in state["notes"]),
+          state["notes"])
+    check(case + ": the annotation does not call it an unexpected outcome",
+          "unexpected action-taken" not in out, out)
 
 
 # --- outstanding-task-item cross-link phrasing (T049) ----------------------
@@ -699,10 +832,14 @@ CASES = [
     case_existing_no_marker_caller_is_byte_identical,
     case_api_failure_preserves_finding_text_and_exits_zero,
     case_label_description_fits_github_cap,
-    case_over_long_label_description_fails_the_stub,
+    case_stage_findings_opts_out_of_fail_on_api_error,
+    case_gh_stub_refuses_an_over_long_label_description,
+    case_over_long_label_description_is_truncated_at_the_call_site,
     case_short_label_description_passes_the_stub,
     case_label_create_failure_with_missing_label_is_create_failed,
     case_comment_failure_on_existing_issue_is_caught,
+    case_degraded_report_fails_the_step_unless_the_caller_opts_out,
+    case_comment_failed_is_recorded_as_dropped_naming_the_open_issue,
     case_filed_with_lifecycle_issue_posts_filed_phrase,
     case_deduped_with_lifecycle_issue_posts_recorded_phrase,
     case_filed_without_lifecycle_issue_records_absence_not_failure,

@@ -351,6 +351,12 @@ runs:
         comment-body-file: ${{ steps.prepare.outputs.survivor-0-recap-file }}
         marker: ${{ steps.prepare.outputs.survivor-0-marker }}
         state-scope: all
+        # FR-022: this composite never fails its stage, and "Record finding
+        # 0 outcome" below reads `action-taken` and degrades the finding
+        # itself. The composite's default is true, for the callers that do
+        # neither and need an API failure back as a red job -- see its
+        # `fail-on-api-error` input (code review of #423).
+        fail-on-api-error: "false"
 
     - name: Record finding 0 outcome
       id: record-0
@@ -398,6 +404,21 @@ runs:
               post_outstanding=true
               jq '.appended += 1' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
               ;;
+            comment-failed)
+              # The issue exists and is open -- it carries this finding's
+              # fingerprint -- and only the recap comment onto it failed.
+              # Still a dropped finding for this run (nothing new was
+              # recorded), but named for what actually happened instead of
+              # being reported as a finding that was never filed, which
+              # sends a maintainer looking for something that is not lost
+              # (code review of #423). $ISSUE_NUMBER is the composite's own
+              # output, a number, so it is safe in an annotation where
+              # $TITLE/$WHAT are not (FR-026, see above).
+              echo "::warning::wing-commander-stage-findings: the recap comment on issue #$ISSUE_NUMBER failed for stage $STAGE — counted as dropped-api-failure; the issue itself is open, see the step summary for the finding text."
+              jq --arg n "$ISSUE_NUMBER" --arg title "$TITLE" --arg what "$WHAT" \
+                '.dropped_api_failure += 1 | .notes += ["dropped (API failure) while recording " + $title + " on existing issue #" + $n + ": " + $what]' \
+                "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+              ;;
             *)
               echo "::warning::wing-commander-stage-findings: unexpected action-taken '$ACTION_TAKEN' filing for stage $STAGE — treating as dropped-api-failure; see the step summary for the finding text."
               jq --arg at "$ACTION_TAKEN" --arg title "$TITLE" --arg what "$WHAT" \
@@ -442,6 +463,8 @@ runs:
         comment-body-file: ${{ steps.prepare.outputs.survivor-1-recap-file }}
         marker: ${{ steps.prepare.outputs.survivor-1-marker }}
         state-scope: all
+        # fail-on-api-error -- see Report finding 0.
+        fail-on-api-error: "false"
 
     - name: Record finding 1 outcome
       id: record-1
@@ -489,6 +512,13 @@ runs:
               post_outstanding=true
               jq '.appended += 1' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
               ;;
+            comment-failed)
+              # comment-failed -- see Record finding 0 outcome.
+              echo "::warning::wing-commander-stage-findings: the recap comment on issue #$ISSUE_NUMBER failed for stage $STAGE — counted as dropped-api-failure; the issue itself is open, see the step summary for the finding text."
+              jq --arg n "$ISSUE_NUMBER" --arg title "$TITLE" --arg what "$WHAT" \
+                '.dropped_api_failure += 1 | .notes += ["dropped (API failure) while recording " + $title + " on existing issue #" + $n + ": " + $what]' \
+                "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+              ;;
             *)
               echo "::warning::wing-commander-stage-findings: unexpected action-taken '$ACTION_TAKEN' filing for stage $STAGE — treating as dropped-api-failure; see the step summary for the finding text."
               jq --arg at "$ACTION_TAKEN" --arg title "$TITLE" --arg what "$WHAT" \
@@ -533,6 +563,8 @@ runs:
         comment-body-file: ${{ steps.prepare.outputs.survivor-2-recap-file }}
         marker: ${{ steps.prepare.outputs.survivor-2-marker }}
         state-scope: all
+        # fail-on-api-error -- see Report finding 0.
+        fail-on-api-error: "false"
 
     - name: Record finding 2 outcome
       id: record-2
@@ -579,6 +611,13 @@ runs:
               phrase="a defect met by the $STAGE stage was recorded on an existing issue"
               post_outstanding=true
               jq '.appended += 1' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+              ;;
+            comment-failed)
+              # comment-failed -- see Record finding 0 outcome.
+              echo "::warning::wing-commander-stage-findings: the recap comment on issue #$ISSUE_NUMBER failed for stage $STAGE — counted as dropped-api-failure; the issue itself is open, see the step summary for the finding text."
+              jq --arg n "$ISSUE_NUMBER" --arg title "$TITLE" --arg what "$WHAT" \
+                '.dropped_api_failure += 1 | .notes += ["dropped (API failure) while recording " + $title + " on existing issue #" + $n + ": " + $what]' \
+                "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
               ;;
             *)
               echo "::warning::wing-commander-stage-findings: unexpected action-taken '$ACTION_TAKEN' filing for stage $STAGE — treating as dropped-api-failure; see the step summary for the finding text."
