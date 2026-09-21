@@ -3757,6 +3757,50 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-stage-findings-wiring.py --self-test
 
+      # Gate 73 — specs/058-per-job-minute-floor (FR-011/FR-012/FR-013,
+      # FR-018/FR-019): an inspection whose aggregate signal set is empty is
+      # decided by a deterministic step in `collect`, and `diagnose` skips.
+      # Three conditions balance against each other here — skip the agent on
+      # an empty signal set, but NOT when every collector failed (that is
+      # the "could not inspect" degradation) and NOT when the `aggregate`
+      # step itself died (its outputs are stale, and a pass written over a
+      # crashed step is the fabricated clean bill of health the watchdog
+      # exists to prevent) — and the signal-bearing path must be unchanged.
+      # Evaluates the shipped `if:` expressions against five aggregate
+      # shapes and executes the shipped reporter's `run:` for the two that
+      # reach it, so the wording (a partial pass names both collector
+      # counts) is asserted, not assumed.
+      - name: Gate 73 — an empty signal set skips diagnose and posts a deterministic pass from collect
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-watchdog-clean-path.py
+
+      # Gate 74 — specs/058-per-job-minute-floor (FR-031): a healthy
+      # inspection runs no agent, so it emits no metrics record — and the
+      # cumulative rollup must not list it AT ALL. "Listed as a record that
+      # could not be retrieved" is the failure that matters: to a reader it
+      # is indistinguishable from spec 043's real expired-artifact case, and
+      # it would put a permanent unexplained hole in the spend history of
+      # every healthy run. Asserts no `metrics-record*` upload is reachable
+      # on the clean path, and runs the shipped rollup region-builder over a
+      # record set without the inspection to prove the region names the runs
+      # that did emit and says nothing about the one that did not.
+      - name: Gate 74 — a healthy watchdog inspection emits no record and the rollup does not list it
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-watchdog-no-record-on-clean-path.py
+
+      # Gate 75 — specs/058-per-job-minute-floor (FR-020): the stage-8
+      # wrapper is one job and does not pass `run-name:`; the stage resolves
+      # it itself when the input is empty. Both halves can regress alone. A
+      # wrapper that passes run-name can pass the run TITLE by mistake (the
+      # defect Gate 70 owns), and a stage that silently resolves an empty
+      # name fails invisibly: watchdog.yml's `case "$RUN_NAME"` arms match
+      # nothing, every stage-scoped collector skips itself, and the run
+      # reports a clean pass having looked at almost nothing. Executes the
+      # shipped resolution block for both invocation shapes.
+      - name: Gate 75 — the watchdog wrapper is one job and the stage resolves its own run-name
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-watchdog-wrapper-resolve-fold.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

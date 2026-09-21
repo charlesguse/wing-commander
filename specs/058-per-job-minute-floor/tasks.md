@@ -305,7 +305,7 @@ shape first).
 
 ### Wrapper and self-verifier (FR-020, FR-032)
 
-- [ ] T027 [US2] `.github/workflows/wing-commander-8-watchdog.yml`:
+- [X] T027 [US2] `.github/workflows/wing-commander-8-watchdog.yml`:
   remove the `resolve` job entirely. The remaining `watchdog` job becomes
   a bare `uses: ./.github/workflows/watchdog.yml` with
   `run-id: ${{ format('{0}', inputs.run-id || github.event.workflow_run.id) }}`
@@ -315,7 +315,7 @@ shape first).
   (spec 043), reused per research.md R-B4. Keep the pause kill-switch
   (`vars.WING_COMMANDER_WATCHDOG_PAUSED`) and the skipped-source guard on
   the remaining job exactly as they are today (FR-015 — unexempted).
-- [ ] T028 [US2] `.github/scripts/verify-watchdog-run.sh`: lower the
+- [X] T028 [US2] `.github/scripts/verify-watchdog-run.sh`: lower the
   hardcoded absolute floor constant (currently `40` at ~line 113) to a
   value measured against this feature's own post-merge component
   durations (`collect` ~25s + `report-unhandled-failure` ~8s,
@@ -329,7 +329,7 @@ shape first).
 
 ### Gates (contracts/gate-coverage-058.md)
 
-- [ ] T029 [US2] New Gate 73 — `verify-watchdog-clean-path`
+- [X] T029 [US2] New Gate 73 — `verify-watchdog-clean-path`
   (`.github/scripts/verify-watchdog-clean-path.py` or `.sh`, matching
   whichever existing watchdog-gate convention it most resembles), wired
   into `.github/workflows/lint-workflows.yml`. Asserts against fixtures
@@ -345,7 +345,7 @@ shape first).
   today's filing/triage/action behavior byte-for-byte (FR-012, a
   regression guard). Ship with checked-in fixtures for each branch
   (data-model.md's "Gate fixtures" table, constitution VIII).
-- [ ] T030 [US2] New Gate 74 — `verify-watchdog-no-record-on-clean-path`
+- [X] T030 [US2] New Gate 74 — `verify-watchdog-no-record-on-clean-path`
   (`.github/scripts/verify-watchdog-no-record-on-clean-path.py` or
   `.sh`), wired into `lint-workflows.yml`. On T029's full-pass and
   partial-pass fixtures, asserts no `metrics-record*` artifact is
@@ -354,7 +354,7 @@ shape first).
   `.github/scripts/verify-metrics-rollup-idempotent.py`'s subject) does
   not list the run at all — never as a record that existed and could not
   be retrieved (FR-031, spec.md's edge case).
-- [ ] T031 [US2] New Gate 75 — `verify-watchdog-wrapper-resolve-fold`
+- [X] T031 [US2] New Gate 75 — `verify-watchdog-wrapper-resolve-fold`
   (`.github/scripts/verify-watchdog-wrapper-resolve-fold.py` or `.sh`),
   wired into `lint-workflows.yml`. Asserts
   `wing-commander-8-watchdog.yml` has exactly one job (`watchdog`), it is
@@ -363,7 +363,7 @@ shape first).
   `run-name` internally when the input is empty (FR-020). Fixture: a
   `run-name`-omitted invocation, asserting the stage's own resolution
   step ran and produced a non-empty value used in the posted comments.
-- [ ] T032 [US2] Amend `.github/scripts/verify-watchdog-run.sh` (Gate 71
+- [X] T032 [US2] Amend `.github/scripts/verify-watchdog-run.sh` (Gate 71
   in `lint-workflows.yml` per its existing "the watchdog verifier"
   wiring — confirm exact gate number by grep, do not assume) and its
   companion fixture harness `.github/scripts/verify-watchdog-run-
@@ -373,13 +373,34 @@ shape first).
   absolute floor) as a **passing** case. Every existing failure branch
   (crashed/stalled agent, could-not-inspect degradation, fired safety
   net, fabricated verdict) must still fail on its own fixture — do not
-  weaken any existing assertion (FR-032, SC-014).
+  weaken any existing assertion (FR-032, SC-014). Two corrections, both
+  from doing what this task asked rather than assuming. Gate number:
+  `verify-watchdog-run.sh` is not wired as a gate in `lint-workflows.yml`
+  at all (it runs inside stage 8b); only its fixture harness is wired,
+  and as **Gate 36** — 71 is the stage-findings pair. Duration: a run
+  genuinely *under* the new absolute floor must still FAIL, so the
+  passing shape is one under the OLD 40s floor and above the new 20s one
+  (~33s). New scenarios: s11 (the clean path verifies healthy and files
+  nothing), s12 (a 15s clean-path run still fails the re-scaled floor),
+  s13 (diagnose skipped with neither of collect's reporters run fails).
+  New mutations m3/m4 cover s12/s13; `run_mutation`'s scenario-id regex
+  widened from `s[0-9]` to `s[0-9]+` so two-digit scenarios are
+  attributed correctly. `verify-watchdog-run.sh` also gained the
+  neither-reporter-ran check the healthy shape's "passed-inspection
+  comment present" clause implies.
 
 ### Validation (SC-005–SC-008, SC-013, SC-014, quickstart.md Story 2)
 
-- [ ] T033 [US2] Run `python .github/scripts/run-local-gates.py` and
+- [X] T033 [US2] Run `python .github/scripts/run-local-gates.py` and
   confirm the new Gates 73-75 and amended Gate 71/36 pass on the real
-  tree, alongside every gate from Phase 3.
+  tree, alongside every gate from Phase 3. Run: 118/118 passed
+  (115 before this phase; the three new gates are the difference),
+  including `verify-watchdog-clean-path.py`,
+  `verify-watchdog-no-record-on-clean-path.py`,
+  `verify-watchdog-wrapper-resolve-fold.py`,
+  `verify-watchdog-run-failure-paths.sh` (Gate 36, see T032's gate-number
+  correction) and `verify-watchdog-self-skip-guard.py` (Gate 70, which
+  T027 retargeted).
 - [ ] T034 [US2] Follow quickstart.md's Story 2 steps 1-11: a healthy
   inspection bills at most two jobs and posts exactly one full-pass
   comment with no agent step anywhere in the run (grep the run's job logs
@@ -392,11 +413,19 @@ shape first).
   still executes when every other job dies; the wrapper's job list is
   exactly one job with a correctly resolved run name; the self-verifier
   accepts the new healthy shape and still fails every pre-existing
-  failure shape.
-- [ ] T035 [US2] `grep -rn "anthropics/claude-code-action"
+  failure shape. NOT DONE this session, for the same reason T021 is not:
+  every step needs `gh workflow run`/`gh run view` against live runs, and
+  this run's permitted command list grants only `gh issue view`/`gh issue
+  comment`. Needs a human or a differently-scoped run once this branch
+  reaches main or a PR. The deterministic half of each claim is covered
+  by Gates 73-75 and Gate 36's s11-s13 against checked-in fixtures.
+- [X] T035 [US2] `grep -rn "anthropics/claude-code-action"
   .github/workflows .github/actions` and diff the match set against
   current `main` — confirm no new agent invocation was added anywhere
-  (SC-013).
+  (SC-013). Done as a per-file match count on both trees
+  (`git grep -c ... origin/main` vs `... HEAD`): identical, 13 files,
+  22 references, including `watchdog.yml`'s single one. Zero new agent
+  invocations.
 
 **Checkpoint**: A clean watchdog inspection bills at most two jobs and
 invokes no agent; a signal-bearing one is byte-for-byte unchanged. User

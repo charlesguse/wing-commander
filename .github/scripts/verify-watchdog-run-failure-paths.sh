@@ -330,6 +330,95 @@ JSON
   mv "$work/run.json.bak_rl" "$work/fixtures/run.json"
   mv "$work/jobs.json.bak_rl" "$work/fixtures/jobs.json"
   mv "$work/artifact.json.bak_rl" "$work/fixtures/artifact.json"
+
+  # ── specs/058-per-job-minute-floor: the clean-path healthy shape ──────────
+  # An inspection whose aggregate signal set is empty now skips diagnose
+  # entirely and posts the pass from collect (FR-011). The whole run is
+  # collect plus report-unhandled-failure -- ~33s, which the verifier's old
+  # 40s absolute floor would have failed as "too fast to have done real
+  # work", and which leaves no execution-output artifact and no metrics
+  # record because no agent ran. This is a PASSING shape; s12 and s13 below
+  # prove the checks it walks past are still load-bearing.
+  cp "$work/fixtures/run.json" "$work/run.json.bak_cp"
+  cp "$work/fixtures/jobs.json" "$work/jobs.json.bak_cp"
+  cp "$work/fixtures/history.json" "$work/history.json.bak_cp"
+  mv "$work/fixtures/artifact.json" "$work/artifact.json.bak_cp"
+
+  cat > "$work/fixtures/run.json" <<'JSON'
+{"id": 9001, "conclusion": "success", "workflow_id": 777,
+ "run_started_at": "2026-08-25T01:00:00Z", "updated_at": "2026-08-25T01:00:33Z",
+ "html_url": "https://example.invalid/runs/9001"}
+JSON
+  # A history of clean-path runs: the median term lands at 13s, so the
+  # ABSOLUTE floor is what these scenarios actually exercise.
+  cat > "$work/fixtures/history.json" <<'JSON'
+{"workflow_runs": [
+  {"id": 8001, "run_started_at": "2026-08-24T01:00:00Z", "updated_at": "2026-08-24T01:00:35Z"},
+  {"id": 8002, "run_started_at": "2026-08-23T01:00:00Z", "updated_at": "2026-08-23T01:00:33Z"},
+  {"id": 8003, "run_started_at": "2026-08-22T01:00:00Z", "updated_at": "2026-08-22T01:00:36Z"},
+  {"id": 8004, "run_started_at": "2026-08-21T01:00:00Z", "updated_at": "2026-08-21T01:00:34Z"}
+]}
+JSON
+  cat > "$work/fixtures/jobs.json" <<'JSON'
+{"total_count": 3, "jobs": [
+  {"id": 1, "name": "watchdog / collect", "conclusion": "success",
+   "started_at": "2026-08-25T01:00:03Z", "completed_at": "2026-08-25T01:00:28Z",
+   "steps": [
+     {"name": "Report \"could not inspect\" to lifecycle issue", "conclusion": "skipped"},
+     {"name": "Report \"passed inspection\" to lifecycle issue (empty signal set, no agent)", "conclusion": "success"}
+   ]},
+  {"id": 2, "name": "watchdog / diagnose", "conclusion": "skipped",
+   "started_at": null, "completed_at": null, "steps": []},
+  {"id": 3, "name": "watchdog / report-unhandled-failure", "conclusion": "success",
+   "started_at": "2026-08-25T01:00:29Z", "completed_at": "2026-08-25T01:00:33Z",
+   "steps": [
+     {"name": "Determine failed jobs", "conclusion": "success"},
+     {"name": "Report unhandled job failure", "conclusion": "skipped"},
+     {"name": "Report unhandled job failure to run summary", "conclusion": "skipped"}
+   ]}
+]}
+JSON
+
+  # s11: the clean path verifies healthy and files nothing -- no agent, no
+  # execution-output artifact, no metrics record, 33s end to end.
+  run_scenario "$script" '' true
+  created="$(grep -c '^issue create' "$work/calls.log" || true)"
+  if [ "$rc" = "0" ] && [ "$created" = "0" ] \
+     && grep -q "diagnose skipped" <<<"$out" \
+     && ! grep -q "too fast to have done real work" <<<"$out"; then
+    ok "$tag s11: the clean path (diagnose skipped, pass posted from collect) verifies healthy"
+  else
+    fail "$tag s11: expected exit 0 with no issue filed, got rc=$rc create=$created: $(tail -5 <<<"$out")"
+  fi
+
+  # s12: the same clean shape, but 15s -- under the re-scaled absolute
+  # floor. The floor was lowered for the clean path, not removed, and this
+  # is the scenario that says so.
+  sed -i 's/"updated_at": "2026-08-25T01:00:33Z"/"updated_at": "2026-08-25T01:00:15Z"/' "$work/fixtures/run.json"
+  run_scenario "$script" '' false
+  if [ "$rc" = "1" ] && grep -q "too fast to have done real work" <<<"$out"; then
+    ok "$tag s12: a clean-path run under the absolute floor still fails -- the floor was lowered, not removed"
+  else
+    fail "$tag s12: expected exit 1 + 'too fast to have done real work', got rc=$rc: $(tail -5 <<<"$out")"
+  fi
+  sed -i 's/"updated_at": "2026-08-25T01:00:15Z"/"updated_at": "2026-08-25T01:00:33Z"/' "$work/fixtures/run.json"
+
+  # s13: diagnose skipped and NEITHER of collect's reporters ran -- the run
+  # decided something and recorded nothing. A skipped agent is only healthy
+  # when the deterministic pass (or the could-not-inspect degradation) was
+  # actually posted.
+  sed -i 's/{"name": "Report \\"passed inspection\\" to lifecycle issue (empty signal set, no agent)", "conclusion": "success"}/{"name": "Report \\"passed inspection\\" to lifecycle issue (empty signal set, no agent)", "conclusion": "skipped"}/' "$work/fixtures/jobs.json"
+  run_scenario "$script" '' false
+  if [ "$rc" = "1" ] && grep -q "neither of collect's reporters ran" <<<"$out"; then
+    ok "$tag s13: a silent clean path (agent skipped, nothing posted) fails"
+  else
+    fail "$tag s13: expected exit 1 + 'neither of collect's reporters ran', got rc=$rc: $(tail -5 <<<"$out")"
+  fi
+
+  mv "$work/run.json.bak_cp" "$work/fixtures/run.json"
+  mv "$work/jobs.json.bak_cp" "$work/fixtures/jobs.json"
+  mv "$work/history.json.bak_cp" "$work/fixtures/history.json"
+  mv "$work/artifact.json.bak_cp" "$work/fixtures/artifact.json"
 }
 
 # ── The real script must pass every scenario ───────────────────────────────
@@ -357,7 +446,7 @@ run_mutation() {
   scenarios "$mutant" "$tag" > "$work/$tag.log" 2>&1
   bad=$before
   local failed_scenarios
-  failed_scenarios="$(grep -oE "\[FAIL\] $tag s[0-9]" "$work/$tag.log" | grep -oE 's[0-9]$' | sort -u | tr '\n' ' ')"
+  failed_scenarios="$(grep -oE "\[FAIL\] $tag s[0-9]+" "$work/$tag.log" | grep -oE 's[0-9]+$' | sort -u | tr '\n' ' ')"
   if [ "$failed_scenarios" = "$covering " ]; then
     ok "$tag: $description - exactly $covering went red"
   else
@@ -381,5 +470,20 @@ sed 's/if existing="$(gh issue list/existing="$(gh issue list/; s/--jq '"'"'.\[0
   "$SCRIPT" > "$mut"
 run_mutation "$mut" "m2" "s5" "reverting the search-failure guard files a duplicate again"
 
-echo "Gate 36: 10 scenario(s) x 3 runs + 2 mutation(s); $bad failure(s)."
+# m3 (spec 058): the absolute duration floor is removed, leaving only the
+# median-derived term. On a clean-path history that term lands at 13s, so a
+# 15s run -- too fast to have collected anything -- would pass. s12 is the
+# scenario that must catch it.
+sed 's/floor=$(( median \* 2 \/ 5 )); \[ "$floor" -lt 20 \] \&\& floor=20/floor=$(( median * 2 \/ 5 ))/' \
+  "$SCRIPT" > "$mut"
+run_mutation "$mut" "m3" "s12" "removing the absolute floor lets a too-fast clean-path run pass"
+
+# m4 (spec 058): the skipped-diagnose branch stops requiring that one of
+# collect's reporters actually ran, so a run that skipped the agent and said
+# nothing at all reads as healthy. s13 must catch it.
+sed 's/reason "diagnose was skipped but neither of collect'"'"'s reporters ran — the run decided something and recorded nothing"/note "diagnose was skipped and neither reporter ran"/' \
+  "$SCRIPT" > "$mut"
+run_mutation "$mut" "m4" "s13" "a skipped agent that recorded nothing must not read as healthy"
+
+echo "Gate 36: 13 scenario(s) x 5 runs + 4 mutation(s); $bad failure(s)."
 exit $([ "$bad" -eq 0 ] && echo 0 || echo 1)

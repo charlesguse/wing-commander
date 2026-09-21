@@ -155,6 +155,18 @@ if [ "$diagnose_conclusion" = "skipped" ]; then
   # its own passing branch so a future reader does not read the silence
   # here as an unchecked gap.
   note "diagnose skipped — no agent ran, so no agent-duration ceiling applies"
+  # Valid, but only when the run said SOMETHING. diagnose skips for exactly
+  # two reasons: collect found no signal at all (spec 058 — collect's own
+  # deterministic reporter posts the pass) or collect could not read the
+  # evidence (check 5 below owns that, and fails on it). A run that skipped
+  # the agent and posted neither inspected something and recorded nothing —
+  # the silent-success shape this whole verifier exists to refuse.
+  c="$(step collect 'Report "passed inspection" to lifecycle issue (empty signal set, no agent)')"
+  cni="$(step collect 'Report "could not inspect" to lifecycle issue')"
+  if { [ -z "$c" ] || [ "$c" = "skipped" ]; } && \
+     { [ -z "$cni" ] || [ "$cni" = "skipped" ]; }; then
+    reason "diagnose was skipped but neither of collect's reporters ran — the run decided something and recorded nothing"
+  fi
 else
   d_secs="$(jq -r '[.jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose")))
     | select(.started_at != null and .completed_at != null)
