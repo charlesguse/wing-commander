@@ -240,10 +240,10 @@ inspection, and every executed run appearing exactly once.
 **Acceptance Scenarios**:
 
 1. **Given** a burst of stage completions inside one short window, **When**
-   the burst has settled, **Then** exactly one persistence run was created
-   per record-bearing completion, none was created for a completion that
-   emitted no record, and every executed run in the burst has exactly one
-   record.
+   the burst has settled, **Then** at most one persistence run executed per
+   stage completion on the completion trigger, none executed for a watchdog
+   completion, and every run in the burst that emitted a record has exactly
+   one record.
 2. **Given** a stage run that concluded and whose metrics artifacts exist,
    **When** persistence next runs, **Then** its record is appended within
    minutes of the run concluding.
@@ -383,8 +383,12 @@ inspection, and every executed run appearing exactly once.
 
 ### Functional Requirements — C. Metrics persistence (P3)
 
-- **FR-021**: No persistence run may be spent on a completion that emitted no
-  record; a record-bearing completion costs at most one persistence run.
+- **FR-021**: No persistence run may be spent on a class of completion that
+  carries no record — after FR-031, every healthy watchdog inspection — and
+  a record-bearing completion costs at most one persistence run. A stage
+  completion that happened to upload no record (a run whose agent step never
+  started) still costs its run: the completion event cannot say whether a
+  record exists, and that case is incidental, not systematic.
 - **FR-022**: Every executed run that emitted a metrics record MUST still be
   persisted exactly once, identified by its record key, whichever path
   reaches it; the existing idempotence and write-contention retry behaviour
@@ -491,9 +495,10 @@ records file. None depends on the usage page.
 - **SC-008**: Every watchdog run lists an executed unhandled-failure report,
   including runs in which every other job failed.
 - **SC-009**: Over a 24-hour window of ordinary pipeline traffic, the number
-  of persistence workflow runs created is at most the number of
-  record-bearing completions plus the number of scheduled sweeps, and zero
-  persistence runs were created for completions that emitted no record.
+  of persistence workflow runs that executed at least one job is at most the
+  number of stage completions on the completion trigger plus the number of
+  scheduled sweeps, and zero such runs were created for watchdog
+  completions.
 - **SC-010**: For that same window, every executed run that emitted a metrics
   record appears in the records file exactly once.
 - **SC-011**: For that same window, the interval between a run concluding and
