@@ -2,7 +2,7 @@
   "issue": 408,
   "spec_dir": "specs/057-autonomous-board-loop",
   "feature_num": "057",
-  "stage": "spec",
+  "stage": "plan",
   "iteration": 0,
-  "spec_branch": null
+  "spec_branch": "spec/057-autonomous-board-loop"
 }
