@@ -35,17 +35,30 @@ only by that stage's own channel-mode instructions:
 > If, while doing your own task, you notice a defect that is not your own
 > task to fix — a gate that cannot fail its subject, a contract that
 > contradicts the workflow it describes, a stale count, or similar — do
-> not fix it and do not attempt to file it yourself. Describe it as one
-> finding object (title, what is wrong, evidence file paths, and the
-> fingerprint basis fields) in `<channel-specific instruction: "a fenced
-> ```wing-commander-findings block in your final message"` or `"the
-> findings array of your structured result"`>, then continue your own task
-> unchanged.
+> not fix it and do not attempt to file it yourself. `<channel-specific
+> instruction>` Then continue your own task unchanged.
+
+The channel-specific instruction shows the agent the finding's exact
+shape (#420 — the first live run with filing enabled lost a real finding
+because the paragraph as first shipped described the object in prose and
+the agent wrote YAML with invented keys). For the fenced-block stages it
+says the block MUST be JSON, not YAML, an array with one object per
+finding, and spells out a one-element example carrying every key of
+`.github/schemas/stage-finding.schema.json` with `detail` marked optional;
+for the structured-array stages it names the same keys in prose and the
+stage's `--json-schema` declares them, closed, under `findings.items`.
+Both tell the agent that `gate_or_artifact` is half of the dedup key and
+must be a stable name, never a sentence, and that an empty array means
+nothing to report.
 
 `verify-stage-findings-wiring.py` checks for this paragraph's presence by
 a stable substring (e.g. `"do not attempt to file it yourself"`), not by
 byte-identity, so the channel-specific clause can legitimately differ
 between the two channel modes without the gate treating that as drift.
+It also requires every prompt carrying the paragraph to name each
+required key of the schema file, quoted, and the two structured stages'
+`findings.items` to require the same keys with `additionalProperties`
+closed — the schema file stays the single home for the shape.
 
 ## Read-only stages and the write-tool question (FR-004)
 
