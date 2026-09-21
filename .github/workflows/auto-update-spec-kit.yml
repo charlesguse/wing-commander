@@ -511,8 +511,16 @@ jobs:
   # (health-check itself skipped) — a custom `if:` disables the automatic
   # success() check, so both cases must be named explicitly (T006).
   detect:
-    needs: health-check
-    if: needs.health-check.result == 'success' && needs.health-check.outputs.pinned-ok != 'false'
+    needs: [health-check, verify-image-prerequisites]
+    # spec 058 (Gate 15/Gate 23): health-check now carries !cancelled()
+    # (it tolerates a skipped verify-image-prerequisites), so GitHub's
+    # implicit success() no longer protects this job across the whole
+    # needs-closure -- !cancelled() restates the same protection
+    # explicitly, and a status-guarded job must directly depend on
+    # verify-image-prerequisites too (Gate 23), tolerating its skip the
+    # same way every other guarded job does. The existing result/output
+    # guard is otherwise unchanged.
+    if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure' && needs.health-check.result == 'success' && needs.health-check.outputs.pinned-ok != 'false'"
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -596,8 +604,9 @@ jobs:
 
   # Settle-tracking state machine against the singular open lifecycle issue.
   settle:
-    needs: detect
-    if: needs.detect.result == 'success' && needs.detect.outputs.newer == 'true'
+    needs: [detect, verify-image-prerequisites]
+    # spec 058 (Gate 15/Gate 23): see detect's own comment above.
+    if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure' && needs.detect.result == 'success' && needs.detect.outputs.newer == 'true'"
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}

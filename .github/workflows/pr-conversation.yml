@@ -1463,13 +1463,23 @@ jobs:
   # "multi-classification" note) so N distinct asks in one comment route
   # and report independently.
   act:
-    needs: classify-and-announce
+    needs: [classify-and-announce, verify-image-prerequisites]
     # `legs != ''` is load-bearing beyond "nothing classified": an empty
     # string reaches fromJson below as a strategy error that kills the job,
     # and it is also what the runner leaves behind when it withholds an
     # output (#287) — the legs-dropped job below is what turns that case
     # into a failure instead of a silent skip.
+    # spec 058 (Gate 15/Gate 23): classify-and-announce now carries
+    # !cancelled() (it tolerates a skipped verify-image-prerequisites),
+    # so GitHub's implicit success() no longer protects this job across
+    # the whole needs-closure -- the first three lines below restate that
+    # protection explicitly (and satisfy Gate 23's requirement that a
+    # status-guarded job directly depend on verify-image-prerequisites
+    # too); the rest is the pre-existing guard, unchanged.
     if: >-
+      !cancelled() &&
+      needs.verify-image-prerequisites.result != 'failure' &&
+      needs.classify-and-announce.result == 'success' &&
       needs.classify-and-announce.outputs.qualifies == 'true' &&
       needs.classify-and-announce.outputs.legs != '' &&
       needs.classify-and-announce.outputs.legs != '[]'

@@ -487,8 +487,14 @@ jobs:
   # array fails strategy evaluation, so zero branches must never reach the
   # matrix (first observed live 2026-07-12, run 29180556763).
   rebase:
-    needs: discover
-    if: ${{ needs.discover.outputs.branches != '[]' }}
+    needs: [discover, verify-image-prerequisites]
+    # spec 058 (Gate 15/Gate 23): discover now carries !cancelled() (it
+    # tolerates a skipped verify-image-prerequisites), so GitHub's
+    # implicit success() no longer protects this job across the whole
+    # needs-closure -- !cancelled() && needs.discover.result == 'success'
+    # restates that protection explicitly, and a status-guarded job must
+    # directly depend on verify-image-prerequisites too (Gate 23).
+    if: ${{ !cancelled() && needs.verify-image-prerequisites.result != 'failure' && needs.discover.result == 'success' && needs.discover.outputs.branches != '[]' }}
     strategy:
       fail-fast: false
       matrix:

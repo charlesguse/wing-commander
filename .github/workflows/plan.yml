@@ -399,9 +399,16 @@ jobs:
           echo "spec-dir=specs/$slug" >> "$GITHUB_OUTPUT"
 
   plan:
-    needs: resolve-spec
-    # An unmerged close is not a planning trigger — no-op by design.
-    if: inputs.merged
+    needs: [resolve-spec, verify-image-prerequisites]
+    # spec 058 (Gate 15/Gate 23): resolve-spec now carries !cancelled()
+    # (it tolerates a skipped verify-image-prerequisites), so GitHub's
+    # implicit success() no longer protects this job across the whole
+    # needs-closure -- !cancelled() && needs.resolve-spec.result ==
+    # 'success' restates that protection explicitly, and a status-guarded
+    # job must directly depend on verify-image-prerequisites too
+    # (Gate 23). An unmerged close is not a planning trigger — no-op by
+    # design.
+    if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure' && needs.resolve-spec.result == 'success' && inputs.merged"
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}

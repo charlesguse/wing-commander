@@ -426,8 +426,15 @@ jobs:
           echo "spec-dir=specs/$slug" >> "$GITHUB_OUTPUT"
 
   tasks:
-    needs: resolve-spec
-    if: inputs.mode == 'generate'
+    needs: [resolve-spec, verify-image-prerequisites]
+    # spec 058 (Gate 15/Gate 23): resolve-spec now carries !cancelled()
+    # (it tolerates a skipped verify-image-prerequisites), so GitHub's
+    # implicit success() no longer protects this job across the whole
+    # needs-closure -- !cancelled() && needs.resolve-spec.result ==
+    # 'success' restates that protection explicitly, and a status-guarded
+    # job must directly depend on verify-image-prerequisites too
+    # (Gate 23).
+    if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure' && needs.resolve-spec.result == 'success' && inputs.mode == 'generate'"
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -1342,8 +1349,9 @@ jobs:
   # acceptance signal; the stage flip rode in with the merge. No agent work:
   # validate the slug and hand off to implementation.
   tasks-approved:
-    needs: resolve-spec
-    if: inputs.mode == 'approved'
+    needs: [resolve-spec, verify-image-prerequisites]
+    # spec 058 (Gate 15/Gate 23): see tasks' own comment above.
+    if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure' && needs.resolve-spec.result == 'success' && inputs.mode == 'approved'"
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}

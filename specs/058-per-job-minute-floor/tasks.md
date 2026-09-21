@@ -160,7 +160,7 @@ shifted.
 
 ### Gates (FR-006, FR-007, FR-008, contracts/gate-coverage-058.md)
 
-- [ ] T015 [US1] Amend Gate 23's real check in
+- [X] T015 [US1] Amend Gate 23's real check in
   `.github/workflows/lint-workflows.yml` (the inline Python block at the
   "Gate 23 — every published stage checks adopter-chosen image
   prerequisites before any real job starts" step, ~lines 2314-3030):
@@ -180,7 +180,7 @@ shifted.
   5): a job with `needs:` naming the check but no `if:` at all, or an
   `if:` that omits this comparison (including one narrowed back to
   `== 'success'`), must fail by name (stage + job).
-- [ ] T016 [US1] Amend Gate 22 in `.github/workflows/lint-workflows.yml`
+- [X] T016 [US1] Amend Gate 22 in `.github/workflows/lint-workflows.yml`
   (the inline Python block at "Gate 22 — every job of every published
   stage carries the runner/container-image passthrough", ~line
   2041-2300) to add a fourth byte-for-byte comparison, alongside
@@ -188,7 +188,7 @@ shifted.
   `EXPECTED_VIP_IF` constant for
   `if: inputs.container-image != ''` on the `verify-image-prerequisites`
   job itself, asserted identical across all 13 stages.
-- [ ] T017 [US1] Update `.github/scripts/verify-gate-23.py`'s
+- [X] T017 [US1] Update `.github/scripts/verify-gate-23.py`'s
   `--selftest` fixtures (the extracted-source self-test for 038's image-
   prerequisites gate) to match T015's amended detector: a fixture proving
   a bare-`needs:` reversion (no `if:` at all) still fails, and a new
@@ -196,11 +196,11 @@ shifted.
   `needs.verify-image-prerequisites.result == 'success'` (instead of
   `!= 'failure'`) also fails, naming the stage and job (data-model.md's
   "Gate fixtures" table).
-- [ ] T018 [US1] Update `.github/scripts/verify-gate-22.py`'s self-test
+- [X] T018 [US1] Update `.github/scripts/verify-gate-22.py`'s self-test
   fixtures to cover T016's new `EXPECTED_VIP_IF` comparison: one fixture
   with the line present and correct, one fixture missing it — the second
   must fail, naming the stage (contracts/gate-coverage-058.md).
-- [ ] T019 [US1] Extend Gate 15's self-test `CASES` list in
+- [X] T019 [US1] Extend Gate 15's self-test `CASES` list in
   `.github/scripts/verify-gate-15.py` (~line 73) with one new case: a
   rewritten entry job (T002-T014's shape — `if: !cancelled() &&
   needs.verify-image-prerequisites.result != 'failure'`, no second real

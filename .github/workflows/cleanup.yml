@@ -394,8 +394,16 @@ jobs:
   # The pipeline's most common outcome — a merged final PR tears itself down
   # with zero human action.
   teardown-done:
-    needs: select
-    if: needs.select.outputs.outcome == 'teardown-done'
+    needs: [select, verify-image-prerequisites]
+    # spec 058 (Gate 15/Gate 23): select now carries !cancelled() (it
+    # tolerates a skipped verify-image-prerequisites), so GitHub's
+    # implicit success() no longer protects this job across the whole
+    # needs-closure -- !cancelled() restates that protection explicitly,
+    # needs.select.result == 'success' restates the check implicit
+    # success() used to make (alongside the existing outcome branch), and
+    # a status-guarded job must directly depend on
+    # verify-image-prerequisites too (Gate 23).
+    if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure' && needs.select.result == 'success' && needs.select.outputs.outcome == 'teardown-done'"
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -953,8 +961,9 @@ jobs:
   # can revise and re-enter the pipeline. No agent step — no credential
   # required.
   teardown-rejected:
-    needs: select
-    if: needs.select.outputs.outcome == 'teardown-rejected'
+    needs: [select, verify-image-prerequisites]
+    # spec 058 (Gate 15/Gate 23): see teardown-done's own comment above.
+    if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure' && needs.select.result == 'success' && needs.select.outputs.outcome == 'teardown-rejected'"
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -1202,8 +1211,9 @@ jobs:
   # plan/tasks/impl PR closed unmerged — mark stalled, never destroy. No
   # agent step — no credential required.
   mark-stalled:
-    needs: select
-    if: needs.select.outputs.outcome == 'mark-stalled'
+    needs: [select, verify-image-prerequisites]
+    # spec 058 (Gate 15/Gate 23): see teardown-done's own comment above.
+    if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure' && needs.select.result == 'success' && needs.select.outputs.outcome == 'mark-stalled'"
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}

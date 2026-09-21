@@ -2082,6 +2082,13 @@ jobs:
           EXPECTED_RUNS_ON = (DOLLAR_OPEN + " startsWith(inputs.runner, '[') && "
                               "fromJSON(inputs.runner) || inputs.runner " + DOLLAR_CLOSE)
           EXPECTED_IMAGE = DOLLAR_OPEN + " inputs.container-image " + DOLLAR_CLOSE
+          # spec 058 (FR-001/FR-006): the job-level if: that makes
+          # verify-image-prerequisites skip cleanly (billing nothing) when
+          # no image is configured. Asserted identical across all 13
+          # stages the same way EXPECTED_RUNS_ON/EXPECTED_IMAGE are — Gate
+          # 23 owns the deeper contract for what depends on this job; Gate
+          # 22 only owns byte-for-byte uniformity of the passthrough shape.
+          EXPECTED_VIP_IF = "inputs.container-image != ''"
           # research D3/D5 (specs/044), measured 2026-09-07 on PR #285: an
           # empty-object credentials mapping suppresses the login attempt,
           # so this single expression is unconditionally correct for every
@@ -2191,6 +2198,16 @@ jobs:
                                 f"the exact runner-passthrough ternary like every "
                                 f"other job, even though it never gets a container: "
                                 f"block (FR-002/FR-003).")
+                          failures += 1
+                          ok = False
+                      vip_if = str(job.get("if", "") or "").strip()
+                      if vip_if != EXPECTED_VIP_IF:
+                          print(f"::error file={f}::job 'verify-image-prerequisites' "
+                                f"has job-level if: {job.get('if')!r}; it must carry "
+                                f"the exact {EXPECTED_VIP_IF!r} so the job skips "
+                                f"cleanly (and bills nothing) when no image is "
+                                f"configured, identically across all 13 stages "
+                                f"(spec 058 FR-001/FR-006).")
                           failures += 1
                           ok = False
                       # Declared, never inherited. This job runs docker
@@ -2392,7 +2409,7 @@ jobs:
               it is verifying.
               """
               iftext = " ".join(str((spec or {}).get("if", "") or "").split())
-              return "needs.verify-image-prerequisites.result == 'success'" in iftext
+              return "needs.verify-image-prerequisites.result != 'failure'" in iftext
 
           failures = 0
           stages = 0
@@ -2423,21 +2440,23 @@ jobs:
                         f"container is created (FR-010/FR-011).")
                   failures += 1
               else:
-                  # The inversion of #224. A job-level `if:` here is not a
-                  # cheap no-op: GitHub's implicit success() spans a job's
-                  # whole needs-CLOSURE, so a SKIPPED check silently
-                  # suppresses every job of the stage that carries no
-                  # status-check function — which, when the condition is
-                  # `container-image != ''`, is every ordinary run. The
-                  # condition belongs on the step, one level down, where
-                  # skipping costs idle seconds instead of the pipeline.
-                  if "if" in vip:
-                      print(f"::error file={f}::verify-image-prerequisites carries a "
-                            f"job-level if: ({vip.get('if')!r}). This job must never "
-                            f"skip: a skipped job suppresses its entire descendant "
-                            f"closure regardless of what those jobs' own if: say, so "
-                            f"skip-conditioning the check turns the whole stage into a "
-                            f"silent no-op (#224). Condition the STEP instead.")
+                  # #224's ban on any job-level if: here is gone (spec
+                  # 058): the job now MUST skip cleanly when no image is
+                  # configured, billing nothing (FR-001). What #224 still
+                  # protects against is silent skip-propagation swallowing
+                  # every dependent job unnoticed — so the job-level if: is
+                  # pinned to this exact literal, and every direct
+                  # dependent's own if: is what is required (below) to
+                  # tolerate that skip explicitly, never widened further.
+                  EXPECTED_VIP_IF = "inputs.container-image != ''"
+                  vip_if = " ".join(str(vip.get("if", "") or "").split())
+                  if vip_if != EXPECTED_VIP_IF:
+                      print(f"::error file={f}::verify-image-prerequisites's "
+                            f"job-level if: is {vip.get('if')!r}, not the required "
+                            f"{EXPECTED_VIP_IF!r}. Without exactly this condition "
+                            f"the job either never skips (billing a job on every "
+                            f"no-op run, FR-001) or skips on some other condition "
+                            f"a dependent job's guard was not written to tolerate.")
                       failures += 1
                   vip_steps = [s for s in (vip.get("steps") or []) if isinstance(s, dict)]
                   unguarded = [s for s in vip_steps
@@ -2502,6 +2521,32 @@ jobs:
                             f"never stop this job (FR-010/FR-011).")
                       failures += 1
                       continue
+
+                  if is_entry:
+                      # FR-007's reversion check (Acceptance Scenario 5): an
+                      # entry job with no if: at all relies on GitHub's
+                      # implicit success() over needs:, which a SKIPPED image
+                      # check (now a normal outcome, not just a failure) also
+                      # fails — silently reverting to the pre-058 shape where
+                      # a no-op run's entry job never even started. Checked
+                      # unconditionally here, not only when a status function
+                      # is already present (has_result_guard's `guarded`
+                      # branch below), because a bare `needs:` with no if: at
+                      # all is exactly the shape that branch never sees.
+                      iftext = " ".join(str(job.get("if", "") or "").split())
+                      if ("!cancelled()" not in iftext or
+                              "needs.verify-image-prerequisites.result != 'failure'"
+                              not in iftext):
+                          print(f"::error file={f}::job {jname!r} is an entry job "
+                                f"depending on verify-image-prerequisites but its "
+                                f"if: ({job.get('if')!r}) does not contain both "
+                                f"'!cancelled()' and \"needs.verify-image-"
+                                f"prerequisites.result != 'failure'\" — with no if: "
+                                f"at all, or one narrowed back to == 'success', "
+                                f"GitHub's implicit success() would skip this job "
+                                f"outright the moment the image check itself "
+                                f"reports skipped (FR-007).")
+                          failures += 1
 
                   if guarded and not has_result_guard(job):
                       print(f"::error file={f}::job {jname!r} needs "

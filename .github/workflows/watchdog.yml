@@ -1948,8 +1948,14 @@ jobs:
   # zero or more Findings. Skipped when collect could not gather any evidence
   # at all (FR-005).
   diagnose:
-    needs: collect
-    if: needs.collect.outputs.evidence-available != 'false'
+    needs: [collect, verify-image-prerequisites]
+    # spec 058 (Gate 15/Gate 23): collect now carries !cancelled() (it
+    # tolerates a skipped verify-image-prerequisites), so GitHub's
+    # implicit success() no longer protects this job across the whole
+    # needs-closure -- !cancelled() && needs.collect.result == 'success'
+    # restates that protection explicitly, and a status-guarded job must
+    # directly depend on verify-image-prerequisites too (Gate 23).
+    if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure' && needs.collect.result == 'success' && needs.collect.outputs.evidence-available != 'false'"
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -2663,8 +2669,20 @@ jobs:
   # withholds an output (#309) — the findings-dropped job below is what
   # turns that case into a failure instead of a silent skip.
   triage:
-    needs: [collect, diagnose]
+    needs: [collect, diagnose, verify-image-prerequisites]
+    # spec 058 (Gate 15/Gate 23): collect (and, transitively, diagnose)
+    # now carries !cancelled() (it tolerates a skipped
+    # verify-image-prerequisites), so GitHub's implicit success() no
+    # longer protects this job across the whole needs-closure -- the
+    # first four lines below restate that protection explicitly (and
+    # satisfy Gate 23's requirement that a status-guarded job directly
+    # depend on verify-image-prerequisites too); the rest is the
+    # pre-existing guard, unchanged.
     if: >-
+      !cancelled() &&
+      needs.verify-image-prerequisites.result != 'failure' &&
+      needs.collect.result == 'success' &&
+      needs.diagnose.result == 'success' &&
       needs.diagnose.outputs.outcome != 'passed-inspection' &&
       needs.collect.outputs.evidence-available != 'false' &&
       needs.diagnose.outputs.finding-indexes != '' &&
