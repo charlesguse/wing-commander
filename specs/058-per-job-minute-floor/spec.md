@@ -210,6 +210,11 @@ and the same behaviour as today.
 7. **Given** any watchdog run at all, including one where every other job
    died, **When** the run completes, **Then** the unhandled-failure report
    still executed.
+8. **Given** the watchdog's separate self-verifier inspecting a healthy
+   inspection of the new shape — diagnose skipped, no execution-output
+   artifact, no metrics record, a run that finished in well under a minute
+   — **When** it runs, **Then** it reports the run verified and files
+   nothing, while every shape it fails on today still fails.
 
 ---
 
@@ -380,6 +385,18 @@ inspection, and every executed run appearing exactly once.
   call site. The lifecycle rollup's "every agent run appears exactly once"
   MUST stay correct on that basis, and no consumer may report such a run as a
   record that existed and could not be retrieved.
+- **FR-032**: The watchdog's separate self-verifier MUST accept the
+  healthy-path shape this feature creates — the diagnose job skipped with the
+  passed-inspection record posted, no execution-output artifact, no metrics
+  record, and a whole-run duration that can fall under the absolute floor it
+  applies today (a floor calibrated when every healthy run carried an agent
+  step) — and MUST still fail on every shape it fails on today: the crashed
+  or stalled agent, the could-not-inspect degradation, the fired safety net,
+  and the fabricated verdict. Its floor MUST be re-derived from the new
+  healthy population rather than removed, and its checked-in failure-path
+  fixtures MUST gain the healthy shape as a passing case. Without this, the
+  self-verifier would file a pipeline-defect issue for every healthy
+  inspection — the cascade #403 closed, reopened from the other side.
 
 ### Functional Requirements — C. Metrics persistence (P3)
 
@@ -435,7 +452,8 @@ inspection, and every executed run appearing exactly once.
 
 - The watchdog self-verifier's own one-job-per-inspection cost. Its shape is
   a question for the spec that owns the watchdog's self-check, and #403
-  already cut its volume along with the watchdog's.
+  already cut its volume along with the watchdog's. Its *correctness* on the
+  healthy shape this feature creates is in scope (FR-032).
 - Reducing the count of jobs inside `collect`, `diagnose`, `triage` or `act`
   on paths that actually do work. This feature targets no-op and healthy
   paths only.
@@ -509,6 +527,9 @@ records file. None depends on the usage page.
   fixture for each of its failure branches, and passes on the real tree.
 - **SC-013**: No workflow in the repository gains an agent invocation as a
   result of this feature.
+- **SC-014**: The self-verifier verifies a healthy inspection of the new shape
+  and files nothing, and its failure-path fixture harness still fails on
+  every shape it failed on before this feature.
 
 ## Assumptions
 
