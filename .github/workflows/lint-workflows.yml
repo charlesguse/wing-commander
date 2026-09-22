@@ -3944,6 +3944,14 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-readiness.py
 
+      # Gate 86 — specs/057-autonomous-board-loop (research.md D17,
+      # FR-052/FR-053): a maintainer's stop comment halts the loop; a
+      # non-maintainer's cannot, and the loop never cancels its own
+      # just-posted announcement.
+      - name: Gate 86 — board loop stop-check resolves every documented branch
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-stop-check.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

@@ -563,7 +563,7 @@ T012 — verified, not re-implemented, in Phase 10's quickstart drill.)
 
 ### Implementation for User Story 7
 
-- [ ] T051 [P] [US7] Create the stop-comment handling procedure in
+- [X] T051 [P] [US7] Create the stop-comment handling procedure in
   `board-loop.yml`, reusing `pr-conversation.yml`'s existing `stop`
   procedure retargeted from a PR thread to the issue thread (research.md
   D17): scan the issue's own comments for the loop's most recent status
@@ -571,7 +571,7 @@ T012 — verified, not re-implemented, in Phase 10's quickstart drill.)
   ID, skip the current run's own announcement by `GITHUB_RUN_ID`, gated by
   the same maintainer-association check `pr-conversation.yml` already uses
   (FR-052).
-- [ ] T052 [US7] Wire the stop-comment check (T051) and a fresh issue
+- [X] T052 [US7] Wire the stop-comment check (T051) and a fresh issue
   `state` re-fetch as a gate re-checked immediately before every durable
   action across the `triage` (T018), `route` (T028), `fix` (T034),
   `review` (T040/T043), and `readiness` (T049) jobs in `board-loop.yml` —
