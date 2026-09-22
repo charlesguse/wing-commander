@@ -282,6 +282,10 @@ contract-widening fixture routes to `spec-request` regardless of size.
   with fixtures covering under/over threshold independently by files and
   by lines, parameterized rather than hardcoding either caller's numbers
   (research.md D26).
+  **Landed at `.github/scripts/size-path-backstop-tests/run-tests.sh`, not
+  the path above** — a harness under `.github/actions/**` is invisible to
+  `run-local-gates.py` and `verify-gate-wiring.py`, so it never ran
+  locally. See T062 for the finding and the precedent followed.
 - [X] T023 [P] [US2] Create `.github/scripts/board_route_backstop.py` with
   `contract_widened(diff_paths, diff_text)` (research.md D6: returns the
   subset of `diff_paths` touching a `workflow_call:` `inputs:`/`outputs:`
@@ -640,6 +644,8 @@ dispatched, issue stays open).
   with fixtures covering successful correlation, ambiguous/absent
   correlation (empty `run-url`), and poll-budget exhaustion
   (`conclusion: timeout`).
+  **Landed at `.github/scripts/dispatch-and-wait-tests/run-tests.sh`, not
+  the path above** — same reason as T022; see T062.
 - [ ] T056 [P] [US6] Add `wing-commander-dispatch-and-wait` to
   `.github/scripts/verify-single-home-idioms.py`'s `DECLARED_HOMES`,
   pointing at `.github/actions/wing-commander-dispatch-and-wait/action.yml`,
@@ -698,7 +704,7 @@ on recorded merge evidence alone.
 **Purpose**: End-to-end gate wiring and the quickstart drills that only
 make sense once every job exists.
 
-- [ ] T061 [P] Run `python .github/scripts/verify-single-home-idioms.py`
+- [X] T061 [P] Run `python .github/scripts/verify-single-home-idioms.py`
   and `python .github/scripts/run-local-gates.py` against the real
   workflow/composite tree (quickstart.md step 2), confirming both
   repointed call sites (`pr-conversation.yml` →
@@ -706,23 +712,81 @@ make sense once every job exists.
   `wing-commander-dispatch-and-wait`) resolve correctly and every new gate
   from Phases 2–7 and 9 is reachable through the auto-derived list
   (FR-065).
-- [ ] T062 [P] Confirm each new gate script fails loudly rather than
+  **RUN 2026-09-22, cycle 2: 131/131 gates pass** (Gate 60,
+  verify-single-home-idioms.py, among them). Every new gate from Phases
+  2–7 and 9 is reachable through run-local-gates.py's auto-derived list:
+  Gates 80–88 all appear in the run. The two repointed call sites this
+  task asks about do NOT exist — T021 and T054 are both blocked (see
+  their own notes); each is recorded instead as a named, stale-checked
+  `single-home-waivers.json` entry, which Gate 60 itself verifies is
+  neither stale nor widened. Both new composites ARE resolved by
+  board-loop.yml's own call sites, which is what makes them reachable at
+  all.
+- [X] T062 [P] Confirm each new gate script fails loudly rather than
   passing vacuously when its subject file is missing or a fixture is
   absent (Principle VIII), by temporarily inverting one fixture's expected
   verdict per script (quickstart.md step 1) and reverting after
   confirming the failure names the mismatched fixture.
+  **RUN 2026-09-22, cycle 2**: one expectation inverted in each of the
+  nine gates this feature adds (Gates 80–88), all nine run in one suite
+  pass, all nine FAILED and each named its own mismatched fixture
+  (`verify-board-eligibility: pipeline-only-label: expected 'ineligible',
+  got 'pipeline-labeled'`, `[under threshold (default 3/40)] expected
+  over-threshold=true ... got over-threshold=false`, and so on), then all
+  nine were reverted and the suite returned to 131/131.
+  **This task found a real defect and fixed it**: Gates 82 and 87 did not
+  fail under inversion on the first attempt because they did not run at
+  all. `wc_gate_registry.py` discovers gates under `.github/scripts/`
+  only (`SCRIPTS_DIR`), so a `run-tests.sh` placed under
+  `.github/actions/<composite>/tests/` — where T022 and T055 put
+  theirs — is invisible to both `verify-gate-wiring.py` and
+  `run-local-gates.py`. CI's own lint-workflows.yml step still ran them,
+  but the local suite CLAUDE.md's "Before pushing" section tells every
+  contributor to trust silently did not. Both harnesses were moved to
+  `.github/scripts/size-path-backstop-tests/` and
+  `.github/scripts/dispatch-and-wait-tests/`, following the precedent
+  `wing-commander-stage-findings` already set with
+  `.github/scripts/stage-findings-tests/`; the suite went from 129 to 131
+  invocations as a result. This feature's "Tests" preamble above, which
+  calls `run-tests.sh` beside the composite the existing convention, is
+  wrong about where the existing one actually lives.
 - [ ] T063 Run the quickstart.md validation drills for User Stories 1–5
   and 7 (steps 3–7, 9) against fixture issues/PRs in a disposable/test
   repository and record each outcome.
+  **BLOCKED (2026-09-22, cycle 2) — tooling, not design**: these drills
+  need a disposable repository and the ability to create fixture
+  issues/PRs and drive runs in it. This agent step's shell allowlist
+  grants only `gh issue view` and `gh issue comment`; `gh repo create`,
+  `gh issue create`, `gh pr create`, and `gh workflow run` are all
+  auto-denied, so the drill cannot be performed here under any
+  formulation. The deterministic half of each story's Independent Test IS
+  covered and green — every decision these drills exercise lives in a
+  gate script with checked-in fixtures (Gates 80–86), and T062 above
+  proves each of those gates can fail. What remains unproven is the live
+  GitHub wiring between them. Needs a human, or a run whose tooling
+  includes repository-and-issue creation.
 - [ ] T064 Run the quickstart.md User Story 6 drill (step 8) in a
   disposable/test repository: a merged Actions-only fix resumes via
   `pull_request: closed`, a dispatched run URL and outcome are recorded,
   and the issue closes citing them; repeat for a failing proof run, a
   docs-only merge, and a closed-not-merged PR.
+  **BLOCKED (2026-09-22, cycle 2) — same tooling blocker as T063**, plus
+  `gh workflow run` specifically, which the re-drive path cannot be
+  exercised without. The path-derived halves (`actions_only()` and
+  `redrive_target()`) are covered by Gate 88, and the composite's own
+  correlate/wait/timeout behaviour by Gate 87 against a stub `gh`; the
+  `pull_request: closed` resume wiring itself is what stays unproven.
 - [ ] T065 Run the quickstart.md untrusted-content drill (step 10): plant
   instruction-shaped text in a non-maintainer comment on an in-flight item
   and confirm it never reaches the fixer as a directive (FR-056) and never
   affects the board-item marker (T010).
+  **BLOCKED (2026-09-22, cycle 2) — same tooling blocker as T063**: the
+  drill needs an in-flight item in a disposable repository and a
+  non-maintainer comment planted on it, neither of which this run's
+  allowlist permits creating. The structural half is in place and
+  reviewable in the workflow text: every agent step frames issue bodies
+  and non-maintainer comments as data (FR-055/FR-056), and the
+  maintainer-association check the stop path uses is covered by Gate 86.
 
 **Checkpoint**: All ten quickstart sections pass; every gate is registered
 and provably able to fail.

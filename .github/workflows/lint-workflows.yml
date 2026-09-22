@@ -3916,7 +3916,7 @@ jobs:
       # and board-loop.yml's own thresholds already are.
       - name: Gate 82 — the size-path-backstop composite measures files/lines correctly at any threshold
         if: "!cancelled()"
-        run: bash .github/actions/wing-commander-size-path-backstop/tests/run-tests.sh
+        run: bash .github/scripts/size-path-backstop-tests/run-tests.sh
 
       # Gate 83 — specs/057-autonomous-board-loop (FR-017/FR-019/FR-021,
       # FR-064 bullet 3): the route backstop can only narrow the
@@ -3963,7 +3963,7 @@ jobs:
       # correlation must never read as success.
       - name: Gate 87 — the dispatch-and-wait composite correlates, waits, and times out correctly
         if: "!cancelled()"
-        run: bash .github/actions/wing-commander-dispatch-and-wait/tests/run-tests.sh
+        run: bash .github/scripts/dispatch-and-wait-tests/run-tests.sh
 
       # Gate 88 — specs/057-autonomous-board-loop (FR-041, research.md
       # D15): whether a merged fix needs a re-driven run before its issue

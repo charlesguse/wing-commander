@@ -440,9 +440,9 @@ def check_size_path_backstop(root="."):
 # --------------------------------------------------------------------------
 def check_dispatch_and_wait(root="."):
     home = DECLARED_HOMES["dispatch-and-wait"]
-    # The composite's own tests/run-tests.sh extracts and executes the
-    # shipped shell (Gate 87) rather than restating it, so the whole home
-    # directory -- not just action.yml -- is the one home.
+    # The home's whole directory, not just action.yml: a future fixture or
+    # helper placed beside the composite is part of the one home, never a
+    # second copy of the idiom.
     home_dir = home.rsplit("/", 1)[0] + "/"
     findings = []
     for path in all_subject_files(root):
