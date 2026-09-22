@@ -11,11 +11,13 @@ Gate/fixture tasks are listed inline with the implementation task they
 verify rather than in a separate TDD phase.
 
 **Gate numbering**: the highest gate number wired into
-`.github/workflows/lint-workflows.yml` as of this branch is Gate 80
-(`grep -n "Gate [0-9]" .github/workflows/lint-workflows.yml`). This
-feature's new gate is assigned **Gate 81**. Re-check this at implementation
-time in case another in-flight branch has since claimed it (research.md D5)
-and renumber every "Gate 81" reference in this file if so.
+`.github/workflows/lint-workflows.yml` as of this branch's Setup phase
+(T001) was Gate 80 (`grep -n "Gate [0-9]" .github/workflows/lint-workflows.yml`),
+so this feature's gate was originally assigned Gate 81. Spec
+057-autonomous-board-loop's board-loop gates (Gates 81-89, #451) landed on
+`main` after T001's check had last run, colliding with that reservation —
+this feature's gate is **Gate 90** throughout this file and the shipped
+code (Maintainer Feedback T036).
 
 ## Format: `[ID] [P?] [Story] Description`
 
@@ -46,7 +48,9 @@ not skip a phase's checkpoint run before starting the next one.
 - [X] T001 Confirm the gate-number reservation above is still accurate:
   `grep -n "Gate 8[0-9]" .github/workflows/lint-workflows.yml` must show
   nothing above Gate 80. If it does, shift every "Gate 81" reference in
-  this file to the next free number before starting Phase 3.
+  this file to the next free number before starting Phase 3. (At T001's
+  own check, nothing above Gate 80 existed yet; #451 landed later, forcing
+  the T036 renumber to Gate 90.)
 
 ---
 
@@ -178,7 +182,7 @@ a branch whose `tasks.md` has unchecked tasks and whose range contains no
   Gate 30 assertion still encodes "no converge commit ⇒ converged=true"
   with outstanding tasks present after this pass.
 - [X] T009 [US1] Create `.github/scripts/verify-tasks-checkbox-convergence-signal.py`
-  (Gate 81, research.md D5), modeled on
+  (Gate 90, research.md D5), modeled on
   `verify-truncated-cycle-carry-forward.py`'s structure: import
   `ensure_jq, find_step, resolve_bash, run_step, use_utf8_stdout` from
   `wc_shell_harness`; constants naming the exact shipped step names this
@@ -197,12 +201,12 @@ a branch whose `tasks.md` has unchecked tasks and whose range contains no
   count composite step fails the job loudly (FR-006); the spec-057 replay
   (11 of 65 tasks ticked, no converge commit, healthy exit) ⇒
   `converged=false` (SC-003). Wire it into `.github/workflows/
-  lint-workflows.yml` immediately as "Gate 81 — …" with a bare `run:`
+  lint-workflows.yml` immediately as "Gate 90 — …" with a bare `run:`
   line naming this script's exact path (Gate 10 requires every check
   script be named by some `run:` line or it is reported orphaned — do not
   leave it unwired even mid-feature).
 - [X] T010 [US1] Run `python .github/scripts/run-local-gates.py`; confirm
-  Gate 81 and every pre-existing gate (including Gate 30, after T008's
+  Gate 90 and every pre-existing gate (including Gate 30, after T008's
   fixture audit) pass.
 
 **Checkpoint**: A cycle that ends healthy with outstanding tasks and no
@@ -230,7 +234,7 @@ must come out true.
 story is a set of properties the Phase 3 implementation must already
 satisfy by construction, verified by fixtures).
 
-- [X] T011 [US2] Extend Gate 81's scenario table with: (a) a fixture where
+- [X] T011 [US2] Extend Gate 90's scenario table with: (a) a fixture where
   `CYCLE_RESULT=success` and the tip's `tasks.md` still has unchecked
   tasks ⇒ `converged=false` regardless of `CYCLE_RESULT`/verdict wording
   (US2 acceptance scenario 1 — since T005/T007 never read those fields to
@@ -243,7 +247,7 @@ satisfy by construction, verified by fixtures).
   arm's own base (US2 acceptance scenario 3, FR-007) — this fixture also
   becomes the target for Phase 7's "mutation applied to only one arm"
   mutation (SC-008).
-- [X] T012 [US2] Add a "single home" structural check to Gate 81
+- [X] T012 [US2] Add a "single home" structural check to Gate 90
   (research.md D2's closing paragraph, modeled on Gate 61's
   `verify-spec-meta-single-home.py`): fail if the fence-aware
   checkbox-counting `awk` idiom introduced in T002 appears anywhere in
@@ -256,7 +260,7 @@ satisfy by construction, verified by fixtures).
   rather than leaving Arm A's separate grep in place — confirm after
   Phase 5 lands that this structural check has nothing left to flag there.
 - [X] T013 [US2] Run `python .github/scripts/run-local-gates.py`; confirm
-  Gate 81's new fixtures and structural check pass.
+  Gate 90's new fixtures and structural check pass.
 
 **Checkpoint**: The convergence decision is proven, not merely
 implemented, to be tree-derived and shared between both arms.
@@ -337,7 +341,7 @@ story's hand-off condition consumes) and Phase 2 (the composite's
   896-915`, `1485-1507`) gain no new instruction to keep working while
   turns remain — that correction is FR-015's wording fix only (Phase 7,
   T029), never an added "keep going" instruction.
-- [X] T020 [US4] Extend Gate 81 with US4's FR-019 branches: unchecked
+- [X] T020 [US4] Extend Gate 90 with US4's FR-019 branches: unchecked
   tasks with **zero** progress and no converge commit ⇒
   `converged=false`, `handoff=true`, `Dispatch next step` posts remaining
   work and dispatches finalize with `converged=false`, no next-cycle
@@ -348,7 +352,7 @@ story's hand-off condition consumes) and Phase 2 (the composite's
   `progressed=false` (FR-010a's conservative reading) even though a box
   moved.
 - [X] T021 [US4] Run `python .github/scripts/run-local-gates.py`; confirm
-  Gate 81's US4 fixtures pass alongside Phases 3-4's.
+  Gate 90's US4 fixtures pass alongside Phases 3-4's.
 
 **Checkpoint**: a spec whose only outstanding tasks are human-only work
 costs exactly one more cycle than today (the zero-progress cycle that
@@ -411,14 +415,14 @@ rewrites the source and narrative of) and Phase 5 (the `handoff`/
   lines (1260, 1264, 1271, 1275) — a run's own log should show why it
   converged, dispatched another cycle, or handed off, without re-deriving
   it from the branch.
-- [X] T026 [US3] Extend Gate 81 with FR-019's remaining-work fixtures: the
+- [X] T026 [US3] Extend Gate 90 with FR-019's remaining-work fixtures: the
   no-converge-commit path (outstanding tasks, no `converge_sha`) produces
   a non-empty `remaining` and a reason naming "tasks outstanding"; the
   converge-commit-appended path's `remaining` lists the appended items
   without duplication; the both-reasons-fire path lists the task set
   exactly once (SC-006).
 - [X] T027 [US3] Run `python .github/scripts/run-local-gates.py`; confirm
-  Gate 81's US3 fixtures pass alongside every prior phase's.
+  Gate 90's US3 fixtures pass alongside every prior phase's.
 
 **Checkpoint**: every `converged=false` lifecycle comment names its reason
 and lists at least one remaining item. All four user stories are shippable
@@ -448,7 +452,7 @@ here.
   syntactic, not semantic | Iteration cap + final converge report always
   posted to the issue") since this feature replaces that mitigation with
   the signal itself (FR-016).
-- [X] T031 Extend Gate 81 with a `MUTATIONS` table (mirroring
+- [X] T031 Extend Gate 90 with a `MUTATIONS` table (mirroring
   `verify-truncated-cycle-carry-forward.py`'s `_mut_*`/`MUTATIONS`
   pattern, FR-020, SC-008): (a) a mutation reverting the decision to
   consult only `converge_sha` (dropping the unchecked-count check) — must
@@ -462,8 +466,8 @@ here.
   `verify-truncated-cycle-carry-forward.py`'s `main()` already does: if the
   mutation's target text no longer exists in the current shipped step, the
   gate must error "mutation inapplicable" rather than silently pass.
-- [X] T032 Add a `check_gate_wired()` self-test to Gate 81 (mirroring
-  Gate 30's): confirm the "Gate 81 — …" step exists in
+- [X] T032 Add a `check_gate_wired()` self-test to Gate 90 (mirroring
+  Gate 30's): confirm the "Gate 90 — …" step exists in
   `.github/workflows/lint-workflows.yml`, is not `if: false`, and its
   `run:` line names `verify-tasks-checkbox-convergence-signal.py`'s exact
   path.
@@ -472,12 +476,12 @@ here.
   converged" (or equivalent phrasing) after T028-T030; confirm none
   remains anywhere on the branch (SC-009).
 - [X] T034 Run `python .github/scripts/run-local-gates.py` for the full
-  suite: confirm Gate 81 (with its complete scenario table and mutation
+  suite: confirm Gate 90 (with its complete scenario table and mutation
   battery) and every other gate, including Gate 30 per T008's fixture
   audit, pass together.
 - [ ] T035 Replay spec 057's cycle-1 conditions against a real dispatch of
   `implement.yml` (quickstart.md's live-replay section; SC-003 as an
-  end-to-end proof, not just Gate 81's synthetic fixture) once this branch
+  end-to-end proof, not just Gate 90's synthetic fixture) once this branch
   reaches a PR: dispatch against a spec branch seeded with some tasks
   checked, most unchecked, no `converge:` commit in range, and confirm the
   run posts `converged=false` and dispatches the next cycle rather than
@@ -490,7 +494,7 @@ here.
 
 **Checkpoint**: `python .github/scripts/run-local-gates.py` exits 0; no
 document describes the retired rule; the fix is proven against the real
-shipped `run:` blocks by Gate 81, pending the post-merge live replay.
+shipped `run:` blocks by Gate 90, pending the post-merge live replay.
 
 ---
 
@@ -578,6 +582,6 @@ iteration cap every time) that does not exist on `main` today.
 
 ## Maintainer Feedback
 
-- [ ] T036 Rename every "Gate 81" reference on this branch to "Gate 90": the `GATE_PREFIX` constant and docstrings in `.github/scripts/verify-tasks-checkbox-convergence-signal.py`, the references in `.github/scripts/verify-truncated-cycle-carry-forward.py`, the step name/comment block/self-test step in `.github/workflows/lint-workflows.yml`, and every "Gate 81" mention in `specs/059-converged-means-tasks-done/tasks.md` (including the now-stale narrative note near the top pointing at T001's original reservation check).
+- [X] T036 Rename every "Gate 81" reference on this branch to "Gate 90": the `GATE_PREFIX` constant and docstrings in `.github/scripts/verify-tasks-checkbox-convergence-signal.py`, the references in `.github/scripts/verify-truncated-cycle-carry-forward.py`, the step name/comment block/self-test step in `.github/workflows/lint-workflows.yml`, and every "Gate 81" mention in `specs/059-converged-means-tasks-done/tasks.md` (including the now-stale narrative note near the top pointing at T001's original reservation check).
 - [ ] T037 Rebase this branch onto current `main` (which now carries #451, occupying Gate 81 through Gate 89 for specs/057-autonomous-board-loop) so the renumbered Gate 90 lands cleanly on top.
 - [ ] T038 Run `python .github/scripts/run-local-gates.py` after the rebase and renumber and confirm it is green, including the renumbered gate's self-test.
