@@ -1173,6 +1173,39 @@ jobs:
           slug: ${{ steps.spec.outputs.slug }}
           spec-dir: ${{ steps.spec.outputs.spec-dir }}
 
+      # FR-001/FR-002/FR-007 (spec 059): the checkbox-count composite is the
+      # one home (research.md D2) the convergence signal and the FR-010a
+      # progress test both read tasks.md through, so the primary and retry
+      # arms share one definition rather than two copies that could drift.
+      # The tip call needs the branch fetched first; hoisted into its own
+      # step here rather than inside "Read back cycle outcome" itself, which
+      # still resolves the default branch for its own Arm B further down.
+      - name: Fetch spec branch for checkbox count (cycle)
+        id: fetch-checkbox-cycle
+        shell: bash
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
+        env:
+          SLUG: ${{ steps.spec.outputs.slug }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
+        run: |
+          git fetch origin "+refs/heads/${SPEC_PREFIX}$SLUG:refs/remotes/origin/${SPEC_PREFIX}$SLUG"
+
+      - name: Count tasks.md checkboxes at base (cycle)
+        id: checkbox-base-cycle
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tasks-checkbox-count
+        with:
+          ref: ${{ steps.base.outputs.base-sha }}
+          path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
+
+      - name: Count tasks.md checkboxes at tip (cycle)
+        id: checkbox-tip-cycle
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tasks-checkbox-count
+        with:
+          ref: origin/${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
+          path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
+
       # FR-008 residual risk (spec 052): the WC_BOT_TOKEN relay above keeps
       # every step after each agent step credentialed, but not the agent
       # step's own push credential while it is still running -- see
@@ -1193,13 +1226,15 @@ jobs:
           META_ITERATION: ${{ steps.meta-cycle.outputs.iteration }}
           VERDICT: ${{ steps.cycle-verdict.outputs.verdict }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          CHECKED_BASE: ${{ steps.checkbox-base-cycle.outputs.checked-count }}
+          CHECKED_TIP: ${{ steps.checkbox-tip-cycle.outputs.checked-count }}
+          UNCHECKED_TIP: ${{ steps.checkbox-tip-cycle.outputs.unchecked-count }}
           # The second alternative rides only on a RESOLVED slug: with an
           # empty slug the pattern would degrade to `claude\[bot\]|\[bot\]`,
           # which matches ANY bot - github-actions[bot] included (PR #258
           # review, F4).
           AGENT_AUTHOR_RE: claude\[bot\]${{ steps.ctx.outputs.bot-slug && format('|{0}\[bot\]', steps.ctx.outputs.bot-slug) || '' }}
         run: |
-          git fetch origin "+refs/heads/${SPEC_PREFIX}$SLUG:refs/remotes/origin/${SPEC_PREFIX}$SLUG"
           # Arm B below must not count commits the branch merely IMPORTED
           # from the default branch: an auto-rebase makes main's commits -
           # many of them bot-authored squash merges - reachable from the
@@ -1285,7 +1320,12 @@ jobs:
             while read -r sha subject; do
               case "$subject" in converge:*) converge_sha="$sha"; break ;; esac
             done < <(git log --format='%H %s' "$BASE_SHA..origin/${SPEC_PREFIX}$SLUG" -- "$SPEC_DIR/tasks.md")
-            if [ -z "$converge_sha" ]; then
+            # FR-001/FR-002/FR-010b (spec 059): zero unchecked tasks at the
+            # pushed tip wins regardless of whether a converge: commit
+            # landed — replacing "no converge commit ⇒ converged" (spec
+            # 057's failure: a cycle can stop healthy with the loop's own
+            # convergence pass never reached, leaving tasks.md untouched).
+            if [ "${UNCHECKED_TIP:-1}" -eq 0 ]; then
               converged=true
             else
               converged=false
@@ -1740,6 +1780,35 @@ jobs:
           slug: ${{ steps.spec.outputs.slug }}
           spec-dir: ${{ steps.spec.outputs.spec-dir }}
 
+      # Mirrors the cycle arm's checkbox-count composite calls above
+      # (FR-007) — the retry's own base per FR-010a "own base"
+      # (research.md D2), never steps.base.outputs.base-sha.
+      - name: Fetch spec branch for checkbox count (retry)
+        id: fetch-checkbox-retry
+        shell: bash
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && (steps.retry.outcome == 'success' || steps.retry.outcome == 'failure')
+        env:
+          SLUG: ${{ steps.spec.outputs.slug }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
+        run: |
+          git fetch origin "+refs/heads/${SPEC_PREFIX}$SLUG:refs/remotes/origin/${SPEC_PREFIX}$SLUG"
+
+      - name: Count tasks.md checkboxes at base (retry)
+        id: checkbox-base-retry
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && (steps.retry.outcome == 'success' || steps.retry.outcome == 'failure')
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tasks-checkbox-count
+        with:
+          ref: ${{ steps.retry-base.outputs.base-sha }}
+          path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
+
+      - name: Count tasks.md checkboxes at tip (retry)
+        id: checkbox-tip-retry
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && (steps.retry.outcome == 'success' || steps.retry.outcome == 'failure')
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tasks-checkbox-count
+        with:
+          ref: origin/${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
+          path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
+
       - name: Read back retry outcome
         id: retry-outcome
         shell: bash
@@ -1759,8 +1828,10 @@ jobs:
           VERDICT: ${{ steps.retry-verdict.outputs.verdict }}
           ESCALATION_MODEL: ${{ inputs.escalation-model }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          CHECKED_BASE: ${{ steps.checkbox-base-retry.outputs.checked-count }}
+          CHECKED_TIP: ${{ steps.checkbox-tip-retry.outputs.checked-count }}
+          UNCHECKED_TIP: ${{ steps.checkbox-tip-retry.outputs.unchecked-count }}
         run: |
-          git fetch origin "+refs/heads/${SPEC_PREFIX}$SLUG:refs/remotes/origin/${SPEC_PREFIX}$SLUG"
           # Arm B below must not count commits the branch merely IMPORTED
           # from the default branch: an auto-rebase makes main's commits -
           # many of them bot-authored squash merges - reachable from the
@@ -1845,7 +1916,12 @@ jobs:
             while read -r sha subject; do
               case "$subject" in converge:*) converge_sha="$sha"; break ;; esac
             done < <(git log --format='%H %s' "$BASE_SHA..origin/${SPEC_PREFIX}$SLUG" -- "$SPEC_DIR/tasks.md")
-            if [ -z "$converge_sha" ]; then
+            # FR-001/FR-002/FR-010b (spec 059): zero unchecked tasks at the
+            # pushed tip wins regardless of whether a converge: commit
+            # landed — replacing "no converge commit ⇒ converged" (spec
+            # 057's failure: a cycle can stop healthy with the loop's own
+            # convergence pass never reached, leaving tasks.md untouched).
+            if [ "${UNCHECKED_TIP:-1}" -eq 0 ]; then
               converged=true
             else
               converged=false

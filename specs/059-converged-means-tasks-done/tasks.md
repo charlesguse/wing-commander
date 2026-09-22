@@ -43,7 +43,7 @@ not skip a phase's checkpoint run before starting the next one.
 
 ## Phase 1: Setup
 
-- [ ] T001 Confirm the gate-number reservation above is still accurate:
+- [X] T001 Confirm the gate-number reservation above is still accurate:
   `grep -n "Gate 8[0-9]" .github/workflows/lint-workflows.yml` must show
   nothing above Gate 80. If it does, shift every "Gate 81" reference in
   this file to the next free number before starting Phase 3.
@@ -57,7 +57,7 @@ checkbox-counting definition. Both arms, and every story's tasks below,
 call this shared read — nothing in Phase 3+ can be wired without it
 (research.md D2, D3).
 
-- [ ] T002 [P] Create `.github/actions/_shared/count-tasks-checkboxes.sh`
+- [X] T002 [P] Create `.github/actions/_shared/count-tasks-checkboxes.sh`
   — the one home of the checkbox read (research.md D2). Invocation shape
   mirrors `read-spec-meta.sh`'s `bash file <args>` convention: takes a git
   ref and a path to `tasks.md` within it. Reads the file with
@@ -81,7 +81,7 @@ call this shared read — nothing in Phase 3+ can be wired without it
   `Read back cycle outcome`, `implement.yml:1295-1301`). Document the exact
   emission format in the script's own header comment — this is the "one
   home" every other reader of this feature will look to.
-- [ ] T003 [P] Create
+- [X] T003 [P] Create
   `.github/actions/wing-commander-tasks-checkbox-count/action.yml` — the
   published front-door composite (research.md D2; contracts/
   convergence-signal.md §1). Header comment mirrors
@@ -119,7 +119,7 @@ a branch whose `tasks.md` has unchecked tasks and whose range contains no
 
 **Depends on**: Phase 2.
 
-- [ ] T004 [US1] `.github/workflows/implement.yml`, primary arm: add two
+- [X] T004 [US1] `.github/workflows/implement.yml`, primary arm: add two
   new steps before `Read back cycle outcome` (id `outcome`, ~line 1180),
   each `uses: ./.wing-commander-pipeline/.github/actions/
   wing-commander-tasks-checkbox-count` (self-checkout resolution, matching
@@ -138,7 +138,7 @@ a branch whose `tasks.md` has unchecked tasks and whose range contains no
   left intact and not duplicated pointlessly. Gate both new steps on the
   same `if:` as `Read back cycle outcome`
   (`is-open == 'true' && skip != 'true'`).
-- [ ] T005 [US1] `.github/workflows/implement.yml`, primary arm,
+- [X] T005 [US1] `.github/workflows/implement.yml`, primary arm,
   `Read back cycle outcome` (~1180-1301): replace the converge-commit-only
   decision (today's 1280-1294:
   `if [ -z "$converge_sha" ]; then converged=true; else converged=false; fi`)
@@ -153,18 +153,18 @@ a branch whose `tasks.md` has unchecked tasks and whose range contains no
   only the non-convergence *reason* (US3, Phase 6). Do not add the
   `progressed`/`handoff` outputs yet (US4, Phase 5) — this task only
   replaces the zero-vs-nonzero-unchecked test.
-- [ ] T006 [US1] `.github/workflows/implement.yml`, retry arm: mirror T004
+- [X] T006 [US1] `.github/workflows/implement.yml`, retry arm: mirror T004
   — add the same two composite-call steps before `Read back retry outcome`
   (id `retry-outcome`, ~line 1743), at the retry's own recorded base
   (`ref:` whatever the retry arm resolves as its own base-sha — **not**
   `steps.base.outputs.base-sha`, per FR-007/FR-010a "own base") and at the
   retry's post-agent pushed tip (contract §1 "Retry arm, base"/"Retry arm,
   tip").
-- [ ] T007 [US1] `.github/workflows/implement.yml`, retry arm: mirror T005
+- [X] T007 [US1] `.github/workflows/implement.yml`, retry arm: mirror T005
   — replace `Read back retry outcome`'s converge-commit-only decision
   (today's 1840-1853) with the identical zero-unchecked rule, using T006's
   steps' outputs.
-- [ ] T008 [US1] Audit `.github/scripts/verify-truncated-cycle-carry-forward.py`
+- [X] T008 [US1] Audit `.github/scripts/verify-truncated-cycle-carry-forward.py`
   (Gate 30)'s `CYCLE_SCENARIOS` table and any retry/final-outcome fixtures
   for a `tasks.md` fixture whose expected `converged` value depends on the
   OLD converge-commit-only rule while leaving unchecked tasks present — a
@@ -177,7 +177,7 @@ a branch whose `tasks.md` has unchecked tasks and whose range contains no
   classification, not the convergence rule (research.md D5). Confirm no
   Gate 30 assertion still encodes "no converge commit ⇒ converged=true"
   with outstanding tasks present after this pass.
-- [ ] T009 [US1] Create `.github/scripts/verify-tasks-checkbox-convergence-signal.py`
+- [X] T009 [US1] Create `.github/scripts/verify-tasks-checkbox-convergence-signal.py`
   (Gate 81, research.md D5), modeled on
   `verify-truncated-cycle-carry-forward.py`'s structure: import
   `ensure_jq, find_step, resolve_bash, run_step, use_utf8_stdout` from
@@ -201,7 +201,7 @@ a branch whose `tasks.md` has unchecked tasks and whose range contains no
   line naming this script's exact path (Gate 10 requires every check
   script be named by some `run:` line or it is reported orphaned — do not
   leave it unwired even mid-feature).
-- [ ] T010 [US1] Run `python .github/scripts/run-local-gates.py`; confirm
+- [X] T010 [US1] Run `python .github/scripts/run-local-gates.py`; confirm
   Gate 81 and every pre-existing gate (including Gate 30, after T008's
   fixture audit) pass.
 
