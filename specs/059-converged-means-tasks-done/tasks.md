@@ -280,7 +280,7 @@ dispatches finalize, and does not dispatch another cycle.
 story's hand-off condition consumes) and Phase 2 (the composite's
 `checked-count` output at base and tip, reused here).
 
-- [ ] T014 [US4] `.github/workflows/implement.yml`, primary arm,
+- [X] T014 [US4] `.github/workflows/implement.yml`, primary arm,
   `Read back cycle outcome`: compute `progressed` from the checkbox-count
   composite's `checked-count` at base (T004's base-ref step) and at tip
   (T004's tip-ref step): `progressed = tip_checked > base_checked` (D1,
@@ -294,10 +294,10 @@ story's hand-off condition consumes) and Phase 2 (the composite's
   Arm A, and this new `progressed` output). Emit `progressed=true|false`
   as a new step output; leave it empty when `ok=false` or `truncated=true`
   (data-model.md's "Scope note").
-- [ ] T015 [US4] `.github/workflows/implement.yml`, retry arm: mirror T014
+- [X] T015 [US4] `.github/workflows/implement.yml`, retry arm: mirror T014
   in `Read back retry outcome`, against the retry's own base/tip counts
   from T006's steps.
-- [ ] T016 [US4] `.github/workflows/implement.yml`, both arms: compute
+- [X] T016 [US4] `.github/workflows/implement.yml`, both arms: compute
   `handoff` (FR-010, research.md D4) in each read-back step:
   `handoff = (ok == true && truncated == false && converged == false &&
   progressed == false && converge_sha == "")` — outstanding tasks, no
@@ -307,13 +307,13 @@ story's hand-off condition consumes) and Phase 2 (the composite's
   even consulted, so `handoff` is never true when `converged=true` — no
   extra ordering logic is needed beyond `handoff`'s own condition already
   requiring `converged == false`.
-- [ ] T017 [US4] `.github/workflows/implement.yml`, `Consolidate final
+- [X] T017 [US4] `.github/workflows/implement.yml`, `Consolidate final
   outcome` (~1888-1949): carry `progressed` and `handoff` through the
   existing `RETRY_RAN` selection (same shape as the existing four-output
   selection at 1906-1910) and add them to the output-emission block
   (1940-1949). These remain step-local outputs, never `workflow_call`
   outputs of `implement.yml` (FR-017, contract §3).
-- [ ] T018 [US4] `.github/workflows/implement.yml`, `Dispatch next step`
+- [X] T018 [US4] `.github/workflows/implement.yml`, `Dispatch next step`
   (~2498-2621): add a new `HANDOFF` env var
   (`${{ steps.final.outputs.handoff }}`) to the step's env block
   (~2508-2519), and a new branch, evaluated after the existing
@@ -330,14 +330,14 @@ story's hand-off condition consumes) and Phase 2 (the composite's
   bash function called from both branches) rather than pasting it twice
   (CLAUDE.md's "one home" applies within a single script too) — the reason
   text is the only thing that must differ (Phase 6, US3).
-- [ ] T019 [US4] Confirm FR-009 and FR-011 are unaffected: the cap-reached
+- [X] T019 [US4] Confirm FR-009 and FR-011 are unaffected: the cap-reached
   terminal behaviour's own shape (`max-iterations` default of 5, the
   existing `else` branch's action) gets no semantic change beyond T018's
   new sibling branch; the cycle/retry agent prompts (`implement.yml:
   896-915`, `1485-1507`) gain no new instruction to keep working while
   turns remain — that correction is FR-015's wording fix only (Phase 7,
   T029), never an added "keep going" instruction.
-- [ ] T020 [US4] Extend Gate 81 with US4's FR-019 branches: unchecked
+- [X] T020 [US4] Extend Gate 81 with US4's FR-019 branches: unchecked
   tasks with **zero** progress and no converge commit ⇒
   `converged=false`, `handoff=true`, `Dispatch next step` posts remaining
   work and dispatches finalize with `converged=false`, no next-cycle
@@ -347,7 +347,7 @@ story's hand-off condition consumes) and Phase 2 (the composite's
   cycle dispatched; a cycle that checked one task and unchecked another ⇒
   `progressed=false` (FR-010a's conservative reading) even though a box
   moved.
-- [ ] T021 [US4] Run `python .github/scripts/run-local-gates.py`; confirm
+- [X] T021 [US4] Run `python .github/scripts/run-local-gates.py`; confirm
   Gate 81's US4 fixtures pass alongside Phases 3-4's.
 
 **Checkpoint**: a spec whose only outstanding tasks are human-only work

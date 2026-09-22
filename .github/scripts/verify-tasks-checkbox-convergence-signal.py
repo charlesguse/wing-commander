@@ -219,10 +219,16 @@ def build_scenario(root, *, base_tasks_md, tip_tasks_md, converge=False,
     """One synthetic cycle's history: a base commit, a commit that leaves
     tasks.md in its tip state (a plain "implement:" commit, or a
     "converge:"-prefixed one), and — unless `advance` is False — a commit
-    advancing spec-meta.json the way /speckit-implement's step 2 does."""
+    advancing spec-meta.json the way /speckit-implement's step 2 does.
+
+    A FR-010 zero-progress cycle realistically never touches tasks.md at
+    all, so when `tip_tasks_md` is byte-identical to `base_tasks_md` this
+    skips the tasks.md commit entirely rather than handing git an empty
+    commit."""
     work, repo, base_sha, branch = make_workspace(root, base_tasks_md, prior_iteration)
-    write_file(repo, f"{SPEC_DIR}/tasks.md", tip_tasks_md)
-    git_commit(repo, "converge: add convergence phase" if converge else "implement: tick tasks")
+    if tip_tasks_md != base_tasks_md:
+        write_file(repo, f"{SPEC_DIR}/tasks.md", tip_tasks_md)
+        git_commit(repo, "converge: add convergence phase" if converge else "implement: tick tasks")
     if advance:
         write_file(repo, f"{SPEC_DIR}/spec-meta.json", _meta(iteration))
         git_commit(repo, "implement: advance lifecycle record")
@@ -296,6 +302,25 @@ SIGNAL_SCENARIOS = [
          base_tasks_md=_tasks_md(0, 65), tip_tasks_md=_tasks_md(11, 54),
          converge=False, verdict="healthy", cycle_result="success",
          expect=dict(ok="true", truncated="false", converged="false")),
+    dict(name="US4/FR-010: zero progress, no converge commit -- hand off "
+              "to finalize rather than looping to the cap",
+         base_tasks_md=_tasks_md(0, 3), tip_tasks_md=_tasks_md(0, 3),
+         converge=False, verdict="healthy", cycle_result="success",
+         expect=dict(ok="true", truncated="false", converged="false",
+                     progressed="false", handoff="true")),
+    dict(name="US4/FR-010: zero progress but a converge commit landed -- "
+              "new work exists, NOT the FR-010 hand-off",
+         base_tasks_md=_tasks_md(0, 3),
+         tip_tasks_md=_tasks_md(0, 3) + "- [ ] C001 leftover item\n",
+         converge=True, verdict="healthy", cycle_result="success",
+         expect=dict(ok="true", truncated="false", converged="false",
+                     progressed="false", handoff="false")),
+    dict(name="FR-010a: a cycle that ticks one task and unticks another -- "
+              "no progress, even though a box moved",
+         base_tasks_md="- [x] T001 done\n- [ ] T002 todo\n- [ ] T003 todo\n",
+         tip_tasks_md="- [ ] T001 todo\n- [x] T002 done\n- [ ] T003 todo\n",
+         converge=False, verdict="healthy", cycle_result="success",
+         expect=dict(ok="true", truncated="false", progressed="false")),
 ]
 
 SCENARIOS_BY_NAME = {s["name"]: s for s in SIGNAL_SCENARIOS}
@@ -422,6 +447,72 @@ def check_unreadable_tasks_md(root):
     return failures
 
 
+GH_STUB = """#!/bin/sh
+orig="$*"
+while [ "$#" -gt 0 ]; do
+  shift
+done
+echo "gh $orig" >> "$GH_CALLS"
+exit 0
+"""
+
+
+def run_dispatch_step(steps, env_overrides, root):
+    """Drives the shipped "Dispatch next step" text with a stubbed `gh`,
+    recording every invocation so a test can assert which workflow was
+    dispatched with which payload (mirrors verify-truncated-cycle-carry-
+    forward.py's identical helper)."""
+    workdir = tempfile.mkdtemp(dir=root)
+    runner_temp = os.path.join(workdir, "runner_temp")
+    bindir = os.path.join(workdir, "bin")
+    calls_file = os.path.join(workdir, "gh_calls")
+    os.makedirs(runner_temp, exist_ok=True)
+    os.makedirs(bindir, exist_ok=True)
+    open(calls_file, "w").close()
+    with open(os.path.join(bindir, "gh"), "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(GH_STUB)
+    os.chmod(os.path.join(bindir, "gh"), 0o755)
+    env = {
+        "SPEC_DIR": SPEC_DIR, "ISSUE": "999", "ITERATION": "2", "MAX": "5",
+        "CONVERGED": "false", "TRUNCATED": "false", "TRUNCATED_COUNT": "0",
+        "HANDOFF": "false", "TIER": "claude-sonnet-5", "REMAINING": "- [ ] T099 leftover",
+        "SELF_WORKFLOW": "wing-commander-5-implement.yml", "NEXT_WORKFLOW": "wing-commander-6-finalize.yml",
+        "APP_TOKEN": "x", "DISPATCH_TOKEN": "x",
+        "GH_CALLS": calls_file,
+        "GITHUB_SERVER_URL": "https://example.invalid",
+        "GITHUB_REPOSITORY": "acme/repo", "GITHUB_RUN_ID": "1",
+        "PATH": bindir + os.pathsep + os.environ["PATH"],
+    }
+    env.update(env_overrides)
+    rc, out, outputs, summary = run_step(BASH, steps[DISPATCH_STEP], workdir,
+                                         env, runner_temp)
+    with open(calls_file, encoding="utf-8") as fh:
+        calls = fh.read()
+    return rc, out, outputs, calls, summary
+
+
+def check_dispatch_handoff(steps, root):
+    """T020/US4: "Dispatch next step" posts the remaining work and
+    dispatches finalize with converged=false when HANDOFF=true, and takes
+    that branch even when ITERATION < MAX (the reused terminal path,
+    contracts/convergence-signal.md §4) -- never a next-cycle
+    self-dispatch."""
+    failures = []
+    rc, out, outputs, calls, summary = run_dispatch_step(
+        steps, {"CONVERGED": "false", "TRUNCATED": "false", "HANDOFF": "true",
+                "ITERATION": "2", "MAX": "5"}, root)
+    if rc != 0:
+        failures.append(f"check_dispatch_handoff: {DISPATCH_STEP!r} exited {rc}: {out.strip()}")
+        return failures
+    if "wing-commander-6-finalize.yml" not in calls or "converged=false" not in calls:
+        failures.append(f"US4/FR-010: HANDOFF=true did not dispatch NEXT_WORKFLOW "
+                        f"with converged=false -- gh calls were: {calls!r}")
+    if "wing-commander-5-implement.yml" in calls:
+        failures.append(f"US4/FR-010: HANDOFF=true wrongly dispatched a next cycle "
+                        f"(SELF_WORKFLOW) instead of handing off -- gh calls were: {calls!r}")
+    return failures
+
+
 def check_gate_wired():
     """FR-020's reflexive check (mirrors Gate 30's own check_gate_wired):
     this script cannot see its own absence from a workflow it isn't in, so
@@ -472,6 +563,7 @@ def main():
         failures.extend(check_arms_agree(steps, root))
         failures.extend(check_single_home_no_pasted_idiom())
         failures.extend(check_unreadable_tasks_md(root))
+        failures.extend(check_dispatch_handoff(steps, root))
         failures.extend(check_gate_wired())
     finally:
         shutil.rmtree(root, ignore_errors=True)
