@@ -160,6 +160,23 @@ def rev_parse(repo, rev="HEAD"):
 
 
 READ_SPEC_META = ".github/actions/_shared/read-spec-meta.sh"
+COUNT_TASKS_CHECKBOXES = ".github/actions/_shared/count-tasks-checkboxes.sh"
+
+
+def checkbox_count_env(repo, ref):
+    """Stand in for the wing-commander-tasks-checkbox-count composite calls
+    that now precede each read-back (spec 059, research.md D2): run the
+    REAL shared script against `ref`'s tasks.md in the workspace, returning
+    (checked-count, unchecked-count) the way the composite's own outputs
+    would. Only the two digit outputs are needed here — Gate 30's own
+    subject is the ok/truncated classification, not the remaining-work
+    text (that belongs to Gate 81)."""
+    script = os.path.abspath(COUNT_TASKS_CHECKBOXES).replace("\\", "/")
+    proc = sh(f"cd '{repo}' && bash '{script}' '{ref}' '{SPEC_DIR}/tasks.md'", repo)
+    lines = proc.stdout.splitlines()
+    checked = lines[0].split("=", 1)[1] if lines and "=" in lines[0] else "0"
+    unchecked = lines[1].split("=", 1)[1] if len(lines) > 1 and "=" in lines[1] else "0"
+    return checked, unchecked
 
 
 def read_spec_meta_env(repo):
@@ -279,11 +296,15 @@ git push -q -f origin '{branch}'
 def run_cycle_step(steps, repo, base_sha, *, verdict, cycle_result,
                     iteration=ITERATION):
     runner_temp = tempfile.mkdtemp(dir=os.path.dirname(repo))
+    checked_base, _ = checkbox_count_env(repo, base_sha)
+    checked_tip, unchecked_tip = checkbox_count_env(repo, f"origin/{SPEC_PREFIX}{SLUG}")
     env = {"SLUG": SLUG, "SPEC_DIR": SPEC_DIR, "ITERATION": str(iteration),
            "BASE_SHA": base_sha, "CYCLE_RESULT": cycle_result,
            "VERDICT": verdict, "SPEC_PREFIX": SPEC_PREFIX,
            "AGENT_AUTHOR_RE": AGENT_AUTHOR_RE,
-           "DEFAULT_BRANCH": "main"}
+           "DEFAULT_BRANCH": "main",
+           "CHECKED_BASE": checked_base, "CHECKED_TIP": checked_tip,
+           "UNCHECKED_TIP": unchecked_tip}
     env.update(read_spec_meta_env(repo))
     return run_step(BASH, steps[CYCLE_STEP], repo, env, runner_temp)
 
@@ -291,12 +312,16 @@ def run_cycle_step(steps, repo, base_sha, *, verdict, cycle_result,
 def run_retry_step(steps, repo, base_sha, *, verdict, retry_result,
                     iteration=ITERATION):
     runner_temp = tempfile.mkdtemp(dir=os.path.dirname(repo))
+    checked_base, _ = checkbox_count_env(repo, base_sha)
+    checked_tip, unchecked_tip = checkbox_count_env(repo, f"origin/{SPEC_PREFIX}{SLUG}")
     env = {"SLUG": SLUG, "SPEC_DIR": SPEC_DIR, "ITERATION": str(iteration),
            "BASE_SHA": base_sha, "RETRY_RESULT": retry_result,
            "VERDICT": verdict, "ESCALATION_MODEL": ESCALATION_MODEL,
            "SPEC_PREFIX": SPEC_PREFIX,
            "AGENT_AUTHOR_RE": AGENT_AUTHOR_RE,
-           "DEFAULT_BRANCH": "main"}
+           "DEFAULT_BRANCH": "main",
+           "CHECKED_BASE": checked_base, "CHECKED_TIP": checked_tip,
+           "UNCHECKED_TIP": unchecked_tip}
     env.update(read_spec_meta_env(repo))
     return run_step(BASH, steps[RETRY_STEP], repo, env, runner_temp)
 
@@ -432,6 +457,13 @@ def run_dispatch_step(steps, env_overrides, root):
 CYCLE_SCENARIOS = [
     dict(name="1: exhausted, Arm-A progress, no converge commit",
          tick_task=True, outside_file=False, advance=True, converge=False,
+         # spec 059: base_unchecked=1 so the single tick empties the
+         # outstanding count — this scenario is also MUTATIONS target #1
+         # (removing the forced converged=false on the truncated path),
+         # which needs a fixture where "no converge commit" alone would
+         # newly satisfy the zero-unchecked convergence rule too, or the
+         # mutation would no longer flip anything (research.md D5).
+         base_checked=0, base_unchecked=1,
          verdict="exhausted", cycle_result="failure",
          expect=dict(ok="true", truncated="true", converged="false")),
     dict(name="2: exhausted, only the lifecycle-record advance landed",
@@ -469,10 +501,14 @@ CYCLE_SCENARIOS = [
          tick_task=True, outside_file=False, advance=True, converge=False,
          verdict="failed", cycle_result="failure",
          expect=dict(ok="false", truncated="false", converged="")),
-    dict(name="6a: normal successful cycle, no converge commit (converged)",
+    dict(name="6a: normal successful cycle, no converge commit, tasks still "
+              "outstanding (spec 059: not converged — the fixture's tasks.md "
+              "still has unchecked boxes; Gate 81 owns the zero-unchecked "
+              "convergence rule itself, this scenario is here only for the "
+              "ok/truncated classification)",
          tick_task=True, outside_file=False, advance=True, converge=False,
          verdict="healthy", cycle_result="success",
-         expect=dict(ok="true", truncated="false", converged="true")),
+         expect=dict(ok="true", truncated="false", converged="false")),
     dict(name="6b: normal successful cycle, converge commit present (not yet converged)",
          tick_task=True, outside_file=False, advance=True, converge=True,
          verdict="healthy", cycle_result="success",
@@ -500,7 +536,9 @@ def run_cycle_scenario(steps, scenario, root):
         outside_author=scenario.get("outside_author"),
         outside_revert=scenario.get("outside_revert", False),
         import_main_commit=scenario.get("import_main_commit", False),
-        advance=scenario["advance"], converge=scenario["converge"])
+        advance=scenario["advance"], converge=scenario["converge"],
+        base_checked=scenario.get("base_checked", 0),
+        base_unchecked=scenario.get("base_unchecked", 3))
     rc, out, outputs, summary = run_cycle_step(
         steps, repo, base_sha, verdict=scenario["verdict"],
         cycle_result=scenario["cycle_result"])

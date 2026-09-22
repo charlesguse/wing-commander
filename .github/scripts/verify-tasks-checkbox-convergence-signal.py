@@ -1,0 +1,406 @@
+#!/usr/bin/env python3
+"""Gate 81 — converged means no task is left, and the signal reads tasks.md.
+
+WHY THIS EXISTS
+----------------
+"Read back cycle outcome" (and its retry-arm twin) used to decide
+`converged` from one proxy: whether a `converge:`-prefixed commit touching
+`tasks.md` landed in the cycle's commit range. A cycle that stopped
+healthy, with `tasks.md` still full of unchecked boxes, but whose own
+convergence pass never ran (or ran and found nothing to append) was
+reported `converged=true` anyway — spec 057's cycle 1 hit exactly this: 11
+of 65 tasks ticked, no `converge:` commit, and finalization was reached
+with 54 tasks never built. This feature (spec 059) replaces that proxy
+with a deterministic read of `tasks.md`'s own checkbox state at the
+cycle's pushed tip, gated by a progress test that tells "a later cycle
+will finish this" apart from "no cycle ever will" (FR-010).
+
+WHAT THIS CHECKS (this pass — US1 only; later phases extend this table)
+-------------------------------------------------------------------------
+Drives the SHIPPED `run:` text of "Read back cycle outcome" (via
+`find_step`, never a copy), fed the env the new
+`wing-commander-tasks-checkbox-count` composite's outputs now supply
+(itself exercised for real, via the shared script it fronts —
+`.github/actions/_shared/count-tasks-checkboxes.sh` — against a synthetic
+git repo with a real bare remote), proving: a healthy cycle that makes
+progress but lands no `converge:` commit is NOT converged while tasks
+remain (User Story 1); a cycle whose `tasks.md` has zero unchecked tasks
+at the tip IS converged regardless of a converge commit (SC-004); a
+`- [ ]` inside a fenced code block is never counted (FR-004); a ref:path
+the shared script cannot read fails loudly rather than resolving as
+converged (FR-006, Principle VIII); and spec 057's own cycle-1 shape (11
+of 65 ticked, no converge commit, healthy exit) now reports
+`converged=false` (SC-003).
+
+Usage: python3 .github/scripts/verify-tasks-checkbox-convergence-signal.py
+Requires: bash, jq, git (all present on ubuntu-latest runners).
+"""
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+import yaml
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_shell_harness import (ensure_jq, find_step, resolve_bash, run_step,
+                              use_utf8_stdout)
+
+STAGE = ".github/workflows/implement.yml"
+LINT_WORKFLOW = ".github/workflows/lint-workflows.yml"
+GATE_PREFIX = "Gate 81"
+THIS_SCRIPT = ".github/scripts/verify-tasks-checkbox-convergence-signal.py"
+COUNT_TASKS_CHECKBOXES = ".github/actions/_shared/count-tasks-checkboxes.sh"
+COMPOSITE = ".github/actions/wing-commander-tasks-checkbox-count/action.yml"
+
+CYCLE_STEP = "Read back cycle outcome"
+RETRY_STEP = "Read back retry outcome"
+FINAL_STEP = "Consolidate final outcome"
+DISPATCH_STEP = "Dispatch next step"
+
+AGENT_AUTHOR_RE = r"claude\[bot\]|wing-commander-bot\[bot\]"
+SPEC_PREFIX = "spec/"
+SLUG = "059-fixture"
+SPEC_DIR = f"specs/{SLUG}"
+ITERATION = "3"
+PRIOR_ITERATION = "2"
+
+BASH = None
+
+
+def sh(script, cwd):
+    """Run a helper snippet through the same bash the steps get.
+
+    Mirrors verify-truncated-cycle-carry-forward.py's own `sh` — the script
+    file must live OUTSIDE `cwd` so a `git add -A` inside the fixture repo
+    never sweeps it up.
+    """
+    fd, path = tempfile.mkstemp(suffix=".sh")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(script)
+        return subprocess.run([BASH, "-e", path.replace("\\", "/")], cwd=cwd,
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace")
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def write_file(repo, relpath, content):
+    path = os.path.join(repo, relpath)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(content)
+
+
+def git_commit(repo, message):
+    proc = sh(f"""cd '{repo}'
+git add -A
+git commit -q -m {json.dumps(message)}
+""", repo)
+    if proc.returncode != 0:
+        sys.exit(f"::error::commit {message!r} failed: {proc.stdout}{proc.stderr}")
+
+
+def git_push(repo, branch):
+    proc = sh(f"cd '{repo}' && git push -q origin '{branch}'", repo)
+    if proc.returncode != 0:
+        sys.exit(f"::error::push of '{branch}' failed: {proc.stdout}{proc.stderr}")
+
+
+def rev_parse(repo, rev="HEAD"):
+    return sh(f"cd '{repo}' && git rev-parse {rev}", repo).stdout.strip()
+
+
+def _meta(iteration, **extra):
+    meta = {"stage": "implement", "iteration": int(iteration), "spec_dir": SPEC_DIR}
+    meta.update(extra)
+    return json.dumps(meta) + "\n"
+
+
+def _tasks_md(checked, unchecked, start=0):
+    lines = [f"- [x] T{i:03d} done" for i in range(start, start + checked)]
+    lines += [f"- [ ] T{i:03d} todo" for i in range(start + checked, start + checked + unchecked)]
+    return "\n".join(lines) + "\n"
+
+
+FENCE_TASKS_MD_BASE = (
+    "- [ ] T001 do a thing\n"
+    "- [ ] T002 do another\n"
+    "\n"
+    "```markdown\n"
+    "- [ ] FAKE not a real task, inside a fence\n"
+    "```\n"
+)
+FENCE_TASKS_MD_TIP = (
+    "- [x] T001 do a thing\n"
+    "- [x] T002 do another\n"
+    "\n"
+    "```markdown\n"
+    "- [ ] FAKE not a real task, inside a fence\n"
+    "```\n"
+)
+
+
+def checkbox_count_env(repo, ref):
+    """Stand in for the wing-commander-tasks-checkbox-count composite calls
+    that precede each read-back (research.md D2): runs the REAL shared
+    script against `ref`'s tasks.md, returning (checked-count,
+    unchecked-count) the way the composite's own outputs would."""
+    script = os.path.abspath(COUNT_TASKS_CHECKBOXES).replace("\\", "/")
+    proc = sh(f"cd '{repo}' && bash '{script}' '{ref}' '{SPEC_DIR}/tasks.md'", repo)
+    if proc.returncode != 0:
+        sys.exit(f"::error::checkbox_count_env: count-tasks-checkboxes.sh failed "
+                 f"against a fixture that should be readable: {proc.stdout}{proc.stderr}")
+    lines = proc.stdout.splitlines()
+    checked = lines[0].split("=", 1)[1] if lines and "=" in lines[0] else "0"
+    unchecked = lines[1].split("=", 1)[1] if len(lines) > 1 and "=" in lines[1] else "0"
+    return checked, unchecked
+
+
+READ_SPEC_META = ".github/actions/_shared/read-spec-meta.sh"
+
+
+def read_spec_meta_env(repo):
+    """Stand in for the `Read spec-meta.json from the spec branch` composite
+    step that precedes each read-back (#340) -- see
+    verify-truncated-cycle-carry-forward.py's identical helper."""
+    script = os.path.abspath(READ_SPEC_META).replace("\\", "/")
+    proc = sh(f"cd '{repo}' && bash '{script}' '{SPEC_PREFIX}' '{SLUG}' '{SPEC_DIR}'", repo)
+    kv = dict(line.split("=", 1) for line in proc.stdout.splitlines() if "=" in line)
+    return {"META_IDENTITY_OK": kv.get("meta_identity_ok", ""),
+            "META_STAGE": kv.get("meta_stage", ""),
+            "META_ITERATION": kv.get("meta_iteration", "")}
+
+
+def make_workspace(root, base_tasks_md, prior_iteration=PRIOR_ITERATION):
+    """A git repo + bare remote, seeded with one commit on the spec branch.
+
+    Mirrors verify-truncated-cycle-carry-forward.py's make_workspace: a
+    REAL bare remote so the checkbox-count composite's own `git show
+    origin/...` executes against a real fetched ref, not a mock.
+    """
+    branch = f"{SPEC_PREFIX}{SLUG}"
+    work = tempfile.mkdtemp(dir=root)
+    remote = os.path.join(work, "remote.git")
+    repo = os.path.join(work, "repo")
+    setup = f"""
+git init --bare -q -b main '{remote}'
+git clone -q '{remote}' '{repo}'
+cd '{repo}'
+git config user.email 'claude[bot]@users.noreply.invalid'
+git config user.name 'claude[bot]'
+"""
+    proc = sh(setup, work)
+    if proc.returncode != 0:
+        sys.exit(f"::error::harness could not build a git workspace: "
+                 f"{proc.stdout}{proc.stderr}")
+    write_file(repo, f"{SPEC_DIR}/tasks.md", base_tasks_md)
+    write_file(repo, f"{SPEC_DIR}/spec-meta.json", _meta(prior_iteration))
+    write_file(repo, "README.md", "unrelated\n")
+    git_commit(repo, "seed")
+    git_push(repo, "main")
+    proc = sh(f"cd '{repo}' && git checkout -q -b '{branch}'", repo)
+    if proc.returncode != 0:
+        sys.exit(f"::error::branching failed: {proc.stdout}{proc.stderr}")
+    git_push(repo, branch)
+    base_sha = rev_parse(repo)
+    return work, repo, base_sha, branch
+
+
+def build_scenario(root, *, base_tasks_md, tip_tasks_md, converge=False,
+                    iteration=ITERATION, prior_iteration=PRIOR_ITERATION,
+                    advance=True):
+    """One synthetic cycle's history: a base commit, a commit that leaves
+    tasks.md in its tip state (a plain "implement:" commit, or a
+    "converge:"-prefixed one), and — unless `advance` is False — a commit
+    advancing spec-meta.json the way /speckit-implement's step 2 does."""
+    work, repo, base_sha, branch = make_workspace(root, base_tasks_md, prior_iteration)
+    write_file(repo, f"{SPEC_DIR}/tasks.md", tip_tasks_md)
+    git_commit(repo, "converge: add convergence phase" if converge else "implement: tick tasks")
+    if advance:
+        write_file(repo, f"{SPEC_DIR}/spec-meta.json", _meta(iteration))
+        git_commit(repo, "implement: advance lifecycle record")
+    git_push(repo, branch)
+    return work, repo, base_sha, branch
+
+
+def run_cycle_step(steps, repo, base_sha, *, verdict, cycle_result,
+                    iteration=ITERATION):
+    runner_temp = tempfile.mkdtemp(dir=os.path.dirname(repo))
+    checked_base, _ = checkbox_count_env(repo, base_sha)
+    checked_tip, unchecked_tip = checkbox_count_env(repo, f"origin/{SPEC_PREFIX}{SLUG}")
+    env = {"SLUG": SLUG, "SPEC_DIR": SPEC_DIR, "ITERATION": str(iteration),
+           "BASE_SHA": base_sha, "CYCLE_RESULT": cycle_result,
+           "VERDICT": verdict, "SPEC_PREFIX": SPEC_PREFIX,
+           "AGENT_AUTHOR_RE": AGENT_AUTHOR_RE,
+           "DEFAULT_BRANCH": "main",
+           "CHECKED_BASE": checked_base, "CHECKED_TIP": checked_tip,
+           "UNCHECKED_TIP": unchecked_tip}
+    env.update(read_spec_meta_env(repo))
+    return run_step(BASH, steps[CYCLE_STEP], repo, env, runner_temp)
+
+
+# ---------------------------------------------------------------------------
+# Scenarios (contracts/convergence-signal.md, data-model.md's decision table)
+# ---------------------------------------------------------------------------
+
+SIGNAL_SCENARIOS = [
+    dict(name="US1: progress made, no converge commit -- not converged",
+         base_tasks_md=_tasks_md(0, 3), tip_tasks_md=_tasks_md(1, 2),
+         converge=False, verdict="healthy", cycle_result="success",
+         expect=dict(ok="true", truncated="false", converged="false")),
+    dict(name="SC-004: zero unchecked tasks at the tip -- converged",
+         base_tasks_md=_tasks_md(0, 3), tip_tasks_md=_tasks_md(3, 0),
+         converge=False, verdict="healthy", cycle_result="success",
+         expect=dict(ok="true", truncated="false", converged="true")),
+    dict(name="FR-004: a '- [ ]' inside a fenced code block is not counted",
+         base_tasks_md=FENCE_TASKS_MD_BASE, tip_tasks_md=FENCE_TASKS_MD_TIP,
+         converge=False, verdict="healthy", cycle_result="success",
+         expect=dict(ok="true", truncated="false", converged="true")),
+    dict(name="SC-003: spec-057 replay -- 11 of 65 ticked, no converge "
+              "commit, healthy exit -- not converged",
+         base_tasks_md=_tasks_md(0, 65), tip_tasks_md=_tasks_md(11, 54),
+         converge=False, verdict="healthy", cycle_result="success",
+         expect=dict(ok="true", truncated="false", converged="false")),
+]
+
+SCENARIOS_BY_NAME = {s["name"]: s for s in SIGNAL_SCENARIOS}
+
+
+def run_cycle_scenario(steps, scenario, root):
+    """(rc, out, outputs, failures) for one SIGNAL_SCENARIOS entry."""
+    work, repo, base_sha, _ = build_scenario(
+        root, base_tasks_md=scenario["base_tasks_md"],
+        tip_tasks_md=scenario["tip_tasks_md"],
+        converge=scenario["converge"])
+    rc, out, outputs, summary = run_cycle_step(
+        steps, repo, base_sha, verdict=scenario["verdict"],
+        cycle_result=scenario["cycle_result"])
+    failures = []
+    where = scenario["name"]
+    if rc != 0:
+        failures.append(f"{where}: {CYCLE_STEP!r} exited {rc}: {out.strip()}")
+        return rc, out, outputs, failures
+    for key, want in scenario["expect"].items():
+        got = outputs.get(key, "")
+        if got != want:
+            failures.append(f"{where}: expected {key}={want!r}, got {got!r}")
+    return rc, out, outputs, failures
+
+
+def suite_cycle(steps, root):
+    failures = []
+    for scenario in SIGNAL_SCENARIOS:
+        _, _, _, f = run_cycle_scenario(steps, scenario, root)
+        failures.extend(f)
+    return failures
+
+
+def check_unreadable_tasks_md(root):
+    """FR-006/Principle VIII: a ref:path the shared script cannot read
+    fails loudly, never resolving as a count of zero (which would read as
+    "converged" -- exactly the false pass a scan that cannot reach its
+    subject must not produce). Runs the REAL shared script against a ref
+    that does not exist, and confirms the composite's own step carries no
+    continue-on-error or exit-code swallow that would hide that failure
+    from the job."""
+    failures = []
+    work, repo, _, _ = make_workspace(root, _tasks_md(0, 1))
+    script = os.path.abspath(COUNT_TASKS_CHECKBOXES).replace("\\", "/")
+    proc = sh(f"cd '{repo}' && bash '{script}' 'refs/heads/does-not-exist' '{SPEC_DIR}/tasks.md'", repo)
+    if proc.returncode == 0:
+        failures.append("count-tasks-checkboxes.sh exited 0 against an unreadable "
+                        "ref:path -- FR-006 requires a loud failure, never a quiet "
+                        "zero count.")
+    if "count-tasks-checkboxes.sh" not in proc.stderr:
+        failures.append(f"count-tasks-checkboxes.sh's failure carried no message on "
+                        f"stderr identifying what it could not read (got stderr={proc.stderr!r}).")
+
+    doc = yaml.safe_load(open(COMPOSITE, encoding="utf-8")) or {}
+    step = None
+    for s in (doc.get("runs") or {}).get("steps") or []:
+        if (s or {}).get("id") == "read":
+            step = s
+            break
+    if step is None:
+        failures.append(f"{COMPOSITE}: no step id 'read' found -- the gate's own "
+                        f"target moved, update GATE_PREFIX/COMPOSITE together.")
+    else:
+        if str(step.get("continue-on-error", "")).strip().lower() == "true":
+            failures.append(f"{COMPOSITE}: its step carries continue-on-error: true "
+                            f"-- a failing shared-script call would be swallowed "
+                            f"instead of failing the job (FR-006).")
+        run_text = str(step.get("run", ""))
+        if "|| true" in run_text or "|| :" in run_text:
+            failures.append(f"{COMPOSITE}: its run: block swallows the shared "
+                            f"script's exit code (FR-006).")
+    return failures
+
+
+def check_gate_wired():
+    """FR-020's reflexive check (mirrors Gate 30's own check_gate_wired):
+    this script cannot see its own absence from a workflow it isn't in, so
+    it reads lint-workflows.yml directly and confirms Gate 81 is present,
+    enabled, and invokes this script by path."""
+    wf = yaml.safe_load(open(LINT_WORKFLOW, encoding="utf-8")) or {}
+    for job in (wf.get("jobs") or {}).values():
+        for step in (job or {}).get("steps") or []:
+            name = (step or {}).get("name") or ""
+            if name.startswith(GATE_PREFIX):
+                if str(step.get("if", "")).strip().lower() == "false":
+                    return [f"{GATE_PREFIX} step is present in {LINT_WORKFLOW} "
+                            f"but disabled (if: false) -- its own coverage "
+                            f"would not run (FR-020)."]
+                if THIS_SCRIPT not in str(step.get("run", "")):
+                    return [f"{GATE_PREFIX} step in {LINT_WORKFLOW} does not "
+                            f"invoke {THIS_SCRIPT} -- the gate registry entry "
+                            f"and this script have drifted apart (FR-020)."]
+                return []
+    return [f"no step named {GATE_PREFIX!r} found in {LINT_WORKFLOW} -- this "
+            f"script's own coverage would not run if it were dropped from "
+            f"the registry (FR-020)."]
+
+
+STEPS_CACHE = {}
+
+
+def load_steps():
+    for name in (CYCLE_STEP, RETRY_STEP, FINAL_STEP, DISPATCH_STEP):
+        STEPS_CACHE[name] = find_step(STAGE, name)["run"]
+    return STEPS_CACHE
+
+
+def main():
+    global BASH
+    use_utf8_stdout()
+    ensure_jq()
+    BASH = resolve_bash()
+    if not shutil.which("git"):
+        sys.exit("::error::git is not on PATH. The shipped steps under test "
+                 "commit and push, so nothing here can run without it.")
+
+    steps = load_steps()
+    root = tempfile.mkdtemp()
+    failures = []
+    try:
+        failures.extend(suite_cycle(steps, root))
+        failures.extend(check_unreadable_tasks_md(root))
+        failures.extend(check_gate_wired())
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+    print(f"tasks-checkbox convergence signal: {len(SIGNAL_SCENARIOS)} "
+          f"scenario(s); {len(failures)} failure(s).")
+    for f in failures:
+        print(f"::error::{f}")
+    sys.exit(1 if failures else 0)
+
+
+if __name__ == "__main__":
+    main()
