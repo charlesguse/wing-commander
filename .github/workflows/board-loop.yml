@@ -35,6 +35,14 @@ env:
   # precedent for how many fix -> review rounds one board item may spend
   # before it stalls rather than converging.
   BOARD_LOOP_ROUND_BUDGET: 5
+  # research.md D5/data-model.md "Configuration Constants": the board's own
+  # size-and-path backstop thresholds, a separate PR-reviewed constant with
+  # the same narrow-only shape as pr-conversation.yml's 3/40 -- never that
+  # workflow's own numbers (T024). Larger than pr-conversation's because a
+  # board-driven fix is expected to span more of a genuinely small defect
+  # than a single unrelated-change PR would.
+  BOARD_MAX_FILES: 6
+  BOARD_MAX_LINES: 120
 
 jobs:
   # Foundational layer (specs/057-autonomous-board-loop Phase 2): entry

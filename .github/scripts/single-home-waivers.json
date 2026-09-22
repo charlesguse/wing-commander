@@ -49,6 +49,14 @@
       "count": 3,
       "issue": "#326",
       "reason": "research.md D1/D2 of specs/049-single-home-release-idioms: auto-update-spec-kit.yml IS a workflow_call-only published stage, and it is ALSO this feature's own declared consumer of the remaining shared composites (scoped-app-token, orphan-branch-reset), reached deliberately through its existing self-checkout convention -- the exact wiring specs/049's own tasks (T011-T013) add. specs/052-agent-credential-lifetime (research.md D8) adds a second, independent call to scoped-app-token immediately after the e2e-stage agent step, to re-mint WC_SCRATCH_TOKEN the same way the pre-agent mint does -- the same declared consumer, not a new promotion. specs/056-stage-found-defect-filing promoted durable-failure-issue out of _shared/ entirely (research.md D8), dropping this count from 4 to 3; a fourth, unrelated _shared/ reference in this file would change it again and fail the gate."
+    },
+    {
+      "file": ".github/workflows/pr-conversation.yml",
+      "check": "size-path-backstop",
+      "pattern": "select\\(test",
+      "count": 1,
+      "issue": "#408",
+      "reason": "specs/057-autonomous-board-loop tasks.md T021 (repoint pr-conversation.yml's classify-and-announce job at the new wing-commander-size-path-backstop composite) is NOT done in this cycle: the inline jq formula sits inside a per-classification-leg `map()` pipeline that also rewrites category/drafted-content based on the over-threshold result, with no existing behavioral test harness (unlike Gate 4's auto-update-spec-kit-tests) to prove a refactor byte-identical -- repointing it blind, under this cycle's own turn budget, was judged too large a regression risk for a live, production routing decision. board-loop.yml's own route job reaches the formula only through the composite. Remove this waiver when T021 lands."
     }
   ]
 }

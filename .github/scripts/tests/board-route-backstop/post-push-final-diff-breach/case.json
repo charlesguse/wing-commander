@@ -1,0 +1,10 @@
+{
+  "agent_proposal": "fix",
+  "board_max_files": 6,
+  "board_max_lines": 120,
+  "initial_measure": {"over_threshold": false, "files": 1, "lines": 8},
+  "final_measure": {"over_threshold": true, "files": 9, "lines": 200},
+  "diff_paths": [],
+  "diff_text": "",
+  "expected": {"backstop_verdict": "spec", "reason": "post_push_final_diff_breach"}
+}

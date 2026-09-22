@@ -168,6 +168,13 @@ DECLARED_HOMES = {
     # proposal-validate-fingerprint-file-cross-link sequence must not be
     # re-pasted into a stage workflow directly -- FR-032.
     "stage-findings": ".github/actions/wing-commander-stage-findings/action.yml",
+    # specs/057-autonomous-board-loop, research.md D5 (T027): the
+    # small-change file/line-count formula. pr-conversation.yml's own call
+    # site is NOT yet repointed at this composite (T021, still open -- see
+    # the waiver below and issue #408) -- board-loop.yml is, and this check
+    # exists so a THIRD site cannot paste the formula a second, independent
+    # time while T021 is outstanding.
+    "size-path-backstop": ".github/actions/wing-commander-size-path-backstop/action.yml",
 }
 CHECK_NAMES = tuple(DECLARED_HOMES) + ("promotion",)
 
@@ -196,6 +203,7 @@ ISSUE_LOOKUP_RE = re.compile(
     r"gh issue list\b[^\n]*--label\b[^\n]*--state open\b[^\n]*"
     r"--json number\b[^\n]*--jq\b[^\n]*\.\[0\]\.number // empty")
 OUTSTANDING_TASK_RE = re.compile(r'gh issue comment\b[^\n]*"- \[ \] ')
+SIZE_PATH_BACKSTOP_FRAGMENT = r'select(test("^[+-]") and (test("^(\\+\\+\\+|---)") | not))'
 VERDICT_FIELDS = ("outcome", "verified_head", "failing_check", "expected",
                   "observed", "evidence_url")
 MODE_TAG_FRAGMENT_RE = re.compile(r"\{\s*mode\s*:\s*\$mode\s*\}")
@@ -388,6 +396,25 @@ def check_stage_findings(root="."):
 
 
 # --------------------------------------------------------------------------
+# Check: size-path-backstop (file-wide, the small-change file/line-count
+# formula -- specs/057-autonomous-board-loop research.md D5)
+# --------------------------------------------------------------------------
+def check_size_path_backstop(root="."):
+    home = DECLARED_HOMES["size-path-backstop"]
+    findings = []
+    for path in all_subject_files(root):
+        if path == home:
+            continue
+        text = read(root, path)
+        if SIZE_PATH_BACKSTOP_FRAGMENT in text:
+            offset = text.index(SIZE_PATH_BACKSTOP_FRAGMENT)
+            findings.append(Finding(
+                path, "size-path-backstop", line_of(text, offset),
+                SIZE_PATH_BACKSTOP_FRAGMENT))
+    return findings
+
+
+# --------------------------------------------------------------------------
 # Check 3: verdict-shape (file-wide, all six field names near a jq call)
 # --------------------------------------------------------------------------
 def check_verdict_shape(root="."):
@@ -509,6 +536,7 @@ ALL_CHECKS = {
     "failure-issue": check_failure_issue,
     "outstanding-task-item": check_outstanding_task_item,
     "stage-findings": check_stage_findings,
+    "size-path-backstop": check_size_path_backstop,
     "verdict-shape": check_verdict_shape,
     "token-mint": check_token_mint,
     "mode-tag-shape": check_mode_tag_shape,
@@ -813,6 +841,10 @@ def _clean_tree(root):
           "        fp = sha256(stage + fingerprint_basis['file_path'])\n"
           "        ok, reason = validate_finding(item)\n"
           "        PYEOF\n")
+    _write(root, DECLARED_HOMES["size-path-backstop"],
+          "runs:\n  using: composite\n  steps:\n"
+          "    - shell: bash\n      run: |\n"
+          "        select(test(\"^[+-]\") and (test(\"^(\\\\+\\\\+\\\\+|---)\") | not))\n")
     _write(root, DECLARED_HOMES["verdict-shape"],
           "#!/usr/bin/env bash\n"
           "jq -n '{outcome:$outcome, verified_head:$head, "
@@ -1015,6 +1047,12 @@ def run_selftest():
         "          fp = sha256(stage + fingerprint_basis['file_path'])\n"
         "          ok, reason = validate_finding(item)\n"
         "          PYEOF\n")
+    selftest_third_paste_fails(
+        "size-path-backstop", ".github/workflows/third-size-path-backstop.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          jq '[.[] | select(test(\"^[+-]\") and "
+        "(test(\"^(\\\\+\\\\+\\\\+|---)\") | not))] | length'\n")
     selftest_third_paste_fails(
         "verdict-shape", ".github/workflows/third-verdict.yml",
         "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"

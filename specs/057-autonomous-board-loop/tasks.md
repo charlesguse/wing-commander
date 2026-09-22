@@ -250,7 +250,7 @@ contract-widening fixture routes to `spec-request` regardless of size.
 
 ### Implementation for User Story 2
 
-- [ ] T020 [P] [US2] Extract `pr-conversation.yml`'s `classify-and-announce`
+- [X] T020 [P] [US2] Extract `pr-conversation.yml`'s `classify-and-announce`
   inline `jq` size/path check into a new composite
   `.github/actions/wing-commander-size-path-backstop/action.yml` taking
   `file-changes` (required JSON, the same shape
@@ -261,12 +261,28 @@ contract-widening fixture routes to `spec-request` regardless of size.
   job at `wing-commander-size-path-backstop`, passing no `max-files`/
   `max-lines` override, so its existing behavior is byte-identical
   (research.md D5).
-- [ ] T022 [P] [US2] Create
+  **BLOCKED (2026-09-22, cycle 2)**: the inline jq this task repoints sits
+  inside a per-classification-leg `map()` pipeline that also rewrites
+  `category`/`drafted-content` on the over-threshold branch, and
+  pr-conversation.yml has no existing behavioral test harness (unlike Gate
+  4's auto-update-spec-kit-tests) to prove a refactor byte-identical before
+  it ships. Repointing this specific call site blind, under this cycle's
+  turn budget, was judged too large a regression risk to a live, production
+  routing decision to attempt without one. The composite itself
+  (`wing-commander-size-path-backstop/action.yml`) is built and is
+  board-loop.yml's own route job's single home for the formula (T020,
+  T023, T028); a waiver in `single-home-waivers.json` (`size-path-backstop`
+  check, `pr-conversation.yml`) records pr-conversation.yml's own call site
+  as the known, temporary exception, with a pointer back to this task.
+  Recommended follow-up: add a behavioral harness for
+  `classify-and-announce` (mirroring Gate 4's extraction-and-execution
+  approach) in its own change, THEN repoint this call site against it.
+- [X] T022 [P] [US2] Create
   `.github/actions/wing-commander-size-path-backstop/tests/run-tests.sh`
   with fixtures covering under/over threshold independently by files and
   by lines, parameterized rather than hardcoding either caller's numbers
   (research.md D26).
-- [ ] T023 [P] [US2] Create `.github/scripts/board_route_backstop.py` with
+- [X] T023 [P] [US2] Create `.github/scripts/board_route_backstop.py` with
   `contract_widened(diff_paths, diff_text)` (research.md D6: returns the
   subset of `diff_paths` touching a `workflow_call:` `inputs:`/`outputs:`
   block of any `.github/workflows/*.yml`, or the `inputs:`/`outputs:` keys
@@ -279,12 +295,12 @@ contract-widening fixture routes to `spec-request` regardless of size.
   re-applies `route()` to the pushed branch's final diff; on a newly
   introduced breach the branch/PR are left open under a notice, never
   deleted).
-- [ ] T024 [US2] Declare the board's own size-and-path backstop thresholds
+- [X] T024 [US2] Declare the board's own size-and-path backstop thresholds
   (`BOARD_MAX_FILES`/`BOARD_MAX_LINES` — a separate PR-reviewed constant,
   distinct from `pr-conversation.yml`'s 3/40, same narrow-only shape) as
   checked-in constants in `board-loop.yml`, passed to
   `board_route_backstop.py` (data-model.md "Configuration Constants").
-- [ ] T025 [US2] Create `.github/scripts/verify-board-route-backstop.py`
+- [X] T025 [US2] Create `.github/scripts/verify-board-route-backstop.py`
   with the four FR-064-bullet-3 fixtures under
   `.github/scripts/tests/board-route-backstop/` (under threshold → `fix`;
   over threshold by files → `spec-request`, reason names the measured
@@ -292,7 +308,7 @@ contract-widening fixture routes to `spec-request` regardless of size.
   `spec-request` regardless of size; post-push final-diff breach →
   branch/PR left open with a notice, `spec-request` filed,
   `board:stalled` applied, nothing deleted).
-- [ ] T026 [US2] Register `verify-board-route-backstop.py` as the next
+- [X] T026 [US2] Register `verify-board-route-backstop.py` as the next
   sequential `Gate N — board route backstop` step in
   `.github/workflows/lint-workflows.yml`.
 - [ ] T027 [P] [US2] Add `wing-commander-size-path-backstop` to
@@ -301,6 +317,18 @@ contract-widening fixture routes to `spec-request` regardless of size.
   failing if the inline `jq` threshold logic reappears pasted a second
   time or if `pr-conversation.yml`'s call site still resolves the old
   inline path.
+  **PARTIALLY DONE, BLOCKED on T021 (2026-09-22, cycle 2)**: the
+  `DECLARED_HOMES` entry, the `check_size_path_backstop` structural scan
+  (a third paste anywhere else in the tree fails Gate 60), and its
+  `--self-test` coverage are done. The second half -- failing when
+  `pr-conversation.yml`'s call site still resolves the old inline path --
+  cannot land honestly while T021 itself is blocked (see its note): doing
+  so would fail Gate 60 on every PR, including PRs with no relation to this
+  feature, until a human lands T021. A `single-home-waivers.json` entry
+  (`size-path-backstop` check, `pr-conversation.yml`, issue #408) records
+  pr-conversation.yml's own occurrence as the named, temporary exception
+  instead; removing that waiver is the completion signal for both T021 and
+  the rest of this task.
 - [ ] T028 [US2] Add the `route` job to `board-loop.yml`: a route-propose
   agent step (read-only tools, issue body/comments framed as data) whose
   `fix`/`spec` proposal feeds `board_route_backstop.py`'s `route()`; on

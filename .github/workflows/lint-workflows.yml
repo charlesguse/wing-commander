@@ -3904,6 +3904,24 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-triage.py
 
+      # Gate 82 — specs/057-autonomous-board-loop T022: the shared
+      # size-path-backstop composite's own file/line-count formula, run
+      # extracted from the shipped action.yml (not a hand-copied duplicate)
+      # against fixtures parameterized by threshold, so a future caller's
+      # own numbers are exercised the same way pr-conversation.yml's 3/40
+      # and board-loop.yml's own thresholds already are.
+      - name: Gate 82 — the size-path-backstop composite measures files/lines correctly at any threshold
+        if: "!cancelled()"
+        run: bash .github/actions/wing-commander-size-path-backstop/tests/run-tests.sh
+
+      # Gate 83 — specs/057-autonomous-board-loop (FR-017/FR-019/FR-021,
+      # FR-064 bullet 3): the route backstop can only narrow the
+      # route-propose agent's fix/spec proposal, never widen it, and a
+      # contract-widening diff re-routes regardless of size.
+      - name: Gate 83 — board loop route backstop resolves every FR-064 bullet-3 branch
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-route-backstop.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when
