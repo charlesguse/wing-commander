@@ -32,6 +32,7 @@ EXPECTED_CASES = {
     "under-threshold",
     "over-threshold-files",
     "contract-widening",
+    "contract-widening-trailing-comment",
     "post-push-final-diff-breach",
 }
 

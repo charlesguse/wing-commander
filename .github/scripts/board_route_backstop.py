@@ -62,7 +62,11 @@ def _protected_range_workflow(text):
     wc_indent = None
     for i in range(start, end):
         line = lines[i - 1] if i - 1 < len(lines) else ""
-        m = re.match(r"^(\s+)workflow_call:\s*(\{\s*\})?\s*$", line)
+        # A trailing `# comment` on the `workflow_call:` line itself is
+        # valid YAML and must not make this block register as absent --
+        # that would let a diff widen inputs:/outputs: underneath it while
+        # contract_widened() silently reports nothing touched.
+        m = re.match(r"^(\s+)workflow_call:\s*(\{\s*\})?\s*(#.*)?$", line)
         if m:
             wc_start = i
             wc_indent = len(m.group(1))
