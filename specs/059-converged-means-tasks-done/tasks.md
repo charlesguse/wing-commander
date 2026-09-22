@@ -575,3 +575,9 @@ particular should not be deferred past a single PR — shipping US1 alone
 would fix spec 057's exact failure but reintroduce a *different* new
 failure mode (a spec with only human-only leftovers grinding to the
 iteration cap every time) that does not exist on `main` today.
+
+## Maintainer Feedback
+
+- [ ] T036 Rename every "Gate 81" reference on this branch to "Gate 90": the `GATE_PREFIX` constant and docstrings in `.github/scripts/verify-tasks-checkbox-convergence-signal.py`, the references in `.github/scripts/verify-truncated-cycle-carry-forward.py`, the step name/comment block/self-test step in `.github/workflows/lint-workflows.yml`, and every "Gate 81" mention in `specs/059-converged-means-tasks-done/tasks.md` (including the now-stale narrative note near the top pointing at T001's original reservation check).
+- [ ] T037 Rebase this branch onto current `main` (which now carries #451, occupying Gate 81 through Gate 89 for specs/057-autonomous-board-loop) so the renumbered Gate 90 lands cleanly on top.
+- [ ] T038 Run `python .github/scripts/run-local-gates.py` after the rebase and renumber and confirm it is green, including the renumbered gate's self-test.
