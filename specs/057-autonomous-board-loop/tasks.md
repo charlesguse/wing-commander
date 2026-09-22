@@ -338,7 +338,7 @@ contract-widening fixture routes to `spec-request` regardless of size.
   (contracts/labels-and-cross-links.md), and end the run with no branch
   cut (FR-021); on `fix`, continue to the `fix` job (Phase 5); any
   re-route names the breached threshold and the measured value (FR-020).
-- [ ] T029 [US2] Wire `route_final_diff()` (T023) into `board-loop.yml`
+- [X] T029 [US2] Wire `route_final_diff()` (T023) into `board-loop.yml`
   after the fix step's push (Phase 5, T034), before the PR is reported
   ready: on a newly introduced breach, leave the branch/PR open under a
   notice pointing at the spun-off `spec-request`, apply `board:stalled`,
@@ -366,34 +366,34 @@ named on the issue.
 
 ### Implementation for User Story 3
 
-- [ ] T030 [P] [US3] Add the `fix` job's second-branch/PR guard to
+- [X] T030 [P] [US3] Add the `fix` job's second-branch/PR guard to
   `board-loop.yml`: before fetching `main`, re-derive live GitHub state
   (T011) for an existing branch/PR already associated with the issue; if
   one exists, skip the fetch/branch/push steps and resume at whatever step
   the existing PR's state implies (review or readiness) rather than
   cutting a second branch (FR-054, contracts/fix-step.md).
-- [ ] T031 [US3] Add the `fix` job's fetch-and-branch steps: `git fetch
+- [X] T031 [US3] Add the `fix` job's fetch-and-branch steps: `git fetch
   origin main` fresh in this run, record `base-sha` as a step output the
   same way `implement.yml`'s `steps.base.outputs.base-sha` already does
   (research.md D7), then `git checkout -b fix/<issue_number>-<slug>
   <base-sha>` (FR-022/FR-023).
-- [ ] T032 [US3] Add the fixer agent step to the `fix` job: model tier and
+- [X] T032 [US3] Add the fixer agent step to the `fix` job: model tier and
   turn ceiling from T013, write/push tool allowlist per research.md D23
   (web tools never, per FR-057), only maintainer-association content
   reaching the fixer as a directive — everything else framed as data
   (FR-055/FR-056) — and never naming a downstream consumer of this
   repository (FR-058), followed by the credential-refresh/metrics-summary
   pattern (T012).
-- [ ] T033 [US3] Add the gate-suite step to the `fix` job: `python3
+- [X] T033 [US3] Add the gate-suite step to the `fix` job: `python3
   .github/scripts/run-local-gates.py`, the exact CI invocation
   (research.md D8, FR-025); on non-zero exit, stop before any push,
   comment the failing gate's name on the issue, and open no PR (FR-024).
-- [ ] T034 [US3] Add the push-and-PR step to the `fix` job: on a green
+- [X] T034 [US3] Add the push-and-PR step to the `fix` job: on a green
   gate suite, push the branch, open the PR with a body citing the
   originating issue (FR-026), and comment the PR link on the issue via
   `wing-commander-outstanding-task-item` with the `Fix opened` phrase
   (research.md D9, contracts/labels-and-cross-links.md).
-- [ ] T035 [US3] Verify the mid-failure resume path: a run ending between
+- [X] T035 [US3] Verify the mid-failure resume path: a run ending between
   the branch cut (T031) and the PR open (T034) leaves a branch with no PR;
   confirm the next run's guard (T030) finds the branch and re-enters the
   fixer step (T032) on the existing branch, never cutting a second one
