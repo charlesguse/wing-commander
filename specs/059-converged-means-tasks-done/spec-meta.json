@@ -3,7 +3,7 @@
   "spec_dir": "specs/059-converged-means-tasks-done",
   "feature_num": "059",
   "stage": "implement",
-  "iteration": 1,
+  "iteration": 2,
   "spec_branch": "spec/059-converged-means-tasks-done",
   "pending_re_review_from": ["charlesguse"]
 }
