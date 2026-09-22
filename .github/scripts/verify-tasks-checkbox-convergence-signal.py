@@ -246,6 +246,25 @@ def run_cycle_step(steps, repo, base_sha, *, verdict, cycle_result,
     return run_step(BASH, steps[CYCLE_STEP], repo, env, runner_temp)
 
 
+def run_retry_step(steps, repo, base_sha, *, verdict, retry_result):
+    """Runs "Read back retry outcome" against the SAME fixture repo/base a
+    run_cycle_step call already used, to prove the two arms compute
+    `converged` from one shared definition (FR-007) rather than two copies
+    that could drift -- US2 acceptance scenario 3."""
+    runner_temp = tempfile.mkdtemp(dir=os.path.dirname(repo))
+    checked_base, _ = checkbox_count_env(repo, base_sha)
+    checked_tip, unchecked_tip = checkbox_count_env(repo, f"origin/{SPEC_PREFIX}{SLUG}")
+    env = {"SLUG": SLUG, "SPEC_DIR": SPEC_DIR, "ITERATION": ITERATION,
+           "BASE_SHA": base_sha, "RETRY_RESULT": retry_result,
+           "VERDICT": verdict, "ESCALATION_MODEL": "claude-opus-5",
+           "SPEC_PREFIX": SPEC_PREFIX, "AGENT_AUTHOR_RE": AGENT_AUTHOR_RE,
+           "DEFAULT_BRANCH": "main",
+           "CHECKED_BASE": checked_base, "CHECKED_TIP": checked_tip,
+           "UNCHECKED_TIP": unchecked_tip}
+    env.update(read_spec_meta_env(repo))
+    return run_step(BASH, steps[RETRY_STEP], repo, env, runner_temp)
+
+
 # ---------------------------------------------------------------------------
 # Scenarios (contracts/convergence-signal.md, data-model.md's decision table)
 # ---------------------------------------------------------------------------
@@ -255,7 +274,16 @@ SIGNAL_SCENARIOS = [
          base_tasks_md=_tasks_md(0, 3), tip_tasks_md=_tasks_md(1, 2),
          converge=False, verdict="healthy", cycle_result="success",
          expect=dict(ok="true", truncated="false", converged="false")),
-    dict(name="SC-004: zero unchecked tasks at the tip -- converged",
+    dict(name="US2 acceptance scenario 1: CYCLE_RESULT=success and VERDICT "
+              "claim the run finished, but tasks remain -- not converged "
+              "regardless of what the agent's own verdict says (T005/T007 "
+              "never read CYCLE_RESULT/VERDICT to decide converged; this "
+              "fixture pins that against a future regression)",
+         base_tasks_md=_tasks_md(0, 2), tip_tasks_md=_tasks_md(1, 1),
+         converge=False, verdict="healthy", cycle_result="success",
+         expect=dict(ok="true", truncated="false", converged="false")),
+    dict(name="SC-004 / US2 acceptance scenario 2: zero unchecked tasks at "
+              "the tip -- converged regardless of verdict wording",
          base_tasks_md=_tasks_md(0, 3), tip_tasks_md=_tasks_md(3, 0),
          converge=False, verdict="healthy", cycle_result="success",
          expect=dict(ok="true", truncated="false", converged="true")),
@@ -300,6 +328,57 @@ def suite_cycle(steps, root):
         _, _, _, f = run_cycle_scenario(steps, scenario, root)
         failures.extend(f)
     return failures
+
+
+ARMS_AGREE_FIXTURE = dict(base_tasks_md=_tasks_md(0, 3), tip_tasks_md=_tasks_md(1, 2))
+
+
+def check_arms_agree(steps, root):
+    """US2 acceptance scenario 3 / FR-007: the primary and retry arms share
+    ONE definition, never two copies that could drift. Drives the
+    IDENTICAL fixture (same base, same tip) through both arms' shipped
+    step bodies and asserts a byte-identical `converged` verdict. Also the
+    target Phase 7's "mutation applied to only one arm" proof mutates
+    (SC-008)."""
+    failures = []
+    work, repo, base_sha, _ = build_scenario(
+        root, base_tasks_md=ARMS_AGREE_FIXTURE["base_tasks_md"],
+        tip_tasks_md=ARMS_AGREE_FIXTURE["tip_tasks_md"], converge=False)
+    rc_c, out_c, outputs_c, _ = run_cycle_step(
+        steps, repo, base_sha, verdict="healthy", cycle_result="success")
+    rc_r, out_r, outputs_r, _ = run_retry_step(
+        steps, repo, base_sha, verdict="healthy", retry_result="success")
+    if rc_c != 0 or rc_r != 0:
+        failures.append(f"US2 arms-agree fixture: cycle rc={rc_c}, retry "
+                        f"rc={rc_r} (expected both 0). cycle out={out_c!r} "
+                        f"retry out={out_r!r}")
+        return failures
+    if outputs_c.get("converged") != outputs_r.get("converged"):
+        failures.append(f"US2/FR-007: the primary and retry arms disagreed "
+                        f"on converged for the identical fixture -- "
+                        f"primary={outputs_c.get('converged')!r}, "
+                        f"retry={outputs_r.get('converged')!r}.")
+    return failures
+
+
+FENCE_AWK_MARKER = "in_fence = !in_fence"
+
+
+def check_single_home_no_pasted_idiom():
+    """US2 / research.md D2's closing paragraph: no third hand-rolled copy
+    of the fence-aware checkbox-counting awk idiom (T002's one home) is
+    pasted into implement.yml now that the composite exists -- modeled on
+    Gate 61's verify-spec-meta-single-home.py. Distinct from Gate 30's own
+    pre-existing Arm-A `grep -c '^\\s*- \\[[xX]\\]'` comparison, which is a
+    different (non-fence-aware) idiom Phase 5 replaces separately."""
+    text = open(STAGE, encoding="utf-8").read()
+    if FENCE_AWK_MARKER in text:
+        return [f"{STAGE} contains the fence-aware checkbox-counting awk "
+                f"idiom ({FENCE_AWK_MARKER!r}) -- the one home is "
+                f"{COUNT_TASKS_CHECKBOXES}; call the "
+                f"wing-commander-tasks-checkbox-count composite instead of "
+                f"pasting a third copy into the workflow."]
+    return []
 
 
 def check_unreadable_tasks_md(root):
@@ -390,6 +469,8 @@ def main():
     failures = []
     try:
         failures.extend(suite_cycle(steps, root))
+        failures.extend(check_arms_agree(steps, root))
+        failures.extend(check_single_home_no_pasted_idiom())
         failures.extend(check_unreadable_tasks_md(root))
         failures.extend(check_gate_wired())
     finally:
