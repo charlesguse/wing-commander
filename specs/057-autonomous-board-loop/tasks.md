@@ -421,14 +421,14 @@ and the PR diff never contains the out-of-scope fix.
 
 ### Implementation for User Story 4
 
-- [ ] T036 [P] [US4] Create
+- [X] T036 [P] [US4] Create
   `.github/schemas/board-review-finding.schema.json` exactly as specified
   in contracts/review-and-findings.md: a JSON array whose items require
   `title` (string, `maxLength: 120`), `what` (string), `evidence` (object
   requiring `file_paths`, optional `detail`), `in_scope` (boolean), and
   `fingerprint_basis` (object requiring `file_path`, `gate_or_artifact`),
   `additionalProperties: false` at every object level.
-- [ ] T037 [US4] Create
+- [X] T037 [US4] Create
   `.github/scripts/verify-board-review-finding-schema.py` as a
   hand-written validator (D5-style, no third-party JSON Schema library)
   exposing `validate_finding()`, with fixtures: one well-formed finding
@@ -436,7 +436,7 @@ and the PR diff never contains the out-of-scope fix.
   `evidence.file_paths`, `in_scope`, `fingerprint_basis`) — each rejected
   with the missing field named, under
   `.github/scripts/tests/board-review-finding-schema/`.
-- [ ] T038 [US4] Register `verify-board-review-finding-schema.py` as the
+- [X] T038 [US4] Register `verify-board-review-finding-schema.py` as the
   next sequential `Gate N — board review finding schema` step in
   `.github/workflows/lint-workflows.yml`.
 - [ ] T039 [US4] Add the `review` job to `board-loop.yml`: a reviewer

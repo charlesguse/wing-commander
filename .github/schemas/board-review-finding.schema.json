@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["title", "what", "evidence", "in_scope", "fingerprint_basis"],
+    "additionalProperties": false,
+    "properties": {
+      "title": {"type": "string", "maxLength": 120},
+      "what": {"type": "string"},
+      "evidence": {
+        "type": "object",
+        "required": ["file_paths"],
+        "additionalProperties": false,
+        "properties": {
+          "file_paths": {"type": "array", "items": {"type": "string"}},
+          "detail": {"type": "string"}
+        }
+      },
+      "in_scope": {"type": "boolean"},
+      "fingerprint_basis": {
+        "type": "object",
+        "required": ["file_path", "gate_or_artifact"],
+        "additionalProperties": false,
+        "properties": {
+          "file_path": {"type": "string"},
+          "gate_or_artifact": {"type": "string"}
+        }
+      }
+    }
+  }
+}

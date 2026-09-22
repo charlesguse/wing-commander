@@ -3922,6 +3922,15 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-route-backstop.py
 
+      # Gate 84 — specs/057-autonomous-board-loop research.md D11: the
+      # board review finding schema carries in_scope as a required field
+      # distinct from spec 056's stage-finding.schema.json -- a malformed
+      # entry (any one required field missing) must be rejected, named,
+      # never defaulted.
+      - name: Gate 84 — board review finding schema rejects every malformed required field
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-review-finding-schema.py --self-test
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

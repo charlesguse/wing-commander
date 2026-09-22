@@ -184,7 +184,34 @@ jobs:
             '{open_issues: $issues[0], labeled_events_by_issue: $events[0]}' \
             > "$RUNNER_TEMP/board-eligibility-input.json"
 
-          issue_number="$(python3 .github/scripts/board_eligibility.py < "$RUNNER_TEMP/board-eligibility-input.json")"
+          # "One item at a time" (User Story 7): an item already mid-flight
+          # (an open PR citing it -- fix, review round, or a post-push
+          # breach's spec-request never changes this) is finished before a
+          # fresh, merely-older item is started, so this run's own
+          # oldest-first fallback below never starves an in-progress item.
+          # Excluded exactly like board_eligibility.py's own is_excluded()
+          # (closed/disposition/board:stalled/stage:*/spec:*), reusing that
+          # same function rather than a second exclusion rule.
+          in_flight_issue="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --json number,body --limit 200 \
+            | jq -r '[.[].body // "" | capture("(?:Fixes|fixes) #(?<n>[0-9]+)")? | .n] | .[0] // empty' 2>/dev/null || true)"
+          if [ -n "$in_flight_issue" ]; then
+            excluded="$(python3 -c "
+          import json, sys
+          sys.path.insert(0, '.github/scripts')
+          from board_eligibility import is_excluded
+          issues = json.load(open('$RUNNER_TEMP/board-open-issues.json', encoding='utf-8'))
+          match = [i for i in issues if i.get('number') == int('$in_flight_issue')]
+          excluded, _ = is_excluded(match[0]) if match else (True, 'not-open')
+          print('true' if excluded else 'false')
+          ")"
+            if [ "$excluded" = "false" ]; then
+              issue_number="$in_flight_issue"
+            fi
+          fi
+
+          if [ -z "${issue_number:-}" ]; then
+            issue_number="$(python3 .github/scripts/board_eligibility.py < "$RUNNER_TEMP/board-eligibility-input.json")"
+          fi
 
           if [ -z "$issue_number" ]; then
             echo "board-loop: nothing to do -- no eligible, non-excluded open issue." >> "$GITHUB_STEP_SUMMARY"
