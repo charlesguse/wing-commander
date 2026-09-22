@@ -278,3 +278,41 @@ jobs:
           fi
           echo "tier=$tier" >> "$GITHUB_OUTPUT"
           echo "Board loop model for this run: $tier" >> "$GITHUB_STEP_SUMMARY"
+
+# =============================================================================
+# Per-agent-step pattern (specs/057-autonomous-board-loop T012, research.md
+# D18-D20, FR-047): every job below that runs an agent step (triage-propose,
+# route-propose, fixer, reviewer) follows this same five-part shape, in this
+# order, reusing the composites already declared as single homes elsewhere in
+# this repository rather than a board-loop-only retyping of any of them:
+#   1. wing-commander-tool-args, composing that step's own least-privilege
+#      allowlist (research.md D23: WebSearch/WebFetch always disallowed; the
+#      fixer gets write/push tools the reviewer never does, and vice versa).
+#   2. wing-commander-turn-ceiling, with that step's own intended-turns.
+#   3. The agent step itself (anthropics/claude-code-action@v1),
+#      continue-on-error: true so the deterministic steps below it still run.
+#   4. The post-agent credential-refresh triple, gated
+#      `if: "!cancelled() && steps.<agent-id>.outcome != 'skipped'"`:
+#        a. wing-commander-context (re-mint), continue-on-error: true.
+#        b. wing-commander-refresh-remote (only for a job that pushes a git
+#           remote, e.g. the fix step -- omitted elsewhere, per that
+#           composite's own refresh-outcome default).
+#        c. wing-commander-post-agent-credential-status, folding (a)/(b)'s
+#           outcomes into one `ok` this job's own outcome reporting reads.
+#   5. wing-commander-agent-verdict then wing-commander-metrics-summary,
+#      immediately after the agent step, with that step's own
+#      model/max-turns/ceiling inputs (research.md D20, SC-010).
+#
+# Closing-step pattern (T014, FR-044): every job below ends by posting its
+# outcome on the originating issue -- the triage verdict and its evidence,
+# the route and its reason, the PR, each review round's outcome, the
+# readiness report or the unmet condition, the human merge, and the proof
+# run, per whichever step that job represents -- with the human-legible
+# comment body ending in the board_item_marker.py write_marker() HTML
+# comment (contracts/board-item-marker.md); the marker is never the comment's
+# only content. Every durable action (a close, a label, a push, a PR) is
+# preceded by a fresh re-check of the kill switch (research.md D2, FR-051),
+# not only at job start -- Phase 8/T052 additionally layers the stop-comment
+# and issue-state re-check (research.md D17) onto this same re-check point in
+# every job this pattern already touches.
+# =============================================================================

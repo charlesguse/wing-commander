@@ -1,0 +1,6 @@
+{
+  "cited_run_transcript_path": ".github/scripts/tests/board-triage/evidence-unavailable/does-not-exist.json",
+  "cited_run_commit_sha": null,
+  "workflow_files": [],
+  "agent_proposal": {}
+}

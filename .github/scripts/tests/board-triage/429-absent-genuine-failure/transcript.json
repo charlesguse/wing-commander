@@ -1,0 +1,4 @@
+[
+  {"type": "result", "subtype": "error_during_execution", "is_error": true,
+   "terminal_reason": "tool_error", "num_turns": 14, "total_cost_usd": 1.23}
+]

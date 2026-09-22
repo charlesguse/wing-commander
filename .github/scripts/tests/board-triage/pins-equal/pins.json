@@ -1,0 +1,5 @@
+{
+  "workflow_file": ".github/workflows/example.yml",
+  "run_pins": {"actions/checkout": "v5", "actions/upload-artifact": "v6"},
+  "main_pins": {"actions/checkout": "v5", "actions/upload-artifact": "v6"}
+}

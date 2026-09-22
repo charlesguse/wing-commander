@@ -135,7 +135,7 @@ it can act.
   review-finding count) before any durable action, falling back to live
   state on a missing/unparsable/stale marker rather than to a second
   branch/PR or undefined behavior (FR-054).
-- [ ] T012 Wire the standard per-agent-step pattern into `board-loop.yml`:
+- [X] T012 Wire the standard per-agent-step pattern into `board-loop.yml`:
   `wing-commander-context`'s App-token mint feeding `env.WC_BOT_TOKEN`, the
   post-agent credential-refresh triple (spec 052) via an `if: always()`
   step immediately after every agent step this feature adds, with every
@@ -144,7 +144,7 @@ it can act.
   immediately after every agent step with the correct
   `transcript-path`/`model`/`max-turns`/`ceiling` inputs (research.md D20,
   FR-047, SC-010).
-- [ ] T013 Add a `resolve-model` job to `board-loop.yml` reusing
+- [X] T013 Add a `resolve-model` job to `board-loop.yml` reusing
   `wing-commander-9-pr-conversation.yml`'s model-tier resolution verbatim
   (default `vars.WING_COMMANDER_BOARD_LOOP_MODEL`, fallback
   `claude-sonnet-5`, escalated to `claude-opus-5` when the issue (for
@@ -153,7 +153,7 @@ it can act.
   (research.md D18); declare the round-budget constant `5` (data-model.md
   "Configuration Constants") alongside, consumed by the review round loop
   (US4) and the round-budget-exhaustion checks (US4/US1/US2).
-- [ ] T014 Wire every job's closing step in `board-loop.yml` to post its
+- [X] T014 Wire every job's closing step in `board-loop.yml` to post its
   outcome on the originating issue — the triage verdict and its evidence,
   the route and its reason, the PR, each review round's outcome, the
   readiness report or the unmet condition, the human merge, and the proof
@@ -180,7 +180,7 @@ failure (stays open), an "already fixed" proposal naming a real commit
 
 ### Implementation for User Story 1
 
-- [ ] T015 [P] [US1] Create `.github/scripts/board_triage.py` with
+- [X] T015 [P] [US1] Create `.github/scripts/board_triage.py` with
   `check_rate_limit(run_transcript_path)` delegating to
   `wing-commander-agent-verdict`'s existing rate-limited classifier (spec
   047, research.md D4 — never a second parse of `rate_limit_event`/
@@ -199,7 +199,7 @@ failure (stays open), an "already fixed" proposal naming a real commit
   — expired artifact, missing run, API error (FR-014) — and returning
   `outcome: proceed` with no ground when the issue cites no run at all
   (edge case, spec.md).
-- [ ] T016 [US1] Create `.github/scripts/verify-board-triage.py` with the
+- [X] T016 [US1] Create `.github/scripts/verify-board-triage.py` with the
   six FR-064-bullet-1 fixtures under `.github/scripts/tests/board-triage/`
   (429 present → `closed, rate_limit`; 429 absent, genuine failure →
   `proceed`; cited run's artifact expired/missing → `proceed,
@@ -208,7 +208,7 @@ failure (stays open), an "already fixed" proposal naming a real commit
   `main`" naming a real commit → NOT closed, `handover` with
   `board:stalled` applied and the proposal+commit recorded), asserting the
   exact `TriageVerdict` fields per fixture.
-- [ ] T017 [US1] Register `verify-board-triage.py` as the next sequential
+- [X] T017 [US1] Register `verify-board-triage.py` as the next sequential
   `Gate N — board triage` step in `.github/workflows/lint-workflows.yml`.
 - [ ] T018 [US1] Add the `triage` job to `board-loop.yml`: a
   triage-propose agent step (read-only tool allowlist, web tools never per
