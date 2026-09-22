@@ -47,10 +47,18 @@ remain covered by this contract. Since #397 this is enforced: Gate 80
 (a `git push` in its own steps, an agent granted `Bash(git push:*)`, or a
 local composite that pushes) and requires the group above or a waiver in
 `.github/scripts/spec-branch-push-waivers.json` stating what the job
-pushes and why that is not a spec-branch write. The non-members below
-are the waived jobs.
+pushes and why that is not a spec-branch write. The full, current list of
+waived jobs lives only in that file — Gate 80 reads it directly, and every
+waiver is itself stale-checked (a waiver naming a job that no longer
+exists, or no longer pushes, fails the gate). It is not duplicated here:
+a hand-maintained second copy is exactly how this table's own "Non-members"
+list (below) silently fell out of sync with the waivers file as later
+entries were filed only in the JSON (found by the code review of #438).
 
-## Non-members (MUST NOT be folded into the canonical group)
+## Non-members (the two original exceptions predating the waiver
+mechanism; MUST NOT be folded into the canonical group — see
+`.github/scripts/spec-branch-push-waivers.json` for these two plus every
+later waiver)
 
 | Workflow | Job | Group | Why excluded |
 |---|---|---|---|
