@@ -1,0 +1,107 @@
+# The kill-switch/stop-request recheck idiom, in one home (issue #462):
+# board-loop.yml's six jobs (triage, route, fix, review, readiness, prove)
+# each re-check the kill switch AND a maintainer stop request immediately
+# before their own next durable action (FR-051/T052) -- not only at job
+# start. board_stop_check.py's own docstring already calls
+# find_stop_request() "the reusable check every job's own... step also
+# performs"; this composite is the surrounding gh/bash orchestration
+# CLAUDE.md's "Shared logic has exactly one home" section also asks for,
+# which the decision function alone never unified.
+#
+# Two tokens, not one (issue #461): the paginated comment read and the
+# stop-request decision use `token` (the wing-commander App installation
+# token) like every other read in these jobs, but the `gh run cancel` call
+# needs `cancel-token` -- github.token -- instead. The App token has no
+# `actions` permission (a documented 403, issue/spec 005; see
+# auto-release.yml's `dispatch-release` job and board-loop.yml's own
+# `prove` job "Re-drive the changed behaviour to prove the fix" step,
+# which already made this exact fix during #451's review) so a cancel
+# attempted under the App token is silently swallowed by the
+# `2>/dev/null || true` below and never actually cancels a still-running
+# earlier run -- `paused` is set regardless, so the kill switch itself
+# still halts further progress, but the cancel side effect never fires.
+# The caller's job needs `permissions.actions: write` for `cancel-token`
+# (github.token) to have any effect here, the same way the `prove` job's
+# own re-drive step does.
+#
+# No composite action in this repository reads the caller's `vars` context
+# directly -- a composite `run:` step only sees what is passed as
+# `inputs`. `initial-paused` is therefore the kill switch's own boolean,
+# already resolved by the caller (`vars.WING_COMMANDER_BOARD_LOOP_PAUSED
+# == 'true'`), not re-derived here.
+name: wing-commander-board-stop-check
+description: >
+  Re-checks the kill switch and any maintainer stop request on a board-loop
+  issue, immediately before a job's own next durable action, and cancels a
+  still-running earlier run when one is found.
+
+inputs:
+  token:
+    description: The wing-commander App token, used for the issue-comment/issue-state reads
+    required: true
+  cancel-token:
+    description: >
+      A token with `actions: write` on this repository (github.token, with
+      the caller job's own permissions.actions: write) -- used ONLY for the
+      `gh run cancel` call; see this file's own header comment for why it
+      must differ from `token`.
+    required: true
+  issue-number:
+    description: The board item's issue number
+    required: true
+  initial-paused:
+    description: >
+      The kill switch's own already-resolved boolean -- the caller's own
+      `vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true'` comparison,
+      evaluated by the caller before this composite is invoked (a
+      composite step cannot read the caller's vars context directly).
+    required: true
+  check-issue-closed:
+    description: >
+      "true" only for the prove job's extra pre-check: the issue is also
+      treated as paused when it is already CLOSED.
+    required: false
+    default: "false"
+
+outputs:
+  paused:
+    description: "true when this job's next durable action must stand down"
+    value: ${{ steps.check.outputs.paused }}
+
+runs:
+  using: composite
+  steps:
+    - name: Re-check kill switch and stop requests before any durable action
+      id: check
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        CANCEL_TOKEN: ${{ inputs.cancel-token }}
+        ISSUE_NUMBER: ${{ inputs.issue-number }}
+        INITIAL_PAUSED: ${{ inputs.initial-paused }}
+        CHECK_ISSUE_CLOSED: ${{ inputs.check-issue-closed }}
+      run: |
+        set -uo pipefail
+        paused="$INITIAL_PAUSED"
+        if [ "$CHECK_ISSUE_CLOSED" = "true" ]; then
+          state="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json state --jq .state)"
+          if [ "$state" = "CLOSED" ]; then
+            paused=true
+          fi
+        fi
+        gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate \
+          --jq '.[] | {body, author_association, created_at}' | jq -s '.' \
+          > "$RUNNER_TEMP/board-stop-check-comments.json"
+        stop_run_id="$(python3 -c "
+        import json, os, sys
+        sys.path.insert(0, '.github/scripts')
+        from board_stop_check import find_stop_request
+        comments = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'board-stop-check-comments.json'), encoding='utf-8'))
+        run_id = find_stop_request(comments, os.environ['GITHUB_RUN_ID'])
+        print(run_id or '')
+        ")"
+        if [ -n "$stop_run_id" ]; then
+          GH_TOKEN="$CANCEL_TOKEN" gh run cancel "$stop_run_id" -R "$GITHUB_REPOSITORY" 2>/dev/null || true
+          paused=true
+        fi
+        echo "paused=$paused" >> "$GITHUB_OUTPUT"
