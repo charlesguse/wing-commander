@@ -50,14 +50,15 @@ jobs:
   # side. No user-story job body (triage onward) is wired yet -- those
   # land in later build-and-reassess cycles of this same feature.
   select:
-    # Entry gate 1 (research.md D2): the exact kill-switch idiom
-    # auto-release.yml already uses at every durable-action boundary.
     # github.event_name != 'pull_request' keeps this job -- and the
     # schedule/dispatch item-selection path it starts -- from also firing
     # on the pull_request: closed resume trigger, which a later phase's
     # `prove` job owns instead (contracts/board-loop-workflow.md entry
-    # gate 3).
-    if: github.event_name != 'pull_request' && vars.WING_COMMANDER_BOARD_LOOP_PAUSED != 'true'
+    # gate 3). Entry gate 1 (the kill switch) is checked as this job's own
+    # first STEP, not a job-level `if:`, so a paused run still executes far
+    # enough to record the pause (T067, FR-046) rather than showing as a
+    # bare "skipped" job with no cost line or durable record (FR-047).
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -76,10 +77,26 @@ jobs:
         with:
           persist-credentials: false
 
+      # Entry gate 1 (research.md D2): the exact kill-switch idiom
+      # auto-release.yml already uses at every durable-action boundary --
+      # now a step (T067) rather than the job-level `if:` this replaced, so
+      # the pause is recorded (FR-046) instead of silent.
+      - name: Check the kill switch (entry gate 1)
+        id: killswitch
+        run: |
+          set -uo pipefail
+          status=ok
+          if [ "${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}" = "true" ]; then
+            status=paused
+            echo "board-loop: standing down -- the kill switch is set." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
       # Entry gate 2 (research.md D16, FR-049): read directly from Actions'
       # own run state -- never inferred from usage metrics or elapsed time.
       - name: Check whether an implement cycle is in flight (entry gate 2)
         id: stand-down
+        if: steps.killswitch.outputs.status != 'paused'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -92,7 +109,7 @@ jobs:
 
       - name: Wing Commander context
         id: ctx
-        if: steps.stand-down.outputs.status != 'in-flight'
+        if: steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight'
         uses: ./.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
@@ -121,7 +138,7 @@ jobs:
       # never an over-admission.
       - name: Fetch open issues and select the next board item
         id: select
-        if: steps.stand-down.outputs.status != 'in-flight'
+        if: steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight'
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
         run: |
@@ -228,7 +245,7 @@ jobs:
       # rather than to undefined behavior or a second branch/PR (FR-054).
       - name: Resume - read the board item marker and re-derive live state
         id: resume
-        if: steps.stand-down.outputs.status != 'in-flight' && steps.select.outputs.issue-number != ''
+        if: steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight' && steps.select.outputs.issue-number != ''
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE_NUMBER: ${{ steps.select.outputs.issue-number }}
@@ -283,6 +300,51 @@ jobs:
             echo "round=$marker_round"
             echo "base-sha=$marker_base_sha"
           } >> "$GITHUB_OUTPUT"
+
+      # T067/FR-047/SC-010: this job runs no agent, but every run of this
+      # workflow -- including a paused, stood-down, or nothing-to-do one --
+      # still emits a cost line and a durable metrics record, the same as
+      # every other stage does, so a quiet board is distinguishable from a
+      # paused one (FR-046) purely from the record, not from reading
+      # $GITHUB_STEP_SUMMARY prose. `always()` so this runs whichever step
+      # above stopped the job short.
+      - name: Determine this run's outcome for the metrics record
+        id: outcome
+        if: always()
+        run: |
+          set -uo pipefail
+          if [ "${{ steps.killswitch.outputs.status }}" = "paused" ]; then
+            label="kill switch"
+          elif [ "${{ steps.stand-down.outputs.status }}" = "in-flight" ]; then
+            label="implement cycle in flight"
+          elif [ -z "${{ steps.select.outputs.issue-number }}" ]; then
+            label="no eligible issue"
+          else
+            label="selected issue #${{ steps.select.outputs.issue-number }}"
+          fi
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+
+      - name: Agent run metrics summary (select)
+        id: metrics-summary
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/wing-commander-metrics-summary
+        with:
+          transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
+          model: ''
+          stage: board-loop
+          run-label: ${{ steps.outcome.outputs.label }}
+          record-path: ${{ runner.temp }}/wing-commander-metrics-record-select.json
+
+      - name: Upload metrics record (select)
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-select
+          path: ${{ runner.temp }}/wing-commander-metrics-record-select.json
+          if-no-files-found: ignore
+          retention-days: 90
 
   # research.md D18: model tier resolution for the item this run selected --
   # default vars.WING_COMMANDER_BOARD_LOOP_MODEL (fallback claude-sonnet-5),
@@ -2218,6 +2280,32 @@ jobs:
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Not ready on PR #%s: %s. Picked up again on a later run.' "$PR_NUMBER" "$unmet")"
           fi
 
+      # T067/FR-047/SC-010: no agent runs in this job, but readiness still
+      # takes a durable action (a report or a spec-request) every time it
+      # runs -- it emits a cost line and a durable metrics record the same
+      # as every other stage, so it appears in the record in the same form.
+      - name: Agent run metrics summary (readiness)
+        id: metrics-summary
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/wing-commander-metrics-summary
+        with:
+          transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
+          model: ''
+          stage: board-loop
+          run-label: ${{ steps.decide.outputs.ready == 'true' && 'ready' || 'not ready' }}
+          record-path: ${{ runner.temp }}/wing-commander-metrics-record-readiness.json
+
+      - name: Upload metrics record (readiness)
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-readiness
+          path: ${{ runner.temp }}/wing-commander-metrics-record-readiness.json
+          if-no-files-found: ignore
+          retention-days: 90
+
   # Phase 9 (User Story 6, contracts/prove-step.md "Entry", FR-041): the
   # human's merge is what resumes this item -- at the prove step, never by
   # re-selecting it from the top. This job is the entry gate alone: it
@@ -2312,6 +2400,33 @@ jobs:
             echo "issue-number=$issue_number"
             echo "eligible=$eligible"
           } >> "$GITHUB_OUTPUT"
+
+      # T067/FR-047/SC-010: no agent runs in this job, but every
+      # pull_request: closed event this loop's own concurrency group
+      # processes reaches a decision here (proceed to prove, or not) -- it
+      # emits a cost line and a durable metrics record the same as every
+      # other stage does.
+      - name: Agent run metrics summary (prove-gate)
+        id: metrics-summary
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/wing-commander-metrics-summary
+        with:
+          transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
+          model: ''
+          stage: board-loop
+          run-label: ${{ steps.gate.outputs.eligible == 'true' && 'eligible for prove' || 'prove not entered' }}
+          record-path: ${{ runner.temp }}/wing-commander-metrics-record-prove-gate.json
+
+      - name: Upload metrics record (prove-gate)
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-prove-gate
+          path: ${{ runner.temp }}/wing-commander-metrics-record-prove-gate.json
+          if-no-files-found: ignore
+          retention-days: 90
 
   # Phase 9 (User Story 6, contracts/prove-step.md "Actions-only decision"
   # and "Re-drive"): behaviour that only runs in Actions is re-driven and
@@ -2520,3 +2635,45 @@ jobs:
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
               --body "$(printf 'Not proven: %s was re-driven after the merge of PR #%s and concluded %s -- %s. This issue stays open.\n\n%s' "$REDRIVE_WORKFLOW" "$PR_NUMBER" "$CONCLUSION" "$RUN_URL" "$marker")"
           fi
+
+      # T067/FR-047/SC-010: no agent runs in this job -- it closes the
+      # issue on merge evidence alone, or dispatches and waits on a
+      # re-driven run -- either way it emits a cost line and a durable
+      # metrics record the same as every other stage does.
+      - name: Determine this run's outcome for the metrics record
+        id: outcome
+        if: always()
+        run: |
+          set -uo pipefail
+          if [ "${{ steps.killswitch-recheck.outputs.paused }}" = "true" ]; then
+            label="stood down"
+          elif [ "${{ steps.decide.outputs.actions-only }}" != "true" ]; then
+            label="closed on merge evidence alone"
+          elif [ -z "${{ steps.redrive.outputs.run-url }}" ]; then
+            label="proof run uncorrelated"
+          else
+            label="proof: ${{ steps.redrive.outputs.conclusion }}"
+          fi
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+
+      - name: Agent run metrics summary (prove)
+        id: metrics-summary
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/wing-commander-metrics-summary
+        with:
+          transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
+          model: ''
+          stage: board-loop
+          run-label: ${{ steps.outcome.outputs.label }}
+          record-path: ${{ runner.temp }}/wing-commander-metrics-record-prove.json
+
+      - name: Upload metrics record (prove)
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-prove
+          path: ${{ runner.temp }}/wing-commander-metrics-record-prove.json
+          if-no-files-found: ignore
+          retention-days: 90

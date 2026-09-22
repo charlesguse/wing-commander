@@ -917,5 +917,20 @@ removes an earlier story's guarantee.
   forbidden shapes) and into a new `--self-test` mode (registered as a
   second Gate 85 step in `lint-workflows.yml`) exercising both a clean
   fixture and one isolated dirty line per forbidden pattern, per SC-004.
-- [ ] T067 Emit a cost line and a durable metrics record on `board-loop.yml`'s agent-free completion paths — the no-op `select` (`SC-009`), the two stand-downs (`FR-046`/`FR-049`), and the `readiness`, `prove-gate` and `prove` jobs — so every run appears in the record "indistinguishable in form from any other stage's" per `SC-010` (`FR-047`, `SC-010`, `partial`). `wing-commander-metrics-summary`'s `transcript-path` is already `required: false`, so a zero-turn record needs no change to the composite.
+- [X] T067 Emit a cost line and a durable metrics record on `board-loop.yml`'s agent-free completion paths — the no-op `select` (`SC-009`), the two stand-downs (`FR-046`/`FR-049`), and the `readiness`, `prove-gate` and `prove` jobs — so every run appears in the record "indistinguishable in form from any other stage's" per `SC-010` (`FR-047`, `SC-010`, `partial`). `wing-commander-metrics-summary`'s `transcript-path` is already `required: false`, so a zero-turn record needs no change to the composite.
+  **Done**: the kill-switch check in `select` moved from a job-level `if:`
+  to its own first step (`killswitch`), so a paused run still executes far
+  enough to be recorded instead of showing as a bare skipped job; `select`
+  now ends with a `Determine this run's outcome`/`Agent run metrics
+  summary`/`Upload metrics record` triple (`always()`, following
+  `implement.yml`'s transcript-less-invocation precedent, `model: ''`
+  since no agent runs) distinguishing kill switch / implement-cycle-in-
+  flight / no-eligible-issue / selected-an-issue. The same triple (minus
+  the outcome step where a single `steps.*.outputs` expression sufficed)
+  was added to `readiness` (ready vs not ready), `prove-gate` (eligible vs
+  not), and `prove` (stood down / closed-on-merge-evidence / uncorrelated
+  / proof conclusion). `prove-gate`/`prove`'s own kill-switch job-level
+  `if:` was left as is — T067 scopes "the two stand-downs" to `select`
+  only (FR-046/FR-049's own text), not a rewrite of every job's pause
+  gating.
 - [ ] T068 Route the readiness job's backstop-breach `spec-request` cross-link (`board-loop.yml`, the `Report the unmet condition (not ready)` step) through `wing-commander-outstanding-task-item`, as the route job and the fix job's post-push-breach path already do for the identical artifact, rather than the hand-written `gh issue comment` link it uses now (`FR-045`, `partial`).
