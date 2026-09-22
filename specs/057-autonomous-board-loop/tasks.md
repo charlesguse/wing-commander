@@ -773,8 +773,8 @@ make sense once every job exists.
   **BLOCKED (2026-09-22, cycle 2) — same tooling blocker as T063**, plus
   `gh workflow run` specifically, which the re-drive path cannot be
   exercised without. The path-derived halves (`actions_only()` and
-  `redrive_target()`) are covered by Gate 88, and the composite's own
-  correlate/wait/timeout behaviour by Gate 87 against a stub `gh`; the
+  `redrive_target()`) are covered by Gate 89, and the composite's own
+  correlate/wait/timeout behaviour by Gate 88 against a stub `gh`; the
   `pull_request: closed` resume wiring itself is what stays unproven.
 - [ ] T065 Run the quickstart.md untrusted-content drill (step 10): plant
   instruction-shaped text in a non-maintainer comment on an in-flight item
@@ -786,7 +786,7 @@ make sense once every job exists.
   allowlist permits creating. The structural half is in place and
   reviewable in the workflow text: every agent step frames issue bodies
   and non-maintainer comments as data (FR-055/FR-056), and the
-  maintainer-association check the stop path uses is covered by Gate 86.
+  maintainer-association check the stop path uses is covered by Gate 87.
 
 **Checkpoint**: All ten quickstart sections pass; every gate is registered
 and provably able to fail.
@@ -916,7 +916,7 @@ removes an earlier story's guarantee.
   **Done**: `check_no_merge_invariant()` added to `verify-board-readiness.py`,
   wired into its default run (scans `board-loop.yml`'s raw text for the five
   forbidden shapes) and into a new `--self-test` mode (registered as a
-  second Gate 85 step in `lint-workflows.yml`) exercising both a clean
+  second Gate 86 step in `lint-workflows.yml`) exercising both a clean
   fixture and one isolated dirty line per forbidden pattern, per SC-004.
 - [X] T067 Emit a cost line and a durable metrics record on `board-loop.yml`'s agent-free completion paths — the no-op `select` (`SC-009`), the two stand-downs (`FR-046`/`FR-049`), and the `readiness`, `prove-gate` and `prove` jobs — so every run appears in the record "indistinguishable in form from any other stage's" per `SC-010` (`FR-047`, `SC-010`, `partial`). `wing-commander-metrics-summary`'s `transcript-path` is already `required: false`, so a zero-turn record needs no change to the composite.
   **Done**: the kill-switch check in `select` moved from a job-level `if:`

@@ -3898,69 +3898,72 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-eligibility.py
 
-      # Gate 81 — specs/057-autonomous-board-loop (FR-012/FR-064 bullet 1):
+      # Gate 82 — specs/057-autonomous-board-loop (FR-012/FR-064 bullet 1):
       # triage may close an issue on exactly two code-derived grounds, and
       # an agent's "already fixed on main" proposal must NEVER be one of
       # them -- the fixture this gate pins is the one case where "the agent
       # says so" and "the gate says so" could be confused for the same
-      # thing.
-      - name: Gate 81 — board loop triage resolves every FR-064 bullet-1 branch
+      # thing. Numbered 82, not 81 (its original slot): landing after
+      # Gate 80 (#397/#438) shifts this whole block by one, and an earlier
+      # pass only shifted Gate 81 (eligibility) itself, leaving this gate's
+      # number colliding with it -- fixed as part of #451's own review.
+      - name: Gate 82 — board loop triage resolves every FR-064 bullet-1 branch
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-triage.py
 
-      # Gate 82 — specs/057-autonomous-board-loop T022: the shared
+      # Gate 83 — specs/057-autonomous-board-loop T022: the shared
       # size-path-backstop composite's own file/line-count formula, run
       # extracted from the shipped action.yml (not a hand-copied duplicate)
       # against fixtures parameterized by threshold, so a future caller's
       # own numbers are exercised the same way pr-conversation.yml's 3/40
       # and board-loop.yml's own thresholds already are.
-      - name: Gate 82 — the size-path-backstop composite measures files/lines correctly at any threshold
+      - name: Gate 83 — the size-path-backstop composite measures files/lines correctly at any threshold
         if: "!cancelled()"
         run: bash .github/scripts/size-path-backstop-tests/run-tests.sh
 
-      # Gate 83 — specs/057-autonomous-board-loop (FR-017/FR-019/FR-021,
+      # Gate 84 — specs/057-autonomous-board-loop (FR-017/FR-019/FR-021,
       # FR-064 bullet 3): the route backstop can only narrow the
       # route-propose agent's fix/spec proposal, never widen it, and a
       # contract-widening diff re-routes regardless of size.
-      - name: Gate 83 — board loop route backstop resolves every FR-064 bullet-3 branch
+      - name: Gate 84 — board loop route backstop resolves every FR-064 bullet-3 branch
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-route-backstop.py
 
-      # Gate 84 — specs/057-autonomous-board-loop research.md D11: the
+      # Gate 85 — specs/057-autonomous-board-loop research.md D11: the
       # board review finding schema carries in_scope as a required field
       # distinct from spec 056's stage-finding.schema.json -- a malformed
       # entry (any one required field missing) must be rejected, named,
       # never defaulted.
-      - name: Gate 84 — board review finding schema rejects every malformed required field
+      - name: Gate 85 — board review finding schema rejects every malformed required field
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-review-finding-schema.py --self-test
 
-      # Gate 85 — specs/057-autonomous-board-loop (FR-036/FR-037/FR-068,
+      # Gate 86 — specs/057-autonomous-board-loop (FR-036/FR-037/FR-068,
       # FR-064 bullet 4): readiness is reported or refused solely on
       # re-derived head-SHA evidence, and this loop never merges, approves,
       # or enables auto-merge -- these six fixtures are what stands between
       # "ready" and a maintainer merging stale evidence.
-      - name: Gate 85 — board loop readiness resolves every FR-064 bullet-4 branch
+      - name: Gate 86 — board loop readiness resolves every FR-064 bullet-4 branch
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-readiness.py
 
-      # Gate 85 self-test (T066, SC-004): check_no_merge_invariant() catches
+      # Gate 86 self-test (T066, SC-004): check_no_merge_invariant() catches
       # every forbidden merge/approve/auto-merge shape and stays silent on a
       # clean fixture, in both directions -- not just against board-loop.yml
       # as it stands today.
-      - name: Gate 85 — board loop readiness no-merge invariant catches every forbidden shape
+      - name: Gate 86 — board loop readiness no-merge invariant catches every forbidden shape
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-readiness.py --self-test
 
-      # Gate 86 — specs/057-autonomous-board-loop (research.md D17,
+      # Gate 87 — specs/057-autonomous-board-loop (research.md D17,
       # FR-052/FR-053): a maintainer's stop comment halts the loop; a
       # non-maintainer's cannot, and the loop never cancels its own
       # just-posted announcement.
-      - name: Gate 86 — board loop stop-check resolves every documented branch
+      - name: Gate 87 — board loop stop-check resolves every documented branch
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-stop-check.py
 
-      # Gate 87 — specs/057-autonomous-board-loop T055 (research.md D14):
+      # Gate 88 — specs/057-autonomous-board-loop T055 (research.md D14):
       # the dispatch-then-correlate-then-wait idiom's own shell, run
       # extracted from the shipped action.yml against a stub `gh`, so the
       # three outcomes a caller has to branch on -- a correlated run, a
@@ -3969,17 +3972,17 @@ jobs:
       # timeout) -- are each proven rather than assumed. The prove step
       # closes an issue on this composite's conclusion; a silently-empty
       # correlation must never read as success.
-      - name: Gate 87 — the dispatch-and-wait composite correlates, waits, and times out correctly
+      - name: Gate 88 — the dispatch-and-wait composite correlates, waits, and times out correctly
         if: "!cancelled()"
         run: bash .github/scripts/dispatch-and-wait-tests/run-tests.sh
 
-      # Gate 88 — specs/057-autonomous-board-loop (FR-041, research.md
+      # Gate 89 — specs/057-autonomous-board-loop (FR-041, research.md
       # D15): whether a merged fix needs a re-driven run before its issue
       # closes is a path-based rule, not an agent's judgement. A merge
       # touching only docs/specs, or only a verify-*.py the merged PR's own
       # required checks already executed, proves nothing a fresh dispatch
       # would add; anything else does.
-      - name: Gate 88 — board loop prove resolves actions-only from the merged paths
+      - name: Gate 89 — board loop prove resolves actions-only from the merged paths
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-prove.py
 

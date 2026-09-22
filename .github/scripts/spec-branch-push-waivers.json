@@ -56,6 +56,18 @@
       "reason": "Not a spec branch; the composite serialises itself with fetch-rebase-push retries."
     },
     {
+      "file": ".github/workflows/board-loop.yml",
+      "job": "fix",
+      "pushes": "fix/<issue-number>-<slug>, a board-item branch, never a spec branch",
+      "reason": "specs/057-autonomous-board-loop: the board loop works one issue at a time repository-wide under its own top-level concurrency (group: wing-commander-board-loop, cancel-in-progress: false), a stronger single-flight guarantee than the per-spec group. No spec/<NNN-slug> branch is ever touched."
+    },
+    {
+      "file": ".github/workflows/board-loop.yml",
+      "job": "review",
+      "pushes": "a follow-up commit on the same fix/<issue-number>-<slug> board-item branch, never a spec branch",
+      "reason": "Same top-level wing-commander-board-loop single-flight group as the fix job above (specs/057-autonomous-board-loop)."
+    },
+    {
       "file": ".github/workflows/auto-release.yml",
       "job": "verify-e2e",
       "pushes": "a scaffold onto the E2E test repository's default branch",
