@@ -25,6 +25,7 @@ Nothing here reaches the network. `origin` is a bare repository on disk,
 and its `update` hook is what injects a push rejection when a gate needs
 to prove that two files retry together rather than separately.
 """
+import functools
 import json
 import os
 import shutil
@@ -249,7 +250,12 @@ exit "${{PIPESTATUS[0]}}"
 """
 
 
+@functools.lru_cache(maxsize=1)
 def _jq_emitting_cr():
+    """The real jq's own answer never changes within one process (#449
+    review) -- _bindir() runs once per run_sweep()/run_window() call, and
+    each of Gates 76-78's mutation scenarios calls one of those, so an
+    unmemoized probe re-spawns jq to re-derive an already-known answer."""
     real = shutil.which("jq")
     if not real:
         return None
