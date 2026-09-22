@@ -501,7 +501,7 @@ merge performed.
 
 ### Implementation for User Story 5
 
-- [ ] T045 [P] [US5] Create `.github/scripts/board_readiness.py` with
+- [X] T045 [P] [US5] Create `.github/scripts/board_readiness.py` with
   `evaluate(pr_number) -> ReadinessDecision` fetching `gh pr view
   <pr_number> --json headRefOid,statusCheckRollup` fresh at evaluation
   time (never a value captured earlier in the run — FR-036) and
@@ -515,7 +515,7 @@ merge performed.
   (contracts/readiness-report.md condition 4); and the kill switch clear,
   checked again at this exact moment (FR-051). `ready: true` only when all
   five hold.
-- [ ] T046 [US5] Create `.github/scripts/verify-board-readiness.py` with
+- [X] T046 [US5] Create `.github/scripts/verify-board-readiness.py` with
   the six FR-064-bullet-4 fixtures under
   `.github/scripts/tests/board-readiness/` (stale check summary over a
   newer head → not ready, SHA mismatch named; no checks at all on the head
@@ -523,18 +523,18 @@ merge performed.
   diff breaches the backstop → routes to `spec-request`, not merely "not
   ready"; kill switch set → not ready, stand-down recorded; all five
   conditions hold → ready, report posted, no merge performed).
-- [ ] T047 [US5] Register `verify-board-readiness.py` as the next
+- [X] T047 [US5] Register `verify-board-readiness.py` as the next
   sequential `Gate N — board readiness` step in
   `.github/workflows/lint-workflows.yml`.
-- [ ] T048 [US5] Add the `readiness` job to `board-loop.yml`, entered once
+- [X] T048 [US5] Add the `readiness` job to `board-loop.yml`, entered once
   the `review` job (T042) reaches zero open in-scope findings: calls
   `board_readiness.py`'s `evaluate()` (T045) against the current PR.
-- [ ] T049 [US5] Wire the `ready: true` path in the `readiness` job: post
+- [X] T049 [US5] Wire the `ready: true` path in the `readiness` job: post
   a readiness report on the PR naming `head_sha` and each condition's
   result, record the same on the issue, and state that a human merge is
   awaited (FR-066) — never merge, approve, or enable auto-merge anywhere
   in the job's own API calls (FR-068).
-- [ ] T050 [US5] Wire the `ready: false` path in the `readiness` job:
+- [X] T050 [US5] Wire the `ready: false` path in the `readiness` job:
   leave the PR open, name `unmet_reason` on the issue (FR-067); for a
   final-diff backstop breach specifically, route through
   `board_route_backstop.py`'s `route_final_diff()` (T029) rather than

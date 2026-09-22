@@ -1,0 +1,12 @@
+{
+  "snapshot": {
+    "headRefOid": "aaaa111",
+    "statusCheckRollup": [
+      {"name": "lint-workflows", "state": "SUCCESS", "headSha": "aaaa111"}
+    ]
+  },
+  "open_in_scope_findings": 0,
+  "backstop_holds": false,
+  "kill_switch_paused": false,
+  "expected": {"ready": false, "reason_contains": "backstop"}
+}

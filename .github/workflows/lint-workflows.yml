@@ -3935,6 +3935,15 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-review-finding-schema.py --self-test
 
+      # Gate 85 — specs/057-autonomous-board-loop (FR-036/FR-037/FR-068,
+      # FR-064 bullet 4): readiness is reported or refused solely on
+      # re-derived head-SHA evidence, and this loop never merges, approves,
+      # or enables auto-merge -- these six fixtures are what stands between
+      # "ready" and a maintainer merging stale evidence.
+      - name: Gate 85 — board loop readiness resolves every FR-064 bullet-4 branch
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-readiness.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

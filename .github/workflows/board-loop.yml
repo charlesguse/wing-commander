@@ -1317,6 +1317,9 @@ jobs:
       issues: write
       pull-requests: write
       actions: read
+    outputs:
+      pr-number: ${{ steps.pr.outputs.pr-number }}
+      outcome: ${{ steps.round.outputs.outcome }}
     steps:
       - name: Resolve the PR under review
         id: pr
@@ -1906,3 +1909,189 @@ jobs:
         run: |
           set -uo pipefail
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'A review-fixup follow-up commit failed the local gate suite before any push -- nothing was pushed, the PR is unchanged:\n\n%s' "$FIRST_FAILURE")"
+
+  # Phase 7 (User Story 5, contracts/readiness-report.md): every condition
+  # is re-derived against the PR's exact head SHA; the loop reports ready
+  # or names the unmet condition, and NEVER merges, approves, or enables
+  # auto-merge (FR-068) anywhere in this job's own API calls.
+  readiness:
+    needs: [select, review]
+    if: >-
+      (
+        (needs.review.result == 'success' && needs.review.outputs.outcome == 'converged')
+        || (needs.select.outputs.step == 'readiness' && needs.select.outputs.pr != '')
+      ) && vars.WING_COMMANDER_BOARD_LOOP_PAUSED != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+      actions: read
+    steps:
+      - name: Resolve the PR under readiness
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.review.outputs.pr-number || needs.select.outputs.pr }}
+        run: |
+          set -uo pipefail
+          branch="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json headRefName --jq .headRefName)"
+          {
+            echo "pr-number=$PR_NUMBER"
+            echo "branch=$branch"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.pr.outputs.branch }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Wing Commander context
+        id: ctx
+        uses: ./.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+          private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
+
+      # contracts/readiness-report.md condition 4: the same backstop check
+      # route_final_diff() performs, computed FRESH against the branch's
+      # current diff (base..HEAD) rather than trusted from a possibly
+      # much-earlier fix-job run this job has no durable channel to read
+      # back -- strictly safer than a stale re-read, since a review-fixup
+      # round can grow the diff after the fix job's own check ran.
+      - name: Re-apply the route backstop to the current final diff
+        id: final-diff-backstop
+        env:
+          BOARD_MAX_FILES: ${{ env.BOARD_MAX_FILES }}
+          BOARD_MAX_LINES: ${{ env.BOARD_MAX_LINES }}
+        run: |
+          set -uo pipefail
+          base_sha="$(git merge-base origin/main HEAD)"
+          git diff "$base_sha" HEAD > "$RUNNER_TEMP/board-readiness-final-diff.patch"
+          git diff --name-only "$base_sha" HEAD > "$RUNNER_TEMP/board-readiness-final-diff-paths.txt"
+
+          python3 - <<'PYEOF'
+          import json
+          import os
+          import sys
+
+          sys.path.insert(0, ".github/scripts")
+          from board_route_backstop import contract_widened
+
+          runner_temp = os.environ["RUNNER_TEMP"]
+          with open(os.path.join(runner_temp, "board-readiness-final-diff.patch"), encoding="utf-8") as fh:
+              diff_text = fh.read()
+          with open(os.path.join(runner_temp, "board-readiness-final-diff-paths.txt"), encoding="utf-8") as fh:
+              diff_paths = [line.strip() for line in fh if line.strip()]
+
+          file_contents = {}
+          for path in diff_paths:
+              if os.path.isfile(path):
+                  with open(path, encoding="utf-8") as fh:
+                      file_contents[path] = fh.read()
+
+          files = len(diff_paths)
+          lines = sum(1 for line in diff_text.splitlines()
+                      if line[:1] in "+-" and not line.startswith(("+++", "---")))
+          board_max_files = int(os.environ["BOARD_MAX_FILES"])
+          board_max_lines = int(os.environ["BOARD_MAX_LINES"])
+          widened = contract_widened(diff_paths, diff_text, file_contents)
+          holds = files <= board_max_files and lines <= board_max_lines and not widened
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write("holds={0}\n".format("true" if holds else "false"))
+              fh.write("measured=files={0},lines={1}\n".format(files, lines))
+          PYEOF
+
+      - name: Re-check kill switch
+        id: killswitch-recheck
+        run: echo "paused=${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}" >> "$GITHUB_OUTPUT"
+
+      # Zero open in-scope findings is trusted from the state machine
+      # itself, not re-derived: readiness is entered ONLY when review's own
+      # round loop already converged (needs.review.outputs.outcome ==
+      # 'converged') or from a marker step already set to "readiness" by
+      # that same convergence on an earlier run -- there is no path into
+      # this job with an open in-scope finding.
+      - name: Evaluate readiness
+        id: decide
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          PR_NUMBER: ${{ steps.pr.outputs.pr-number }}
+          BACKSTOP_HOLDS: ${{ steps.final-diff-backstop.outputs.holds }}
+          PAUSED: ${{ steps.killswitch-recheck.outputs.paused }}
+        run: |
+          set -uo pipefail
+          gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json headRefOid,statusCheckRollup > "$RUNNER_TEMP/board-readiness-snapshot.json"
+
+          python3 - <<'PYEOF'
+          import json
+          import os
+          import sys
+
+          sys.path.insert(0, ".github/scripts")
+          from board_readiness import evaluate_from_snapshot
+
+          runner_temp = os.environ["RUNNER_TEMP"]
+          with open(os.path.join(runner_temp, "board-readiness-snapshot.json"), encoding="utf-8") as fh:
+              snapshot = json.load(fh)
+
+          decision = evaluate_from_snapshot(
+              snapshot, 0, os.environ["BACKSTOP_HOLDS"] == "true",
+              os.environ["PAUSED"] == "true")
+
+          with open(os.path.join(runner_temp, "board-readiness-decision.json"), "w", encoding="utf-8") as fh:
+              json.dump(decision, fh)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write("ready={0}\n".format("true" if decision["ready"] else "false"))
+          PYEOF
+
+      # FR-066/FR-068: names head_sha and every condition's result; states
+      # a human merge is awaited; never merges, approves, or enables
+      # auto-merge anywhere in this job's own API calls.
+      - name: Post the readiness report (ready)
+        if: steps.decide.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}
+          PR_NUMBER: ${{ steps.pr.outputs.pr-number }}
+        run: |
+          set -uo pipefail
+          decision="$(cat "$RUNNER_TEMP/board-readiness-decision.json")"
+          body="$(printf 'Readiness: all conditions hold on head_sha %s.\n\ndecision: %s\n\nAwaiting a human merge -- this loop never merges, approves, or enables auto-merge.' \
+            "$(jq -r '.head_sha' "$RUNNER_TEMP/board-readiness-decision.json")" "$decision")"
+          gh pr comment "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
+          marker="$(python3 -c "import os, sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('readiness', 0, int(os.environ['PR_NUMBER']), None, None))")"
+          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf '%s\n\n%s' "$body" "$marker")"
+
+      # FR-067/FR-021: a final-diff backstop breach routes through the same
+      # spec-request-and-notice path the fix job's own post-push breach
+      # uses, rather than merely reporting "not ready" -- any other unmet
+      # condition just names the reason (FR-067) and the item is picked up
+      # again on a later scheduled run, never polled in a loop here.
+      - name: Report the unmet condition (not ready)
+        if: steps.decide.outputs.ready != 'true'
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}
+          PR_NUMBER: ${{ steps.pr.outputs.pr-number }}
+          BACKSTOP_HOLDS: ${{ steps.final-diff-backstop.outputs.holds }}
+          MEASURED: ${{ steps.final-diff-backstop.outputs.measured }}
+        run: |
+          set -uo pipefail
+          unmet="$(jq -r '.unmet_reason' "$RUNNER_TEMP/board-readiness-decision.json")"
+
+          if [ "$BACKSTOP_HOLDS" != "true" ]; then
+            issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)"
+            spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$issue_title" \
+              --body "$(printf 'PR #%s grew past the board'"'"'s size-and-path backstop by readiness time (measured: %s). The branch/PR are left open, unmerged, under a notice -- this spec request covers finishing the work at the size a human plan should decide.' "$PR_NUMBER" "$MEASURED")" \
+              --label spec-request)"
+            marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, None, None))")"
+            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Readiness backstop breach on PR #%s (measured: %s) -- a spec-request now covers finishing this at the right size: %s\n\n%s' "$PR_NUMBER" "$MEASURED" "$spec_url" "$marker")"
+            gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
+          else
+            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Not ready on PR #%s: %s. Picked up again on a later run.' "$PR_NUMBER" "$unmet")"
+          fi
