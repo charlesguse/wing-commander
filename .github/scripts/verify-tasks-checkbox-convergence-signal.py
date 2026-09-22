@@ -35,6 +35,7 @@ of 65 ticked, no converge commit, healthy exit) now reports
 Usage: python3 .github/scripts/verify-tasks-checkbox-convergence-signal.py
 Requires: bash, jq, git (all present on ubuntu-latest runners).
 """
+import copy
 import json
 import os
 import shutil
@@ -572,6 +573,121 @@ def check_remaining_work_report(steps, root):
     return failures
 
 
+CONVERGED_DECISION = (
+    '  if [ "${UNCHECKED_TIP:-1}" -eq 0 ]; then\n'
+    '    converged=true\n'
+    '  else\n'
+    '    converged=false\n'
+    '  fi\n'
+)
+PROGRESS_TEST = (
+    '  if [ "${CHECKED_TIP:-0}" -gt "${CHECKED_BASE:-0}" ]; then\n'
+    '    progressed=true\n'
+    '  else\n'
+    '    progressed=false\n'
+    '  fi\n'
+)
+
+
+def _mut_converge_sha_only(steps):
+    """FR-020(a): revert the decision to consult only converge_sha (spec
+    057's exact bug) -- must flip the US1 no-converge-commit scenario's
+    converged from false back to (wrongly) true."""
+    steps[CYCLE_STEP] = steps[CYCLE_STEP].replace(
+        CONVERGED_DECISION,
+        '  if [ -z "$converge_sha" ]; then\n'
+        '    converged=true\n'
+        '  else\n'
+        '    converged=false\n'
+        '  fi\n', 1)
+
+
+def _mut_one_arm_only(steps):
+    """FR-020(b): a regression applied to only ONE arm -- the cycle arm
+    always reports converged=true regardless of tasks.md, the retry arm is
+    untouched. Must flip check_arms_agree's identical fixture to a
+    cycle/retry DISAGREEMENT, proving the gate attributes a one-arm-only
+    regression rather than merely re-checking the cycle arm alone."""
+    steps[CYCLE_STEP] = steps[CYCLE_STEP].replace(
+        CONVERGED_DECISION, '  converged=true\n', 1)
+
+
+def _mut_drop_progress_test(steps):
+    """FR-020(c): remove/invert the FR-010 progress test -- checked-count
+    rising against base always reads as progressed=true, so the
+    zero-progress hand-off scenario wrongly reports progressed=true and
+    handoff=false instead of handing off."""
+    steps[CYCLE_STEP] = steps[CYCLE_STEP].replace(
+        PROGRESS_TEST, '  progressed=true\n', 1)
+
+
+MUTATIONS = [
+    ("revert to consulting only converge_sha (spec 057's exact bug)",
+     _mut_converge_sha_only,
+     "US1: progress made, no converge commit -- not converged",
+     {"converged": "true"}),
+    ("remove/invert the FR-010 progress test",
+     _mut_drop_progress_test,
+     "US4/FR-010: zero progress, no converge commit -- hand off "
+     "to finalize rather than looping to the cap",
+     {"progressed": "true", "handoff": "false"}),
+]
+
+
+def check_one_arm_mutation(steps, root):
+    """FR-020(b): see _mut_one_arm_only's docstring."""
+    mutated = copy.deepcopy(steps)
+    _mut_one_arm_only(mutated)
+    if mutated[CYCLE_STEP] == steps[CYCLE_STEP]:
+        print("::error::mutation 'one-arm-only regression' changed nothing -- "
+              "the code it edits was rewritten. Update the mutation so this "
+              "harness keeps proving it can fail.")
+        return ["mutation inapplicable: one-arm-only regression"]
+    work, repo, base_sha, _ = build_scenario(
+        root, base_tasks_md=ARMS_AGREE_FIXTURE["base_tasks_md"],
+        tip_tasks_md=ARMS_AGREE_FIXTURE["tip_tasks_md"], converge=False)
+    rc_c, out_c, outputs_c, _ = run_cycle_step(
+        mutated, repo, base_sha, verdict="healthy", cycle_result="success")
+    rc_r, out_r, outputs_r, _ = run_retry_step(
+        mutated, repo, base_sha, verdict="healthy", retry_result="success")
+    if (rc_c == 0 and rc_r == 0 and outputs_c.get("converged") == "true"
+            and outputs_r.get("converged") == "false"):
+        print("Mutation OK -- one-arm-only regression: caught (cycle wrongly "
+              "reports converged=true while the retry arm, untouched, "
+              "correctly reports false).")
+        return []
+    return [f"mutation survived: one-arm-only regression did not make the "
+            f"two arms disagree on the identical fixture (cycle "
+            f"converged={outputs_c.get('converged')!r}, retry "
+            f"converged={outputs_r.get('converged')!r}, rc_c={rc_c}, rc_r={rc_r})"]
+
+
+def run_mutations(steps, root):
+    failures = []
+    for label, apply_mutation, target_name, expect_wrong in MUTATIONS:
+        mutated = copy.deepcopy(steps)
+        apply_mutation(mutated)
+        if mutated[CYCLE_STEP] == steps[CYCLE_STEP]:
+            print(f"::error::mutation {label!r} changed nothing -- the code "
+                  f"it edits was rewritten. Update the mutation so this "
+                  f"harness keeps proving it can fail.")
+            failures.append(f"mutation inapplicable: {label}")
+            continue
+        scenario = SCENARIOS_BY_NAME[target_name]
+        rc, out, outputs, _ = run_cycle_scenario(mutated, scenario, root)
+        wrong = rc == 0 and all(outputs.get(k) == v for k, v in expect_wrong.items())
+        if wrong:
+            print(f"Mutation OK -- {label}: caught (now wrongly reports {expect_wrong}).")
+        else:
+            print(f"::error::MUTATION SURVIVED -- reintroducing {label!r} did "
+                  f"not flip scenario {target_name!r} to {expect_wrong} (got "
+                  f"rc={rc}, outputs={outputs}, out={out!r}). Fix the "
+                  f"scenarios, not the mutation.")
+            failures.append(f"mutation survived: {label}")
+    failures.extend(check_one_arm_mutation(steps, root))
+    return failures
+
+
 def check_gate_wired():
     """FR-020's reflexive check (mirrors Gate 30's own check_gate_wired):
     this script cannot see its own absence from a workflow it isn't in, so
@@ -624,6 +740,7 @@ def main():
         failures.extend(check_unreadable_tasks_md(root))
         failures.extend(check_dispatch_handoff(steps, root))
         failures.extend(check_remaining_work_report(steps, root))
+        failures.extend(run_mutations(steps, root))
         failures.extend(check_gate_wired())
     finally:
         shutil.rmtree(root, ignore_errors=True)
