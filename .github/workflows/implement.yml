@@ -1268,12 +1268,11 @@ jobs:
               advanced=true
             fi
           fi
+          progressed=""
           if [ "$VERDICT" = "exhausted" ]; then
             if [ "$advanced" = "true" ]; then
-              before_count=$(git show "$BASE_SHA:$SPEC_DIR/tasks.md" 2>/dev/null | grep -c '^\s*- \[[xX]\]' || true)
-              after_count=$(git show "origin/${SPEC_PREFIX}$SLUG:$SPEC_DIR/tasks.md" 2>/dev/null | grep -c '^\s*- \[[xX]\]' || true)
               arm_a=false
-              if [ "${after_count:-0}" -gt "${before_count:-0}" ]; then
+              if [ "${CHECKED_TIP:-0}" -gt "${CHECKED_BASE:-0}" ]; then
                 arm_a=true
               fi
               arm_b=false
@@ -1314,12 +1313,22 @@ jobs:
           echo "reason=$reason" >> "$GITHUB_OUTPUT"
           converged=""
           converge_sha=""
+          handoff=false
           if [ "$ok" = "true" ] && [ "$truncated" = "true" ]; then
             converged=false
           elif [ "$ok" = "true" ]; then
             while read -r sha subject; do
               case "$subject" in converge:*) converge_sha="$sha"; break ;; esac
             done < <(git log --format='%H %s' "$BASE_SHA..origin/${SPEC_PREFIX}$SLUG" -- "$SPEC_DIR/tasks.md")
+            # FR-010a (spec 059): the FR-010 hand-off's progress test --
+            # reuses the identical checked-count comparison Arm A above
+            # already performs, now run unconditionally rather than only
+            # inside the VERDICT=="exhausted" branch (research.md D1).
+            if [ "${CHECKED_TIP:-0}" -gt "${CHECKED_BASE:-0}" ]; then
+              progressed=true
+            else
+              progressed=false
+            fi
             # FR-001/FR-002/FR-010b (spec 059): zero unchecked tasks at the
             # pushed tip wins regardless of whether a converge: commit
             # landed — replacing "no converge commit ⇒ converged" (spec
@@ -1331,7 +1340,17 @@ jobs:
               converged=false
             fi
           fi
+          # FR-010 (spec 059): a healthy cycle that makes no progress and
+          # lands no converge: commit hands off to finalize instead of
+          # looping to the iteration cap or being reported converged.
+          # FR-010b already decided converged=true above before progressed
+          # is even consulted, so handoff is never true when converged=true.
+          if [ "$ok" = "true" ] && [ "$truncated" = "false" ] && [ "$converged" = "false" ] && [ "$progressed" = "false" ] && [ -z "$converge_sha" ]; then
+            handoff=true
+          fi
           echo "converged=$converged" >> "$GITHUB_OUTPUT"
+          echo "progressed=$progressed" >> "$GITHUB_OUTPUT"
+          echo "handoff=$handoff" >> "$GITHUB_OUTPUT"
           {
             echo "remaining<<WING_COMMANDER_REMAINING_EOF"
             if [ -n "$converge_sha" ]; then
@@ -1865,12 +1884,11 @@ jobs:
               advanced=true
             fi
           fi
+          progressed=""
           if [ "$VERDICT" = "exhausted" ]; then
             if [ "$advanced" = "true" ]; then
-              before_count=$(git show "$BASE_SHA:$SPEC_DIR/tasks.md" 2>/dev/null | grep -c '^\s*- \[[xX]\]' || true)
-              after_count=$(git show "origin/${SPEC_PREFIX}$SLUG:$SPEC_DIR/tasks.md" 2>/dev/null | grep -c '^\s*- \[[xX]\]' || true)
               arm_a=false
-              if [ "${after_count:-0}" -gt "${before_count:-0}" ]; then
+              if [ "${CHECKED_TIP:-0}" -gt "${CHECKED_BASE:-0}" ]; then
                 arm_a=true
               fi
               arm_b=false
@@ -1910,12 +1928,23 @@ jobs:
           echo "reason=$reason" >> "$GITHUB_OUTPUT"
           converged=""
           converge_sha=""
+          handoff=false
           if [ "$ok" = "true" ] && [ "$truncated" = "true" ]; then
             converged=false
           elif [ "$ok" = "true" ]; then
             while read -r sha subject; do
               case "$subject" in converge:*) converge_sha="$sha"; break ;; esac
             done < <(git log --format='%H %s' "$BASE_SHA..origin/${SPEC_PREFIX}$SLUG" -- "$SPEC_DIR/tasks.md")
+            # FR-010a (spec 059): the FR-010 hand-off's progress test,
+            # measured from the RETRY's own base (research.md D2's "own
+            # base") -- reuses the identical checked-count comparison Arm A
+            # above already performs, now run unconditionally rather than
+            # only inside the VERDICT=="exhausted" branch (research.md D1).
+            if [ "${CHECKED_TIP:-0}" -gt "${CHECKED_BASE:-0}" ]; then
+              progressed=true
+            else
+              progressed=false
+            fi
             # FR-001/FR-002/FR-010b (spec 059): zero unchecked tasks at the
             # pushed tip wins regardless of whether a converge: commit
             # landed — replacing "no converge commit ⇒ converged" (spec
@@ -1927,7 +1956,18 @@ jobs:
               converged=false
             fi
           fi
+          # FR-010 (spec 059): a healthy retry that makes no progress of
+          # its own and lands no converge: commit hands off to finalize
+          # instead of looping to the iteration cap or being reported
+          # converged. FR-010b already decided converged=true above before
+          # progressed is even consulted, so handoff is never true when
+          # converged=true.
+          if [ "$ok" = "true" ] && [ "$truncated" = "false" ] && [ "$converged" = "false" ] && [ "$progressed" = "false" ] && [ -z "$converge_sha" ]; then
+            handoff=true
+          fi
           echo "converged=$converged" >> "$GITHUB_OUTPUT"
+          echo "progressed=$progressed" >> "$GITHUB_OUTPUT"
+          echo "handoff=$handoff" >> "$GITHUB_OUTPUT"
           {
             echo "remaining<<WING_COMMANDER_REMAINING_EOF"
             if [ -n "$converge_sha" ]; then
@@ -1969,20 +2009,24 @@ jobs:
           PRIMARY_OK: ${{ steps.outcome.outputs.ok }}
           PRIMARY_TRUNCATED: ${{ steps.outcome.outputs.truncated }}
           PRIMARY_CONVERGED: ${{ steps.outcome.outputs.converged }}
+          PRIMARY_PROGRESSED: ${{ steps.outcome.outputs.progressed }}
+          PRIMARY_HANDOFF: ${{ steps.outcome.outputs.handoff }}
           PRIMARY_REMAINING: ${{ steps.outcome.outputs.remaining }}
           PRIMARY_TIER: ${{ steps.effective-model.outputs.model }}
           RETRY_OK: ${{ steps.retry-outcome.outputs.ok }}
           RETRY_TRUNCATED: ${{ steps.retry-outcome.outputs.truncated }}
           RETRY_CONVERGED: ${{ steps.retry-outcome.outputs.converged }}
+          RETRY_PROGRESSED: ${{ steps.retry-outcome.outputs.progressed }}
+          RETRY_HANDOFF: ${{ steps.retry-outcome.outputs.handoff }}
           RETRY_REMAINING: ${{ steps.retry-outcome.outputs.remaining }}
           PRIMARY_REASON: ${{ steps.outcome.outputs.reason }}
           RETRY_REASON: ${{ steps.retry-outcome.outputs.reason }}
           ESCALATION_MODEL: ${{ inputs.escalation-model }}
         run: |
           if [ "$RETRY_RAN" = "true" ]; then
-            ok="$RETRY_OK"; truncated="$RETRY_TRUNCATED"; converged="$RETRY_CONVERGED"; remaining="$RETRY_REMAINING"; tier="$ESCALATION_MODEL"; reason="$RETRY_REASON"
+            ok="$RETRY_OK"; truncated="$RETRY_TRUNCATED"; converged="$RETRY_CONVERGED"; progressed="$RETRY_PROGRESSED"; handoff="$RETRY_HANDOFF"; remaining="$RETRY_REMAINING"; tier="$ESCALATION_MODEL"; reason="$RETRY_REASON"
           else
-            ok="$PRIMARY_OK"; truncated="$PRIMARY_TRUNCATED"; converged="$PRIMARY_CONVERGED"; remaining="$PRIMARY_REMAINING"; tier="$PRIMARY_TIER"; reason="$PRIMARY_REASON"
+            ok="$PRIMARY_OK"; truncated="$PRIMARY_TRUNCATED"; converged="$PRIMARY_CONVERGED"; progressed="$PRIMARY_PROGRESSED"; handoff="$PRIMARY_HANDOFF"; remaining="$PRIMARY_REMAINING"; tier="$PRIMARY_TIER"; reason="$PRIMARY_REASON"
           fi
           # A retry the API refused before its first model response — e.g. a
           # spend/rate-limit kill, observed live on issue #231's stall notice —
@@ -2017,6 +2061,8 @@ jobs:
             echo "ok=$ok"
             echo "truncated=$truncated"
             echo "converged=$converged"
+            echo "progressed=$progressed"
+            echo "handoff=$handoff"
             echo "tier=$tier"
             echo "reason=$reason"
             echo "remaining<<WING_COMMANDER_REMAINING_EOF"
@@ -2593,6 +2639,7 @@ jobs:
           CONVERGED: ${{ steps.final.outputs.converged }}
           TRUNCATED: ${{ steps.final.outputs.truncated }}
           TRUNCATED_COUNT: ${{ steps.record-truncation.outputs.count }}
+          HANDOFF: ${{ steps.final.outputs.handoff }}
           TIER: ${{ steps.final.outputs.tier }}
           REMAINING: ${{ steps.final.outputs.remaining }}
           SELF_WORKFLOW: ${{ inputs.self-workflow }}
@@ -2603,6 +2650,36 @@ jobs:
           # comment-posting step in this job after that record is computed.
           COST_LINE: ${{ steps.cost-line-progress.outputs.line }}
         run: |
+          # FR-010/D4 (spec 059): the FR-010 hand-off (HANDOFF branch below)
+          # and the cap-reached else branch post the identical shape of
+          # comment and dispatch the same workflow with the same payload
+          # (converged=false) — the reused terminal path (contracts/
+          # convergence-signal.md §4). One home for that body (CLAUDE.md
+          # "Shared logic has exactly one home" applies within a single
+          # script too); only the heading and step-summary line differ.
+          post_handoff_remaining_work() {
+            fence='```'
+            body=$(printf '%s\n' \
+              "$1" \
+              "" \
+              "${fence}markdown" \
+              "$REMAINING" \
+              "$fence" \
+              "" \
+              "Handing off to finalization flagged **converged=false**; the final PR will carry this remaining work for human review." \
+              "" \
+              "_[Final cycle run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})_" \
+              "" \
+              "$COST_LINE")
+            GH_TOKEN="$APP_TOKEN" gh issue comment "$ISSUE" --body "$body"
+            if [ -n "$NEXT_WORKFLOW" ]; then
+              GH_TOKEN="$DISPATCH_TOKEN" gh workflow run "$NEXT_WORKFLOW" \
+                -f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f converged=false
+              echo "$2 — reported remaining work and dispatched $NEXT_WORKFLOW (converged=false)." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "$2 — reported remaining work; no next-workflow configured, stopped (standalone mode)." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          }
           if [ "$CONVERGED" = "true" ]; then
             if [ -n "$NEXT_WORKFLOW" ]; then
               GH_TOKEN="$DISPATCH_TOKEN" gh workflow run "$NEXT_WORKFLOW" \
@@ -2659,6 +2736,16 @@ jobs:
             else
               echo "Iteration cap ($MAX) reached on a truncated cycle — reported; no next-workflow configured, stopped (standalone mode)." >> "$GITHUB_STEP_SUMMARY"
             fi
+          elif [ "$HANDOFF" = "true" ]; then
+            # FR-010 (spec 059, User Story 4): a healthy cycle that checked
+            # no new task and landed no converge: commit is the loop's
+            # natural end — a spec whose only leftovers are human-only work
+            # must not grind to the iteration cap. Takes the SAME terminal
+            # path the cap-reached branch below takes, regardless of
+            # ITERATION vs MAX (research.md D4).
+            post_handoff_remaining_work \
+              "⚠️ **No further progress this cycle** — cycle $ITERATION checked nothing new and landed no convergence commit, so the loop is ending here rather than dispatching another cycle. Remaining work identified by the last convergence pass:" \
+              "Cycle $ITERATION made no progress and landed no converge commit — handing off before the iteration cap ($MAX)"
           elif [ "$ITERATION" -lt "$MAX" ]; then
             if [ -n "$SELF_WORKFLOW" ]; then
               GH_TOKEN="$DISPATCH_TOKEN" gh workflow run "$SELF_WORKFLOW" \
@@ -2682,27 +2769,9 @@ jobs:
               echo "Not converged — no self-workflow configured; reported remaining work to the issue and stopped (standalone mode)." >> "$GITHUB_STEP_SUMMARY"
             fi
           else
-            fence='```'
-            body=$(printf '%s\n' \
+            post_handoff_remaining_work \
               "⚠️ **Iteration cap reached** — cycle $ITERATION of $MAX completed without converging. Remaining work identified by the last convergence pass:" \
-              "" \
-              "${fence}markdown" \
-              "$REMAINING" \
-              "$fence" \
-              "" \
-              "Handing off to finalization flagged **converged=false**; the final PR will carry this remaining work for human review." \
-              "" \
-              "_[Final cycle run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})_" \
-              "" \
-              "$COST_LINE")
-            GH_TOKEN="$APP_TOKEN" gh issue comment "$ISSUE" --body "$body"
-            if [ -n "$NEXT_WORKFLOW" ]; then
-              GH_TOKEN="$DISPATCH_TOKEN" gh workflow run "$NEXT_WORKFLOW" \
-                -f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f converged=false
-              echo "Iteration cap ($MAX) reached without convergence — reported remaining work and dispatched $NEXT_WORKFLOW (converged=false)." >> "$GITHUB_STEP_SUMMARY"
-            else
-              echo "Iteration cap ($MAX) reached without convergence — reported remaining work; no next-workflow configured, stopped (standalone mode)." >> "$GITHUB_STEP_SUMMARY"
-            fi
+              "Iteration cap ($MAX) reached without convergence"
           fi
 
       # Deferred to the job's last steps, one per agent-step chain -- see
