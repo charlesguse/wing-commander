@@ -2257,6 +2257,7 @@ jobs:
       # condition just names the reason (FR-067) and the item is picked up
       # again on a later scheduled run, never polled in a loop here.
       - name: Report the unmet condition (not ready)
+        id: report-unmet
         if: steps.decide.outputs.ready != 'true'
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
@@ -2274,11 +2275,27 @@ jobs:
               --body "$(printf 'PR #%s grew past the board'"'"'s size-and-path backstop by readiness time (measured: %s). The branch/PR are left open, unmerged, under a notice -- this spec request covers finishing the work at the size a human plan should decide.' "$PR_NUMBER" "$MEASURED")" \
               --label spec-request)"
             marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, None, None))")"
-            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Readiness backstop breach on PR #%s (measured: %s) -- a spec-request now covers finishing this at the right size: %s\n\n%s' "$PR_NUMBER" "$MEASURED" "$spec_url" "$marker")"
+            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Readiness backstop breach on PR #%s (measured: %s) -- the branch/PR are left open, unmerged; a spec-request now covers finishing this at the right size.\n\n%s' "$PR_NUMBER" "$MEASURED" "$marker")"
             gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
+            echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
+            echo "measured=$MEASURED" >> "$GITHUB_OUTPUT"
           else
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Not ready on PR #%s: %s. Picked up again on a later run.' "$PR_NUMBER" "$unmet")"
           fi
+
+      # FR-045 (T068): the identical artifact the route job (T028) and the
+      # fix job's own post-push-breach path (T029) already cross-link this
+      # same way -- never a second, hand-written link format for the same
+      # spec-request-artifact shape.
+      - name: Cross-link the readiness-backstop-breach spec-request onto the originating issue
+        if: steps.report-unmet.outputs.spec-url != ''
+        uses: ./.github/actions/wing-commander-outstanding-task-item
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          issue-number: ${{ needs.select.outputs.issue-number }}
+          phrase: "Routed to spec-request"
+          artifact-url: ${{ steps.report-unmet.outputs.spec-url }}
+          context: "(readiness backstop breach, measured=${{ steps.report-unmet.outputs.measured }})"
 
       # T067/FR-047/SC-010: no agent runs in this job, but readiness still
       # takes a durable action (a report or a spec-request) every time it

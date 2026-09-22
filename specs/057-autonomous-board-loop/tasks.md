@@ -933,4 +933,10 @@ removes an earlier story's guarantee.
   `if:` was left as is — T067 scopes "the two stand-downs" to `select`
   only (FR-046/FR-049's own text), not a rewrite of every job's pause
   gating.
-- [ ] T068 Route the readiness job's backstop-breach `spec-request` cross-link (`board-loop.yml`, the `Report the unmet condition (not ready)` step) through `wing-commander-outstanding-task-item`, as the route job and the fix job's post-push-breach path already do for the identical artifact, rather than the hand-written `gh issue comment` link it uses now (`FR-045`, `partial`).
+- [X] T068 Route the readiness job's backstop-breach `spec-request` cross-link (`board-loop.yml`, the `Report the unmet condition (not ready)` step) through `wing-commander-outstanding-task-item`, as the route job and the fix job's post-push-breach path already do for the identical artifact, rather than the hand-written `gh issue comment` link it uses now (`FR-045`, `partial`).
+  **Done**: `Report the unmet condition (not ready)` now outputs `spec-url`/
+  `measured` instead of inlining the URL into its own comment body, and a
+  new `Cross-link the readiness-backstop-breach spec-request onto the
+  originating issue` step posts it through `wing-commander-outstanding-
+  task-item` with the same `Routed to spec-request` phrase the route job
+  (T028) and the fix job's post-push-breach path (T029) already use.
