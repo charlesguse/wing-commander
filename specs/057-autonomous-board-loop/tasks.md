@@ -210,7 +210,7 @@ failure (stays open), an "already fixed" proposal naming a real commit
   exact `TriageVerdict` fields per fixture.
 - [X] T017 [US1] Register `verify-board-triage.py` as the next sequential
   `Gate N — board triage` step in `.github/workflows/lint-workflows.yml`.
-- [ ] T018 [US1] Add the `triage` job to `board-loop.yml`: a
+- [X] T018 [US1] Add the `triage` job to `board-loop.yml`: a
   triage-propose agent step (read-only tool allowlist, web tools never per
   FR-057, the issue body and non-maintainer comments framed as data only
   per FR-055/FR-056, never naming a downstream consumer of this repository
@@ -221,7 +221,7 @@ failure (stays open), an "already fixed" proposal naming a real commit
   `outcome: handover`, record the proposal and named commit, apply
   `board:stalled`, and end the run; on `outcome: proceed`, continue to the
   `route` job (Phase 4).
-- [ ] T019 [US1] Wire the disagreement-recording path in the `triage` job:
+- [X] T019 [US1] Wire the disagreement-recording path in the `triage` job:
   when the triage-propose agent proposes a close the gate's re-derivation
   does not support (e.g. "just a rate limit" against a record with no
   rate-limit evidence), nothing is closed and the disagreement is recorded
