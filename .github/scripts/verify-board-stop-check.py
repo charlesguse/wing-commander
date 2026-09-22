@@ -28,6 +28,7 @@ FIXTURES_DIR = os.path.join(
 EXPECTED_FILES = {
     "maintainer-stop.json", "non-maintainer-stop-ignored.json",
     "no-stop-mentioned.json", "skips-own-run.json",
+    "stale-stop-predates-run.json",
 }
 
 

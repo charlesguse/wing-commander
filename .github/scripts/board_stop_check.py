@@ -31,13 +31,29 @@ def find_stop_request(comments, current_run_id):
     cancel, or None when no authorized, unactioned stop request exists.
 
     A maintainer comment containing the word "stop" is the request
-    (FR-052); the run to cancel is the most recent `**Run:**`-bearing
-    comment's own run ID, excluding current_run_id (never self-cancel,
-    research.md D17)."""
+    (FR-052), but only when it was posted after the most recent
+    `**Run:**`-bearing comment other than this run's own (research.md
+    D17): that comment is the run a stop reply is actually replying to,
+    and a "stop" mention from before it is about an item that has already
+    ended or been superseded -- FR-052 stops the *in-flight* item, not
+    every issue that ever had the word said near it. Without a prior run
+    announcement there is nothing in flight to stop yet."""
     ordered = sorted(comments or [], key=lambda c: c.get("created_at") or "")
+
+    last_run_comment = None
+    for comment in ordered:
+        match = RUN_URL_RE.search(comment.get("body") or "")
+        if match and match.group(1) != str(current_run_id):
+            last_run_comment = comment
+
+    if last_run_comment is None:
+        return None
+    baseline = last_run_comment.get("created_at") or ""
 
     stop_seen = False
     for comment in ordered:
+        if (comment.get("created_at") or "") <= baseline:
+            continue
         if (comment.get("author_association") in MAINTAINER_ASSOCIATIONS
                 and STOP_RE.search(comment.get("body") or "")):
             stop_seen = True
@@ -45,15 +61,8 @@ def find_stop_request(comments, current_run_id):
     if not stop_seen:
         return None
 
-    for comment in reversed(ordered):
-        body = comment.get("body") or ""
-        match = RUN_URL_RE.search(body)
-        if not match:
-            continue
-        run_id = match.group(1)
-        if run_id != str(current_run_id):
-            return run_id
-    return None
+    match = RUN_URL_RE.search(last_run_comment.get("body") or "")
+    return match.group(1) if match else None
 
 
 def main():
