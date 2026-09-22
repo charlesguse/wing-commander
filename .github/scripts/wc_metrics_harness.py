@@ -25,6 +25,7 @@ Nothing here reaches the network. `origin` is a bare repository on disk,
 and its `update` hook is what injects a push rejection when a gate needs
 to prove that two files retry together rather than separately.
 """
+import functools
 import json
 import os
 import shutil
@@ -235,10 +236,41 @@ def make_workspace(work, seed_files=None, reject_pushes=0):
     return origin, repo
 
 
+# The Windows build of jq ends raw (-r) output lines with CRLF, and the
+# shipped composite builds a per-run directory from `jq -r` output
+# (runs/<id>/artifacts.json), so on a Windows checkout every path carries a
+# trailing CR and the three sweep gates fail while CI (Linux) is green (#446).
+# The pipeline targets ubuntu-latest, so nothing shipped changes: this shim is
+# written only where the local jq is observed to emit a CR, and strips it.
+JQ_SHIM = """#!/usr/bin/env bash
+# jq whose lines never end in a carriage return (#446); the real jq is {real}.
+# Only a CR at the end of a line goes: one inside a value is data.
+"{real}" "$@" | sed 's/\\r$//'
+exit "${{PIPESTATUS[0]}}"
+"""
+
+
+@functools.lru_cache(maxsize=1)
+def _jq_emitting_cr():
+    """The real jq's own answer never changes within one process (#449
+    review) -- _bindir() runs once per run_sweep()/run_window() call, and
+    each of Gates 76-78's mutation scenarios calls one of those, so an
+    unmemoized probe re-spawns jq to re-derive an already-known answer."""
+    real = shutil.which("jq")
+    if not real:
+        return None
+    out = subprocess.run([real, "-nr", '"x"'], capture_output=True).stdout
+    return real if b"\r" in out else None
+
+
 def _bindir(work):
     bindir = os.path.join(work, "bin")
     os.makedirs(bindir, exist_ok=True)
     _exec(os.path.join(bindir, "gh"), GH_STUB)
+    real = _jq_emitting_cr()
+    if real:
+        _exec(os.path.join(bindir, "jq"),
+              JQ_SHIM.format(real=real.replace("\\", "/")))
     return bindir
 
 
