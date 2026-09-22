@@ -57,19 +57,27 @@ written down - are still compared in order. Widening every row to a set
 comparison would have been the easy fix and would have thrown away a real
 assertion on the thirteen rows that can hold it.
 
-  3. Every `Bash(.specify/scripts/bash/<script>:*)` grant, in either
-     spelling (with or without a leading `bash `), names a script that
-     exists. Spec Kit stopped shipping `update-agent-context.sh` and
-     both plan sites kept granting it, with the prompt still describing
-     the step it ran (#426). A granted command that does not exist
-     cannot be abused, but it is a stale entry in a load-bearing list,
-     and the next Spec Kit rename would leave the same hole.
+  3. Every `Bash(.specify/scripts/bash/<script>...)` grant - bare, or
+     prefixed with `bash `/`sh `/`./`, with or without a trailing
+     argument before the wildcard - names a script that exists. Spec Kit
+     stopped shipping `update-agent-context.sh` and both plan sites kept
+     granting it, with the prompt still describing the step it ran
+     (#426). A granted command that does not exist cannot be abused, but
+     it is a stale entry in a load-bearing list, and the next Spec Kit
+     rename would leave the same hole. Scoped to `.specify/scripts/bash/`
+     only, the one directory #426 actually hit, and to grants that reach
+     this check through a `wing-commander-tool-args` call site - a script
+     grant rooted elsewhere, or composed through a different mechanism
+     (e.g. a bare `claude_args` string), is not this check's job yet.
 
 WHAT IT DOES NOT CHECK
 ----------------------
 Whether a default list is the RIGHT list. Gate 12 answers that for `gh`
 tools (does the step's token carry the permission the grant implies); this
-gate only answers whether the documentation says what the workflows do.
+gate mostly only answers whether the documentation says what the workflows
+do. Check 3 is the one exception: it reads the granted `.specify` script
+path against the working tree, not the table, so it can fail even when
+documentation and call sites already agree with each other (#426).
 
 SELF-TEST
 ---------
@@ -119,11 +127,13 @@ READ_CAPABLE_LABELS = {
 }
 
 # A grant of a Spec Kit helper script: the two spellings the call sites use
-# (bare, and `bash `-prefixed), plus `sh ` and a `./` path prefix so a
-# re-spelled grant cannot walk around the check. The captured path is
-# checked against the working tree (#426).
+# (bare, and `bash `-prefixed), plus `sh ` and a `./` path prefix, and an
+# optional trailing argument before the wildcard, so a re-spelled grant
+# cannot walk around the check. The captured path is checked against the
+# working tree, case-sensitively even on a case-insensitive filesystem,
+# since Actions runs on Ubuntu (#426, #436 review round 2).
 SCRIPT_GRANT = re.compile(
-    r"^Bash\((?:(?:bash|sh) )?(?:\./)?(\.specify/scripts/bash/[^:\s)]+)(?::\*)?\)$")
+    r"^Bash\((?:(?:bash|sh) )?(?:\./)?(\.specify/scripts/bash/[^:\s)]+)[^)]*\)$")
 
 # What repository guidance (CLAUDE.md's "Before pushing" section) mandates a
 # stage run - hand-maintained alongside CLAUDE.md edits, same as TABLE_DOC/
@@ -375,25 +385,55 @@ def check_mandated_commands(table):
     return failures
 
 
+def _script_exists(root, rel):
+    """Case-sensitive `os.path.isfile`, keyed off the directory listing.
+
+    `os.path.isfile` is case-insensitive on Windows and macOS, but Actions
+    runs this gate on Ubuntu. A case-mangled grant (`Setup-Plan.sh` for the
+    shipped `setup-plan.sh`) would pass `run-local-gates.py` on this
+    repository's own Windows worktrees and then fail only in CI - the exact
+    local-pass/CI-fail divergence this gate exists to prevent (#436 review
+    round 2).
+    """
+    path = os.path.join(root, rel)
+    if not os.path.isfile(path):
+        return False
+    directory, filename = os.path.split(path)
+    try:
+        return filename in os.listdir(directory or ".")
+    except OSError:
+        return False
+
+
 def check_script_grants(sites, root="."):
     """-> list of failure strings.
 
     Every granted `.specify/scripts/bash/<script>` must exist in the
     working tree. Read off the CALL SITES, not the table: the table is
     held to the sites by `compare()`, and the grant that reaches the
-    agent is the site's literal (#426).
+    agent is the site's literal (#426). `exists` memoizes per call: the
+    same script is granted at up to a dozen call sites (`check-
+    prerequisites.sh` alone, across both spellings, at six labels), and
+    the directory listing behind `_script_exists` isn't free to repeat
+    (#436 review round 2).
     """
     failures = []
+    exists = {}
     for label in sorted(sites):
         for tool in sites[label][0]:
             m = SCRIPT_GRANT.match(tool)
-            if m and not os.path.isfile(os.path.join(root, m.group(1))):
+            if not m:
+                continue
+            rel = m.group(1)
+            if rel not in exists:
+                exists[rel] = _script_exists(root, rel)
+            if not exists[rel]:
                 failures.append(
                     "{0!r} grants {1!r}, but {2} does not exist in this "
                     "repository - a stale entry in a load-bearing list; "
                     "drop the grant and any prompt text that describes "
                     "the step it ran (#426).".format(
-                        label, tool, m.group(1)))
+                        label, tool, rel))
     return failures
 
 
@@ -591,18 +631,70 @@ def self_test(root="."):
         print("[FAIL] a grant for a nonexistent .specify script was not caught "
               "in both spellings (expected 2 failures naming it): {0}".format(found))
 
+    # The other two spellings SCRIPT_GRANT accepts (`sh `-prefixed and a
+    # `./`-prefixed path), plus a grant carrying a trailing argument before
+    # the wildcard - none of which the #426 replay above exercises. A
+    # synthetic name, not a real script that merely happens to be absent
+    # today, so this can never start passing for the wrong reason if a
+    # future Spec Kit release ships a same-named file (#436 review round 2).
+    ghost2 = ".specify/scripts/bash/zzz-does-not-exist.sh"
+    for spelling, grant in (
+        ("sh-prefixed", "Bash(sh {0}:*)".format(ghost2)),
+        ("./-prefixed", "Bash(./{0}:*)".format(ghost2)),
+        ("carrying a trailing argument", "Bash({0} --json:*)".format(ghost2)),
+    ):
+        m_sites = dict(sites)
+        allowed, disallowed = m_sites["plan.direct-commit"]
+        m_sites["plan.direct-commit"] = (allowed + [grant], disallowed)
+        found = check_script_grants(m_sites, root)
+        if len(found) == 1 and ghost2 in found[0]:
+            print("[ok] mutation caught: a {0} grant for a .specify script "
+                  "that does not exist".format(spelling))
+        else:
+            bad += 1
+            print("[FAIL] a {0} grant for a nonexistent .specify script was "
+                  "not caught (expected 1 failure naming it): {1}".format(
+                      spelling, found))
+
+    # A grant whose case doesn't match the file on disk must fail here the
+    # same way it fails on Actions' case-sensitive runners, even though
+    # this self-test itself may be running on a case-insensitive filesystem.
+    tmp = tempfile.mkdtemp()
+    try:
+        script_dir = os.path.join(tmp, ".specify", "scripts", "bash")
+        os.makedirs(script_dir)
+        with io.open(os.path.join(script_dir, "setup-plan.sh"), "w",
+                     encoding="utf-8") as fh:
+            fh.write("#!/bin/sh\n")
+        mismatched = {"plan.direct-commit": (
+            ["Bash(.specify/scripts/bash/Setup-Plan.sh:*)"], [])}
+        found = check_script_grants(mismatched, tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if len(found) == 1 and "Setup-Plan.sh" in found[0]:
+        print("[ok] mutation caught: a case-mismatched grant, even on a "
+              "case-insensitive filesystem")
+    else:
+        bad += 1
+        print("[FAIL] a case-mismatched grant was not caught - this check "
+              "would pass locally on Windows/macOS and fail only in CI: "
+              "{0}".format(found))
+
     # A grant for a script that DOES exist is not a failure: the check
-    # reads the working tree, not a list of names.
+    # reads the working tree, not a list of names. `real` can legitimately
+    # be empty (e.g. if a future change moves every `.specify` script grant
+    # off plan.direct-commit) - that is not itself a defect, so it must not
+    # be reported as one; `baseline_scripts` above already covers every
+    # real grant across every site.
     real = [t for t in sites["plan.direct-commit"][0] if SCRIPT_GRANT.match(t)]
-    if real and not check_script_grants(
-            {"plan.direct-commit": (real, [])}, root):
+    found = check_script_grants({"plan.direct-commit": (real, [])}, root)
+    if not found:
         print("[ok] the {0} shipped script grant(s) on plan.direct-commit "
               "pass".format(len(real)))
     else:
         bad += 1
         print("[FAIL] the shipped script grants should pass, got: {0} for "
-              "{1}".format(check_script_grants(
-                  {"plan.direct-commit": (real, [])}, root), real))
+              "{1}".format(found, real))
 
     for name, m_sites, m_table, expect in _mutations(sites, table):
         found = compare(m_sites, m_table, relative)
