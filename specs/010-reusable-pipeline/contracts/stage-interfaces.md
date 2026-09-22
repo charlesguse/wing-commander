@@ -342,6 +342,8 @@ already read-only via its allowed list; see footnote).
 | board-loop | `board-loop.triage-propose` | `Read,Grep,Glob,Bash(git log:*),Bash(git show:*),Bash(cat:*)` (deliberately read-only — board_triage.py, not this step, decides) | `WebSearch,WebFetch,Write,Edit,Bash(git push:*),Bash(gh issue close:*),Bash(gh issue edit:*)` |
 | board-loop | `board-loop.route-propose` | `Read,Grep,Glob,Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(cat:*)` (deliberately read-only — board_route_backstop.py, not this step, decides) | `WebSearch,WebFetch,Write,Edit,Bash(git push:*),Bash(git commit:*)` |
 | board-loop | `board-loop.fixer` | `Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*)` | `WebSearch,WebFetch,Bash(git push:*)` — push is deliberately withheld; a deterministic step pushes only after the local gate suite is green (FR-024) |
+| board-loop | `board-loop.reviewer` | `Read,Grep,Glob,Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(cat:*),Bash(gh pr view:*)` (deliberately read-only — a context-isolated job, FR-028) | `WebSearch,WebFetch,Write,Edit,Bash(git push:*),Bash(git commit:*)` |
+| board-loop | `board-loop.review-fixup` | same as `board-loop.fixer` | same as `board-loop.fixer` — push withheld for the same reason (FR-024 applies to every push this loop makes) |
 
 † `watchdog.diagnose`'s shipped disallowed literal omits `ScheduleWakeup,
 Monitor,SendMessage` (unlike every other stage). This is the actual inline

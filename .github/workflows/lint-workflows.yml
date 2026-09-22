@@ -888,6 +888,10 @@ jobs:
               # pull-request write, the same level as `gh issue close` above.
               ("pr", "close"):       frozenset({("pull-requests", "write")}),
               ("pr", "list"):        frozenset({("pull-requests", "read")}),
+              # board-loop.yml's reviewer step reads the PR's own diff --
+              # GET /repos/{o}/{r}/pulls/{n} with the diff media type, a
+              # pull-requests read like `pr view`.
+              ("pr", "diff"):        frozenset({("pull-requests", "read")}),
               ("pr", "ready"):       frozenset({("pull-requests", "write"),
                                                  ("contents", "write")}),
               ("search", "issues"):  frozenset({("issues", "read")}),

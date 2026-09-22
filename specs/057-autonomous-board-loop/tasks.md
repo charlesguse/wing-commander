@@ -439,7 +439,7 @@ and the PR diff never contains the out-of-scope fix.
 - [X] T038 [US4] Register `verify-board-review-finding-schema.py` as the
   next sequential `Gate N — board review finding schema` step in
   `.github/workflows/lint-workflows.yml`.
-- [ ] T039 [US4] Add the `review` job to `board-loop.yml`: a reviewer
+- [X] T039 [US4] Add the `review` job to `board-loop.yml`: a reviewer
   agent step run as a separate job with no shared transcript, memory, or
   prompt continuation from the fixer's invocation (FR-028, research.md
   D10), prompt input limited to the PR diff, the originating issue's body
@@ -449,22 +449,22 @@ and the PR diff never contains the out-of-scope fix.
   ` ```wing-commander-review-findings ` fenced block from the `.result`
   field of the last `type=="result"` transcript entry
   (contracts/review-and-findings.md "Channel").
-- [ ] T040 [US4] Wire the reviewer's finding-posting step: `gh api
+- [X] T040 [US4] Wire the reviewer's finding-posting step: `gh api
   repos/:owner/:repo/pulls/:number/reviews -f event=COMMENT -F
   body=@review-body.md` — never `APPROVE`/`REQUEST_CHANGES`, which GitHub
   rejects from the PR's own author identity (FR-029, research.md D10) —
   followed by the credential-refresh/metrics-summary pattern (T012).
-- [ ] T041 [US4] Wire `verify-board-review-finding-schema.py`'s
+- [X] T041 [US4] Wire `verify-board-review-finding-schema.py`'s
   `validate_finding()` (T037) into the `review` job to filter malformed
   findings out of the extracted block, dropped and logged (same
   discipline as spec 056's D5/D11).
-- [ ] T042 [US4] Wire the in-scope round loop in `board-loop.yml`: each
+- [X] T042 [US4] Wire the in-scope round loop in `board-loop.yml`: each
   `in_scope: true` finding triggers a fixer follow-up commit on the same
   branch (reusing the fixer step, T032), increments the round count in the
   marker (T010), and re-runs the `review` job (T039) against the new head
   (FR-031) — repeating until zero open in-scope findings or the round
   budget (T013, 5) is spent.
-- [ ] T043 [US4] Wire out-of-scope filing in the `review` job: each
+- [X] T043 [US4] Wire out-of-scope filing in the `review` job: each
   `in_scope: false` finding is filed via
   `wing-commander-durable-failure-issue` with `operation: report`,
   `label: found-by:board-review`, `marker:
@@ -474,7 +474,7 @@ and the PR diff never contains the out-of-scope fix.
   untrusted data (FR-032, FR-059), cross-linked from the originating issue
   via `wing-commander-outstanding-task-item` and never held against the
   PR's readiness.
-- [ ] T044 [US4] Wire round-budget exhaustion in the `review` job: when
+- [X] T044 [US4] Wire round-budget exhaustion in the `review` job: when
   the round budget (T013) is spent with in-scope findings still open,
   leave the PR open and unmerged, post a stall notice on the issue naming
   the remaining findings, and apply `board:stalled` (FR-030) — the notice

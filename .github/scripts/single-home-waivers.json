@@ -57,6 +57,14 @@
       "count": 1,
       "issue": "#408",
       "reason": "specs/057-autonomous-board-loop tasks.md T021 (repoint pr-conversation.yml's classify-and-announce job at the new wing-commander-size-path-backstop composite) is NOT done in this cycle: the inline jq formula sits inside a per-classification-leg `map()` pipeline that also rewrites category/drafted-content based on the over-threshold result, with no existing behavioral test harness (unlike Gate 4's auto-update-spec-kit-tests) to prove a refactor byte-identical -- repointing it blind, under this cycle's own turn budget, was judged too large a regression risk for a live, production routing decision. board-loop.yml's own route job reaches the formula only through the composite. Remove this waiver when T021 lands."
+    },
+    {
+      "file": ".github/workflows/board-loop.yml",
+      "check": "stage-findings",
+      "pattern": "sha256\\(\\.\\.\\.\\) \\+ fingerprint_basis \\+ validate_finding co-occurrence",
+      "count": 1,
+      "issue": "#408",
+      "reason": "specs/057-autonomous-board-loop research.md D12: the review job's out-of-scope filing uses its OWN fingerprint formula, sha256(\"<issue>|<norm(title)>|<norm(file_path)>\") -- deliberately distinct from spec 056's stage-finding formula (sha256(STAGE|norm(file_path)|norm(gate_or_artifact))) per D11's own explanation for why board review needed a second schema/channel in the first place -- and separately calls verify-board-review-finding-schema.py's validate_finding() (T041) to filter malformed findings, the same discipline spec 056's own D5/D11 use, but against a DIFFERENT schema (board-review-finding.schema.json, not stage-finding.schema.json). The three fragments Gate 60 keys on (sha256, fingerprint_basis, validate_finding) are each genuinely present for a genuinely different, unrelated reason than spec 056's mechanism -- structurally similar shell, conceptually distinct feature, exactly the case this waiver mechanism exists for."
     }
   ]
 }
