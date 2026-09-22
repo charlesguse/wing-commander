@@ -175,6 +175,14 @@ DECLARED_HOMES = {
     # exists so a THIRD site cannot paste the formula a second, independent
     # time while T021 is outstanding.
     "size-path-backstop": ".github/actions/wing-commander-size-path-backstop/action.yml",
+    # specs/057-autonomous-board-loop, research.md D14 (T056): the
+    # dispatch-then-correlate-by-attempt-token-then-wait-to-terminal idiom.
+    # auto-release.yml's own dispatch-release job is NOT yet repointed at
+    # this composite (T054, still open -- see the waiver below and issue
+    # #408); board-loop.yml's prove step is, and this check exists so a
+    # THIRD site cannot paste the correlate-and-poll loop a second,
+    # independent time while T054 is outstanding.
+    "dispatch-and-wait": ".github/actions/wing-commander-dispatch-and-wait/action.yml",
 }
 CHECK_NAMES = tuple(DECLARED_HOMES) + ("promotion",)
 
@@ -204,6 +212,17 @@ ISSUE_LOOKUP_RE = re.compile(
     r"--json number\b[^\n]*--jq\b[^\n]*\.\[0\]\.number // empty")
 OUTSTANDING_TASK_RE = re.compile(r'gh issue comment\b[^\n]*"- \[ \] ')
 SIZE_PATH_BACKSTOP_FRAGMENT = r'select(test("^[+-]") and (test("^(\\+\\+\\+|---)") | not))'
+# specs/057-autonomous-board-loop research.md D14: correlating a dispatched
+# run by an attempt-token carried in its own run-name -- never by recency --
+# and then polling it to a terminal status. All four fragments together are
+# the idiom; any one alone is ordinary gh-CLI usage (release.yml's run-name
+# carries "[attempt:" and nothing else here, and is not a second copy).
+DISPATCH_WAIT_FRAGMENTS = (
+    "gh workflow run",
+    "gh run list --workflow=",
+    "displayTitle",
+    "[attempt:",
+)
 VERDICT_FIELDS = ("outcome", "verified_head", "failing_check", "expected",
                   "observed", "evidence_url")
 MODE_TAG_FRAGMENT_RE = re.compile(r"\{\s*mode\s*:\s*\$mode\s*\}")
@@ -415,6 +434,31 @@ def check_size_path_backstop(root="."):
 
 
 # --------------------------------------------------------------------------
+# Check: dispatch-and-wait (file-wide co-occurrence of the correlate-by-
+# attempt-token search and the dispatch that mints it --
+# specs/057-autonomous-board-loop research.md D14)
+# --------------------------------------------------------------------------
+def check_dispatch_and_wait(root="."):
+    home = DECLARED_HOMES["dispatch-and-wait"]
+    # The composite's own tests/run-tests.sh extracts and executes the
+    # shipped shell (Gate 87) rather than restating it, so the whole home
+    # directory -- not just action.yml -- is the one home.
+    home_dir = home.rsplit("/", 1)[0] + "/"
+    findings = []
+    for path in all_subject_files(root):
+        if path == home or path.startswith(home_dir):
+            continue
+        text = read(root, path)
+        if all(fragment in text for fragment in DISPATCH_WAIT_FRAGMENTS):
+            offset = text.find("gh run list --workflow=")
+            findings.append(Finding(
+                path, "dispatch-and-wait", line_of(text, max(offset, 0)),
+                "gh workflow run + gh run list --workflow= + displayTitle + "
+                "[attempt: co-occurrence"))
+    return findings
+
+
+# --------------------------------------------------------------------------
 # Check 3: verdict-shape (file-wide, all six field names near a jq call)
 # --------------------------------------------------------------------------
 def check_verdict_shape(root="."):
@@ -537,6 +581,7 @@ ALL_CHECKS = {
     "outstanding-task-item": check_outstanding_task_item,
     "stage-findings": check_stage_findings,
     "size-path-backstop": check_size_path_backstop,
+    "dispatch-and-wait": check_dispatch_and_wait,
     "verdict-shape": check_verdict_shape,
     "token-mint": check_token_mint,
     "mode-tag-shape": check_mode_tag_shape,
@@ -845,6 +890,15 @@ def _clean_tree(root):
           "runs:\n  using: composite\n  steps:\n"
           "    - shell: bash\n      run: |\n"
           "        select(test(\"^[+-]\") and (test(\"^(\\\\+\\\\+\\\\+|---)\") | not))\n")
+    _write(root, DECLARED_HOMES["dispatch-and-wait"],
+          "runs:\n  using: composite\n  steps:\n"
+          "    - shell: bash\n      run: |\n"
+          "        gh workflow run \"$WORKFLOW_FILE\" -f "
+          "\"attempt-token=${ATTEMPT_TOKEN}\"\n"
+          "        gh run list --workflow=\"$WORKFLOW_FILE\" --json "
+          "databaseId,displayTitle,createdAt,url -L 20\n"
+          "        case \"$row_title\" in *\"[attempt:${ATTEMPT_TOKEN}]\"*) ;; "
+          "*) continue ;; esac\n")
     _write(root, DECLARED_HOMES["verdict-shape"],
           "#!/usr/bin/env bash\n"
           "jq -n '{outcome:$outcome, verified_head:$head, "
@@ -1053,6 +1107,15 @@ def run_selftest():
         "      - shell: bash\n        run: |\n"
         "          jq '[.[] | select(test(\"^[+-]\") and "
         "(test(\"^(\\\\+\\\\+\\\\+|---)\") | not))] | length'\n")
+    selftest_third_paste_fails(
+        "dispatch-and-wait", ".github/workflows/third-dispatch-and-wait.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          gh workflow run other.yml -f \"attempt-token=${token}\"\n"
+        "          rows=\"$(gh run list --workflow=other.yml --json "
+        "databaseId,displayTitle,createdAt,url -L 20)\"\n"
+        "          case \"$row_title\" in *\"[attempt:${token}]\"*) ;; "
+        "*) continue ;; esac\n")
     selftest_third_paste_fails(
         "verdict-shape", ".github/workflows/third-verdict.yml",
         "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"

@@ -59,6 +59,14 @@
       "reason": "specs/057-autonomous-board-loop tasks.md T021 (repoint pr-conversation.yml's classify-and-announce job at the new wing-commander-size-path-backstop composite) is NOT done in this cycle: the inline jq formula sits inside a per-classification-leg `map()` pipeline that also rewrites category/drafted-content based on the over-threshold result, with no existing behavioral test harness (unlike Gate 4's auto-update-spec-kit-tests) to prove a refactor byte-identical -- repointing it blind, under this cycle's own turn budget, was judged too large a regression risk for a live, production routing decision. board-loop.yml's own route job reaches the formula only through the composite. Remove this waiver when T021 lands."
     },
     {
+      "file": ".github/workflows/auto-release.yml",
+      "check": "dispatch-and-wait",
+      "pattern": "gh workflow run \\+ gh run list --workflow= \\+ displayTitle \\+ \\[attempt: co-occurrence",
+      "count": 1,
+      "issue": "#408",
+      "reason": "specs/057-autonomous-board-loop tasks.md T054 (repoint auto-release.yml's dispatch-release job at the new wing-commander-dispatch-and-wait composite) is NOT done in this cycle, and its blocker is specific and checkable: Gate 59 (verify-correlated-release-dispatch.py) checks 3, 4 and 5 assert the correlation search, the tag-state outcome and the wait-for-status all appear in auto-release.yml's OWN raw YAML text -- it is a line-based textual gate over that one file, not an execution harness. Repointing the job moves that shell into the composite and makes Gate 59 fail, so T054 is not a repoint but a coupled redesign of spec 048's own regression gate. dispatch-release also emits six outputs (correlation, correlated-run-id, correlated-run-url, tag-matches, request-time, dispatch-rejected) that its report job branches on, including the three-way found/ambiguous/not-observed distinction and the 90-second fixed wait on the uncorrelated path, none of which this composite's contracted run-url/conclusion pair can carry. board-loop.yml's own prove job reaches the idiom only through the composite. Remove this waiver when T054 lands."
+    },
+    {
       "file": ".github/workflows/board-loop.yml",
       "check": "stage-findings",
       "pattern": "sha256\\(\\.\\.\\.\\) \\+ fingerprint_basis \\+ validate_finding co-occurrence",

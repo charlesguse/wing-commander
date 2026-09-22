@@ -3952,6 +3952,29 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-stop-check.py
 
+      # Gate 87 — specs/057-autonomous-board-loop T055 (research.md D14):
+      # the dispatch-then-correlate-then-wait idiom's own shell, run
+      # extracted from the shipped action.yml against a stub `gh`, so the
+      # three outcomes a caller has to branch on -- a correlated run, a
+      # correlation that never resolved (empty run-url), and a poll budget
+      # spent before the run reached a terminal status (conclusion:
+      # timeout) -- are each proven rather than assumed. The prove step
+      # closes an issue on this composite's conclusion; a silently-empty
+      # correlation must never read as success.
+      - name: Gate 87 — the dispatch-and-wait composite correlates, waits, and times out correctly
+        if: "!cancelled()"
+        run: bash .github/actions/wing-commander-dispatch-and-wait/tests/run-tests.sh
+
+      # Gate 88 — specs/057-autonomous-board-loop (FR-041, research.md
+      # D15): whether a merged fix needs a re-driven run before its issue
+      # closes is a path-based rule, not an agent's judgement. A merge
+      # touching only docs/specs, or only a verify-*.py the merged PR's own
+      # required checks already executed, proves nothing a fresh dispatch
+      # would add; anything else does.
+      - name: Gate 88 — board loop prove resolves actions-only from the merged paths
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-prove.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

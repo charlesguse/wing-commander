@@ -2217,3 +2217,306 @@ jobs:
           else
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Not ready on PR #%s: %s. Picked up again on a later run.' "$PR_NUMBER" "$unmet")"
           fi
+
+  # Phase 9 (User Story 6, contracts/prove-step.md "Entry", FR-041): the
+  # human's merge is what resumes this item -- at the prove step, never by
+  # re-selecting it from the top. This job is the entry gate alone: it
+  # decides whether the closing PR is a board item of this loop's own and
+  # whether it was merged, and it is the ONLY job on the pull_request:
+  # closed trigger path that writes anything when the answer is "closed,
+  # not merged" (User Story 6 scenario 5).
+  prove-gate:
+    if: github.event_name == 'pull_request' && vars.WING_COMMANDER_BOARD_LOOP_PAUSED != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    outputs:
+      issue-number: ${{ steps.gate.outputs.issue-number }}
+      eligible: ${{ steps.gate.outputs.eligible }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Wing Commander context
+        id: ctx
+        uses: ./.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+          private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
+
+      # The PR body is untrusted content (FR-055/FR-056) -- it reaches this
+      # step only through an env var and is only ever pattern-matched for
+      # the `Fixes #N` the fix job itself wrote, never interpreted. Citing
+      # an issue is not sufficient on its own: the issue must also carry
+      # this loop's own board-item marker (contracts/board-item-marker.md),
+      # so an unrelated human PR that happens to say "Fixes #12" can never
+      # drive this loop's prove step.
+      - name: Resolve the originating issue and decide whether prove is entered
+        id: gate
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MERGED: ${{ github.event.pull_request.merged }}
+        run: |
+          set -uo pipefail
+          issue_number="$(python3 -c "
+          import os, re
+          m = re.search(r'(?i)\bfixes #(\d+)', os.environ.get('PR_BODY') or '')
+          print(m.group(1) if m else '')
+          ")"
+
+          eligible=false
+          if [ -z "$issue_number" ]; then
+            echo "PR #$PR_NUMBER cites no issue -- not a board item; prove is not entered." >> "$GITHUB_STEP_SUMMARY"
+            {
+              echo "issue-number="
+              echo "eligible=false"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          gh api "repos/$GITHUB_REPOSITORY/issues/$issue_number/comments" --paginate \
+            --jq '.[] | {created_at, body}' | jq -s '.' > "$RUNNER_TEMP/board-prove-comments.json"
+          has_marker="$(COMMENTS_PATH="$RUNNER_TEMP/board-prove-comments.json" python3 - <<'PYEOF'
+          import json
+          import os
+          import sys
+
+          sys.path.insert(0, ".github/scripts")
+          from board_item_marker import read_marker
+
+          with open(os.environ["COMMENTS_PATH"], encoding="utf-8") as fh:
+              comments = json.load(fh)
+          print("true" if read_marker(comments) else "false")
+          PYEOF
+          )"
+
+          if [ "$has_marker" != "true" ]; then
+            echo "Issue #$issue_number carries no board-item marker -- PR #$PR_NUMBER is not this loop's item; prove is not entered." >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$MERGED" != "true" ]; then
+            # User Story 6 scenario 5: recorded on the issue, and the prove
+            # step is never entered. Nothing is dispatched and nothing is
+            # closed -- the item simply waits for a later run.
+            gh issue comment "$issue_number" -R "$GITHUB_REPOSITORY" \
+              --body "$(printf 'PR #%s was closed without being merged. No proof run was dispatched and this issue stays open.' "$PR_NUMBER")"
+          else
+            eligible=true
+          fi
+
+          {
+            echo "issue-number=$issue_number"
+            echo "eligible=$eligible"
+          } >> "$GITHUB_OUTPUT"
+
+  # Phase 9 (User Story 6, contracts/prove-step.md "Actions-only decision"
+  # and "Re-drive"): behaviour that only runs in Actions is re-driven and
+  # proven before the issue closes (FR-041/FR-042/FR-043). Both the
+  # actions-only decision and the choice of which workflow to re-drive are
+  # board_prove.py's -- deterministic and path-derived (Principle IX), never
+  # an agent's pick.
+  prove:
+    needs: prove-gate
+    if: needs.prove-gate.outputs.eligible == 'true' && vars.WING_COMMANDER_BOARD_LOOP_PAUSED != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+      actions: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Wing Commander context
+        id: ctx
+        uses: ./.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+          private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
+
+      # research.md D15 + contracts/prove-step.md "Re-drive". The
+      # dispatchable set and the uses-graph are read off the checked-out
+      # tree at this exact moment (the merge commit's own tree), so a
+      # wrapper added or removed by the very merge being proven is
+      # accounted for.
+      - name: Decide whether this merge needs a re-driven run, and which
+        id: decide
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -uo pipefail
+          gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json files \
+            --jq '[.files[].path]' > "$RUNNER_TEMP/board-prove-paths.json"
+
+          python3 - <<'PYEOF'
+          import json
+          import os
+          import re
+          import sys
+
+          sys.path.insert(0, ".github/scripts")
+          from board_prove import actions_only, redrive_target
+
+          import yaml
+
+          runner_temp = os.environ["RUNNER_TEMP"]
+          with open(os.path.join(runner_temp, "board-prove-paths.json"), encoding="utf-8") as fh:
+              changed_paths = json.load(fh)
+
+          workflows_dir = ".github/workflows"
+          workflow_ref = re.compile(r"\.github/workflows/[A-Za-z0-9._-]+\.ya?ml")
+          composite_ref = re.compile(r"\.github/actions/[A-Za-z0-9._-]+")
+
+          dispatchable = []
+          uses_graph = {}
+          for name in sorted(os.listdir(workflows_dir)):
+              if not name.endswith((".yml", ".yaml")):
+                  continue
+              path = "{0}/{1}".format(workflows_dir, name)
+              with open(path, encoding="utf-8") as fh:
+                  text = fh.read()
+              try:
+                  doc = yaml.safe_load(text) or {}
+              except yaml.YAMLError:
+                  continue
+              # PyYAML resolves the bare key `on:` to the boolean True.
+              triggers = doc.get("on", doc.get(True)) or {}
+              if isinstance(triggers, dict) and "workflow_dispatch" in triggers:
+                  dispatchable.append(path)
+
+              referenced = set()
+              for match in workflow_ref.findall(text):
+                  if match != path:
+                      referenced.add(match)
+              for directory in composite_ref.findall(text):
+                  for dirpath, _dirs, names in os.walk(directory):
+                      for fname in names:
+                          referenced.add(os.path.join(dirpath, fname).replace(os.sep, "/"))
+              uses_graph[path] = sorted(referenced)
+
+          only, reason = actions_only(changed_paths)
+          target, target_reason = redrive_target(changed_paths, dispatchable, uses_graph)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write("actions-only={0}\n".format("true" if only else "false"))
+              fh.write("reason={0}\n".format(reason))
+              fh.write("redrive-workflow={0}\n".format(target or ""))
+              fh.write("redrive-reason={0}\n".format(target_reason))
+          PYEOF
+
+      # T052/FR-051: the kill switch AND a maintainer stop request, both
+      # re-checked immediately before this job's own next durable action --
+      # closing the issue below, or dispatching a run.
+      - name: Re-check kill switch and stop requests before any durable action
+        id: killswitch-recheck
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          ISSUE_NUMBER: ${{ needs.prove-gate.outputs.issue-number }}
+        run: |
+          set -uo pipefail
+          paused="${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}"
+          state="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json state --jq .state)"
+          if [ "$state" = "CLOSED" ]; then
+            paused=true
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate \
+            --jq '.[] | {body, author_association, created_at}' | jq -s '.' \
+            > "$RUNNER_TEMP/board-stop-check-comments.json"
+          stop_run_id="$(python3 -c "
+          import json, os, sys
+          sys.path.insert(0, '.github/scripts')
+          from board_stop_check import find_stop_request
+          comments = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'board-stop-check-comments.json'), encoding='utf-8'))
+          run_id = find_stop_request(comments, os.environ['GITHUB_RUN_ID'])
+          print(run_id or '')
+          ")"
+          if [ -n "$stop_run_id" ]; then
+            gh run cancel "$stop_run_id" -R "$GITHUB_REPOSITORY" 2>/dev/null || true
+            paused=true
+          fi
+          echo "paused=$paused" >> "$GITHUB_OUTPUT"
+
+      # FR-041 scenario 4: nothing a fresh dispatch would prove that the
+      # merged PR's own required checks did not already prove -- the issue
+      # closes on the merge evidence alone, with the reason recorded.
+      - name: Close the issue on the merge evidence alone
+        if: steps.decide.outputs.actions-only != 'true' && steps.killswitch-recheck.outputs.paused != 'true'
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          ISSUE_NUMBER: ${{ needs.prove-gate.outputs.issue-number }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REASON: ${{ steps.decide.outputs.reason }}
+        run: |
+          set -uo pipefail
+          marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('proven', 0, None, None, None))")"
+          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
+            --body "$(printf 'Closed on the merge of PR #%s alone: %s -- no Actions-only behaviour changed, so a re-driven run would prove nothing this merge did not.\n\n%s' "$PR_NUMBER" "$REASON" "$marker")"
+          gh issue close "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY"
+
+      # FR-042: the re-drive itself. `conclusion` is read from the
+      # composite's own output -- this step never decides the outcome, and
+      # never closes anything.
+      - name: Re-drive the changed behaviour to prove the fix
+        id: redrive
+        if: >-
+          steps.decide.outputs.actions-only == 'true'
+          && steps.decide.outputs.redrive-workflow != ''
+          && steps.killswitch-recheck.outputs.paused != 'true'
+        uses: ./.github/actions/wing-commander-dispatch-and-wait
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          workflow-file: ${{ steps.decide.outputs.redrive-workflow }}
+          attempt-token: ${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Cross-link the proof run onto the originating issue
+        if: steps.redrive.outputs.run-url != ''
+        uses: ./.github/actions/wing-commander-outstanding-task-item
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          issue-number: ${{ needs.prove-gate.outputs.issue-number }}
+          phrase: "Re-driven to prove the fix"
+          artifact-url: ${{ steps.redrive.outputs.run-url }}
+
+      # FR-043's three branches, decided from the composite's own outputs:
+      # success closes citing the run URL and outcome; failure/timeout
+      # leaves the issue open carrying the run URL; an uncorrelated dispatch
+      # (empty run-url, including "no wrapper reaches this change") leaves
+      # the issue open carrying that fact. No branch here ever merges,
+      # approves, or re-dispatches.
+      - name: Record the proof outcome
+        if: steps.decide.outputs.actions-only == 'true' && steps.killswitch-recheck.outputs.paused != 'true'
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          ISSUE_NUMBER: ${{ needs.prove-gate.outputs.issue-number }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ steps.redrive.outputs.run-url }}
+          CONCLUSION: ${{ steps.redrive.outputs.conclusion }}
+          REDRIVE_WORKFLOW: ${{ steps.decide.outputs.redrive-workflow }}
+          REDRIVE_REASON: ${{ steps.decide.outputs.redrive-reason }}
+        run: |
+          set -uo pipefail
+          if [ -z "$RUN_URL" ]; then
+            marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('prove', 0, None, None, None))")"
+            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
+              --body "$(printf 'PR #%s merged, but the proof run could not be correlated (%s). This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_REASON" "$marker")"
+            exit 0
+          fi
+
+          if [ "$CONCLUSION" = "success" ]; then
+            marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('proven', 0, None, None, None))")"
+            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
+              --body "$(printf 'Proven: %s was re-driven after the merge of PR #%s and concluded %s -- %s\n\n%s' "$REDRIVE_WORKFLOW" "$PR_NUMBER" "$CONCLUSION" "$RUN_URL" "$marker")"
+            gh issue close "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY"
+          else
+            marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('prove', 0, None, None, None))")"
+            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
+              --body "$(printf 'Not proven: %s was re-driven after the merge of PR #%s and concluded %s -- %s. This issue stays open.\n\n%s' "$REDRIVE_WORKFLOW" "$PR_NUMBER" "$CONCLUSION" "$RUN_URL" "$marker")"
+          fi
