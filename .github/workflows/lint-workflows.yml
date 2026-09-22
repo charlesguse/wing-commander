@@ -3944,6 +3944,14 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-readiness.py
 
+      # Gate 85 self-test (T066, SC-004): check_no_merge_invariant() catches
+      # every forbidden merge/approve/auto-merge shape and stays silent on a
+      # clean fixture, in both directions -- not just against board-loop.yml
+      # as it stands today.
+      - name: Gate 85 — board loop readiness no-merge invariant catches every forbidden shape
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-readiness.py --self-test
+
       # Gate 86 — specs/057-autonomous-board-loop (research.md D17,
       # FR-052/FR-053): a maintainer's stop comment halts the loop; a
       # non-maintainer's cannot, and the loop never cancels its own

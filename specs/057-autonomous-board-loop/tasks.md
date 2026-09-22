@@ -911,6 +911,11 @@ removes an earlier story's guarantee.
 
 ## Phase 11: Convergence
 
-- [ ] T066 Assert the no-merge invariant structurally over `board-loop.yml` — add a check (extending `.github/scripts/verify-board-readiness.py`, or a sibling gate registered in `lint-workflows.yml`) that fails if any `gh pr merge`, `--auto`, `--merge/--squash/--rebase`, or `event=APPROVE`/`event=REQUEST_CHANGES` call appears anywhere in the workflow, with fixtures in both directions per SC-004 (`FR-068`, `SC-004`, `missing`). The gate's own docstring already claims FR-068 is a hard invariant while none of its six fixtures reads the workflow text, so the claim is currently unenforced.
+- [X] T066 Assert the no-merge invariant structurally over `board-loop.yml` — add a check (extending `.github/scripts/verify-board-readiness.py`, or a sibling gate registered in `lint-workflows.yml`) that fails if any `gh pr merge`, `--auto`, `--merge/--squash/--rebase`, or `event=APPROVE`/`event=REQUEST_CHANGES` call appears anywhere in the workflow, with fixtures in both directions per SC-004 (`FR-068`, `SC-004`, `missing`). The gate's own docstring already claims FR-068 is a hard invariant while none of its six fixtures reads the workflow text, so the claim is currently unenforced.
+  **Done**: `check_no_merge_invariant()` added to `verify-board-readiness.py`,
+  wired into its default run (scans `board-loop.yml`'s raw text for the five
+  forbidden shapes) and into a new `--self-test` mode (registered as a
+  second Gate 85 step in `lint-workflows.yml`) exercising both a clean
+  fixture and one isolated dirty line per forbidden pattern, per SC-004.
 - [ ] T067 Emit a cost line and a durable metrics record on `board-loop.yml`'s agent-free completion paths — the no-op `select` (`SC-009`), the two stand-downs (`FR-046`/`FR-049`), and the `readiness`, `prove-gate` and `prove` jobs — so every run appears in the record "indistinguishable in form from any other stage's" per `SC-010` (`FR-047`, `SC-010`, `partial`). `wing-commander-metrics-summary`'s `transcript-path` is already `required: false`, so a zero-turn record needs no change to the composite.
 - [ ] T068 Route the readiness job's backstop-breach `spec-request` cross-link (`board-loop.yml`, the `Report the unmet condition (not ready)` step) through `wing-commander-outstanding-task-item`, as the route job and the fix job's post-push-breach path already do for the identical artifact, rather than the hand-written `gh issue comment` link it uses now (`FR-045`, `partial`).
