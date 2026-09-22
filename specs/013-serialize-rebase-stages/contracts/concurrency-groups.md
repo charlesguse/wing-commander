@@ -36,19 +36,34 @@ cancelling the holder or being dropped (research.md D4).
 | `implement.yml` | `implement` | `wing-commander-${{ inputs.spec-dir }}` (**unchanged**) |
 | `implement.yml` | dispatch-next-iteration job | `wing-commander-${{ inputs.spec-dir }}` (**unchanged**) |
 | `finalize.yml` | `finalize` | `wing-commander-${{ inputs.spec-dir }}` (**unchanged**) |
+| `tasks.yml` | `stalled`, `stalled-approved` (survivor jobs; mark spec-meta stalled through the chain-stop notice) | `wing-commander-${{ needs.resolve-spec.outputs.spec-dir }}` (joined 2026-09-21, #397) |
+| `cleanup.yml` | `teardown-done`, `teardown-rejected`, `mark-stalled` | `wing-commander-${{ needs.select.outputs.spec-dir }}` (joined 2026-09-21, #397; `select` derives it from `head-ref`) |
 
 Any future published stage that checks out and publishes to a
 specification's `spec/NNN-slug` working branch MUST declare its job-level
 `concurrency.group` as `wing-commander-<spec-dir>` in this same form to
-remain covered by this contract.
+remain covered by this contract. Since #397 this is enforced: Gate 80
+(`verify-spec-branch-push-concurrency.py`) lists every job that can push
+(a `git push` in its own steps, an agent granted `Bash(git push:*)`, or a
+local composite that pushes) and requires the group above or a waiver in
+`.github/scripts/spec-branch-push-waivers.json` stating what the job
+pushes and why that is not a spec-branch write. The full, current list of
+waived jobs lives only in that file — Gate 80 reads it directly, and every
+waiver is itself stale-checked (a waiver naming a job that no longer
+exists, or no longer pushes, fails the gate). It is not duplicated here:
+a hand-maintained second copy is exactly how this table's own "Non-members"
+list (below) silently fell out of sync with the waivers file as later
+entries were filed only in the JSON (found by the code review of #438).
 
-## Non-members (MUST NOT be folded into the canonical group)
+## Non-members (the two original exceptions predating the waiver
+mechanism; MUST NOT be folded into the canonical group — see
+`.github/scripts/spec-branch-push-waivers.json` for these two plus every
+later waiver)
 
 | Workflow | Job | Group | Why excluded |
 |---|---|---|---|
 | `intake.yml` | `intake` | `wing-commander-intake` | No specification slug exists yet (FR-005) |
 | `clarify.yml` | `clarify` | `wing-commander-${{ inputs.issue-number }}` | Keyed to the lifecycle issue, not a `spec/NNN-slug` branch (FR-005) |
-| `cleanup.yml` | all three outcome jobs | `wing-commander-cleanup-${{ inputs.head-ref }}` | Runs only after a specification's terminal stage; not a contender for the rebase-vs-stage collision this spec fixes (research.md D5) |
 
 ## `resolve-spec` job contract (new, `plan.yml` and `tasks.yml` only)
 

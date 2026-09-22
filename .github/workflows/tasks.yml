@@ -1537,6 +1537,16 @@ jobs:
   # refusal-reporting step performs.
   stalled:
     needs: [verify-image-prerequisites, resolve-spec, tasks]
+    # Marks spec-meta stalled on the spec branch through the chain-stop
+    # notice, so it joins the per-spec group the way implement.yml's and
+    # finalize.yml's survivor jobs already do (#397, found by Gate 80).
+    # When resolve-spec itself failed this output is empty and the group
+    # below is not the spec's; the notice step then gets an empty spec-dir
+    # and posts without the mark rather than push unordered (review of
+    # PR #438).
+    concurrency:
+      group: wing-commander-${{ needs.resolve-spec.outputs.spec-dir }}
+      cancel-in-progress: false
     if: |
       needs.verify-image-prerequisites.result != 'failure' &&
       inputs.mode == 'generate' &&
@@ -1661,7 +1671,9 @@ jobs:
         with:
           token: ${{ steps.ctx.outputs.token }}
           issue-number: ${{ steps.issuelookup.outputs.issue }}
-          spec-dir: ${{ steps.identity.outputs.spec-dir }}
+          # #397: only mark under the per-spec lock -- see the job's
+          # concurrency block above.
+          spec-dir: ${{ needs.resolve-spec.outputs.spec-dir }}
           spec-branch: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug }}
           reason: ${{ steps.reason.outputs.reason }}
           # FR-015: resume-oriented wording when the agent ran and a step
@@ -1675,6 +1687,11 @@ jobs:
   # above, against tasks-approved.
   stalled-approved:
     needs: [verify-image-prerequisites, resolve-spec, tasks-approved]
+    # Marks spec-meta stalled on the spec branch through the chain-stop
+    # notice, so it joins the per-spec group -- see above in this file.
+    concurrency:
+      group: wing-commander-${{ needs.resolve-spec.outputs.spec-dir }}
+      cancel-in-progress: false
     if: |
       needs.verify-image-prerequisites.result != 'failure' &&
       inputs.mode == 'approved' &&
@@ -1793,7 +1810,9 @@ jobs:
         with:
           token: ${{ steps.ctx.outputs.token }}
           issue-number: ${{ steps.issuelookup.outputs.issue }}
-          spec-dir: ${{ steps.identity.outputs.spec-dir }}
+          # #397: only mark under the per-spec lock -- see the job's
+          # concurrency block above.
+          spec-dir: ${{ needs.resolve-spec.outputs.spec-dir }}
           spec-branch: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug }}
           reason: ${{ steps.reason.outputs.reason }}
           restart-command: "Re-dispatch the tasks stage for this specification once the cause above is resolved."

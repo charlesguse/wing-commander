@@ -346,6 +346,7 @@ jobs:
     outputs:
       outcome: ${{ steps.pick.outputs.outcome }}
       default-branch: ${{ steps.defbranch.outputs.name }}
+      spec-dir: ${{ steps.pick.outputs.spec-dir }}
     steps:
       # Spec edge case 3: never assume `main` — take the input or derive.
       - name: Resolve default branch
@@ -389,6 +390,23 @@ jobs:
               ;;
           esac
           echo "outcome=$outcome" >> "$GITHUB_OUTPUT"
+          # #397: the spec directory the outcome jobs' concurrency group is
+          # keyed on. Derived here because a job-level `concurrency:` can
+          # read `needs.*` outputs but not a step of its own. Same prefix
+          # stripping as mark-stalled's "Resolve spec" step, which repeats
+          # it with validation and still refuses to guess. A ref with no
+          # known prefix leaves this empty and `outcome` is `none`, so no
+          # job runs; a ref whose slug does not validate still runs its
+          # outcome job, which fails at that step before any push.
+          slug=""
+          case "$HEAD_REF" in
+            "${SPEC_PREFIX}"*)       slug="${HEAD_REF#"$SPEC_PREFIX"}" ;;
+            "${SPEC_DRAFT_PREFIX}"*) slug="${HEAD_REF#"$SPEC_DRAFT_PREFIX"}" ;;
+            "${PLAN_PREFIX}"*)       slug="${HEAD_REF#"$PLAN_PREFIX"}" ;;
+            "${TASKS_PREFIX}"*)      slug="${HEAD_REF#"$TASKS_PREFIX"}" ;;
+            "${IMPL_PREFIX}"*)       slug="${HEAD_REF#"$IMPL_PREFIX"}"; slug="${slug%-iter*}" ;;
+          esac
+          echo "spec-dir=${slug:+specs/$slug}" >> "$GITHUB_OUTPUT"
           echo "Closed PR (head=$HEAD_REF, base=$BASE_REF, merged=$MERGED) → cleanup outcome: **$outcome**." >> "$GITHUB_STEP_SUMMARY"
 
   # The pipeline's most common outcome — a merged final PR tears itself down
@@ -421,8 +439,17 @@ jobs:
       pull-requests: write
       issues: write
       id-token: write
+    # #397: the per-spec group every spec-branch writer shares (specs/013's
+    # contract), not a group keyed on the closed PR's head ref. Spec 013's
+    # D5 kept cleanup out of it on the assumption that cleanup runs only
+    # after a spec's terminal stage; closing a plan or tasks PR mid-cycle
+    # is not terminal, and mark-stalled's push onto the spec branch was
+    # unordered against a running implement or rebase on the same branch.
+    # The two teardown jobs delete spec branches, so they queue here too.
+    # Gate 80 (verify-spec-branch-push-concurrency.py) holds every
+    # pusher to this form.
     concurrency:
-      group: wing-commander-cleanup-${{ inputs.head-ref }}
+      group: wing-commander-${{ needs.select.outputs.spec-dir }}
       cancel-in-progress: false
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
@@ -981,8 +1008,9 @@ jobs:
       pull-requests: write
       issues: write
       id-token: write
+    # The per-spec concurrency group (#397) -- see above in this file.
     concurrency:
-      group: wing-commander-cleanup-${{ inputs.head-ref }}
+      group: wing-commander-${{ needs.select.outputs.spec-dir }}
       cancel-in-progress: false
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
@@ -1231,8 +1259,9 @@ jobs:
       pull-requests: write
       issues: write
       id-token: write
+    # The per-spec concurrency group (#397) -- see above in this file.
     concurrency:
-      group: wing-commander-cleanup-${{ inputs.head-ref }}
+      group: wing-commander-${{ needs.select.outputs.spec-dir }}
       cancel-in-progress: false
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
