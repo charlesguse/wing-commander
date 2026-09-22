@@ -723,6 +723,13 @@ jobs:
           case "$outcome" in
             closed) marker_step="closed" ;;
             handover) marker_step="stalled" ;;
+            # "route" is informational only (FR-044): select's own
+            # step-derivation forces step back to "triage" whenever
+            # branch/pr are still empty, which they always are the moment
+            # triage finishes -- an interrupted run resumes by re-running
+            # triage (cheap and deterministic, so a repeat costs a turn,
+            # never a second branch/PR, FR-054), it does not resume at
+            # route.
             *) marker_step="route" ;;
           esac
           marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('$marker_step', 0, None, None, None))")"
@@ -2495,7 +2502,7 @@ jobs:
           import sys
 
           sys.path.insert(0, ".github/scripts")
-          from board_prove import actions_only, redrive_target
+          from board_prove import actions_only, is_safe_redrive_target, redrive_target
 
           import yaml
 
@@ -2522,7 +2529,14 @@ jobs:
               # PyYAML resolves the bare key `on:` to the boolean True.
               triggers = doc.get("on", doc.get(True)) or {}
               if isinstance(triggers, dict) and "workflow_dispatch" in triggers:
-                  dispatchable.append(path)
+                  wd = triggers.get("workflow_dispatch") or {}
+                  wd_inputs = wd.get("inputs") if isinstance(wd, dict) else None
+                  # Never offer a target the composite could dispatch but
+                  # never correlate, or that gh would reject outright for
+                  # a missing required input (board_prove.py's own
+                  # is_safe_redrive_target contract).
+                  if is_safe_redrive_target(text, wd_inputs or {}):
+                      dispatchable.append(path)
 
               referenced = set()
               for match in workflow_ref.findall(text):

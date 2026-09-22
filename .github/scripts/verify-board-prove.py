@@ -7,7 +7,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from board_prove import actions_only, redrive_target  # noqa: E402
+from board_prove import actions_only, is_safe_redrive_target, redrive_target  # noqa: E402
 
 CASES = [
     (["docs/setup.md", "specs/999-example-feature/spec.md"], False),
@@ -15,6 +15,26 @@ CASES = [
     ([".github/workflows/board-loop.yml"], True),
     ([".github/scripts/board_triage.py"], True),
     (["docs/setup.md", ".github/workflows/board-loop.yml"], True),
+]
+
+# is_safe_redrive_target(): a candidate missing attempt-token correlation
+# support, or carrying another required input the composite has no way to
+# supply, must never be offered to redrive_target() -- the composite could
+# dispatch it but never observe the result, or gh would reject the
+# dispatch outright.
+SAFE_TARGET_CASES = [
+    ("run-name: 'release ${{ inputs.attempt-token }}'\non:\n  workflow_dispatch:\n"
+     "    inputs:\n      attempt-token:\n        required: true\n",
+     {"attempt-token": {"required": True}}, True),
+    ("name: plan\non:\n  workflow_dispatch: {}\n", {}, False),
+    ("run-name: 'release ${{ inputs.attempt-token }}'\non:\n  workflow_dispatch:\n"
+     "    inputs:\n      attempt-token:\n        required: true\n"
+     "      version:\n        required: true\n",
+     {"attempt-token": {"required": True}, "version": {"required": True}}, False),
+    ("run-name: 'release ${{ inputs.attempt-token }}'\non:\n  workflow_dispatch:\n"
+     "    inputs:\n      attempt-token:\n        required: true\n"
+     "      breaking:\n        required: false\n",
+     {"attempt-token": {"required": True}, "breaking": {"required": False}}, True),
 ]
 
 # contracts/prove-step.md "Re-drive": which workflow proves the change.
@@ -66,6 +86,15 @@ def run():
                   "{1}, got {2} ({3}).".format(changed_paths, expected, got, reason))
         else:
             print("[ok] {0}: redrive={1} ({2})".format(changed_paths, got, reason))
+
+    for workflow_text, inputs, expected in SAFE_TARGET_CASES:
+        got = is_safe_redrive_target(workflow_text, inputs)
+        if got != expected:
+            failures += 1
+            print("::error::verify-board-prove: is_safe_redrive_target({0!r}, {1!r}): "
+                  "expected {2}, got {3}.".format(workflow_text, inputs, expected, got))
+        else:
+            print("[ok] is_safe_redrive_target(...): {0}".format(got))
 
     print("verify-board-prove: {0} failure(s).".format(failures))
     return 1 if failures else 0
