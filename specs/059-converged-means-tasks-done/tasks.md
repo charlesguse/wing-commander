@@ -428,27 +428,27 @@ here.
 
 ## Phase 7: Polish & Cross-Cutting Concerns
 
-- [ ] T028 Correct `.github/workflows/implement.yml`'s header comment
+- [X] T028 Correct `.github/workflows/implement.yml`'s header comment
   (lines 5-9) and its "Failure detection + convergence signal" comment
   (lines 1151-1164) to describe the shipped rule (FR-015): `converged`
   now requires zero outstanding unchecked tasks at the tip, not merely the
   absence of a `converge:` commit; note the FR-010 zero-progress hand-off
   path explicitly, since it is new terminal behaviour reached before the
   cap.
-- [ ] T029 Correct `.github/workflows/implement.yml`'s cycle prompt
+- [X] T029 Correct `.github/workflows/implement.yml`'s cycle prompt
   (~896-915) and retry prompt (~1485-1507), and any preceding framing text
   in those prompt blocks that explains the old converge:-commit-only rule
   to the agent, to describe the new signal (FR-015) — without adding any
   instruction to keep working while turns remain (FR-011 remains
   unmodified; this task only corrects what the prompt *describes*).
-- [ ] T030 Correct `docs/architecture.md`'s Stage 4 section (lines
+- [X] T030 Correct `docs/architecture.md`'s Stage 4 section (lines
   467-500, specifically the commit-range-walk rationale at 486-490) to
   describe the tasks.md-checkbox-driven rule, and retire or restate the
   risk-table row at line 1330 ("Converge 'unchanged tasks.md' is
   syntactic, not semantic | Iteration cap + final converge report always
   posted to the issue") since this feature replaces that mitigation with
   the signal itself (FR-016).
-- [ ] T031 Extend Gate 81 with a `MUTATIONS` table (mirroring
+- [X] T031 Extend Gate 81 with a `MUTATIONS` table (mirroring
   `verify-truncated-cycle-carry-forward.py`'s `_mut_*`/`MUTATIONS`
   pattern, FR-020, SC-008): (a) a mutation reverting the decision to
   consult only `converge_sha` (dropping the unchecked-count check) — must
@@ -462,16 +462,16 @@ here.
   `verify-truncated-cycle-carry-forward.py`'s `main()` already does: if the
   mutation's target text no longer exists in the current shipped step, the
   gate must error "mutation inapplicable" rather than silently pass.
-- [ ] T032 Add a `check_gate_wired()` self-test to Gate 81 (mirroring
+- [X] T032 Add a `check_gate_wired()` self-test to Gate 81 (mirroring
   Gate 30's): confirm the "Gate 81 — …" step exists in
   `.github/workflows/lint-workflows.yml`, is not `if: false`, and its
   `run:` line names `verify-tasks-checkbox-convergence-signal.py`'s exact
   path.
-- [ ] T033 `grep -rn` across `.github/workflows/`, `.github/actions/`, and
+- [X] T033 `grep -rn` across `.github/workflows/`, `.github/actions/`, and
   `docs/` for any remaining description of "no converge: commit ⇒
   converged" (or equivalent phrasing) after T028-T030; confirm none
   remains anywhere on the branch (SC-009).
-- [ ] T034 Run `python .github/scripts/run-local-gates.py` for the full
+- [X] T034 Run `python .github/scripts/run-local-gates.py` for the full
   suite: confirm Gate 81 (with its complete scenario table and mutation
   battery) and every other gate, including Gate 30 per T008's fixture
   audit, pass together.
