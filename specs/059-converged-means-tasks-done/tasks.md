@@ -230,7 +230,7 @@ must come out true.
 story is a set of properties the Phase 3 implementation must already
 satisfy by construction, verified by fixtures).
 
-- [ ] T011 [US2] Extend Gate 81's scenario table with: (a) a fixture where
+- [X] T011 [US2] Extend Gate 81's scenario table with: (a) a fixture where
   `CYCLE_RESULT=success` and the tip's `tasks.md` still has unchecked
   tasks ⇒ `converged=false` regardless of `CYCLE_RESULT`/verdict wording
   (US2 acceptance scenario 1 — since T005/T007 never read those fields to
@@ -243,7 +243,7 @@ satisfy by construction, verified by fixtures).
   arm's own base (US2 acceptance scenario 3, FR-007) — this fixture also
   becomes the target for Phase 7's "mutation applied to only one arm"
   mutation (SC-008).
-- [ ] T012 [US2] Add a "single home" structural check to Gate 81
+- [X] T012 [US2] Add a "single home" structural check to Gate 81
   (research.md D2's closing paragraph, modeled on Gate 61's
   `verify-spec-meta-single-home.py`): fail if the fence-aware
   checkbox-counting `awk` idiom introduced in T002 appears anywhere in
@@ -255,7 +255,7 @@ satisfy by construction, verified by fixtures).
   Phase 5 (T014) replaces by reusing this feature's composite outputs
   rather than leaving Arm A's separate grep in place — confirm after
   Phase 5 lands that this structural check has nothing left to flag there.
-- [ ] T013 [US2] Run `python .github/scripts/run-local-gates.py`; confirm
+- [X] T013 [US2] Run `python .github/scripts/run-local-gates.py`; confirm
   Gate 81's new fixtures and structural check pass.
 
 **Checkpoint**: The convergence decision is proven, not merely
