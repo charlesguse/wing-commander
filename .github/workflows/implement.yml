@@ -1229,6 +1229,7 @@ jobs:
           CHECKED_BASE: ${{ steps.checkbox-base-cycle.outputs.checked-count }}
           CHECKED_TIP: ${{ steps.checkbox-tip-cycle.outputs.checked-count }}
           UNCHECKED_TIP: ${{ steps.checkbox-tip-cycle.outputs.unchecked-count }}
+          REMAINING_TIP: ${{ steps.checkbox-tip-cycle.outputs.unchecked-items }}
           # The second alternative rides only on a RESOLVED slug: with an
           # empty slug the pattern would degrade to `claude\[bot\]|\[bot\]`,
           # which matches ANY bot - github-actions[bot] included (PR #258
@@ -1310,7 +1311,6 @@ jobs:
           fi
           echo "ok=$ok" >> "$GITHUB_OUTPUT"
           echo "truncated=$truncated" >> "$GITHUB_OUTPUT"
-          echo "reason=$reason" >> "$GITHUB_OUTPUT"
           converged=""
           converge_sha=""
           handoff=false
@@ -1348,14 +1348,43 @@ jobs:
           if [ "$ok" = "true" ] && [ "$truncated" = "false" ] && [ "$converged" = "false" ] && [ "$progressed" = "false" ] && [ -z "$converge_sha" ]; then
             handoff=true
           fi
+          # FR-013 (spec 059): the non-convergence reason narrative, gained
+          # here as the healthy-cycle counterpart of the failed/truncated
+          # reasons already set above (data-model.md's "Non-convergence
+          # reason"). Left untouched when the cycle failed or truncated —
+          # those reasons already stand.
+          if [ "$ok" = "true" ] && [ "$truncated" = "false" ] && [ "$converged" = "false" ]; then
+            if [ "$handoff" = "true" ]; then
+              reason="the cycle checked nothing new, so the loop is ending here rather than dispatching another cycle"
+            else
+              parts=()
+              if [ -n "$converge_sha" ]; then
+                parts+=("converge appended new work")
+              fi
+              if [ "$progressed" = "true" ]; then
+                parts+=("the cycle ended with tasks outstanding")
+              fi
+              if [ "${#parts[@]}" -eq 2 ]; then
+                reason="${parts[0]} and ${parts[1]}"
+              else
+                reason="${parts[0]}"
+              fi
+            fi
+          fi
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
           echo "converged=$converged" >> "$GITHUB_OUTPUT"
           echo "progressed=$progressed" >> "$GITHUB_OUTPUT"
           echo "handoff=$handoff" >> "$GITHUB_OUTPUT"
+          echo "Cycle: tasks.md unchecked-count at tip = ${UNCHECKED_TIP:-0}, progressed=${progressed:-n/a}." >> "$GITHUB_STEP_SUMMARY"
           {
             echo "remaining<<WING_COMMANDER_REMAINING_EOF"
-            if [ -n "$converge_sha" ]; then
-              git show "$converge_sha" -- "$SPEC_DIR/tasks.md" | grep '^+' | grep -v '^+++' | sed 's/^+//'
-            fi
+            # D6 (spec 059): the tip's own outstanding-item text, not a
+            # converge-commit diff -- covers both non-convergence reasons
+            # without double-listing (a converge:-appended phase is, by
+            # construction, additional unchecked lines already present at
+            # the tip) and is never empty on the no-converge-commit path
+            # (FR-012).
+            printf '%s' "$REMAINING_TIP"
             echo "WING_COMMANDER_REMAINING_EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -1850,6 +1879,7 @@ jobs:
           CHECKED_BASE: ${{ steps.checkbox-base-retry.outputs.checked-count }}
           CHECKED_TIP: ${{ steps.checkbox-tip-retry.outputs.checked-count }}
           UNCHECKED_TIP: ${{ steps.checkbox-tip-retry.outputs.unchecked-count }}
+          REMAINING_TIP: ${{ steps.checkbox-tip-retry.outputs.unchecked-items }}
         run: |
           # Arm B below must not count commits the branch merely IMPORTED
           # from the default branch: an auto-rebase makes main's commits -
@@ -1925,7 +1955,6 @@ jobs:
           fi
           echo "ok=$ok" >> "$GITHUB_OUTPUT"
           echo "truncated=$truncated" >> "$GITHUB_OUTPUT"
-          echo "reason=$reason" >> "$GITHUB_OUTPUT"
           converged=""
           converge_sha=""
           handoff=false
@@ -1965,14 +1994,39 @@ jobs:
           if [ "$ok" = "true" ] && [ "$truncated" = "false" ] && [ "$converged" = "false" ] && [ "$progressed" = "false" ] && [ -z "$converge_sha" ]; then
             handoff=true
           fi
+          # FR-013 (spec 059): the non-convergence reason narrative, mirroring
+          # the cycle arm's identical block above (data-model.md's
+          # "Non-convergence reason"). Left untouched when the retry failed
+          # or truncated — those reasons already stand.
+          if [ "$ok" = "true" ] && [ "$truncated" = "false" ] && [ "$converged" = "false" ]; then
+            if [ "$handoff" = "true" ]; then
+              reason="the cycle checked nothing new, so the loop is ending here rather than dispatching another cycle"
+            else
+              parts=()
+              if [ -n "$converge_sha" ]; then
+                parts+=("converge appended new work")
+              fi
+              if [ "$progressed" = "true" ]; then
+                parts+=("the cycle ended with tasks outstanding")
+              fi
+              if [ "${#parts[@]}" -eq 2 ]; then
+                reason="${parts[0]} and ${parts[1]}"
+              else
+                reason="${parts[0]}"
+              fi
+            fi
+          fi
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
           echo "converged=$converged" >> "$GITHUB_OUTPUT"
           echo "progressed=$progressed" >> "$GITHUB_OUTPUT"
           echo "handoff=$handoff" >> "$GITHUB_OUTPUT"
+          echo "Retry: tasks.md unchecked-count at tip = ${UNCHECKED_TIP:-0}, progressed=${progressed:-n/a}." >> "$GITHUB_STEP_SUMMARY"
           {
             echo "remaining<<WING_COMMANDER_REMAINING_EOF"
-            if [ -n "$converge_sha" ]; then
-              git show "$converge_sha" -- "$SPEC_DIR/tasks.md" | grep '^+' | grep -v '^+++' | sed 's/^+//'
-            fi
+            # D6 (spec 059): the tip's own outstanding-item text, not a
+            # converge-commit diff -- see the cycle arm's identical change
+            # above (FR-012).
+            printf '%s' "$REMAINING_TIP"
             echo "WING_COMMANDER_REMAINING_EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -2640,6 +2694,7 @@ jobs:
           TRUNCATED: ${{ steps.final.outputs.truncated }}
           TRUNCATED_COUNT: ${{ steps.record-truncation.outputs.count }}
           HANDOFF: ${{ steps.final.outputs.handoff }}
+          REASON: ${{ steps.final.outputs.reason }}
           TIER: ${{ steps.final.outputs.tier }}
           REMAINING: ${{ steps.final.outputs.remaining }}
           SELF_WORKFLOW: ${{ inputs.self-workflow }}
@@ -2659,9 +2714,15 @@ jobs:
           # script too); only the heading and step-summary line differ.
           post_handoff_remaining_work() {
             fence='```'
+            reason_line=""
+            # FR-013 (spec 059): name the reason so a reader can tell "the
+            # spec grew" from "the cycle ran short" from "the loop is
+            # ending here" without opening the branch.
+            [ -n "$REASON" ] && reason_line="**Why:** $REASON."
             body=$(printf '%s\n' \
               "$1" \
               "" \
+              "$reason_line" \
               "${fence}markdown" \
               "$REMAINING" \
               "$fence" \
@@ -2753,9 +2814,12 @@ jobs:
               echo "Not converged — dispatched $SELF_WORKFLOW iteration $((ITERATION + 1)) of $MAX." >> "$GITHUB_STEP_SUMMARY"
             else
               fence='```'
+              reason_line=""
+              [ -n "$REASON" ] && reason_line="**Why:** $REASON."
               body=$(printf '%s\n' \
                 "🔁 **Cycle $ITERATION completed without converging.** Remaining work identified by the convergence pass:" \
                 "" \
+                "$reason_line" \
                 "${fence}markdown" \
                 "$REMAINING" \
                 "$fence" \
