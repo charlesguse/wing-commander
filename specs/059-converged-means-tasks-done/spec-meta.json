@@ -2,8 +2,8 @@
   "issue": 450,
   "spec_dir": "specs/059-converged-means-tasks-done",
   "feature_num": "059",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 2,
   "spec_branch": "spec/059-converged-means-tasks-done",
-  "pending_re_review_from": ["charlesguse"]
+  "pending_re_review_from": []
 }
