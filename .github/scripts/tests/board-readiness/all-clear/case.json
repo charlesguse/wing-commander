@@ -1,0 +1,13 @@
+{
+  "snapshot": {
+    "headRefOid": "aaaa111",
+    "statusCheckRollup": [
+      {"name": "lint", "workflowName": "lint · workflows", "status": "COMPLETED", "conclusion": "SUCCESS"},
+      {"name": "harness-tests", "workflowName": "lint · workflows", "status": "COMPLETED", "conclusion": "SUCCESS"}
+    ]
+  },
+  "open_in_scope_findings": 0,
+  "backstop_holds": true,
+  "kill_switch_paused": false,
+  "expected": {"ready": true, "reason_contains": null}
+}

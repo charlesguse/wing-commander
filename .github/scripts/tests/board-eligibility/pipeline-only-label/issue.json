@@ -1,0 +1,8 @@
+{
+  "number": 1004,
+  "author": {"login": "wing-commander-watchdog-bot"},
+  "authorAssociation": "NONE",
+  "labels": [{"name": "pipeline-defect"}],
+  "state": "OPEN",
+  "createdAt": "2026-01-04T00:00:00Z"
+}

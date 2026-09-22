@@ -1,0 +1,11 @@
+{
+  "cited_run_transcript_path": ".github/scripts/tests/board-triage/already-fixed-proposal/transcript.json",
+  "cited_run_commit_sha": null,
+  "workflow_files": [],
+  "agent_proposal": {
+    "close": true,
+    "ground": "already_fixed_proposal",
+    "proposed_commit_sha": "abc123def4567890abc123def4567890abc1234",
+    "reasoning": "This looks already fixed by abc123def on main."
+  }
+}

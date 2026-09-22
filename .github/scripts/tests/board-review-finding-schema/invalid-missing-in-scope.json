@@ -1,0 +1,6 @@
+{
+  "title": "in_scope missing",
+  "what": "The finding omits the in_scope field entirely.",
+  "evidence": {"file_paths": ["a.py"]},
+  "fingerprint_basis": {"file_path": "a.py", "gate_or_artifact": "example"}
+}

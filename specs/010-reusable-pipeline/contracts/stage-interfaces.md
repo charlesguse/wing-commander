@@ -339,13 +339,18 @@ already read-only via its allowed list; see footnote).
 | watchdog | `watchdog.diagnose` | `Read,Grep,Bash(gh:*),Bash(git log:*),Bash(git diff:*)` (deliberately read-only) | `WebSearch,WebFetch,Write,Edit,Bash(git commit:*),Bash(git push:*)` † |
 | pr-conversation | `pr-conversation.classify` | `Read,Grep,Glob,Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(cat:*),Bash(gh pr view:*),Bash(gh issue view:*),Bash(gh search issues:*)` (deliberately read-only) | `Write,Edit,WebSearch,WebFetch,Bash(git push:*),Bash(git commit:*),ScheduleWakeup,Monitor,SendMessage` |
 | pr-conversation | `pr-conversation.act` | `Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(git checkout:*),Bash(git switch:*),Bash(git branch:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue create:*),Bash(gh issue edit:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(gh pr create:*),Bash(gh pr edit:*),Bash(gh api:*),Bash(gh label create:*),Bash(gh search issues:*),Bash(gh search prs:*)` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
+| board-loop | `board-loop.triage-propose` | `Read,Grep,Glob,Bash(git log:*),Bash(git show:*),Bash(cat:*)` (deliberately read-only — board_triage.py, not this step, decides) | `WebSearch,WebFetch,Write,Edit,Bash(git push:*),Bash(gh issue close:*),Bash(gh issue edit:*)` |
+| board-loop | `board-loop.route-propose` | `Read,Grep,Glob,Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(cat:*)` (deliberately read-only — board_route_backstop.py, not this step, decides) | `WebSearch,WebFetch,Write,Edit,Bash(git push:*),Bash(git commit:*)` |
+| board-loop | `board-loop.fixer` | `Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*)` | `WebSearch,WebFetch,Bash(git push:*)` — push is deliberately withheld; a deterministic step pushes only after the local gate suite is green (FR-024) |
+| board-loop | `board-loop.reviewer` | `Read,Grep,Glob,Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(cat:*),Bash(gh pr view:*)` (deliberately read-only — a context-isolated job, FR-028) | `WebSearch,WebFetch,Write,Edit,Bash(git push:*),Bash(git commit:*)` |
+| board-loop | `board-loop.review-fixup` | same as `board-loop.fixer` | same as `board-loop.fixer` — push withheld for the same reason (FR-024 applies to every push this loop makes) |
 
 † `watchdog.diagnose`'s shipped disallowed literal omits `ScheduleWakeup,
 Monitor,SendMessage` (unlike every other stage). This is the actual inline
 value in `watchdog.yml` today; it is carried verbatim so a consumer who sets
 none of the four tool-list inputs gets a byte-for-byte identical list (SC-005).
 
-Sources: `.github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase,watchdog,pr-conversation}.yml`
+Sources: `.github/workflows/{intake,clarify,plan,tasks,implement,finalize,cleanup,rebase,watchdog,pr-conversation,board-loop}.yml`
 (`claude_args:` blocks, now composed via the `wing-commander-tool-args`
 composite action). A future change that edits a stage's default list must
 update this table in the same change — the composite action reads these as

@@ -152,6 +152,7 @@ Create these labels (Issues → Labels):
 | `model:opus` | Opt this spec's implementation into `claude-opus-5` |
 | `disposition:confirmed` | **Watchdog precision.** A maintainer applying this to a `pipeline-defect` issue records that the finding was genuine |
 | `disposition:false-positive` | The counterpart: the watchdog's finding was not a real defect |
+| `board:stalled` | Applied by the board loop (`board-loop.yml`) on round-budget exhaustion, a post-push backstop breach, or an already-fixed hand-over — excludes the issue from selection until a human removes the label, the sole condition that re-admits it |
 
 `spec:<NNN-slug>` and `stage:stalled` labels are created on the fly by the
 pipeline — no need to pre-create those, and the same goes for the watchdog's
@@ -179,6 +180,7 @@ gh label create stage:done      --color 5319E7 --description "Lifecycle complete
 gh label create model:opus      --color D93F0B --description "Use claude-opus-5 for implementation"
 gh label create disposition:confirmed      --color 0E8A16 --description "Watchdog finding confirmed genuine by a maintainer"
 gh label create disposition:false-positive --color B60205 --description "Watchdog finding judged a false positive by a maintainer"
+gh label create board:stalled               --color B60205 --description "Board loop hand-over: a human decision is needed before this item resumes"
 ```
 
 ## 5. Smoke test

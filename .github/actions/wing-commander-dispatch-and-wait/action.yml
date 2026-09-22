@@ -1,0 +1,150 @@
+# Single home for the dispatch-then-correlate-then-wait-to-terminal idiom
+# (specs/057-autonomous-board-loop research.md D14): extracted from
+# auto-release.yml's dispatch-release job (attempt-token correlation, `gh
+# workflow run` + poll-by-title-and-timestamp, wait on status to
+# completed) so board-loop.yml's own prove step (T059/T060, re-driving
+# whichever Actions-only workflow a merged fix changed) reuses the same
+# correlate-and-poll idiom rather than a second, independently-drifting
+# copy.
+#
+# auto-release.yml's own dispatch-release job is NOT yet repointed at this
+# composite (specs/057-autonomous-board-loop tasks.md T054) -- see that
+# task's own note and the waiver in single-home-waivers.json: its `report`
+# job reads six distinct outputs (correlation, correlated-run-id,
+# correlated-run-url, tag-matches, request-time, dispatch-rejected) this
+# composite's own contracted shape (run-url, conclusion) does not carry, so
+# a byte-identical repoint is a genuine outputs-contract redesign, not a
+# mechanical swap.
+name: wing-commander-dispatch-and-wait
+description: >
+  Dispatches a workflow, correlates the resulting run by an attempt-token
+  embedded in its own run-name (never by recency), waits for that run to
+  reach a terminal status, and reports its conclusion.
+
+inputs:
+  token:
+    description: Token with actions:write on this repository
+    required: true
+  workflow-file:
+    description: The workflow file to dispatch, e.g. release.yml
+    required: true
+  workflow-inputs:
+    description: >
+      JSON object of workflow_dispatch inputs, passed as `-f key=value`
+      pairs. attempt-token (below) is added automatically -- the target
+      workflow's own run-name must embed it via an expression reading
+      inputs.attempt-token, the same way release.yml's own run-name does,
+      or correlation can never succeed.
+    required: false
+    default: "{}"
+  attempt-token:
+    description: >
+      Correlation token, e.g. a combination of the calling run's own ID
+      and attempt number -- unique across this repository's run history by GitHub's own
+      guarantee, so two callers can never mint the same token.
+    required: true
+  poll-attempts:
+    description: Correlation-search attempts before giving up (5s apart)
+    required: false
+    default: "12"
+  poll-interval-seconds:
+    description: Seconds between wait-for-terminal-status polls
+    required: false
+    default: "10"
+  wait-attempts:
+    description: Wait-for-terminal-status attempts (poll-interval-seconds apart)
+    required: false
+    default: "60"
+
+outputs:
+  run-url:
+    description: The correlated run's URL, or empty if correlation was ambiguous/absent
+    value: ${{ steps.watch.outputs.run-url }}
+  conclusion:
+    description: The correlated run's terminal conclusion, or 'timeout' if the wait budget was exhausted, or empty if never correlated
+    value: ${{ steps.watch.outputs.conclusion }}
+
+runs:
+  using: composite
+  steps:
+    - name: Dispatch and correlate
+      id: watch
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        WORKFLOW_FILE: ${{ inputs.workflow-file }}
+        WORKFLOW_INPUTS: ${{ inputs.workflow-inputs }}
+        ATTEMPT_TOKEN: ${{ inputs.attempt-token }}
+        POLL_ATTEMPTS: ${{ inputs.poll-attempts }}
+        POLL_INTERVAL_SECONDS: ${{ inputs.poll-interval-seconds }}
+        WAIT_ATTEMPTS: ${{ inputs.wait-attempts }}
+      run: |
+        set -uo pipefail
+
+        request_time="$(date -u +%s)"
+
+        mapfile -t dispatch_args < <(printf '%s' "$WORKFLOW_INPUTS" | jq -r 'to_entries[] | "-f" , (.key + "=" + (.value | tostring))')
+
+        correlation="not-observed"
+        correlated_run_id=""
+        run_url=""
+        conclusion=""
+
+        if ! gh workflow run "$WORKFLOW_FILE" "${dispatch_args[@]}" -f "attempt-token=${ATTEMPT_TOKEN}"; then
+          echo "::error::wing-commander-dispatch-and-wait: gh workflow run $WORKFLOW_FILE was rejected."
+        else
+          attempt=0
+          while [ "$attempt" -lt "$POLL_ATTEMPTS" ]; do
+            rows="$(gh run list --workflow="$WORKFLOW_FILE" --json databaseId,displayTitle,createdAt,url -L 20 2>/dev/null || true)"
+            count=0
+            match_id=""
+            match_url=""
+            while IFS=$'\t' read -r row_id row_title row_created row_url; do
+              [ -n "$row_id" ] || continue
+              case "$row_title" in
+                *"[attempt:${ATTEMPT_TOKEN}]"*) ;;
+                *) continue ;;
+              esac
+              created_epoch="$(date -u -d "$row_created" +%s 2>/dev/null || echo 0)"
+              if [ "$created_epoch" -ge "$request_time" ]; then
+                count=$((count + 1))
+                match_id="$row_id"
+                match_url="$row_url"
+              fi
+            done < <(printf '%s' "$rows" | jq -r '.[] | [.databaseId, .displayTitle, .createdAt, .url] | @tsv')
+
+            if [ "$count" -eq 1 ]; then
+              correlation="found"
+              correlated_run_id="$match_id"
+              run_url="$match_url"
+              break
+            elif [ "$count" -ge 2 ]; then
+              correlation="ambiguous"
+              break
+            fi
+
+            attempt=$((attempt + 1))
+            [ "$attempt" -lt "$POLL_ATTEMPTS" ] && sleep 5
+          done
+        fi
+
+        if [ "$correlation" = "found" ]; then
+          wait_attempt=0
+          status=""
+          while [ "$wait_attempt" -lt "$WAIT_ATTEMPTS" ]; do
+            status="$(gh run view "$correlated_run_id" --json status --jq .status 2>/dev/null || echo "")"
+            [ "$status" = "completed" ] && break
+            wait_attempt=$((wait_attempt + 1))
+            sleep "$POLL_INTERVAL_SECONDS"
+          done
+          if [ "$status" = "completed" ]; then
+            conclusion="$(gh run view "$correlated_run_id" --json conclusion --jq .conclusion 2>/dev/null || echo "")"
+          else
+            conclusion="timeout"
+          fi
+        fi
+
+        {
+          echo "run-url=$run_url"
+          echo "conclusion=$conclusion"
+        } >> "$GITHUB_OUTPUT"
