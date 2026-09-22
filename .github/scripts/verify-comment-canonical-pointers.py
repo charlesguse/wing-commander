@@ -9,20 +9,24 @@ the rule is one a reviewer has to remember.
 WHAT IT CHECKS, over `#` comments in .github/workflows/*.yml
 -----------------------------------------------------------
 (a) EVERY POINTER RESOLVES. `-- see` marks a pointer; if the text after it
-    names a `NAME.yml` / `NAME.yaml` / `.../NAME.md`, that file must exist.
-    Same-file pointers (`-- see above in this file.`) name nothing to
-    resolve and are exempt.
+    names a `NAME.yml` / `NAME.yaml` / `.../NAME.md` / `NAME.py`, that file
+    must exist. A bare `NAME.py` resolves under .github/scripts/, the same
+    way a bare `NAME.yml` resolves under .github/workflows/ (#439 review --
+    a pointer at a gate script's own docstring, the canonical home for
+    that script's self-test regression list, is a real, intended target,
+    not only workflow-to-workflow prose). Same-file pointers (`-- see
+    above in this file.`) name nothing to resolve and are exempt.
 
 (b) EVERY CROSS-FILE POINTER'S TOPIC SHOWS UP AT THE TARGET. Resolving a
     path proves the file exists, not that the pointer aims at the right
     thing. So the sentence before `-- see` is stripped of stopwords and at
     least one remaining 4+-letter word must appear, whole-word, at the
-    target (its comments for a workflow, its full text for a `.md`). A
-    generic overlap test, deliberately not a list of expected phrases --
-    a list goes stale silently (#149, wc_gate_registry.py). It works
-    because a real pointer and its target describe the same thing in the
-    same words; a misaimed one shares no vocabulary. Same-file pointers
-    are vacuous here and exempt.
+    target (its comments for a workflow, its full text for a `.md` or
+    `.py`). A generic overlap test, deliberately not a list of expected
+    phrases -- a list goes stale silently (#149, wc_gate_registry.py). It
+    works because a real pointer and its target describe the same thing in
+    the same words; a misaimed one shares no vocabulary. Same-file
+    pointers are vacuous here and exempt.
 
 (c) EVERY CANONICAL MARKER IS POINTED AT. Pointers ship in two phrasings:
     the `-- see FILE.` form above, and `(see intake.yml)` / `(see intake
@@ -48,6 +52,7 @@ import sys
 import tempfile
 
 WORKFLOWS_DIR = ".github/workflows"
+SCRIPTS_DIR = ".github/scripts"
 
 POINTER_MARK = re.compile(r"--\s*see\b", re.IGNORECASE)
 # Both fragments together, not just "(canonical copy" alone: a rationale
@@ -57,10 +62,14 @@ POINTER_MARK = re.compile(r"--\s*see\b", re.IGNORECASE)
 # phantom marker instance. Every real marker in this repo carries both.
 CANONICAL_MARK_PARTS = ("(canonical copy", "do not condense")
 
-# A concrete file the pointer names: `something.yml`, `something.yaml`, or
-# a (possibly path-qualified) `something.md`. Bounded by \b so a trailing
-# sentence period ("clarify.yml.") is never swallowed into the match.
-TARGET_RE = re.compile(r"([A-Za-z0-9_][A-Za-z0-9_./-]*\.(?:ya?ml|md))\b")
+# A concrete file the pointer names: `something.yml`, `something.yaml`,
+# `something.py`, or a (possibly path-qualified) `something.md`. Bounded by
+# \b so a trailing sentence period ("clarify.yml.") is never swallowed into
+# the match. `.py` added #439 review: a pointer at a gate script's own
+# docstring (the canonical home for that script's self-test regression
+# list, say) was silently unvalidated before -- TARGET_RE never matched it,
+# so extract_pointers() never even tried to resolve it.
+TARGET_RE = re.compile(r"([A-Za-z0-9_][A-Za-z0-9_./-]*\.(?:ya?ml|md|py))\b")
 
 # The second, narrower pointer phrasing this repo actually ships for the
 # per-stage metrics-summary duplication -- see part (c) in the module
@@ -175,9 +184,12 @@ def significant_words(text):
 def resolve_target_path(root, target):
     """A pointer target string -> the path it names, repo-relative rules:
     a name with a "/" is repo-root-relative (specs/.../research.md); a bare
-    name (clarify.yml) lives in .github/workflows/."""
+    `.py` name (verify-x.py) lives in .github/scripts/ (#439 review); any
+    other bare name (clarify.yml) lives in .github/workflows/."""
     if "/" in target:
         return os.path.join(root, target)
+    if target.endswith(".py"):
+        return os.path.join(root, SCRIPTS_DIR, target)
     return os.path.join(root, WORKFLOWS_DIR, target)
 
 
@@ -402,6 +414,28 @@ def self_test():
         clean_c, _ = check_canonical_markers(td)
         check("canonical marker justified by an on-topic pointer",
               not clean_c, f"got {clean_c!r}")
+
+        # A bare `.py` target resolves under .github/scripts/, not
+        # .github/workflows/ (#439 review) -- a pointer at a gate script's
+        # own docstring, sharing real vocabulary with the pointing comment.
+        script_dir = os.path.join(td, SCRIPTS_DIR)
+        os.makedirs(script_dir, exist_ok=True)
+        _write(os.path.join(script_dir, "verify-example-gate.py"), (
+            '"""Gate N -- checks widget frobnication.\n\n'
+            "SELF-TEST\n---------\nEach mutation the self-test replays is "
+            "listed once, here.\n\"\"\"\n"))
+        _write(os.path.join(wf, "good-py.yml"), (
+            "on: push\n"
+            "jobs:\n"
+            "  a:\n"
+            "    steps:\n"
+            "      # the mutation list -- see verify-example-gate.py.\n"
+            "      - run: echo good\n"))
+        py_p, _ = check_pointers(td)
+        check("a bare .py pointer resolves under .github/scripts/",
+              not py_p, f"got {py_p!r}")
+        os.remove(os.path.join(script_dir, "verify-example-gate.py"))
+        os.remove(os.path.join(wf, "good-py.yml"))
 
         # Defect 1 (check a): a pointer naming a file that does not exist.
         _write(os.path.join(wf, "bad-target.yml"), (

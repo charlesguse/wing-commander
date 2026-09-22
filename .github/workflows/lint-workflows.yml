@@ -1764,6 +1764,11 @@ jobs:
       # was not meant to change.
       - name: implement.yml's exhausted-retry stall notice reads exactly as before
         run: python3 .github/scripts/verify-implement-stall-notice-unchanged.py
+      # #410 item 3: the gate above had no self-test. The regressions it
+      # reintroduces are listed once, in the script's own SELF-TEST
+      # section -- see verify-implement-stall-notice-unchanged.py.
+      - name: The exhausted-retry stall-notice gate detects a reworded, deleted or reshaped pinned step, a missing pin, and a dependency-reason script that drifts on either branch
+        run: python3 .github/scripts/verify-implement-stall-notice-unchanged.py --self-test
 
       # Gate 16 — every agent step's execution log survives the agent's own
       # failure. `anthropics/claude-code-action` writes its transcript to

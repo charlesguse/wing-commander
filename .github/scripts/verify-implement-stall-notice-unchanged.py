@@ -33,12 +33,27 @@ branch never emits the pre-existing "never started" phrase, and that the
 regression pin research.md calls for: this feature's wording change must
 land only on the new branch).
 
+SELF-TEST (#410 item 3)
+-----------------------
+`--self-test` reintroduces each regression this gate exists to catch and
+asserts it is caught, for the right reason: a pinned step's `run:` reworded,
+a pinned step deleted, a pinned step's `uses:` reshaped, a pin missing from
+the fixture, and a dependency-reason script that drifts on either branch
+(the agent-ran branch rendering the never-started phrase; the unset branch
+no longer rendering it byte-for-byte). The pinned-step mutations are made
+on a parsed copy of implement.yml and re-serialised, so the comparison
+under test is the one the gate ships; the script mutations are handed to
+the same harness run the gate uses.
+
 Usage: python3 .github/scripts/verify-implement-stall-notice-unchanged.py
+       python3 .github/scripts/verify-implement-stall-notice-unchanged.py --self-test
 """
 import json
 import os
 import sys
 import tempfile
+
+import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import find_step, resolve_bash, run_step  # noqa: E402
@@ -62,7 +77,6 @@ STALL_REASON_COMPOSITE = ".github/actions/wing-commander-stall-reason/action.yml
 
 
 def find_step_in_text(text, name):
-    import yaml
     wf = yaml.safe_load(text) or {}
     for job in (wf.get("jobs") or {}).values():
         for step in (job or {}).get("steps") or []:
@@ -80,8 +94,65 @@ def load_baseline():
                  f"baseline: {e}")
 
 
-def check_dependency_reason_branch():
-    """Execute the shipped "Determine which dependency did not start" script.
+def check_pinned_steps(new_text, baseline):
+    """-> failures: the three pinned steps in `new_text` vs the fixture."""
+    failures = []
+    for name in STEP_NAMES:
+        old_step = baseline.get(name)
+        new_step = find_step_in_text(new_text, name)
+        if old_step is None:
+            failures.append(f"{name!r} not pinned in {FIXTURE} — update "
+                            f"the fixture or the step name list together "
+                            f"with this gate.")
+            continue
+        if new_step is None:
+            failures.append(f"{name!r} no longer exists in {STAGE} — the "
+                            f"exhausted-retry notice path was removed, not "
+                            f"just left untouched.")
+            continue
+        old_run = old_step.get("run")
+        new_run = new_step.get("run")
+        if old_run is not None and new_run != old_run:
+            failures.append(
+                f"{name!r}'s `run:` text changed since the pinned baseline "
+                f"— Out of Scope / research.md D7 requires this step's "
+                f"wording stay byte-for-byte unchanged. If the reword was "
+                f"intentional, regenerate the fixture on purpose, in its "
+                f"own reviewed change.")
+        # uses:/with: shape (the "Announce" step calls a composite, no run:)
+        for key in ("uses", "with"):
+            if old_step.get(key) != new_step.get(key):
+                failures.append(
+                    f"{name!r}'s `{key}:` changed since the pinned baseline: "
+                    f"{old_step.get(key)!r} -> {new_step.get(key)!r}.")
+    return failures
+
+
+def shipped_dependency_script():
+    """-> (script, failures): the composite's shipped `run:` block, or why not.
+
+    `find_step` never returns None on a miss -- it exits the process itself,
+    with its own generic "no step named" message (#439 review). The lookup
+    against STAGE below is kept for that loud-failure side effect (the step
+    vanishing from implement.yml entirely still stops the run, just with
+    that more generic message instead of the one this function used to
+    return). Only the composite lookup's `run:` block can be legitimately
+    absent while the step itself still exists -- reshaped into a `uses:`
+    call, say -- so only that case is reported through the (script,
+    failures) return convention `check_dependency_reason_branch` expects.
+    """
+    find_step(STAGE, DEPENDENCY_STEP_NAME)
+    step = find_step(STALL_REASON_COMPOSITE, DEPENDENCY_STEP_NAME)
+    script = step.get("run")
+    if not script:
+        return None, [f"{DEPENDENCY_STEP_NAME!r} has no `run:` block in "
+                      f"{STALL_REASON_COMPOSITE} — the dependency-diagnosis step "
+                      f"was removed or reshaped."]
+    return script, []
+
+
+def check_dependency_reason_branch(script=None):
+    """Execute the "Determine which dependency did not start" script.
 
     Two cases, matching quickstart.md §5: agent-ran == 'true' must never
     render the pre-existing never-started phrase and must name the agent's
@@ -91,20 +162,20 @@ def check_dependency_reason_branch():
     Second maintainer review of PR #407 (CLAUDE.md single-home rule): the
     step in implement.yml is now a `uses:` call to
     wing-commander-stall-reason, not an inline `run:` block -- this gate
-    executes the composite's own shipped copy instead, confirming
-    implement.yml's `if:` guard is unchanged as a structural check below
-    (main()), and covering the behavior once here rather than re-testing it
-    identically at all six call sites (the composite has exactly one body).
+    executes the composite's own shipped copy instead, confirming the step
+    still exists in implement.yml and still has a `run:` block in the
+    composite (shipped_dependency_script; this does NOT inspect the step's
+    `if:` guard -- nothing in this file does, #439 review), and covering
+    the behavior once here rather than re-testing it identically at all six
+    call sites (the composite has exactly one body).
+
+    `script` overrides the shipped block; the self-test hands in drifted
+    copies so the assertions below are proven to fire.
     """
-    if find_step(STAGE, DEPENDENCY_STEP_NAME) is None:
-        return [f"{DEPENDENCY_STEP_NAME!r} not found in {STAGE} -- the "
-                f"dependency-diagnosis step was removed."]
-    step = find_step(STALL_REASON_COMPOSITE, DEPENDENCY_STEP_NAME)
-    script = step.get("run") if step else None
-    if not script:
-        return [f"{DEPENDENCY_STEP_NAME!r} has no `run:` block in "
-                f"{STALL_REASON_COMPOSITE} — the dependency-diagnosis step "
-                f"was removed or reshaped."]
+    if script is None:
+        script, failures = shipped_dependency_script()
+        if failures:
+            return failures
 
     bash = resolve_bash()
     failures = []
@@ -195,43 +266,117 @@ def check_dependency_reason_branch():
     return failures
 
 
-def main():
+def run():
     baseline = load_baseline()
     with open(STAGE, encoding="utf-8") as fh:
         new_text = fh.read()
+    return check_pinned_steps(new_text, baseline) + check_dependency_reason_branch()
 
-    failures = []
-    for name in STEP_NAMES:
-        old_step = baseline.get(name)
-        new_step = find_step_in_text(new_text, name)
-        if old_step is None:
-            failures.append(f"{name!r} not pinned in {FIXTURE} — update "
-                            f"the fixture or the step name list together "
-                            f"with this gate.")
-            continue
-        if new_step is None:
-            failures.append(f"{name!r} no longer exists in {STAGE} — the "
-                            f"exhausted-retry notice path was removed, not "
-                            f"just left untouched.")
-            continue
-        old_run = old_step.get("run")
-        new_run = new_step.get("run")
-        if old_run is not None and new_run != old_run:
-            failures.append(
-                f"{name!r}'s `run:` text changed since the pinned baseline "
-                f"— Out of Scope / research.md D7 requires this step's "
-                f"wording stay byte-for-byte unchanged. If the reword was "
-                f"intentional, regenerate the fixture on purpose, in its "
-                f"own reviewed change.")
-        # uses:/with: shape (the "Announce" step calls a composite, no run:)
-        for key in ("uses", "with"):
-            if old_step.get(key) != new_step.get(key):
-                failures.append(
-                    f"{name!r}'s `{key}:` changed since the pinned baseline: "
-                    f"{old_step.get(key)!r} -> {new_step.get(key)!r}.")
 
-    failures.extend(check_dependency_reason_branch())
+# --------------------------------------------------------------------------
+# Self-test (#410 item 3)
+# --------------------------------------------------------------------------
+def _mutated_stage_text(edit):
+    """implement.yml parsed, `edit(step)` applied to each pinned step, and
+    re-serialised. The gate's own parser reads the result, so what is under
+    test is the shipped comparison, not a string the test invented. An edit
+    returning "delete" removes the step."""
+    with open(STAGE, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh)
+    for job in (doc.get("jobs") or {}).values():
+        steps = (job or {}).get("steps") or []
+        for step in list(steps):
+            if (step or {}).get("name") in STEP_NAMES and edit(step) == "delete":
+                steps.remove(step)
+    return yaml.safe_dump(doc, sort_keys=False)
 
+
+# Drifted dependency-reason scripts: one renders the never-started phrase on
+# the agent-ran branch (the regression spec 052 forbids), one drops it from
+# the unset branch (the pin spec 041 keeps). Both are otherwise well-formed.
+ALWAYS_NEVER_STARTED = (
+    'echo "reason=' + NEVER_STARTED_PHRASE + '" >> "$GITHUB_OUTPUT"\n')
+NEVER_NEVER_STARTED = (
+    'echo "reason=the agent ran and ended with conclusion \'failure\' '
+    '(failed step: \'push\'; credential re-establishment failed)" '
+    '>> "$GITHUB_OUTPUT"\n')
+
+
+def self_test():
+    problems = []
+
+    def expect(label, failures, *substrings):
+        joined = " | ".join(failures)
+        if failures and all(s in joined for s in substrings):
+            print(f"[ok] {label}")
+        else:
+            problems.append(f"{label}: expected failure(s) containing "
+                            f"{list(substrings)}, got: {failures or 'clean'}")
+
+    baseline = load_baseline()
+    clean = run()
+    if clean:
+        problems.append("the shipped tree should be clean, got: " + " | ".join(clean))
+    else:
+        print("[ok] baseline: the shipped implement.yml matches the pin and the "
+              "dependency-reason script behaves")
+
+    # The re-serialised, UNmutated text must still pass: otherwise every
+    # mutation below would fail for a reason that is not the mutation.
+    identity = check_pinned_steps(_mutated_stage_text(lambda s: None), baseline)
+    if identity:
+        problems.append("the re-serialised implement.yml no longer matches the "
+                        "pin, so the mutations below cannot be trusted: "
+                        + " | ".join(identity))
+    else:
+        print("[ok] the parse/dump round trip of implement.yml matches the pin")
+
+    def reword(step):
+        if step.get("run") is not None:
+            step["run"] = step["run"] + "\necho reworded\n"
+    expect("a pinned step's `run:` reworded",
+           check_pinned_steps(_mutated_stage_text(reword), baseline),
+           "`run:` text changed")
+
+    expect("a pinned step deleted",
+           check_pinned_steps(_mutated_stage_text(lambda s: "delete"), baseline),
+           "no longer exists")
+
+    def reshape(step):
+        if step.get("uses") is not None:
+            step["uses"] = "./.github/actions/something-else"
+    expect("a pinned step's `uses:` reshaped",
+           check_pinned_steps(_mutated_stage_text(reshape), baseline),
+           "`uses:` changed")
+
+    with open(STAGE, encoding="utf-8") as fh:
+        shipped_text = fh.read()
+    short = dict(baseline)
+    short.pop(STEP_NAMES[0])
+    expect("a pin missing from the fixture",
+           check_pinned_steps(shipped_text, short), "not pinned")
+
+    expect("a dependency-reason script rendering the never-started phrase on "
+           "the agent-ran branch",
+           check_dependency_reason_branch(ALWAYS_NEVER_STARTED),
+           "still rendered the never-started phrase")
+
+    expect("a dependency-reason script dropping the pinned phrase on the "
+           "agent-ran-unset branch",
+           check_dependency_reason_branch(NEVER_NEVER_STARTED),
+           "changed from the pinned never-started phrase")
+
+    for p in problems:
+        print(f"::error::{p}")
+    print(f"implement.yml exhausted-retry notice self-test: {len(problems)} "
+          f"failure(s).")
+    return 1 if problems else 0
+
+
+def main():
+    if "--self-test" in sys.argv[1:]:
+        sys.exit(self_test())
+    failures = run()
     for f in failures:
         print(f"::error::{f}")
     print(f"implement.yml exhausted-retry notice: {len(STEP_NAMES)} step(s) "
