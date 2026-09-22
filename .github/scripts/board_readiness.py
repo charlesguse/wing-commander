@@ -23,14 +23,18 @@ CONDITIONS = ("checks_green", "gate_suite_green", "zero_open_findings",
 
 
 def _checks_green(head_sha, rollup):
-    """FR-036/FR-037: every rollup entry belongs to head_sha; an empty
-    rollup is not green (a docs-only PR with no triggered checks is never
-    reported ready)."""
+    """FR-036/FR-037: an empty rollup is not green (a docs-only PR with no
+    triggered checks is never reported ready), and every entry must have
+    reached a terminal, non-failing state. Freshness against head_sha
+    (FR-036) comes from the caller fetching `headRefOid` and
+    `statusCheckRollup` together in one `gh pr view` call, never a value
+    this run captured earlier -- `gh` does not expose a per-entry commit
+    SHA to re-check here (confirmed against both CheckRun and legacy
+    StatusContext shapes, neither of which carries one), so head_sha is
+    accepted, not re-verified, per entry."""
     if not rollup:
         return False
     for entry in rollup:
-        if entry.get("headSha") and entry["headSha"] != head_sha:
-            return False
         state = (entry.get("state") or entry.get("conclusion") or "").upper()
         if state not in ("SUCCESS", "NEUTRAL", "SKIPPED"):
             return False
@@ -39,10 +43,16 @@ def _checks_green(head_sha, rollup):
 
 def _gate_suite_green(rollup):
     """research.md D13: read from the lint-workflows entry within the same
-    fresh rollup, never a second local re-run."""
+    fresh rollup, never a second local re-run. A CheckRun's own `name` is
+    its job id ("lint"), never the workflow's name -- lint-workflows.yml's
+    display name ("lint · workflows") only ever shows up in
+    `workflowName` -- so both are checked together to find the right job
+    among any repository's same-named jobs, rather than a `name` guess
+    that never matches a real rollup entry."""
     for entry in rollup:
-        name = (entry.get("name") or entry.get("context") or "")
-        if "lint-workflows" in name or "lint workflows" in name.lower():
+        name = entry.get("name") or entry.get("context") or ""
+        workflow_name = (entry.get("workflowName") or "").lower()
+        if name == "lint" and "lint" in workflow_name and "workflow" in workflow_name:
             state = (entry.get("state") or entry.get("conclusion") or "").upper()
             return state in ("SUCCESS", "NEUTRAL", "SKIPPED")
     return False
@@ -50,10 +60,11 @@ def _gate_suite_green(rollup):
 
 def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
                             kill_switch_paused):
-    """snapshot: {"headRefOid": str, "statusCheckRollup": [{"headSha": str,
-    "state"|"conclusion": str, "name"|"context": str}, ...]} -- the `gh pr
-    view --json headRefOid,statusCheckRollup` shape, fetched fresh by the
-    caller. Returns the ReadinessDecision dict (data-model.md)."""
+    """snapshot: {"headRefOid": str, "statusCheckRollup": [{"state"|
+    "conclusion": str, "name"|"context": str, "workflowName": str}, ...]}
+    -- the `gh pr view --json headRefOid,statusCheckRollup` shape, fetched
+    fresh by the caller. Returns the ReadinessDecision dict
+    (data-model.md)."""
     head_sha = snapshot.get("headRefOid")
     rollup = snapshot.get("statusCheckRollup") or []
 

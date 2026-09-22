@@ -2,8 +2,8 @@
   "snapshot": {
     "headRefOid": "aaaa111",
     "statusCheckRollup": [
-      {"name": "lint-workflows", "state": "SUCCESS", "headSha": "aaaa111"},
-      {"name": "harness tests", "state": "SUCCESS", "headSha": "aaaa111"}
+      {"name": "lint", "workflowName": "lint · workflows", "status": "COMPLETED", "conclusion": "SUCCESS"},
+      {"name": "harness-tests", "workflowName": "lint · workflows", "status": "COMPLETED", "conclusion": "SUCCESS"}
     ]
   },
   "open_in_scope_findings": 0,

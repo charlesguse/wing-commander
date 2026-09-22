@@ -2,7 +2,7 @@
   "snapshot": {
     "headRefOid": "cccc333",
     "statusCheckRollup": [
-      {"name": "lint-workflows", "state": "SUCCESS", "headSha": "bbbb222"}
+      {"name": "lint", "workflowName": "lint · workflows", "status": "IN_PROGRESS", "conclusion": null}
     ]
   },
   "open_in_scope_findings": 0,
