@@ -125,6 +125,21 @@ def _is_wc_composite_action_path(path):
             and path.split("/")[-1] in ("action.yml", "action.yaml"))
 
 
+def touches_protected_file(diff_paths):
+    """Coarse, pre-push proxy for contract_widened() (research.md D6):
+    before a fix has been pushed, this job has only the route-propose
+    agent's drafted diff snippets, not the new side's full file content
+    contract_widened() needs to locate the workflow_call:/inputs:/outputs:
+    block precisely -- so the pre-push route step treats ANY touched
+    `.github/workflows/*.yml` or `wing-commander-*` composite `action.yml`
+    as provisionally contract-widening (never under-protects; may
+    over-flag a workflow/composite change that turns out not to touch the
+    published surface, which route_final_diff()'s precise post-push check
+    corrects once the real diff and file content exist)."""
+    return [p for p in diff_paths
+            if _is_workflow_path(p) or _is_wc_composite_action_path(p)]
+
+
 def contract_widened(diff_paths, diff_text, file_contents=None):
     """research.md D6. `file_contents`: optional {path: new-side full text}
     -- when omitted, this function cannot determine protected line ranges
@@ -155,15 +170,23 @@ def contract_widened(diff_paths, diff_text, file_contents=None):
 
 
 def route(agent_proposal, file_changes, board_max_files, board_max_lines,
-          measure_backstop, diff_paths=None, diff_text=None, file_contents=None):
+          measure_backstop, diff_paths=None, diff_text=None, file_contents=None,
+          widened_paths_override=None):
     """FR-016..FR-020. `measure_backstop` is a callable
     (file_changes, max_files, max_lines) -> (over_threshold, files, lines)
     -- the runtime caller (board-loop.yml) supplies one that shells out to
     wing-commander-size-path-backstop; the gate supplies a pure fixture
     stand-in. Narrows agent_proposal ("fix" -> "spec") only, never widens
-    ("spec" stays "spec", FR-017)."""
+    ("spec" stays "spec", FR-017). `widened_paths_override`, when not None,
+    is used instead of calling contract_widened() internally -- the
+    pre-push route job passes touches_protected_file()'s coarser result
+    here (research.md D6's precise check needs the new side's full file
+    content, unavailable before a fix has been pushed)."""
     over_threshold, files, lines = measure_backstop(file_changes, board_max_files, board_max_lines)
-    widened_paths = contract_widened(diff_paths or [], diff_text or "", file_contents)
+    if widened_paths_override is not None:
+        widened_paths = widened_paths_override
+    else:
+        widened_paths = contract_widened(diff_paths or [], diff_text or "", file_contents)
 
     if agent_proposal == "spec":
         backstop_verdict = "spec"

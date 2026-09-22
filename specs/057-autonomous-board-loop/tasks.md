@@ -329,7 +329,7 @@ contract-widening fixture routes to `spec-request` regardless of size.
   pr-conversation.yml's own occurrence as the named, temporary exception
   instead; removing that waiver is the completion signal for both T021 and
   the rest of this task.
-- [ ] T028 [US2] Add the `route` job to `board-loop.yml`: a route-propose
+- [X] T028 [US2] Add the `route` job to `board-loop.yml`: a route-propose
   agent step (read-only tools, issue body/comments framed as data) whose
   `fix`/`spec` proposal feeds `board_route_backstop.py`'s `route()`; on
   `spec-request`, create the `spec-request` artifact, cross-link the
