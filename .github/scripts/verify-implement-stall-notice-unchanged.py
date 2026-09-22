@@ -129,12 +129,21 @@ def check_pinned_steps(new_text, baseline):
 
 
 def shipped_dependency_script():
-    """-> (script, failures): the composite's shipped `run:` block, or why not."""
-    if find_step(STAGE, DEPENDENCY_STEP_NAME) is None:
-        return None, [f"{DEPENDENCY_STEP_NAME!r} not found in {STAGE} -- the "
-                      f"dependency-diagnosis step was removed."]
+    """-> (script, failures): the composite's shipped `run:` block, or why not.
+
+    `find_step` never returns None on a miss -- it exits the process itself,
+    with its own generic "no step named" message (#439 review). The lookup
+    against STAGE below is kept for that loud-failure side effect (the step
+    vanishing from implement.yml entirely still stops the run, just with
+    that more generic message instead of the one this function used to
+    return). Only the composite lookup's `run:` block can be legitimately
+    absent while the step itself still exists -- reshaped into a `uses:`
+    call, say -- so only that case is reported through the (script,
+    failures) return convention `check_dependency_reason_branch` expects.
+    """
+    find_step(STAGE, DEPENDENCY_STEP_NAME)
     step = find_step(STALL_REASON_COMPOSITE, DEPENDENCY_STEP_NAME)
-    script = step.get("run") if step else None
+    script = step.get("run")
     if not script:
         return None, [f"{DEPENDENCY_STEP_NAME!r} has no `run:` block in "
                       f"{STALL_REASON_COMPOSITE} — the dependency-diagnosis step "
@@ -153,11 +162,12 @@ def check_dependency_reason_branch(script=None):
     Second maintainer review of PR #407 (CLAUDE.md single-home rule): the
     step in implement.yml is now a `uses:` call to
     wing-commander-stall-reason, not an inline `run:` block -- this gate
-    executes the composite's own shipped copy instead, confirming
-    implement.yml's `if:` guard is unchanged as a structural check
-    (shipped_dependency_script), and covering the behavior once here rather
-    than re-testing it identically at all six call sites (the composite has
-    exactly one body).
+    executes the composite's own shipped copy instead, confirming the step
+    still exists in implement.yml and still has a `run:` block in the
+    composite (shipped_dependency_script; this does NOT inspect the step's
+    `if:` guard -- nothing in this file does, #439 review), and covering
+    the behavior once here rather than re-testing it identically at all six
+    call sites (the composite has exactly one body).
 
     `script` overrides the shipped block; the self-test hands in drifted
     copies so the assertions below are proven to fire.

@@ -105,7 +105,8 @@ Self-test (--self-test): loads the real shipped trees, then reintroduces
 each way this could regress -- a post-agent step's credential reference
 reverted to the stale form or spelled with bracket notation, fromJSON(...)
 with or without nested parens/bracket key, a bare toJSON(...) outputs
-dump, or full bracket notation on every segment; the refresh step between
+dump, a whole-step or whole-steps-context toJSON(...) dump (#410 item 2),
+or full bracket notation on every segment; the refresh step between
 implement.yml's retry and progress agent steps deleted;
 `continue-on-error: true` stripped from clarify.yml's canonical
 over-budget step (and from a suffixed variant); clarify.yml's only
@@ -300,6 +301,28 @@ def _is_mint_step(step):
     return any(marker in uses for marker in MINT_USES_MARKERS)
 
 
+# Extracts the <id> out of a matched `steps.<id>` / `steps['<id>']`
+# fragment, so a `toJSON(steps.<id>)` / `toJSON(steps.<id>.outputs)` match
+# can be checked against the job's own mint step ids rather than assumed
+# to be the mint on sight (#439 review): `toJSON({_STEP_REF}...)` matches
+# ANY step id, so an unrelated step dumped for logging/diagnostics -- not
+# the credential mint -- would otherwise be reported as a stale
+# credential reference.
+_STEP_ID_RE = re.compile(r"steps(?:\.([\w-]+)|\[[\'\"]([\w-]+)[\'\"]\])")
+
+
+def _toJSON_dump_is_mint(matched_text, mint_ids):
+    """A `toJSON(steps.<id>...)` match only implicates a credential when
+    <id> names a mint step in this job. `toJSON(steps)` (the whole
+    context, no id to extract) always implicates one when the job has a
+    mint step at all, since the dumped context necessarily carries it."""
+    if matched_text == "toJSON(steps)":
+        return bool(mint_ids)
+    m = _STEP_ID_RE.search(matched_text)
+    ref_id = (m.group(1) or m.group(2)) if m else None
+    return ref_id in mint_ids
+
+
 def _is_relay_step(step):
     return bool(RELAY_STEP_NAME_RE.match(str((step or {}).get("name", ""))))
 
@@ -375,11 +398,14 @@ def check_job(path, job_name, job):
     first = agent_idxs[0]
 
     # check 1 -- no stale credential reference after the first agent step.
+    mint_ids = {(s or {}).get("id") for s in steps if _is_mint_step(s) and (s or {}).get("id")}
     for step in steps[first + 1:]:
         if _is_relay_step(step):
             continue
         name = (step or {}).get("name", "<unnamed step>")
         m = TOKEN_REF_RE.search(_step_text(step))
+        if m and m.group(0).startswith("toJSON(") and not _toJSON_dump_is_mint(m.group(0), mint_ids):
+            continue
         if m:
             failures.append(
                 f"{path} [{job_name}] step {name!r} references "
@@ -664,7 +690,22 @@ def mut_whole_steps_context_dump(loaded):
     job = loaded[".github/workflows/clarify.yml"]["jobs"]["clarify"]
     step = _find_step(job, "Announce spec PR ready for review")
     assert step is not None, "fixture assumption broken: step renamed"
+    assert step["with"]["token"] == "${{ env.WC_BOT_TOKEN }}", \
+        "fixture assumption broken: token form changed"
     step["with"]["token"] = "${{ fromJSON(toJSON(steps)).ctx.outputs.token }}"
+
+
+def mut_unrelated_step_tojson_dump(loaded):
+    """NEGATIVE control (#439 review): toJSON(steps.<id>) matches any step
+    id, not only the mint's. Dumping 'agent-verdict' (a real, non-mint
+    post-agent step in this same job) for logging/diagnostics must NOT be
+    reported -- it never carries the credential."""
+    job = loaded[".github/workflows/clarify.yml"]["jobs"]["clarify"]
+    step = _find_step(job, "Announce spec PR ready for review")
+    assert step is not None, "fixture assumption broken: step renamed"
+    assert _find_step(job, "Compute agent run verdict") is not None, \
+        "fixture assumption broken: step renamed"
+    step["with"]["token"] = "${{ env.WC_BOT_TOKEN }} ${{ toJSON(steps.agent-verdict) }}"
 
 
 def mut_full_bracket_credential_reference(loaded):
@@ -956,6 +997,23 @@ def self_test():
                             f"broke nothing in this gate.")
         else:
             print(f"Mutation OK -- {label}: {len(broke)} assertion(s) fail.")
+
+    # Negative control: unlike SIMPLE_MUTATIONS, this mutation must NOT
+    # break the gate (#439 review) -- it proves the toJSON(steps.<id>)
+    # scoping fix actually discriminates the mint step from an unrelated
+    # one, not just that a plausible-looking pattern happens to be absent
+    # from the shipped tree today.
+    mutated = copy.deepcopy(base)
+    mut_unrelated_step_tojson_dump(mutated)
+    broke = scan(mutated)
+    if broke:
+        problems.append(
+            "a toJSON() dump of an unrelated, non-mint step was reported "
+            "as a stale credential reference -- expected 0 assertions, "
+            f"got: {'; '.join(broke)}")
+    else:
+        print("Mutation OK (negative control) -- toJSON() dump of an "
+              "unrelated, non-mint step is not flagged: 0 assertion(s) fail.")
 
     for label, apply_mutation in SUBJECT_MUTATIONS:
         mutated_loaded = copy.deepcopy(base)
