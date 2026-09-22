@@ -463,6 +463,9 @@ def check_unreadable_tasks_md(root):
 GH_STUB = """#!/bin/sh
 orig="$*"
 while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--body" ]; then
+    printf '%s' "$2" > "$GH_BODY_FILE"
+  fi
   shift
 done
 echo "gh $orig" >> "$GH_CALLS"
@@ -472,26 +475,30 @@ exit 0
 
 def run_dispatch_step(steps, env_overrides, root):
     """Drives the shipped "Dispatch next step" text with a stubbed `gh`,
-    recording every invocation so a test can assert which workflow was
-    dispatched with which payload (mirrors verify-truncated-cycle-carry-
-    forward.py's identical helper)."""
+    recording every invocation (and the last posted --body) so a test can
+    assert which workflow was dispatched with which payload and comment
+    text (mirrors verify-truncated-cycle-carry-forward.py's identical
+    helper)."""
     workdir = tempfile.mkdtemp(dir=root)
     runner_temp = os.path.join(workdir, "runner_temp")
     bindir = os.path.join(workdir, "bin")
     calls_file = os.path.join(workdir, "gh_calls")
+    body_file = os.path.join(workdir, "gh_body")
     os.makedirs(runner_temp, exist_ok=True)
     os.makedirs(bindir, exist_ok=True)
     open(calls_file, "w").close()
+    open(body_file, "w").close()
     with open(os.path.join(bindir, "gh"), "w", encoding="utf-8", newline="\n") as fh:
         fh.write(GH_STUB)
     os.chmod(os.path.join(bindir, "gh"), 0o755)
     env = {
         "SPEC_DIR": SPEC_DIR, "ISSUE": "999", "ITERATION": "2", "MAX": "5",
         "CONVERGED": "false", "TRUNCATED": "false", "TRUNCATED_COUNT": "0",
-        "HANDOFF": "false", "TIER": "claude-sonnet-5", "REMAINING": "- [ ] T099 leftover",
+        "HANDOFF": "false", "REASON": "the cycle ended with tasks outstanding",
+        "TIER": "claude-sonnet-5", "REMAINING": "- [ ] T099 leftover",
         "SELF_WORKFLOW": "wing-commander-5-implement.yml", "NEXT_WORKFLOW": "wing-commander-6-finalize.yml",
         "APP_TOKEN": "x", "DISPATCH_TOKEN": "x",
-        "GH_CALLS": calls_file,
+        "GH_CALLS": calls_file, "GH_BODY_FILE": body_file,
         "GITHUB_SERVER_URL": "https://example.invalid",
         "GITHUB_REPOSITORY": "acme/repo", "GITHUB_RUN_ID": "1",
         "PATH": bindir + os.pathsep + os.environ["PATH"],
@@ -501,7 +508,55 @@ def run_dispatch_step(steps, env_overrides, root):
                                          env, runner_temp)
     with open(calls_file, encoding="utf-8") as fh:
         calls = fh.read()
-    return rc, out, outputs, calls, summary
+    with open(body_file, encoding="utf-8") as fh:
+        body = fh.read()
+    return rc, out, outputs, calls, body, summary
+
+
+def check_dispatch_next_cycle(steps, root):
+    """FR-019: unchecked tasks with progress and no converge commit ⇒
+    false, next cycle dispatched -- the plain below-cap self-dispatch
+    branch, unaffected by this feature's HANDOFF branch, still fires."""
+    failures = []
+    rc, out, outputs, calls, body, summary = run_dispatch_step(
+        steps, {"CONVERGED": "false", "TRUNCATED": "false", "HANDOFF": "false",
+                "ITERATION": "2", "MAX": "5"}, root)
+    if rc != 0:
+        failures.append(f"check_dispatch_next_cycle: {DISPATCH_STEP!r} exited {rc}: {out.strip()}")
+    elif "wing-commander-5-implement.yml" not in calls:
+        failures.append(f"FR-019: progress + no converge commit did not dispatch "
+                        f"the next cycle (SELF_WORKFLOW) -- gh calls were: {calls!r}")
+    return failures
+
+
+def check_dispatch_cap_reached(steps, root):
+    """FR-012/FR-013: the at-cap, non-truncated, non-handoff branch (the
+    shared post_handoff_remaining_work body, D4) still dispatches finalize
+    with converged=false, posts the reason, and never an empty remaining
+    block -- the same assertions check_dispatch_handoff makes for the
+    HANDOFF branch, made here for its sibling caller of the same shared
+    function."""
+    failures = []
+    rc, out, outputs, calls, body, summary = run_dispatch_step(
+        steps, {"CONVERGED": "false", "TRUNCATED": "false", "HANDOFF": "false",
+                "ITERATION": "5", "MAX": "5",
+                "REASON": "the cycle ended with tasks outstanding"}, root)
+    if rc != 0:
+        failures.append(f"check_dispatch_cap_reached: {DISPATCH_STEP!r} exited {rc}: {out.strip()}")
+        return failures
+    if "wing-commander-6-finalize.yml" not in calls or "converged=false" not in calls:
+        failures.append(f"cap-reached branch did not dispatch NEXT_WORKFLOW with "
+                        f"converged=false -- gh calls were: {calls!r}")
+    if "wing-commander-5-implement.yml" in calls:
+        failures.append(f"cap-reached branch wrongly dispatched a next cycle -- "
+                        f"gh calls were: {calls!r}")
+    if "the cycle ended with tasks outstanding" not in body:
+        failures.append(f"FR-013: the cap-reached comment did not carry the "
+                        f"reason narrative -- body={body!r}")
+    if "T099 leftover" not in body:
+        failures.append(f"FR-012: the cap-reached comment did not carry the "
+                        f"remaining-work text -- body={body!r}")
+    return failures
 
 
 def check_dispatch_handoff(steps, root):
@@ -511,9 +566,10 @@ def check_dispatch_handoff(steps, root):
     contracts/convergence-signal.md §4) -- never a next-cycle
     self-dispatch."""
     failures = []
-    rc, out, outputs, calls, summary = run_dispatch_step(
+    rc, out, outputs, calls, body, summary = run_dispatch_step(
         steps, {"CONVERGED": "false", "TRUNCATED": "false", "HANDOFF": "true",
-                "ITERATION": "2", "MAX": "5"}, root)
+                "ITERATION": "2", "MAX": "5",
+                "REASON": "the cycle checked nothing new, so the loop is ending here rather than dispatching another cycle"}, root)
     if rc != 0:
         failures.append(f"check_dispatch_handoff: {DISPATCH_STEP!r} exited {rc}: {out.strip()}")
         return failures
@@ -523,6 +579,9 @@ def check_dispatch_handoff(steps, root):
     if "wing-commander-5-implement.yml" in calls:
         failures.append(f"US4/FR-010: HANDOFF=true wrongly dispatched a next cycle "
                         f"(SELF_WORKFLOW) instead of handing off -- gh calls were: {calls!r}")
+    if "checked nothing new" not in body:
+        failures.append(f"FR-013: the HANDOFF comment did not carry the hand-off "
+                        f"reason phrasing -- body={body!r}")
     return failures
 
 
@@ -738,6 +797,8 @@ def main():
         failures.extend(check_arms_agree(steps, root))
         failures.extend(check_single_home_no_pasted_idiom())
         failures.extend(check_unreadable_tasks_md(root))
+        failures.extend(check_dispatch_next_cycle(steps, root))
+        failures.extend(check_dispatch_cap_reached(steps, root))
         failures.extend(check_dispatch_handoff(steps, root))
         failures.extend(check_remaining_work_report(steps, root))
         failures.extend(run_mutations(steps, root))
