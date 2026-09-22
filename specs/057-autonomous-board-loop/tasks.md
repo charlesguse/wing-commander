@@ -772,3 +772,9 @@ Task: "Create .github/scripts/board_prove.py per research.md D15"
 Each step is independently testable per its own "Independent Test" above,
 and each preserves every previous step's behavior — none narrows or
 removes an earlier story's guarantee.
+
+## Maintainer Feedback
+
+- [ ] Resume implementation of `057-autonomous-board-loop` and complete every currently-unchecked task, T012 through T065, in the order listed in this file, checking each one off in the same commit that lands it (PR #451 review comment from @charlesguse).
+- [ ] Do not defer any task to a later cycle while the current cycle's turn budget remains. If a task is genuinely blocked, name the specific task and the blocker on the lifecycle issue (#408) instead of silently deferring it.
+- [ ] Run `python .github/scripts/run-local-gates.py` and confirm it is green before every push made in this cycle.
