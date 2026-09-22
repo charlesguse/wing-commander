@@ -170,7 +170,7 @@ def checkbox_count_env(repo, ref):
     (checked-count, unchecked-count) the way the composite's own outputs
     would. Only the two digit outputs are needed here — Gate 30's own
     subject is the ok/truncated classification, not the remaining-work
-    text (that belongs to Gate 81)."""
+    text (that belongs to Gate 90)."""
     script = os.path.abspath(COUNT_TASKS_CHECKBOXES).replace("\\", "/")
     proc = sh(f"cd '{repo}' && bash '{script}' '{ref}' '{SPEC_DIR}/tasks.md'", repo)
     lines = proc.stdout.splitlines()
@@ -503,7 +503,7 @@ CYCLE_SCENARIOS = [
          expect=dict(ok="false", truncated="false", converged="")),
     dict(name="6a: normal successful cycle, no converge commit, tasks still "
               "outstanding (spec 059: not converged — the fixture's tasks.md "
-              "still has unchecked boxes; Gate 81 owns the zero-unchecked "
+              "still has unchecked boxes; Gate 90 owns the zero-unchecked "
               "convergence rule itself, this scenario is here only for the "
               "ok/truncated classification)",
          tick_task=True, outside_file=False, advance=True, converge=False,
