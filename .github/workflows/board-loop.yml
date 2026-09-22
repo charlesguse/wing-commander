@@ -16,9 +16,24 @@ name: "board-loop"
 on:
   schedule:
     - cron: "13 * * * *"   # one-line, PR-reviewed knob (research.md D1) -- not repository-variable-configurable
-  workflow_dispatch: {}     # on-demand, no inputs needed
+  workflow_dispatch:
+    inputs:
+      # contracts/prove-step.md "Re-drive": this workflow is its own
+      # wrapper (board_prove.redrive_target()'s case 1) -- a merged fix
+      # that changes only board-loop.yml's own logic is proven by
+      # re-driving board-loop.yml itself, which `is_safe_redrive_target()`
+      # (board_prove.py) only offers when the target's own run-name
+      # embeds this input, the same contract release.yml's attempt-token
+      # already established (research.md D14). Blank on a manual dispatch.
+      attempt-token:
+        description: "Correlation token for an automatic re-drive dispatch (internal use; leave blank for a manual run)"
+        required: false
+        default: ""
+        type: string
   pull_request:
     types: [closed]         # resume path (FR-041) -- the `prove` step, added in a later phase of this feature
+
+run-name: ${{ inputs.attempt-token && format('board-loop [attempt:{0}]', inputs.attempt-token) || 'board-loop' }}
 
 permissions: {}
 
@@ -2498,55 +2513,22 @@ jobs:
           python3 - <<'PYEOF'
           import json
           import os
-          import re
           import sys
 
           sys.path.insert(0, ".github/scripts")
-          from board_prove import actions_only, is_safe_redrive_target, redrive_target
-
-          import yaml
+          from board_prove import actions_only, redrive_target, scan_dispatchable_and_uses_graph
 
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "board-prove-paths.json"), encoding="utf-8") as fh:
               changed_paths = json.load(fh)
 
-          workflows_dir = ".github/workflows"
-          workflow_ref = re.compile(r"\.github/workflows/[A-Za-z0-9._-]+\.ya?ml")
-          composite_ref = re.compile(r"\.github/actions/[A-Za-z0-9._-]+")
-
-          dispatchable = []
-          uses_graph = {}
-          for name in sorted(os.listdir(workflows_dir)):
-              if not name.endswith((".yml", ".yaml")):
-                  continue
-              path = "{0}/{1}".format(workflows_dir, name)
-              with open(path, encoding="utf-8") as fh:
-                  text = fh.read()
-              try:
-                  doc = yaml.safe_load(text) or {}
-              except yaml.YAMLError:
-                  continue
-              # PyYAML resolves the bare key `on:` to the boolean True.
-              triggers = doc.get("on", doc.get(True)) or {}
-              if isinstance(triggers, dict) and "workflow_dispatch" in triggers:
-                  wd = triggers.get("workflow_dispatch") or {}
-                  wd_inputs = wd.get("inputs") if isinstance(wd, dict) else None
-                  # Never offer a target the composite could dispatch but
-                  # never correlate, or that gh would reject outright for
-                  # a missing required input (board_prove.py's own
-                  # is_safe_redrive_target contract).
-                  if is_safe_redrive_target(text, wd_inputs or {}):
-                      dispatchable.append(path)
-
-              referenced = set()
-              for match in workflow_ref.findall(text):
-                  if match != path:
-                      referenced.add(match)
-              for directory in composite_ref.findall(text):
-                  for dirpath, _dirs, names in os.walk(directory):
-                      for fname in names:
-                          referenced.add(os.path.join(dirpath, fname).replace(os.sep, "/"))
-              uses_graph[path] = sorted(referenced)
+          # board_prove.scan_dispatchable_and_uses_graph is the single home
+          # for this scan (never offer a target the composite could
+          # dispatch but never correlate, or that gh would reject outright
+          # for a missing required input -- its own is_safe_redrive_target
+          # contract); read off THIS checkout's tree, so a wrapper added or
+          # removed by the very merge being proven is accounted for.
+          dispatchable, uses_graph = scan_dispatchable_and_uses_graph(".github/workflows")
 
           only, reason = actions_only(changed_paths)
           target, target_reason = redrive_target(changed_paths, dispatchable, uses_graph)
@@ -2618,7 +2600,15 @@ jobs:
           && steps.killswitch-recheck.outputs.paused != 'true'
         uses: ./.github/actions/wing-commander-dispatch-and-wait
         with:
-          token: ${{ env.WC_BOT_TOKEN }}
+          # github.token, never the wing-commander App token (WC_BOT_TOKEN)
+          # -- that token has no `actions` permission and `gh workflow run`/
+          # `gh run` 403 on it (auto-release.yml's dispatch-release job,
+          # issue/spec 005, the same reason this composite's own inputs.token
+          # doc references release.yml's attempt-token convention). This
+          # job's own `permissions.actions: write` above is what
+          # github.token needs for the composite's `gh workflow run`/
+          # `gh run list`/`gh run view` calls to succeed.
+          token: ${{ github.token }}
           workflow-file: ${{ steps.decide.outputs.redrive-workflow }}
           attempt-token: ${{ github.run_id }}-${{ github.run_attempt }}
 

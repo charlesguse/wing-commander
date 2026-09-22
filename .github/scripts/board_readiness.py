@@ -22,16 +22,18 @@ CONDITIONS = ("checks_green", "gate_suite_green", "zero_open_findings",
               "backstop_holds", "kill_switch_clear")
 
 
-def _checks_green(head_sha, rollup):
+def _checks_green(rollup):
     """FR-036/FR-037: an empty rollup is not green (a docs-only PR with no
     triggered checks is never reported ready), and every entry must have
-    reached a terminal, non-failing state. Freshness against head_sha
-    (FR-036) comes from the caller fetching `headRefOid` and
-    `statusCheckRollup` together in one `gh pr view` call, never a value
-    this run captured earlier -- `gh` does not expose a per-entry commit
-    SHA to re-check here (confirmed against both CheckRun and legacy
-    StatusContext shapes, neither of which carries one), so head_sha is
-    accepted, not re-verified, per entry."""
+    reached a terminal, non-failing state. Freshness (FR-036) comes from
+    the caller fetching `headRefOid` and `statusCheckRollup` together in
+    one `gh pr view` call, never a value this run captured earlier --
+    `gh` does not expose a per-entry commit SHA to re-check here
+    (confirmed against both CheckRun and legacy StatusContext shapes,
+    neither of which carries one), so there is nothing for this function
+    itself to re-verify per entry; a caller that assembles a snapshot from
+    more than one fetch breaks that guarantee with no code-level check to
+    catch it."""
     if not rollup:
         return False
     for entry in rollup:
@@ -52,7 +54,7 @@ def _gate_suite_green(rollup):
     for entry in rollup:
         name = entry.get("name") or entry.get("context") or ""
         workflow_name = (entry.get("workflowName") or "").lower()
-        if name == "lint" and "lint" in workflow_name and "workflow" in workflow_name:
+        if name == "lint" and "workflow" in workflow_name:
             state = (entry.get("state") or entry.get("conclusion") or "").upper()
             return state in ("SUCCESS", "NEUTRAL", "SKIPPED")
     return False
@@ -68,7 +70,7 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
     head_sha = snapshot.get("headRefOid")
     rollup = snapshot.get("statusCheckRollup") or []
 
-    checks_green = _checks_green(head_sha, rollup)
+    checks_green = _checks_green(rollup)
     gate_suite_green = checks_green and _gate_suite_green(rollup)
     zero_open_findings = open_in_scope_findings == 0
     kill_switch_clear = not kill_switch_paused

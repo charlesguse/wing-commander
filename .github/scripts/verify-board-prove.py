@@ -7,7 +7,13 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from board_prove import actions_only, is_safe_redrive_target, redrive_target  # noqa: E402
+from board_prove import (  # noqa: E402
+    actions_only, is_safe_redrive_target, redrive_target,
+    scan_dispatchable_and_uses_graph,
+)
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+REPO_WORKFLOWS_DIR = os.path.join(REPO_ROOT, ".github", "workflows")
 
 CASES = [
     (["docs/setup.md", "specs/999-example-feature/spec.md"], False),
@@ -95,6 +101,26 @@ def run():
                   "expected {2}, got {3}.".format(workflow_text, inputs, expected, got))
         else:
             print("[ok] is_safe_redrive_target(...): {0}".format(got))
+
+    # Integration check, not just fixtures: the synthetic DISPATCHABLE/
+    # SAFE_TARGET_CASES above can all pass while scan_dispatchable_and_uses_graph()
+    # filters every REAL workflow in this repository out to an empty set
+    # (this is exactly how the redrive mechanism went dead for every
+    # workflow, including board-loop.yml itself, without failing CI --
+    # board-loop.yml lacked the run-name/attempt-token wiring
+    # is_safe_redrive_target() requires). board-loop.yml is its own
+    # documented redrive target (REDRIVE_CASES case 1 above); assert it
+    # actually is one on the checked-out tree, not only in a fixture.
+    real_dispatchable, _real_uses_graph = scan_dispatchable_and_uses_graph(REPO_WORKFLOWS_DIR)
+    real_dispatchable_basenames = {p.rsplit("/", 1)[-1] for p in real_dispatchable}
+    if "board-loop.yml" not in real_dispatchable_basenames:
+        failures += 1
+        print("::error::verify-board-prove: board-loop.yml is not in the real "
+              "repository's dispatchable set ({0}) -- the redrive/prove "
+              "mechanism cannot re-drive itself, and a merge that changes only "
+              "board-loop.yml's own logic can never be proven.".format(sorted(real_dispatchable_basenames)))
+    else:
+        print("[ok] board-loop.yml is a real, safe redrive target on the checked-out tree")
 
     print("verify-board-prove: {0} failure(s).".format(failures))
     return 1 if failures else 0

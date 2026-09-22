@@ -12,14 +12,18 @@ add. This is a deterministic, path-based rule (Principle IX) -- never an
 agent's guess.
 """
 import fnmatch
+import os
 import re
 import sys
 
 import json
+import yaml
 
 DOCS_ONLY_GLOBS = ("docs/**", "specs/**")
 VERIFY_SCRIPT_GLOB = ".github/scripts/verify-*.py"
 RUN_NAME_ATTEMPT_TOKEN_RE = re.compile(r"^run-name:.*inputs\.attempt-token", re.MULTILINE)
+WORKFLOW_REF_RE = re.compile(r"\.github/workflows/[A-Za-z0-9._-]+\.ya?ml")
+COMPOSITE_REF_RE = re.compile(r"\.github/actions/[A-Za-z0-9._-]+")
 
 
 def _matches_any(path, globs):
@@ -73,6 +77,62 @@ def is_safe_redrive_target(workflow_text, workflow_dispatch_inputs=None):
         if (input_spec or {}).get("required"):
             return False
     return True
+
+
+def scan_dispatchable_and_uses_graph(workflows_dir):
+    """Single home for the repo-tree scan `redrive_target()`'s own inputs
+    come from (previously duplicated inline as a `board-loop.yml` `run:`
+    step -- CLAUDE.md "shared logic has exactly one home"). Reads every
+    workflow file under `workflows_dir` off the checked-out tree, exactly
+    as the `prove` job's own comment requires ("the merge commit's own
+    tree, so a wrapper added or removed by the very merge being proven is
+    accounted for") -- callers must invoke this against that checkout,
+    never a cached/prior tree.
+
+    Also closes a testability gap a runtime-only duplicate of this scan
+    had: `is_safe_redrive_target()` was previously exercised only against
+    synthetic fixtures, never against the repository's own real workflow
+    files, so a scan that filtered out every real workflow (this one did,
+    until board-loop.yml's own run-name/attempt-token wiring was added)
+    passed the gate suite while being dead code at runtime. A caller that
+    wants that regression caught again should assert against this
+    function's own output, not a fixture.
+
+    Returns (dispatchable, uses_graph): dispatchable is the sorted list of
+    repo-relative workflow paths `is_safe_redrive_target()` accepts;
+    uses_graph maps every workflow path (dispatchable or not) to the
+    repo-relative workflow/composite paths its text references."""
+    dispatchable = []
+    uses_graph = {}
+    for name in sorted(os.listdir(workflows_dir)):
+        if not name.endswith((".yml", ".yaml")):
+            continue
+        path = "{0}/{1}".format(workflows_dir, name)
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        try:
+            doc = yaml.safe_load(text) or {}
+        except yaml.YAMLError:
+            continue
+        # PyYAML resolves the bare key `on:` to the boolean True.
+        triggers = doc.get("on", doc.get(True)) or {}
+        if isinstance(triggers, dict) and "workflow_dispatch" in triggers:
+            wd = triggers.get("workflow_dispatch") or {}
+            wd_inputs = wd.get("inputs") if isinstance(wd, dict) else None
+            if is_safe_redrive_target(text, wd_inputs or {}):
+                dispatchable.append(path)
+
+        referenced = set()
+        for match in WORKFLOW_REF_RE.findall(text):
+            if match != path:
+                referenced.add(match)
+        for directory in set(COMPOSITE_REF_RE.findall(text)):
+            for dirpath, _dirs, names in os.walk(directory):
+                for fname in names:
+                    referenced.add(os.path.join(dirpath, fname).replace(os.sep, "/"))
+        uses_graph[path] = sorted(referenced)
+
+    return sorted(dispatchable), uses_graph
 
 
 def redrive_target(changed_paths, dispatchable, uses_graph):
