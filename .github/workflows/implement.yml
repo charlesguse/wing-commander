@@ -931,7 +931,7 @@ jobs:
             approve anything; do not edit files under .github/workflows
             unless the task list explicitly requires it. A commit message
             longer than one line goes through the Write tool to exactly
-            ${{ runner.temp }}/implement-commit-message.txt and then
+            ${{ runner.temp }}/implement-commit-message-cycle.txt and then
             git commit -F with that path; never a heredoc or $(cat ...)
             on the command line, which the permission layer denies, and
             never a file under the repository (a path inside .git/ is
@@ -1523,12 +1523,14 @@ jobs:
             approve anything; do not edit files under .github/workflows
             unless the task list explicitly requires it. A commit message
             longer than one line goes through the Write tool to exactly
-            ${{ runner.temp }}/implement-commit-message.txt and then
+            ${{ runner.temp }}/implement-commit-message-retry.txt and then
             git commit -F with that path; never a heredoc or $(cat ...)
             on the command line, which the permission layer denies, and
             never a file under the repository (a path inside .git/ is
             denied outright, and any other path there would be swept
-            into the commit).
+            into the commit). Use a name distinct from the cycle step's
+            scratch file above -- the cycle attempt may have left one
+            behind, and this is a fresh session that never read it.
 
             Tooling: ${{ steps.tool-args-retry.outputs.shell-commands }} That
             statement is derived from this run's own composed allowed and
