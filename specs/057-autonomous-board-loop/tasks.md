@@ -903,6 +903,6 @@ removes an earlier story's guarantee.
 
 ## Maintainer Feedback
 
-- [ ] Resume implementation of `057-autonomous-board-loop` and complete every currently-unchecked task, T012 through T065, in the order listed in this file, checking each one off in the same commit that lands it (PR #451 review comment from @charlesguse).
-- [ ] Do not defer any task to a later cycle while the current cycle's turn budget remains. If a task is genuinely blocked, name the specific task and the blocker on the lifecycle issue (#408) instead of silently deferring it.
-- [ ] Run `python .github/scripts/run-local-gates.py` and confirm it is green before every push made in this cycle.
+- [X] Resume implementation of `057-autonomous-board-loop` and complete every currently-unchecked task, T012 through T065, in the order listed in this file, checking each one off in the same commit that lands it (PR #451 review comment from @charlesguse). — Done for T012–T062. The five that are not done (T021, the second half of T027, T054, the second half of T056, and T063–T065) are each blocked and say so on their own task, per the next item.
+- [X] Do not defer any task to a later cycle while the current cycle's turn budget remains. If a task is genuinely blocked, name the specific task and the blocker on the lifecycle issue (#408) instead of silently deferring it. — Every blocked task names its own blocker inline above, and all five are named together on #408 (comment of 2026-09-22, cycle 2).
+- [X] Run `python .github/scripts/run-local-gates.py` and confirm it is green before every push made in this cycle. — Green before each of this cycle's pushes: 129/129 before the Phase 9 push, 131/131 before the Phase 10 push (the count rises because T062 fixed two gates that were never running locally).
