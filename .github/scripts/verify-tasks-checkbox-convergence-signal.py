@@ -151,7 +151,10 @@ def checkbox_count_env(repo, ref):
     """Stand in for the wing-commander-tasks-checkbox-count composite calls
     that precede each read-back (research.md D2): runs the REAL shared
     script against `ref`'s tasks.md, returning (checked-count,
-    unchecked-count) the way the composite's own outputs would."""
+    unchecked-count, unchecked-items) the way the composite's own outputs
+    would -- unchecked-items is the heredoc-style block the composite
+    relays straight into $GITHUB_OUTPUT (count-tasks-checkboxes.sh's own
+    header comment)."""
     script = os.path.abspath(COUNT_TASKS_CHECKBOXES).replace("\\", "/")
     proc = sh(f"cd '{repo}' && bash '{script}' '{ref}' '{SPEC_DIR}/tasks.md'", repo)
     if proc.returncode != 0:
@@ -160,7 +163,16 @@ def checkbox_count_env(repo, ref):
     lines = proc.stdout.splitlines()
     checked = lines[0].split("=", 1)[1] if lines and "=" in lines[0] else "0"
     unchecked = lines[1].split("=", 1)[1] if len(lines) > 1 and "=" in lines[1] else "0"
-    return checked, unchecked
+    items = ""
+    if len(lines) > 2 and "<<" in lines[2]:
+        delim = lines[2].split("<<", 1)[1]
+        body = []
+        for line in lines[3:]:
+            if line == delim:
+                break
+            body.append(line)
+        items = "\n".join(body) + ("\n" if body else "")
+    return checked, unchecked, items
 
 
 READ_SPEC_META = ".github/actions/_shared/read-spec-meta.sh"
@@ -239,15 +251,15 @@ def build_scenario(root, *, base_tasks_md, tip_tasks_md, converge=False,
 def run_cycle_step(steps, repo, base_sha, *, verdict, cycle_result,
                     iteration=ITERATION):
     runner_temp = tempfile.mkdtemp(dir=os.path.dirname(repo))
-    checked_base, _ = checkbox_count_env(repo, base_sha)
-    checked_tip, unchecked_tip = checkbox_count_env(repo, f"origin/{SPEC_PREFIX}{SLUG}")
+    checked_base, _, _ = checkbox_count_env(repo, base_sha)
+    checked_tip, unchecked_tip, items_tip = checkbox_count_env(repo, f"origin/{SPEC_PREFIX}{SLUG}")
     env = {"SLUG": SLUG, "SPEC_DIR": SPEC_DIR, "ITERATION": str(iteration),
            "BASE_SHA": base_sha, "CYCLE_RESULT": cycle_result,
            "VERDICT": verdict, "SPEC_PREFIX": SPEC_PREFIX,
            "AGENT_AUTHOR_RE": AGENT_AUTHOR_RE,
            "DEFAULT_BRANCH": "main",
            "CHECKED_BASE": checked_base, "CHECKED_TIP": checked_tip,
-           "UNCHECKED_TIP": unchecked_tip}
+           "UNCHECKED_TIP": unchecked_tip, "REMAINING_TIP": items_tip}
     env.update(read_spec_meta_env(repo))
     return run_step(BASH, steps[CYCLE_STEP], repo, env, runner_temp)
 
@@ -258,15 +270,15 @@ def run_retry_step(steps, repo, base_sha, *, verdict, retry_result):
     `converged` from one shared definition (FR-007) rather than two copies
     that could drift -- US2 acceptance scenario 3."""
     runner_temp = tempfile.mkdtemp(dir=os.path.dirname(repo))
-    checked_base, _ = checkbox_count_env(repo, base_sha)
-    checked_tip, unchecked_tip = checkbox_count_env(repo, f"origin/{SPEC_PREFIX}{SLUG}")
+    checked_base, _, _ = checkbox_count_env(repo, base_sha)
+    checked_tip, unchecked_tip, items_tip = checkbox_count_env(repo, f"origin/{SPEC_PREFIX}{SLUG}")
     env = {"SLUG": SLUG, "SPEC_DIR": SPEC_DIR, "ITERATION": ITERATION,
            "BASE_SHA": base_sha, "RETRY_RESULT": retry_result,
            "VERDICT": verdict, "ESCALATION_MODEL": "claude-opus-5",
            "SPEC_PREFIX": SPEC_PREFIX, "AGENT_AUTHOR_RE": AGENT_AUTHOR_RE,
            "DEFAULT_BRANCH": "main",
            "CHECKED_BASE": checked_base, "CHECKED_TIP": checked_tip,
-           "UNCHECKED_TIP": unchecked_tip}
+           "UNCHECKED_TIP": unchecked_tip, "REMAINING_TIP": items_tip}
     env.update(read_spec_meta_env(repo))
     return run_step(BASH, steps[RETRY_STEP], repo, env, runner_temp)
 
@@ -513,6 +525,53 @@ def check_dispatch_handoff(steps, root):
     return failures
 
 
+def check_remaining_work_report(steps, root):
+    """FR-012/FR-013/SC-006: the remaining-work text is the tip's own
+    outstanding items (D6), never empty on the no-converge-commit path,
+    and the reason narrative names why -- without double-reporting the
+    same task list when both a converge commit and outstanding progress
+    fire at once."""
+    failures = []
+
+    work, repo, base_sha, _ = build_scenario(
+        root, base_tasks_md=_tasks_md(0, 3), tip_tasks_md=_tasks_md(1, 2),
+        converge=False)
+    rc, out, outputs, _ = run_cycle_step(
+        steps, repo, base_sha, verdict="healthy", cycle_result="success")
+    if rc != 0:
+        failures.append(f"check_remaining_work_report(a): {CYCLE_STEP!r} exited {rc}: {out.strip()}")
+    else:
+        if not outputs.get("remaining", "").strip():
+            failures.append("FR-012: the no-converge-commit path rendered an EMPTY remaining block.")
+        if "tasks outstanding" not in outputs.get("reason", ""):
+            failures.append(f"FR-013: reason did not name tasks outstanding -- "
+                            f"got {outputs.get('reason')!r}")
+
+    # A converge commit appends a phase whose own tasks are unchecked, AND
+    # this cycle also made progress on pre-existing tasks -- both reasons
+    # fire at once; the appended item's text must be listed exactly once
+    # (SC-006's "must not report the same work twice").
+    base_md = _tasks_md(0, 3)
+    tip_md = _tasks_md(1, 2) + "- [ ] C001 leftover item\n"
+    work, repo, base_sha, _ = build_scenario(
+        root, base_tasks_md=base_md, tip_tasks_md=tip_md, converge=True)
+    rc, out, outputs, _ = run_cycle_step(
+        steps, repo, base_sha, verdict="healthy", cycle_result="success")
+    if rc != 0:
+        failures.append(f"check_remaining_work_report(b): {CYCLE_STEP!r} exited {rc}: {out.strip()}")
+    else:
+        remaining = outputs.get("remaining", "")
+        reason = outputs.get("reason", "")
+        if "converge appended new work" not in reason or "tasks outstanding" not in reason:
+            failures.append(f"FR-013: the both-reasons-fire case did not name both "
+                            f"reasons -- got reason={reason!r}")
+        count = remaining.count("C001 leftover item")
+        if count != 1:
+            failures.append(f"SC-006: the appended item was listed {count} time(s), "
+                            f"not exactly once -- remaining={remaining!r}")
+    return failures
+
+
 def check_gate_wired():
     """FR-020's reflexive check (mirrors Gate 30's own check_gate_wired):
     this script cannot see its own absence from a workflow it isn't in, so
@@ -564,6 +623,7 @@ def main():
         failures.extend(check_single_home_no_pasted_idiom())
         failures.extend(check_unreadable_tasks_md(root))
         failures.extend(check_dispatch_handoff(steps, root))
+        failures.extend(check_remaining_work_report(steps, root))
         failures.extend(check_gate_wired())
     finally:
         shutil.rmtree(root, ignore_errors=True)

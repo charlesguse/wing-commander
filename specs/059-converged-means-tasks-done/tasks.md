@@ -373,7 +373,7 @@ names the reason.
 rewrites the source and narrative of) and Phase 5 (the `handoff`/
 `progressed` values this story's reason narrative also names).
 
-- [ ] T022 [US3] `.github/workflows/implement.yml`, both read-back steps:
+- [X] T022 [US3] `.github/workflows/implement.yml`, both read-back steps:
   change the `remaining` output's source (research.md D6) from
   `git show "$converge_sha" -- "$SPEC_DIR/tasks.md" | grep '^+' | grep -v
   '^+++' | sed 's/^+//'` (today's 1296-1300 / 1855-1860) to the tip's
@@ -383,7 +383,7 @@ rewrites the source and narrative of) and Phase 5 (the `handoff`/
   non-convergence reasons without double-listing (D6: a converge-appended
   phase is, by construction, additional unchecked lines already present in
   the tip's `tasks.md`).
-- [ ] T023 [US3] `.github/workflows/implement.yml`, both read-back steps:
+- [X] T023 [US3] `.github/workflows/implement.yml`, both read-back steps:
   extend the `reason` output (contract §2: "gains new narrative cases")
   with the non-convergence cases from data-model.md's "Non-convergence
   reason" entity — "converge appended new work" (`converge_sha` non-empty),
@@ -394,7 +394,7 @@ rewrites the source and narrative of) and Phase 5 (the `handoff`/
   so the loop is ending here rather than dispatching another cycle" — when
   `handoff=true`. Leave the existing failed/truncated/cap-reached reason
   strings elsewhere in the step untouched; only add these new cases.
-- [ ] T024 [US3] `.github/workflows/implement.yml`, `Dispatch next step`:
+- [X] T024 [US3] `.github/workflows/implement.yml`, `Dispatch next step`:
   update the two existing `$REMAINING`-posting branches (~2582-2598
   standalone next-cycle, ~2599-2621 cap-reached) plus T018's `HANDOFF`
   branch to prefix the posted comment with T023's `reason` narrative, so a
@@ -404,20 +404,20 @@ rewrites the source and narrative of) and Phase 5 (the `handoff`/
   that posts `$REMAINING` (FR-012, SC-006) — the truncated/at-cap-while-
   truncated branch (~2560-2576), which posts no `$REMAINING` block at all
   today, is unaffected and keeps its own shape.
-- [ ] T025 [US3] `.github/workflows/implement.yml`, both read-back steps:
+- [X] T025 [US3] `.github/workflows/implement.yml`, both read-back steps:
   add to the step summary (FR-014) the numeric `unchecked-count` (tip)
   the decision used and the `progressed` boolean, written to
   `$GITHUB_STEP_SUMMARY` alongside the existing exhausted/failed summary
   lines (1260, 1264, 1271, 1275) — a run's own log should show why it
   converged, dispatched another cycle, or handed off, without re-deriving
   it from the branch.
-- [ ] T026 [US3] Extend Gate 81 with FR-019's remaining-work fixtures: the
+- [X] T026 [US3] Extend Gate 81 with FR-019's remaining-work fixtures: the
   no-converge-commit path (outstanding tasks, no `converge_sha`) produces
   a non-empty `remaining` and a reason naming "tasks outstanding"; the
   converge-commit-appended path's `remaining` lists the appended items
   without duplication; the both-reasons-fire path lists the task set
   exactly once (SC-006).
-- [ ] T027 [US3] Run `python .github/scripts/run-local-gates.py`; confirm
+- [X] T027 [US3] Run `python .github/scripts/run-local-gates.py`; confirm
   Gate 81's US3 fixtures pass alongside every prior phase's.
 
 **Checkpoint**: every `converged=false` lifecycle comment names its reason
