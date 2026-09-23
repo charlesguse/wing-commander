@@ -16,13 +16,14 @@ MARKER_RE = re.compile(
     r"<!--\s*wing-commander-board-item:\s*(\{.*?\})\s*-->", re.DOTALL)
 
 
-def read_marker(issue_comments):
+def read_marker_with_timestamp(issue_comments):
     """issue_comments: a list of {"created_at": "...", "body": "..."}
-    dicts (an issue's own comments, any order). Returns the most recent
-    well-formed board-item marker dict found in any comment body, or None
-    when no comment carries one, or the newest one is not valid JSON
-    (missing/unparsable marker -- degrade to None, never raise; the caller
-    falls back to live GitHub state per FR-054)."""
+    dicts (an issue's own comments, any order). Returns
+    (created_at, marker) for the most recent well-formed board-item marker
+    found in any comment body, or None when no comment carries one, or the
+    newest one is not valid JSON (missing/unparsable marker -- degrade to
+    None, never raise; the caller falls back to live GitHub state per
+    FR-054)."""
     dated_markers = []
     for comment in issue_comments or []:
         body = comment.get("body") or ""
@@ -39,7 +40,18 @@ def read_marker(issue_comments):
     if not dated_markers:
         return None
     dated_markers.sort(key=lambda pair: pair[0])
-    return dated_markers[-1][1]
+    return dated_markers[-1]
+
+
+def read_marker(issue_comments):
+    """issue_comments: a list of {"created_at": "...", "body": "..."}
+    dicts (an issue's own comments, any order). Returns the most recent
+    well-formed board-item marker dict found in any comment body, or None
+    when no comment carries one, or the newest one is not valid JSON
+    (missing/unparsable marker -- degrade to None, never raise; the caller
+    falls back to live GitHub state per FR-054)."""
+    pair = read_marker_with_timestamp(issue_comments)
+    return pair[1] if pair else None
 
 
 def write_marker(step, round, pr, branch, base_sha):

@@ -38,7 +38,7 @@ dependency and must exist before the fix step's first post-feature run
 (spec Assumptions: "The ownership label exists in the repository... before
 first use").
 
-- [ ] T001 [P] Add `board:owned` to `docs/setup.md`'s label table (alongside
+- [X] T001 [P] Add `board:owned` to `docs/setup.md`'s label table (alongside
   `board:stalled`, ~line 155) — "Applied by the board loop (`board-loop.yml`)
   to every pull request it opens, at creation time, marking it as the
   loop's own (FR-013) — read only by resume's ownership-label fallback
@@ -58,7 +58,7 @@ recovery and step resolution keep using plain `read_marker()`.
 
 **⚠️ CRITICAL**: T003 (User Story 1) cannot start until this phase is done.
 
-- [ ] T002 Add `read_marker_with_timestamp(issue_comments)` to
+- [X] T002 Add `read_marker_with_timestamp(issue_comments)` to
   `.github/scripts/board_item_marker.py`, returning `(created_at, marker)`
   for the newest well-formed marker found by the same scan `read_marker()`
   already performs, or `None` when none is found (data-model.md
