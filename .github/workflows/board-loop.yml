@@ -186,6 +186,7 @@ jobs:
 
           mapfile -t numbers < <(jq -r '.[].number' "$RUNNER_TEMP/board-open-issues.json")
           echo '{}' > "$RUNNER_TEMP/board-labeled-events.json"
+          echo '{}' > "$RUNNER_TEMP/board-comments-by-issue.json"
           for number in "${numbers[@]}"; do
             # Gate 18: a --paginate `gh api` call must not --jq an
             # array-collecting filter (each page would emit its own array
@@ -201,10 +202,19 @@ jobs:
             issue_author_assoc="$(jq -r --arg n "$number" '.[] | select(.number == ($n|tonumber)) | .authorAssociation' "$RUNNER_TEMP/board-open-issues.json")"
 
             if ! gh api "repos/$GITHUB_REPOSITORY/issues/$number/comments" --paginate \
-                --jq '.[] | {login: .user.login, association: .author_association, created_at}' 2>/dev/null | jq -s '.' \
+                --jq '.[] | {login: .user.login, association: .author_association, created_at, body}' 2>/dev/null | jq -s '.' \
                 > "$RUNNER_TEMP/board-comments-$number.json"; then
               echo '[]' > "$RUNNER_TEMP/board-comments-$number.json"
             fi
+
+            # contracts/in-flight-detection.md "Runtime caller contract":
+            # the same per-issue comments call above already carries `body`
+            # now, so this accumulation feeds board_eligibility.py's marker
+            # scan without a second per-issue comments fetch (research.md D3).
+            jq --arg number "$number" --slurpfile comments "$RUNNER_TEMP/board-comments-$number.json" \
+              '. + {($number): $comments[0]}' "$RUNNER_TEMP/board-comments-by-issue.json" \
+              > "$RUNNER_TEMP/board-comments-by-issue.tmp"
+            mv "$RUNNER_TEMP/board-comments-by-issue.tmp" "$RUNNER_TEMP/board-comments-by-issue.json"
 
             mapfile -t logins < <(jq -r '[.[].actor.login] | unique[]' "$RUNNER_TEMP/board-events-$number.json")
             echo '{}' > "$RUNNER_TEMP/board-assoc-$number.json"
@@ -232,39 +242,75 @@ jobs:
             mv "$RUNNER_TEMP/board-labeled-events.tmp" "$RUNNER_TEMP/board-labeled-events.json"
           done
 
+          # "One item at a time" (User Story 7): an item already mid-flight
+          # (fix, review round, or a post-push breach's spec-request never
+          # changes this) is finished before a fresh, merely-older item is
+          # started, so this run's own oldest-first fallback below never
+          # starves an in-progress item. FR-001/FR-011: this decision reads
+          # only the board item marker, never a pull request body --
+          # board_eligibility.in_flight_candidate() (see the canonical
+          # comment above that function) is the single home for it.
+          #
+          # contracts/in-flight-detection.md "Runtime caller contract" step
+          # 2: a narrow second pass, scoped to exactly the PR numbers a
+          # fix-or-later-step marker names -- never a `gh pr list` call,
+          # never a body/text search.
+          pr_numbers_to_check="$(COMMENTS_BY_ISSUE_PATH="$RUNNER_TEMP/board-comments-by-issue.json" python3 - <<'PYEOF'
+          import json
+          import os
+          import sys
+
+          sys.path.insert(0, ".github/scripts")
+          from board_eligibility import FIX_OR_LATER_STEPS
+          from board_item_marker import read_marker_with_timestamp
+
+          with open(os.environ["COMMENTS_BY_ISSUE_PATH"], encoding="utf-8") as fh:
+              comments_by_issue = json.load(fh)
+
+          pr_numbers = set()
+          for comments in comments_by_issue.values():
+              pair = read_marker_with_timestamp(comments)
+              if pair is None:
+                  continue
+              _created_at, marker = pair
+              if marker.get("step") not in FIX_OR_LATER_STEPS:
+                  continue
+              try:
+                  pr_numbers.add(int(marker.get("pr")))
+              except (TypeError, ValueError):
+                  continue
+
+          for number in sorted(pr_numbers):
+              print(number)
+          PYEOF
+          )"
+
+          echo '{}' > "$RUNNER_TEMP/board-pr-state-by-number.json"
+          if [ -n "$pr_numbers_to_check" ]; then
+            while IFS= read -r pr_number; do
+              [ -z "$pr_number" ] && continue
+              # GitHub's REST pulls endpoint reports state as lowercase
+              # open/closed with `merged` as a separate boolean -- normalize
+              # to the OPEN/CLOSED/MERGED vocabulary data-model.md and this
+              # module's callers use throughout.
+              pr_state="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr_number" \
+                --jq 'if .merged then "MERGED" elif .state == "open" then "OPEN" else "CLOSED" end' 2>/dev/null || true)"
+              [ -z "$pr_state" ] && continue
+              jq --arg n "$pr_number" --arg s "$pr_state" '. + {($n): $s}' \
+                "$RUNNER_TEMP/board-pr-state-by-number.json" > "$RUNNER_TEMP/board-pr-state-by-number.tmp"
+              mv "$RUNNER_TEMP/board-pr-state-by-number.tmp" "$RUNNER_TEMP/board-pr-state-by-number.json"
+            done <<< "$pr_numbers_to_check"
+          fi
+
           jq -n --slurpfile issues "$RUNNER_TEMP/board-open-issues.json" \
             --slurpfile events "$RUNNER_TEMP/board-labeled-events.json" \
-            '{open_issues: $issues[0], labeled_events_by_issue: $events[0]}' \
+            --slurpfile comments "$RUNNER_TEMP/board-comments-by-issue.json" \
+            --slurpfile pr_states "$RUNNER_TEMP/board-pr-state-by-number.json" \
+            '{open_issues: $issues[0], labeled_events_by_issue: $events[0],
+              comments_by_issue: $comments[0], pr_state_by_number: $pr_states[0]}' \
             > "$RUNNER_TEMP/board-eligibility-input.json"
 
-          # "One item at a time" (User Story 7): an item already mid-flight
-          # (an open PR citing it -- fix, review round, or a post-push
-          # breach's spec-request never changes this) is finished before a
-          # fresh, merely-older item is started, so this run's own
-          # oldest-first fallback below never starves an in-progress item.
-          # Excluded exactly like board_eligibility.py's own is_excluded()
-          # (closed/disposition/board:stalled/stage:*/spec:*), reusing that
-          # same function rather than a second exclusion rule.
-          in_flight_issue="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --json number,body --limit 200 \
-            | jq -r '[.[].body // "" | capture("(?:Fixes|fixes) #(?<n>[0-9]+)")? | .n] | .[0] // empty' 2>/dev/null || true)"
-          if [ -n "$in_flight_issue" ]; then
-            excluded="$(python3 -c "
-          import json, sys
-          sys.path.insert(0, '.github/scripts')
-          from board_eligibility import is_excluded
-          issues = json.load(open('$RUNNER_TEMP/board-open-issues.json', encoding='utf-8'))
-          match = [i for i in issues if i.get('number') == int('$in_flight_issue')]
-          excluded, _ = is_excluded(match[0]) if match else (True, 'not-open')
-          print('true' if excluded else 'false')
-          ")"
-            if [ "$excluded" = "false" ]; then
-              issue_number="$in_flight_issue"
-            fi
-          fi
-
-          if [ -z "${issue_number:-}" ]; then
-            issue_number="$(python3 .github/scripts/board_eligibility.py < "$RUNNER_TEMP/board-eligibility-input.json")"
-          fi
+          issue_number="$(python3 .github/scripts/board_eligibility.py < "$RUNNER_TEMP/board-eligibility-input.json")"
 
           if [ -z "$issue_number" ]; then
             echo "board-loop: nothing to do -- no eligible, non-excluded open issue." >> "$GITHUB_STEP_SUMMARY"

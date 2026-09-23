@@ -35,7 +35,11 @@ since GitHub's timeline API does not itself carry author_association):
 `labeled_events_by_issue` (for `select()`): {issue_number: [labeled_events]}.
 """
 import json
+import os
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from board_item_marker import read_marker_with_timestamp  # noqa: E402
 
 MAINTAINER_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 
@@ -48,6 +52,14 @@ PIPELINE_LABEL_PREFIXES = ("auto-update:", "found-by:")
 STALLED_LABEL = "board:stalled"
 DISPOSITION_PREFIX = "disposition:"
 LIFECYCLE_PREFIXES = ("stage:", "spec:")
+
+# data-model.md "Step" / contracts/in-flight-detection.md: the loop's named
+# steps, split by whether a PR can exist yet at that step. Pre-fix qualifies
+# an in-flight candidate on the marker's step alone; fix-or-later needs its
+# recorded PR to still resolve OPEN (FR-002).
+PRE_FIX_STEPS = frozenset({"triage", "route"})
+FIX_OR_LATER_STEPS = frozenset({"fix", "review", "readiness", "prove"})
+TERMINAL_STEPS = frozenset({"closed", "stalled", "proven"})
 
 
 def _label_names(issue):
@@ -120,9 +132,61 @@ def is_excluded(issue):
     return False, None
 
 
-def select(open_issues, labeled_events_by_issue):
-    """Oldest (by createdAt asc) issue where classify_issue() != "ineligible"
-    and is_excluded() is False. None when no issue qualifies (FR-009)."""
+# FR-011/CLAUDE.md single-home rule: "is this issue an in-flight board item
+# of mine?" is decided here, and only here -- in_flight_candidate() and the
+# select() that consults it first. Never re-derive this inline in a
+# workflow's run: step or in a second module; point back at this comment
+# instead (contracts/in-flight-detection.md).
+def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number):
+    """FR-001/FR-002/FR-003/FR-005. Returns (issue_number, multiple_found).
+
+    issue_number is the newest-marker in-flight issue among open,
+    non-excluded issues, or None. multiple_found is True when more than
+    one issue qualified (FR-005) regardless of which one issue_number
+    names.
+
+    Skips (never raises on): an issue with no comments, an issue whose
+    newest marker is unparsable (per board_item_marker.read_marker's own
+    degrade rule), a marker naming a fix-or-later step whose pr is absent
+    from pr_state_by_number or not OPEN there.
+    """
+    candidates = []
+    for issue in open_issues:
+        excluded, _reason = is_excluded(issue)
+        if excluded:
+            continue
+        number = issue.get("number")
+        pair = read_marker_with_timestamp(comments_by_issue.get(number) or [])
+        if pair is None:
+            continue
+        created_at, marker = pair
+        step = marker.get("step")
+        if step in TERMINAL_STEPS:
+            continue
+        if step in PRE_FIX_STEPS:
+            candidates.append((created_at, number))
+        elif step in FIX_OR_LATER_STEPS:
+            try:
+                pr = int(marker.get("pr"))
+            except (TypeError, ValueError):
+                continue
+            if pr_state_by_number.get(pr) == "OPEN":
+                candidates.append((created_at, number))
+    if not candidates:
+        return None, False
+    candidates.sort(key=lambda pair: pair[0])
+    return candidates[-1][1], len(candidates) > 1
+
+
+def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_number):
+    """FR-004/FR-011: consults in_flight_candidate() first; falls through to
+    the existing oldest-first/classify_issue/is_excluded scan (unchanged)
+    when it returns (None, ...)."""
+    in_flight, _multiple_found = in_flight_candidate(
+        open_issues, comments_by_issue, pr_state_by_number)
+    if in_flight is not None:
+        return in_flight
+
     candidates = sorted(open_issues, key=lambda issue: issue.get("createdAt") or "")
     for issue in candidates:
         excluded, _reason = is_excluded(issue)
@@ -136,15 +200,24 @@ def select(open_issues, labeled_events_by_issue):
 
 def main():
     """Runtime entry point: reads `{"open_issues": [...],
-    "labeled_events_by_issue": {...}}` from stdin, prints the selected
-    issue number (or nothing) to stdout."""
+    "labeled_events_by_issue": {...}, "comments_by_issue": {...},
+    "pr_state_by_number": {...}}` from stdin, prints the selected issue
+    number (or nothing) to stdout."""
     payload = json.load(sys.stdin)
     open_issues = payload.get("open_issues", [])
     labeled_events_by_issue = {
         int(number): events
         for number, events in (payload.get("labeled_events_by_issue") or {}).items()
     }
-    selected = select(open_issues, labeled_events_by_issue)
+    comments_by_issue = {
+        int(number): comments
+        for number, comments in (payload.get("comments_by_issue") or {}).items()
+    }
+    pr_state_by_number = {
+        int(number): state
+        for number, state in (payload.get("pr_state_by_number") or {}).items()
+    }
+    selected = select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_number)
     if selected is not None:
         print(selected)
 

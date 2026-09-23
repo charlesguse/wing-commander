@@ -88,7 +88,7 @@ Acceptance Scenario 1; full live replay is quickstart.md §3, SC-001/SC-003).
 
 ### Implementation for User Story 1
 
-- [ ] T003 [US1] Add `PRE_FIX_STEPS = frozenset({"triage", "route"})`,
+- [X] T003 [US1] Add `PRE_FIX_STEPS = frozenset({"triage", "route"})`,
   `FIX_OR_LATER_STEPS = frozenset({"fix", "review", "readiness", "prove"})`,
   `TERMINAL_STEPS = frozenset({"closed", "stalled", "proven"})`, and
   `in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number)
@@ -111,7 +111,7 @@ Acceptance Scenario 1; full live replay is quickstart.md §3, SC-001/SC-003).
   missing a field, non-integer `pr`) — degrade to "not a candidate" per
   `read_marker()`'s own existing contract.
 
-- [ ] T004 [US1] Extend `select()` in `.github/scripts/board_eligibility.py`
+- [X] T004 [US1] Extend `select()` in `.github/scripts/board_eligibility.py`
   to the signature `select(open_issues, labeled_events_by_issue,
   comments_by_issue, pr_state_by_number)`: call `in_flight_candidate()`
   (T003) first; when it returns an `issue_number` (not `None`), return it
@@ -120,13 +120,13 @@ Acceptance Scenario 1; full live replay is quickstart.md §3, SC-001/SC-003).
   (FR-004, contracts/in-flight-detection.md, data-model.md "Extended
   `select()` signature").
 
-- [ ] T005 [US1] Update `main()` in `.github/scripts/board_eligibility.py`
+- [X] T005 [US1] Update `main()` in `.github/scripts/board_eligibility.py`
   to also read `comments_by_issue` and `pr_state_by_number` from the stdin
   JSON payload (keyed the same way `labeled_events_by_issue` already is —
   issue numbers as string keys, coerced to `int`) and pass them through to
   `select()` (T004).
 
-- [ ] T006 [US1] In `board-loop.yml`'s "Fetch open issues and select the
+- [X] T006 [US1] In `board-loop.yml`'s "Fetch open issues and select the
   next board item" step (~line 154), extend the per-issue `gh api
   .../issues/$number/comments` call's `--jq` projection (~line 204) to also
   extract `body`, alongside the `login`/`association`/`created_at` it
@@ -135,7 +135,7 @@ Acceptance Scenario 1; full live replay is quickstart.md §3, SC-001/SC-003).
   is already accumulated (~lines 224-233) — one API round-trip continues to
   serve both purposes (research.md D3).
 
-- [ ] T007 [US1] [P] In the same step, after `board-comments-by-issue.json`
+- [X] T007 [US1] [P] In the same step, after `board-comments-by-issue.json`
   is assembled (T006), add a narrow second pass: scan it in Python for
   markers naming a step in `FIX_OR_LATER_STEPS` and a `pr` number (reusing
   `board_item_marker.read_marker_with_timestamp()` and
@@ -144,7 +144,7 @@ Acceptance Scenario 1; full live replay is quickstart.md §3, SC-001/SC-003).
   .state` into a `pr_state_by_number` map — never a `gh pr list` call, never
   a body or text search (FR-001, research.md D3).
 
-- [ ] T008 [US1] Delete the unrestricted in-flight shortcut block in
+- [X] T008 [US1] Delete the unrestricted in-flight shortcut block in
   `board-loop.yml` (~lines 240-263: the `in_flight_issue="$(gh pr list
   --repo ... capture("Fixes #...")` call and its inline `is_excluded`
   Python subprocess) outright. Add `comments_by_issue` and
@@ -154,7 +154,7 @@ Acceptance Scenario 1; full live replay is quickstart.md §3, SC-001/SC-003).
   `python3 .github/scripts/board_eligibility.py` (T005) is the run's only
   source of the selected issue number (FR-001/FR-004).
 
-- [ ] T009 [US1] Add one canonical comment directly above
+- [X] T009 [US1] Add one canonical comment directly above
   `in_flight_candidate()`/`select()` in `.github/scripts/board_eligibility.py`
   stating that the in-flight decision lives here and only here (FR-011,
   CLAUDE.md's single-home rule), for any future call site to point back at
