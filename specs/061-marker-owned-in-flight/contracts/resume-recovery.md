@@ -43,45 +43,52 @@ empty. Unchanged from spec 057.
 ## Step resolution (FR-008/FR-009/FR-014 — replaces "force triage when
 branch and pr are both empty")
 
-```text
-step = the marker's own step, IF:
-  - the step is pre-fix (triage, route), OR
-  - the step is fix-or-later AND the recovered pr's state == OPEN
-  EXCEPT: step == "route" with no re-derived branch and no recovered pr
-    still collapses to "triage" (unchanged pre-existing behavior -- see
-    board-loop.yml's own comment at the triage job's marker-write step;
-    route is stateless and cheap to redo, so an item interrupted between
-    triage and route resumes by re-running triage, not by a dedicated
-    "resume at route" path).
-  step == fix-or-later AND recovered pr's state != OPEN:
-    -> falls through to the "no usable marker" rules below, WITH the
-       reason recorded (FR-009: "stale marker -- recorded pr <n> is
-       <state>, not open").
+Priority by strongest live signal (research.md D5) — each clause below
+fires only when the ones above it don't apply:
 
-no usable marker (missing, unparsable, or just fell through above):
-  - a branch is re-derived and no pr is recovered -> step = "fix"
-    (this is the case board-loop.yml's fix job `if:` already expects --
-    `needs.select.outputs.step == 'fix' && branch != '' && pr == ''` --
-    but which today's resume logic can never produce; see research.md D5)
-  - a pr is recovered (marker-named or FR-007 fallback) and its state is
-    OPEN -> step = "review" (matches contracts/fix-step.md's own guard
-    language: "resumes at whatever step the existing PR's state implies")
-  - neither -> step = "triage", and the run records that this item's
-    prior state could not be recovered and why (FR-009) -- e.g. "no
-    marker and no board:owned PR citing this issue" or "marker's step was
-    X but its recorded PR is Y".
+```text
+1. The marker names a pr number, and it resolves (pre-fix: no pr required;
+   fix-or-later: the resolved pr's state == OPEN)
+     -> step = the marker's own step.
+   (A fix-or-later marker whose pr's state != OPEN does NOT match this
+   clause -- it falls through to clause 4, WITH the reason recorded,
+   FR-009: "stale marker -- recorded pr <n> is <state>, not open".)
+
+2. No marker-named pr resolved, but the FR-007 fallback recovers an open
+   board:owned pr citing this issue
+     -> step = "review" (matches contracts/fix-step.md's own guard
+        language: "resumes at whatever step the existing PR's state
+        implies"), and the run records that this pr was recovered via the
+        label fallback, not a marker (FR-014).
+
+3. No pr resolved by clause 1 or 2, but a branch is re-derived
+   (`git ls-remote` finds it)
+     -> step = "fix" -- this is the case board-loop.yml's fix job `if:`
+        already expects (`needs.select.outputs.step == 'fix' && branch !=
+        '' && pr == ''`) but which today's resume logic can never produce
+        (see research.md D5).
+
+4. Neither a pr nor a branch resolved (covers: no marker; a marker naming
+   triage/route with nothing cut yet -- branch/pr are never present that
+   early, so this is the ordinary shape of a pre-fix interruption; a
+   disqualified fix-or-later marker from clause 1; an unparsable marker)
+     -> step = "triage", and, whenever a marker was present but
+        disqualified rather than simply absent, the run records why
+        (FR-009).
 ```
 
 `step` is never left empty (FR-008) — every branch above ends in one of the
-loop's named steps.
+loop's named steps. The marker's own step name is consulted only in clause
+1, and only once a live pr lookup has confirmed the marker is current —
+live state, not the marker's say-so, decides which clause applies.
 
 ## Acceptance mapping
 
 | Spec scenario | This contract's clause |
 |---|---|
-| US2 AS1 (marker + live branch + live PR) | step = marker's step (fix-or-later, PR OPEN) |
-| US2 AS2 (no marker, no board:owned PR) | step = triage, "no usable marker" branch |
-| US2 AS3 (no marker, board:owned PR citing issue) | PR recovery step 2, step = review, FR-014 recorded |
-| US2 AS4 (marker's branch and PR both gone) | branch empty, PR recovery finds nothing (marker PR 404s, no board:owned match) → step = triage |
-| US2 AS5 (marker fix-or-later, PR closed/merged) | "falls through... WITH the reason recorded" clause → step = triage |
-| US2 AS6 (step never empty) | every branch above ends in a named step |
+| US2 AS1 (marker + live branch + live PR) | step-resolution clause 1 (fix-or-later, PR OPEN) → marker's own step |
+| US2 AS2 (no marker, no board:owned PR) | PR recovery finds nothing, no branch either → step-resolution clause 4 → triage |
+| US2 AS3 (no marker, board:owned PR citing issue) | PR recovery step 2 → step-resolution clause 2 → review, FR-014 recorded |
+| US2 AS4 (marker's branch and PR both gone) | branch empty, PR recovery finds nothing (marker PR 404s, no board:owned match) → step-resolution clause 4 → triage |
+| US2 AS5 (marker fix-or-later, PR closed/merged) | clause 1 does not match (PR not OPEN) → clause 4, reason recorded → triage |
+| US2 AS6 (step never empty) | every clause above ends in a named step |

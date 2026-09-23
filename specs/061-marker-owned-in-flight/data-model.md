@@ -143,22 +143,29 @@ No change to `write_marker()` or the marker's own JSON shape (Out of Scope).
 
 ## State flow (resume's step resolution, decision D5)
 
+Priority by strongest live signal — each clause fires only when the ones
+above it don't apply; re-derive branch (`git ls-remote`) and resolve PR
+(marker-named lookup by number, then FR-007's `board:owned` fallback)
+first, then:
+
 ```text
-              re-derive branch (git ls-remote), PR (by number or FR-007 fallback)
-                              |
-     marker usable & step is pre-fix ---------------------------> step = marker's step
-       (route + no branch/pr re-derived) --------------------------------\
-                              |                                          v
-     marker usable, step fix-or-later,                             step = triage
-       recorded PR still OPEN -------------------------------------> step = marker's step
-                              |
-     no usable marker, branch re-derived, no PR ------------------> step = fix
-                              |
-     no usable marker, PR recovered (marker-named or FR-007), OPEN -> step = review
-                              |
-     none of the above --------------------------------------------> step = triage
-                                                                       (FR-009: reason recorded)
+1. marker names a PR, and that PR resolves (pre-fix: no PR needed;
+   fix-or-later: PR state == OPEN)          -> step = marker's own step
+2. no marker-named PR, but FR-007 fallback
+   recovers an open board:owned PR          -> step = review   (FR-014 recorded)
+3. no PR resolved by 1 or 2, but a branch
+   is re-derived                            -> step = fix
+4. neither a PR nor a branch resolved       -> step = triage   (FR-009 recorded
+                                                                 when a marker
+                                                                 was present but
+                                                                 disqualified)
 ```
+
+Clause 4 is where a `triage`- or `route`-step marker with nothing cut yet
+lands (branch/PR are never present that early), reproducing today's
+existing "route is informational only, resume re-runs triage" behavior
+without a per-step exception — the marker's step name is only consulted in
+clause 1, and only once a PR has already confirmed the marker is current.
 
 This flow is resume's own step-resolution logic inside `board-loop.yml`'s
 `resume` step — not part of `board_eligibility.py`, since it answers "what

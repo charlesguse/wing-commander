@@ -127,57 +127,75 @@ the mechanism that produced the observed failure. Widening the fallback to
 branch-naming convention (`fix/<n>-*`) — explicitly rejected by FR-007's own
 text as a signal that "does not stay in sync with the fix step by itself."
 
-## D5: Resume's step resolution — three named-step outcomes, never empty
+## D5: Resume's step resolution — priority by strongest live signal, never empty
 
-**Decision**: Resume derives `step` as follows, replacing the existing
-"`step=$marker_step`; force to `triage` when both branch and pr are empty"
-rule:
+**Decision**: Resume derives `step` from re-derived live state, in this
+priority order (each clause fires only when the ones above it don't apply),
+replacing the existing "`step=$marker_step`; force to `triage` when both
+branch and pr are empty" rule outright rather than patching it:
 
-1. The marker (re-derived, live-validated per FR-002) names a step and,
-   where required, its PR is still open: `step` is exactly that marker step,
-   **except** when the step is `route` and neither a branch nor a PR is
-   re-derived — that specific case still collapses to `triage`
-   (unchanged from today's behavior: `route` never persists as a resumable
-   step because the route job is stateless and re-running triage is cheaper
-   than adding a fourth job trigger keyed on it; recorded in board-loop.yml's
-   existing comment at the triage job's marker-write step and preserved
-   here, not reopened by this feature).
-2. The marker names a pre-fix step (`triage`) with no branch/PR, or is
-   otherwise unusable (missing, unparsable, fix-or-later step whose PR is no
-   longer open) and neither a marker-named nor FR-007-fallback PR/branch is
-   found: `step` is `triage` (FR-008), and the run records that it did so
-   and why (FR-009).
-3. No usable marker, but a branch is re-derived and no PR is: `step` is
-   `fix` — this is the case `board-loop.yml`'s existing `fix` job condition
-   (`needs.select.outputs.step == 'fix' && branch != '' && pr == ''`,
-   board-loop.yml line 1072 at the time of writing) already anticipates but
-   which today's resume logic can never actually produce (a marker naming
-   `route` with a re-derived branch present still resolves under today's
-   code to `route`, which no job's `if:` ever matches, silently stranding
-   the item — the same "step resolves to nothing runnable" failure shape
-   FR-008/FR-010 exist to close, found here as a second instance while
-   designing this fix). Fixing this makes an existing, previously
-   unreachable job condition reachable; it changes no job's `if:` guard.
-4. No usable marker, but a PR is recovered (marker-named or FR-007
-   fallback) and its state is still open: `step` is `review` — the state a
-   PR that exists but was never marked implies, matching `contracts/fix-
+1. A PR is resolved from the marker's own recorded number (FR-002-validated:
+   pre-fix markers need no PR; fix-or-later markers need that PR's state to
+   be `OPEN`): `step` is exactly the marker's own step. (US2 AS1.)
+2. No marker-named PR, but the FR-007 fallback recovers an open,
+   `board:owned` PR citing this issue: `step` is `review` — the state a PR
+   that exists but was never marked implies, matching `contracts/fix-
    step.md`'s existing guard language ("resumes at whatever step the
-   existing PR's state implies (review or readiness)").
+   existing PR's state implies (review or readiness)"). FR-014's recording
+   requirement applies. (US2 AS3.)
+3. No PR resolved by either of the above, but a branch is re-derived
+   (`git ls-remote` finds it): `step` is `fix` — this is the case
+   `board-loop.yml`'s existing `fix` job condition (`needs.select.outputs.
+   step == 'fix' && branch != '' && pr == ''`, board-loop.yml line 1072 at
+   the time of writing) already anticipates but which today's resume logic
+   can never actually produce (a marker still naming `route`, written by
+   triage before route/fix ever ran, survives untouched if the fix job dies
+   after cutting a branch but before opening a PR — under today's code this
+   resolves to `route`, which no job's `if:` ever matches, silently
+   stranding the item exactly the way the reported defect did, just via a
+   different path; found here as a second instance of the same failure
+   shape while designing this fix). Fixing this makes an existing,
+   previously unreachable job condition reachable; it changes no job's
+   `if:` guard.
+4. Neither a PR nor a branch is resolved (covers: no marker at all; a
+   marker naming `triage`/`route` with nothing cut yet — the ordinary,
+   frequent shape of an item interrupted before the fix step; a marker
+   naming a fix-or-later step whose PR turned out closed/merged and whose
+   branch is also gone; an unparsable marker): `step` is `triage` (FR-008),
+   and the run records that it did so and why (FR-009) whenever a marker
+   was present but disqualified (as opposed to simply absent, which needs
+   no explanation).
 
-**Rationale**: FR-008 requires a named step in every case; FR-010 requires a
+**Rationale**: This priority order needs no special case for any individual
+step name — `triage` and `route` markers both naturally fall to clause 4
+when (as they always are, by construction, before the fix step ever runs)
+neither branch nor PR exists yet, exactly reproducing today's correct
+"route is informational only, an interrupted pre-fix item resumes by
+re-running triage" behavior (board-loop.yml's own comment at the triage
+job's marker-write step) without encoding it as an exception. What actually
+distinguishes each outcome is the strongest live fact available — a real PR
+outranks a real branch, which outranks nothing at all — which is also why
+this reads each fact in a fixed order rather than switching on the marker's
+step name first: the marker's step is a claim about a run that already
+happened, live state is what is actually true now, and FR-002/FR-008 both
+already establish that live state wins whenever it disagrees with the
+marker. FR-008 requires a named step in every case; FR-010 requires a
 "selected but did nothing" run to be distinguishable from a "selected and
-worked" one, which a silently-unmatched `if:` (case 3, as it exists today)
-defeats identically to an empty step string. Preserving the existing
-`route`-collapses-to-`triage` behavior keeps this feature's blast radius to
-the reported defect and its immediate FR-008 corollary, per Out of Scope
-("changing... when the marker is written" — the collapse is a read-side
-convenience predating this feature, not part of what FR-002 governs).
+worked" one, which a silently-unmatched `if:` (clause 3's condition, dead
+under today's code) defeats identically to an empty step string.
 
-**Alternatives considered**: Adding a fourth trigger condition so `step ==
-'route'` runs the route job directly — rejected as unnecessary scope growth;
-the existing collapse-to-triage behavior already handles that case
-correctly (route is cheap to redo) and no acceptance scenario asks for it to
-change.
+**Alternatives considered**: Switching on the marker's own step name first
+and only falling back to live state on a miss (an earlier draft of this
+decision) — rejected on review: it needed an ad hoc exception for `route`
+specifically to reproduce the existing collapse-to-triage behavior, and
+still produced the wrong answer for "marker says `route`, but a branch
+exists because route-then-fix already ran and died mid-fix" (it kept
+`step` at `route`, which is unreachable). Prioritizing live facts first
+handles that case for free and generalizes without per-step exceptions.
+Adding a fourth trigger condition so `step == 'route'` runs the route job
+directly — rejected as unnecessary scope growth; clause 4 already handles
+that case correctly (route is cheap to redo) and no acceptance scenario
+asks for it to change.
 
 ## D6: The loop ownership label
 
