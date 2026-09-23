@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,30 +31,33 @@
 
 ## Notes
 
-- Three `[NEEDS CLARIFICATION]` markers remain open, at the three-marker limit.
-  Per the intake stage's CI deviation they were not presented interactively;
-  they are posted to lifecycle issue
-  [#460](https://github.com/charlesguse/wing-commander/issues/460) and the
-  clarify stage encodes the owner's answers back into the spec.
-  - **FR-002** — the resolution shape for the concurrency conflict. The
-    lifecycle issue states outright that this needs an owner decision, not a
-    unilateral fix, and names three of the four options (separate group, async
-    proof, accept-as-is); the fourth (per-trigger group scoping) is added
-    because it is cheaper than the first and the issue does not consider it.
-    No default exists: each option pays in a different currency — spec 057
-    FR-048's simultaneity guarantee, FR-043's definition of proof, or a
-    permanently non-functional re-drive branch.
+- All three `[NEEDS CLARIFICATION]` markers are resolved. Per the intake
+  stage's CI deviation they were not presented interactively; they were posted
+  to lifecycle issue
+  [#460](https://github.com/charlesguse/wing-commander/issues/460) and answered
+  there on 2026-09-23, and the clarify stage encoded the answers into the spec
+  (see "What the owner decided", and FR-002, FR-010, FR-014).
+  - **FR-002** — the resolution shape for the concurrency conflict. Answered
+    **(a) re-drive dispatches get their own concurrency group**: the narrowest
+    fix, leaving triage/route/fix/review/readiness and the no-re-drive prove
+    case serialized as before. Per-trigger scoping, the asynchronous shape and
+    accept-as-is were each rejected for a stated reason. Spec 057 FR-048 is
+    narrowed to exclude proof runs; the single new overlap it permits is held
+    by FR-017's check, which the answer asked be specified precisely rather
+    than left implicit — FR-017 now enumerates the three properties it covers
+    and the still-open-issue case it must exercise.
   - **FR-010** — whether the issue may close on a dispatched-and-started run
-    without a terminal conclusion. Separated from FR-002 deliberately: it is
-    the evidence bar, and the owner may well want it answered the same way
-    (terminal conclusion required) regardless of which concurrency shape wins.
-    Guessing it would silently redefine what "proven" means on this board.
-  - **FR-014** — whether `.github/scripts/**` joins the uses-graph, whether a
-    board-helper-only merge instead closes on the merged PR's own checks, or
-    whether the reachability gap leaves this feature's scope. The lifecycle
-    issue asks for "the same owner look" on this one and does not propose an
-    answer. It is also the one marker whose answer may *remove* scope
-    (User Story 4, FR-013, FR-015), which is recorded in Assumptions.
+    without a terminal conclusion. Answered **no**: the evidence bar is
+    unchanged from spec 057 FR-043. With the deadlock gone the proof run
+    completes inside the existing synchronous wait, so nothing justifies a
+    weaker bar; "proven" still means the fix ran green.
+  - **FR-014** — whether `.github/scripts/**` joins the uses-graph. Answered
+    **yes**: a board-helper-only merge re-drives its wrapper like any other
+    Actions-only change, because the loop executes those helpers on every
+    iteration and "nothing reaches this change" is false for them. Scope is
+    therefore *not* removed — User Story 4, FR-013 and FR-015 stay — and the
+    ordering caveat (FR-014 not before FR-002) is internal to this feature,
+    which ships both. Assumptions records this.
 - Findings the spec records that the lifecycle issue did not, established by
   reading the tree rather than assumed:
   - `board-loop.yml` is the **only** member of the dispatchable set —
@@ -67,9 +70,11 @@
     at run creation. That is why the symptom is `conclusion=timeout` with a
     real-looking `run-url` rather than an empty `run-url`, and it is why FR-006
     has to separate "never started" from "started and ran out of budget".
-  - GitHub keeps at most one pending run per concurrency group, so the hourly
-    schedule tick can displace a queued proof dispatch outright. FR-007 and the
-    edge-case list cover it; the issue does not mention it.
+  - GitHub keeps at most one pending run per concurrency group, so a queued
+    proof dispatch can be displaced outright — by the hourly schedule tick
+    today, and after FR-002's split by a second proof dispatch in the proof
+    group. FR-007 and the edge-case list cover it; the issue does not mention
+    it.
   - A proof re-drive of `board-loop.yml` runs the loop's own entry gates, so it
     can conclude `success` having stood down without exercising the fix at all.
     FR-003 forbids recording that as proof. This is a correctness hole in the
@@ -83,8 +88,10 @@
     to settle.
   - FR-011/FR-012 (the abandoned dispatch must not become an unattributable
     board iteration, and its cost must be visible) state the outcome and leave
-    the mechanism to plan. Some FR-002 options remove the condition entirely;
-    the requirement is written so that satisfying it by removal is valid.
+    the mechanism to plan. The adopted FR-002 resolution removes the commonest
+    cause — a dispatch queued behind its own caller — but not a proof run that
+    outlives the wait budget or a dispatch displaced from the proof group's
+    pending slot, so both requirements stand.
   - FR-004 (the rule must work for a target outside the caller's group) follows
     from the dispatchable set being one workflow *today* and not permanently;
     it is not a trade-off.
@@ -103,4 +110,5 @@
   checked — and never prescribe the workflow syntax that produces them. The
   `file:line` citations are evidence for where the defect lives, not
   instructions for the implementation.
-- Every other checklist item passes. The spec is ready for `/speckit-clarify`.
+- Every checklist item passes. With the clarifications folded in, the spec is
+  ready for `/speckit-plan`.
