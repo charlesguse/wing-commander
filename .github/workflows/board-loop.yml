@@ -355,23 +355,117 @@ jobs:
           marker_step="$(printf '%s' "$marker_json" | jq -r '.step // empty')"
           marker_round="$(printf '%s' "$marker_json" | jq -r '.round // 0')"
           marker_base_sha="$(printf '%s' "$marker_json" | jq -r '.base_sha // empty')"
+          marker_pr="$(printf '%s' "$marker_json" | jq -r '.pr // empty')"
 
           branch=""
           if [ -n "$marker_branch" ] && git ls-remote --exit-code --heads origin "$marker_branch" >/dev/null 2>&1; then
             branch="$marker_branch"
           fi
 
+          # contracts/resume-recovery.md "PR recovery" (FR-006/FR-007):
+          # (1) a direct by-number lookup of the marker's own recorded PR,
+          # re-validated live -- never a search; a 404 falls through to (2).
           pr_number=""
           pr_state=""
-          pr_json="$(gh pr list --repo "$GITHUB_REPOSITORY" --search "$ISSUE_NUMBER in:body" --state all --json number,state --jq '.[0] // empty')"
-          if [ -n "$pr_json" ]; then
-            pr_number="$(printf '%s' "$pr_json" | jq -r '.number')"
-            pr_state="$(printf '%s' "$pr_json" | jq -r '.state')"
+          pr_from_marker="false"
+          if [ -n "$marker_pr" ]; then
+            # Normalize the REST endpoint's lowercase open/closed + separate
+            # `merged` boolean to the OPEN/CLOSED/MERGED vocabulary this
+            # module's callers use throughout (matches the select job's own
+            # pr_state_by_number resolution above).
+            pr_state_raw="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$marker_pr" \
+              --jq 'if .merged then "MERGED" elif .state == "open" then "OPEN" else "CLOSED" end' 2>/dev/null || true)"
+            if [ -n "$pr_state_raw" ]; then
+              pr_number="$marker_pr"
+              pr_state="$pr_state_raw"
+              pr_from_marker="true"
+            fi
           fi
 
-          step="$marker_step"
-          if [ -z "$branch" ] && [ -z "$pr_number" ]; then
-            step="triage"
+          # (2) the FR-007 fallback: an open PR carrying this loop's own
+          # board:owned label AND citing this issue -- only when no
+          # marker-named PR resolved (never a body-only or label-only
+          # match, and never when the marker's own PR resolved but simply
+          # disqualified -- contracts/resume-recovery.md "PR recovery").
+          pr_from_fallback="false"
+          if [ -z "$pr_number" ]; then
+            fallback_number="$(gh api "repos/$GITHUB_REPOSITORY/issues" -X GET --paginate \
+                -f state=open -f labels=board:owned \
+                --jq '{number, body}' 2>/dev/null | jq -s '.' \
+              | jq -r --arg n "$ISSUE_NUMBER" \
+                '[.[] | select((.body // "") | test("(?:Fixes|fixes) #" + $n + "\\b"))] | (.[0].number // empty)')"
+            if [ -n "$fallback_number" ]; then
+              pr_number="$fallback_number"
+              pr_state="OPEN"
+              pr_from_fallback="true"
+            fi
+          fi
+
+          # contracts/resume-recovery.md "Step resolution" (FR-008/FR-009/
+          # FR-014): priority by strongest live signal -- a resolved
+          # marker-named PR outranks the fallback PR, which outranks a
+          # bare re-derived branch, which outranks nothing at all. `step`
+          # is never left empty. Reuses board_eligibility.py's own
+          # PRE_FIX_STEPS/FIX_OR_LATER_STEPS rather than a second,
+          # parallel step-vocabulary list.
+          step_resolution_json="$(MARKER_STEP="$marker_step" MARKER_JSON="$marker_json" BRANCH="$branch" \
+              PR_FROM_MARKER="$pr_from_marker" PR_FROM_FALLBACK="$pr_from_fallback" \
+              PR_STATE="$pr_state" PR_NUMBER="$pr_number" python3 - <<'PYEOF'
+          import json
+          import os
+          import sys
+
+          sys.path.insert(0, ".github/scripts")
+          from board_eligibility import PRE_FIX_STEPS, FIX_OR_LATER_STEPS
+
+          marker_step = os.environ.get("MARKER_STEP") or None
+          branch = os.environ.get("BRANCH") or ""
+          pr_from_marker = os.environ.get("PR_FROM_MARKER") == "true"
+          pr_from_fallback = os.environ.get("PR_FROM_FALLBACK") == "true"
+          pr_state = os.environ.get("PR_STATE") or ""
+          pr_number = os.environ.get("PR_NUMBER") or ""
+          marker_present = os.environ.get("MARKER_JSON") != "null"
+
+          reason = ""
+          if pr_from_marker and marker_step and (
+              marker_step in PRE_FIX_STEPS
+              or (marker_step in FIX_OR_LATER_STEPS and pr_state == "OPEN")
+          ):
+              step = marker_step
+          elif pr_from_marker and marker_step in FIX_OR_LATER_STEPS:
+              # Resolved by number but not OPEN -- disqualified. Falls to
+              # the triage clause below, never the fallback clause: the
+              # marker named a real PR, so a different loop-owned PR must
+              # not be adopted in its place (SC-007).
+              step = "triage"
+              reason = "stale marker -- recorded pr {0} is {1}, not open".format(
+                  pr_number, pr_state)
+          elif pr_from_fallback:
+              step = "review"
+          elif branch:
+              step = "fix"
+          else:
+              step = "triage"
+              if marker_present and marker_step not in PRE_FIX_STEPS:
+                  reason = "stale marker -- recorded branch/pr could not be re-derived live"
+
+          print(json.dumps({
+              "step": step,
+              "recovered_via_fallback": pr_from_fallback,
+              "disqualified_reason": reason,
+          }))
+          PYEOF
+          )"
+
+          step="$(printf '%s' "$step_resolution_json" | jq -r '.step')"
+          recovered_via_fallback="$(printf '%s' "$step_resolution_json" | jq -r '.recovered_via_fallback')"
+          disqualified_reason="$(printf '%s' "$step_resolution_json" | jq -r '.disqualified_reason')"
+
+          if [ "$recovered_via_fallback" = "true" ]; then
+            echo "board-loop: resume recovered PR #$pr_number for issue #$ISSUE_NUMBER via the board:owned label fallback (no board item marker named it)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -n "$disqualified_reason" ]; then
+            echo "board-loop: resume falling back to triage for issue #$ISSUE_NUMBER -- $disqualified_reason." >> "$GITHUB_STEP_SUMMARY"
           fi
 
           {
@@ -1342,7 +1436,7 @@ jobs:
 
           issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)"
           pr_body="$(printf 'Fixes #%s.\n\nOpened by board-loop.yml on branch %s (base %s).' "$ISSUE_NUMBER" "$BRANCH" "$BASE_SHA")"
-          pr_url="$(gh pr create -R "$GITHUB_REPOSITORY" --title "Fix #$ISSUE_NUMBER: $issue_title" --body "$pr_body" --head "$BRANCH" --base main)"
+          pr_url="$(gh pr create -R "$GITHUB_REPOSITORY" --title "Fix #$ISSUE_NUMBER: $issue_title" --body "$pr_body" --head "$BRANCH" --base main --label board:owned)"
           pr_number="${pr_url##*/}"
           echo "pr-number=$pr_number" >> "$GITHUB_OUTPUT"
           echo "pr-url=$pr_url" >> "$GITHUB_OUTPUT"

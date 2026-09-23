@@ -179,13 +179,13 @@ confirm the run proceeds through triage rather than reporting every job
 
 ### Implementation for User Story 2
 
-- [ ] T010 [US2] In `board-loop.yml`'s "Push and open the PR" step (~line
+- [X] T010 [US2] In `board-loop.yml`'s "Push and open the PR" step (~line
   1299), add `--label board:owned` to the existing `gh pr create` call
   (contracts/ownership-label.md "Write") — one call, one API round-trip, so
   no window exists between "PR exists" and "PR is labeled" for a run to die
   inside (FR-013).
 
-- [ ] T011 [US2] Replace `board-loop.yml`'s "Resume" step's PR recovery
+- [X] T011 [US2] Replace `board-loop.yml`'s "Resume" step's PR recovery
   (~line 320, the `gh pr list --repo "$GITHUB_REPOSITORY" --search
   "$ISSUE_NUMBER in:body" --state all` call) with, per
   contracts/resume-recovery.md "PR recovery": (1) when the marker names a
@@ -198,7 +198,7 @@ confirm the run proceeds through triage rather than reporting every job
   adopted and `pr`/`pr-state` stay empty. Never widen either lookup by PR
   title, author, or head-branch naming convention (FR-007).
 
-- [ ] T012 [US2] Rewrite the "Resume" step's `step` derivation (replacing
+- [X] T012 [US2] Rewrite the "Resume" step's `step` derivation (replacing
   the `step="$marker_step"; if [ -z "$branch" ] && [ -z "$pr_number" ];
   then step="triage"; fi` rule at ~lines 326-329) with the four-clause
   priority order from contracts/resume-recovery.md "Step resolution": (1)
@@ -211,7 +211,7 @@ confirm the run proceeds through triage rather than reporting every job
   `branch` resolved → `step` = `"triage"` (FR-008). `step` must never be
   empty in any branch.
 
-- [ ] T013 [US2] In the same step, record in `$GITHUB_STEP_SUMMARY` (matching
+- [X] T013 [US2] In the same step, record in `$GITHUB_STEP_SUMMARY` (matching
   this job's existing `echo "board-loop: ..." >> "$GITHUB_STEP_SUMMARY"`
   idiom): when clause 2 of T012 fires, that the PR was recovered via the
   `board:owned` label fallback rather than a marker (FR-014); and when
