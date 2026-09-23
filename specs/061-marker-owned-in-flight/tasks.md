@@ -299,12 +299,12 @@ in-flight decision is gate-covered.
 **Purpose**: Whole-suite verification and this repository's own
 before-pushing requirements (CLAUDE.md).
 
-- [ ] T026 [P] Run `python3 .github/scripts/run-local-gates.py` (the full
+- [X] T026 [P] Run `python3 .github/scripts/run-local-gates.py` (the full
   PR-time gate suite, per CLAUDE.md "Before pushing") across every touched
   file (`board_eligibility.py`, `board_item_marker.py`, `board-loop.yml`,
   `verify-board-eligibility.py`, `docs/setup.md`) and fix any fallout.
 
-- [ ] T027 Statically verify, against contracts/resume-recovery.md's
+- [X] T027 Statically verify, against contracts/resume-recovery.md's
   decision table, that every branch of T012's rewritten step-resolution
   logic in `board-loop.yml` assigns one of `triage`/`fix`/`review`/the
   marker's own step and none leaves `step` unset (quickstart.md §2,
@@ -313,7 +313,7 @@ before-pushing requirements (CLAUDE.md).
   scope for this local verification and are proven post-merge per
   CLAUDE.md's "re-drive one run" rule.
 
-- [ ] T028 Since this change touches `if:` conditions and a `run:` step in
+- [X] T028 Since this change touches `if:` conditions and a `run:` step in
   `board-loop.yml` (T006-T013), give it a pass from the
   `review-step-gating` skill per CLAUDE.md, before this feature's
   implementation is proposed for review.
