@@ -169,20 +169,19 @@ jobs:
           # exact shape board_eligibility.py's contract already documents,
           # so nothing downstream of this step changes. Gate 18: a
           # --paginate call must not --jq an array-collecting filter, so
-          # this emits one issue object per line and slurps after.
+          # this emits one issue object per line and slurps after -- kept
+          # on one physical line (not split across the braces) because
+          # Gate 18's scan only joins backslash-continued lines, and a
+          # split inside the quotes (bash line-continuation has no
+          # special meaning inside single quotes) reads as unparseable,
+          # so the gate would abstain rather than actually check it.
           # Gate 28: -X GET is required below -- the field flags alone
           # would otherwise default this call to a POST, which 422s here
           # ("title" wasn't supplied) since a POST to this same path
           # creates an issue -- verified empirically.
           gh api "repos/$GITHUB_REPOSITORY/issues" -X GET --paginate -f state=open -f per_page=100 \
-            --jq '.[] | select(has("pull_request") | not) | {
-              number,
-              author: {login: .user.login},
-              authorAssociation: .author_association,
-              labels: [.labels[] | {name}],
-              state: (.state | ascii_upcase),
-              createdAt: .created_at
-            }' | jq -s '.' \
+            --jq '.[] | select(has("pull_request") | not) | {number, author: {login: .user.login}, authorAssociation: .author_association, labels: [.labels[] | {name}], state: (.state | ascii_upcase), createdAt: .created_at}' \
+            | jq -s '.' \
             > "$RUNNER_TEMP/board-open-issues.json"
 
           mapfile -t numbers < <(jq -r '.[].number' "$RUNNER_TEMP/board-open-issues.json")
