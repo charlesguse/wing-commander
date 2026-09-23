@@ -243,36 +243,36 @@ Each case is a directory under
 and `expected.json` (`{"issue_number": <int|null>, "multiple_found":
 <bool>}`), per contracts/in-flight-detection.md's fixture list:
 
-- [ ] T014 [P] [US3] Create fixture case `no-marker` — no issue anywhere
+- [X] T014 [P] [US3] Create fixture case `no-marker` — no issue anywhere
   carries a marker → `{"issue_number": null, "multiple_found": false}`.
-- [ ] T015 [P] [US3] Create fixture case `pre-fix-no-pr` — marker at
+- [X] T015 [P] [US3] Create fixture case `pre-fix-no-pr` — marker at
   `route`, no `pr` recorded → that issue, `multiple_found: false`.
-- [ ] T016 [P] [US3] Create fixture case `fix-or-later-pr-open` — marker at
+- [X] T016 [P] [US3] Create fixture case `fix-or-later-pr-open` — marker at
   `review`, recorded PR state `OPEN` → that issue, `false`.
-- [ ] T017 [P] [US3] Create fixture case `fix-or-later-pr-closed` — marker
+- [X] T017 [P] [US3] Create fixture case `fix-or-later-pr-closed` — marker
   at `review`, recorded PR state `CLOSED` (not merged) →
   `{"issue_number": null, "multiple_found": false}`.
-- [ ] T018 [P] [US3] Create fixture case `fix-or-later-pr-merged` — marker
+- [X] T018 [P] [US3] Create fixture case `fix-or-later-pr-merged` — marker
   at `readiness`, recorded PR state `MERGED` → `(null, false)`.
-- [ ] T019 [P] [US3] Create fixture case `terminal-step` — marker at
+- [X] T019 [P] [US3] Create fixture case `terminal-step` — marker at
   `proven` → `(null, false)`.
-- [ ] T020 [P] [US3] Create fixture case `excluded-issue` — marker at
+- [X] T020 [P] [US3] Create fixture case `excluded-issue` — marker at
   `route` on an issue that also carries the `board:stalled` label →
   `(null, false)` (proves FR-003's shared exclusion path).
-- [ ] T021 [P] [US3] Create fixture case `unparsable-marker` — a comment
+- [X] T021 [P] [US3] Create fixture case `unparsable-marker` — a comment
   containing a marker-shaped HTML comment whose JSON body does not parse →
   `(null, false)`.
-- [ ] T022 [P] [US3] Create fixture case `two-non-terminal` — two open,
+- [X] T022 [P] [US3] Create fixture case `two-non-terminal` — two open,
   non-excluded issues, each carrying a non-terminal, qualifying marker with
   different `created_at` timestamps → the newer marker's issue, `true`.
-- [ ] T023 [P] [US3] Create fixture case `unrelated-pr-no-marker` — an
+- [X] T023 [P] [US3] Create fixture case `unrelated-pr-no-marker` — an
   eligible issue with no marker, plus `pr_state_by_number` populated for an
   unrelated open PR whose body cites that issue → `(null, false)` — proves
   the decision never reads PR body text (FR-001).
 
 ### Gate wiring for User Story 3
 
-- [ ] T024 [US3] Extend `.github/scripts/verify-board-eligibility.py` with a
+- [X] T024 [US3] Extend `.github/scripts/verify-board-eligibility.py` with a
   second fixture loop (mirroring its existing `classify_issue` loop's
   "fail loudly, non-zero exit, `::error::` annotation if any of the four
   files is missing" pattern, not a new mechanism) that, for each of the ten
@@ -281,7 +281,7 @@ and `expected.json` (`{"issue_number": <int|null>, "multiple_found":
   `expected.json`'s `{"issue_number", "multiple_found"}` (depends on T003,
   T014-T023).
 
-- [ ] T025 [US3] Run `python3 .github/scripts/run-local-gates.py` and
+- [X] T025 [US3] Run `python3 .github/scripts/run-local-gates.py` and
   confirm Gate 81 passes all ten new cases plus the four existing
   `classify_issue` cases. Then, per quickstart.md §1, temporarily edit
   `in_flight_candidate()` to admit an issue with no marker (e.g. `return
