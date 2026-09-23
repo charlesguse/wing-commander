@@ -202,7 +202,10 @@ def main():
     """Runtime entry point: reads `{"open_issues": [...],
     "labeled_events_by_issue": {...}, "comments_by_issue": {...},
     "pr_state_by_number": {...}}` from stdin, prints the selected issue
-    number (or nothing) to stdout."""
+    number (or nothing) to stdout -- unchanged from before. Also prints
+    FR-005's provenance -- `{"decided_by_marker": bool, "multiple_found":
+    bool}` -- to stderr, so the caller can say the marker is why (spec.md
+    US1 AS3) without re-deriving the decision."""
     payload = json.load(sys.stdin)
     open_issues = payload.get("open_issues", [])
     labeled_events_by_issue = {
@@ -217,7 +220,13 @@ def main():
         int(number): state
         for number, state in (payload.get("pr_state_by_number") or {}).items()
     }
+    in_flight_issue, multiple_found = in_flight_candidate(
+        open_issues, comments_by_issue, pr_state_by_number)
     selected = select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_number)
+    print(json.dumps({
+        "decided_by_marker": in_flight_issue is not None and in_flight_issue == selected,
+        "multiple_found": multiple_found,
+    }), file=sys.stderr)
     if selected is not None:
         print(selected)
 

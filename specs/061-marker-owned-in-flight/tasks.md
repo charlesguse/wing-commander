@@ -412,7 +412,7 @@ Task: "Create fixture case fix-or-later-pr-open under .../in-flight/fix-or-later
 
 ## Phase 7: Convergence
 
-- [ ] T029 Record in the select job's `$GITHUB_STEP_SUMMARY` whether an
+- [X] T029 Record in the select job's `$GITHUB_STEP_SUMMARY` whether an
   in-flight board item marker (rather than the oldest-first fallback)
   decided the selected issue, and whether more than one issue qualified as
   in-flight, per FR-005 and spec.md US1 AS1/AS3 ("the right answer for the

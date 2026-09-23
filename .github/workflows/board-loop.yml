@@ -310,14 +310,29 @@ jobs:
               comments_by_issue: $comments[0], pr_state_by_number: $pr_states[0]}' \
             > "$RUNNER_TEMP/board-eligibility-input.json"
 
-          issue_number="$(python3 .github/scripts/board_eligibility.py < "$RUNNER_TEMP/board-eligibility-input.json")"
+          issue_number="$(python3 .github/scripts/board_eligibility.py < "$RUNNER_TEMP/board-eligibility-input.json" 2>"$RUNNER_TEMP/board-eligibility-provenance.json")"
+
+          # FR-005/spec.md US1 AS3: the run's record says the marker is
+          # why, not just which issue -- board_eligibility.py's main()
+          # already computed this alongside the selection itself (single
+          # home; not re-derived here).
+          decided_by_marker="$(jq -r '.decided_by_marker' "$RUNNER_TEMP/board-eligibility-provenance.json")"
+          multiple_found="$(jq -r '.multiple_found' "$RUNNER_TEMP/board-eligibility-provenance.json")"
 
           if [ -z "$issue_number" ]; then
             echo "board-loop: nothing to do -- no eligible, non-excluded open issue." >> "$GITHUB_STEP_SUMMARY"
             echo "issue-number=" >> "$GITHUB_OUTPUT"
           else
-            echo "board-loop: selected issue #$issue_number." >> "$GITHUB_STEP_SUMMARY"
+            if [ "$decided_by_marker" = "true" ]; then
+              echo "board-loop: selected issue #$issue_number -- in-flight board item marker." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "board-loop: selected issue #$issue_number -- oldest-first eligibility scan." >> "$GITHUB_STEP_SUMMARY"
+            fi
             echo "issue-number=$issue_number" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ "$multiple_found" = "true" ]; then
+            echo "board-loop: more than one issue qualified as in-flight -- selected the one with the newest marker (FR-005)." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       # Board Item Marker (contracts/board-item-marker.md, research.md D21):
