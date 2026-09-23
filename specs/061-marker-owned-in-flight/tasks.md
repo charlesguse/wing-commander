@@ -409,3 +409,17 @@ Task: "Create fixture case fix-or-later-pr-open under .../in-flight/fix-or-later
   `in-flight/` fixture subdirectory FR-012 asks for.
 - Commit after each task or logical group of tasks, consistent with this
   repository's small-PR, gate-verified workflow.
+
+## Phase 7: Convergence
+
+- [ ] T029 Record in the select job's `$GITHUB_STEP_SUMMARY` whether an
+  in-flight board item marker (rather than the oldest-first fallback)
+  decided the selected issue, and whether more than one issue qualified as
+  in-flight, per FR-005 and spec.md US1 AS1/AS3 ("the right answer for the
+  right reason, and the run's record says the marker is why"). The
+  underlying decision (`in_flight_candidate()`) already returns
+  `multiple_found` and is fixture-verified; the gap is that nothing between
+  it and `$GITHUB_STEP_SUMMARY` surfaces that value or the marker-vs-fallback
+  provenance — `board_eligibility.py`'s `main()` prints only the selected
+  issue number, and `board-loop.yml`'s select step only echoes
+  `board-loop: selected issue #$issue_number.` (missing)
