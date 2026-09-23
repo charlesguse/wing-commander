@@ -1,34 +1,22 @@
 # The kill-switch/stop-request recheck idiom, in one home (issue #462):
 # board-loop.yml's six jobs (triage, route, fix, review, readiness, prove)
 # each re-check the kill switch AND a maintainer stop request immediately
-# before their own next durable action (FR-051/T052) -- not only at job
-# start. board_stop_check.py's own docstring already calls
+# before their own next durable action -- triage's decide.outcome, route's
+# decide, fix's push, review's next round/converge step, readiness's
+# evaluation, prove's close-or-redrive -- not only at job start
+# (FR-051/T052). board_stop_check.py's own docstring already calls
 # find_stop_request() "the reusable check every job's own... step also
 # performs"; this composite is the surrounding gh/bash orchestration
 # CLAUDE.md's "Shared logic has exactly one home" section also asks for,
 # which the decision function alone never unified.
 #
-# Two tokens, not one (issue #461): the paginated comment read and the
-# stop-request decision use `token` (the wing-commander App installation
-# token) like every other read in these jobs, but the `gh run cancel` call
-# needs `cancel-token` -- github.token -- instead. The App token has no
-# `actions` permission (a documented 403, issue/spec 005; see
-# auto-release.yml's `dispatch-release` job and board-loop.yml's own
-# `prove` job "Re-drive the changed behaviour to prove the fix" step,
-# which already made this exact fix during #451's review) so a cancel
-# attempted under the App token is silently swallowed by the
-# `2>/dev/null || true` below and never actually cancels a still-running
-# earlier run -- `paused` is set regardless, so the kill switch itself
-# still halts further progress, but the cancel side effect never fires.
-# The caller's job needs `permissions.actions: write` for `cancel-token`
-# (github.token) to have any effect here, the same way the `prove` job's
-# own re-drive step does.
-#
-# No composite action in this repository reads the caller's `vars` context
-# directly -- a composite `run:` step only sees what is passed as
-# `inputs`. `initial-paused` is therefore the kill switch's own boolean,
-# already resolved by the caller (`vars.WING_COMMANDER_BOARD_LOOP_PAUSED
-# == 'true'`), not re-derived here.
+# Two tokens, not one (issue #461) -- see auto-release.yml's
+# `dispatch-release` job for the canonical statement of why the App token
+# (`token`) cannot do the `gh run cancel` call below and `cancel-token`
+# (github.token, needing the caller job's own `permissions.actions:
+# write`) must. `initial-paused` and `check-issue-closed` are resolved by
+# the caller because a composite `run:` step cannot read the caller's
+# `vars` context directly.
 name: wing-commander-board-stop-check
 description: >
   Re-checks the kill switch and any maintainer stop request on a board-loop
@@ -41,11 +29,14 @@ inputs:
     required: true
   cancel-token:
     description: >
-      A token with `actions: write` on this repository (github.token, with
-      the caller job's own permissions.actions: write) -- used ONLY for the
+      A token with `actions: write` on this repository -- used ONLY for the
       `gh run cancel` call; see this file's own header comment for why it
-      must differ from `token`.
-    required: true
+      must differ from `token`. Defaults to github.token (the caller job's
+      own permissions.actions: write is what gives it effect), matching
+      wing-commander-metrics-persist's own token input convention -- a
+      caller only needs to override this if it has no such token.
+    required: false
+    default: ${{ github.token }}
   issue-number:
     description: The board item's issue number
     required: true
@@ -71,6 +62,23 @@ outputs:
 runs:
   using: composite
   steps:
+    # Gate 25 (verify-lifecycle-gate-retry.py) hardens this exact "is the
+    # issue open" read against the transient-failure case run 31597186484
+    # hit with a single bare `gh issue view` attempt (specs/039-lifecycle-
+    # gate-retry) -- reused here (issue #462 review) rather than a second,
+    # weaker bare read. continue-on-error: the behaviour this replaces
+    # already treated a failed read as "not closed, keep going" rather
+    # than failing the job; this keeps that same fallback while gaining
+    # the retry/timeout hardening lifecycle-gate already has.
+    - name: Check whether the issue is already closed
+      id: closed-check
+      if: inputs.check-issue-closed == 'true'
+      continue-on-error: true
+      uses: ./.github/actions/wing-commander-lifecycle-gate
+      with:
+        issue-number: ${{ inputs.issue-number }}
+        token: ${{ inputs.token }}
+
     - name: Re-check kill switch and stop requests before any durable action
       id: check
       shell: bash
@@ -79,15 +87,12 @@ runs:
         CANCEL_TOKEN: ${{ inputs.cancel-token }}
         ISSUE_NUMBER: ${{ inputs.issue-number }}
         INITIAL_PAUSED: ${{ inputs.initial-paused }}
-        CHECK_ISSUE_CLOSED: ${{ inputs.check-issue-closed }}
+        ISSUE_IS_OPEN: ${{ steps.closed-check.outputs.is-open }}
       run: |
         set -uo pipefail
         paused="$INITIAL_PAUSED"
-        if [ "$CHECK_ISSUE_CLOSED" = "true" ]; then
-          state="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json state --jq .state)"
-          if [ "$state" = "CLOSED" ]; then
-            paused=true
-          fi
+        if [ "$ISSUE_IS_OPEN" = "false" ]; then
+          paused=true
         fi
         gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate \
           --jq '.[] | {body, author_association, created_at}' | jq -s '.' \
@@ -101,7 +106,18 @@ runs:
         print(run_id or '')
         ")"
         if [ -n "$stop_run_id" ]; then
-          GH_TOKEN="$CANCEL_TOKEN" gh run cancel "$stop_run_id" -R "$GITHUB_REPOSITORY" 2>/dev/null || true
+          # A first pass through this run (the common case) has no earlier
+          # run to cancel -- find_stop_request() falls back to this run's
+          # own id, and cancelling the run executing this very step would
+          # race its own graceful stand-down against GitHub's async
+          # cancellation. `paused=true` is what actually halts further
+          # durable action either way; the cancel call only ever targets a
+          # genuinely different, earlier run (issue #461 review).
+          if [ "$stop_run_id" != "$GITHUB_RUN_ID" ]; then
+            if ! cancel_error="$(GH_TOKEN="$CANCEL_TOKEN" gh run cancel "$stop_run_id" -R "$GITHUB_REPOSITORY" 2>&1)"; then
+              echo "::warning::gh run cancel $stop_run_id failed: $cancel_error"
+            fi
+          fi
           paused=true
         fi
         echo "paused=$paused" >> "$GITHUB_OUTPUT"
