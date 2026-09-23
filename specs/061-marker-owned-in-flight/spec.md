@@ -54,6 +54,43 @@ mode returns with the next unrelated open fix pull request, and while it is
 active the loop is stalled on one issue no matter how many others are
 eligible.
 
+## Clarifications
+
+### Session 2026-09-23
+
+- Q: Is a non-terminal marker step sufficient on its own to make an item in
+  flight, or must the marker's recorded pull request also still resolve to
+  an open pull request? → A: Split by step. Steps before the fix step
+  (triage, route) qualify on the non-terminal step alone, because no pull
+  request exists yet at those steps; the fix step and every step after it
+  additionally require the recorded pull request to still be open. Requiring
+  an open pull request everywhere would drop an item interrupted during
+  triage or route out of in-flight status on every run; requiring one
+  nowhere would leave an item whose pull request was closed without merging
+  pinned in flight forever — the reported failure shape, relocated from "no
+  marker" to "a stale marker". (FR-002, FR-012)
+- Q: Should resume retain any pull-request search as a fallback for the case
+  where the marker is missing but a prior run did open a pull request — and
+  if so, narrowed by what? → A: Keep a fallback, narrowed to open pull
+  requests carrying a label the loop applies to its own pull requests at
+  creation time, and which cite the item's issue. The fix job creates the
+  pull request and records the marker in separate steps, so a run cancelled
+  or killed in that window leaves a real pull request no marker names; with
+  no fallback the next run would open a second pull request for the same
+  issue. A label applied at creation is an explicit, self-applied ownership
+  signal, unlike a branch-naming convention that has to be hand-kept in sync
+  with the fix job — the same quiet-drift shape that produced this defect.
+  (FR-007, FR-013, FR-014)
+- Q: Should the in-flight decision fold into the existing eligibility
+  decision, or stand alone? → A: Fold it in, alongside the existing
+  classification and exclusion logic, with selection consulting it first.
+  This keeps one definition of "which issue does the loop act on" and reuses
+  the eligibility gate's existing fixture harness for the new branches; the
+  cost is that the eligibility decision's inputs grow to include each
+  issue's own comments, where the marker lives. Leaving the rule inline in
+  the selecting job's shell is ruled out by this repository's single-home
+  rule — it is the shape that let this defect ship. (FR-011, FR-012)
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - An unrelated open fix PR no longer hijacks the loop (Priority: P1)
@@ -88,6 +125,13 @@ returns, not the one the pull request cites.
    a board item marker recording a non-terminal step, **When** the loop
    selects, **Then** it selects issue A — the right answer for the right
    reason, and the run's record says the marker is why.
+4. **Given** issue A carries a marker recording a pre-fix step (triage or
+   route) and naming no pull request, **When** the loop selects, **Then**
+   it selects issue A on the strength of the step alone.
+5. **Given** issue A carries a marker recording the fix step or a later one
+   whose pull request has since been closed without merging, **When** the
+   loop selects, **Then** issue A does not qualify as in flight and
+   selection falls through to the oldest-first eligibility scan.
 
 ---
 
@@ -95,10 +139,13 @@ returns, not the one the pull request cites.
 
 The loop resumes an item it started on a previous run. It reads the item's
 own marker for the branch and pull request it opened, re-derives both
-against live GitHub state, and continues from the recorded step. When it
-cannot establish that any prior work of its own exists, it starts the item
-from triage — it never leaves the step unresolved, because an unresolved
-step silently skips every downstream job.
+against live GitHub state, and continues from the recorded step. Where no
+marker was ever recorded — a run that died between opening a pull request
+and writing the marker — it can still recognise its own pull request by the
+ownership label it applied when it created it, and continues on that rather
+than opening a second one. When it cannot establish that any prior work of
+its own exists, it starts the item from triage — it never leaves the step
+unresolved, because an unresolved step silently skips every downstream job.
 
 **Why this priority**: The empty-step outcome is the half of the live
 failure that turns a mis-selection into a no-op run. Even with User Story 1
@@ -116,13 +163,24 @@ the run proceeds through triage rather than reporting every job `skipped`.
    exists and a pull request that still exists, **When** resume runs,
    **Then** it continues from the marker's recorded step with the
    re-derived branch and pull request.
-2. **Given** a selected issue with no marker, **When** resume runs, **Then**
-   the step resolves to triage and no pull request from an unrelated issue
-   is adopted as this item's pull request.
-3. **Given** a selected issue with a marker whose branch no longer exists
+2. **Given** a selected issue with no marker and no open pull request
+   carrying the loop's ownership label that cites it, **When** resume runs,
+   **Then** the step resolves to triage and no pull request from an
+   unrelated issue is adopted as this item's pull request.
+3. **Given** a selected issue with no marker but an open pull request that
+   carries the loop's ownership label and cites it — a run that died
+   between opening the pull request and recording the marker — **When**
+   resume runs, **Then** it adopts that pull request and its branch,
+   records that it recovered them by the label fallback rather than from a
+   marker, and does not open a second pull request.
+4. **Given** a selected issue with a marker whose branch no longer exists
    and whose recorded pull request no longer exists, **When** resume runs,
    **Then** the step resolves to triage.
-4. **Given** any selected issue in any state, **When** resume finishes,
+5. **Given** a selected issue with a marker recording the fix step or a
+   later one whose recorded pull request has been closed or merged, **When**
+   resume runs, **Then** the step resolves to triage and the run records
+   why, rather than continuing against a pull request that is gone.
+6. **Given** any selected issue in any state, **When** resume finishes,
    **Then** the resolved step is one of the loop's named steps — never
    empty — so no run can skip every downstream job without saying so.
 
@@ -169,8 +227,19 @@ deliberately broken in-flight rule and confirm a gate fails.
   the loop reads live GitHub state, per spec 057 FR-054 — never raises,
   never guesses.
 - **Marker's recorded pull request was closed without merging, or merged,
-  while its step is still non-terminal.** Covered by the clarification in
-  FR-002.
+  while its step is still non-terminal.** At a fix-or-later step the item no
+  longer qualifies as in flight (FR-002); selection falls through to the
+  oldest-first scan, and if the issue is still eligible it is picked up
+  again and resumed from triage with the reason recorded (FR-008, FR-009)
+  rather than being pinned forever to a dead pull request.
+- **Marker records a pre-fix step (triage, route) and names no pull
+  request.** The item is in flight on the strength of its step alone
+  (FR-002) — this is the ordinary shape of an item interrupted before the
+  fix step.
+- **A pull request was opened but the run died before its marker was
+  recorded.** The pull request carries the loop's ownership label (FR-013),
+  so resume's narrowed fallback (FR-007) finds it and continues on it
+  instead of opening a second one.
 - **Marker exists on an issue that is not in the run's fetched open-issues
   set** (e.g. closed between fetch and check). Treated as not in flight.
 - **An ordinary fix pull request cites the very issue the loop is working.**
@@ -187,12 +256,19 @@ deliberately broken in-flight rule and confirm a gate fails.
   from a third party's.
 
 - **FR-002**: An issue qualifies as in flight when it carries a board item
-  marker whose recorded step is not terminal, and
-  [NEEDS CLARIFICATION: is a non-terminal step sufficient on its own, or
-  must the marker's recorded pull request also still resolve to an open
-  pull request? Requiring an open pull request stops a closed-without-merge
-  item from being re-selected forever; not requiring one keeps pre-PR steps
-  (triage, route) in flight, since no pull request exists yet].
+  marker whose recorded step is not terminal, with the recorded step
+  deciding what else is required:
+  - **Steps before the fix step** (triage, route) qualify on the
+    non-terminal step alone. No pull request exists yet at those steps, so
+    demanding one would drop every item interrupted during triage or route
+    out of in-flight status on every subsequent run.
+  - **The fix step and every step after it** (fix, review, readiness,
+    prove) additionally require the marker's recorded pull request to still
+    resolve to an **open** pull request. A recorded pull request that is
+    closed, merged, or no longer resolvable disqualifies the item, so a
+    marker left behind by an abandoned pull request cannot pin the loop to
+    one issue forever — the same failure shape this feature exists to
+    remove, relocated from "no marker" to "a stale marker".
 
 - **FR-003**: An issue that qualifies under FR-002 MUST still be subject to
   the existing exclusion rule (closed, `disposition:*`, `board:stalled`,
@@ -212,12 +288,16 @@ deliberately broken in-flight rule and confirm a gate fails.
   durable action, per spec 057 FR-054.
 
 - **FR-007**: Resume MUST NOT adopt a pull request as this item's pull
-  request on the strength of a repository-wide body or text search.
-  [NEEDS CLARIFICATION: should resume retain any pull-request search as a
-  fallback for the case where the marker is missing but a prior run did
-  open a pull request — and if so, narrowed by what (head branch matching
-  the loop's own branch convention, pull request author, a loop-applied
-  label)? Or should "no marker" mean "no prior pull request", full stop?]
+  request on the strength of an unrestricted repository-wide body or text
+  search. Resume MAY, and only when the item has no usable marker, fall
+  back to a search restricted to open pull requests carrying the ownership
+  label the loop applies to its own pull requests (FR-013); a pull request
+  is adopted only when it carries that label **and** cites this item's
+  issue — the label establishes that the pull request is the loop's, the
+  citation establishes which item it belongs to. The fallback MUST NOT be
+  widened by pull request body text alone, by title, by author, or by head
+  branch naming convention, none of which distinguish the loop's own work
+  from a third party's or stay in sync with the fix step by themselves.
 
 - **FR-008**: Resume MUST resolve the item's step to one of the loop's named
   steps in every case. A state in which no step can be established MUST
@@ -234,21 +314,43 @@ deliberately broken in-flight rule and confirm a gate fails.
 
 - **FR-011**: The in-flight decision MUST live in exactly one place, and the
   comment explaining it MUST be canonical with every other site pointing at
-  it, per this repository's single-home rule.
-  [NEEDS CLARIFICATION: should that home be the existing eligibility
-  decision module — which already owns classification and exclusion and
-  already has a fixture-driven gate — or a separate decision of its own?
-  Folding it in reuses the gate and keeps one definition of "eligible";
-  keeping it separate keeps the eligibility module free of any dependency
-  on marker parsing].
+  it, per this repository's single-home rule. That home MUST be the
+  existing eligibility decision that already owns issue classification and
+  exclusion, with selection consulting the in-flight answer before the
+  oldest-first scan — so the loop keeps one definition of "which issue does
+  the loop act on" and the in-flight branches are covered by that
+  decision's existing fixture-driven gate rather than a second harness. The
+  eligibility decision's inputs accordingly grow to include each issue's
+  own comments, where the marker lives, alongside the issues and label
+  events it already takes. The in-flight decision MUST NOT be left inline
+  in the selecting job's shell, where no fixture can exercise it — that
+  shape is what let this defect ship.
 
 - **FR-012**: The in-flight decision MUST be covered by checked-in fixtures
-  asserting its exact result for at least: no marker anywhere; marker with a
-  non-terminal step; marker with a terminal step; marker on an excluded
-  issue; unparsable marker; two issues with non-terminal markers; and an
-  unrelated open pull request citing an eligible issue with no marker
-  present. The gate MUST fail loudly when a fixture file is missing rather
-  than skipping it (Constitution VIII).
+  asserting its exact result for at least: no marker anywhere; marker at a
+  pre-fix step (triage, route) with no pull request recorded; marker at a
+  fix-or-later step whose recorded pull request is open; marker at a
+  fix-or-later step whose recorded pull request is closed without merging;
+  marker at a fix-or-later step whose recorded pull request is merged;
+  marker with a terminal step; marker on an excluded issue; unparsable
+  marker; two issues with non-terminal markers; and an unrelated open pull
+  request citing an eligible issue with no marker present. The gate MUST
+  fail loudly when a fixture file is missing rather than skipping it
+  (Constitution VIII).
+
+- **FR-013**: The loop MUST mark every pull request it opens as its own
+  with an ownership label, applied as part of creating the pull request
+  rather than in a later step. A run cancelled, killed, or failed between
+  creating a pull request and recording its marker must still leave an
+  unambiguous record that the pull request is the loop's — otherwise the
+  next scheduled run has no memory of it and the fix step opens a second
+  pull request for the same issue.
+
+- **FR-014**: When resume recovers a pull request through the FR-007
+  fallback rather than from a marker, the run MUST record that it did so
+  and why, and MUST continue with that pull request and its branch rather
+  than opening a second branch or a second pull request for the item (spec
+  057 FR-054).
 
 ### Key Entities
 
@@ -257,7 +359,14 @@ deliberately broken in-flight rule and confirm a gate fails.
   it opened, and the base commit. Already defined by spec 057; this feature
   changes who reads it, not its shape.
 - **In-flight candidate**: an open, non-excluded issue whose marker says the
-  loop has unfinished work on it.
+  loop has unfinished work on it — at a pre-fix step on the marker's step
+  alone, at the fix step or later only while the marker's recorded pull
+  request is still open.
+- **Loop ownership label**: a label the loop applies to every pull request
+  it opens, at creation time, marking that pull request as its own. It is
+  the loop's only ownership signal that survives a run dying before the
+  marker is recorded, and it makes "which open pull requests did the loop
+  open?" answerable without reading pull request bodies.
 - **Step**: the loop's position in triage → route → fix → review →
   readiness → prove, plus the terminal outcomes.
 
@@ -282,6 +391,13 @@ deliberately broken in-flight rule and confirm a gate fails.
   continues from its recorded step without opening a second branch or a
   second pull request (spec 057 FR-054), across at least one full
   interrupt-and-resume cycle.
+- **SC-006**: An item whose pull request was opened but whose marker was
+  never recorded is resumed onto that same pull request — zero second pull
+  requests opened for an issue that already has an open loop-owned one.
+- **SC-007**: An item whose marker records the fix step or later and whose
+  pull request has since been closed or merged never blocks selection: the
+  run that follows selects by the oldest-first scan, demonstrated by
+  fixture.
 
 ## Assumptions
 
@@ -302,8 +418,23 @@ deliberately broken in-flight rule and confirm a gate fails.
 - The loop's own concurrency group (FR-048) makes two simultaneous in-flight
   items an anomaly rather than a supported state, so FR-005 reports rather
   than reconciles.
-- Fixing this does not require changing how or when the marker is written —
-  only who reads it and what they read instead of pull request bodies.
+- Fixing this does not require changing the marker's fields, or how and when
+  the marker is written — only who reads it and what they read instead of
+  pull request bodies. The one write this feature does add is the ownership
+  label of FR-013, which is applied to the pull request itself at creation
+  and carries no marker content.
+- The ownership label exists in the repository (or is created before first
+  use), so labelling at creation time cannot fail the pull request it is
+  attached to.
+- Pull requests the loop opened before this change carry no ownership label
+  and so are invisible to the FR-007 fallback. That is acceptable: those
+  items either still carry a marker, or fall back to triage as they do
+  today.
+- An item whose marker records the fix step or later and whose pull request
+  is gone resolves to triage (FR-008) with its reason recorded (FR-009);
+  re-running triage is cheap compared with stalling the board, and the
+  existing "re-derive against live GitHub state" rule (spec 057 FR-054)
+  governs what the fix step does with any branch that survived.
 
 ## Dependencies
 
@@ -311,7 +442,11 @@ deliberately broken in-flight rule and confirm a gate fails.
   contract, the eligibility and selection contract, FR-048 and FR-054. This
   feature is a correction inside that feature's boundary.
 - The board loop workflow's `select` and `resume` jobs, and the eligibility
-  decision module and its gate.
+  decision module and its gate — which this feature extends rather than
+  duplicates (FR-011), including its fixture harness and the issue-comment
+  input the marker needs.
+- The board loop workflow's fix job, at the point where it creates the pull
+  request, for the ownership label of FR-013.
 
 ## Out of Scope
 
@@ -320,4 +455,8 @@ deliberately broken in-flight rule and confirm a gate fails.
 - Changing the marker's fields or when it is written.
 - Changing the kill switch, the stand-down check, or the stop-comment
   handling.
-- Retrofitting markers onto items the loop worked before this change.
+- Retrofitting markers onto items the loop worked before this change, or
+  the ownership label onto pull requests it opened before this change.
+- Using the ownership label for anything beyond resume's narrowed fallback
+  (FR-007) — it does not become an eligibility input, a routing signal, or a
+  substitute for the marker.

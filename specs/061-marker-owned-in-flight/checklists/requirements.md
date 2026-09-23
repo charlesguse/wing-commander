@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,14 +31,16 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain, deliberately, and are the
-  three open questions the lifecycle issue asked the clarify stage to
-  resolve: FR-002 (does an in-flight item need a still-open pull request,
-  or is a non-terminal marker step enough), FR-007 (does resume keep any
-  fallback pull-request search, and narrowed by what), and FR-011 (does the
-  in-flight decision fold into the existing eligibility decision or stand
-  alone). This intake run is non-interactive, so the markers stay in place
-  and the questions are posted to the lifecycle issue instead.
+- All three [NEEDS CLARIFICATION] markers are resolved by the answer posted
+  on lifecycle issue #473 and recorded under Clarifications (Session
+  2026-09-23): FR-002 qualifies in-flight by step (pre-fix steps on the
+  marker alone, fix-onward only with a still-open pull request); FR-007
+  keeps a fallback search narrowed to open pull requests carrying the loop's
+  own ownership label and citing the item's issue, with FR-013 requiring the
+  label to be applied at creation time and FR-014 requiring the recovery to
+  be recorded; FR-011 folds the in-flight decision into the existing
+  eligibility decision and reuses its fixture-driven gate. No open questions
+  remain.
 - Named file paths, job names, and run IDs appear in the Overview, Edge
   Cases and Dependencies as *evidence of the reported defect* and as the
   boundary of the change, not as prescribed implementation. The functional
