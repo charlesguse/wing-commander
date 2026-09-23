@@ -810,6 +810,18 @@ jobs:
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
           }
+          # #396 item 3: every pass-path read below (the label timeline, the
+          # slug fallback, the comments read, and the three merged-PR reads)
+          # needs the same treatment on a failed gh call -- fail-infra rather
+          # than silently falling open into a value indistinguishable from a
+          # genuine "not found," which the check downstream would otherwise
+          # report as a pipeline defect. One helper instead of six near-
+          # identical blocks.
+          fail_infra_on_read() { # subject expected errfile
+            write_verdict "fail-infra" "$1" "$2" "$(tail -c 300 "$3")"
+            emit_verdict
+            exit 0
+          }
           # FR-016/FR-018, maintainer feedback: a `pass` verdict must not
           # rest on an inference (reaching stage:done implies the PR
           # merged) -- assert each merge PR is non-null AND attributed to
@@ -1110,8 +1122,23 @@ jobs:
           # '.'` expects each chunk to already be valid JSON and errors on a
           # bareword like `spec-request`, so it must slurp as raw input
           # instead (#358: the mismatch silently produced timeline=[] on a
-          # real, fully-successful run, via the `|| timeline='[]'` fallback).
-          timeline="$(gh api "repos/${E2E_REPO}/issues/${ISSUE}/timeline" --paginate --jq '.[] | select(.event=="labeled") | .label.name' 2>/dev/null | jq -R -s -c 'split("\n") | map(select(length > 0))' 2>/dev/null)" || timeline='[]'
+          # real, fully-successful run).
+          #
+          # #396 item 3 (code review of #389): the `|| timeline='[]'` fallback
+          # #358 left in place also caught a genuine `gh api` read failure --
+          # a transient error fell open into an empty timeline the same way a
+          # parse mismatch used to, and the missing-stage check below then
+          # reported fail-wrong-output (a pipeline defect) for what was
+          # really an infrastructure problem. `gh api`'s own exit status is
+          # checked directly now; only the `jq -R -s -c` re-parse afterwards
+          # is allowed to fall open, since an empty raw read from a genuinely
+          # unlabeled issue is legitimate input to it.
+          if ! timeline_raw="$(gh api "repos/${E2E_REPO}/issues/${ISSUE}/timeline" --paginate --jq \
+              '.[] | select(.event=="labeled") | .label.name' 2>"$RUNNER_TEMP/auto-release-timeline-err.txt")"; then
+            fail_infra_on_read "reading the issue's label timeline for the pass-path stage-label assertion" \
+              "gh api issues/timeline succeeds" "$RUNNER_TEMP/auto-release-timeline-err.txt"
+          fi
+          timeline="$(printf '%s' "$timeline_raw" | jq -R -s -c 'split("\n") | map(select(length > 0))' 2>/dev/null || echo '[]')"
           missing_stage=""
           # stage:clarify is never applied as an issue label by any stage
           # workflow (clarify.yml's only reference is stall-notice prose,
@@ -1135,8 +1162,16 @@ jobs:
           # loop never resolved it (e.g. the pass path was reached on the
           # very first check after the finalize PR had already merged
           # between iterations) -- one home, not a second derivation.
+          #
+          # #396 item 3: `|| true` swallowed a genuine `gh api` read failure
+          # the same way as the timeline fallback above, leaving slug empty
+          # and the missing-file check below reporting fail-wrong-output
+          # for an infrastructure problem.
           if [ -z "$slug" ]; then
-            slug="$(gh api "repos/${E2E_REPO}/contents/specs" --jq '[.[] | select(.type=="dir")][0].name // empty' 2>/dev/null || true)"
+            if ! slug="$(gh api "repos/${E2E_REPO}/contents/specs" --jq '[.[] | select(.type=="dir")][0].name // empty' 2>"$RUNNER_TEMP/auto-release-slug-err.txt")"; then
+              fail_infra_on_read "reading the E2E repository's specs/ directory to resolve the pass-path slug" \
+                "gh api repos/contents/specs succeeds" "$RUNNER_TEMP/auto-release-slug-err.txt"
+            fi
           fi
           missing_file=""
           if [ -z "$slug" ]; then
@@ -1176,10 +1211,8 @@ jobs:
           if ! gh api "repos/${E2E_REPO}/issues/${ISSUE}/comments" --paginate --jq \
               '.[] | {id, user: {login: .user.login, id: .user.id, type: .user.type}, author_association, body, created_at}' \
               > "$RUNNER_TEMP/auto-release-final-comments.ndjson" 2>"$RUNNER_TEMP/auto-release-final-comments-err.txt"; then
-            write_verdict "fail-infra" "reading the issue's comments for the pass-path clarification assertion" \
-              "gh api issues/comments succeeds" "$(tail -c 300 "$RUNNER_TEMP/auto-release-final-comments-err.txt")"
-            emit_verdict
-            exit 0
+            fail_infra_on_read "reading the issue's comments for the pass-path clarification assertion" \
+              "gh api issues/comments succeeds" "$RUNNER_TEMP/auto-release-final-comments-err.txt"
           fi
           comments_json="$(jq -cs '.' "$RUNNER_TEMP/auto-release-final-comments.ndjson" 2>/dev/null || echo '[]')"
           # Fallback for the rare case the loop reached stage:done before
@@ -1211,9 +1244,32 @@ jobs:
           # variable below keeps the full object (for the assertion); each
           # `*_pr_out` variable is the {number, mergedAt}-only projection
           # that actually reaches $GITHUB_OUTPUT.
-          spec_draft_pr="$(GH_TOKEN="$HARNESS_TOKEN" gh pr list --repo "$E2E_REPO" --state merged --head "spec-draft/${slug}" --json number,mergedAt,mergedBy 2>/dev/null | jq -c '.[0] // null' 2>/dev/null || echo null)"
-          plan_pr="$(GH_TOKEN="$HARNESS_TOKEN" gh pr list --repo "$E2E_REPO" --state merged --head "plan/${slug}" --json number,mergedAt,mergedBy 2>/dev/null | jq -c '.[0] // null' 2>/dev/null || echo null)"
-          finalize_pr="$(GH_TOKEN="$HARNESS_TOKEN" gh pr list --repo "$E2E_REPO" --state merged --head "spec/${slug}" --json number,mergedAt,mergedBy 2>/dev/null | jq -c '.[0] // null' 2>/dev/null || echo null)"
+          # #396 item 3: each read used to fall open to `null` on a `gh pr
+          # list` failure via `|| echo null`, which assert_merged_by_harness
+          # below cannot tell apart from a genuine "no merged PR found" --
+          # reporting fail-wrong-output (a pipeline defect) for what was
+          # really a transient read failure. `gh pr list`'s own exit status
+          # is checked directly now; only the `jq` projection afterwards
+          # (never expected to fail on gh's own JSON) keeps a fallback.
+          read_merged_pr() { # head_ref -> stdout: raw gh pr list JSON array
+            GH_TOKEN="$HARNESS_TOKEN" gh pr list --repo "$E2E_REPO" --state merged \
+              --head "$1" --json number,mergedAt,mergedBy
+          }
+          if ! spec_draft_pr_raw="$(read_merged_pr "spec-draft/${slug}" 2>"$RUNNER_TEMP/auto-release-prlist-err.txt")"; then
+            fail_infra_on_read "reading merged PRs for head spec-draft/${slug}" \
+              "gh pr list succeeds" "$RUNNER_TEMP/auto-release-prlist-err.txt"
+          fi
+          spec_draft_pr="$(printf '%s' "$spec_draft_pr_raw" | jq -c '.[0] // null' 2>/dev/null || echo null)"
+          if ! plan_pr_raw="$(read_merged_pr "plan/${slug}" 2>"$RUNNER_TEMP/auto-release-prlist-err.txt")"; then
+            fail_infra_on_read "reading merged PRs for head plan/${slug}" \
+              "gh pr list succeeds" "$RUNNER_TEMP/auto-release-prlist-err.txt"
+          fi
+          plan_pr="$(printf '%s' "$plan_pr_raw" | jq -c '.[0] // null' 2>/dev/null || echo null)"
+          if ! finalize_pr_raw="$(read_merged_pr "spec/${slug}" 2>"$RUNNER_TEMP/auto-release-prlist-err.txt")"; then
+            fail_infra_on_read "reading merged PRs for head spec/${slug}" \
+              "gh pr list succeeds" "$RUNNER_TEMP/auto-release-prlist-err.txt"
+          fi
+          finalize_pr="$(printf '%s' "$finalize_pr_raw" | jq -c '.[0] // null' 2>/dev/null || echo null)"
 
           # --- PR-merge gates pass assertion (FR-016/FR-018, maintainer
           # feedback) -- see assert_merged_by_harness above. ---
