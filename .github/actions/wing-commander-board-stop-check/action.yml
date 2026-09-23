@@ -127,14 +127,22 @@ runs:
             # #460 is weighing a redrive design that could give a
             # dispatched run its own concurrency group, which would make
             # a genuinely still-running "other run" possible again.
+            # `status` is not `queued`/`in_progress` alone -- GitHub also
+            # reports `waiting` (held on an environment approval),
+            # `requested` and `pending`, none of which are terminal
+            # either, and it is not a closed enum this composite should
+            # allowlist against. `completed` is the one value that always
+            # means "gh run cancel will 409" (peer review of #465, round
+            # 2); an unreadable status (a transient `gh run view`
+            # failure, empty string here) is treated the same as
+            # not-completed -- worth attempting, since the alternative is
+            # silently skipping a cancel we have no evidence is pointless.
             cancel_target_status="$(GH_TOKEN="$CANCEL_TOKEN" gh run view "$stop_run_id" -R "$GITHUB_REPOSITORY" --json status --jq .status 2>/dev/null || true)"
-            case "$cancel_target_status" in
-              queued|in_progress)
-                if ! cancel_error="$(GH_TOKEN="$CANCEL_TOKEN" gh run cancel "$stop_run_id" -R "$GITHUB_REPOSITORY" 2>&1)"; then
-                  echo "::warning::gh run cancel $stop_run_id failed: $cancel_error"
-                fi
-                ;;
-            esac
+            if [ "$cancel_target_status" != "completed" ]; then
+              if ! cancel_error="$(GH_TOKEN="$CANCEL_TOKEN" gh run cancel "$stop_run_id" -R "$GITHUB_REPOSITORY" 2>&1)"; then
+                echo "::warning::gh run cancel $stop_run_id failed: $cancel_error"
+              fi
+            fi
           fi
           paused=true
         fi
