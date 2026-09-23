@@ -1,0 +1,167 @@
+# Data Model: The Loop Recognizes Its Own Work
+
+**Feature**: specs/061-marker-owned-in-flight | **Spec**: [spec.md](./spec.md)
+
+This feature adds no new persistent storage and changes no schema owned by
+spec 057. It adds one derived decision, one new label value, and two field
+additions to data already flowing through the `select`/`resume` jobs. Entity
+shapes below are the ones `board_eligibility.py` and `board_item_marker.py`
+consume and return; see [research.md](./research.md) for why each shape was
+chosen.
+
+## Board Item Marker (existing, spec 057 — read here, not redefined)
+
+```text
+{"step": "<step>", "round": <int>, "pr": <int|null>,
+ "branch": "<name>|null", "base_sha": "<sha>|null"}
+```
+
+Unchanged by this feature. What changes is who reads it (`board_eligibility.
+in_flight_candidate()` in addition to the `resume` step) and how much of it
+resume trusts before re-deriving (FR-002).
+
+## Step (existing vocabulary, ordered here for the first time)
+
+The loop's named steps, in the order an item passes through them:
+
+```text
+triage < route < fix < review < readiness < prove
+```
+
+plus three terminal outcomes, none of which are "in flight":
+`closed`, `stalled`, `proven`.
+
+**Pre-fix** = `{triage, route}` — qualifies as in flight on the marker's step
+alone (FR-002 bullet 1); no PR can exist yet at these steps.
+
+**Fix-or-later** = `{fix, review, readiness, prove}` — additionally requires
+the marker's recorded PR to still resolve to state `OPEN` (FR-002 bullet 2).
+
+This ordering lives as a plain constant inside `board_eligibility.py`
+(e.g. `PRE_FIX_STEPS`/`FIX_OR_LATER_STEPS` frozensets) — not a new shared
+vocabulary module, since spec 057 already treats step names as string
+literals scattered across `board-loop.yml`'s own `if:` conditions, and this
+feature does not change that (Assumptions: "this feature does not introduce
+a new vocabulary of step names").
+
+## In-Flight Candidate (new — the decision this feature adds)
+
+Not a stored entity — the return value of a new function:
+
+```python
+def in_flight_candidate(
+    open_issues: list[dict],
+    comments_by_issue: dict[int, list[dict]],
+    pr_state_by_number: dict[int, str],
+) -> tuple[int | None, bool]:
+    """Returns (issue_number, multiple_found).
+
+    issue_number: the in-flight issue, or None when no open, non-excluded
+    issue carries a qualifying marker.
+
+    multiple_found: True when more than one open, non-excluded issue
+    carried a qualifying marker (FR-005) -- issue_number is still the
+    single deterministic pick (the newest marker) even when this is True.
+    """
+```
+
+**Fields consumed**:
+
+| Field | Source | Purpose |
+|---|---|---|
+| `open_issues[].number`, `.state`, `.labels` | already fetched (`board_eligibility.is_excluded`) | FR-003 exclusion, reused unchanged |
+| `comments_by_issue[N]` | `gh api .../issues/N/comments` — `{created_at, body}` per comment (D2/D3 in research.md) | marker discovery via `board_item_marker.read_marker_with_timestamp()` |
+| `pr_state_by_number[pr]` | `gh api .../pulls/pr` — `.state` (`OPEN`\|`CLOSED`\|`MERGED`), fetched only for PR numbers a fix-or-later marker names | FR-002 bullet 2's open-PR requirement |
+
+**Decision** (per issue, oldest-`createdAt`-first is irrelevant here — this
+picks by marker recency, not issue age):
+
+1. Skip if `is_excluded(issue)` is `(True, _)` (FR-003).
+2. Read the newest marker via `read_marker_with_timestamp`; skip if none, or
+   if unparsable (already `None` from `read_marker`'s own degrade rule).
+3. Skip if the marker's `step` is terminal (`closed`/`stalled`/`proven`).
+4. If `step` is pre-fix: candidate, keyed by the marker's own `created_at`.
+5. If `step` is fix-or-later: candidate only if `marker["pr"]` is present in
+   `pr_state_by_number` with value `OPEN`; otherwise skip (this is the
+   "stale marker" disqualification FR-002 exists for).
+6. Among all candidates found across all issues, return the one with the
+   lexicographically greatest `created_at` (ISO-8601 timestamps sort
+   lexicographically); `multiple_found` is `len(candidates) > 1`.
+
+**Validation rules**: everything above degrades to "not a candidate" on
+missing/malformed input — an issue with no comments, a marker missing a
+required field, or a `pr` value that doesn't parse as an int are all treated
+as "no usable marker for this issue," never a raised exception (per
+`board_item_marker.read_marker()`'s own existing contract, reused here
+rather than re-implemented, and the spec's own Assumptions section).
+
+## Extended `select()` signature
+
+```python
+def select(
+    open_issues: list[dict],
+    labeled_events_by_issue: dict[int, list[dict]],
+    comments_by_issue: dict[int, list[dict]],
+    pr_state_by_number: dict[int, str],
+) -> int | None:
+    """FR-004/FR-011: consults in_flight_candidate() first; falls through
+    to the existing oldest-first/classify_issue/is_excluded scan, unchanged,
+    when it returns (None, ...)."""
+```
+
+`labeled_events_by_issue`, `classify_issue`, `is_excluded`, and the
+oldest-first fallback scan are byte-for-byte unchanged from spec 057 — only
+the new parameters and the new first check are added.
+
+## Loop Ownership Label (new)
+
+A plain GitHub label, `board:owned` (decision D6), with no machine-readable
+payload beyond its name — unlike the marker, it carries no JSON. Applied
+exactly once, at PR-creation time, to every PR the fix step opens. Never
+removed by the loop, never read by `classify_issue`/`is_excluded`/any
+eligibility input (Out of Scope: "it does not become an eligibility input, a
+routing signal, or a substitute for the marker").
+
+| Property | Value |
+|---|---|
+| Name | `board:owned` |
+| Applied by | `gh pr create --label board:owned` (fix step, single call) |
+| Applied to | every PR the loop opens, from this feature onward (pre-existing loop PRs are not retrofitted — Out of Scope) |
+| Read by | resume's FR-007 fallback only: `gh pr list --state open --label board:owned` |
+| Removed by | nobody — it is a permanent provenance marker on the PR, not a workflow state toggle like `board:stalled` |
+
+## `board_item_marker.py` addition
+
+```python
+def read_marker_with_timestamp(issue_comments: list[dict]) -> tuple[str, dict] | None:
+    """Same scan as read_marker(), returning (created_at, marker) for the
+    newest well-formed marker, or None. read_marker() becomes a one-line
+    wrapper: `pair = read_marker_with_timestamp(c); return pair[1] if pair else None`."""
+```
+
+No change to `write_marker()` or the marker's own JSON shape (Out of Scope).
+
+## State flow (resume's step resolution, decision D5)
+
+```text
+              re-derive branch (git ls-remote), PR (by number or FR-007 fallback)
+                              |
+     marker usable & step is pre-fix ---------------------------> step = marker's step
+       (route + no branch/pr re-derived) --------------------------------\
+                              |                                          v
+     marker usable, step fix-or-later,                             step = triage
+       recorded PR still OPEN -------------------------------------> step = marker's step
+                              |
+     no usable marker, branch re-derived, no PR ------------------> step = fix
+                              |
+     no usable marker, PR recovered (marker-named or FR-007), OPEN -> step = review
+                              |
+     none of the above --------------------------------------------> step = triage
+                                                                       (FR-009: reason recorded)
+```
+
+This flow is resume's own step-resolution logic inside `board-loop.yml`'s
+`resume` step — not part of `board_eligibility.py`, since it answers "what
+step is *this already-selected* item at," a different question from
+`in_flight_candidate()`'s "*which* item is in flight" (FR-011 governs the
+latter only).
