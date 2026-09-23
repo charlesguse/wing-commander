@@ -114,9 +114,27 @@ runs:
           # durable action either way; the cancel call only ever targets a
           # genuinely different, earlier run (issue #461 review).
           if [ "$stop_run_id" != "$GITHUB_RUN_ID" ]; then
-            if ! cancel_error="$(GH_TOKEN="$CANCEL_TOKEN" gh run cancel "$stop_run_id" -R "$GITHUB_REPOSITORY" 2>&1)"; then
-              echo "::warning::gh run cancel $stop_run_id failed: $cancel_error"
-            fi
+            # board-loop.yml's single workflow-level concurrency group
+            # (cancel-in-progress: false) serializes every trigger, so a
+            # DIFFERENT run that already posted its own marker (this
+            # branch) can only be found here after THIS run's own group
+            # slot became available -- which requires that other run to
+            # already be terminal. `gh run cancel` on a completed run
+            # always 409s, so attempting it -- and warning on the
+            # "failure" -- would fire on every ordinary stop request
+            # rather than signalling anything wrong (issue #465 review).
+            # Checked live rather than assumed permanently true: issue
+            # #460 is weighing a redrive design that could give a
+            # dispatched run its own concurrency group, which would make
+            # a genuinely still-running "other run" possible again.
+            cancel_target_status="$(GH_TOKEN="$CANCEL_TOKEN" gh run view "$stop_run_id" -R "$GITHUB_REPOSITORY" --json status --jq .status 2>/dev/null || true)"
+            case "$cancel_target_status" in
+              queued|in_progress)
+                if ! cancel_error="$(GH_TOKEN="$CANCEL_TOKEN" gh run cancel "$stop_run_id" -R "$GITHUB_REPOSITORY" 2>&1)"; then
+                  echo "::warning::gh run cancel $stop_run_id failed: $cancel_error"
+                fi
+                ;;
+            esac
           fi
           paused=true
         fi
