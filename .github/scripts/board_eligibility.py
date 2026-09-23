@@ -7,14 +7,16 @@ WHY THIS EXISTS
 The board loop MUST decide, in code, which open issues it is authorized to
 act on -- never by reading the issue's text (FR-008). This module is that
 decision, run twice per contracts/eligibility-and-selection.md: fed real
-`gh issue list`/`gh api .../timeline` data at runtime, and fed the checked-in
-fixtures under `.github/scripts/tests/board-eligibility/` by
+`gh api .../issues`/`gh api .../timeline` data at runtime, and fed the
+checked-in fixtures under `.github/scripts/tests/board-eligibility/` by
 `verify-board-eligibility.py` at PR time.
 
 Expected shapes
 ----------------
-`issue`: the JSON object `gh issue view --json
-number,author,authorAssociation,labels,state,createdAt` produces, i.e.
+`issue`: `gh issue list --json` does not support `authorAssociation` --
+only `gh issue view` does, and the runtime caller needs every open issue
+at once, so it remaps `gh api repos/OWNER/REPO/issues`'s REST shape
+(which carries `author_association` natively) into this, i.e.
     {"number": 1, "author": {"login": "..."},
      "authorAssociation": "OWNER" | "MEMBER" | "COLLABORATOR" | "NONE" | ...,
      "labels": [{"name": "..."}, ...],
