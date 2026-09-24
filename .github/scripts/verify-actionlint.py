@@ -46,7 +46,9 @@ Shell lint of run: blocks is Gate 48's job (verify-stage-shell-lint.py;
 this gate's subject the schema/expression pass alone, byte-identical
 between CI and run-local-gates.py.
 """
+import contextlib
 import glob
+import io
 import os
 import re
 import shutil
@@ -116,17 +118,26 @@ def _lint_tree(root="."):
     skips local ones with no diagnostic and no error, gate-shaped or
     otherwise, when `.git` is missing, which would have made this gate
     stop checking every local composite call site rather than just the
-    self-checkout ones. A directory-only `git init` supplies that marker
-    without a commit, an index, or reading anything from `root`'s own
-    .git.
+    self-checkout ones. An empty `.git/` directory supplies that marker
+    -- actionlint only checks for its presence, never reads it -- without
+    shelling out to a `git` binary or an `os.mkdir` that could pick up a
+    caller's exported GIT_DIR: an actual `git init` obeys GIT_DIR when
+    it's set (e.g. running inside a git hook), which re-initialises the
+    REAL repository's .git/config and leaves the copy with no `.git` of
+    its own, silently reopening the exact hole this closes.
     """
-    td = tempfile.mkdtemp(prefix="wc-gate46-")
-    shutil.copytree(os.path.join(root, ".github"), os.path.join(td, ".github"))
-    shutil.copytree(os.path.join(td, ".github", "actions"),
-                     os.path.join(td, STALE_PIPELINE_DIR, ".github", "actions"))
-    subprocess.run(["git", "init", "-q"], cwd=td, check=True,
-                   capture_output=True)
-    return td
+    td = None
+    try:
+        td = tempfile.mkdtemp(prefix="wc-gate46-")
+        shutil.copytree(os.path.join(root, ".github"), os.path.join(td, ".github"))
+        shutil.copytree(os.path.join(td, ".github", "actions"),
+                        os.path.join(td, STALE_PIPELINE_DIR, ".github", "actions"))
+        os.mkdir(os.path.join(td, ".git"))
+        return td
+    except Exception:
+        if td is not None:
+            shutil.rmtree(td, ignore_errors=True)
+        raise
 
 
 def workflow_files(root="."):
@@ -208,15 +219,21 @@ def classify(diag_lines, bindings, cred_bindings=0):
     return errors, other
 
 
-def run_gate():
-    files = workflow_files()
+def run_gate(root="."):
+    """`root` defaults to the repository root; --self-test passes a
+    fixture root so its typo-fixture case runs this SAME function,
+    not a hand-rolled stand-in for it (the review of #479 that added
+    this parameter: a self-test that calls _lint_tree()/run_actionlint()
+    directly instead of run_gate() would still read 0 failures if
+    run_gate() were reverted to lint the real tree in place)."""
+    files = workflow_files(root)
     # A derived-empty set must not read as a clean pass -- the same
     # reasoning as Gate 7's stages == 0 guard.
     if not files:
         sys.exit(f"no workflow files found under {WORKFLOWS_DIR} -- "
                  f"this gate linted nothing. Run from the repository root.")
     binary = ensure_binary()
-    tree = _lint_tree()
+    tree = _lint_tree(root)
     try:
         tree_files = ["./" + os.path.relpath(f, tree)
                       for f in workflow_files(tree)]
@@ -378,18 +395,22 @@ def self_test():
                 "    - run: echo ok\n"
                 "      shell: bash\n")
 
-        tree = _lint_tree(typo_root)
-        try:
-            typo_files = ["./" + os.path.relpath(f, tree)
-                          for f in workflow_files(tree)]
-            diags = run_actionlint(binary, typo_files, cwd=tree)
-        finally:
-            shutil.rmtree(tree, ignore_errors=True)
+        # Through run_gate() itself, not _lint_tree()/run_actionlint()
+        # called by hand -- a stand-in that called the same helpers
+        # directly would still read 0 failures here if run_gate() were
+        # ever reverted to lint the real tree in place instead of the
+        # copy (verified: see this PR's description for the revert-and-
+        # rerun proof).
+        captured = io.StringIO()
+        with contextlib.redirect_stdout(captured):
+            rc = run_gate(typo_root)
+        output = captured.getvalue()
         check("a call-site input typo through "
-              "./.wing-commander-pipeline/... is caught, even with a "
-              "stale, differently-typo'd checkout present in the tree",
-              any('"sweep-runz" is not defined' in l for l in diags),
-              f"got {diags!r}")
+              "./.wing-commander-pipeline/... is caught by run_gate() "
+              "itself, even with a stale, differently-typo'd checkout "
+              "present in the tree",
+              rc == 1 and '"sweep-runz" is not defined' in output,
+              f"rc={rc} output={output!r}")
         check("the fixture's own stale checkout was never touched",
               os.path.isdir(os.path.join(typo_root, STALE_PIPELINE_DIR)),
               "decoy directory missing after the run")
