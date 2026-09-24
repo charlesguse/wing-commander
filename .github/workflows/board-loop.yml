@@ -683,6 +683,18 @@ jobs:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 
+      # #488: board-loop.yml's own labels (board:stalled, board:owned) are
+      # never guaranteed to exist on the target repo -- see
+      # wing-commander-board-labels for why this call is here.
+      # continue-on-error: a missed create here leaves this run no worse
+      # off than before #488 (the --add-label call below still just
+      # fails); it must never block triage's own verdict-acting step.
+      - name: Ensure board-loop's own labels exist
+        continue-on-error: true
+        uses: ./.github/actions/wing-commander-board-labels
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+
       # A cited run is read from the issue's own body/comments -- a plain
       # URL scan, never an agent's paraphrase of what it cited (FR-011).
       - name: Locate a cited run, if any
@@ -1006,6 +1018,14 @@ jobs:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 
+      # #488: see wing-commander-board-labels; continue-on-error so a
+      # missed create cannot block route's own decide step.
+      - name: Ensure board-loop's own labels exist
+        continue-on-error: true
+        uses: ./.github/actions/wing-commander-board-labels
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+
       - name: Compose tool args (route-propose)
         id: tool-args-route
         uses: ./.github/actions/wing-commander-tool-args
@@ -1310,6 +1330,14 @@ jobs:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 
+      # #488: see wing-commander-board-labels; continue-on-error so a
+      # missed create cannot block the fix job's push/PR/gate steps.
+      - name: Ensure board-loop's own labels exist
+        continue-on-error: true
+        uses: ./.github/actions/wing-commander-board-labels
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+
       # research.md D7: the same inline fetch-and-branch idiom
       # implement.yml's own steps.base.outputs.base-sha capture already
       # uses -- a two-line idiom with exactly one existing instance is not
@@ -1499,6 +1527,12 @@ jobs:
           set -euo pipefail
           git push origin "HEAD:refs/heads/$BRANCH"
 
+          # One-line fallback (CLAUDE.md "shared logic has exactly one
+          # home") for the case the composite step above never ran: this
+          # step is `set -e`, so a missing board:owned would otherwise
+          # abort before `gh pr create --label board:owned` below.
+          # wing-commander-board-labels is canonical for this label's
+          # color/description -- keep the two strings identical.
           gh label create "board:owned" -R "$GITHUB_REPOSITORY" --color 0E8A16 --description "Board loop: this PR was opened by board-loop.yml" --force
           issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)"
           pr_body="$(printf 'Fixes #%s.\n\nOpened by board-loop.yml on branch %s (base %s).' "$ISSUE_NUMBER" "$BRANCH" "$BASE_SHA")"
@@ -1682,6 +1716,14 @@ jobs:
         with:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
+
+      # #488: see wing-commander-board-labels; continue-on-error so a
+      # missed create cannot block the review round's own outcome step.
+      - name: Ensure board-loop's own labels exist
+        continue-on-error: true
+        uses: ./.github/actions/wing-commander-board-labels
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
 
       - name: Gather review inputs (diff, issue body, commit messages)
         id: gather
@@ -2288,6 +2330,14 @@ jobs:
         with:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
+
+      # #488: see wing-commander-board-labels; continue-on-error so a
+      # missed create cannot block readiness's own report-unmet step.
+      - name: Ensure board-loop's own labels exist
+        continue-on-error: true
+        uses: ./.github/actions/wing-commander-board-labels
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
 
       # contracts/readiness-report.md condition 4: the same backstop check
       # route_final_diff() performs, computed FRESH against the branch's

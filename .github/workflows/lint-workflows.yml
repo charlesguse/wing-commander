@@ -3986,6 +3986,18 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-prove.py
 
+      # Gate 90 — #488: a literal board:* label applied via --add-label or
+      # --label with no matching `gh label create ... --force` anywhere in
+      # workflows/actions fails on a repo that never created it by hand,
+      # exactly the shape that left board:stalled unappliable and let route
+      # re-open a duplicate spec-request on every scheduled run.
+      - name: Gate 90 — every applied board:* label has a matching gh label create
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-label-creation.py
+      - name: Gate 90 self-test — a missing create fails, a cross-file create passes, a variable-named label is out of scope
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-label-creation.py --self-test
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when
