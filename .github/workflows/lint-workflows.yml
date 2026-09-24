@@ -4135,6 +4135,17 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-helper-provenance.py --self-test
 
+      # Gate 99 — specs/060-self-redrive-concurrency (FR-010b, research.md
+      # D8): a merge whose own pull_request: closed run never reached
+      # prove-gate/prove at all -- displaced from wing-commander-board-loop's
+      # own pending slot before it began -- is a distinct, detectable
+      # condition from anything the directed-proof mechanism itself
+      # produces, since that mechanism only ever runs once prove-gate has
+      # already executed.
+      - name: Gate 99 — board loop prove-displacement detects a merge whose proof run never started
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-prove-displacement.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

@@ -174,6 +174,93 @@ jobs:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 
+      # research.md D8, FR-010b: select is the one job structurally
+      # guaranteed to run on every non-pull_request trigger, so it is the
+      # natural periodic check point for a merge whose OWN pull_request:
+      # closed run never reached prove-gate/prove at all -- displaced from
+      # wing-commander-board-loop's own pending slot by a later run before
+      # it ever started (contracts/concurrency-groups.md "What does not
+      # change": that pre-existing behaviour is unaffected by this
+      # feature). Runs whether or not select goes on to pick anything this
+      # tick -- it never gates select's own proceed/no-op decision.
+      - name: Detect a merge whose proof run never started (FR-010b)
+        id: displacement
+        if: steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight'
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+        run: |
+          set -uo pipefail
+          gh pr list -R "$GITHUB_REPOSITORY" --state merged --label board:owned \
+            --json number,body,mergedAt -L 20 > "$RUNNER_TEMP/board-recent-merges.json"
+
+          # One row per issue's own MOST RECENT merge -- the same `Fixes #N`
+          # convention prove-gate's own "Resolve the originating issue" step
+          # already reads.
+          python3 - <<'PYEOF'
+          import json
+          import os
+          import re
+
+          with open(os.path.join(os.environ["RUNNER_TEMP"], "board-recent-merges.json"), encoding="utf-8") as fh:
+              prs = json.load(fh)
+
+          latest_by_issue = {}
+          for pr in prs:
+              m = re.search(r"(?i)\bfixes #(\d+)", pr.get("body") or "")
+              if not m:
+                  continue
+              issue = int(m.group(1))
+              merged_at = pr.get("mergedAt") or ""
+              existing = latest_by_issue.get(issue)
+              if existing is None or merged_at > existing["merged_at"]:
+                  latest_by_issue[issue] = {"issue": issue, "pr": pr["number"], "merged_at": merged_at}
+
+          with open(os.path.join(os.environ["RUNNER_TEMP"], "board-recent-merges-by-issue.json"), "w", encoding="utf-8") as fh:
+              json.dump(list(latest_by_issue.values()), fh)
+          PYEOF
+
+          echo '{}' > "$RUNNER_TEMP/board-displacement-comments-by-issue.json"
+          mapfile -t displacement_issues < <(jq -r '.[].issue' "$RUNNER_TEMP/board-recent-merges-by-issue.json")
+          for number in "${displacement_issues[@]}"; do
+            gh api "repos/$GITHUB_REPOSITORY/issues/$number/comments" --paginate \
+              --jq '.[] | {created_at, body}' 2>/dev/null | jq -s '.' \
+              > "$RUNNER_TEMP/board-displacement-comments-$number.json" || echo '[]' > "$RUNNER_TEMP/board-displacement-comments-$number.json"
+            jq --arg number "$number" --slurpfile comments "$RUNNER_TEMP/board-displacement-comments-$number.json" \
+              '. + {($number): $comments[0]}' "$RUNNER_TEMP/board-displacement-comments-by-issue.json" \
+              > "$RUNNER_TEMP/board-displacement-comments-by-issue.tmp"
+            mv "$RUNNER_TEMP/board-displacement-comments-by-issue.tmp" "$RUNNER_TEMP/board-displacement-comments-by-issue.json"
+          done
+
+          MERGED_PRS_PATH="$RUNNER_TEMP/board-recent-merges-by-issue.json" \
+            COMMENTS_BY_ISSUE_PATH="$RUNNER_TEMP/board-displacement-comments-by-issue.json" \
+            python3 - <<'PYEOF'
+          import json
+          import os
+          import sys
+
+          sys.path.insert(0, ".github/scripts")
+          from board_prove_displacement import find_undetected_merges
+
+          with open(os.environ["MERGED_PRS_PATH"], encoding="utf-8") as fh:
+              merged_prs = json.load(fh)
+          with open(os.environ["COMMENTS_BY_ISSUE_PATH"], encoding="utf-8") as fh:
+              raw = json.load(fh)
+          issues_by_number = {int(k): v for k, v in raw.items()}
+
+          undetected = find_undetected_merges(merged_prs, issues_by_number)
+
+          with open(os.path.join(os.environ["RUNNER_TEMP"], "board-undetected-merges.json"), "w", encoding="utf-8") as fh:
+              json.dump(undetected, fh)
+          PYEOF
+
+          jq -c '.[]' "$RUNNER_TEMP/board-undetected-merges.json" | while read -r row; do
+            issue_number="$(printf '%s' "$row" | jq -r '.issue')"
+            merged_pr="$(printf '%s' "$row" | jq -r '.merged_pr')"
+            marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('prove', 0, None, None, None))")"
+            gh issue comment "$issue_number" -R "$GITHUB_REPOSITORY" \
+              --body "$(printf 'PR #%s merged, but its proof run never started -- the pull_request: closed run that would have entered prove-gate/prove was itself displaced from the queue before it began. This issue stays open.\n\n%s' "$merged_pr" "$marker")"
+          done
+
       # FR-006/FR-008/FR-009/FR-010, contracts/eligibility-and-selection.md.
       # A maintainer-applied label is decided from the `labeled` timeline
       # event's own actor, never from the label's mere presence (FR-008) --
@@ -3969,6 +4056,7 @@ jobs:
           && steps.decide.outputs.redrive-workflow != ''
           && steps.killswitch-recheck.outputs.paused != 'true'
           && steps.busy-check.outputs.busy != 'true'
+          && (steps.decide.outputs.redrive-workflow != 'board-loop.yml' || steps.decide.outputs.directed-stage != '')
         uses: ./.github/actions/wing-commander-dispatch-and-wait
         with:
           # github.token, never the wing-commander App token (WC_BOT_TOKEN)
@@ -4004,12 +4092,63 @@ jobs:
           phrase: "Re-driven to prove the fix"
           artifact-url: ${{ steps.redrive.outputs.run-url }}
 
-      # FR-043's three branches, decided from the composite's own outputs:
-      # success closes citing the run URL and outcome; failure/timeout
-      # leaves the issue open carrying the run URL; an uncorrelated dispatch
-      # (empty run-url, including "no wrapper reaches this change") leaves
-      # the issue open carrying that fact. No branch here ever merges,
-      # approves, or re-dispatches.
+      # research.md D6/contracts/proof-outcome-taxonomy.md: the composite
+      # itself distinguishes only success/failure/timeout/uncorrelated (an
+      # empty run-url, for either a genuine 0-match eviction or an
+      # ambiguous 2+-match correlation -- Out of Scope forbids changing the
+      # composite to tell those apart itself). This wrapper-side read,
+      # right after the composite returns, is what board_prove.outcome_reason()
+      # (T027) needs to tell not-started from unfinished and displaced from
+      # uncorrelated -- only when the composite's own conclusion is neither
+      # success nor failure and a dispatch was genuinely attempted.
+      - name: Disambiguate an inconclusive dispatch attempt
+        id: disambiguate
+        if: >-
+          steps.decide.outputs.actions-only == 'true'
+          && steps.decide.outputs.redrive-workflow != ''
+          && steps.killswitch-recheck.outputs.paused != 'true'
+          && steps.busy-check.outputs.busy != 'true'
+          && (steps.decide.outputs.redrive-workflow != 'board-loop.yml' || steps.decide.outputs.directed-stage != '')
+          && steps.redrive.outputs.conclusion != 'success'
+          && steps.redrive.outputs.conclusion != 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ steps.redrive.outputs.run-url }}
+          ATTEMPT_TOKEN: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -uo pipefail
+          if [ -n "$RUN_URL" ]; then
+            # correlated, but the composite's own wait budget exhausted
+            # before the run reached a terminal status (T028).
+            run_id="${RUN_URL##*/}"
+            status="$(gh run view "$run_id" -R "$GITHUB_REPOSITORY" --json status --jq .status)"
+            started_at="$(gh run view "$run_id" -R "$GITHUB_REPOSITORY" --json startedAt --jq .startedAt)"
+            if [ "$status" = "queued" ] && { [ -z "$started_at" ] || [ "$started_at" = "null" ]; }; then
+              reason="not-started"
+            else
+              reason="unfinished"
+            fi
+          else
+            # never correlated at all (T029) -- a fresh read, reusing
+            # busy-check's own gh-run-list-and-title-match shape (T019)
+            # rather than a second, differently-shaped idiom, distinguishes
+            # eviction (0 matching rows) from ambiguity (2+).
+            matches="$(gh run list --workflow=board-loop.yml -R "$GITHUB_REPOSITORY" \
+              --json displayTitle -L 20 \
+              --jq "[.[] | select(.displayTitle | contains(\"[attempt:${ATTEMPT_TOKEN}]\"))] | length")"
+            if [ "$matches" -eq 0 ]; then
+              reason="displaced"
+            else
+              reason="uncorrelated"
+            fi
+          fi
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+
+      # FR-043/contracts/proof-outcome-taxonomy.md's eight branches, decided
+      # by board_prove.outcome_reason() (T027) -- never re-derived ad hoc in
+      # this step's own shell (Principle IX). Every non-success reason
+      # leaves the issue open (FR-008), carrying which of the eight
+      # conditions applied (FR-009, SC-007) and a prove marker.
       - name: Record the proof outcome
         if: steps.decide.outputs.actions-only == 'true' && steps.killswitch-recheck.outputs.paused != 'true'
         env:
@@ -4020,25 +4159,71 @@ jobs:
           CONCLUSION: ${{ steps.redrive.outputs.conclusion }}
           REDRIVE_WORKFLOW: ${{ steps.decide.outputs.redrive-workflow }}
           REDRIVE_REASON: ${{ steps.decide.outputs.redrive-reason }}
+          DIRECTED_STAGE: ${{ steps.decide.outputs.directed-stage }}
+          BUSY: ${{ steps.busy-check.outputs.busy }}
+          DISAMBIGUATED_REASON: ${{ steps.disambiguate.outputs.reason }}
         run: |
           set -uo pipefail
-          if [ -z "$RUN_URL" ]; then
-            marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('prove', 0, None, None, None))")"
-            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-              --body "$(printf 'PR #%s merged, but the proof run could not be correlated (%s). This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_REASON" "$marker")"
-            exit 0
-          fi
+          reason="$(python3 -c "
+          import os, sys
+          sys.path.insert(0, '.github/scripts')
+          from board_prove import outcome_reason
+          print(outcome_reason(
+              os.environ.get('BUSY') == 'true',
+              os.environ.get('REDRIVE_WORKFLOW') or None,
+              os.environ.get('DIRECTED_STAGE') or None,
+              os.environ.get('CONCLUSION') or None,
+              os.environ.get('DISAMBIGUATED_REASON') or None))
+          ")"
 
-          if [ "$CONCLUSION" = "success" ]; then
-            marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('proven', 0, None, None, None))")"
-            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-              --body "$(printf 'Proven: %s was re-driven after the merge of PR #%s and concluded %s -- %s\n\n%s' "$REDRIVE_WORKFLOW" "$PR_NUMBER" "$CONCLUSION" "$RUN_URL" "$marker")"
-            gh issue close "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY"
-          else
-            marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('prove', 0, None, None, None))")"
-            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-              --body "$(printf 'Not proven: %s was re-driven after the merge of PR #%s and concluded %s -- %s. This issue stays open.\n\n%s' "$REDRIVE_WORKFLOW" "$PR_NUMBER" "$CONCLUSION" "$RUN_URL" "$marker")"
-          fi
+          case "$reason" in
+            success)
+              marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('proven', 0, None, None, None))")"
+              gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
+                --body "$(printf 'Proven: %s was re-driven after the merge of PR #%s and concluded success -- %s\n\n%s' "$REDRIVE_WORKFLOW" "$PR_NUMBER" "$RUN_URL" "$marker")"
+              gh issue close "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY"
+              ;;
+            failure)
+              marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('prove', 0, None, None, None))")"
+              gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
+                --body "$(printf 'Not proven: %s was re-driven after the merge of PR #%s and concluded failure -- %s. This issue stays open.\n\n%s' "$REDRIVE_WORKFLOW" "$PR_NUMBER" "$RUN_URL" "$marker")"
+              ;;
+            group-busy)
+              marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('prove', 0, None, None, None))")"
+              gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
+                --body "$(printf 'PR #%s merged, but the directed proof group was already occupied by another proof run -- nothing was dispatched. Picked up again on a later run.\n\n%s' "$PR_NUMBER" "$marker")"
+              ;;
+            no-target)
+              marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('prove', 0, None, None, None))")"
+              gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
+                --body "$(printf 'PR #%s merged, but no directed run of board-loop.yml reaches the changed behaviour -- nothing was dispatched. This issue stays open for a maintainer to review.\n\n%s' "$PR_NUMBER" "$marker")"
+              ;;
+            nothing-reaches)
+              marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('prove', 0, None, None, None))")"
+              gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
+                --body "$(printf 'PR #%s merged, but no workflow in the repository reaches the changed behaviour (%s) -- nothing was dispatched. This issue stays open for a maintainer to review.\n\n%s' "$PR_NUMBER" "$REDRIVE_REASON" "$marker")"
+              ;;
+            not-started)
+              marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('prove', 0, None, None, None))")"
+              gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
+                --body "$(printf 'PR #%s merged, and %s was dispatched to prove it (%s), but that run never left the queue within the wait budget. This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_WORKFLOW" "$RUN_URL" "$marker")"
+              ;;
+            unfinished)
+              marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('prove', 0, None, None, None))")"
+              gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
+                --body "$(printf 'PR #%s merged, and %s was dispatched to prove it (%s), but it did not reach a terminal conclusion within the wait budget. This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_WORKFLOW" "$RUN_URL" "$marker")"
+              ;;
+            displaced)
+              marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('prove', 0, None, None, None))")"
+              gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
+                --body "$(printf 'PR #%s merged, but the proof run dispatched to prove it was evicted before it could ever be correlated. This issue stays open.\n\n%s' "$PR_NUMBER" "$marker")"
+              ;;
+            uncorrelated|*)
+              marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('prove', 0, None, None, None))")"
+              gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
+                --body "$(printf 'PR #%s merged, but the proof run could not be correlated (%s). This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_REASON" "$marker")"
+              ;;
+          esac
 
       # T067/FR-047/SC-010: no agent runs in this job -- it closes the
       # issue on merge evidence alone, or dispatches and waits on a
@@ -4047,16 +4232,31 @@ jobs:
       - name: Determine this run's outcome for the metrics record
         id: outcome
         if: always()
+        env:
+          BUSY: ${{ steps.busy-check.outputs.busy }}
+          REDRIVE_WORKFLOW: ${{ steps.decide.outputs.redrive-workflow }}
+          DIRECTED_STAGE: ${{ steps.decide.outputs.directed-stage }}
+          CONCLUSION: ${{ steps.redrive.outputs.conclusion }}
+          DISAMBIGUATED_REASON: ${{ steps.disambiguate.outputs.reason }}
         run: |
           set -uo pipefail
           if [ "${{ steps.killswitch-recheck.outputs.paused }}" = "true" ]; then
             label="stood down"
           elif [ "${{ steps.decide.outputs.actions-only }}" != "true" ]; then
             label="closed on merge evidence alone"
-          elif [ -z "${{ steps.redrive.outputs.run-url }}" ]; then
-            label="proof run uncorrelated"
           else
-            label="proof: ${{ steps.redrive.outputs.conclusion }}"
+            reason="$(python3 -c "
+          import os, sys
+          sys.path.insert(0, '.github/scripts')
+          from board_prove import outcome_reason
+          print(outcome_reason(
+              os.environ.get('BUSY') == 'true',
+              os.environ.get('REDRIVE_WORKFLOW') or None,
+              os.environ.get('DIRECTED_STAGE') or None,
+              os.environ.get('CONCLUSION') or None,
+              os.environ.get('DISAMBIGUATED_REASON') or None))
+          ")"
+            label="proof: $reason"
           fi
           echo "label=$label" >> "$GITHUB_OUTPUT"
 

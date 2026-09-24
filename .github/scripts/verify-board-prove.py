@@ -16,8 +16,8 @@ import yaml
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from board_prove import (  # noqa: E402
     actions_only, aimable_jobs, directed_proof_group_busy, directed_stage,
-    is_safe_redrive_target, joins_directed_group, redrive_target,
-    scan_dispatchable_and_uses_graph, scan_job_uses_graph,
+    is_safe_redrive_target, joins_directed_group, outcome_reason,
+    redrive_target, scan_dispatchable_and_uses_graph, scan_job_uses_graph,
 )
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -117,6 +117,24 @@ DIRECTED_PROOF_GROUP_BUSY_CASES = [
     (json.dumps([{"databaseId": 1, "displayTitle": "board-loop", "status": "in_progress"}]), False),
 ]
 
+# contracts/proof-outcome-taxonomy.md's eight-reason table (research.md D6):
+# (group_busy, redrive_workflow, directed_stage_value, conclusion,
+#  disambiguated_reason) -> expected outcome_reason.
+OUTCOME_REASON_CASES = [
+    ("group-busy", (True, "board-loop.yml", "prove", None, None), "group-busy"),
+    ("nothing-reaches", (False, None, None, None, None), "nothing-reaches"),
+    ("no-target", (False, "board-loop.yml", None, None, None), "no-target"),
+    ("not-started", (False, "board-loop.yml", "prove", "timeout", "not-started"), "not-started"),
+    ("unfinished", (False, "board-loop.yml", "prove", "timeout", "unfinished"), "unfinished"),
+    ("displaced", (False, "board-loop.yml", "prove", None, "displaced"), "displaced"),
+    ("uncorrelated", (False, "board-loop.yml", "prove", None, "uncorrelated"), "uncorrelated"),
+    ("success", (False, "board-loop.yml", "prove", "success", None), "success"),
+    ("failure", (False, "board-loop.yml", "prove", "failure", None), "failure"),
+    # an external target (FR-004): no-target's board-loop.yml-only check
+    # never applies, so a directed_stage_value of None does not misfire.
+    ("external target success", (False, "release.yml", None, "success", None), "success"),
+]
+
 
 def run():
     failures = 0
@@ -203,6 +221,15 @@ def run():
                   "expected {1}, got {2}.".format(run_list_json, expected, got))
         else:
             print("[ok] directed_proof_group_busy({0}) = {1}".format(run_list_json, got))
+
+    for name, args, expected in OUTCOME_REASON_CASES:
+        got = outcome_reason(*args)
+        if got != expected:
+            failures += 1
+            print("::error::verify-board-prove: outcome_reason {0}: expected "
+                  "{1!r}, got {2!r}.".format(name, expected, got))
+        else:
+            print("[ok] outcome_reason {0} = {1!r}".format(name, got))
 
     # Integration check, not just fixtures: the synthetic DISPATCHABLE/
     # SAFE_TARGET_CASES above can all pass while scan_dispatchable_and_uses_graph()

@@ -309,6 +309,44 @@ def directed_proof_group_busy(run_list_json):
     )
 
 
+OUTCOME_REASONS = (
+    "group-busy", "not-started", "unfinished", "displaced", "uncorrelated",
+    "no-target", "nothing-reaches", "success", "failure",
+)
+
+
+def outcome_reason(group_busy, redrive_workflow, directed_stage_value,
+                    conclusion, disambiguated_reason):
+    """contracts/proof-outcome-taxonomy.md's eight-reason table (research.md
+    D6), computed in one place rather than a workflow `run:` block's own
+    shell `if`/`elif` chain (Principle IX) -- the judgment gates whether an
+    issue closes, a durable action.
+
+    Priority order mirrors the sequence the `prove` job's own steps run in:
+    a busy directed-proof group means no dispatch was even attempted
+    (checked before anything else); no dispatchable workflow at all beats a
+    workflow that exists but reaches no aimable job (a workflow-level gap
+    is checked before a job-level one, FR-010a); only once a dispatch could
+    genuinely have been attempted does the composite's own conclusion (or,
+    when it is inconclusive, the caller's own disambiguation of WHY --
+    T028/T029's not-started/unfinished/displaced/uncorrelated read) decide
+    the outcome.
+
+    `disambiguated_reason` is one of "not-started"/"unfinished"/"displaced"/
+    "uncorrelated" -- the caller's own post-dispatch read (research.md D6),
+    passed through unchanged when `conclusion` is neither "success" nor
+    "failure"."""
+    if group_busy:
+        return "group-busy"
+    if not redrive_workflow:
+        return "nothing-reaches"
+    if redrive_workflow == "board-loop.yml" and not directed_stage_value:
+        return "no-target"
+    if conclusion in ("success", "failure"):
+        return conclusion
+    return disambiguated_reason
+
+
 def main():
     """Reads {"changed_paths": [...], "dispatchable": [...],
     "uses_graph": {...}} from stdin, prints
