@@ -74,7 +74,7 @@ checkpoint passes.
 
 ### `board_prove.py` — the directed-stage and concurrency-occupancy functions (research.md D1, D2, D4)
 
-- [ ] T002 `.github/scripts/board_prove.py`: add a module-level
+- [X] T002 `.github/scripts/board_prove.py`: add a module-level
   `aimable_jobs = frozenset({"triage", "review", "readiness", "prove"})`
   constant (research.md D2). Comment inline why `select`, `route`, `fix`
   are excluded: `select`'s own job body *is* the item-picking logic (a
@@ -84,7 +84,7 @@ checkpoint passes.
   open the fix PR — both are mutating actions FR-002 forbids. This
   constant is read directly (never re-derived) by Gate 91 (T040)'s
   structural assertion.
-- [ ] T003 `.github/scripts/board_prove.py`: add
+- [X] T003 `.github/scripts/board_prove.py`: add
   `scan_job_uses_graph(workflow_path)` (research.md D1): parse the one
   checked-out workflow file with `yaml.safe_load`, walk
   `doc["jobs"][job]["steps"]` per job (joining each step's own `run:`/
@@ -94,7 +94,7 @@ checkpoint passes.
   T045's script-import pass (Phase 7) rather than duplicating the regex
   set — this function and `scan_dispatchable_and_uses_graph()` should
   share the resolution helper T045 adds, not each carry their own copy.
-- [ ] T004 `.github/scripts/board_prove.py`: add
+- [X] T004 `.github/scripts/board_prove.py`: add
   `directed_stage(changed_paths, job_uses_graph, aimable_jobs)` (research.md
   D1): intersects `changed_paths` against each aimable job's referenced
   set from `job_uses_graph`. Exactly one aimable job's set intersects →
@@ -104,7 +104,7 @@ checkpoint passes.
   does → `None` (FR-010a's "no directed run reaches the changed
   behaviour"). Only meaningful when the caller already knows
   `redrive_target()`'s chosen workflow is `board-loop.yml`.
-- [ ] T005 `.github/scripts/board_prove.py`: add
+- [X] T005 `.github/scripts/board_prove.py`: add
   `joins_directed_group(target_workflow_path, target_job, aimable_jobs)`
   (research.md D4, FR-001 static check): for the self-target case (target
   basename is `board-loop.yml` and `target_job in aimable_jobs`) return
@@ -115,7 +115,7 @@ checkpoint passes.
   and confirm its group name is neither `wing-commander-board-loop` nor
   `wing-commander-board-loop-directed-proof` (FR-004: correctness for a
   target outside the caller's own group).
-- [ ] T006 `.github/scripts/board_prove.py`: add
+- [X] T006 `.github/scripts/board_prove.py`: add
   `directed_proof_group_busy(run_list_json)` (research.md D4, FR-001a
   dynamic check): parse
   `gh run list --workflow=board-loop.yml --json databaseId,displayTitle,status -L 20`
@@ -124,20 +124,20 @@ checkpoint passes.
 
 ### `board-loop.yml` — dispatch surface and concurrency split (research.md D1, D3, D4)
 
-- [ ] T007 `.github/workflows/board-loop.yml`: add
+- [X] T007 `.github/workflows/board-loop.yml`: add
   `directed-stage` (string, default `""`), `directed-issue` (string,
   default `""`), `directed-pr` (string, default `""`) to the
   `workflow_dispatch.inputs` block (~lines 19-32), alongside
   `attempt-token`. Descriptions per contracts/directed-proof-run.md's
   input table.
-- [ ] T008 `.github/workflows/board-loop.yml`: widen `run-name:` (line 36)
+- [X] T008 `.github/workflows/board-loop.yml`: widen `run-name:` (line 36)
   so a directed dispatch's own run carries a second, distinct token:
   `${{ inputs.attempt-token && format('board-loop [attempt:{0}]',
   inputs.attempt-token) || 'board-loop' }}${{ inputs.directed-stage != ''
   && format(' [directed:{0}]', inputs.directed-stage) || '' }}`
   (research.md D4). T006's `directed_proof_group_busy()` depends on this
   exact `[directed:` substring.
-- [ ] T009 `.github/workflows/board-loop.yml`: replace the workflow-level
+- [X] T009 `.github/workflows/board-loop.yml`: replace the workflow-level
   `concurrency:` block (lines 40-46) with per-job blocks (research.md D3,
   contracts/concurrency-groups.md "Groups, per job"):
   - `select`, `triage`, `route`, `fix`, `review`, `readiness`:
@@ -155,7 +155,7 @@ checkpoint passes.
   runs queues rather than races or cancels." Gate 90 (T038) diffs this
   text byte-for-byte against contracts/concurrency-groups.md and
   board-loop-workflow.md (T039), so do not paraphrase it.
-- [ ] T010 `.github/workflows/board-loop.yml`: `select`'s `if:` (line 84)
+- [X] T010 `.github/workflows/board-loop.yml`: `select`'s `if:` (line 84)
   gains `&& inputs.directed-stage == ''` (contracts/directed-proof-run.md
   "Job gating").
 
@@ -176,7 +176,7 @@ cascade-skip. See this run's `wing-commander-findings` for the two ways
 this differs from what research.md D1/contracts/directed-proof-run.md's
 "Job gating" section states.
 
-- [ ] T011 `.github/workflows/board-loop.yml`: `resolve-model`'s `if:`
+- [X] T011 `.github/workflows/board-loop.yml`: `resolve-model`'s `if:`
   (line 598, currently `needs.select.outputs.issue-number != ''`) becomes
   `!cancelled() && needs.select.result != 'failure' &&
   (needs.select.outputs.issue-number != '' || inputs.directed-issue != '')`.
@@ -185,7 +185,7 @@ this differs from what research.md D1/contracts/directed-proof-run.md's
   `resolve-model` is a hard `needs:` dependency of `triage`/`route`/
   `fix`/`review`; without this fix a directed `triage`/`review` dispatch
   never gets a model tier and cascade-skips.
-- [ ] T012 `.github/workflows/board-loop.yml`: `triage`'s `if:` (line 664)
+- [X] T012 `.github/workflows/board-loop.yml`: `triage`'s `if:` (line 664)
   becomes `!cancelled() && needs.select.result != 'failure' &&
   needs.resolve-model.result != 'failure' &&
   ((needs.select.outputs.issue-number != '' && needs.select.outputs.step
@@ -195,7 +195,7 @@ this differs from what research.md D1/contracts/directed-proof-run.md's
   inside this job's own steps (re-grep `needs.select.outputs.issue-number`
   within the `triage:` job's line range — T007-T011 shift line numbers)
   becomes `${{ needs.select.outputs.issue-number || inputs.directed-issue }}`.
-- [ ] T013 `.github/workflows/board-loop.yml`: add one new step, reused
+- [X] T013 `.github/workflows/board-loop.yml`: add one new step, reused
   by `review` and `readiness` (T014/T015) — name it "Resolve directed PR
   from the issue marker" — gated
   `if: !cancelled() && inputs.directed-stage != '' &&
@@ -215,7 +215,7 @@ this differs from what research.md D1/contracts/directed-proof-run.md's
   `review`'s outputs where possible, or duplicated verbatim into
   `readiness` if job boundaries don't allow reuse — whichever keeps
   CLAUDE.md's single-home rule cleanest is this task's own call).
-- [ ] T014 `.github/workflows/board-loop.yml`: `review`'s `if:` (lines
+- [X] T014 `.github/workflows/board-loop.yml`: `review`'s `if:` (lines
   1638-1642) becomes `!cancelled() && needs.select.result != 'failure' &&
   needs.resolve-model.result != 'failure' && needs.fix.result != 'failure'
   && ((needs.fix.result == 'success' && needs.fix.outputs.pr-number != '')
@@ -228,7 +228,7 @@ this differs from what research.md D1/contracts/directed-proof-run.md's
   `needs.select.outputs.issue-number` reference inside this job (re-grep
   within its own line range) becomes
   `${{ needs.select.outputs.issue-number || inputs.directed-issue }}`.
-- [ ] T015 `.github/workflows/board-loop.yml`: `readiness`'s `if:` (lines
+- [X] T015 `.github/workflows/board-loop.yml`: `readiness`'s `if:` (lines
   2253-2257) becomes `!cancelled() && needs.select.result != 'failure' &&
   needs.review.result != 'failure' &&
   ((needs.review.result == 'success' && needs.review.outputs.outcome ==
@@ -240,7 +240,7 @@ this differs from what research.md D1/contracts/directed-proof-run.md's
   steps.resolve-directed-pr.outputs.pr }}`. Every other
   `needs.select.outputs.issue-number` reference inside this job becomes
   `${{ needs.select.outputs.issue-number || inputs.directed-issue }}`.
-- [ ] T016 `.github/workflows/board-loop.yml`: `prove-gate`'s `if:` (line
+- [X] T016 `.github/workflows/board-loop.yml`: `prove-gate`'s `if:` (line
   2489) becomes `(github.event_name == 'pull_request' ||
   (github.event_name == 'workflow_dispatch' && inputs.directed-stage ==
   'prove')) && vars.WING_COMMANDER_BOARD_LOOP_PAUSED != 'true'`
@@ -257,14 +257,14 @@ this differs from what research.md D1/contracts/directed-proof-run.md's
   (Principle IX, Constitution V). The marker-membership check
   (`has_marker`) is unchanged — it still confirms the caller-supplied
   issue really is a board item before `eligible` can be `true`.
-- [ ] T017 `.github/workflows/board-loop.yml`: `prove`'s job body —
+- [X] T017 `.github/workflows/board-loop.yml`: `prove`'s job body —
   every `PR_NUMBER: ${{ github.event.pull_request.number }}` reference
   (currently lines 2640, 2694, 2746) becomes
   `${{ github.event.pull_request.number || inputs.directed-pr }}`.
 
 ### `board-loop.yml` — the `decide`/busy-check/redrive wiring inside `prove` (FR-001/FR-001a/FR-002/FR-002a)
 
-- [ ] T018 `.github/workflows/board-loop.yml`: extend the `prove` job's
+- [X] T018 `.github/workflows/board-loop.yml`: extend the `prove` job's
   "Decide whether this merge needs a re-driven run, and which" step
   (~line 2636): after computing `target`/`target_reason` via
   `redrive_target()`, when `target == "board-loop.yml"` also call
@@ -272,7 +272,7 @@ this differs from what research.md D1/contracts/directed-proof-run.md's
   aimable_jobs)` (T003/T004/T002) and write a new `directed-stage` output
   (empty when `target != "board-loop.yml"` or `directed_stage()` returns
   `None`).
-- [ ] T019 `.github/workflows/board-loop.yml`: add a new step "Check
+- [X] T019 `.github/workflows/board-loop.yml`: add a new step "Check
   whether the directed proof group is busy" right after the `decide`
   step, gated `if: steps.decide.outputs.actions-only == 'true' &&
   steps.decide.outputs.directed-stage != '' &&
@@ -280,7 +280,7 @@ this differs from what research.md D1/contracts/directed-proof-run.md's
   `gh run list --workflow=board-loop.yml --json
   databaseId,displayTitle,status -L 20`, feeds the JSON to
   `directed_proof_group_busy()` (T006), outputs `busy`.
-- [ ] T020 `.github/workflows/board-loop.yml`: "Re-drive the changed
+- [X] T020 `.github/workflows/board-loop.yml`: "Re-drive the changed
   behaviour to prove the fix" step's `if:` (lines 2708-2711) gains
   `&& steps.busy-check.outputs.busy != 'true'` (T019's step id — name it
   `busy-check`). Its `with:` block gains a `workflow-inputs` entry (the
@@ -296,22 +296,22 @@ this differs from what research.md D1/contracts/directed-proof-run.md's
 
 ### Gate 89 — fixtures for every function this phase adds
 
-- [ ] T021 Extend Gate 89 (`.github/scripts/verify-board-prove.py`) with
+- [X] T021 Extend Gate 89 (`.github/scripts/verify-board-prove.py`) with
   fixtures for `directed_stage()` (T004): one case per aimable job, one
   none-of-the-aimable-jobs-match case (→ `None`), one tie-break case (a
   helper referenced by both `review` and `readiness` → `readiness`
   wins), each in both directions (FR-020).
-- [ ] T022 Extend Gate 89 with fixtures for `joins_directed_group()`
+- [X] T022 Extend Gate 89 with fixtures for `joins_directed_group()`
   (T005): self-target true-by-construction case, an external target
   sharing `wing-commander-board-loop` (must return `False`), an external
   target with its own distinct group (must return `True`), each in both
   directions.
-- [ ] T023 Extend Gate 89 with fixtures for `directed_proof_group_busy()`
+- [X] T023 Extend Gate 89 with fixtures for `directed_proof_group_busy()`
   (T006): empty run list (`False`), a `[directed:` row with `status:
   in_progress` (`True`), a `[directed:` row with `status: completed`
   (`False`), an unrelated non-directed row (`False`), each in both
   directions.
-- [ ] T024 Extend Gate 89's real-tree assertion (FR-021 partial): read
+- [X] T024 Extend Gate 89's real-tree assertion (FR-021 partial): read
   `board-loop.yml`'s own `prove-gate`/`prove` `concurrency.group:`
   expression off the checked-out tree (T009) and assert it differs
   literally from `select`'s (or any of `triage`/`route`/`fix`/`review`/
