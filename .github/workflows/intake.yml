@@ -540,45 +540,23 @@ jobs:
       # comments — ordered oldest to newest — for the agent step to read.
       # Comment bodies move only between gh api/jq and files, never through
       # a shell variable (contracts/comment-staging-format.md).
+      #
+      # #499 code review of board-loop.yml: this logic is now the single
+      # home wing-commander-issue-context/action.yml, so board-loop.yml's
+      # own agent steps get the same trust filter instead of each writing
+      # (or omitting) their own inline copy. Consumes only `comments-file`
+      # here, unchanged in shape and semantics from before this extraction
+      # (comments-trust-gate.md/comment-staging-format.md) — the
+      # composite's other output, `context-file`, exists for a caller with
+      # no other way to read the issue body at all, which intake.yml is
+      # not (it fetches title/body itself in the agent's own step 1 below).
       - name: Compute comment trust gate
         id: comment-trust-gate
         if: steps.lifecycle-gate.outputs.is-open == 'true'
-        env:
-          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
-          ISSUE: ${{ inputs.issue-number }}
-        run: |
-          mkdir -p /tmp/wing-commander
-
-          AUTHOR_ID=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE}" --jq '.user.id')
-
-          gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE}/comments" --paginate --jq '.[]' \
-            | jq -s '.' > /tmp/wing-commander/intake-comments-raw.json
-
-          TOTAL_COUNT=$(jq 'length' /tmp/wing-commander/intake-comments-raw.json)
-          QUALIFYING_COUNT=$(jq --argjson aid "$AUTHOR_ID" \
-            '[.[] | select(.user.type != "Bot") | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR" or .user.id == $aid)] | length' \
-            /tmp/wing-commander/intake-comments-raw.json)
-          EXCLUDED_HUMAN_COUNT=$(jq --argjson aid "$AUTHOR_ID" \
-            '[.[] | select(.user.type != "Bot") | select((.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR" or .user.id == $aid) | not)] | length' \
-            /tmp/wing-commander/intake-comments-raw.json)
-
-          {
-            echo "total-count=$TOTAL_COUNT"
-            echo "qualifying-count=$QUALIFYING_COUNT"
-            echo "excluded-human-count=$EXCLUDED_HUMAN_COUNT"
-          } >> "$GITHUB_OUTPUT"
-
-          if [ "$QUALIFYING_COUNT" -gt 0 ]; then
-            jq -r --argjson aid "$AUTHOR_ID" \
-              '[.[] | select(.user.type != "Bot") | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR" or .user.id == $aid)] | sort_by(.created_at) | .[] | "## Comment by @\(.user.login) (\(.created_at))\n\n\(.body)\n"' \
-              /tmp/wing-commander/intake-comments-raw.json \
-              > /tmp/wing-commander/intake-comments.md
-            echo "comments-file=/tmp/wing-commander/intake-comments.md" >> "$GITHUB_OUTPUT"
-          else
-            echo "comments-file=" >> "$GITHUB_OUTPUT"
-          fi
-
-          rm -f /tmp/wing-commander/intake-comments-raw.json
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-issue-context
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          issue-number: ${{ inputs.issue-number }}
 
       # Deterministic notice (contracts/notice-callout.md, FR-008): fires
       # only when substantive human discussion existed but none of it

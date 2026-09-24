@@ -1,0 +1,133 @@
+# Single home (#499 code review of board-loop.yml) for the trust filter
+# intake.yml's own inline "Compute comment trust gate" step originated
+# (specs/029-intake-issue-comments/contracts/comment-trust-gate.md): a
+# comment qualifies only when `user.type != "Bot"` AND (its
+# `author_association` is OWNER/MEMBER/COLLABORATOR OR its author is the
+# issue's own author, compared by id). Every caller gets the SAME filtered
+# comment set from the SAME code instead of writing, or forgetting to
+# write, its own inline copy -- exactly the gap board-loop.yml shipped
+# with (triage/route/reviewer had no comment filter, and no comment
+# access, at all; the fixer, uniquely, could not be granted `gh issue`
+# access even body-only, since that tool can't be scoped narrower than
+# the whole `gh issue view` prefix -- this composite is what makes
+# granting the fixer safe).
+#
+# Two outputs share one fetch. `comments-file` reproduces
+# contracts/comment-staging-format.md byte-for-byte (qualifying comments
+# only, oldest to newest, empty string when nothing qualifies) -- this is
+# the one intake.yml keeps consuming, unchanged, after this extraction.
+# `context-file` additionally prepends the issue's own title and body
+# under a "## Issue" heading and is always non-empty, for a caller
+# (board-loop.yml) that has no other way to read the issue at all and,
+# per specs/057-autonomous-board-loop FR-056, must not be granted any
+# `gh issue` tool of its own.
+#
+# Written under /tmp/wing-commander, matching intake.yml's own established
+# convention exactly (contracts/comment-staging-format.md: "runner-local,
+# matching clarify.yml's /tmp/wing-commander/ convention") rather than
+# $RUNNER_TEMP -- an unproven path for the agent's Read tool where
+# /tmp/wing-commander is already shipped and working in intake.yml,
+# clarify.yml and pr-conversation.yml. Either way it is never inside any
+# job's checkout, so a later `git add`/`git commit` in that job (the
+# fixer's own commit step) can never pick it up. The Read tool reaches it
+# by the output path the same way intake.yml's own agent already reads
+# its comments file today.
+name: wing-commander-issue-context
+description: >
+  Fetch an issue's title, body and comments and stage a trust-filtered
+  context file (OWNER/MEMBER/COLLABORATOR or the issue's own author,
+  never a bot) for an agent step to Read, so no agent step needs its own
+  `gh issue` tool grant.
+
+inputs:
+  token:
+    description: GH_TOKEN for the gh calls this composite makes.
+    required: true
+  issue-number:
+    description: The issue number to fetch.
+    required: true
+  repository:
+    description: "owner/repo to read from. Defaults to the current repository."
+    required: false
+    default: ${{ github.repository }}
+
+outputs:
+  comments-file:
+    description: >
+      Path to the qualifying-comments-only file, oldest to newest, one
+      "## Comment by @login (timestamp)" section per qualifying comment --
+      byte-for-byte intake.yml's own pre-extraction shape
+      (contracts/comment-staging-format.md). Empty string when nothing
+      qualifies -- no file is written in that case.
+    value: ${{ steps.fetch.outputs.comments-file }}
+  context-file:
+    description: >
+      Path to a file with a "## Issue" section (title + body) followed by
+      every qualifying comment section, same order and format as
+      comments-file. Always non-empty -- an issue always has a title, even
+      with zero qualifying comments.
+    value: ${{ steps.fetch.outputs.context-file }}
+  total-count:
+    description: Total comments on the issue, qualifying or not, bot or not.
+    value: ${{ steps.fetch.outputs.total-count }}
+  qualifying-count:
+    description: Comments that passed the trust filter. 0 reproduces title+body-only behavior.
+    value: ${{ steps.fetch.outputs.qualifying-count }}
+  excluded-human-count:
+    description: Non-bot comments where the trust filter's association/author-id clause failed.
+    value: ${{ steps.fetch.outputs.excluded-human-count }}
+
+runs:
+  using: composite
+  steps:
+    - name: Fetch issue and comments, apply the trust filter
+      id: fetch
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPOSITORY: ${{ inputs.repository }}
+        ISSUE: ${{ inputs.issue-number }}
+      run: |
+        DIR="/tmp/wing-commander/issue-context-$ISSUE"
+        mkdir -p "$DIR"
+
+        gh api "repos/${REPOSITORY}/issues/${ISSUE}" > "$DIR/issue-raw.json"
+        AUTHOR_ID=$(jq '.user.id' "$DIR/issue-raw.json")
+
+        gh api "repos/${REPOSITORY}/issues/${ISSUE}/comments" --paginate --jq '.[]' \
+          | jq -s '.' > "$DIR/comments-raw.json"
+
+        TOTAL_COUNT=$(jq 'length' "$DIR/comments-raw.json")
+        QUALIFYING_COUNT=$(jq --argjson aid "$AUTHOR_ID" \
+          '[.[] | select(.user.type != "Bot") | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR" or .user.id == $aid)] | length' \
+          "$DIR/comments-raw.json")
+        EXCLUDED_HUMAN_COUNT=$(jq --argjson aid "$AUTHOR_ID" \
+          '[.[] | select(.user.type != "Bot") | select((.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR" or .user.id == $aid) | not)] | length' \
+          "$DIR/comments-raw.json")
+
+        {
+          echo "total-count=$TOTAL_COUNT"
+          echo "qualifying-count=$QUALIFYING_COUNT"
+          echo "excluded-human-count=$EXCLUDED_HUMAN_COUNT"
+        } >> "$GITHUB_OUTPUT"
+
+        if [ "$QUALIFYING_COUNT" -gt 0 ]; then
+          jq -r --argjson aid "$AUTHOR_ID" \
+            '[.[] | select(.user.type != "Bot") | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR" or .user.id == $aid)] | sort_by(.created_at) | .[] | "## Comment by @\(.user.login) (\(.created_at))\n\n\(.body)\n"' \
+            "$DIR/comments-raw.json" \
+            > "$DIR/comments.md"
+          echo "comments-file=$DIR/comments.md" >> "$GITHUB_OUTPUT"
+        else
+          rm -f "$DIR/comments.md"
+          echo "comments-file=" >> "$GITHUB_OUTPUT"
+        fi
+
+        jq -r '"## Issue\n\n" + .title + "\n\n" + (.body // "")' "$DIR/issue-raw.json" \
+          > "$DIR/context.md"
+        if [ -f "$DIR/comments.md" ]; then
+          printf '\n' >> "$DIR/context.md"
+          cat "$DIR/comments.md" >> "$DIR/context.md"
+        fi
+        echo "context-file=$DIR/context.md" >> "$GITHUB_OUTPUT"
+
+        rm -f "$DIR/comments-raw.json" "$DIR/issue-raw.json"

@@ -4025,12 +4025,39 @@ jobs:
       # `##[warning]Unexpected input(s)` line, never a failure), so the
       # resolved model tier, turn ceiling and tool allowlist were never
       # applied -- see verify-claude-code-action-inputs.py's own docstring
-      # for the accepted-input list's source. Fails any claude-code-action@v1
-      # step, anywhere in workflows/ or actions/, that passes an input v1
-      # does not accept.
-      - name: "Gate 92 — every claude-code-action@v1 step's with: keys are inputs v1 accepts"
+      # for the accepted-input list's source. Fails any claude-code-action
+      # step, at any ref (not only a bare @v1 tag -- a code review found a
+      # step pinned @v1.2.0 passing green under the original exact-ref
+      # match), anywhere in workflows/ or actions/, that passes an input
+      # the action does not accept.
+      - name: "Gate 92 — every claude-code-action step's with: keys are inputs the action accepts"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-claude-code-action-inputs.py
+
+      # Gate 93 — #499 code review round 3 (B1): board-loop.yml's agent
+      # steps must never be granted `gh issue view`/`gh api` (that read
+      # would bypass the code-level author-association trust filter
+      # wing-commander-issue-context/action.yml now provides, the way
+      # round 2's own fix briefly did before this round found it), and
+      # that filter itself must have exactly one home -- no workflow or
+      # action may re-implement it inline.
+      - name: "Gate 93 — board-loop reads the issue only through wing-commander-issue-context"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-issue-context-single-home.py
+      - name: "Gate 93 self-test — a board-loop gh issue view grant and an inline trust-filter reimplementation each fail"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-issue-context-single-home.py --self-test
+
+      # Gate 94 — SF1 (#499 code review round 3): triage-propose and the
+      # reviewer's own inline fenced-block extractors used the same
+      # first-match regex route-propose's did before an earlier round of
+      # this review fixed route alone -- exposed to the same embedded-```
+      # truncation. wc_fence_extract.py (.github/scripts/) is now the one
+      # extractor all three consume; this gate exercises it directly and
+      # confirms all three still import it rather than a drifted copy.
+      - name: "Gate 94 — the shared fence extractor behaves correctly and all three board-loop extract steps consume it"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-fence-extract.py
 
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
