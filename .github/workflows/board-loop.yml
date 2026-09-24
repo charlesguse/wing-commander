@@ -1378,6 +1378,14 @@ jobs:
             || printf 'No drafted body.\n\n---\n%s\n' "$footer" > "$spec_body_file"
 
           spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$spec_title" --body-file "$spec_body_file" --label spec-request)"
+          # #514: this step runs without -e, so a failed create would
+          # otherwise still post the re-route comment, add board:stalled
+          # and cross-link an empty URL, dropping the issue from
+          # eligibility with no spec-request filed. The URL is checked
+          # before any of that; a failed create fails the job with the
+          # issue left unstalled, so a later run retries it. Gate 93
+          # check 3 requires this guard at every spec-request site.
+          [[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] || { echo "::error::board-loop route (spec verdict): creating the spec-request returned no issue URL (got '$spec_url') -- no spec-request was filed; the issue is left without board:stalled so a later run retries it."; exit 1; }
           echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
 
           marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, None, None))")"
@@ -1815,6 +1823,8 @@ jobs:
             --title "$issue_title" \
             --body-file "$spec_body_file" \
             --label spec-request)"
+          # #514 -- see route's spec-request site.
+          [[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] || { echo "::error::board-loop fix (post-push breach): creating the spec-request returned no issue URL (got '$spec_url') -- no spec-request was filed; the issue is left without board:stalled so a later run retries it."; exit 1; }
           echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
           echo "measured=$measured" >> "$GITHUB_OUTPUT"
 
@@ -2822,11 +2832,13 @@ jobs:
             spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$issue_title" \
               --body-file "$spec_body_file" \
               --label spec-request)"
+            # #514 -- see route's spec-request site.
+            [[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] || { echo "::error::board-loop readiness (backstop breach): creating the spec-request returned no issue URL (got '$spec_url') -- no spec-request was filed; the issue is left without board:stalled so a later run retries it."; exit 1; }
+            echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
+            echo "measured=$MEASURED" >> "$GITHUB_OUTPUT"
             marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, None, None))")"
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Readiness backstop breach on PR #%s (measured: %s) -- the branch/PR are left open, unmerged; a spec-request now covers finishing this at the right size.\n\n%s' "$PR_NUMBER" "$MEASURED" "$marker")"
             gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
-            echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
-            echo "measured=$MEASURED" >> "$GITHUB_OUTPUT"
           else
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Not ready on PR #%s: %s. Picked up again on a later run.' "$PR_NUMBER" "$unmet")"
           fi

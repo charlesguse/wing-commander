@@ -84,7 +84,19 @@ WHAT IT CHECKS
    - make no issue read of its own: no `gh api` of any kind (REST or
      graphql), and no `gh issue view` other than
      `$(gh issue view N -R REPO --json title --jq .title)` (FR-056 --
-     the spec-request body feeds intake).
+     the spec-request body feeds intake);
+   - capture the new issue's URL (`V="$(gh issue create ...)"`) and guard
+     it with `[[ "$V" =~ RE ]] || { echo "::error::..."; exit N; }` (or
+     `[ -n "$V" ]`), N >= 1, before anything else touches `$V` or the
+     issue: no `gh issue comment/edit/close/reopen`, `gh pr comment/
+     edit`, `gh label` or `$GITHUB_OUTPUT` write may come first, and the
+     guard's own failure branch may do none of them (#514: these steps
+     run without `-e`, so a failed create still posted the re-route
+     comment, added board:stalled and cross-linked an empty URL);
+   - not be `continue-on-error`, and no later step in the job that reads
+     the site's outputs may be gated `always()`/`!cancelled()`/
+     `failure()` -- a failed create fails the job and leaves the issue
+     without board:stalled, so a later run retries it.
    `gh issue edit --add-label spec-request` is also flagged: relabelling
    an existing issue would file a spec-request whose body never went
    through the builder. So is any `gh issue create` in board-loop.yml
@@ -585,6 +597,103 @@ def _is_spec_request_create(line):
     return bool(GH_ISSUE_CREATE_RE.search(line) and "spec-request" in line)
 
 
+# Check 3's create guard (#514). A site's `run:` has no `-e`, so a failed
+# `gh issue create` would otherwise flow straight into the re-route
+# comment, board:stalled and the outstanding-task item.
+CREATE_CAPTURE_RE = re.compile(
+    r'^\s*([A-Za-z_][A-Za-z0-9_]*)="?\$\(\s*gh\s+issue\s+create\b')
+# Acting on the issue or publishing the URL: none may precede the guard.
+ACT_BEFORE_GUARD_RE = re.compile(
+    r"\bgh\s+(?:issue\s+(?:comment|edit|close|reopen)|pr\s+(?:comment|edit)"
+    r"|label)\b|GITHUB_OUTPUT")
+# Step conditions that would still run a later step after the site failed.
+RUNS_AFTER_FAILURE_RE = re.compile(r"\b(?:always|cancelled|failure)\(\)")
+
+
+def _url_guard_re(var):
+    """One logical line that tests the captured URL and, when it fails,
+    reports `::error::` and exits non-zero from the step's own shell:
+    `[ -n "$V" ] || { ...; exit N; }` or `[[ "$V" =~ RE ]] || { ... }`
+    (N >= 1, as the brace group's last command; a `( ... )` subshell
+    would exit only itself)."""
+    v = r'"\$\{?' + re.escape(var) + r'\}?"'
+    test = (r"(?:\[\[?\s+-n\s+" + v + r"\s+\]\]?"
+            r"|\[\[\s+" + v + r"\s+=~\s+\S+\s+\]\])")
+    return re.compile(r"^\s*" + test + r"\s*\|\|\s*\{\s+echo\s.*::error::.*"
+                      r";\s*exit\s+[1-9][0-9]*\s*;\s*\}\s*$")
+
+
+def _create_guard_problems(where, step, steps, job_id, lines, create_idx):
+    """Check 3 (#514): each spec-request create captures its URL, and a
+    guard on that URL exits non-zero before the step comments, labels or
+    publishes anything; the site is not continue-on-error, and no later
+    step reading its outputs is gated to run after it failed."""
+    problems = []
+    for index in create_idx:
+        m = CREATE_CAPTURE_RE.match(lines[index])
+        if not m:
+            problems.append(
+                f"{where} files a spec-request without capturing its URL "
+                f"(`VAR=\"$(gh issue create ...)\"`) -- nothing can check "
+                f"that the create succeeded (#514).")
+            continue
+        var = m.group(1)
+        guard = _url_guard_re(var)
+        var_ref = re.compile(r"\$\{?" + re.escape(var) + r"\b")
+        for later in lines[index + 1:]:
+            if guard.search(later):
+                if ACT_BEFORE_GUARD_RE.search(later):
+                    problems.append(
+                        f"{where}: the guard on ${var} itself comments, "
+                        f"labels or publishes on a failed create "
+                        f"({later.strip()[:80]!r}) -- it may only report "
+                        f"`::error::` and exit (#514).")
+                break
+            if ACT_BEFORE_GUARD_RE.search(later) or var_ref.search(later):
+                problems.append(
+                    f"{where} acts on the spec-request before checking "
+                    f"${var} ({later.strip()[:80]!r}) -- on a failed "
+                    f"create that posts the re-route comment, adds "
+                    f"board:stalled or publishes an empty URL with no "
+                    f"spec-request filed (#514). Guard ${var} right "
+                    f"after the create.")
+                break
+        else:
+            problems.append(
+                f"{where} never checks ${var} after `gh issue create "
+                f"... spec-request` -- add `[[ \"${var}\" =~ ... ]] || "
+                f"{{ echo \"::error::...\"; exit 1; }}` right after it "
+                f"(#514).")
+    coe = step.get("continue-on-error")
+    if coe is not None and coe is not False and str(coe).strip() != "false":
+        problems.append(
+            f"{where} is continue-on-error ({coe!r}) -- a failed "
+            f"spec-request create must fail the job, so the issue is "
+            f"retried rather than reported as done (#514).")
+    step_id = step.get("id")
+    if step_id:
+        ref = re.compile(r"\bsteps\." + re.escape(str(step_id))
+                         + r"\.outputs\.")
+        seen = False
+        for other in steps:
+            if other is step:
+                seen = True
+                continue
+            if not seen or not isinstance(other, dict):
+                continue
+            if not ref.search(yaml.safe_dump(other)):
+                continue
+            cond = str(other.get("if") or "")
+            if RUNS_AFTER_FAILURE_RE.search(cond):
+                name = other.get("name") or other.get("id") or "(unnamed)"
+                problems.append(
+                    f"{where}: later step {name!r} in job {job_id!r} reads "
+                    f"its outputs under `if: {cond}`, which runs after the "
+                    f"site failed its create guard -- gate it on "
+                    f"success() (#514).")
+    return problems
+
+
 def check_spec_request_bodies(path):
     """Gate 93 check 3: every spec-request board-loop.yml files gets its
     body from board_spec_request_body.py, fed the issue-context
@@ -640,10 +749,14 @@ def check_spec_request_bodies(path):
                                 f"gate cannot tell whether it files a "
                                 f"spec-request. Pass labels literally.")
 
-            creates = [line for line in lines if _is_spec_request_create(line)]
+            create_idx = [i for i, line in enumerate(lines)
+                          if _is_spec_request_create(line)]
+            creates = [lines[i] for i in create_idx]
             if not creates:
                 continue
             sites += len(creates)
+            problems.extend(_create_guard_problems(
+                where, step, steps, job_id, lines, create_idx))
 
             builder_idx = [i for i, line in enumerate(lines)
                            if "board_spec_request_body.py" in line]
@@ -795,6 +908,9 @@ def check_repo():
     return problems
 
 
+_URL_GUARD = (
+    '          [[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] '
+    '|| { echo "::error::no spec-request URL (got \'$spec_url\')"; exit 1; }\n')
 _GOOD_SITE_RUN = (
     '          set -uo pipefail\n'
     '          jq -r \'.proposal["pr-body"] // empty\' "$RUNNER_TEMP/d.json" > "$RUNNER_TEMP/drafted.md"\n'
@@ -805,9 +921,13 @@ _GOOD_SITE_RUN = (
     '            --drafted-body-file "$RUNNER_TEMP/drafted.md" \\\n'
     '            --footer "f" --out "$spec_body_file" \\\n'
     '            || printf \'No drafted body.\\n\' > "$spec_body_file"\n'
-    '          gh issue create -R "$GITHUB_REPOSITORY" --title "$issue_title" \\\n'
+    '          spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$issue_title" \\\n'
     '            --body-file "$spec_body_file" \\\n'
-    '            --label spec-request\n'
+    '            --label spec-request)"\n'
+    + _URL_GUARD +
+    '          echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"\n'
+    '          gh issue comment 1 --body "re-routed"\n'
+    '          gh issue edit 1 --add-label "board:stalled"\n'
 )
 _BEFORE_BUILDER = '          spec_body_file='
 
@@ -815,7 +935,8 @@ _BEFORE_BUILDER = '          spec_body_file='
 def _site_fixture(run=_GOOD_SITE_RUN,
                   context_env="${{ steps.ctx.outputs.context-file }}",
                   context_step_first=True, fetch_if=None,
-                  site_if="steps.x.outputs.y != 'true'"):
+                  site_if="steps.x.outputs.y != 'true'",
+                  site_coe=None, after=""):
     fetch = (
         "      - name: Fetch issue context\n"
         "        id: ctx\n"
@@ -827,12 +948,15 @@ def _site_fixture(run=_GOOD_SITE_RUN,
     )
     site = (
         "      - name: File the spec-request\n"
+        "        id: site\n"
         + (f"        if: {site_if}\n" if site_if is not None else "")
+        + (f"        continue-on-error: {site_coe}\n"
+           if site_coe is not None else "")
         + "        env:\n"
         f"          ISSUE_CONTEXT_FILE: {context_env}\n"
         "        run: |\n" + run
     )
-    body = fetch + site if context_step_first else site + fetch
+    body = (fetch + site if context_step_first else site + fetch) + after
     return ("name: gate-93-fixture-spec-request\n"
             "jobs:\n"
             "  route:\n"
@@ -842,6 +966,94 @@ def _site_fixture(run=_GOOD_SITE_RUN,
 def _insert_before_builder(line):
     return _GOOD_SITE_RUN.replace(_BEFORE_BUILDER,
                                   "          " + line + "\n" + _BEFORE_BUILDER)
+
+
+def _cross_link_step(cond):
+    return ("      - name: Cross-link the spec-request\n"
+            f"        if: {cond}\n"
+            "        uses: ./.github/actions/wing-commander-outstanding-task-item\n"
+            "        with:\n"
+            "          artifact-url: ${{ steps.site.outputs.spec-url }}\n")
+
+
+def _create_guard_cases(good):
+    """Check 3 fixtures for the create guard (#514): a spec-request site
+    whose failed `gh issue create` could still comment, label, publish
+    its URL, or leave the job green."""
+    uncaptured = good.replace('spec_url="$(gh issue create',
+                              'gh issue create').replace(
+        '--label spec-request)"', '--label spec-request')
+    unguarded = good.replace(_URL_GUARD, "")
+    comment = '          gh issue comment 1 --body "re-routed"\n'
+    edit = '          gh issue edit 1 --add-label "board:stalled"\n'
+    output = '          echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"\n'
+
+    def guard_with(tail):
+        return good.replace(
+            _URL_GUARD,
+            '          [[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/'
+            '[0-9]+$ ]] || ' + tail + '\n')
+
+    return [
+        ("good site ([ -n ] guard)",
+         _site_fixture(run=good.replace(
+             _URL_GUARD,
+             '          [ -n "$spec_url" ] || { echo "::error::no URL"; '
+             'exit 1; }\n')),
+         None),
+        ("good site (cross-link gated on the site's output only)",
+         _site_fixture(after=_cross_link_step(
+             "steps.site.outputs.spec-url != ''")),
+         None),
+        ("create URL not captured",
+         _site_fixture(run=uncaptured), "without capturing its URL"),
+        ("no guard, output written next (the #514 shape)",
+         _site_fixture(run=unguarded), "acts on the spec-request before"),
+        ("no guard and nothing after the create",
+         _site_fixture(run=unguarded.replace(output, "").replace(
+             comment, "").replace(edit, "")),
+         "never checks $spec_url"),
+        ("guard after the re-route comment",
+         _site_fixture(run=unguarded.replace(output, "").replace(
+             edit, edit + _URL_GUARD + output)),
+         "acts on the spec-request before"),
+        ("board:stalled added before the guard",
+         _site_fixture(run=unguarded.replace(output, "").replace(
+             comment, "").replace(edit, edit + _URL_GUARD + output
+                                  + comment)),
+         "acts on the spec-request before"),
+        ("guard with no exit",
+         _site_fixture(run=guard_with('echo "::error::no URL"')),
+         "acts on the spec-request before"),
+        ("guard exits 0",
+         _site_fixture(run=guard_with('{ echo "::error::no URL"; exit 0; }')),
+         "acts on the spec-request before"),
+        ("guard exits only a subshell",
+         _site_fixture(run=guard_with('( echo "::error::no URL"; exit 1 )')),
+         "acts on the spec-request before"),
+        ("guard with no ::error::",
+         _site_fixture(run=guard_with('{ echo "no URL"; exit 1; }')),
+         "acts on the spec-request before"),
+        ("guard on a different variable",
+         _site_fixture(run=good.replace(
+             _URL_GUARD, _URL_GUARD.replace("$spec_url", "$other_url"))),
+         "acts on the spec-request before"),
+        ("guard's failure branch comments on the issue",
+         _site_fixture(run=guard_with(
+             '{ echo "::error::no URL"; gh issue comment 1 --body x; '
+             'exit 1; }')),
+         "the guard on $spec_url itself"),
+        ("site is continue-on-error",
+         _site_fixture(site_coe="true"), "is continue-on-error"),
+        ("cross-link gated always()",
+         _site_fixture(after=_cross_link_step(
+             "always() && steps.site.outputs.spec-url != ''")),
+         "runs after the site failed its create guard"),
+        ("cross-link gated !cancelled()",
+         _site_fixture(after=_cross_link_step(
+             "\"!cancelled() && steps.site.outputs.spec-url != ''\"")),
+         "runs after the site failed its create guard"),
+    ]
 
 
 def _self_test_spec_request_sites(tmpdir):
@@ -958,6 +1170,7 @@ def _self_test_spec_request_sites(tmpdir):
          _site_fixture(run=good.replace("spec-request", "board:stalled")),
          "would pass vacuously"),
     ]
+    cases.extend(_create_guard_cases(good))
     for index, (label, text, expect) in enumerate(cases):
         path = os.path.join(tmpdir, f"gate-93-fixture-spec-{index}.yml")
         with open(path, "w", encoding="utf-8") as fh:
@@ -1133,6 +1346,39 @@ SPEC_REQUEST_MUTATIONS = (
      '--json title --jq .title)"\n\n          spec_title=',
      'issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" '
      '--json title,body --jq .title)"\n\n          spec_title='),
+    # #514: the create guard at each site.
+    ("route create guard reduced to an echo",
+     '[[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] || '
+     '{ echo "::error::board-loop route (spec verdict)',
+     'echo "::error::board-loop route (spec verdict)'),
+    ("route create URL no longer captured",
+     'spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$spec_title"',
+     'gh issue create -R "$GITHUB_REPOSITORY" --title "$spec_title"'),
+    ("fix create guard exits 0",
+     'retries it."; exit 1; }\n'
+     '          echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"\n'
+     '          echo "measured=$measured"',
+     'retries it."; exit 0; }\n'
+     '          echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"\n'
+     '          echo "measured=$measured"'),
+    ("fix breach site made continue-on-error",
+     "        id: post-push-breach\n",
+     "        id: post-push-breach\n        continue-on-error: true\n"),
+    ("readiness spec-url output written before the guard",
+     '            [[ "$spec_url" =~',
+     '            echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"\n'
+     '            [[ "$spec_url" =~'),
+    ("readiness re-route comment posted before the guard",
+     '            [[ "$spec_url" =~',
+     '            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" '
+     '--body "re-routed"\n'
+     '            [[ "$spec_url" =~'),
+    ("route cross-link gated always()",
+     "        if: steps.spec_request.outputs.spec-url != ''",
+     "        if: always() && steps.spec_request.outputs.spec-url != ''"),
+    ("readiness cross-link gated !cancelled()",
+     "        if: steps.report-unmet.outputs.spec-url != ''",
+     "        if: \"!cancelled() && steps.report-unmet.outputs.spec-url != ''\""),
 )
 
 
