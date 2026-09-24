@@ -1420,7 +1420,30 @@ jobs:
   # cross-link each other (FR-026, research.md D9).
   fix:
     needs: [select, resolve-model, route]
-    if: (needs.route.outputs.decision == 'fix' || (needs.select.outputs.step == 'fix' && needs.select.outputs.branch != '' && needs.select.outputs.pr == '')) && vars.WING_COMMANDER_BOARD_LOOP_PAUSED != 'true'
+    # Resume gating (#525): fix, review and readiness each have two entry
+    # branches -- a same-run handoff from the job above, and a cross-run
+    # resume read off select's marker (step=fix/review/readiness). On a
+    # resume the job above never ran, and GitHub's implicit success() is
+    # false whenever ANY needed job was skipped, however many hops away
+    # (review-step-gating: "Job-level skip propagation is transitive"). So
+    # without a status function every resume past triage skipped itself,
+    # and the marker kept re-selecting the same item to do nothing (run
+    # 36055743563, #396 at step=readiness). Hence `!cancelled()` in place
+    # of the implicit success(), with every upstream the job actually
+    # depends on tested explicitly instead: select (and resolve-model where
+    # an agent runs) must have succeeded, and a same-run branch reads its
+    # upstream's outputs only once that upstream's result is 'success'.
+    # On a resume, steps read needs.select.outputs.* (the marker's values)
+    # wherever the upstream's outputs are empty.
+    # verify-board-loop-resume-gating.py holds all three `if:`s to this.
+    if: >-
+      !cancelled()
+      && needs.select.result == 'success'
+      && needs.resolve-model.result == 'success'
+      && (
+        (needs.route.result == 'success' && needs.route.outputs.decision == 'fix')
+        || (needs.select.outputs.step == 'fix' && needs.select.outputs.branch != '' && needs.select.outputs.pr == '')
+      ) && vars.WING_COMMANDER_BOARD_LOOP_PAUSED != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -1429,6 +1452,10 @@ jobs:
       actions: write
     outputs:
       pr-number: ${{ steps.push-pr.outputs.pr-number }}
+      # 'true' when the post-push backstop breached and this job filed a
+      # spec-request and stalled the item (#526): review's same-run branch
+      # must not pick up the stalled PR.
+      breach: ${{ steps.final-diff-backstop.outputs.breach }}
     steps:
       # FR-054/contracts/fix-step.md "Guard against a second branch/PR": the
       # select job's own resume step (T011) already re-derived live branch/
@@ -1857,9 +1884,16 @@ jobs:
   # become their own cross-linked issues, never held against the PR.
   review:
     needs: [select, resolve-model, fix]
+    # Resume gating (#525) -- see fix's job-level `if:`. The breach test
+    # (#526): a fix whose final diff breached the backstop has already
+    # stalled the item under a spec-request, yet stays green with
+    # pr-number set.
     if: >-
-      (
-        (needs.fix.result == 'success' && needs.fix.outputs.pr-number != '')
+      !cancelled()
+      && needs.select.result == 'success'
+      && needs.resolve-model.result == 'success'
+      && (
+        (needs.fix.result == 'success' && needs.fix.outputs.pr-number != '' && needs.fix.outputs.breach != 'true')
         || (needs.select.outputs.step == 'review' && needs.select.outputs.pr != '')
       ) && vars.WING_COMMANDER_BOARD_LOOP_PAUSED != 'true'
     runs-on: ubuntu-latest
@@ -2628,8 +2662,11 @@ jobs:
   # auto-merge (FR-068) anywhere in this job's own API calls.
   readiness:
     needs: [select, review]
+    # Resume gating (#525) -- see fix's job-level `if:`.
     if: >-
-      (
+      !cancelled()
+      && needs.select.result == 'success'
+      && (
         (needs.review.result == 'success' && needs.review.outputs.outcome == 'converged')
         || (needs.select.outputs.step == 'readiness' && needs.select.outputs.pr != '')
       ) && vars.WING_COMMANDER_BOARD_LOOP_PAUSED != 'true'
