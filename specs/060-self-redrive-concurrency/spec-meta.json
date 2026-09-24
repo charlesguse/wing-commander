@@ -2,7 +2,7 @@
   "issue": 460,
   "spec_dir": "specs/060-self-redrive-concurrency",
   "feature_num": "060",
-  "stage": "spec",
+  "stage": "plan",
   "iteration": 0,
-  "spec_branch": null
+  "spec_branch": "spec/060-self-redrive-concurrency"
 }
