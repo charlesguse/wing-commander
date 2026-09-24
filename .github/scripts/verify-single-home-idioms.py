@@ -187,6 +187,16 @@ DECLARED_HOMES = {
     # THIRD site cannot paste the correlate-and-poll loop a second,
     # independent time while T054 is outstanding.
     "dispatch-and-wait": ".github/actions/wing-commander-dispatch-and-wait/action.yml",
+    # issue #462 (code review of #451): the kill-switch/stop-request
+    # recheck -- paginate the issue's own comments, hand them to
+    # board_stop_check.find_stop_request(), and `gh run cancel` whatever
+    # it names -- was pasted near-verbatim into all six of board-loop.yml's
+    # jobs. board_stop_check.py's own docstring already called
+    # find_stop_request() "the reusable check every job's own... step also
+    # performs," but never the surrounding gh/bash orchestration around it;
+    # this check is the structural scan that catches a THIRD paste the way
+    # every other idiom in this gate already does.
+    "board-stop-check": ".github/actions/wing-commander-board-stop-check/action.yml",
 }
 CHECK_NAMES = tuple(DECLARED_HOMES) + ("promotion",)
 
@@ -229,6 +239,17 @@ DISPATCH_WAIT_FRAGMENTS = (
 )
 VERDICT_FIELDS = ("outcome", "verified_head", "failing_check", "expected",
                   "observed", "evidence_url")
+# issue #462: `gh run cancel` alone is ordinary gh-CLI usage that also
+# appears in pr-conversation.yml's own (unrelated) stop procedure, so
+# co-occurrence with the other two fragments -- both unique to this
+# idiom's own shell -- is what keeps this check from false-positiving
+# there, the same reasoning check_dispatch_and_wait already documents for
+# its own fragment set.
+BOARD_STOP_CHECK_FRAGMENTS = (
+    "from board_stop_check import find_stop_request",
+    "gh run cancel",
+    "board-stop-check-comments.json",
+)
 MODE_TAG_FRAGMENT_RE = re.compile(r"\{\s*mode\s*:\s*\$[A-Za-z_][A-Za-z0-9_]*\s*\}")
 SHARED_REF_RE = re.compile(r"\.github/actions/_shared/[A-Za-z0-9_.\-/]+")
 
@@ -463,6 +484,31 @@ def check_dispatch_and_wait(root="."):
 
 
 # --------------------------------------------------------------------------
+# Check: board-stop-check (file-wide co-occurrence of the find_stop_request
+# import, the gh run cancel call, and the paginated-comments filename --
+# issue #462)
+# --------------------------------------------------------------------------
+def check_board_stop_check(root="."):
+    home = DECLARED_HOMES["board-stop-check"]
+    # The home's whole directory, same reasoning as check_dispatch_and_wait:
+    # a future fixture or helper placed beside the composite is part of the
+    # one home, never a second copy of the idiom.
+    home_dir = home.rsplit("/", 1)[0] + "/"
+    findings = []
+    for path in all_subject_files(root):
+        if path == home or path.startswith(home_dir):
+            continue
+        text = read(root, path)
+        if all(fragment in text for fragment in BOARD_STOP_CHECK_FRAGMENTS):
+            offset = text.find(BOARD_STOP_CHECK_FRAGMENTS[0])
+            findings.append(Finding(
+                path, "board-stop-check", line_of(text, max(offset, 0)),
+                "from board_stop_check import find_stop_request + gh run "
+                "cancel + board-stop-check-comments.json co-occurrence"))
+    return findings
+
+
+# --------------------------------------------------------------------------
 # Check 3: verdict-shape (file-wide, all six field names near a jq call)
 # --------------------------------------------------------------------------
 def check_verdict_shape(root="."):
@@ -586,6 +632,7 @@ ALL_CHECKS = {
     "stage-findings": check_stage_findings,
     "size-path-backstop": check_size_path_backstop,
     "dispatch-and-wait": check_dispatch_and_wait,
+    "board-stop-check": check_board_stop_check,
     "verdict-shape": check_verdict_shape,
     "token-mint": check_token_mint,
     "mode-tag-shape": check_mode_tag_shape,
@@ -921,6 +968,15 @@ def _clean_tree(root):
           "\"http.https://github.com/.extraheader\" 2>/dev/null || true\n"
           "        git remote set-url origin "
           "\"https://x-access-token:${TOKEN}@github.com/repo.git\"\n")
+    _write(root, DECLARED_HOMES["board-stop-check"],
+          "runs:\n  using: composite\n  steps:\n"
+          "    - shell: bash\n      run: |\n"
+          "        gh api \"repos/$GITHUB_REPOSITORY/issues/$N/comments\" "
+          "--paginate --jq '.[]' | jq -s '.' > "
+          "\"$RUNNER_TEMP/board-stop-check-comments.json\"\n"
+          "        # from board_stop_check import find_stop_request\n"
+          "        GH_TOKEN=\"$CANCEL_TOKEN\" gh run cancel "
+          "\"$stop_run_id\" -R \"$GITHUB_REPOSITORY\" 2>/dev/null || true\n")
     _write(root, ".github/workflows/harmless.yml",
           "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
           "      - run: echo hi\n")
@@ -1120,6 +1176,16 @@ def run_selftest():
         "databaseId,displayTitle,createdAt,url -L 20)\"\n"
         "          case \"$row_title\" in *\"[attempt:${token}]\"*) ;; "
         "*) continue ;; esac\n")
+    selftest_third_paste_fails(
+        "board-stop-check", ".github/workflows/third-board-stop-check.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          gh api \"repos/$GITHUB_REPOSITORY/issues/$N/comments\" "
+        "--paginate --jq '.[]' | jq -s '.' > "
+        "\"$RUNNER_TEMP/board-stop-check-comments.json\"\n"
+        "          # from board_stop_check import find_stop_request\n"
+        "          GH_TOKEN=\"$CANCEL_TOKEN\" gh run cancel "
+        "\"$stop_run_id\" -R \"$GITHUB_REPOSITORY\" 2>/dev/null || true\n")
     selftest_third_paste_fails(
         "verdict-shape", ".github/workflows/third-verdict.yml",
         "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"

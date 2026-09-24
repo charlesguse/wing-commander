@@ -159,8 +159,29 @@ jobs:
         run: |
           set -uo pipefail
 
-          gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 200 \
-            --json number,author,authorAssociation,labels,state,createdAt \
+          # `gh issue list --json` does not support authorAssociation --
+          # only `gh issue view` does; a first scheduled run (board-loop.yml
+          # ran only on pull_request: closed before this fix) surfaced the
+          # "Unknown JSON field" error immediately. The REST issues list
+          # (`gh api .../issues`) carries author_association natively, so
+          # it -- filtered to genuine issues (PRs share this endpoint,
+          # marked by a present `pull_request` key) -- is remapped to the
+          # exact shape board_eligibility.py's contract already documents,
+          # so nothing downstream of this step changes. Gate 18: a
+          # --paginate call must not --jq an array-collecting filter, so
+          # this emits one issue object per line and slurps after -- kept
+          # on one physical line (not split across the braces) because
+          # Gate 18's scan only joins backslash-continued lines, and a
+          # split inside the quotes (bash line-continuation has no
+          # special meaning inside single quotes) reads as unparseable,
+          # so the gate would abstain rather than actually check it.
+          # Gate 28: -X GET is required below -- the field flags alone
+          # would otherwise default this call to a POST, which 422s here
+          # ("title" wasn't supplied) since a POST to this same path
+          # creates an issue -- verified empirically.
+          gh api "repos/$GITHUB_REPOSITORY/issues" -X GET --paginate -f state=open -f per_page=100 \
+            --jq '.[] | select(has("pull_request") | not) | {number, author: {login: .user.login}, authorAssociation: .author_association, labels: [.labels[] | {name}], state: (.state | ascii_upcase), createdAt: .created_at}' \
+            | jq -s '.' \
             > "$RUNNER_TEMP/board-open-issues.json"
 
           mapfile -t numbers < <(jq -r '.[].number' "$RUNNER_TEMP/board-open-issues.json")
@@ -642,35 +663,14 @@ jobs:
               json.dump(proposal, fh)
           PYEOF
 
-      # FR-051/T052: the kill switch AND a maintainer stop request
-      # (research.md D17, retargeted from pr-conversation.yml's PR-thread
-      # stop procedure to this issue thread) are both re-checked here,
-      # immediately before the one durable action this job can take
-      # (decide.outputs.outcome below) -- not only at job start.
       - name: Re-check kill switch and stop requests before any durable action
         id: killswitch-recheck
-        env:
-          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
-          ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}
-        run: |
-          set -uo pipefail
-          paused="${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}"
-          gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate \
-            --jq '.[] | {body, author_association, created_at}' | jq -s '.' \
-            > "$RUNNER_TEMP/board-stop-check-comments.json"
-          stop_run_id="$(python3 -c "
-          import json, os, sys
-          sys.path.insert(0, '.github/scripts')
-          from board_stop_check import find_stop_request
-          comments = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'board-stop-check-comments.json'), encoding='utf-8'))
-          run_id = find_stop_request(comments, os.environ['GITHUB_RUN_ID'])
-          print(run_id or '')
-          ")"
-          if [ -n "$stop_run_id" ]; then
-            gh run cancel "$stop_run_id" -R "$GITHUB_REPOSITORY" 2>/dev/null || true
-            paused=true
-          fi
-          echo "paused=$paused" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/wing-commander-board-stop-check
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          cancel-token: ${{ github.token }}
+          issue-number: ${{ needs.select.outputs.issue-number }}
+          initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
 
       - name: Decide the triage verdict
         id: decide
@@ -952,32 +952,14 @@ jobs:
           max-files: ${{ env.BOARD_MAX_FILES }}
           max-lines: ${{ env.BOARD_MAX_LINES }}
 
-      # T052: kill switch AND a maintainer stop request, both re-checked
-      # here, immediately before this job's own next durable action.
       - name: Re-check kill switch and stop requests before any durable action
         id: killswitch-recheck
-        env:
-          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
-          ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}
-        run: |
-          set -uo pipefail
-          paused="${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}"
-          gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate \
-            --jq '.[] | {body, author_association, created_at}' | jq -s '.' \
-            > "$RUNNER_TEMP/board-stop-check-comments.json"
-          stop_run_id="$(python3 -c "
-          import json, os, sys
-          sys.path.insert(0, '.github/scripts')
-          from board_stop_check import find_stop_request
-          comments = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'board-stop-check-comments.json'), encoding='utf-8'))
-          run_id = find_stop_request(comments, os.environ['GITHUB_RUN_ID'])
-          print(run_id or '')
-          ")"
-          if [ -n "$stop_run_id" ]; then
-            gh run cancel "$stop_run_id" -R "$GITHUB_REPOSITORY" 2>/dev/null || true
-            paused=true
-          fi
-          echo "paused=$paused" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/wing-commander-board-stop-check
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          cancel-token: ${{ github.token }}
+          issue-number: ${{ needs.select.outputs.issue-number }}
+          initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
 
       - name: Decide the route
         id: decide
@@ -1289,34 +1271,15 @@ jobs:
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'The fixer'"'"'s branch failed the local gate suite before any push -- nothing was pushed, no PR was opened:\n\n%s\n\n%s' "$FIRST_FAILURE" "$marker")"
           gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
 
-      # T052/FR-051: kill switch AND a maintainer stop request, both
-      # re-checked here, immediately before this job's own next durable
-      # action (the push below) -- not only at job start.
       - name: Re-check kill switch and stop requests before any durable action
         id: killswitch-recheck
         if: steps.gate-suite.outputs.outcome == 'pass'
-        env:
-          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
-          ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}
-        run: |
-          set -uo pipefail
-          paused="${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}"
-          gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate \
-            --jq '.[] | {body, author_association, created_at}' | jq -s '.' \
-            > "$RUNNER_TEMP/board-stop-check-comments.json"
-          stop_run_id="$(python3 -c "
-          import json, os, sys
-          sys.path.insert(0, '.github/scripts')
-          from board_stop_check import find_stop_request
-          comments = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'board-stop-check-comments.json'), encoding='utf-8'))
-          run_id = find_stop_request(comments, os.environ['GITHUB_RUN_ID'])
-          print(run_id or '')
-          ")"
-          if [ -n "$stop_run_id" ]; then
-            gh run cancel "$stop_run_id" -R "$GITHUB_REPOSITORY" 2>/dev/null || true
-            paused=true
-          fi
-          echo "paused=$paused" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/wing-commander-board-stop-check
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          cancel-token: ${{ github.token }}
+          issue-number: ${{ needs.select.outputs.issue-number }}
+          initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
 
       # FR-026/research.md D9: push only on green, then cross-link.
       - name: Push and open the PR
@@ -1880,32 +1843,14 @@ jobs:
           phrase: "Found by the code review of #${{ steps.pr.outputs.pr-number }}"
           artifact-url: "${{ github.server_url }}/${{ github.repository }}/issues/${{ steps.file-oos-2.outputs.issue-number }}"
 
-      # T052: kill switch AND a maintainer stop request, both re-checked
-      # here, immediately before this job's own next durable action.
       - name: Re-check kill switch and stop requests before any durable action
         id: killswitch-recheck
-        env:
-          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
-          ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}
-        run: |
-          set -uo pipefail
-          paused="${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}"
-          gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate \
-            --jq '.[] | {body, author_association, created_at}' | jq -s '.' \
-            > "$RUNNER_TEMP/board-stop-check-comments.json"
-          stop_run_id="$(python3 -c "
-          import json, os, sys
-          sys.path.insert(0, '.github/scripts')
-          from board_stop_check import find_stop_request
-          comments = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'board-stop-check-comments.json'), encoding='utf-8'))
-          run_id = find_stop_request(comments, os.environ['GITHUB_RUN_ID'])
-          print(run_id or '')
-          ")"
-          if [ -n "$stop_run_id" ]; then
-            gh run cancel "$stop_run_id" -R "$GITHUB_REPOSITORY" 2>/dev/null || true
-            paused=true
-          fi
-          echo "paused=$paused" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/wing-commander-board-stop-check
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          cancel-token: ${{ github.token }}
+          issue-number: ${{ needs.select.outputs.issue-number }}
+          initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
 
       # T042/T044/FR-030/FR-031: zero open in-scope findings advances to
       # readiness; findings remain and the round budget (research.md D18,
@@ -2188,32 +2133,14 @@ jobs:
               fh.write("measured=files={0},lines={1}\n".format(files, lines))
           PYEOF
 
-      # T052: kill switch AND a maintainer stop request, both re-checked
-      # here, immediately before this job's own next durable action.
       - name: Re-check kill switch and stop requests
         id: killswitch-recheck
-        env:
-          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
-          ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}
-        run: |
-          set -uo pipefail
-          paused="${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}"
-          gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate \
-            --jq '.[] | {body, author_association, created_at}' | jq -s '.' \
-            > "$RUNNER_TEMP/board-stop-check-comments.json"
-          stop_run_id="$(python3 -c "
-          import json, os, sys
-          sys.path.insert(0, '.github/scripts')
-          from board_stop_check import find_stop_request
-          comments = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'board-stop-check-comments.json'), encoding='utf-8'))
-          run_id = find_stop_request(comments, os.environ['GITHUB_RUN_ID'])
-          print(run_id or '')
-          ")"
-          if [ -n "$stop_run_id" ]; then
-            gh run cancel "$stop_run_id" -R "$GITHUB_REPOSITORY" 2>/dev/null || true
-            paused=true
-          fi
-          echo "paused=$paused" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/wing-commander-board-stop-check
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          cancel-token: ${{ github.token }}
+          issue-number: ${{ needs.select.outputs.issue-number }}
+          initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
 
       # Zero open in-scope findings is trusted from the state machine
       # itself, not re-derived: readiness is entered ONLY when review's own
@@ -2540,37 +2467,15 @@ jobs:
               fh.write("redrive-reason={0}\n".format(target_reason))
           PYEOF
 
-      # T052/FR-051: the kill switch AND a maintainer stop request, both
-      # re-checked immediately before this job's own next durable action --
-      # closing the issue below, or dispatching a run.
       - name: Re-check kill switch and stop requests before any durable action
         id: killswitch-recheck
-        env:
-          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
-          ISSUE_NUMBER: ${{ needs.prove-gate.outputs.issue-number }}
-        run: |
-          set -uo pipefail
-          paused="${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}"
-          state="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json state --jq .state)"
-          if [ "$state" = "CLOSED" ]; then
-            paused=true
-          fi
-          gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate \
-            --jq '.[] | {body, author_association, created_at}' | jq -s '.' \
-            > "$RUNNER_TEMP/board-stop-check-comments.json"
-          stop_run_id="$(python3 -c "
-          import json, os, sys
-          sys.path.insert(0, '.github/scripts')
-          from board_stop_check import find_stop_request
-          comments = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'board-stop-check-comments.json'), encoding='utf-8'))
-          run_id = find_stop_request(comments, os.environ['GITHUB_RUN_ID'])
-          print(run_id or '')
-          ")"
-          if [ -n "$stop_run_id" ]; then
-            gh run cancel "$stop_run_id" -R "$GITHUB_REPOSITORY" 2>/dev/null || true
-            paused=true
-          fi
-          echo "paused=$paused" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/wing-commander-board-stop-check
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          cancel-token: ${{ github.token }}
+          issue-number: ${{ needs.prove-gate.outputs.issue-number }}
+          initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
+          check-issue-closed: "true"
 
       # FR-041 scenario 4: nothing a fresh dispatch would prove that the
       # merged PR's own required checks did not already prove -- the issue
