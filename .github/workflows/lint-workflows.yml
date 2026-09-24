@@ -4146,6 +4146,27 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-prove-displacement.py
 
+      # Gate 90 — specs/060-self-redrive-concurrency (SC-006): the FR-016
+      # one-board-item-in-flight guarantee sentence is restated verbatim in
+      # three places (board-loop.yml's own per-job concurrency: comments,
+      # board-loop-workflow.md's "Concurrency" section, and
+      # concurrency-groups.md itself) -- a paraphrase drifting in any one of
+      # them is a silent contract violation nothing else in the gate suite
+      # would catch.
+      - name: Gate 90 — the concurrency guarantee sentence is identical everywhere it is stated
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-concurrency-guarantee-statement.py
+
+      # Gate 91 — specs/060-self-redrive-concurrency (FR-017, research.md
+      # D7): a directed proof run never selects a board item or opens a fix
+      # PR (D2's aimable_jobs exclusion), checked structurally rather than
+      # only argued in prose, plus accounting for the directed-proof-in-flight
+      # regression fixture verify-board-eligibility.py already asserts
+      # against.
+      - name: Gate 91 — a directed proof run never conflicts with the item it is proving
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-directed-proof-no-item-conflict.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

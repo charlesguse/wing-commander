@@ -1409,6 +1409,13 @@ jobs:
       contents: read
       issues: write
       actions: write
+    # One board item is in flight repository-wide. A directed proof run,
+    # which selects no board item and opens no fix PR, is the only run
+    # permitted to overlap an ordinary board-loop run. Every other pair of
+    # board-loop.yml runs queues rather than races or cancels.
+    concurrency:
+      group: wing-commander-board-loop
+      cancel-in-progress: false
     outputs:
       decision: ${{ steps.decide.outputs.verdict }}
       reason: ${{ steps.decide.outputs.reason }}
@@ -1862,6 +1869,13 @@ jobs:
       issues: write
       pull-requests: write
       actions: write
+    # One board item is in flight repository-wide. A directed proof run,
+    # which selects no board item and opens no fix PR, is the only run
+    # permitted to overlap an ordinary board-loop run. Every other pair of
+    # board-loop.yml runs queues rather than races or cancels.
+    concurrency:
+      group: wing-commander-board-loop
+      cancel-in-progress: false
     outputs:
       pr-number: ${{ steps.push-pr.outputs.pr-number }}
       # 'true' when the post-push backstop breached and this job filed a

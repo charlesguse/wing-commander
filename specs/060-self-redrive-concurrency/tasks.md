@@ -478,7 +478,7 @@ collide on the same issue.
 **Independent Test**: state the post-change guarantee and exercise the
 pairs it permits and the pairs it forbids (spec.md).
 
-- [ ] T038 [US5] New Gate 90 —
+- [X] T038 [US5] New Gate 90 —
   `.github/scripts/verify-concurrency-guarantee-statement.py` (SC-006),
   wired into `lint-workflows.yml` with `if: "!cancelled()"`: diffs the
   FR-016 sentence (contracts/concurrency-groups.md "The guarantee") that
@@ -486,13 +486,13 @@ pairs it permits and the pairs it forbids (spec.md).
   against `specs/057-autonomous-board-loop/contracts/board-loop-workflow.md`'s
   "Concurrency" section (T039), failing if either drifts from the
   canonical text in `contracts/concurrency-groups.md`.
-- [ ] T039 [US5] Update
+- [X] T039 [US5] Update
   `specs/057-autonomous-board-loop/contracts/board-loop-workflow.md`'s
   "Concurrency" section (FR-019, research.md D9) to restate the FR-016
   sentence and the per-job group table from
   `contracts/concurrency-groups.md`, replacing the single workflow-level
   block it currently documents.
-- [ ] T040 [US5] New Gate 91 —
+- [X] T040 [US5] New Gate 91 —
   `.github/scripts/verify-directed-proof-no-item-conflict.py` (FR-017,
   research.md D7), wired into `lint-workflows.yml` with `if:
   "!cancelled()"`:

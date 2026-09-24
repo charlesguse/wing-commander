@@ -29,18 +29,24 @@ pair under .github/scripts/tests/board-eligibility/<case>/:
 In-flight fixtures (FR-012), each a checked-in open_issues.json +
 comments_by_issue.json + pr_state_by_number.json + expected.json set under
 .github/scripts/tests/board-eligibility/in-flight/<case>/ -- see
-contracts/in-flight-detection.md for the full case list. A case
-whose expected.json also carries "select_issue_number" additionally
-requires a labeled_events_by_issue.json and gets its result asserted
-against select() itself, not just in_flight_candidate() -- used by
+contracts/in-flight-detection.md for the eleven-case list contracts/061
+documents, plus the four awaiting-merge-* cases (#532) and
+directed-proof-in-flight (specs/060-self-redrive-concurrency FR-017,
+Gate 91's own structural check that aimable_jobs cannot widen this
+exclusion). A case whose expected.json also carries "select_issue_number"
+additionally requires a labeled_events_by_issue.json and gets its result
+asserted against select() itself, not just in_flight_candidate() -- used by
 prove-no-pr to also pin that select()'s oldest-first fallback, not only
 the priority path, skips a stuck `prove` marker (Maintainer Feedback,
-board_eligibility.py's select()), and by the four awaiting-merge-* cases
-(#532) to pin that a ready-and-handed-over item never holds the board:
-never in-flight, passed over by the fallback while its PR is OPEN (or its
-state is unknown), and eligible again once that PR is CLOSED or MERGED.
-Each awaiting-merge-* case puts the awaiting-merge issue OLDEST, so
-reverting the fallback skip makes select() return it and fails the case.
+board_eligibility.py's select()), by the four awaiting-merge-* cases to pin
+that a ready-and-handed-over item never holds the board: never in-flight,
+passed over by the fallback while its PR is OPEN (or its state is
+unknown), and eligible again once that PR is CLOSED or MERGED (each
+awaiting-merge-* case puts the awaiting-merge issue OLDEST, so reverting
+the fallback skip makes select() return it and fails the case), and by
+directed-proof-in-flight to pin that select() returns None rather than any
+issue at all when the only open issue is mid-proof (FR-017,
+specs/060-self-redrive-concurrency).
 
 Marker authorship (#555): markers are read only from the loop's own App
 comments (board_item_marker.is_loop_marker_author(); every fixture marker
@@ -119,6 +125,7 @@ IN_FLIGHT_CASES = {
     "forged-marker-unclosed-in-own-comment",
     "breach-pr-open",
     "breach-pr-closed",
+    "directed-proof-in-flight",
 }
 
 # (name, replacement for board_item_marker.is_loop_marker_author)
