@@ -4040,11 +4040,15 @@ jobs:
       # wing-commander-issue-context/action.yml now provides, the way
       # round 2's own fix briefly did before this round found it), and
       # that filter itself must have exactly one home -- no workflow or
-      # action may re-implement it inline.
+      # action may re-implement it inline. Board-loop run 36044831201
+      # (spec-request #509, body "No drafted body."): every spec-request
+      # board-loop.yml files must also take its body from
+      # board_spec_request_body.py, whose fallback reads only that
+      # composite's context-file.
       - name: "Gate 93 — board-loop reads the issue only through wing-commander-issue-context"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-issue-context-single-home.py
-      - name: "Gate 93 self-test — a board-loop gh issue view grant and an inline trust-filter reimplementation each fail"
+      - name: "Gate 93 self-test — a board-loop gh issue view grant, an inline trust-filter reimplementation, and a spec-request body without the trust-filtered fallback each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-issue-context-single-home.py --self-test
 
