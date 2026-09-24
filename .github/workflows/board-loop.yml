@@ -58,6 +58,14 @@ env:
   # than a single unrelated-change PR would.
   BOARD_MAX_FILES: 6
   BOARD_MAX_LINES: 120
+  # CLAUDE.md "shared logic has exactly one home": GitHub's REST pulls
+  # endpoint reports state as lowercase open/closed with `merged` as a
+  # separate boolean -- this normalizes it to the OPEN/CLOSED/MERGED
+  # vocabulary data-model.md and this workflow's callers use throughout.
+  # The select job's pr_state_by_number resolution and the resume step's
+  # marker-PR resolution both point at this one filter rather than pasting
+  # their own copies.
+  BOARD_PR_STATE_JQ: 'if .merged then "MERGED" elif .state == "open" then "OPEN" else "CLOSED" end'
 
 jobs:
   # Foundational layer (specs/057-autonomous-board-loop Phase 2): entry
@@ -289,12 +297,9 @@ jobs:
           if [ -n "$pr_numbers_to_check" ]; then
             while IFS= read -r pr_number; do
               [ -z "$pr_number" ] && continue
-              # GitHub's REST pulls endpoint reports state as lowercase
-              # open/closed with `merged` as a separate boolean -- normalize
-              # to the OPEN/CLOSED/MERGED vocabulary data-model.md and this
-              # module's callers use throughout.
+              # BOARD_PR_STATE_JQ -- see this workflow's top-level env: block.
               pr_state="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr_number" \
-                --jq 'if .merged then "MERGED" elif .state == "open" then "OPEN" else "CLOSED" end' 2>/dev/null || true)"
+                --jq "$BOARD_PR_STATE_JQ" 2>/dev/null || true)"
               [ -z "$pr_state" ] && continue
               jq --arg n "$pr_number" --arg s "$pr_state" '. + {($n): $s}' \
                 "$RUNNER_TEMP/board-pr-state-by-number.json" > "$RUNNER_TEMP/board-pr-state-by-number.tmp"
@@ -384,12 +389,9 @@ jobs:
           pr_state=""
           pr_from_marker="false"
           if [ -n "$marker_pr" ]; then
-            # Normalize the REST endpoint's lowercase open/closed + separate
-            # `merged` boolean to the OPEN/CLOSED/MERGED vocabulary this
-            # module's callers use throughout (matches the select job's own
-            # pr_state_by_number resolution above).
+            # BOARD_PR_STATE_JQ -- see this workflow's top-level env: block.
             pr_state_raw="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$marker_pr" \
-              --jq 'if .merged then "MERGED" elif .state == "open" then "OPEN" else "CLOSED" end' 2>/dev/null || true)"
+              --jq "$BOARD_PR_STATE_JQ" 2>/dev/null || true)"
             if [ -n "$pr_state_raw" ]; then
               pr_number="$marker_pr"
               pr_state="$pr_state_raw"
@@ -406,7 +408,7 @@ jobs:
           if [ -z "$pr_number" ]; then
             fallback_number="$(gh api "repos/$GITHUB_REPOSITORY/issues" -X GET --paginate \
                 -f state=open -f labels=board:owned \
-                --jq '{number, body}' 2>/dev/null | jq -s '.' \
+                --jq '.[] | {number, body}' 2>/dev/null | jq -s '.' \
               | jq -r --arg n "$ISSUE_NUMBER" \
                 '[.[] | select((.body // "") | test("(?:Fixes|fixes) #" + $n + "\\b"))] | (.[0].number // empty)')"
             if [ -n "$fallback_number" ]; then
@@ -451,10 +453,14 @@ jobs:
               # Resolved by number but not OPEN -- disqualified. Falls to
               # the triage clause below, never the fallback clause: the
               # marker named a real PR, so a different loop-owned PR must
-              # not be adopted in its place (SC-007).
+              # not be adopted in its place (SC-007). The disqualified PR's
+              # number/state must not leak into this triage output (it is
+              # not the PR the run is now acting on).
               step = "triage"
               reason = "stale marker -- recorded pr {0} is {1}, not open".format(
                   pr_number, pr_state)
+              pr_number = ""
+              pr_state = ""
           elif pr_from_fallback:
               step = "review"
           elif branch:
@@ -468,6 +474,8 @@ jobs:
               "step": step,
               "recovered_via_fallback": pr_from_fallback,
               "disqualified_reason": reason,
+              "pr_number": pr_number,
+              "pr_state": pr_state,
           }))
           PYEOF
           )"
@@ -475,6 +483,8 @@ jobs:
           step="$(printf '%s' "$step_resolution_json" | jq -r '.step')"
           recovered_via_fallback="$(printf '%s' "$step_resolution_json" | jq -r '.recovered_via_fallback')"
           disqualified_reason="$(printf '%s' "$step_resolution_json" | jq -r '.disqualified_reason')"
+          pr_number="$(printf '%s' "$step_resolution_json" | jq -r '.pr_number')"
+          pr_state="$(printf '%s' "$step_resolution_json" | jq -r '.pr_state')"
 
           if [ "$recovered_via_fallback" = "true" ]; then
             echo "board-loop: resume recovered PR #$pr_number for issue #$ISSUE_NUMBER via the board:owned label fallback (no board item marker named it)." >> "$GITHUB_STEP_SUMMARY"
@@ -1446,9 +1456,10 @@ jobs:
           BRANCH: ${{ steps.base.outputs.branch }}
           BASE_SHA: ${{ steps.base.outputs.base-sha }}
         run: |
-          set -uo pipefail
+          set -euo pipefail
           git push origin "HEAD:refs/heads/$BRANCH"
 
+          gh label create "board:owned" -R "$GITHUB_REPOSITORY" --color 0E8A16 --description "Board loop: this PR was opened by board-loop.yml" --force
           issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)"
           pr_body="$(printf 'Fixes #%s.\n\nOpened by board-loop.yml on branch %s (base %s).' "$ISSUE_NUMBER" "$BRANCH" "$BASE_SHA")"
           pr_url="$(gh pr create -R "$GITHUB_REPOSITORY" --title "Fix #$ISSUE_NUMBER: $issue_title" --body "$pr_body" --head "$BRANCH" --base main --label board:owned)"

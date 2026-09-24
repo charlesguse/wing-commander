@@ -148,7 +148,10 @@ def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number):
     Skips (never raises on): an issue with no comments, an issue whose
     newest marker is unparsable (per board_item_marker.read_marker's own
     degrade rule), a marker naming a fix-or-later step whose pr is absent
-    from pr_state_by_number or not OPEN there.
+    from pr_state_by_number or not OPEN there -- except `prove`, whose
+    marker is always written with `pr=None` (the fixing PR has already
+    merged by the time the prove step runs), so it qualifies on the step
+    alone like a pre-fix step rather than being unconditionally dropped.
     """
     candidates = []
     for issue in open_issues:
@@ -166,8 +169,12 @@ def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number):
         if step in PRE_FIX_STEPS:
             candidates.append((created_at, number))
         elif step in FIX_OR_LATER_STEPS:
+            pr_field = marker.get("pr")
+            if step == "prove" and pr_field is None:
+                candidates.append((created_at, number))
+                continue
             try:
-                pr = int(marker.get("pr"))
+                pr = int(pr_field)
             except (TypeError, ValueError):
                 continue
             if pr_state_by_number.get(pr) == "OPEN":

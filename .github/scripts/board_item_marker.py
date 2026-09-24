@@ -24,23 +24,24 @@ def read_marker_with_timestamp(issue_comments):
     newest one is not valid JSON (missing/unparsable marker -- degrade to
     None, never raise; the caller falls back to live GitHub state per
     FR-054)."""
-    dated_markers = []
+    dated_matches = []
     for comment in issue_comments or []:
         body = comment.get("body") or ""
         match = MARKER_RE.search(body)
         if not match:
             continue
-        try:
-            marker = json.loads(match.group(1))
-        except ValueError:
-            continue
-        if not isinstance(marker, dict):
-            continue
-        dated_markers.append((comment.get("created_at") or "", marker))
-    if not dated_markers:
+        dated_matches.append((comment.get("created_at") or "", match.group(1)))
+    if not dated_matches:
         return None
-    dated_markers.sort(key=lambda pair: pair[0])
-    return dated_markers[-1]
+    dated_matches.sort(key=lambda pair: pair[0])
+    created_at, raw = dated_matches[-1]
+    try:
+        marker = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(marker, dict):
+        return None
+    return created_at, marker
 
 
 def read_marker(issue_comments):

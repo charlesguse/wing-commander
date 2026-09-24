@@ -64,6 +64,7 @@ IN_FLIGHT_CASES = {
     "unparsable-marker",
     "two-non-terminal",
     "unrelated-pr-no-marker",
+    "prove-no-pr",
 }
 
 
