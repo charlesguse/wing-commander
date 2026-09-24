@@ -648,6 +648,44 @@ def case_validate_then_append_persists_reusable_workflow_records():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def case_jq_cr_shim_has_exactly_one_home():
+    """The jq Windows-CRLF shim (#446) has exactly one home: ensure_jq() in
+    wc_shell_harness.py, which every gate here gets jq from. #459: it used
+    to live a second time, privately, in wc_metrics_harness.py's _bindir()
+    -- undiscoverable to a future gate that reaches for ensure_jq() and
+    then builds a path from `jq -r` output the way Gates 76-78 do. Scans
+    every other .github/scripts/*.py for the shim's own marker comment,
+    which only this fix's template carries (this gate quotes the marker
+    only in this docstring line, never in code, so it does not trip over
+    itself)."""
+    case = "jq CRLF shim single home"
+    marker = "jq whose lines never end in a carriage return (#446)"
+    this_file = os.path.normpath(os.path.abspath(__file__))
+    canonical = os.path.normpath(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                     "wc_shell_harness.py"))
+    hits = []
+    scripts_dir = os.path.dirname(os.path.abspath(__file__))
+    for name in sorted(os.listdir(scripts_dir)):
+        if not name.endswith(".py"):
+            continue
+        path = os.path.join(scripts_dir, name)
+        if os.path.normpath(path) in (canonical, this_file):
+            continue
+        with open(path, encoding="utf-8") as fh:
+            if marker in fh.read():
+                hits.append(name)
+    if hits:
+        fail(case, "the jq CRLF shim's only home is wc_shell_harness.py's "
+                   "ensure_jq(); a copy pasted into another script drifts "
+                   "silently the next time the shim changes. Found in: "
+                   + ", ".join(hits))
+    else:
+        note("no .github/scripts/*.py other than wc_shell_harness.py "
+             "carries a copy of the jq CRLF shim; every gate gets it from "
+             "ensure_jq()")
+
+
 CASES = [
     case_zero_artifact_batch_against_existing_branch_is_zero_failure,
     case_first_write_creates_missing_destination_branch,
@@ -656,6 +694,7 @@ CASES = [
     case_sustained_contention_fails_loudly_naming_the_key,
     case_idempotent_repeat_persistence_is_byte_for_byte_unchanged,
     case_validate_then_append_persists_reusable_workflow_records,
+    case_jq_cr_shim_has_exactly_one_home,
 ]
 
 

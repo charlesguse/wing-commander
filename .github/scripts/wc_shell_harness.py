@@ -51,10 +51,13 @@ between a gate that gets exercised before it is pushed and one that does not.
 
 Set WC_BASH to override the bash choice.
 """
+import functools
 import os
 import shutil
+import stat
 import subprocess
 import sys
+import tempfile
 
 
 def use_utf8_stdout():
@@ -117,24 +120,63 @@ def resolve_bash():
           "Windows or point WC_BASH at a POSIX bash.")
 
 
+# The Windows build of jq ends raw (-r) output lines with CRLF, and a
+# harness that builds a path from `jq -r` output (as Gates 76-78 do) inherits
+# a trailing CR on that platform while CI (Linux) stays green (#446, #459).
+# The pipeline targets ubuntu-latest, so nothing shipped changes: this shim
+# is written only where the local jq is observed to emit a CR, and strips
+# it. ensure_jq() is the one place every such harness gets jq from, so this
+# is that shim's only home -- see verify-metrics-persist-retry.py's
+# case_jq_cr_shim_has_exactly_one_home for the gate that keeps it that way.
+JQ_CR_SHIM = """#!/usr/bin/env bash
+# jq whose lines never end in a carriage return (#446); the real jq is {real}.
+# Only a CR at the end of a line goes: one inside a value is data.
+"{real}" "$@" | sed 's/\\r$//'
+exit "${{PIPESTATUS[0]}}"
+"""
+
+
+@functools.lru_cache(maxsize=1)
+def _jq_emitting_cr(real):
+    """The real jq's own answer never changes within one process, so a
+    caller that re-probes on every ensure_jq() call (there can be several
+    per gate) re-spawns jq to re-derive an already-known answer."""
+    out = subprocess.run([real, "-nr", '"x"'], capture_output=True).stdout
+    return b"\r" in out
+
+
+def _shim_jq_cr(real):
+    """Prepend a CR-stripping jq shim ahead of `real` on PATH if needed."""
+    bindir = tempfile.mkdtemp(prefix="wc-jq-cr-shim-")
+    path = os.path.join(bindir, "jq")
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(JQ_CR_SHIM.format(real=real.replace("\\", "/")))
+    os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    os.environ["PATH"] = bindir + os.pathsep + os.environ["PATH"]
+
+
 def ensure_jq():
     """Put jq on PATH for the child shells, or say precisely what is missing.
 
     The shipped shell calls `jq` by name, so it must be on the PATH the child
     bash inherits — not merely installed somewhere. On ubuntu-latest it
-    already is and this returns on the first line.
+    already is and this returns after the CR check on the first line.
     """
-    if shutil.which("jq"):
-        return
-    for cand in (os.path.join(os.environ.get("LOCALAPPDATA", ""),
-                              "Microsoft", "WinGet", "Links"),
-                 r"C:\ProgramData\chocolatey\bin",
-                 r"C:\Program Files\Git\usr\bin"):
-        if cand and os.path.exists(os.path.join(cand, "jq.exe")):
-            os.environ["PATH"] = cand + os.pathsep + os.environ["PATH"]
-            return
-    sys.exit("::error::jq is not on PATH. The shipped shell under test calls "
-             "it, so nothing here can run without it.")
+    real = shutil.which("jq")
+    if not real:
+        for cand in (os.path.join(os.environ.get("LOCALAPPDATA", ""),
+                                  "Microsoft", "WinGet", "Links"),
+                     r"C:\ProgramData\chocolatey\bin",
+                     r"C:\Program Files\Git\usr\bin"):
+            if cand and os.path.exists(os.path.join(cand, "jq.exe")):
+                real = os.path.join(cand, "jq.exe")
+                os.environ["PATH"] = cand + os.pathsep + os.environ["PATH"]
+                break
+        else:
+            sys.exit("::error::jq is not on PATH. The shipped shell under "
+                     "test calls it, so nothing here can run without it.")
+    if _jq_emitting_cr(real):
+        _shim_jq_cr(real)
 
 
 def parse_github_output(path):
