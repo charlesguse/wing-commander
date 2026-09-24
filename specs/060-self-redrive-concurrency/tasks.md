@@ -49,7 +49,7 @@ path below is relative to the repository root.
 
 ## Phase 1: Setup
 
-- [ ] T001 Confirm the gate-number reservation above is still accurate:
+- [X] T001 Confirm the gate-number reservation above is still accurate:
   `grep -n "Gate 9[0-9]" .github/workflows/lint-workflows.yml` must show
   nothing above Gate 89. If it does, shift every "Gate 9x" reference in
   this file by the same offset before starting Phase 4/6/7.
