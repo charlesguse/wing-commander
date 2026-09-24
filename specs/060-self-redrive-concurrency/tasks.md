@@ -723,3 +723,18 @@ Task: "New Gate 92: verify-board-prove-displacement.py fixtures"
   `python .github/scripts/run-local-gates.py` after every `board_prove.py`
   or `board-loop.yml` edit, since both files are gate-covered and edits
   compound quickly.
+
+---
+
+## Phase 9: Convergence
+
+- [ ] T055 Update `.claude/skills/spec-cross-reference/SKILL.md`'s
+  "Over-rated" example (lines 23-28), which still describes
+  `group: wing-commander-board-loop` as "applied to every trigger in the
+  file" — the single workflow-level block T009 replaced with per-job
+  groups. Restate it in terms of the per-job split (the refutation itself
+  still stands: a directed proof run selects no board item and opens no
+  fix PR, and every other pair of runs still queues) and point at
+  `specs/060-self-redrive-concurrency/contracts/concurrency-groups.md`.
+  Found by T053's sweep, which could not write under `.claude/` in that
+  run's permission set. Per FR-016 (contradicts).
