@@ -178,6 +178,20 @@ CASES = [
      {"scripts/foo.sh": ARRAY_COLLECTING + "\n"},
      True, ("array-collecting", "file=scripts/foo.sh,")),
 
+    # #480: every checked-in script in the real repository lives under a
+    # dot-directory (.github/, .specify/, .claude/) and plain `**` never
+    # descends into one, so the script sweep matched 0 files while reading
+    # green. This fixture plants a violation under a dot-directory two
+    # levels deep — the exact shape that went unscanned — so a regression
+    # of the include_hidden=True fix (or a future exclude-list entry wide
+    # enough to swallow it back up) fails THIS self-test, not just the
+    # production scan against the real fleet.
+    ("the same FAIL shape inside a checked-in script under a dot-directory "
+     "(.github/, .specify/, .claude/ are exactly the shape #480 found "
+     "unscanned) — proves the sweep actually descends into dot-directories",
+     {".github/scripts/foo.py": ARRAY_COLLECTING + "\n"},
+     True, ("array-collecting", "file=.github/scripts/foo.py,")),
+
     ("the shipped, fixed forms of all three distinct filter shapes this "
      "feature's call sites use: none flagged (the regression case)",
      {".github/workflows/w.yml": wf([SHIPPED_JOBS_STREAM,
@@ -197,6 +211,50 @@ CASES = [
 ]
 
 
+def check_zero_script_sweep_guard(gate_path, root):
+    """#480's second regression guard, run outside the CASES loop because it
+    exercises the PRODUCTION path (no --fixture-root) rather than the
+    fixture-root path every other case uses: a tree with a real
+    .github/workflows/lint-workflows.yml but no checked-in .sh/.py anywhere
+    must make the scan itself refuse to report "0 failure(s)" as if that
+    were a clean fleet. Returns a problems list, empty on success."""
+    name = ("the checked-in-script sweep refuses to report a clean scan "
+            "when it matches 0 files")
+    case_dir = tempfile.mkdtemp(prefix="zero_scripts_", dir=root)
+    lint_dir = os.path.join(case_dir, ".github", "workflows")
+    os.makedirs(lint_dir, exist_ok=True)
+    io.open(os.path.join(lint_dir, "lint-workflows.yml"), "w",
+            encoding="utf-8", newline="\n").write(
+        "name: fixture\non:\n  workflow_call: {}\njobs: {}\n")
+
+    env = dict(os.environ, PYTHONIOENCODING="utf-8")
+    # No --fixture-root: this is the real, guarded production path.
+    proc = subprocess.run([sys.executable, gate_path], cwd=case_dir,
+                          capture_output=True, text=True, env=env,
+                          encoding="utf-8", errors="replace")
+    out = (proc.stdout or "") + (proc.stderr or "")
+
+    problems = []
+    if proc.returncode == 0:
+        problems.append("a tree with zero checked-in scripts PASSED "
+                         "instead of being refused")
+    if "matched 0 files" not in out:
+        problems.append("error text never mentions the 0-file sweep "
+                         "(\"matched 0 files\")")
+    if "#480" not in out:
+        problems.append("error text does not point back at #480")
+
+    if problems:
+        print(f"FAIL  {name}")
+        for p in problems:
+            print(f"        - {p}")
+        for line in out.strip().splitlines():
+            print(f"        | {line}")
+    else:
+        print(f"ok    {name}")
+    return name, problems, out.strip()
+
+
 def main():
     try:
         sys.stdout.reconfigure(errors="replace")
@@ -211,6 +269,7 @@ def main():
     io.open(gate_path, "w", encoding="utf-8").write(gate_src)
 
     failures = []
+    total = len(CASES) + 1
     try:
         for name, files, expect_fail, must_mention in CASES:
             case_dir = tempfile.mkdtemp(prefix="case_", dir=root)
@@ -249,17 +308,21 @@ def main():
                     print(f"        | {line}")
             else:
                 print(f"ok    {name}")
+
+        name, problems, out = check_zero_script_sweep_guard(gate_path, root)
+        if problems:
+            failures.append((name, problems, out))
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
     print()
     if failures:
         print(f"::error file={LINT_WORKFLOW}::Gate 18 self-test: "
-              f"{len(failures)} of {len(CASES)} scenarios behaved wrongly. Gate 18's "
+              f"{len(failures)} of {total} scenarios behaved wrongly. Gate 18's "
               f"detection logic does not do what its name claims, so a green Gate 18 "
               f"on the real fleet means nothing.")
         return 1
-    print(f"Gate 18 self-test: all {len(CASES)} scenarios behaved as expected.")
+    print(f"Gate 18 self-test: all {total} scenarios behaved as expected.")
     return 0
 
 
