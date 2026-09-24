@@ -120,11 +120,10 @@ def _lint_tree(root="."):
     stop checking every local composite call site rather than just the
     self-checkout ones. An empty `.git/` directory supplies that marker
     -- actionlint only checks for its presence, never reads it -- without
-    shelling out to a `git` binary or an `os.mkdir` that could pick up a
-    caller's exported GIT_DIR: an actual `git init` obeys GIT_DIR when
-    it's set (e.g. running inside a git hook), which re-initialises the
-    REAL repository's .git/config and leaves the copy with no `.git` of
-    its own, silently reopening the exact hole this closes.
+    shelling out to a `git` binary. An actual `git init` obeys an
+    exported GIT_DIR (e.g. running inside a git hook): it re-initialises
+    the REAL repository's .git/config and leaves the copy with no `.git`
+    of its own, silently reopening the exact hole this closes.
     """
     td = None
     try:
