@@ -436,3 +436,25 @@ Task: "Create fixture case fix-or-later-pr-open under .../in-flight/fix-or-later
 - [X] Change `set -uo pipefail` to `set -euo pipefail` on the "Push and open the PR" step (board-loop.yml:1449) so a `gh pr create` failure (e.g. the missing `board:owned` label) fails the step immediately at its source instead of cascading into a confusing downstream error from `write_marker`/`int(os.environ['PR_NUMBER'])`.
 - [X] Stop leaking a stale `pr_number`/`pr_state` into the `step=triage` output path (board-loop.yml:440) when the marker-named PR resolves but is disqualified -- clear both before falling through to triage, so the step summary/metrics record does not carry misleading values.
 - [X] Consolidate the PR-state jq normalizer (`if .merged then "MERGED" elif .state == "open" then "OPEN" else "CLOSED" end`), currently pasted at board-loop.yml:297 and :392 with separately-worded comments, into one canonical filter per CLAUDE.md's "shared logic has exactly one home" rule.
+
+## Phase 8: Convergence
+
+- [ ] T030 Add a `prove` clause to `board-loop.yml`'s resume step-resolution
+  logic (contracts/resume-recovery.md "Step resolution") so a selected
+  issue whose newest marker records `step="prove"` with `pr=null`/
+  `branch=null` resolves to `step="prove"` (matching
+  `in_flight_candidate()`'s prove exception added to fix the Maintainer
+  Feedback `int(None)` finding) instead of falling through to clause 4's
+  `step="triage"` -- which today discards the item's prove status and
+  restarts its whole triage->route->fix->review->readiness->prove
+  lifecycle for an issue whose fix has already merged, contradicting
+  FR-002/FR-006 (contradicts).
+
+- [ ] T031 Reconcile spec.md FR-002, data-model.md "Fix-or-later",
+  contracts/in-flight-detection.md, and plan.md's fixture-count
+  references with `in_flight_candidate()`'s implemented `prove`-with-
+  `pr=null` exception (the Maintainer Feedback fix plus the new
+  `prove-no-pr` fixture) -- these documents state that every fix-or-later
+  step including `prove` requires the marker's recorded PR to resolve
+  OPEN, and count fixture coverage as ten cases; both are now inaccurate,
+  per FR-002 (contradicts).
