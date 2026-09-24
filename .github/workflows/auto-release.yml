@@ -1181,8 +1181,9 @@ jobs:
             # land here indistinguishable from a genuine "not found," and
             # the missing-file check below reported fail-wrong-output for
             # what was really an infrastructure problem. `gh api` writes
-            # "Not Found (HTTP 404)" to stderr on a real 404 (see the
-            # cleanup sweep's own 404 probe for the same distinction); any
+            # "Not Found (HTTP 404)" to stderr on a real 404 (see
+            # wing-commander-resolve-checkout-ref's branch probe for the
+            # same distinction); any
             # other stderr here is a read failure, not a legitimately
             # missing file, and goes through fail_infra_on_read like the
             # other pass-path reads.
