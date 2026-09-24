@@ -4252,6 +4252,19 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-pipeline-checkout-guard.py --self-test
 
+      # Gate 117 — specs/060-self-redrive-concurrency (FR-010b, research.md
+      # D8): a merge whose own pull_request: closed run never reached
+      # prove-gate/prove at all -- displaced from wing-commander-board-loop's
+      # own pending slot before it began -- is a distinct, detectable
+      # condition from anything the directed-proof mechanism itself
+      # produces, since that mechanism only ever runs once prove-gate has
+      # already executed. Numbered 117, not the 101 this branch's own commit
+      # picked: Gate 116 (#611) claimed 101-115 as reserved and 116 as used
+      # before this branch's rebase landed.
+      - name: Gate 117 — board loop prove-displacement detects a merge whose proof run never started
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-prove-displacement.py
+
       # Gate 120 — #569: the dedup key's rule (data-model.md's Fingerprint
       # fenced block) and its shipped implementation
       # (wing-commander-stage-findings's "Extract, validate, cap, and

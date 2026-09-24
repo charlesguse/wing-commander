@@ -372,7 +372,7 @@ comment for each; each must name its own distinct condition (spec.md).
 
 ### The `outcome_reason` taxonomy (research.md D6)
 
-- [ ] T027 [US2] `.github/scripts/board_prove.py`: add
+- [X] T027 [US2] `.github/scripts/board_prove.py`: add
   `outcome_reason(...)` — a pure function taking the busy-check result
   (T019), the composite's `run-url`/`conclusion` outputs, the T028/T029
   disambiguation reads, and `redrive_target()`/`directed_stage()`'s own
@@ -380,7 +380,7 @@ comment for each; each must name its own distinct condition (spec.md).
   / `displaced` / `uncorrelated` / `no-target` / `nothing-reaches` /
   `success` / `failure` per contracts/proof-outcome-taxonomy.md's exact
   table.
-- [ ] T028 [US2] `.github/workflows/board-loop.yml`: add a step
+- [X] T028 [US2] `.github/workflows/board-loop.yml`: add a step
   immediately after `wing-commander-dispatch-and-wait` returns, gated
   `if: steps.redrive.outputs.conclusion == 'timeout'`, calling
   `gh run view <correlated-run-id> --json status,startedAt` once to
@@ -389,13 +389,13 @@ comment for each; each must name its own distinct condition (spec.md).
   composite itself, so this read happens in the wrapper, once, right
   after the composite returns (research.md D6). Extract the run id from
   `steps.redrive.outputs.run-url`.
-- [ ] T029 [US2] `.github/workflows/board-loop.yml`: the `displaced`
+- [X] T029 [US2] `.github/workflows/board-loop.yml`: the `displaced`
   branch (correlation returned empty `run-url`) reuses T019's `gh run
   list` payload (already fetched for the busy-check) rather than a
   second call — confirming no matching row exists at all is what
   distinguishes `displaced` (evicted from the pending slot) from
   `uncorrelated` (ambiguous correlation, two or more matching titles).
-- [ ] T030 [US2] `.github/workflows/board-loop.yml`: rewrite "Record the
+- [X] T030 [US2] `.github/workflows/board-loop.yml`: rewrite "Record the
   proof outcome" (~line 2741) to call `outcome_reason()` (T027) instead
   of the current two-branch shell `if`, and post the distinct issue
   comment contracts/proof-outcome-taxonomy.md's "Recording rule"
@@ -403,7 +403,7 @@ comment for each; each must name its own distinct condition (spec.md).
   non-`success` reason leaves the issue open (FR-008) carrying a
   `write_marker('prove', ...)` marker, exactly as today's two branches
   already do.
-- [ ] T031 [US2] `.github/workflows/board-loop.yml`: rewrite "Determine
+- [X] T031 [US2] `.github/workflows/board-loop.yml`: rewrite "Determine
   this run's outcome for the metrics record" (~line 2775) to map each
   `outcome_reason` value to its own `run-label` per
   contracts/proof-outcome-taxonomy.md's "Cost line / metrics record
@@ -412,7 +412,7 @@ comment for each; each must name its own distinct condition (spec.md).
 
 ### FR-010b — the prove run itself can be displaced before it exists (research.md D8)
 
-- [ ] T032 [P] [US2] New module `.github/scripts/board_prove_displacement.py`:
+- [X] T032 [P] [US2] New module `.github/scripts/board_prove_displacement.py`:
   `find_undetected_merges(merged_prs, issues_by_number)` — given the
   repo's recently-merged, loop-labeled fix PRs (the same `Fixes #N` +
   board-item-marker convention `prove-gate` already reads) and each
@@ -420,14 +420,14 @@ comment for each; each must name its own distinct condition (spec.md).
   recently merged PR left no later `prove`/`proven` marker and no
   proof-outcome comment (the signature of a `pull_request: closed` run
   displaced from its pending slot before `prove-gate`/`prove` ever ran).
-- [ ] T033 [US2] `.github/workflows/board-loop.yml`: add a new early
+- [X] T033 [US2] `.github/workflows/board-loop.yml`: add a new early
   step to the `select` job, after the entry gates and before the picking
   logic (research.md D8 — `select` runs on every non-`pull_request`
   trigger, so no new schedule/workflow/concurrency-group is needed),
   calling `find_undetected_merges()` (T032) and posting `"prove run
   displaced"` (data-model.md's `recorded_reason`) on any issue it finds,
   without gating `select`'s own proceed/no-op decision.
-- [ ] T034 [P] [US2] New Gate 92 —
+- [X] T034 [P] [US2] New Gate 92 —
   `.github/scripts/verify-board-prove-displacement.py`, wired into
   `.github/workflows/lint-workflows.yml` with `if: "!cancelled()"`.
   Fixtures for `find_undetected_merges()` in both directions: a merged
@@ -437,12 +437,12 @@ comment for each; each must name its own distinct condition (spec.md).
 
 ### Coverage and contract fold-in
 
-- [ ] T035 [US2] Extend Gate 89 with fixtures for `outcome_reason()`
+- [X] T035 [US2] Extend Gate 89 with fixtures for `outcome_reason()`
   (T027): one fixture per each of the eight values, in both directions
   (FR-020), including the `not-started`-vs-`unfinished` distinction
   (T028) and the `displaced`-vs-`uncorrelated` distinction (T029) as
   their own explicit cases (SC-003).
-- [ ] T036 [US2] Update
+- [X] T036 [US2] Update
   `specs/057-autonomous-board-loop/contracts/prove-step.md`'s "Re-drive"
   section (FR-019, research.md D9): replace the three-branch
   success/failure-or-timeout/uncorrelated table with a pointer to

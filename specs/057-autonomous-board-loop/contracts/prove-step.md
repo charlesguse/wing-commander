@@ -48,9 +48,33 @@ When `actions_only: true`: call `wing-commander-dispatch-and-wait` against
 the wrapper workflow that can dispatch the changed behavior; record
 `run-url`/`conclusion` on the PR or issue.
 
-- `conclusion == success` → close the issue, citing the run URL and
-  outcome (FR-043).
-- `conclusion in {failure, timeout}` → issue stays open, carrying the
-  failing/unresolved run URL (FR-043, User Story 6 scenario 3).
-- Dispatch itself could not be correlated (`run-url` empty) → issue stays
-  open, carrying that fact.
+Before dispatching, two pre-dispatch checks (specs/060-self-redrive-concurrency
+FR-001/FR-001a) decide whether a dispatch could even start; the outcome
+itself is one of the eight reasons
+`specs/060-self-redrive-concurrency/contracts/proof-outcome-taxonomy.md`
+specifies (`group-busy`/`not-started`/`unfinished`/`displaced`/
+`uncorrelated`/`no-target`/`nothing-reaches`/`success`/`failure`), computed
+by `board_prove.outcome_reason()` — never the three-branch
+success/failure-or-timeout/uncorrelated shape this section stated before
+specs/060-self-redrive-concurrency shipped. Every non-`success` reason
+leaves the issue open, carrying which of the eight conditions applied.
+
+## Directed proof run (specs/060-self-redrive-concurrency)
+
+When the workflow this feature would re-drive is `board-loop.yml` itself
+(the wrapper's own case 1, "the changed workflow dispatches itself"), the
+re-drive is a **directed proof run**: a `workflow_dispatch` of
+`board-loop.yml` carrying a non-empty `directed-stage` input, running
+exactly one job (`triage`/`review`/`readiness`/`prove` — never
+`select`/`route`/`fix`, which either pick a board item or open a fix PR)
+against the caller-supplied issue (and, for `prove`, PR) rather than one
+`select()` chose. It selects no board item and opens no fix PR (FR-002),
+and it is the only kind of `board-loop.yml` run permitted to be in flight
+at the same time as the run that dispatched it — see
+`specs/060-self-redrive-concurrency/contracts/directed-proof-run.md` for
+the full mechanism (the `workflow_dispatch` input table, the aimable-stage
+set, and job gating) and
+`specs/060-self-redrive-concurrency/contracts/concurrency-groups.md` for
+the per-job concurrency groups this depends on. An external,
+non-`board-loop.yml` target (FR-004) is unaffected: it continues to be
+dispatched and waited on exactly as before this feature.
