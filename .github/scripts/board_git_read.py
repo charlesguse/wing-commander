@@ -30,8 +30,14 @@ WHAT IT REFUSES
   accept only the exact `--output`, but git's parse-options library
   accepts unambiguous prefixes of long options in other commands, so a
   later git could accept `--outp=` here too;
-- any short option starting with `-o` (`-o`, `-oFILE`). log/diff/show
-  have no `-o` today; this keeps a later one from becoming a write.
+- any short option cluster (one `-`, not `--`) in which `o` is used as
+  an option letter: `-o`, `-oFILE`, `-po`. log/diff/show have no `-o`
+  today; this keeps a later one from becoming a write. The cluster is
+  read left to right, and scanning stops at the first letter in
+  VALUE_LETTERS, because the rest of the cluster is that option's value
+  (`-Sfoo`, `-Gfoo.*`, `-U3`, `-L1,5:foo.py`, `-Oorderfile`). So
+  `-Sfoo` and `-pSfoo` pass (the `o` is pickaxe text), but `-po` and
+  `-poS` are refused.
 
 Every argument is checked, including those after `--`: a path named like
 one of these options is refused too.
@@ -69,10 +75,27 @@ def refusal(argv):
                 return (f"refused: {arg!r} can write a file (git's "
                         f"--output option or an abbreviation of it). "
                         f"This wrapper is read-only.")
-        elif arg.startswith("-o"):
-            return (f"refused: {arg!r} (-o can name an output file). "
-                    f"This wrapper is read-only.")
+        elif arg.startswith("-") and _cluster_uses_o(arg[1:]):
+            return (f"refused: {arg!r} uses -o, which can name an output "
+                    f"file. This wrapper is read-only.")
     return None
+
+
+# Short options of git log/diff/show whose value is the rest of the
+# cluster (`-S<string>`, `-G<regex>`, `-U<n>`, `-M<n>`, `-C<n>`,
+# `-B<n>/<m>`, `-l<n>`, `-O<orderfile>`, `-X<param>`, `-I<regex>`,
+# `-L<range>:<file>`, `-n<number>`). An `o` after one of them is part of
+# the value, not an option letter.
+VALUE_LETTERS = frozenset("SGUMCBlOXILn")
+
+
+def _cluster_uses_o(letters):
+    for letter in letters:
+        if letter == "o":
+            return True
+        if letter in VALUE_LETTERS:
+            return False
+    return False
 
 
 def main(argv):

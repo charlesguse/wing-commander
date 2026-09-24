@@ -764,7 +764,9 @@ jobs:
       # for `git log` allows `git log --output=...` too. They get
       # .github/scripts/board_git_read.py instead (log/diff/show only, any
       # --output spelling refused), and `Bash(git:*)` is denied so plain
-      # git is not a second way in. Gate 93 enforces both.
+      # git is not a second way in. Gate 93 enforces both. A board PR
+      # branch cut before this change has no wrapper, so its reviewer has
+      # no git access until the branch picks up main.
       - name: Compose tool args (triage-propose)
         id: tool-args-triage
         uses: ./.github/actions/wing-commander-tool-args

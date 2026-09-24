@@ -117,7 +117,12 @@ WHAT IT CHECKS
      denied).
    The agent step fed by such a site may not append a Bash grant to its
    own `--allowedTools` outside that list, and must pass the site's
-   disallowed-tools output. The check fails if a label is missing, so a
+   disallowed-tools output. It also may not switch the checks off or
+   work around the lists: no `--dangerously-skip-permissions`, no
+   `--permission-mode` other than `default`, no `--settings` flag at all
+   (its value can be a file this gate cannot read), and no `settings:`
+   input on the action step that carries `permissions` or is not inline
+   JSON. The check fails if a label is missing, so a
    rename cannot make it pass without checking anything.
 
 `--self-test`: synthetic tempdir fixtures prove each check can fail (a
@@ -355,6 +360,44 @@ def _bash_grant_problems(text, where):
     return problems
 
 
+SKIP_PERMISSIONS_RE = re.compile(r"--(?:allow-)?dangerously-skip-permissions")
+PERMISSION_MODE_RE = re.compile(
+    r"--permission-mode(?:=|[ \t]+)(\"[^\"]*\"|'[^']*'|\S+)")
+SETTINGS_FLAG_RE = re.compile(r"--settings(?![\w-])")
+
+
+def _permission_bypass_problems(claude_args, settings_input, where):
+    """A read-only agent step must not turn permission checks off or add
+    rules around the composite's lists: no --dangerously-skip-permissions,
+    no --permission-mode other than `default`, no --settings flag (its
+    value can be a file this gate cannot read, so any use is refused), and
+    no `settings:` input that carries `permissions` or is not inline JSON
+    (a path cannot be read here either)."""
+    problems = []
+    if SKIP_PERMISSIONS_RE.search(claude_args):
+        problems.append(f"{where} passes --dangerously-skip-permissions to a "
+                        f"read-only agent, which turns every tool check off "
+                        f"(#513).")
+    for m in PERMISSION_MODE_RE.finditer(claude_args):
+        mode = m.group(1).strip("\"'")
+        if mode != "default":
+            problems.append(f"{where} sets --permission-mode {mode} on a "
+                            f"read-only agent; only `default` keeps the "
+                            f"allow/deny lists in force (#513).")
+    if SETTINGS_FLAG_RE.search(claude_args):
+        problems.append(f"{where} passes --settings to a read-only agent. "
+                        f"Settings can carry a permissions allow list that "
+                        f"this gate cannot see (#513).")
+    if settings_input is not None:
+        text = str(settings_input).strip()
+        if "permissions" in text or not text.startswith("{"):
+            problems.append(
+                f"{where}: the step's `settings:` input carries "
+                f"permissions, or is not inline JSON this gate can read "
+                f"(#513).")
+    return problems
+
+
 def check_read_only_git(path):
     """Gate 93 check 4 (#513): a read-only board-loop agent gets no raw
     `Bash(git ...)` grant and no Bash grant outside READ_ONLY_BASH_GRANTS,
@@ -428,6 +471,8 @@ def check_read_only_git(path):
                  f"'s claude_args")
         for m in ALLOWED_TOOLS_ARG_RE.finditer(claude_args):
             problems.extend(_bash_grant_problems(m.group(1), where))
+        problems.extend(_permission_bypass_problems(
+            claude_args, with_block.get("settings"), where))
         for tool_id in sorted(ids):
             if f"steps.{tool_id}.outputs.disallowed-tools" not in claude_args:
                 problems.append(
@@ -1123,7 +1168,7 @@ _RO_DENIED = "WebSearch,WebFetch,Write,Edit,Bash(git:*),Bash(git push:*)"
 def _read_only_fixture(allowed=_RO_ALLOWED, denied=_RO_DENIED,
                        claude_allowed='"${{ steps.ta.outputs.allowed-tools }}"',
                        claude_denied='"${{ steps.ta.outputs.disallowed-tools }}"',
-                       extra_step=""):
+                       extra_step="", claude_extra="", with_extra=""):
     """A workflow with the three read-only tool-args sites; the route one
     (id `ta`) takes the given lists and feeds an agent step."""
     def site(label, step_id, allow, deny):
@@ -1149,9 +1194,11 @@ def _read_only_fixture(allowed=_RO_ALLOWED, denied=_RO_DENIED,
             "        uses: anthropics/claude-code-action@v1\n"
             "        with:\n"
             "          prompt: hello\n"
-            "          claude_args: |\n"
+            + with_extra
+            + "          claude_args: |\n"
             f"            --allowedTools {claude_allowed}\n"
             f"            --disallowedTools {claude_denied}\n"
+            + (f"            {claude_extra}\n" if claude_extra else "")
             + extra_step)
 
 
@@ -1204,6 +1251,35 @@ def _self_test_read_only_git(tmpdir):
         ("claude_args drops the composite's deny list",
          _read_only_fixture(claude_denied='"WebFetch"'),
          "does not pass steps.ta.outputs.disallowed-tools"),
+        ("--permission-mode default is left alone",
+         _read_only_fixture(claude_extra="--permission-mode default"), None),
+        ("inline settings: without permissions is left alone",
+         _read_only_fixture(
+             with_extra="          settings: '{\"model\": \"x\"}'\n"), None),
+        ("--permission-mode acceptEdits",
+         _read_only_fixture(claude_extra="--permission-mode acceptEdits"),
+         "sets --permission-mode acceptEdits"),
+        ("--permission-mode=bypassPermissions",
+         _read_only_fixture(
+             claude_extra="--permission-mode=bypassPermissions"),
+         "sets --permission-mode bypassPermissions"),
+        ("--dangerously-skip-permissions",
+         _read_only_fixture(claude_extra="--dangerously-skip-permissions"),
+         "passes --dangerously-skip-permissions"),
+        ("--settings with a permissions allow list",
+         _read_only_fixture(claude_extra=(
+             "--settings '{\"permissions\": {\"allow\": [\"Bash(git:*)\"]}}'")),
+         "passes --settings"),
+        ("--settings pointing at a file",
+         _read_only_fixture(claude_extra="--settings /tmp/s.json"),
+         "passes --settings"),
+        ("settings: input with a permissions allow list",
+         _read_only_fixture(with_extra=(
+             "          settings: '{\"permissions\": {\"allow\": [\"Write\"]}}'\n")),
+         "`settings:` input carries permissions"),
+        ("settings: input pointing at a file",
+         _read_only_fixture(with_extra="          settings: .claude/s.json\n"),
+         "`settings:` input carries permissions"),
         ("a read-only site renamed away (vacuous)",
          _read_only_fixture().replace("board-loop.reviewer", "board-loop.rv"),
          "no tool-args step labelled 'board-loop.reviewer'"),
@@ -1254,6 +1330,20 @@ def _self_test_git_read_wrapper():
         ["show", "-s", "--format=%B", "HEAD"],
         ["show", "HEAD:README.md"],
         ["log", "--no-merges", "-S", "output", "--oneline"],
+        # Short clusters git accepts today, including values holding 'o'.
+        ["log", "-p", "-1"],
+        ["diff", "-U3", "HEAD"],
+        ["diff", "-M", "-C", "-B", "HEAD"],
+        ["diff", "-M50%", "-l1000", "HEAD"],
+        ["log", "-Sfoo", "--oneline"],
+        ["log", "-Gfoo.*bar", "-p"],
+        ["log", "-pSfoo"],
+        ["log", "-L1,5:foo.py"],
+        ["diff", "-Oorderfile", "HEAD"],
+        ["diff", "-Ifoo", "HEAD"],
+        ["diff", "-Xfiles,cumulative", "--dirstat", "HEAD"],
+        ["log", "-n10", "-3"],
+        ["diff", "-pRw", "HEAD"],
     )
     for argv in allowed:
         reason = w.refusal(argv)
@@ -1274,6 +1364,9 @@ def _self_test_git_read_wrapper():
         ["show", "--output-indicator-new=+"],
         ["log", "-o", "/tmp/x"],
         ["log", "-o/tmp/x"],
+        ["log", "-po", "/tmp/x"],
+        ["diff", "-pRo/tmp/x"],
+        ["show", "-poS", "x"],
         ["log", "--", "--output=/tmp/x"],
         ["push"],
         ["commit", "-m", "x"],
@@ -1335,6 +1428,10 @@ READ_ONLY_GIT_MUTATIONS = (
      '--allowedTools "${{ steps.tool-args-route.outputs.allowed-tools }}"',
      '--allowedTools "${{ steps.tool-args-route.outputs.allowed-tools }},'
      'Bash(git diff:*)"'),
+    ("reviewer's claude_args turns on acceptEdits",
+     '--allowedTools "${{ steps.tool-args-review.outputs.allowed-tools }}"',
+     '--allowedTools "${{ steps.tool-args-review.outputs.allowed-tools }}"\n'
+     '            --permission-mode acceptEdits'),
 )
 
 
