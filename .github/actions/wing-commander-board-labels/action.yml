@@ -7,18 +7,28 @@
 # create "board:owned" ... --force` inline, right before the `gh pr
 # create --label board:owned` that needs it -- see board-loop.yml's
 # push-pr step, kept as its one-line fallback.) This is the single home
-# (CLAUDE.md "shared logic has exactly one home") for creating both
-# labels together, so a future board:* label doesn't repeat board:stalled's
-# mistake; board-loop.yml calls it once per job that can reach one of
-# their own apply call sites (triage, route, fix, review, readiness),
-# right after minting the bot token that owns the create. `--force` makes
-# the create idempotent, so calling it from more than one job in the same
-# run is safe and cheap.
+# (CLAUDE.md "shared logic has exactly one home") for creating these
+# labels together, so a future board-loop.yml label doesn't repeat
+# board:stalled's mistake; board-loop.yml calls it once per job that can
+# reach one of their own apply call sites (triage, route, fix, review,
+# readiness), right after minting the bot token that owns the create.
+# `--force` makes the create idempotent, so calling it from more than one
+# job in the same run is safe and cheap.
+#
+# #493: spec-request joined this composite the same way -- route, fix, and
+# readiness each run `gh issue create ... --label spec-request` with
+# nothing in any workflow or action ever creating it (the only
+# `gh label create spec-request` anywhere was
+# provision-e2e-target.sh:144, a maintainer-run test-provisioning script,
+# never executed by board-loop.yml itself). Color/description match
+# docs/setup.md's own bootstrap line for spec-request exactly, so a repo
+# that follows docs/setup.md by hand and one whose label board-loop.yml
+# creates on first use end up with the identical label.
 name: wing-commander-board-labels
 description: >
-  Idempotently creates board-loop.yml's own board:stalled and board:owned
-  labels so its --add-label / --label call sites never depend on either
-  label already existing in the target repo.
+  Idempotently creates board-loop.yml's own board:stalled, board:owned,
+  and spec-request labels so its --add-label / --label call sites never
+  depend on any of them already existing in the target repo.
 
 inputs:
   token:
@@ -28,19 +38,20 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Ensure board:stalled and board:owned labels exist
+    - name: Ensure board:stalled, board:owned, and spec-request labels exist
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
       run: |
         set -uo pipefail
-        # Both creates always run -- a failed board:stalled create must
-        # never skip the board:owned create (or vice versa). The caller
-        # step is continue-on-error: true (board-loop.yml), so exiting
-        # non-zero here is safe and is what makes a failed create visible
-        # in the log instead of silently vanishing into the same bug #488
-        # already was (wing-commander-durable-failure-issue/action.yml's
-        # own ::warning:: pattern, action.yml:228-229).
+        # All three creates always run -- a failed board:stalled create must
+        # never skip the board:owned or spec-request creates (or vice
+        # versa). The caller step is continue-on-error: true
+        # (board-loop.yml), so exiting non-zero here is safe and is what
+        # makes a failed create visible in the log instead of silently
+        # vanishing into the same bug #488 already was
+        # (wing-commander-durable-failure-issue/action.yml's own
+        # ::warning:: pattern, action.yml:228-229).
         status=0
         if ! gh label create "board:stalled" -R "$GITHUB_REPOSITORY" --color B60205 --description "Board loop: stalled awaiting a human (CLAUDE.md board-loop rules)" --force; then
           echo "::warning::wing-commander-board-labels: gh label create failed for board:stalled -- board-loop.yml's --add-label \"board:stalled\" call sites may fail until this label exists."
@@ -48,6 +59,10 @@ runs:
         fi
         if ! gh label create "board:owned" -R "$GITHUB_REPOSITORY" --color 0E8A16 --description "Board loop: this PR was opened by board-loop.yml" --force; then
           echo "::warning::wing-commander-board-labels: gh label create failed for board:owned -- board-loop.yml's --label board:owned call sites may fail until this label exists."
+          status=1
+        fi
+        if ! gh label create "spec-request" -R "$GITHUB_REPOSITORY" --color 0E8A16 --description "Maintainer approval: run spec intake on this issue" --force; then
+          echo "::warning::wing-commander-board-labels: gh label create failed for spec-request -- board-loop.yml's --label spec-request call sites may fail until this label exists."
           status=1
         fi
         exit "$status"
