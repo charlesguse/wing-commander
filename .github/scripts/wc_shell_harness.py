@@ -145,14 +145,34 @@ def _jq_emitting_cr(real):
     return b"\r" in out
 
 
+# Set once _shim_jq_cr() has installed a shim dir, so a second call in the
+# same process is a no-op rather than stacking another dir on PATH. Keying
+# this off shutil.which("jq") instead is not reliable: on Windows the shim
+# is written without a .exe suffix (it is a bash script, run by the bash
+# under test, never by Windows directly) and shutil.which there generally
+# will not resolve an extensionless name, so a caller that re-derives
+# `real` on every ensure_jq() call would see the SAME real jq each time
+# (correctly) but a fresh, unshimmed one -- and _shim_jq_cr would then
+# mkdtemp and prepend again, growing PATH and leaking a tempdir per call.
+_JQ_SHIM_DIR = None
+
+
 def _shim_jq_cr(real):
-    """Prepend a CR-stripping jq shim ahead of `real` on PATH if needed."""
-    bindir = tempfile.mkdtemp(prefix="wc-jq-cr-shim-")
-    path = os.path.join(bindir, "jq")
+    """Prepend a CR-stripping jq shim ahead of `real` on PATH if needed.
+
+    Installs at most once per process (see _JQ_SHIM_DIR above); the one
+    shim dir this creates is left for the OS to reclaim at process exit,
+    matching the rest of this module's tempdirs (run_step's workdir/
+    out_file/sum_file are the caller's to clean up, never this module's)."""
+    global _JQ_SHIM_DIR
+    if _JQ_SHIM_DIR is not None:
+        return
+    _JQ_SHIM_DIR = tempfile.mkdtemp(prefix="wc-jq-cr-shim-")
+    path = os.path.join(_JQ_SHIM_DIR, "jq")
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(JQ_CR_SHIM.format(real=real.replace("\\", "/")))
     os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    os.environ["PATH"] = bindir + os.pathsep + os.environ["PATH"]
+    os.environ["PATH"] = _JQ_SHIM_DIR + os.pathsep + os.environ["PATH"]
 
 
 def ensure_jq():
