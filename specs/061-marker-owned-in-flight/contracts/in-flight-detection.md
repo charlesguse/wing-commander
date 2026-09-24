@@ -43,13 +43,22 @@ def select(
     pr_state_by_number: dict[int, str],
 ) -> int | None:
     """FR-004/FR-011: in_flight_candidate() first; falls through to the
-    existing oldest-first/classify_issue/is_excluded scan (unchanged) when
-    it returns (None, ...)."""
+    existing oldest-first/classify_issue/is_excluded scan when it returns
+    (None, ...). That fallback skips an issue whose newest marker records
+    step "prove", the same exclusion in_flight_candidate() already applies
+    on its own priority path (never a second, parallel rule) -- otherwise a
+    stuck prove marker that ages to the front of the oldest-first queue
+    would be re-selected every run with no consumer able to advance it
+    (Maintainer Feedback finding on PR #475)."""
 ```
 
 `classify_issue()` and `is_excluded()` keep their existing signatures and
 behavior verbatim (Out of Scope: "the exclusion rule... is reused
-unchanged"; "the oldest-first eligibility scan... is not modified").
+unchanged"). The oldest-first ordering and its `classify_issue`/
+`is_excluded` eligibility test are themselves unmodified; the one addition
+layered in front of them is the `prove`-marker skip above, so "which issues
+can `select()` ever return" stays governed by the one function FR-011's
+single-home rule designates for that decision.
 
 ## Runtime caller contract (`board-loop.yml`'s `select` job)
 
@@ -109,12 +118,20 @@ expressed as a single `issue.json` the way Gate 81's existing
 11. `prove-no-pr` — marker at `prove`, no `pr` recorded → `(null, false)` —
     `prove` never qualifies as a candidate, regardless of `pr`, since no
     job consumes step `prove` off the schedule/workflow_dispatch path this
-    decision runs on.
+    decision runs on. This case also carries a second, eligible issue with
+    no marker and a `labeled_events_by_issue.json` plus a
+    `select_issue_number` key in `expected.json`, so the gate additionally
+    asserts `select()` itself skips the `prove`-marker issue in its
+    oldest-first fallback and returns the other issue, not just that
+    `in_flight_candidate()` alone excludes it from the priority path.
 
 Each fixture directory's four files are all required; the gate fails loudly
 (non-zero exit, `::error::` annotation) if any is missing, per Gate 81's
 existing pattern (`verify-board-eligibility.py` already does this for its
 `classify_issue` fixtures — the new loop mirrors it, not a new mechanism).
+A case whose `expected.json` also carries `select_issue_number` requires
+the fifth `labeled_events_by_issue.json` file and is additionally asserted
+against `select()`'s own return value.
 
 ## `.github/scripts/board_item_marker.py` (addition)
 

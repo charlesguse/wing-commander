@@ -2,9 +2,17 @@
   {
     "number": 5011,
     "author": {"login": "someone"},
-    "authorAssociation": "NONE",
+    "authorAssociation": "MEMBER",
     "labels": [],
     "state": "OPEN",
     "createdAt": "2026-01-01T00:00:00Z"
+  },
+  {
+    "number": 5012,
+    "author": {"login": "someone-else"},
+    "authorAssociation": "MEMBER",
+    "labels": [],
+    "state": "OPEN",
+    "createdAt": "2026-01-02T00:00:00Z"
   }
 ]

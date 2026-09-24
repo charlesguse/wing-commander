@@ -116,13 +116,19 @@ def select(
     pr_state_by_number: dict[int, str],
 ) -> int | None:
     """FR-004/FR-011: consults in_flight_candidate() first; falls through
-    to the existing oldest-first/classify_issue/is_excluded scan, unchanged,
-    when it returns (None, ...)."""
+    to the existing oldest-first/classify_issue/is_excluded scan, plus the
+    same prove-marker skip in_flight_candidate() applies, when it returns
+    (None, ...)."""
 ```
 
-`labeled_events_by_issue`, `classify_issue`, `is_excluded`, and the
-oldest-first fallback scan are byte-for-byte unchanged from spec 057 — only
-the new parameters and the new first check are added.
+`labeled_events_by_issue`, `classify_issue`, and `is_excluded` are
+byte-for-byte unchanged from spec 057. The oldest-first fallback scan
+itself (ordering, `is_excluded`/`classify_issue` eligibility test) is also
+unchanged, but gained one addition on top: it skips an issue whose newest
+marker records step `prove`, mirroring `in_flight_candidate()`'s own
+priority-path exclusion (Maintainer Feedback finding on PR #475) — without
+it, a stuck `prove` marker that ages to the front of the queue would be
+re-selected by this fallback every run with no consumer able to advance it.
 
 ## Loop Ownership Label (new)
 

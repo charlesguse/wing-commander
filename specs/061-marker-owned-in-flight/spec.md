@@ -277,10 +277,11 @@ deliberately broken in-flight rule and confirm a gate fails.
     decision runs on ever consumes step `prove` (only `prove-gate`/`prove`
     do, and those run solely on the `pull_request: closed` trigger), so
     treating a `prove` marker as in flight here would starve every other
-    candidate forever for no possible benefit. Resume's own step
-    resolution (a separate decision, FR-008) still reports step `prove`
-    correctly, independent of this rule, on whichever issue the
-    oldest-first fallback selects.
+    candidate forever for no possible benefit. The oldest-first fallback
+    that selection falls through to (FR-004) carries this same exclusion,
+    so an issue stuck at `prove` is never selected by either path — it is
+    left untouched rather than re-selected every run with no consumer able
+    to advance it.
 
 - **FR-003**: An issue that qualifies under FR-002 MUST still be subject to
   the existing exclusion rule (closed, `disposition:*`, `board:stalled`,
@@ -422,8 +423,11 @@ deliberately broken in-flight rule and confirm a gate fails.
 - The existing exclusion rule (closed, `disposition:*`, `board:stalled`,
   `stage:*`, `spec:*`) is correct as written and is reused unchanged — the
   defect is what feeds it a candidate, not how it judges one.
-- The oldest-first eligibility scan is correct as written and is not
-  modified by this feature.
+- The oldest-first eligibility scan's ordering and its `classify_issue`/
+  exclusion test are correct as written and are not modified by this
+  feature; the one addition layered in front of them is the `prove`-marker
+  skip FR-002 already gives the priority path, extended to this fallback
+  so it does not re-select a stuck `prove` item forever.
 - Marker parsing already degrades to `None` on missing or malformed input
   and never raises; this feature relies on that behaviour rather than adding
   its own error handling.
@@ -463,7 +467,9 @@ deliberately broken in-flight rule and confirm a gate fails.
 ## Out of Scope
 
 - Changing the oldest-first ordering, the eligibility classification, or the
-  exclusion list.
+  exclusion list — the `prove`-marker skip described in FR-002 is not such
+  a change: it is the same exclusion applied on both paths that consult it,
+  not a new rule for either.
 - Changing the marker's fields or when it is written.
 - Changing the kill switch, the stand-down check, or the stop-comment
   handling.

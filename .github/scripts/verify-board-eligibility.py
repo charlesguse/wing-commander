@@ -29,7 +29,13 @@ pair under .github/scripts/tests/board-eligibility/<case>/:
 In-flight fixtures (FR-012), each a checked-in open_issues.json +
 comments_by_issue.json + pr_state_by_number.json + expected.json set under
 .github/scripts/tests/board-eligibility/in-flight/<case>/ -- see
-contracts/in-flight-detection.md for the full ten-case list.
+contracts/in-flight-detection.md for the full eleven-case list. A case
+whose expected.json also carries "select_issue_number" additionally
+requires a labeled_events_by_issue.json and gets its result asserted
+against select() itself, not just in_flight_candidate() -- used by
+prove-no-pr to also pin that select()'s oldest-first fallback, not only
+the priority path, skips a stuck `prove` marker (Maintainer Feedback,
+board_eligibility.py's select()).
 
 Fails loudly, not vacuously, if any fixture file is missing.
 """
@@ -39,7 +45,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from board_eligibility import classify_issue, in_flight_candidate  # noqa: E402
+from board_eligibility import classify_issue, in_flight_candidate, select  # noqa: E402
 
 FIXTURES_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "tests", "board-eligibility")
@@ -155,12 +161,40 @@ def run():
         issue_number, multiple_found = in_flight_candidate(
             open_issues, comments_by_issue, pr_state_by_number)
         got = {"issue_number": issue_number, "multiple_found": multiple_found}
-        if got != expected:
+        expected_in_flight = {
+            "issue_number": expected.get("issue_number"),
+            "multiple_found": expected.get("multiple_found"),
+        }
+        if got != expected_in_flight:
             failures += 1
             print("::error::verify-board-eligibility: in-flight/{0}: expected "
-                  "{1!r}, got {2!r}.".format(case, expected, got))
+                  "{1!r}, got {2!r}.".format(case, expected_in_flight, got))
         else:
             print("[ok] in-flight/{0}: in_flight_candidate() == {1!r}".format(case, got))
+
+        if "select_issue_number" in expected:
+            labeled_events_path = os.path.join(case_dir, "labeled_events_by_issue.json")
+            if not os.path.isfile(labeled_events_path):
+                failures += 1
+                print("::error::verify-board-eligibility: {0} declares "
+                      "select_issue_number in expected.json but is missing "
+                      "labeled_events_by_issue.json.".format(case_dir))
+                continue
+            labeled_events_by_issue = {
+                int(number): events
+                for number, events in _load(labeled_events_path).items()
+            }
+            selected = select(open_issues, labeled_events_by_issue,
+                               comments_by_issue, pr_state_by_number)
+            expected_selected = expected["select_issue_number"]
+            if selected != expected_selected:
+                failures += 1
+                print("::error::verify-board-eligibility: in-flight/{0}: "
+                      "select() expected {1!r}, got {2!r}.".format(
+                          case, expected_selected, selected))
+            else:
+                print("[ok] in-flight/{0}: select() == {1!r} (oldest-first "
+                      "fallback also skips the prove marker)".format(case, selected))
 
     print("verify-board-eligibility: {0} failure(s).".format(failures))
     return 1 if failures else 0

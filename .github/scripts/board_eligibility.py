@@ -155,9 +155,10 @@ def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number):
     path consumes step == "prove" (only prove-gate/prove do, and those run
     solely on pull_request: closed). Prioritizing a stuck prove marker here
     would starve every other candidate forever for no possible benefit.
-    Resume's own step-resolution (board-loop.yml) still reports step=
-    "prove" correctly -- independent of this function -- if such an issue
-    is ever selected via the oldest-first fallback below.
+    select()'s oldest-first fallback carries this same exclusion (never a
+    second, parallel rule), so a stuck prove marker is never selected by
+    either path -- it stays untouched until something off this run's own
+    trigger path (prove-gate/prove, or a maintainer) resolves it.
     """
     candidates = []
     for issue in open_issues:
@@ -189,8 +190,12 @@ def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number):
 
 def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_number):
     """FR-004/FR-011: consults in_flight_candidate() first; falls through to
-    the existing oldest-first/classify_issue/is_excluded scan (unchanged)
-    when it returns (None, ...)."""
+    the existing oldest-first/classify_issue/is_excluded scan when it
+    returns (None, ...). That fallback carries the same `prove`-marker skip
+    as in_flight_candidate() above (never a second, parallel rule) so a
+    stuck `prove` issue that ages to the front of the oldest-first queue is
+    passed over instead of being re-selected every run with no consumer
+    able to advance it."""
     in_flight, _multiple_found = in_flight_candidate(
         open_issues, comments_by_issue, pr_state_by_number)
     if in_flight is not None:
@@ -201,9 +206,13 @@ def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_
         excluded, _reason = is_excluded(issue)
         if excluded:
             continue
-        labeled_events = labeled_events_by_issue.get(issue.get("number"), [])
+        number = issue.get("number")
+        pair = read_marker_with_timestamp(comments_by_issue.get(number) or [])
+        if pair is not None and (pair[1] or {}).get("step") == "prove":
+            continue
+        labeled_events = labeled_events_by_issue.get(number, [])
         if classify_issue(issue, labeled_events) != "ineligible":
-            return issue.get("number")
+            return number
     return None
 
 
