@@ -11,7 +11,8 @@ fixer, reviewer, review-fixup) passed `model:`, `max_turns:`,
 only logs a `##[warning]`, never fails the step — so the resolved model
 tier, the turn ceiling, and the tool allowlist were never applied. Every
 other stage workflow already threads these through `claude_args` (see
-intake.yml's `Intake` step), so board-loop.yml was the one outlier, and
+intake.yml's `Create spec from issue` step, intake.yml:622), so
+board-loop.yml was the one outlier, and
 nothing caught it: the workflow, and every gate that ran against it,
 stayed green while the actual behaviour silently drifted from what the
 `with:` block appeared to configure. Visibly, board-loop's route stage sent
@@ -29,12 +30,22 @@ instead of degrading a stage's behaviour with only a log line as evidence.
 WHAT IT CHECKS
 --------------
 Every YAML file under `.github/workflows/` and `.github/actions/` is parsed,
-and every step whose `uses:` pins `anthropics/claude-code-action@v1`
+and every step whose `uses:` pins `anthropics/claude-code-action@` — any
+ref, not only a bare `v1` major tag: a code review of the first version of
+this gate showed a step pinned `anthropics/claude-code-action@v1.2.0` (an
+otherwise-identical, otherwise-bad step) passing green, because the
+comparison was `== "anthropics/claude-code-action@v1"` exactly. Matched the
+same way Gate 23 (verify-gate-23.py) matches this action, by prefix rather
+than by exact ref, so a minor/patch pin or a commit-SHA pin is covered too
 (workflow `jobs.*.steps` or composite-action `runs.steps` — the walk is
 structural, not job/step-name specific, so it also catches a
-`claude-code-action` step added inside a composite action) has its `with:`
-keys checked against ACCEPTED_INPUTS below. Any key not in that set fails,
-naming the file, the step, and the offending key(s).
+`claude-code-action` step added inside a composite action) — has its
+`with:` keys checked against ACCEPTED_INPUTS below. Any key not in that set
+fails, naming the file, the step, and the offending key(s). Finding zero
+such steps repo-wide is ALSO a failure (Gate 5's precedent: a verifier that
+never fires is indistinguishable from one whose detection is broken) —
+there are 20+ known call sites as of this writing, so zero means the
+detector itself regressed, not that the fleet went quiet.
 
 ACCEPTED_INPUTS is hardcoded from the action's own refusal, not
 re-derived at gate time (a network call here would make this gate flaky
@@ -42,24 +53,37 @@ and would not exercise a fixed contract): the exact `##[warning]Unexpected
 input(s) ..., valid inputs are [...]` line `claude-code-action@v1` printed
 for board-loop.yml's triage-propose step in run 36027401298 (job
 107727724501), https://github.com/charlesguse/wing-commander/actions/runs/36027401298/job/107727724501
--- the same run and warning text #499 cites.
+-- the same run and warning text #499 cites. This is v1's own accepted-input
+list; a step pinned to a later v1.x might accept more inputs than this, but
+never fewer, so hardcoding v1's list is conservative (a false failure on a
+genuinely-new input is possible and should be treated as this list needing
+an update, not as the gate being wrong) rather than silently permissive.
 
-The self-test builds a fixture workflow tree in memory with one
-`claude-code-action@v1` step carrying `model:`/`max_turns:` (this PR's own
-motivating defect, reproduced) beside a clean sibling step, and asserts the
-bad step is caught by name while the clean one and the real fleet both
+The self-test writes a fixture workflow file to a temp directory and runs
+`check_file()` on it for real, the same function the real fleet is checked
+with, rather than re-implementing the check inline — a second copy of the
+matching logic could pass its own self-test while the real `check_file()`
+had drifted. The fixture carries a step pinned `@v1.2.0` (this review's own
+motivating defect: the exact-match bug let it through as "good") with
+`model:`/`max_turns:` (this PR's original motivating defect) beside a clean
+`@v1` sibling using only `claude_args`, and asserts the bad step is caught
+by name, by ref, and by input, while the clean one and the real fleet both
 pass.
 """
 import glob
 import os
 import sys
+import tempfile
 
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import use_utf8_stdout  # noqa: E402
 
-ACTION_REF = "anthropics/claude-code-action@v1"
+# Matched by prefix, not exact ref, the same way Gate 23's
+# AGENT_USES_PREFIX does for this same action -- a pin more specific than a
+# bare major tag (`@v1.2.0`, or a commit SHA) is still this action.
+ACTION_REF_PREFIX = "anthropics/claude-code-action@"
 
 # Verbatim from claude-code-action@v1's own refusal, board-loop.yml
 # triage-propose step, run 36027401298 / job 107727724501:
@@ -85,15 +109,19 @@ ACCEPTED_INPUTS = {
 
 def find_claude_code_action_steps(doc):
     """Walk a parsed YAML tree (workflow or composite action) and yield every
-    step dict whose `uses:` pins ACTION_REF. Structural, not path-specific,
-    so it also catches one nested inside a composite action's `runs.steps`
-    or any future job/step shape."""
+    step dict whose `uses:` pins claude-code-action, at any ref (a bare
+    major tag, a minor/patch pin, or a commit SHA -- ACTION_REF_PREFIX is
+    matched by prefix, not equality, precisely so a pin more specific than
+    `@v1` cannot slip past this gate the way `@v1.2.0` did before this
+    matched by prefix). Structural, not path-specific, so it also catches
+    one nested inside a composite action's `runs.steps` or any future
+    job/step shape."""
     steps = []
 
     def walk(node):
         if isinstance(node, dict):
             uses = node.get("uses")
-            if isinstance(uses, str) and uses.strip() == ACTION_REF:
+            if isinstance(uses, str) and uses.strip().startswith(ACTION_REF_PREFIX):
                 steps.append(node)
             for v in node.values():
                 walk(v)
@@ -118,15 +146,17 @@ def check_file(path):
 
     for step in find_claude_code_action_steps(doc):
         name = step.get("name") or step.get("id") or "(unnamed step)"
+        uses = str(step.get("uses") or "").strip()
         with_block = step.get("with") or {}
         if not isinstance(with_block, dict):
             continue
         bad = sorted(k for k in with_block if k not in ACCEPTED_INPUTS)
         if bad:
             problems.append(
-                f"{path}: step {name!r} passes claude-code-action@v1 "
-                f"input(s) it does not accept: {', '.join(bad)}. Move "
-                f"them into claude_args (see intake.yml's Intake step).")
+                f"{path}: step {name!r} ({uses}) passes claude-code-action "
+                f"input(s) it does not accept: {', '.join(bad)}. Move them "
+                f"into claude_args (see intake.yml's 'Create spec from "
+                f"issue' step, intake.yml:622).")
     return problems
 
 
@@ -140,6 +170,22 @@ def gather_files():
     return sorted(set(files))
 
 
+def count_claude_code_action_steps():
+    """Total claude-code-action steps found repo-wide -- used to assert the
+    detector itself still fires (Gate 5's precedent) independent of whether
+    any of them is well-formed."""
+    total = 0
+    for path in gather_files():
+        try:
+            with open(path, encoding="utf-8") as fh:
+                doc = yaml.safe_load(fh)
+        except yaml.YAMLError:
+            continue
+        if isinstance(doc, (dict, list)):
+            total += len(find_claude_code_action_steps(doc))
+    return total
+
+
 def check_repo():
     problems = []
     for path in gather_files():
@@ -147,26 +193,7 @@ def check_repo():
     return problems
 
 
-def main():
-    use_utf8_stdout()
-    if not os.path.isdir(".github"):
-        sys.exit("::error::run this from the repository root; "
-                  ".github not found.")
-
-    real_problems = check_repo()
-    for p in real_problems:
-        print(f"::error::Gate 92: {p}")
-    if real_problems:
-        print(f"Gate 92: {len(real_problems)} claude-code-action@v1 "
-              f"step(s) pass an input v1 does not accept.")
-        return 1
-    print("Gate 92: every claude-code-action@v1 step's with: keys are "
-          "inputs v1 accepts.")
-
-    # --- self-test -----------------------------------------------------
-    self_test_failures = []
-
-    fixture_text = """
+FIXTURE_TEXT = """\
 name: gate-92-fixture
 jobs:
   demo:
@@ -180,6 +207,12 @@ jobs:
           allowed_tools: Read,Grep
           disallowed_tools: WebFetch
           prompt: hello
+      - name: Bad step, pinned past the bare major tag
+        uses: anthropics/claude-code-action@v1.2.0
+        with:
+          claude_code_oauth_token: token
+          model: claude-sonnet-5
+          prompt: hello
       - name: Good step
         uses: anthropics/claude-code-action@v1
         with:
@@ -189,33 +222,66 @@ jobs:
             --model claude-sonnet-5
             --max-turns 10
 """
-    fixture_doc = yaml.safe_load(fixture_text)
-    fixture_problems = []
-    for step in find_claude_code_action_steps(fixture_doc):
-        name = step.get("name") or "(unnamed step)"
-        with_block = step.get("with") or {}
-        bad = sorted(k for k in with_block if k not in ACCEPTED_INPUTS)
-        if bad:
-            fixture_problems.append(f"fixture: step {name!r}: {bad}")
+
+
+def main():
+    use_utf8_stdout()
+    if not os.path.isdir(".github"):
+        sys.exit("::error::run this from the repository root; "
+                  ".github not found.")
+
+    total_steps = count_claude_code_action_steps()
+    if total_steps == 0:
+        print("::error::Gate 92: found zero claude-code-action steps "
+              "repo-wide. This repository has 20+ known call sites; zero "
+              "means ACTION_REF_PREFIX or the YAML walk regressed, not that "
+              "the fleet went quiet.")
+        return 1
+
+    real_problems = check_repo()
+    for p in real_problems:
+        print(f"::error::Gate 92: {p}")
+    if real_problems:
+        print(f"Gate 92: {len(real_problems)} claude-code-action "
+              f"step(s), of {total_steps} checked, pass an input the "
+              f"action does not accept.")
+        return 1
+    print(f"Gate 92: all {total_steps} claude-code-action step(s)' with: "
+          f"keys are inputs the action accepts.")
+
+    # --- self-test -----------------------------------------------------
+    self_test_failures = []
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        fixture_path = os.path.join(tmpdir, "gate-92-fixture.yml")
+        with open(fixture_path, "w", encoding="utf-8") as fh:
+            fh.write(FIXTURE_TEXT)
+        fixture_problems = check_file(fixture_path)
 
     joined = " ".join(fixture_problems)
-    if "Bad step" not in joined:
+    if "'Bad step'" not in joined:
         self_test_failures.append(
             f"fixture's bad step (model/max_turns/allowed_tools/"
-            f"disallowed_tools) was not caught: {fixture_problems!r}")
-    elif "Good step" in joined:
+            f"disallowed_tools, pinned @v1) was not caught: "
+            f"{fixture_problems!r}")
+    if "Bad step, pinned past the bare major tag" not in joined:
+        self_test_failures.append(
+            f"fixture's @v1.2.0-pinned bad step was not caught -- "
+            f"ACTION_REF_PREFIX matching may have regressed to an exact-"
+            f"ref comparison: {fixture_problems!r}")
+    if "'Good step'" in joined:
         self_test_failures.append(
             f"fixture's good step (claude_args only) was wrongly flagged: "
             f"{fixture_problems!r}")
-    else:
+    if not self_test_failures:
         for expect in ("model", "max_turns", "allowed_tools",
                        "disallowed_tools"):
             if expect not in joined:
                 self_test_failures.append(
-                    f"fixture's bad step was caught but {expect!r} was "
-                    f"not named: {fixture_problems!r}")
-        if not self_test_failures:
-            print(f"note: fixture bad step caught: {fixture_problems}")
+                    f"fixture's bad step(s) were caught but {expect!r} "
+                    f"was not named: {fixture_problems!r}")
+    if not self_test_failures:
+        print(f"note: fixture bad steps caught: {fixture_problems}")
 
     # Re-confirm the real fleet still passes, so a self-test fixture
     # leaking into the real check cannot read as green.
@@ -230,9 +296,9 @@ jobs:
         print(f"Gate 92 self-test: {len(self_test_failures)} failure(s).")
         return 1
 
-    print("Gate 92 self-test: the bad step was caught by name, the good "
-          "step (claude_args only) was not flagged, and the real fleet "
-          "passes.")
+    print("Gate 92 self-test: both bad steps (bare @v1 and @v1.2.0) were "
+          "caught by name, the good step (claude_args only) was not "
+          "flagged, and the real fleet passes.")
     return 0
 
 
