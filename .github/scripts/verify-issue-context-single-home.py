@@ -59,10 +59,38 @@ WHAT IT CHECKS
    idiom, checked together" methodology Gate 60
    (verify-single-home-idioms.py) uses for its own idioms.
 
+3. spec-request-body (board-loop run 36044831201: route-propose returned
+   `category=spec` with no `pr-body`, and spec-request #509's whole body
+   was "No drafted body." and a link). Every step in board-loop.yml whose
+   `run:` files a spec-request (`gh issue create ... spec-request`) must:
+   - pass `--body-file "$F"` and never `--body`/`-b`, so the body cannot
+     be an inline string that skips the builder;
+   - write `$F` with `.github/scripts/board_spec_request_body.py
+     ... --out "$F"` (the single home for the body and its fallback);
+   - give that builder `--context-file "$V"`, where the step's `env:`
+     maps `V` to exactly `${{ steps.ID.outputs.context-file }}` and `ID`
+     is an EARLIER step in the SAME job whose `uses:` is
+     wing-commander-issue-context -- so the fallback reads the
+     composite's trust-filtered file and nothing else (not its
+     `comments-file`, not a path of the step's own making);
+   - make no unfiltered issue read of its own: no `gh api` on an issue,
+     no `gh issue view` with `--comments` or a `--json` field list naming
+     `body` or `comments` (FR-056 -- the spec-request body feeds intake).
+   `gh issue edit --add-label spec-request` is also flagged: relabelling
+   an existing issue would file a spec-request whose body never went
+   through the builder. The check fails on zero sites too, so a rename of
+   the label or the command cannot turn it vacuous. The builder's own
+   behaviour (fallback order, the "No drafted body." line, truncation
+   under 65536 characters with a visible note) is exercised by
+   `--self-test`.
+
 `--self-test`: synthetic tempdir fixtures prove each check can fail (a
-board-loop tool-args grant carrying `gh issue view`, and a second file
-re-implementing all three trust-filter fragments), and that the real
-fleet passes both.
+board-loop tool-args grant carrying `gh issue view`, a second file
+re-implementing all three trust-filter fragments, and spec-request
+creation steps that bypass the builder, feed it the wrong file, or read
+the issue unfiltered), unit-test board_spec_request_body.py, run a
+mutation check (each mutation of the real board-loop.yml's spec-request
+sites must be caught), and confirm the real fleet passes.
 """
 import glob
 import os
@@ -262,12 +290,405 @@ def check_single_home(path, exempt):
     return []
 
 
+SPEC_REQUEST_BUILDER = ".github/scripts/board_spec_request_body.py"
+ISSUE_CONTEXT_USES = "wing-commander-issue-context"
+CONTEXT_FILE_EXPR_RE = re.compile(
+    r"^\$\{\{\s*steps\.([A-Za-z0-9_-]+)\.outputs\.context-file\s*\}\}$")
+# `"$X"`, `"${X}"`, `$X` or `${X}` -- a bare shell variable, nothing else.
+SHELL_VAR = r'"?\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?"?'
+BODY_FILE_RE = re.compile(r"--body-file[= ]\s*" + SHELL_VAR + r"(?=\s|$)")
+BUILDER_OUT_RE = re.compile(r"--out[= ]\s*" + SHELL_VAR + r"(?=\s|$)")
+BUILDER_CONTEXT_RE = re.compile(
+    r"--context-file[= ]\s*" + SHELL_VAR + r"(?=\s|$)")
+INLINE_BODY_RE = re.compile(r"(?<![\w-])(?:--body(?![\w-])|-b(?![\w-]))")
+UNFILTERED_READ_RES = (
+    (re.compile(r"gh\s+api\b[^\n]*issues"), "a `gh api` issue read"),
+    (re.compile(r"gh\s+issue\s+view\b[^\n]*--comments"),
+     "`gh issue view --comments`"),
+    (re.compile(r"gh\s+issue\s+view\b[^\n]*--json[= ]\s*[\"']?[\w,]*"
+                r"\b(?:body|comments)\b"),
+     "a `gh issue view --json` read of body/comments"),
+)
+
+
+def _logical_lines(run_text):
+    """Shell logical lines: backslash-newline continuations joined."""
+    return re.sub(r"\\\n\s*", " ", run_text or "").split("\n")
+
+
+def _is_spec_request_create(line):
+    return bool(re.search(r"\bgh\s+issue\s+create\b", line)
+                and "spec-request" in line)
+
+
+def check_spec_request_bodies(path):
+    """Gate 93 check 3: every spec-request board-loop.yml files gets its
+    body from board_spec_request_body.py, fed the issue-context
+    composite's context-file and nothing else."""
+    problems = []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh)
+    except yaml.YAMLError as exc:
+        return [f"{path}: could not parse as YAML ({exc})"]
+    jobs = doc.get("jobs") if isinstance(doc, dict) else None
+    if not isinstance(jobs, dict):
+        return [f"{path}: no jobs: mapping -- check 3 found nothing to "
+                f"check."]
+
+    sites = 0
+    for job_id, job in jobs.items():
+        steps = job.get("steps") if isinstance(job, dict) else None
+        if not isinstance(steps, list):
+            continue
+        # Only steps ABOVE the current one count: a context file fetched
+        # after the spec-request is filed cannot have fed its body.
+        context_step_ids = set()
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            if ISSUE_CONTEXT_USES in str(step.get("uses") or ""):
+                if step.get("id"):
+                    context_step_ids.add(str(step["id"]))
+                continue
+            name = step.get("name") or step.get("id") or "(unnamed step)"
+            where = f"{path}: job {job_id!r} step {name!r}"
+            lines = _logical_lines(str(step.get("run") or ""))
+
+            for line in lines:
+                if (re.search(r"\bgh\s+issue\s+edit\b", line)
+                        and re.search(r"--add-label[= ]\s*[\"']?spec-request",
+                                      line)):
+                    problems.append(
+                        f"{where} relabels an issue as spec-request -- its "
+                        f"body never went through {SPEC_REQUEST_BUILDER}. "
+                        f"File a new spec-request through the builder "
+                        f"instead.")
+
+            creates = [line for line in lines if _is_spec_request_create(line)]
+            if not creates:
+                continue
+            sites += len(creates)
+
+            builder_lines = [line for line in lines
+                             if "board_spec_request_body.py" in line]
+            builder_outs = {m.group(1) for line in builder_lines
+                            for m in BUILDER_OUT_RE.finditer(line)}
+            env = step.get("env")
+            if not isinstance(env, dict):
+                env = {}
+
+            for line in creates:
+                if INLINE_BODY_RE.search(line):
+                    problems.append(
+                        f"{where} files a spec-request with an inline "
+                        f"--body/-b -- the body must come from "
+                        f"{SPEC_REQUEST_BUILDER} via --body-file, so an "
+                        f"empty drafted body falls back to the "
+                        f"trust-filtered issue context.")
+                body_files = [m.group(1) for m in BODY_FILE_RE.finditer(line)]
+                if not body_files:
+                    problems.append(
+                        f"{where} files a spec-request without "
+                        f"--body-file \"$VAR\" -- the body must be the "
+                        f"file {SPEC_REQUEST_BUILDER} wrote.")
+                for var in body_files:
+                    if var not in builder_outs:
+                        problems.append(
+                            f"{where} files a spec-request with --body-file "
+                            f"\"${var}\", which no {SPEC_REQUEST_BUILDER} "
+                            f"call in this step writes (--out \"${var}\").")
+
+            for line in builder_lines:
+                ctx_vars = [m.group(1)
+                            for m in BUILDER_CONTEXT_RE.finditer(line)]
+                if len(ctx_vars) != 1:
+                    problems.append(
+                        f"{where}: {SPEC_REQUEST_BUILDER} must get exactly "
+                        f"one --context-file \"$VAR\" (found "
+                        f"{len(ctx_vars)}) -- without it an empty drafted "
+                        f"body has no trust-filtered fallback.")
+                    continue
+                var = ctx_vars[0]
+                expr = str(env.get(var) or "").strip()
+                match = CONTEXT_FILE_EXPR_RE.match(expr)
+                if not match:
+                    problems.append(
+                        f"{where}: {SPEC_REQUEST_BUILDER}'s --context-file "
+                        f"\"${var}\" is {expr or '(not set in env:)'!r}, "
+                        f"not a wing-commander-issue-context step's "
+                        f"context-file output -- the fallback must read "
+                        f"the composite's trust-filtered file and nothing "
+                        f"else (FR-056).")
+                elif match.group(1) not in context_step_ids:
+                    problems.append(
+                        f"{where}: --context-file comes from step "
+                        f"{match.group(1)!r}, which is not an earlier "
+                        f"wing-commander-issue-context step in job "
+                        f"{job_id!r}.")
+
+            for line in lines:
+                for pattern, label in UNFILTERED_READ_RES:
+                    if pattern.search(line):
+                        problems.append(
+                            f"{where} makes {label} -- unfiltered issue "
+                            f"content must never reach a spec-request "
+                            f"body (FR-056); read the composite's "
+                            f"context-file through {SPEC_REQUEST_BUILDER}.")
+
+    if sites == 0:
+        problems.append(
+            f"{path}: found no `gh issue create ... spec-request` step -- "
+            f"check 3 would pass vacuously. If the label or command "
+            f"changed, update this gate with it.")
+    return problems
+
+
 def check_repo():
     problems = []
     problems.extend(check_tool_grants(BOARD_LOOP))
+    problems.extend(check_spec_request_bodies(BOARD_LOOP))
     for path in gather_scannable_files():
         problems.extend(check_single_home(path, ISSUE_CONTEXT_ACTION))
     return problems
+
+
+_GOOD_SITE_RUN = (
+    '          set -uo pipefail\n'
+    '          spec_body_file="$RUNNER_TEMP/body.md"\n'
+    '          python3 .github/scripts/board_spec_request_body.py '
+    '--context-file "$ISSUE_CONTEXT_FILE" \\\n'
+    '            --footer "f" --out "$spec_body_file" \\\n'
+    '            || printf \'No drafted body.\\n\' > "$spec_body_file"\n'
+    '          gh issue create -R "$GITHUB_REPOSITORY" --title "t" \\\n'
+    '            --body-file "$spec_body_file" \\\n'
+    '            --label spec-request\n'
+)
+
+
+def _site_fixture(run=_GOOD_SITE_RUN,
+                  context_env="${{ steps.ctx.outputs.context-file }}",
+                  context_step_first=True):
+    fetch = (
+        "      - name: Fetch issue context\n"
+        "        id: ctx\n"
+        "        uses: ./.github/actions/wing-commander-issue-context\n"
+        "        with:\n"
+        "          token: t\n"
+        "          issue-number: 1\n"
+    )
+    site = (
+        "      - name: File the spec-request\n"
+        "        env:\n"
+        f"          ISSUE_CONTEXT_FILE: {context_env}\n"
+        "        run: |\n" + run
+    )
+    body = fetch + site if context_step_first else site + fetch
+    return ("name: gate-93-fixture-spec-request\n"
+            "jobs:\n"
+            "  route:\n"
+            "    steps:\n" + body)
+
+
+def _self_test_spec_request_sites(tmpdir):
+    """Check 3 fixtures: a well-formed site passes; each way of filing a
+    spec-request whose body can skip the trust-filtered fallback, or whose
+    fallback reads something other than the composite's context-file,
+    fails and names why."""
+    failures = []
+    good = _GOOD_SITE_RUN
+    cases = [
+        ("good site", _site_fixture(), None),
+        ("inline --body (the #509 shape)",
+         _site_fixture(run=good.replace(
+             '--body-file "$spec_body_file"',
+             '--body "${pr_body:-No drafted body.}"')),
+         "inline --body"),
+        ("--body-file not written by the builder",
+         _site_fixture(run=good.replace(
+             '--body-file "$spec_body_file"', '--body-file "$other_file"')),
+         "which no .github/scripts/board_spec_request_body.py call"),
+        ("no builder call at all",
+         _site_fixture(run=good.replace(
+             "python3 .github/scripts/board_spec_request_body.py",
+             "python3 .github/scripts/some_other.py")),
+         "which no .github/scripts/board_spec_request_body.py call"),
+        ("builder without --context-file",
+         _site_fixture(run=good.replace(
+             '--context-file "$ISSUE_CONTEXT_FILE" ', '')),
+         "exactly one --context-file"),
+        ("context from the composite's comments-file",
+         _site_fixture(
+             context_env="${{ steps.ctx.outputs.comments-file }}"),
+         "not a wing-commander-issue-context step's context-file"),
+        ("context from a self-made path",
+         _site_fixture(context_env="/tmp/wing-commander/context.md"),
+         "not a wing-commander-issue-context step's context-file"),
+        ("context from a step that is not the composite",
+         _site_fixture(
+             context_env="${{ steps.other.outputs.context-file }}"),
+         "not an earlier wing-commander-issue-context step"),
+        ("context fetched only after the site",
+         _site_fixture(context_step_first=False),
+         "not an earlier wing-commander-issue-context step"),
+        ("unfiltered gh issue view --json body,comments read",
+         _site_fixture(run=good.replace(
+             '          spec_body_file=',
+             '          gh issue view 1 --json body,comments > "$RUNNER_TEMP/raw.json"\n'
+             '          spec_body_file=')),
+         "read of body/comments"),
+        ("unfiltered gh issue view --comments read",
+         _site_fixture(run=good.replace(
+             '          spec_body_file=',
+             '          gh issue view 1 --comments > "$RUNNER_TEMP/raw.md"\n'
+             '          spec_body_file=')),
+         "gh issue view --comments"),
+        ("unfiltered gh api issue read",
+         _site_fixture(run=good.replace(
+             '          spec_body_file=',
+             '          gh api "repos/x/y/issues/1/comments" > raw.json\n'
+             '          spec_body_file=')),
+         "a `gh api` issue read"),
+        ("relabel an existing issue as spec-request",
+         _site_fixture(run=good + (
+             '          gh issue edit 1 --add-label spec-request\n')),
+         "relabels an issue as spec-request"),
+        ("no spec-request site at all (vacuous)",
+         _site_fixture(run=good.replace("spec-request", "board:stalled")),
+         "would pass vacuously"),
+    ]
+    for index, (label, text, expect) in enumerate(cases):
+        path = os.path.join(tmpdir, f"gate-93-fixture-spec-{index}.yml")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        problems = check_spec_request_bodies(path)
+        if expect is None:
+            if problems:
+                failures.append(f"check 3 fixture {label!r} should pass but "
+                                f"was flagged: {problems!r}")
+            continue
+        if not problems:
+            failures.append(f"check 3 fixture {label!r} was not caught")
+        elif expect not in " ".join(problems):
+            failures.append(f"check 3 fixture {label!r} was caught without "
+                            f"naming {expect!r}: {problems!r}")
+        else:
+            print(f"note: check 3 fixture {label!r} caught.")
+    return failures
+
+
+def _load_builder():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "board_spec_request_body", SPEC_REQUEST_BUILDER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _self_test_builder():
+    """board_spec_request_body.py: fallback order, the one-line fallback,
+    and truncation under GitHub's body limit with a visible note."""
+    failures = []
+    try:
+        b = _load_builder()
+    except (OSError, ImportError, SyntaxError) as exc:
+        return [f"could not load {SPEC_REQUEST_BUILDER}: {exc}"]
+
+    ctx = "## Issue\n\nTitle\n\nThe issue body."
+    body = b.build_body(drafted="", context=ctx, footer="Routed from x")
+    if not body.startswith(b.CONTEXT_HEADING + "\n\n" + ctx):
+        failures.append(f"builder: an empty drafted body did not fall back "
+                        f"to the labelled context: {body[:200]!r}")
+    if not body.endswith("\n\n---\nRouted from x"):
+        failures.append(f"builder: footer missing or misplaced: {body!r}")
+
+    body = b.build_body(drafted="Drafted.", context=ctx)
+    if body != "Drafted." or ctx in body:
+        failures.append(f"builder: a drafted body should win over the "
+                        f"context: {body!r}")
+
+    body = b.build_body(drafted="  \n", context="", notice="N", footer="F")
+    if body != "N\n\nNo drafted body.\n\n---\nF":
+        failures.append(f"builder: missing context did not produce the "
+                        f"one-line fallback: {body!r}")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        missing = os.path.join(tmpdir, "nope.md")
+        if b.read_text(missing) != "" or b.read_text("") != "":
+            failures.append("builder: a missing/empty context path did not "
+                            "read as empty")
+        out = os.path.join(tmpdir, "out.md")
+        b.main(["--context-file", missing, "--out", out])
+        with open(out, encoding="utf-8") as fh:
+            if fh.read().strip() != b.NO_BODY_FALLBACK:
+                failures.append("builder CLI: a missing context file did "
+                                "not produce the one-line fallback")
+
+    huge = "## Issue\n\n" + ("x" * 50000) + ("\U0001F600" * 20000)
+    notice = "n" * 300
+    footer = "f" * 300
+    for label, kwargs in (("context", {"context": huge}),
+                          ("drafted", {"drafted": huge})):
+        body = b.build_body(notice=notice, footer=footer, **kwargs)
+        units = b.utf16_len(body)
+        if units >= b.GITHUB_BODY_LIMIT or units > b.MAX_BODY_UNITS:
+            failures.append(f"builder: an oversized {label} produced "
+                            f"{units} UTF-16 units, over the limit")
+        if "_[Truncated:" not in body:
+            failures.append(f"builder: an oversized {label} was cut "
+                            f"without a visible truncation note")
+        if not (body.startswith(notice) and body.endswith(footer)):
+            failures.append(f"builder: truncating an oversized {label} "
+                            f"lost the notice or footer")
+    if not failures:
+        print("note: builder unit tests passed (fallback order, one-line "
+              "fallback, truncation under the limit with a note).")
+    return failures
+
+
+# Each mutation rewrites the REAL board-loop.yml in memory the way a later
+# edit could reopen #509's gap; check 3 must catch every one.
+SPEC_REQUEST_MUTATIONS = (
+    ("route site's body inlined again",
+     '--body-file "$spec_body_file" --label spec-request',
+     '--body "${pr_body:-No drafted body.}" --label spec-request'),
+    ("fallback fed the comments-file",
+     "ISSUE_CONTEXT_FILE: ${{ steps.issue-context-route.outputs.context-file }}",
+     "ISSUE_CONTEXT_FILE: ${{ steps.issue-context-route.outputs.comments-file }}"),
+    ("fallback fed an unfiltered issue read",
+     "ISSUE_CONTEXT_FILE: ${{ steps.issue-context-breach.outputs.context-file }}",
+     "ISSUE_CONTEXT_FILE: /tmp/raw.md"),
+    ("builder dropped from the readiness site",
+     '--context-file "$ISSUE_CONTEXT_FILE" \\\n'
+     '              --notice',
+     '--notice'),
+)
+
+
+def _mutation_check_spec_request_sites():
+    failures = []
+    try:
+        with open(BOARD_LOOP, encoding="utf-8") as fh:
+            original = fh.read()
+    except OSError as exc:
+        return [f"mutation check: could not read {BOARD_LOOP}: {exc}"]
+    with tempfile.TemporaryDirectory() as tmpdir:
+        for label, old, new in SPEC_REQUEST_MUTATIONS:
+            if old not in original:
+                failures.append(
+                    f"mutation {label!r} no longer applies ({old!r} not in "
+                    f"{BOARD_LOOP}) -- update SPEC_REQUEST_MUTATIONS so "
+                    f"this gate stays proven.")
+                continue
+            path = os.path.join(tmpdir, "board-loop-mutated.yml")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(original.replace(old, new, 1))
+            if not check_spec_request_bodies(path):
+                failures.append(f"mutation {label!r} was NOT caught")
+            else:
+                print(f"note: mutation caught ({label}).")
+    return failures
 
 
 def run_self_test():
@@ -397,6 +818,10 @@ def run_self_test():
                     f"action.yml) was flagged against itself: "
                     f"{self_problems!r}")
 
+        failures.extend(_self_test_spec_request_sites(tmpdir))
+    failures.extend(_self_test_builder())
+    failures.extend(_mutation_check_spec_request_sites())
+
     # Re-confirm the real fleet still passes, so a self-test fixture
     # leaking into the real check cannot read as green.
     if check_repo():
@@ -422,8 +847,10 @@ def main():
         print(f"Gate 93: {len(real_problems)} problem(s).")
         return 1
     print("Gate 93: board-loop.yml grants no agent step gh issue view/gh "
-          "api, and wing-commander-issue-context's trust filter has "
-          "exactly one home.")
+          "api, wing-commander-issue-context's trust filter has exactly "
+          "one home, and every spec-request board-loop.yml files takes "
+          "its body from board_spec_request_body.py with the "
+          "composite's context-file as its fallback.")
 
     if not self_test:
         return 0
@@ -437,9 +864,12 @@ def main():
 
     print("Gate 93 self-test: every fixture (a direct grant, the bare/"
           "open/claude_args-appended bypasses, and the inline "
-          "re-implementation) was caught, the legitimate gh pr view "
-          "grant and the exempt file were both left alone, and the real "
-          "fleet passes.")
+          "re-implementation, every spec-request site that skips the "
+          "trust-filtered fallback, and every mutation of the real "
+          "sites) was caught, the legitimate gh pr view grant, the "
+          "exempt file and the well-formed site were left alone, the "
+          "spec-request body builder passed its unit tests, and the "
+          "real fleet passes.")
     return 0
 
 

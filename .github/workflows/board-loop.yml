@@ -1327,12 +1327,15 @@ jobs:
       # fix job (Phase 5) with no comment of its own here -- the fix job's
       # own closing step is the next place this item's status is posted, so
       # a maintainer is not shown two comments for one step.
+      # The body falls back to the trust-filtered issue context when
+      # route-propose drafted no pr-body -- see board_spec_request_body.py.
       - name: Create the spec-request artifact on a spec verdict
         id: spec_request
         if: steps.killswitch-recheck.outputs.paused != 'true'
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}
+          ISSUE_CONTEXT_FILE: ${{ steps.issue-context-route.outputs.context-file }}
         run: |
           set -uo pipefail
           verdict="$(jq -r '.decision.backstop_verdict' "$RUNNER_TEMP/board-route-decision.json")"
@@ -1347,15 +1350,18 @@ jobs:
 
           measured="$(jq -c '.decision.measured' "$RUNNER_TEMP/board-route-decision.json")"
           pr_title="$(jq -r '.proposal["pr-title"] // empty' "$RUNNER_TEMP/board-route-decision.json")"
-          pr_body="$(jq -r '.proposal["pr-body"] // empty' "$RUNNER_TEMP/board-route-decision.json")"
+          jq -r '.proposal["pr-body"] // empty' "$RUNNER_TEMP/board-route-decision.json" > "$RUNNER_TEMP/board-spec-request-drafted.md"
           issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)"
 
           spec_title="${pr_title:-$issue_title}"
-          spec_body="$(printf '%s\n\n---\nRouted from board-loop.yml (issue #%s): reason=%s, measured=%s.\nOriginating issue: %s/%s/issues/%s' \
-            "${pr_body:-No drafted body.}" "$ISSUE_NUMBER" "$reason" "$measured" \
-            "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$ISSUE_NUMBER")"
+          footer="$(printf 'Routed from board-loop.yml (issue #%s): reason=%s, measured=%s.\nOriginating issue: %s/%s/issues/%s' \
+            "$ISSUE_NUMBER" "$reason" "$measured" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$ISSUE_NUMBER")"
+          spec_body_file="$RUNNER_TEMP/board-spec-request-body.md"
+          python3 .github/scripts/board_spec_request_body.py --context-file "$ISSUE_CONTEXT_FILE" \
+            --drafted-body-file "$RUNNER_TEMP/board-spec-request-drafted.md" --footer "$footer" --out "$spec_body_file" \
+            || printf 'No drafted body.\n\n---\n%s\n' "$footer" > "$spec_body_file"
 
-          spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$spec_title" --body "$spec_body" --label spec-request)"
+          spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$spec_title" --body-file "$spec_body_file" --label spec-request)"
           echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
 
           marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, None, None))")"
@@ -1749,6 +1755,22 @@ jobs:
           set -uo pipefail
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(cat "$RUNNER_TEMP/board-fix-marker.txt")"
 
+      # The spec-request body below carries the originating issue's
+      # trust-filtered context -- see board_spec_request_body.py. It is
+      # fetched again here rather than reusing the fixer's copy: the fixer
+      # holds Write/Edit, so the file staged before it ran is no longer
+      # known to be the composite's own output. continue-on-error so a
+      # failed fetch degrades to the one-line fallback instead of skipping
+      # the breach notice and spec-request below.
+      - name: Fetch issue context (post-push-breach spec-request)
+        id: issue-context-breach
+        if: steps.push-pr.outputs.pr-url != '' && steps.final-diff-backstop.outputs.breach == 'true'
+        continue-on-error: true
+        uses: ./.github/actions/wing-commander-issue-context
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          issue-number: ${{ needs.select.outputs.issue-number }}
+
       # FR-021: a newly introduced breach on the final diff leaves the
       # branch/PR open under a notice and spins off a spec-request pointing
       # at both -- NEVER deletes the branch or PR.
@@ -1759,13 +1781,20 @@ jobs:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}
           PR_URL: ${{ steps.push-pr.outputs.pr-url }}
+          ISSUE_CONTEXT_FILE: ${{ steps.issue-context-breach.outputs.context-file }}
         run: |
           set -uo pipefail
           measured="$(jq -c '.measured' "$RUNNER_TEMP/board-fix-final-diff-decision.json")"
           issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)"
+          notice="$(printf 'The fix at %s grew past the board'"'"'s size-and-path backstop on its final diff (measured=%s). The branch/PR are left open, unmerged, under a notice -- this spec request covers finishing the work at the size a human plan should decide.' "$PR_URL" "$measured")"
+          footer="$(printf 'Originating issue: %s/%s/issues/%s' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$ISSUE_NUMBER")"
+          spec_body_file="$RUNNER_TEMP/board-spec-request-body.md"
+          python3 .github/scripts/board_spec_request_body.py --context-file "$ISSUE_CONTEXT_FILE" \
+            --notice "$notice" --footer "$footer" --out "$spec_body_file" \
+            || printf '%s\n\nNo drafted body.\n\n---\n%s\n' "$notice" "$footer" > "$spec_body_file"
           spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" \
             --title "$issue_title" \
-            --body "$(printf 'The fix at %s grew past the board'"'"'s size-and-path backstop on its final diff (measured=%s). The branch/PR are left open, unmerged, under a notice -- this spec request covers finishing the work at the size a human plan should decide.\n\nOriginating issue: %s/%s/issues/%s' "$PR_URL" "$measured" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$ISSUE_NUMBER")" \
+            --body-file "$spec_body_file" \
             --label spec-request)"
           echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
           echo "measured=$measured" >> "$GITHUB_OUTPUT"
@@ -2725,6 +2754,20 @@ jobs:
           marker="$(python3 -c "import os, sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('readiness', 0, int(os.environ['PR_NUMBER']), None, None))")"
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf '%s\n\n%s' "$body" "$marker")"
 
+      # Fetched only when a backstop breach is about to file a
+      # spec-request, whose body carries this trust-filtered context -- see
+      # board_spec_request_body.py. continue-on-error so a failed fetch
+      # degrades to the one-line fallback instead of skipping the
+      # report-unmet step below.
+      - name: Fetch issue context (readiness-breach spec-request)
+        id: issue-context-readiness
+        if: steps.decide.outputs.ready != 'true' && steps.final-diff-backstop.outputs.holds != 'true'
+        continue-on-error: true
+        uses: ./.github/actions/wing-commander-issue-context
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          issue-number: ${{ needs.select.outputs.issue-number }}
+
       # FR-067/FR-021: a final-diff backstop breach routes through the same
       # spec-request-and-notice path the fix job's own post-push breach
       # uses, rather than merely reporting "not ready" -- any other unmet
@@ -2739,14 +2782,21 @@ jobs:
           PR_NUMBER: ${{ steps.pr.outputs.pr-number }}
           BACKSTOP_HOLDS: ${{ steps.final-diff-backstop.outputs.holds }}
           MEASURED: ${{ steps.final-diff-backstop.outputs.measured }}
+          ISSUE_CONTEXT_FILE: ${{ steps.issue-context-readiness.outputs.context-file }}
         run: |
           set -uo pipefail
           unmet="$(jq -r '.unmet_reason' "$RUNNER_TEMP/board-readiness-decision.json")"
 
           if [ "$BACKSTOP_HOLDS" != "true" ]; then
             issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)"
+            notice="$(printf 'PR #%s grew past the board'"'"'s size-and-path backstop by readiness time (measured: %s). The branch/PR are left open, unmerged, under a notice -- this spec request covers finishing the work at the size a human plan should decide.' "$PR_NUMBER" "$MEASURED")"
+            footer="$(printf 'Originating issue: %s/%s/issues/%s' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$ISSUE_NUMBER")"
+            spec_body_file="$RUNNER_TEMP/board-spec-request-body.md"
+            python3 .github/scripts/board_spec_request_body.py --context-file "$ISSUE_CONTEXT_FILE" \
+              --notice "$notice" --footer "$footer" --out "$spec_body_file" \
+              || printf '%s\n\nNo drafted body.\n\n---\n%s\n' "$notice" "$footer" > "$spec_body_file"
             spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$issue_title" \
-              --body "$(printf 'PR #%s grew past the board'"'"'s size-and-path backstop by readiness time (measured: %s). The branch/PR are left open, unmerged, under a notice -- this spec request covers finishing the work at the size a human plan should decide.' "$PR_NUMBER" "$MEASURED")" \
+              --body-file "$spec_body_file" \
               --label spec-request)"
             marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, None, None))")"
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Readiness backstop breach on PR #%s (measured: %s) -- the branch/PR are left open, unmerged; a spec-request now covers finishing this at the right size.\n\n%s' "$PR_NUMBER" "$MEASURED" "$marker")"
