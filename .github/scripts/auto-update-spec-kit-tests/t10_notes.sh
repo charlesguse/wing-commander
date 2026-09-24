@@ -68,7 +68,7 @@ cat > "$MUT_OLD" <<'EOF'
 releases_json="$(gh api repos/github/spec-kit/releases --paginate --jq '.[] | select(.prerelease == false)' 2>/dev/null | jq -s '.')" || releases_json='[]'
 EOF
 cat > "$MUT_NEW" <<'EOF'
-releases_json="$(gh api repos/github/spec-kit/releases --paginate 2>/dev/null || echo '[]')"
+releases_json="$(gh api repos/github/spec-kit/releases --paginate 2>/dev/null || echo '[]')"  # wc-pagination-exempt: T033 mutation-drill fixture text (deliberately the broken pre-fix shape, substituted in and executed to prove the scenario above breaks without it), not a real invocation
 EOF
 notes_mutated() { # notes_mutated <pinned> <candidate> <releases-file> -> sets N_BUNDLE; returns 1 if the mutation no longer applies
   new_step_env

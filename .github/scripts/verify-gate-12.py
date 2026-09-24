@@ -687,16 +687,16 @@ CASES = [
             ['gh api -X GET "repos/$REPO/contents/$P" -f ref="$BRANCH" --jq .content']),
      False, ()),
 
-    ("gh api --method GET --paginate stays a read and its path is still "
-     "parsed (not mistaken for `--method`)",
+    ("the --method GET / --paginate combination stays a read and its path "
+     "is still parsed (not mistaken for `--method`)",
      mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
-            ['gh api --method GET "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate']),
+            ['gh api --method GET "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate']),  # wc-pagination-exempt: Gate 12 self-test fixture text (this repo's own no-filter shape, deliberately unfiltered to test Gate 12's own --method parsing), not a real invocation
      False, ()),
 
     ("... and under the App token that same --method GET Actions read fails, "
      "proving the path was seen",
      mkcase("", "", [APP_ENV],
-            ['gh api --method GET "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate']),
+            ['gh api --method GET "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate']),  # wc-pagination-exempt: Gate 12 self-test fixture text, not a real invocation
      True, ("actions", "App token")),
 
     # The method is read from THIS call's own executable arguments only
