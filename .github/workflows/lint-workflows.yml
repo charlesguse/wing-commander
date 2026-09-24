@@ -3986,15 +3986,20 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-prove.py
 
-      # Gate 90 — #488: a literal board:* label applied via --add-label or
-      # --label with no matching `gh label create ... --force` anywhere in
-      # workflows/actions fails on a repo that never created it by hand,
-      # exactly the shape that left board:stalled unappliable and let route
-      # re-open a duplicate spec-request on every scheduled run.
-      - name: Gate 90 — every applied board:* label has a matching gh label create
+      # Gate 90 — #488/#493, two tiers, both job-scoped (never file-wide "a
+      # create exists somewhere"): (1) a literal board:* label applied via
+      # --add-label/--label/-l in ANY workflow or composite action with no
+      # matching `gh label create ... --force` -- inline, or via a local
+      # composite (`uses: ./...`) whose OWN steps create it -- at an
+      # earlier step of that SAME job; (2) board-loop.yml additionally
+      # checked for EVERY literal label it applies, not just board:*. Both
+      # are the shape that left board:stalled and spec-request unappliable
+      # and let route re-open a duplicate spec-request on every scheduled
+      # run.
+      - name: Gate 90 — every applied label has a matching gh label create in the same job
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-label-creation.py
-      - name: Gate 90 self-test — a missing create fails, a cross-file create passes, a variable-named label is out of scope
+      - name: Gate 90 self-test — a missing create fails, a composite's own creates are derived (not assumed), same-job coverage passes, cross-job/cross-file coverage does not, and a variable-named label is out of scope
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-label-creation.py --self-test
 
