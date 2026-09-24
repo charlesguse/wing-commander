@@ -17,8 +17,10 @@ second, divergent way: a `rate_limit_event` record, or a terminal
 transcript.
 
 Ground 2 (action bump) has no prior art in this repository (research.md D4):
-it diffs each workflow file's `uses: owner/action@ref` pins as they stood at
-the cited run's own commit against the same file's pins on current `main`.
+it diffs the cited run's own workflow file's `uses: owner/action@ref` pins
+(plus those of the local reusable workflows it calls -- never any other
+workflow, #505) as they stood at the cited run's own commit against the
+same file's pins on current `main`.
 Because the cited run's commit is (by construction, verified here) an
 ancestor of `main` on a fast-forward-only branch, ANY divergent pin between
 that commit and `main` is, by definition, a pin `main` moved to later --
@@ -122,22 +124,82 @@ def _first_divergent_pin(workflow_file, run_pins, main_pins):
     return None
 
 
-def check_action_bump(run_commit_sha, workflow_files):
-    """NEW (research.md D4). Runtime wrapper: reads each workflow file's
-    `uses:` pins as they stood at run_commit_sha (via `git show`) and on
-    current main (HEAD of this checkout, i.e. the working tree), and
-    returns the first divergence via _first_divergent_pin(). Because
-    run_commit_sha is verified here to be an ancestor of main on a
-    fast-forward-only branch, any divergence found IS main's pin being the
-    newer one -- there is no older-pin case once ancestry holds. Returns
-    None when every pin matches, the commit cannot be confirmed as an
-    ancestor of main, or a workflow file's content cannot be read at that
-    commit."""
+# A `uses: ./.github/workflows/<name>.yml` line -- a local reusable
+# workflow the cited workflow calls, and so part of what the cited run
+# executed. A local ref carries no `@ref`, so _uses_pins() never reads it
+# as a pin; this pattern only widens the scope to the callee's own file.
+LOCAL_REUSABLE_RE = re.compile(
+    r"^\s*(?:-\s+)?uses:\s*[\"']?\./(\.github/workflows/[^\s\"'@#]+\.ya?ml)",
+    re.MULTILINE)
+
+
+def _normalize_workflow_path(path):
+    """The run API's `path` field (".github/workflows/x.yml"), with any
+    trailing "@ref" stripped. None for a missing or blank value."""
+    if not path:
+        return None
+    return str(path).strip().split("@", 1)[0] or None
+
+
+def _scoped_workflow_files(cited_workflow_path, workflow_files, read_at_run):
+    """#505: the only files check_action_bump() may compare -- the cited
+    run's own workflow plus every local reusable workflow it calls
+    (transitively, each as it stood at the run's commit). A bump in an
+    unrelated workflow says nothing about why THIS run failed, so it must
+    never become close evidence for the issue that cites the run.
+
+    `workflow_files` is main's own tracked workflow list and only bounds
+    the scope: a cited path not in it (a dynamic workflow such as
+    "dynamic/pages/...", or one since deleted or renamed) yields [] --
+    there is no main-side file to compare against, so no bump can be
+    shown. `read_at_run(path)` returns the file's text at the run's
+    commit, or None; it is injected so this stays fixturable without a git
+    history. Order: the cited workflow first, then callees as found."""
+    cited = _normalize_workflow_path(cited_workflow_path)
+    tracked = set(workflow_files or [])
+    if cited is None or cited not in tracked:
+        return []
+    scoped = []
+    queue = [cited]
+    while queue:
+        path = queue.pop(0)
+        if path in scoped or path not in tracked:
+            continue
+        scoped.append(path)
+        queue.extend(LOCAL_REUSABLE_RE.findall(read_at_run(path) or ""))
+    return scoped
+
+
+def check_action_bump(run_commit_sha, workflow_files, cited_workflow_path):
+    """NEW (research.md D4). Runtime wrapper: reads the `uses:` pins of the
+    cited run's own workflow file(s) -- cited_workflow_path (the run API's
+    `path` field) plus the local reusable workflows it calls, see
+    _scoped_workflow_files() -- as they stood at run_commit_sha (via
+    `git show`) and on current main (HEAD of this checkout, i.e. the
+    working tree), and returns the first divergence via
+    _first_divergent_pin(). workflow_files (main's tracked workflows)
+    bounds that scope and never widens it (#505). Because run_commit_sha
+    is verified here to be an ancestor of main on a fast-forward-only
+    branch, any divergence found IS main's pin being the newer one --
+    there is no older-pin case once ancestry holds. Returns None when
+    every in-scope pin matches, the cited workflow is unknown or not
+    tracked on main, the commit cannot be confirmed as an ancestor of
+    main, or a workflow file's content cannot be read at that commit."""
+    if _normalize_workflow_path(cited_workflow_path) is None:
+        return None
     if not _is_ancestor(run_commit_sha):
         return None
 
-    for workflow_file in workflow_files:
-        run_text = _git_show(run_commit_sha, workflow_file)
+    run_texts = {}
+
+    def read_at_run(path):
+        if path not in run_texts:
+            run_texts[path] = _git_show(run_commit_sha, path)
+        return run_texts[path]
+
+    for workflow_file in _scoped_workflow_files(
+            cited_workflow_path, workflow_files, read_at_run):
+        run_text = read_at_run(workflow_file)
         if run_text is None:
             continue
         try:
@@ -157,7 +219,7 @@ def triage(issue, cited_run):
     """Read-only until this return value (FR-011). See data-model.md
     "Triage Verdict". `issue` carries at least {"cited_run_url": str|None,
     "cited_run_commit_sha": str|None, "cited_run_transcript_path": str|None,
-    "workflow_files": [str], "agent_proposal": {"close": bool, "ground":
+    "cited_run_workflow_path": str|None, "workflow_files": [str], "agent_proposal": {"close": bool, "ground":
     str|None, "proposed_commit_sha": str|None, "reasoning": str|None}}.
 
     "already fixed on `main`" (FR-012's explicit deferral) has no ground
@@ -192,7 +254,8 @@ def triage(issue, cited_run):
     commit_sha = issue.get("cited_run_commit_sha")
     workflow_files = issue.get("workflow_files") or []
     if commit_sha:
-        bump_evidence = check_action_bump(commit_sha, workflow_files)
+        bump_evidence = check_action_bump(
+            commit_sha, workflow_files, issue.get("cited_run_workflow_path"))
         if bump_evidence is not None:
             return {"outcome": "closed", "ground": "action_bump",
                     "evidence": bump_evidence, "agent_proposal": None}
@@ -222,10 +285,72 @@ def _record_disagreement(outcome, proposal):
     return outcome
 
 
+FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
+def _unquoted_unfenced(text):
+    """`text` with every `>`-quoted line and every fenced code block
+    removed. #505 review: a trusted author quote-replying to a stranger's
+    comment (or pasting it in a code block) carries the stranger's run link
+    into trusted text; neither is the trusted author citing that run. An
+    unclosed fence runs to the end of the text, as it renders -- that can
+    only drop a cite, never add one."""
+    kept = []
+    fence = None
+    for line in (text or "").split("\n"):
+        if fence is not None:
+            stripped = line.lstrip(" ")
+            if (len(line) - len(stripped) <= 3 and stripped.startswith(fence)
+                    and not stripped.rstrip().lstrip(fence[0])):
+                fence = None
+            continue
+        match = FENCE_OPEN_RE.match(line)
+        if match:
+            fence = match.group(1)
+            continue
+        if line.lstrip().startswith(">"):
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
+def find_cited_run(text, repository):
+    """#505: the run an issue cites, from text that already passed
+    wing-commander-issue-context's trust filter (its context-file: title,
+    body, then qualifying comments oldest first). Quoted lines and fenced
+    code blocks are ignored (see _unquoted_unfenced). A watchdog issue's own
+    `_First seen: [this run](URL)_` marker (watchdog.yml) wins over any
+    other run link; otherwise the first run link of `repository` wins.
+    Returns the run URL (https://github.com/OWNER/REPO/actions/runs/ID) or
+    None."""
+    run_url = r"https://github\.com/{0}/actions/runs/[0-9]+".format(
+        re.escape(repository))
+    scanned = _unquoted_unfenced(text)
+    first_seen = re.search(
+        r"_First seen: \[this run\]\((" + run_url + r")[^)\s]*\)_", scanned)
+    if first_seen:
+        return first_seen.group(1)
+    match = re.search(run_url + r"(?![0-9])", scanned)
+    return match.group(0) if match else None
+
+
 def main():
     """Runtime entry point: reads the same shape triage() expects from
     stdin as JSON `{"issue": {...}, "cited_run": str|None}`, prints the
-    TriageVerdict as JSON to stdout."""
+    TriageVerdict as JSON to stdout.
+
+    `find-cited-run --repository OWNER/REPO FILE` instead prints
+    find_cited_run() of FILE (nothing when no run is cited) -- the single
+    home board-loop.yml's triage `cite` step calls."""
+    if len(sys.argv) > 1 and sys.argv[1] == "find-cited-run":
+        import argparse
+        parser = argparse.ArgumentParser(prog="board_triage.py find-cited-run")
+        parser.add_argument("--repository", required=True)
+        parser.add_argument("context_file")
+        args = parser.parse_args(sys.argv[2:])
+        with open(args.context_file, encoding="utf-8") as fh:
+            print(find_cited_run(fh.read(), args.repository) or "")
+        return
     payload = json.load(sys.stdin)
     verdict = triage(payload.get("issue") or {}, payload.get("cited_run"))
     print(json.dumps(verdict))
