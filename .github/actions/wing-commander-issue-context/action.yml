@@ -22,6 +22,15 @@
 # per specs/057-autonomous-board-loop FR-056, must not be granted any
 # `gh issue` tool of its own.
 #
+# A failed `gh api` in the paginated comments fetch (network error, rate
+# limit, permissions) FAILS THIS STEP -- `shell: bash` on a composite
+# step's `run:` gets the same `-eo pipefail` default a workflow `run:`
+# step does (matching intake.yml's own pre-extraction step, which relied
+# on the same default and never handled this differently), so the
+# `gh api ... | jq -s '.'` pipeline's failing exit code propagates rather
+# than the step silently continuing with an empty comment list. A caller
+# never sees a false "zero comments" for what was actually an API error.
+#
 # Written under /tmp/wing-commander, matching intake.yml's own established
 # convention exactly (contracts/comment-staging-format.md: "runner-local,
 # matching clarify.yml's /tmp/wing-commander/ convention") rather than

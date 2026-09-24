@@ -1995,6 +1995,8 @@ jobs:
       # dropped and logged, same discipline as spec 056's D5/D11.
       - name: Extract and validate the review findings
         id: extract
+        env:
+          REVIEW_VERDICT: ${{ steps.review-verdict.outputs.verdict }}
         run: |
           set -uo pipefail
           python3 - <<'PYEOF'
@@ -2023,7 +2025,24 @@ jobs:
           # branch below that could not get real findings out of the
           # transcript sets it, and "Decide the round outcome" checks it
           # before ever looking at in-scope-count.
-          parse_failed = False
+          #
+          # #499 round 4 (BLOCKER): parse_failed used to be set only
+          # inside `if os.path.isfile(path):`, so a reviewer step that
+          # died before ever writing claude-execution-output.json (no
+          # file at all -- crashed before the SDK could flush it, was
+          # OOM-killed, etc.) left parse_failed False, in-scope-count 0,
+          # and the round read as "converged" -- a PR advanced to
+          # readiness having never been reviewed. Missing file, a
+          # non-healthy agent verdict, and "every extracted item was
+          # malformed" (dropped > 0, kept == 0 -- not the same as the
+          # agent genuinely returning `[]`) now all set it too.
+          review_verdict = os.environ.get("REVIEW_VERDICT") or ""
+          if review_verdict and review_verdict != "healthy":
+              print("::warning::board-loop reviewer: agent verdict was {0!r}, not 'healthy' -- the round will be treated as not completed, not as zero findings".format(review_verdict))
+              parse_failed = True
+          else:
+              parse_failed = False
+
           if os.path.isfile(path):
               with open(path, encoding="utf-8") as fh:
                   try:
@@ -2050,6 +2069,12 @@ jobs:
               else:
                   print("::warning::board-loop reviewer: claude-execution-output.json has no terminal result record -- the round will be treated as not completed, not as zero findings")
                   parse_failed = True
+          else:
+              # #499 round 4 (BLOCKER): the file itself is missing -- the
+              # reviewer step never got as far as writing a transcript at
+              # all. This is the case the original code silently missed.
+              print("::warning::board-loop reviewer: claude-execution-output.json does not exist -- the round will be treated as not completed, not as zero findings")
+              parse_failed = True
 
           kept = []
           dropped = 0
@@ -2060,6 +2085,13 @@ jobs:
               else:
                   dropped += 1
                   print("board-loop review: dropping a malformed finding -- {0}".format(reason))
+
+          if dropped > 0 and not kept:
+              # #499 round 4: every item the agent returned was malformed
+              # -- this is not the same as the agent genuinely finding
+              # nothing (an empty array), and must not read as one.
+              print("::warning::board-loop reviewer: {0} finding(s) were extracted but all were malformed -- the round will be treated as not completed, not as zero findings".format(dropped))
+              parse_failed = True
 
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "board-review-findings.json"), "w", encoding="utf-8") as fh:
@@ -2079,6 +2111,8 @@ jobs:
       # PR and its review share the wing-commander-bot App identity.
       - name: Compose the review body
         id: compose-review
+        env:
+          PARSE_FAILED: ${{ steps.extract.outputs.parse-failed }}
         run: |
           set -uo pipefail
           python3 - <<'PYEOF'
@@ -2089,8 +2123,23 @@ jobs:
           with open(os.path.join(runner_temp, "board-review-findings.json"), encoding="utf-8") as fh:
               findings = json.load(fh)
 
+          # #499 round 4: a parse failure must never read to a human as
+          # "No findings." (a clean review) -- see "Extract and validate
+          # the review findings" and "Decide the round outcome" above.
+          # != "false" so an empty/missing output posts the inconclusive
+          # body too, the same fail-closed default used there.
+          parse_failed = os.environ.get("PARSE_FAILED", "") != "false"
+
           lines = ["Board loop review."]
-          if not findings:
+          if parse_failed:
+              lines.append("")
+              lines.append(
+                  "Inconclusive -- this round did not produce a "
+                  "parseable findings list (a missing or malformed "
+                  "reviewer result, or a non-healthy agent verdict). "
+                  "Findings below, if any, are whatever could still be "
+                  "salvaged; do not read this as a clean review.")
+          elif not findings:
               lines.append("")
               lines.append("No findings.")
           for f in findings:
@@ -2302,7 +2351,11 @@ jobs:
           ROUND_BUDGET: ${{ env.BOARD_LOOP_ROUND_BUDGET }}
         run: |
           set -uo pipefail
-          if [ "$PARSE_FAILED" = "true" ]; then
+          # #499 round 4: != "false", not = "true" -- an empty or missing
+          # PARSE_FAILED output (the extract step itself failed to run, or
+          # its outputs step never executed) must stall too, not silently
+          # fall through to the in-scope-count branch below.
+          if [ "$PARSE_FAILED" != "false" ]; then
             echo "outcome=stalled" >> "$GITHUB_OUTPUT"
             echo "stall-reason=parse-failed" >> "$GITHUB_OUTPUT"
           elif [ "$IN_SCOPE_COUNT" -eq 0 ]; then

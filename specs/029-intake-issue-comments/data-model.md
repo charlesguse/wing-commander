@@ -53,8 +53,10 @@ qualifies(c, issue_author_id) :=
 ```
 
 Written, in `created_at` order, to a single staged file (default path
-`/tmp/wing-commander/intake-comments.md`) with one section per qualifying
-comment:
+`/tmp/wing-commander/issue-context-<issue-number>/comments.md` as of
+#499's round-3 extraction into the shared `wing-commander-issue-context`
+composite action; originally `/tmp/wing-commander/intake-comments.md`)
+with one section per qualifying comment:
 
 ```
 ## Comment by @<user.login> (<created_at>)

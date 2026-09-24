@@ -27,12 +27,19 @@ WHAT IT DOES
      re.M) -- a fence embedded inside a diff or quoted code block is
      never bare on its own line the way a real closing fence is (a diff
      line always carries at least a leading +/-/space character), so this
-     cannot be fooled by one.
+     cannot be fooled by one. A model that omits the trailing fence
+     entirely (no closing fence at all) is NOT treated as a failure here:
+     the block is read to the end of the text instead, on the theory that
+     an agent's fenced answer is normally its final content anyway, so
+     whatever follows the opening fence is the best available payload.
   4. Parses the block as JSON.
 
 Returns `(value, None)` on success, `(None, "<reason>")` on any failure
-(no opening fence, no closing fence, invalid JSON) -- the caller decides
-what "failure" means for its own output. triage-propose and route-propose
+(no opening fence at all, or the matched block's text is not valid JSON)
+-- the caller decides what "failure" means for its own output. Gate 94
+(verify-fence-extract.py) asserts the missing-closing-fence case
+specifically reads to end of text rather than failing. triage-propose
+and route-propose
 fall back to an already-safe default (close=False / category=spec) on
 failure; the reviewer must NOT do the equivalent (silently reading as
 "zero findings" would advance a possibly-unreviewed PR straight to

@@ -36,7 +36,7 @@ a permissions change").
 
 **Primary Dependencies**: GitHub Actions (`workflow_call`), `gh` CLI (`gh api` for issue + issue-comments REST reads — the same command family `clarify.yml` already uses for its single-comment fetch), `jq` (comment filtering/counting, already a dependency of `wing-commander-preflight`), `anthropics/claude-code-action@v1` (unchanged invocation shape — no new `claude_args`), `/speckit-specify` skill (consumed as-is, unchanged — research.md D6).
 
-**Storage**: N/A — no persisted state. The staged comments file (`/tmp/wing-commander/intake-comments.md`) is runner-local and discarded with the job, matching `clarify.yml`'s existing `/tmp/wing-commander/` staging convention. Nothing new is written to `spec-meta.json`.
+**Storage**: N/A — no persisted state. The staged comments file (`/tmp/wing-commander/issue-context-<issue-number>/comments.md` as of #499's round-3 extraction into the shared `wing-commander-issue-context` composite action; originally `/tmp/wing-commander/intake-comments.md`) is runner-local and discarded with the job, matching `clarify.yml`'s existing `/tmp/wing-commander/` staging convention. Nothing new is written to `spec-meta.json`.
 
 **Testing**: `actionlint` + `yamllint` (already CI-gated per spec 025-lint-composite-actions) for the changed `intake.yml`; standalone shell invocation of the new filter step's logic against representative `gh api` fixture JSON, asserting `$GITHUB_OUTPUT` counts and staged-file contents (`quickstart.md` "Static validation"); end-to-end dogfood runs via `wing-commander-1-intake.yml` against real test issues with controlled commenter identities (`quickstart.md` "End-to-end scenario checks").
 

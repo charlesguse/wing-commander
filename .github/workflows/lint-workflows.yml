@@ -4059,6 +4059,29 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-fence-extract.py
 
+      # Gate 95 — #499 code review round 4 (BLOCKER): a reviewer step that
+      # never wrote claude-execution-output.json (crashed, was OOM-killed)
+      # left parse-failed false and in-scope-count 0, reading as
+      # "converged" -- a PR advanced to readiness having never been
+      # reviewed. Executes the real "Extract and validate the review
+      # findings", "Decide the round outcome" and "Compose the review
+      # body" steps end to end (read out of board-loop.yml at run time)
+      # against four scenarios, plus three mutations proving each fix
+      # would actually be caught if silently reverted.
+      - name: "Gate 95 — the reviewer's fail-closed wiring (extract, round outcome, review body) is real"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-reviewer-fail-closed.py
+
+      # Gate 96 — #499 code review round 4: the trust-filter jq
+      # wing-commander-issue-context ships had no behavioural coverage of
+      # its own. Executes the real "Fetch issue and comments, apply the
+      # trust filter" step against a stubbed gh with Bot/NONE/author-by-id/
+      # MEMBER/OWNER/COLLABORATOR comments submitted out of order, and a
+      # mutation dropping the author-id clause.
+      - name: "Gate 96 — wing-commander-issue-context's trust-filter jq behaves correctly"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-issue-context-trust-filter.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

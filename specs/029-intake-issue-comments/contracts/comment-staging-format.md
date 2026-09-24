@@ -7,9 +7,17 @@ prompt") from a single comment to an ordered collection.
 
 ## File
 
-- **Path**: `/tmp/wing-commander/intake-comments.md` (runner-local,
-  matching `clarify.yml`'s `/tmp/wing-commander/` convention; discarded
-  with the runner).
+- **Path**: `/tmp/wing-commander/issue-context-<issue-number>/comments.md`
+  (runner-local, matching `clarify.yml`'s `/tmp/wing-commander/`
+  convention; discarded with the runner). #499 code review (round 3)
+  extracted this step's logic into the shared
+  `wing-commander-issue-context` composite action
+  (`.github/actions/wing-commander-issue-context/action.yml`, consumed by
+  board-loop.yml as well as intake.yml) so board-loop.yml's own agent
+  steps get the same trust filter; the path moved from the original
+  `/tmp/wing-commander/intake-comments.md` to this issue-scoped one as
+  part of that move, but every field below — content, ordering,
+  qualification rule, empty-means-nothing-written — is unchanged.
 - **Written by**: the comment-trust-gate step
   (`contracts/comment-trust-gate.md`), via `gh api ... --jq` piped straight
   to the file — never through a shell variable that gets re-interpolated

@@ -546,7 +546,7 @@ jobs:
       # own agent steps get the same trust filter instead of each writing
       # (or omitting) their own inline copy. Consumes only `comments-file`
       # here, unchanged in shape and semantics from before this extraction
-      # (comments-trust-gate.md/comment-staging-format.md) — the
+      # (comment-trust-gate.md/comment-staging-format.md) — the
       # composite's other output, `context-file`, exists for a caller with
       # no other way to read the issue body at all, which intake.yml is
       # not (it fetches title/body itself in the agent's own step 1 below).
