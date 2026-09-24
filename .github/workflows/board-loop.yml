@@ -1399,8 +1399,12 @@ jobs:
           # and cross-link an empty URL, dropping the issue from
           # eligibility with no spec-request filed. The URL is checked
           # before any of that; a failed create fails the job with the
-          # issue left unstalled, so a later run retries it. Gate 93
-          # check 3 requires this guard at every spec-request site.
+          # issue left unstalled, so a later run retries it (the resume
+          # path into fix/readiness depends on #525's job gating). Known
+          # limits, tracked in #527: the retry is unbounded, and a
+          # failure after a successful create (comment or label) can
+          # file a duplicate spec-request next run. Gate 93 check 3
+          # requires this guard at every spec-request site.
           [[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] || { echo "::error::board-loop route (spec verdict): creating the spec-request returned no issue URL (got '$spec_url') -- no spec-request was filed; the issue is left without board:stalled so a later run retries it."; exit 1; }
           echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
 

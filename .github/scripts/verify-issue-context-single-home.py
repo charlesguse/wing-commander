@@ -87,7 +87,9 @@ WHAT IT CHECKS
      the spec-request body feeds intake);
    - capture the new issue's URL (`V="$(gh issue create ...)"`) and guard
      it with `[[ "$V" =~ RE ]] || { echo "::error::..."; exit N; }` (or
-     `[ -n "$V" ]`), N >= 1, before anything else touches `$V` or the
+     `[ -n "$V" ]`), N >= 1, RE anchored `^` and ending
+     `/issues/[0-9]+$` (so `.*` cannot pass an empty URL), before
+     anything else touches `$V` or the
      issue: no `gh issue comment/edit/close/reopen`, `gh pr comment/
      edit`, `gh label` or `$GITHUB_OUTPUT` write may come first, and the
      guard's own failure branch may do none of them (#514: these steps
@@ -615,10 +617,12 @@ def _url_guard_re(var):
     reports `::error::` and exits non-zero from the step's own shell:
     `[ -n "$V" ] || { ...; exit N; }` or `[[ "$V" =~ RE ]] || { ... }`
     (N >= 1, as the brace group's last command; a `( ... )` subshell
-    would exit only itself)."""
+    would exit only itself). RE must be anchored `^...` and end in
+    `/issues/[0-9]+$` -- a vacuous `.*` matches the empty string a
+    failed create leaves behind."""
     v = r'"\$\{?' + re.escape(var) + r'\}?"'
     test = (r"(?:\[\[?\s+-n\s+" + v + r"\s+\]\]?"
-            r"|\[\[\s+" + v + r"\s+=~\s+\S+\s+\]\])")
+            r"|\[\[\s+" + v + r"\s+=~\s+\^\S*/issues/\[0-9\]\+\$\s+\]\])")
     return re.compile(r"^\s*" + test + r"\s*\|\|\s*\{\s+echo\s.*::error::.*"
                       r";\s*exit\s+[1-9][0-9]*\s*;\s*\}\s*$")
 
@@ -1031,6 +1035,14 @@ def _create_guard_cases(good):
         ("guard exits only a subshell",
          _site_fixture(run=guard_with('( echo "::error::no URL"; exit 1 )')),
          "acts on the spec-request before"),
+        ("guard regex vacuous (.* matches an empty URL)",
+         _site_fixture(run=good.replace(
+             "^https?://[^[:space:]]+/issues/[0-9]+$", ".*")),
+         "acts on the spec-request before"),
+        ("guard regex unanchored",
+         _site_fixture(run=good.replace(
+             "^https?://[^[:space:]]+/issues/[0-9]+$", "/issues/")),
+         "acts on the spec-request before"),
         ("guard with no ::error::",
          _site_fixture(run=guard_with('{ echo "no URL"; exit 1; }')),
          "acts on the spec-request before"),
@@ -1351,6 +1363,11 @@ SPEC_REQUEST_MUTATIONS = (
      '[[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] || '
      '{ echo "::error::board-loop route (spec verdict)',
      'echo "::error::board-loop route (spec verdict)'),
+    ("fix create guard regex made vacuous",
+     '[[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] || '
+     '{ echo "::error::board-loop fix (post-push breach)',
+     '[[ "$spec_url" =~ .* ]] || '
+     '{ echo "::error::board-loop fix (post-push breach)'),
     ("route create URL no longer captured",
      'spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$spec_title"',
      'gh issue create -R "$GITHUB_REPOSITORY" --title "$spec_title"'),
