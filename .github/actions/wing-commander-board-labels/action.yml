@@ -1,0 +1,34 @@
+# #488: board-loop.yml's own labels (board:stalled, board:owned) were
+# never created anywhere -- on a repo that starts without them, every
+# `gh issue edit --add-label "board:stalled"` / `gh pr create --label
+# board:owned` call failed, the source issue never carried the stalled
+# label, and board_eligibility.py's STALLED_LABEL check kept re-selecting
+# it, re-opening a duplicate spec-request on every scheduled run. This is
+# the single home (CLAUDE.md "shared logic has exactly one home") for
+# creating both labels; board-loop.yml calls it once per job that can
+# reach one of those call sites (triage, route, fix, review, readiness),
+# right after minting the bot token that owns the create. `--force` makes
+# the create idempotent, so calling it from more than one job in the same
+# run is safe and cheap.
+name: wing-commander-board-labels
+description: >
+  Idempotently creates board-loop.yml's own board:stalled and board:owned
+  labels so its --add-label / --label call sites never depend on either
+  label already existing in the target repo.
+
+inputs:
+  token:
+    description: GH_TOKEN with issues:write on the target repo (the wing-commander-bot App token)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Ensure board:stalled and board:owned labels exist
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        set -uo pipefail
+        gh label create "board:stalled" -R "$GITHUB_REPOSITORY" --color B60205 --description "Board loop: stalled awaiting a human (CLAUDE.md board-loop rules)" --force
+        gh label create "board:owned" -R "$GITHUB_REPOSITORY" --color 0E8A16 --description "Board loop: this PR was opened by board-loop.yml" --force
