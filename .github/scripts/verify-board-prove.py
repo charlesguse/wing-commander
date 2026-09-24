@@ -112,6 +112,17 @@ JOINS_DIRECTED_GROUP_CASES = [
     (REPO_BOARD_LOOP, "readiness", True),
 ]
 
+# research.md D3/D4 (T024): the directed pair's own concurrency.group:
+# expression is load-bearing -- an expression that merely *differs* from the
+# ordinary jobs' can still resolve to wing-commander-board-loop on both
+# branches (or resolve the arms the wrong way round), which reintroduces the
+# deadlock silently. Pin it byte-for-byte, normalized only for the folded
+# scalar's own line breaks, so any such edit fails loudly here.
+DIRECTED_GROUP_EXPR = (
+    "${{ (github.event_name == 'workflow_dispatch' && inputs.directed-stage != '') && "
+    "'wing-commander-board-loop-directed-proof' || 'wing-commander-board-loop' }}"
+)
+
 # research.md D5/T045/T046/T049 (both directions, FR-020):
 SCRIPT_IMPORT_CASES = [
     # positive: the sys.path.insert(0, ".github/scripts") + `from X import
@@ -350,6 +361,19 @@ def run():
         else:
             print("[ok] {0}'s own concurrency.group: expression differs from "
                   "every ordinary job's on the checked-out tree".format(job))
+        normalized = " ".join(str(group).split())
+        if normalized != DIRECTED_GROUP_EXPR:
+            failures += 1
+            print("::error::verify-board-prove: {0}'s own concurrency.group: "
+                  "expression is not the canonical directed-proof split.\n"
+                  "  expected: {1}\n  found:    {2}\n"
+                  "A group that differs from the ordinary jobs' but still "
+                  "resolves to wing-commander-board-loop on its directed "
+                  "branch reintroduces the deadlock (research.md D4).".format(
+                      job, DIRECTED_GROUP_EXPR, normalized))
+        else:
+            print("[ok] {0}'s own concurrency.group: expression matches the "
+                  "canonical directed-proof split byte-for-byte".format(job))
 
     # research.md D5/FR-014/FR-021 (T048): every board_*.py helper resolves
     # to at least one stage of board-loop.yml on the checked-out tree --

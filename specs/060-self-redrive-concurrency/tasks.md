@@ -613,10 +613,10 @@ demonstrable.
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T051 Run `python .github/scripts/run-local-gates.py` and confirm
+- [X] T051 Run `python .github/scripts/run-local-gates.py` and confirm
   all gates pass on the real tree, including amended Gate 89 and new
   Gates 90-92.
-- [ ] T052 Confirm every gate this feature adds or amends fails on its
+- [X] T052 Confirm every gate this feature adds or amends fails on its
   own negative fixture when the behaviour it checks is mutated (SC-008)
   — e.g. temporarily widen `aimable_jobs` (T002) to include `"fix"` and
   confirm Gate 91 (T040) fails; temporarily point `prove-gate`'s directed
@@ -626,11 +626,11 @@ demonstrable.
   `git checkout`/`git restore`; confirm the revert with `git diff` is
   byte-identical to HEAD before moving on, mirroring spec
   058-per-job-minute-floor's T022 precedent).
-- [ ] T053 `grep -rn "wing-commander-board-loop" docs/` (and any other
+- [X] T053 `grep -rn "wing-commander-board-loop" docs/` (and any other
   documented description of the board loop's concurrency behaviour, e.g.
   `docs/architecture.md`) and update any prose that still describes the
   single workflow-level block this feature replaces (T009).
-- [ ] T054 Final full-suite confirmation: re-run
+- [X] T054 Final full-suite confirmation: re-run
   `python .github/scripts/run-local-gates.py` after T051-T053's edits and
   confirm the count is unchanged from T051 (no gate silently dropped),
   and that `verify-gate-wiring.py` accounts for Gates 90, 91, and 92.
