@@ -94,7 +94,11 @@ SIX CHECKS, per contracts/single-home-gate.md (plus a spec 052 addition)
    the six field names it looks for. The mode-tagging jq now lives solely
    inside `auto-release-verdict.sh` (its `mode`/`container-image-
    configured` become two additional, optional positional arguments); this
-   check scans for the `{mode:$mode}` fragment co-occurring with
+   check scans for the `{mode:$<var>}` fragment (any jq variable name, not
+   only the original paste's `$mode` -- #391 item 4, second review of #373:
+   the literal `$mode` spelling let a pipe that renamed only the `--arg`
+   binding, e.g. `--arg tag_mode "$MODE" '. + {mode:$tag_mode} + (...)'`,
+   evade the check while keeping the same JSON shape) co-occurring with
    `container_image_configured` anywhere else, so a THIRD reappearance of
    the pasted shape is caught the same way a third verdict-shape paste is.
 
@@ -246,7 +250,7 @@ BOARD_STOP_CHECK_FRAGMENTS = (
     "gh run cancel",
     "board-stop-check-comments.json",
 )
-MODE_TAG_FRAGMENT_RE = re.compile(r"\{\s*mode\s*:\s*\$mode\s*\}")
+MODE_TAG_FRAGMENT_RE = re.compile(r"\{\s*mode\s*:\s*\$[A-Za-z_][A-Za-z0-9_]*\s*\}")
 SHARED_REF_RE = re.compile(r"\.github/actions/_shared/[A-Za-z0-9_.\-/]+")
 
 Finding = namedtuple("Finding", ["path", "check", "line", "text"])
@@ -539,7 +543,7 @@ def check_mode_tag_shape(root="."):
             if "container_image_configured" in window:
                 findings.append(Finding(
                     path, "mode-tag-shape", line_of(text, m.start()),
-                    "jq '. + {mode:$mode} + (...container_image_configured...)'"))
+                    "jq '. + {mode:$<var>} + (...container_image_configured...)'"))
     return findings
 
 
@@ -1196,6 +1200,17 @@ def run_selftest():
         "          bash .github/actions/_shared/auto-release-verdict.sh "
         "\"fail-infra\" \"$HEAD_SHA\" \"c\" \"e\" \"o\" \"$E2E_REPO\" | "
         "jq --arg mode \"$MODE\" '. + {mode:$mode} + (if $mode == "
+        "\"container\" then {container_image_configured: true} else {} end)'\n")
+    # #391 item 4 (second review of #373): the same paste with only the jq
+    # `--arg` binding renamed -- `$mode` becomes `$tag_mode` -- keeps the
+    # identical JSON shape but evaded the literal-`$mode` regex.
+    selftest_third_paste_fails(
+        "mode-tag-shape", ".github/workflows/third-mode-tag-renamed-var.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          bash .github/actions/_shared/auto-release-verdict.sh "
+        "\"fail-infra\" \"$HEAD_SHA\" \"c\" \"e\" \"o\" \"$E2E_REPO\" | "
+        "jq --arg tag_mode \"$MODE\" '. + {mode:$tag_mode} + (if $tag_mode == "
         "\"container\" then {container_image_configured: true} else {} end)'\n")
     selftest_third_paste_fails(
         "token-mint", ".github/workflows/third-token.yml",
