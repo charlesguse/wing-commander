@@ -12,6 +12,7 @@ add. This is a deterministic, path-based rule (Principle IX) -- never an
 agent's guess.
 """
 import fnmatch
+import glob
 import os
 import re
 import sys
@@ -21,9 +22,20 @@ import yaml
 
 DOCS_ONLY_GLOBS = ("docs/**", "specs/**")
 VERIFY_SCRIPT_GLOB = ".github/scripts/verify-*.py"
+SCRIPTS_DIR = ".github/scripts"
 RUN_NAME_ATTEMPT_TOKEN_RE = re.compile(r"^run-name:.*inputs\.attempt-token", re.MULTILINE)
 WORKFLOW_REF_RE = re.compile(r"\.github/workflows/[A-Za-z0-9._-]+\.ya?ml")
 COMPOSITE_REF_RE = re.compile(r"\.github/actions/[A-Za-z0-9._-]+")
+# research.md D5: the module-loading idiom most board helpers are actually
+# loaded by (e.g. board-loop.yml's own `sys.path.insert(0, ".github/scripts")`
+# + `from board_prove import ...`); single- and double-quoted forms both
+# appear in the tree.
+SYS_PATH_SCRIPTS_RE = re.compile(r"""sys\.path\.insert\(\s*0\s*,\s*['"]\.github/scripts['"]\s*\)""")
+SCRIPT_IMPORT_RE = re.compile(r"^\s*(?:from (\w+) import|import (\w+))\b", re.MULTILINE)
+# A bare script path (e.g. `python3 .github/scripts/board_stand_down.py`) --
+# unambiguous regardless of import style, so it needs no sys.path.insert
+# guard.
+SCRIPT_PATH_RE = re.compile(r"\.github/scripts/(\w+)\.py")
 DIRECTED_GROUP = "wing-commander-board-loop-directed-proof"
 ORDINARY_GROUP = "wing-commander-board-loop"
 
@@ -90,6 +102,75 @@ def is_safe_redrive_target(workflow_text, workflow_dispatch_inputs=None):
     return True
 
 
+def _resolve_script_imports(text):
+    """research.md D5 (FR-013/FR-014/FR-015): resolves every
+    `.github/scripts/<module>.py` reference in TEXT to that file, whether
+    it is a bare script path (`python3 .github/scripts/board_stand_down.py`)
+    or, within text that also carries the
+    `sys.path.insert(0, ".github/scripts")` idiom, a `from X import Y`/
+    `import X` naming a module under that directory. Shared by
+    scan_dispatchable_and_uses_graph() and scan_job_uses_graph() (T045) --
+    neither carries its own copy of this resolution, per CLAUDE.md's
+    single-home rule. Also applied to `.github/actions/**/action.yml`
+    composite files' own `run:` steps (FR-014's third clause, T047), since
+    a helper executed only inside a composite a workflow `uses:` is
+    otherwise invisible to this scan."""
+    resolved = set()
+    # A bare script path (`python3 .github/scripts/X.py`) -- unambiguous
+    # regardless of import style, e.g. board_stand_down.py's own call site.
+    for match in SCRIPT_PATH_RE.finditer(text):
+        candidate = "{0}/{1}.py".format(SCRIPTS_DIR, match.group(1))
+        if os.path.isfile(candidate):
+            resolved.add(candidate)
+    # The sys.path.insert(0, ".github/scripts") + `from X import Y`/
+    # `import X` idiom -- only meaningful within text that also carries it.
+    if SYS_PATH_SCRIPTS_RE.search(text):
+        for match in SCRIPT_IMPORT_RE.finditer(text):
+            name = match.group(1) or match.group(2)
+            candidate = "{0}/{1}.py".format(SCRIPTS_DIR, name)
+            if os.path.isfile(candidate):
+                resolved.add(candidate)
+    return resolved
+
+
+def _script_import_graph():
+    """research.md D5, T046: `{module_path: set(imported_module_paths)}`
+    for every `.github/scripts/board_*.py` file's own top-level imports --
+    a helper can import another helper (a future `board_prove.py`
+    importing `board_item_marker`, say), so a job's own resolved set (from
+    `_resolve_script_imports()`) needs closing over this graph, not just a
+    one-level lookup. A static regex pass is sufficient here: first-party
+    files, uniform import style, no AST needed."""
+    graph = {}
+    for path in sorted(glob.glob("{0}/board_*.py".format(SCRIPTS_DIR))):
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        imported = set()
+        for match in re.finditer(r"^(?:from (\w+) import|import (\w+))\b", text, re.MULTILINE):
+            name = match.group(1) or match.group(2)
+            candidate = "{0}/{1}.py".format(SCRIPTS_DIR, name)
+            if os.path.isfile(candidate) and candidate != path:
+                imported.add(candidate)
+        graph[path] = imported
+    return graph
+
+
+def _close_script_imports(paths, graph):
+    """research.md D5, T046: the transitive closure of `paths` over the
+    helper-imports-helper `graph` (`_script_import_graph()`) -- if a job's
+    steps load module A, and module A imports module B, B is in that job's
+    referenced set too."""
+    closure = set(paths)
+    stack = list(paths)
+    while stack:
+        current = stack.pop()
+        for dep in graph.get(current) or ():
+            if dep not in closure:
+                closure.add(dep)
+                stack.append(dep)
+    return closure
+
+
 def scan_dispatchable_and_uses_graph(workflows_dir):
     """Single home for the repo-tree scan `redrive_target()`'s own inputs
     come from (previously duplicated inline as a `board-loop.yml` `run:`
@@ -113,6 +194,7 @@ def scan_dispatchable_and_uses_graph(workflows_dir):
     repo-relative workflow paths `is_safe_redrive_target()` accepts;
     uses_graph maps every workflow path (dispatchable or not) to the
     repo-relative workflow/composite paths its text references."""
+    script_graph = _script_import_graph()
     dispatchable = []
     uses_graph = {}
     for name in sorted(os.listdir(workflows_dir)):
@@ -137,10 +219,23 @@ def scan_dispatchable_and_uses_graph(workflows_dir):
         for match in WORKFLOW_REF_RE.findall(text):
             if match != path:
                 referenced.add(match)
-        for directory in set(COMPOSITE_REF_RE.findall(text)):
+        composite_dirs = set(COMPOSITE_REF_RE.findall(text))
+        for directory in composite_dirs:
             for dirpath, _dirs, names in os.walk(directory):
                 for fname in names:
                     referenced.add(os.path.join(dirpath, fname).replace(os.sep, "/"))
+
+        # research.md D5 (T045/T047): script imports the workflow's own
+        # text loads directly, plus (its third clause) any a referenced
+        # composite's own action.yml loads, closed transitively (T046).
+        script_imports = set(_resolve_script_imports(text))
+        for directory in composite_dirs:
+            action_path = os.path.join(directory, "action.yml")
+            if os.path.isfile(action_path):
+                with open(action_path, encoding="utf-8") as fh:
+                    script_imports |= _resolve_script_imports(fh.read())
+        referenced |= _close_script_imports(script_imports, script_graph)
+
         uses_graph[path] = sorted(referenced)
 
     return sorted(dispatchable), uses_graph
@@ -170,6 +265,7 @@ def scan_job_uses_graph(workflow_path):
         text = fh.read()
     doc = yaml.safe_load(text) or {}
     jobs = doc.get("jobs") or {}
+    script_graph = _script_import_graph()
 
     graph = {}
     for job_name, job_body in jobs.items():
@@ -180,10 +276,23 @@ def scan_job_uses_graph(workflow_path):
         )
         referenced = set(WORKFLOW_REF_RE.findall(job_text))
         referenced.discard(workflow_path)
-        for directory in set(COMPOSITE_REF_RE.findall(job_text)):
+        composite_dirs = set(COMPOSITE_REF_RE.findall(job_text))
+        for directory in composite_dirs:
             for dirpath, _dirs, names in os.walk(directory):
                 for fname in names:
                     referenced.add(os.path.join(dirpath, fname).replace(os.sep, "/"))
+
+        # research.md D5 (T045/T047), the same pass
+        # scan_dispatchable_and_uses_graph() applies: this job's own script
+        # imports, plus any a referenced composite's action.yml loads,
+        # closed transitively (T046).
+        script_imports = set(_resolve_script_imports(job_text))
+        for directory in composite_dirs:
+            action_path = os.path.join(directory, "action.yml")
+            if os.path.isfile(action_path):
+                with open(action_path, encoding="utf-8") as fh:
+                    script_imports |= _resolve_script_imports(fh.read())
+        referenced |= _close_script_imports(script_imports, script_graph)
 
         key = "prove" if job_name in ("prove-gate", "prove") else job_name
         graph.setdefault(key, set()).update(referenced)

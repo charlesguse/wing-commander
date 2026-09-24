@@ -570,29 +570,29 @@ phase landing after Phase 2.
 board helper script and check the recorded re-drive decision against the
 reachability rule the feature adopts (spec.md).
 
-- [ ] T045 `.github/scripts/board_prove.py`: add a `SCRIPT_IMPORT_RE`
+- [X] T045 `.github/scripts/board_prove.py`: add a `SCRIPT_IMPORT_RE`
   pass shared by `scan_dispatchable_and_uses_graph()` and
   `scan_job_uses_graph()` (T003) (research.md D5): within any step's
   `run:` text that also contains `sys.path.insert(0, ".github/scripts")`
   (or the single-quoted form), match `from (\w+) import`/`import (\w+)`
   and resolve each captured name to `.github/scripts/<module>.py` if that
   file exists.
-- [ ] T046 [US4] `.github/scripts/board_prove.py`: build the transitive
+- [X] T046 [US4] `.github/scripts/board_prove.py`: build the transitive
   closure over first-party helper-imports-helper (research.md D5): parse
   each `.github/scripts/board_*.py` file's own top-level `from X import
   Y`/`import X` lines (regex is sufficient — first-party, uniform import
   style, no AST needed) so a helper imported by another resolved helper
   is captured too.
-- [ ] T047 [US4] `.github/scripts/board_prove.py`: apply the same
+- [X] T047 [US4] `.github/scripts/board_prove.py`: apply the same
   `SCRIPT_IMPORT_RE` pass to `.github/actions/**/action.yml` composite
   files' own `run:` steps (FR-014's third clause: "helpers executed
   inside a composite the workflow uses").
-- [ ] T048 [US4] Extend Gate 89's real-tree assertion (FR-021,
+- [X] T048 [US4] Extend Gate 89's real-tree assertion (FR-021,
   completing T024): assert every `.github/scripts/board_*.py` file
   resolves to at least one job in `board-loop.yml`'s job-uses-graph
   (`scan_job_uses_graph`, T003/T045/T046) — the exact assertion FR-014
   requires.
-- [ ] T049 [US4] Extend Gate 89 with fixtures for the script-import
+- [X] T049 [US4] Extend Gate 89 with fixtures for the script-import
   resolution (T045/T046/T047), both directions: a step whose `run:` text
   loads a module via the `sys.path.insert` + `from X import Y` idiom
   resolves to `X.py`; a bare string that happens to contain a module name

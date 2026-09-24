@@ -6,6 +6,7 @@ mechanism (directed_stage(), joins_directed_group(),
 directed_proof_group_busy(), scan_job_uses_graph()) resolves every
 documented branch correctly too (FR-020/FR-021).
 """
+import glob
 import json
 import os
 import sys
@@ -15,7 +16,8 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from board_prove import (  # noqa: E402
-    actions_only, aimable_jobs, directed_proof_group_busy, directed_stage,
+    _close_script_imports, _resolve_script_imports, actions_only,
+    aimable_jobs, directed_proof_group_busy, directed_stage,
     is_safe_redrive_target, joins_directed_group, outcome_reason,
     redrive_target, scan_dispatchable_and_uses_graph, scan_job_uses_graph,
 )
@@ -109,6 +111,33 @@ JOINS_DIRECTED_GROUP_CASES = [
     (REPO_BOARD_LOOP, "prove", True),
     (REPO_BOARD_LOOP, "readiness", True),
 ]
+
+# research.md D5/T045/T046/T049 (both directions, FR-020):
+SCRIPT_IMPORT_CASES = [
+    # positive: the sys.path.insert(0, ".github/scripts") + `from X import
+    # Y` idiom resolves.
+    ("sys.path.insert idiom",
+     "run: |\n  sys.path.insert(0, \".github/scripts\")\n  from board_triage import triage\n",
+     {".github/scripts/board_triage.py"}),
+    # positive: a bare script path (no import idiom at all) resolves.
+    ("bare script path",
+     "run: python3 .github/scripts/board_stand_down.py\n",
+     {".github/scripts/board_stand_down.py"}),
+    # negative: a module name mentioned in prose, outside both the import
+    # idiom and a real script path, resolves to nothing.
+    ("bare module name outside the idiom, negative case",
+     "run: echo \"the board_triage module handles triage\"\n",
+     set()),
+]
+
+TRANSITIVE_SCRIPT_IMPORT_CASE = (
+    # a helper-imports-helper chain (T046): job loads A directly; A imports
+    # B; B imports C. The closure over all three is what a job's own
+    # referenced set gets.
+    {"a.py"},
+    {"a.py": {"b.py"}, "b.py": {"c.py"}, "c.py": set()},
+    {"a.py", "b.py", "c.py"},
+)
 
 DIRECTED_PROOF_GROUP_BUSY_CASES = [
     ("[]", False),
@@ -213,6 +242,44 @@ def run():
     finally:
         os.unlink(shared_group_path)
 
+    for name, text, expected in SCRIPT_IMPORT_CASES:
+        got = _resolve_script_imports(text)
+        if got != expected:
+            failures += 1
+            print("::error::verify-board-prove: _resolve_script_imports {0}: "
+                  "expected {1!r}, got {2!r}.".format(name, expected, got))
+        else:
+            print("[ok] _resolve_script_imports {0} = {1!r}".format(name, got))
+
+    paths, graph, expected_closure = TRANSITIVE_SCRIPT_IMPORT_CASE
+    got_closure = _close_script_imports(paths, graph)
+    if got_closure != expected_closure:
+        failures += 1
+        print("::error::verify-board-prove: _close_script_imports transitive "
+              "chain: expected {0!r}, got {1!r}.".format(expected_closure, got_closure))
+    else:
+        print("[ok] _close_script_imports transitive chain = {0!r}".format(got_closure))
+
+    # T049's composite case, against the real tree: wing-commander-board-
+    # stop-check's own action.yml loads board_stop_check.py via the
+    # sys.path.insert idiom (T047), and select/triage/review/readiness all
+    # `uses:` that composite -- confirm at least one real job resolves it.
+    real_job_uses_graph_for_composite = scan_job_uses_graph(".github/workflows/board-loop.yml")
+    composite_resolved = any(
+        ".github/scripts/board_stop_check.py" in referenced
+        for referenced in real_job_uses_graph_for_composite.values()
+    )
+    if not composite_resolved:
+        failures += 1
+        print("::error::verify-board-prove: no job in board-loop.yml's own "
+              "job-uses-graph resolves board_stop_check.py through "
+              "wing-commander-board-stop-check's own action.yml (T047) on "
+              "the checked-out tree.")
+    else:
+        print("[ok] a composite's own action.yml script import "
+              "(board_stop_check.py via wing-commander-board-stop-check) "
+              "resolves on the checked-out tree")
+
     for run_list_json, expected in DIRECTED_PROOF_GROUP_BUSY_CASES:
         got = directed_proof_group_busy(run_list_json)
         if got != expected:
@@ -283,6 +350,33 @@ def run():
         else:
             print("[ok] {0}'s own concurrency.group: expression differs from "
                   "every ordinary job's on the checked-out tree".format(job))
+
+    # research.md D5/FR-014/FR-021 (T048): every board_*.py helper resolves
+    # to at least one stage of board-loop.yml on the checked-out tree --
+    # completing T024's real-tree assertion, the same discipline that would
+    # have caught the dispatchable-set bug this feature fixes had it
+    # existed before PR #451.
+    real_job_uses_graph = scan_job_uses_graph(".github/workflows/board-loop.yml")
+    all_referenced = set()
+    for referenced in real_job_uses_graph.values():
+        all_referenced.update(referenced)
+    real_helpers = sorted(
+        p.replace(os.sep, "/") for p in glob.glob(os.path.join(REPO_ROOT, ".github", "scripts", "board_*.py")))
+    unreachable_helpers = []
+    for helper in real_helpers:
+        rel = ".github/scripts/" + os.path.basename(helper)
+        if rel not in all_referenced:
+            unreachable_helpers.append(rel)
+    if unreachable_helpers:
+        failures += 1
+        print("::error::verify-board-prove: {0} resolve(s) to no job in "
+              "board-loop.yml's own job-uses-graph on the checked-out tree "
+              "-- FR-014 requires every board_*.py helper reach at least "
+              "one stage.".format(unreachable_helpers))
+    else:
+        print("[ok] every .github/scripts/board_*.py helper ({0}) resolves "
+              "to at least one job in board-loop.yml's own job-uses-graph "
+              "on the checked-out tree".format(len(real_helpers)))
 
     print("verify-board-prove: {0} failure(s).".format(failures))
     return 1 if failures else 0
