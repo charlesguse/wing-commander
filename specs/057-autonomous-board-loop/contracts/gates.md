@@ -8,7 +8,7 @@ D24) — no separate manifest edit.
 | Gate | Script | Subject | Fixtures (FR-064) |
 |---|---|---|---|
 | Eligibility | `verify-board-eligibility.py` | `board_eligibility.py` | maintainer-authored/no-label; maintainer-applied label; bot-applied same label (not admitted); pipeline-only label |
-| Triage | `verify-board-triage.py` | `board_triage.py` | 429 present; 429 absent (genuine failure); evidence unavailable; action-bump ahead; pins equal; already-fixed proposal (must not close) |
+| Triage | `verify-board-triage.py` | `board_triage.py` | 429 present; 429 absent (genuine failure); evidence unavailable; action-bump ahead; pins equal; already-fixed proposal (must not close); action-bump scoped to the cited run's own workflow(s) (#505); cite step reads only the trust-filtered context-file (#505) |
 | Route backstop | `verify-board-route-backstop.py` | `board_route_backstop.py` + `wing-commander-size-path-backstop` | under threshold; over threshold; contract-widening; post-push final-diff breach |
 | Readiness | `verify-board-readiness.py` | `board_readiness.py` | stale check summary; no checks; open findings; backstop breach; kill switch set; all-clear |
 | Review-finding schema | `verify-board-review-finding-schema.py` | `.github/schemas/board-review-finding.schema.json` | one well-formed finding; one omission per required field |
