@@ -230,6 +230,9 @@ PENDING_CHECK = {"status": "IN_PROGRESS", "conclusion": None}
 # Status API (not a Check Run) reports this shape in statusCheckRollup.
 STATUS_CONTEXT_SUCCESS = {"state": "SUCCESS"}
 STATUS_CONTEXT_PENDING = {"state": "PENDING"}
+# EXPECTED: the state a required legacy check reports before any status has
+# been posted for the commit at all -- still pending, not yet resolved.
+STATUS_CONTEXT_EXPECTED = {"state": "EXPECTED"}
 
 MERGE_SCENARIOS = [
     dict(name="empty array: none", prs=[], prefix="spec-draft/", slug="055-foo",
@@ -282,6 +285,12 @@ MERGE_SCENARIOS = [
                  status_checks=[STATUS_CONTEXT_SUCCESS])],
          prefix="spec/", slug="055-foo", expected_base=DEFAULT_BASE,
          expect_head="blocked"),
+    dict(name="mergeStateStatus BLOCKED, a legacy StatusContext in EXPECTED "
+              "(no status has posted yet): wait, not blocked",
+         prs=[pr(1, "spec/055-foo", merge_state="BLOCKED",
+                 status_checks=[STATUS_CONTEXT_EXPECTED])],
+         prefix="spec/", slug="055-foo", expected_base=DEFAULT_BASE,
+         expect_head="wait"),
     dict(name="clean and mergeable: merge <number>",
          prs=[pr(42, "spec-draft/055-foo")], prefix="spec-draft/", slug="055-foo",
          expected_base=DEFAULT_BASE, expect_head="merge", expect_number="42"),
@@ -359,8 +368,12 @@ MERGE_MUTATIONS = [
     ("a legacy StatusContext rollup entry (state, no status/conclusion) is "
      "read with the CheckRun-shaped predicate and always reads as pending, "
      "hanging forever",
-     'if has("state") then (.state == "PENDING")',
-     'if false then (.state == "PENDING")'),
+     'if has("state") then (.state == "PENDING" or .state == "EXPECTED")',
+     'if false then (.state == "PENDING" or .state == "EXPECTED")'),
+    ("a legacy StatusContext in EXPECTED (no status posted yet) reads as "
+     "resolved instead of still pending",
+     '.state == "PENDING" or .state == "EXPECTED"',
+     '.state == "PENDING"'),
     ("draft collapsed into merge",
      'if [ "$is_draft" = "true" ]; then',
      'if false; then'),

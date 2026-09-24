@@ -83,12 +83,16 @@ if [ "$merge_state" = "BLOCKED" ]; then
   #
   # statusCheckRollup entries come in two shapes: a CheckRun (`status`/
   # `conclusion`) and a legacy commit StatusContext (`state`, one of
-  # SUCCESS/PENDING/ERROR/FAILURE -- no `status` field at all). Reading
-  # a StatusContext with the CheckRun-shaped predicate always finds
-  # `.status` absent and so always reads as pending, which would wait
-  # forever on a repository whose required check is the legacy kind
+  # SUCCESS/PENDING/ERROR/FAILURE/EXPECTED -- no `status` field at all).
+  # Reading a StatusContext with the CheckRun-shaped predicate always
+  # finds `.status` absent and so always reads as pending, which would
+  # wait forever on a repository whose required check is the legacy kind
   # (maintainer feedback on PR #389, second review) -- handled here by
-  # branching on which shape the entry actually is.
+  # branching on which shape the entry actually is. `EXPECTED` is the
+  # state a required legacy check reports before any status has been
+  # posted for the commit at all -- still pending, not resolved; reading
+  # it with `== "PENDING"` alone read a required check that simply hasn't
+  # started yet as a genuine stall (found by the code review of #389).
   #
   # A freshly opened PR under required checks, before any check run or
   # context has been created yet, has an EMPTY statusCheckRollup while
@@ -103,7 +107,7 @@ if [ "$merge_state" = "BLOCKED" ]; then
     | if ($rollup | length) == 0 then true
       else
         [ $rollup[]
-          | if has("state") then (.state == "PENDING")
+          | if has("state") then (.state == "PENDING" or .state == "EXPECTED")
             else ((.status // "") != "COMPLETED" or ((.conclusion // "") == ""))
             end ]
         | any
