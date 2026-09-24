@@ -243,12 +243,21 @@ SIZE_PATH_BACKSTOP_FRAGMENT = r'select(test("^[+-]") and (test("^(\\+\\+\\+|---)
 # specs/057-autonomous-board-loop research.md D14: correlating a dispatched
 # run by an attempt-token carried in its own run-name -- never by recency --
 # and then polling it to a terminal status. All four fragments together are
-# the idiom; any one alone is ordinary gh-CLI usage (release.yml's run-name
-# carries "[attempt:" and nothing else here, and is not a second copy).
+# the idiom; any subset alone is ordinary gh-CLI usage (release.yml's
+# run-name carries "[attempt:" and nothing else here, and is not a second
+# copy). The `--json` field list is matched as displayTitle,createdAt --
+# specifically the composite's own correlate-by-recency-among-same-titled-
+# rows field set, not just "a gh run list call that reads displayTitle" --
+# because specs/060-self-redrive-concurrency research.md D4's
+# directed_proof_group_busy() reads a databaseId/displayTitle/status trio
+# (an occupancy check, board_stand_down.py's own idiom generalized, never a
+# run's recency) and board-loop.yml's own select job already reads
+# createdAt for an unrelated reason (issue listing), so createdAt alone
+# would false-positive on the real tree even before this feature.
 DISPATCH_WAIT_FRAGMENTS = (
     "gh workflow run",
     "gh run list --workflow=",
-    "displayTitle",
+    "displayTitle,createdAt",
     "[attempt:",
 )
 VERDICT_FIELDS = ("outcome", "verified_head", "failing_check", "expected",

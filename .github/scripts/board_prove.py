@@ -24,6 +24,17 @@ VERIFY_SCRIPT_GLOB = ".github/scripts/verify-*.py"
 RUN_NAME_ATTEMPT_TOKEN_RE = re.compile(r"^run-name:.*inputs\.attempt-token", re.MULTILINE)
 WORKFLOW_REF_RE = re.compile(r"\.github/workflows/[A-Za-z0-9._-]+\.ya?ml")
 COMPOSITE_REF_RE = re.compile(r"\.github/actions/[A-Za-z0-9._-]+")
+DIRECTED_GROUP = "wing-commander-board-loop-directed-proof"
+ORDINARY_GROUP = "wing-commander-board-loop"
+
+# research.md D2: select's own job body *is* the item-picking logic -- a
+# directed run of it would either pick nothing or violate FR-002's "MUST
+# NOT select a board item". route can push a branch/PR for the
+# size-and-path backstop's post-push breach case, and fix exists to open
+# the fix PR -- both are mutating actions FR-002 forbids a directed proof
+# run from taking. Read directly (never re-derived) by Gate 91's own
+# structural assertion.
+aimable_jobs = frozenset({"triage", "review", "readiness", "prove"})
 
 
 def _matches_any(path, globs):
@@ -135,6 +146,51 @@ def scan_dispatchable_and_uses_graph(workflows_dir):
     return sorted(dispatchable), uses_graph
 
 
+def scan_job_uses_graph(workflow_path):
+    """research.md D1: per-job extension of scan_dispatchable_and_uses_graph()'s
+    whole-workflow scan -- which changed path(s) each job of the one
+    checked-out workflow at workflow_path actually executes, consumed only
+    by directed_stage(). Parses that single file with yaml.safe_load and
+    walks doc["jobs"][job]["steps"], joining each step's own run:/uses:
+    text into one string per job before applying the same
+    WORKFLOW_REF_RE/COMPOSITE_REF_RE scan_dispatchable_and_uses_graph()
+    already uses (single home, CLAUDE.md) -- never a second regex set.
+
+    The prove-gate and prove jobs are folded into one "prove" key: research.md
+    D2 aims a directed proof run at that pair jointly (aimable_jobs has no
+    separate "prove-gate" entry), so directed_stage() only ever needs to
+    know whether *either* half of the pair references a changed path.
+
+    T045 (Phase 7) extends the per-job text this scans with a script-import
+    resolution pass shared with scan_dispatchable_and_uses_graph(), rather
+    than either function carrying its own copy of that resolution.
+
+    Returns {job_name: sorted(referenced_paths)}."""
+    with open(workflow_path, encoding="utf-8") as fh:
+        text = fh.read()
+    doc = yaml.safe_load(text) or {}
+    jobs = doc.get("jobs") or {}
+
+    graph = {}
+    for job_name, job_body in jobs.items():
+        steps = (job_body or {}).get("steps") or []
+        job_text = "\n".join(
+            "{0}\n{1}".format(step.get("run") or "", step.get("uses") or "")
+            for step in steps if isinstance(step, dict)
+        )
+        referenced = set(WORKFLOW_REF_RE.findall(job_text))
+        referenced.discard(workflow_path)
+        for directory in set(COMPOSITE_REF_RE.findall(job_text)):
+            for dirpath, _dirs, names in os.walk(directory):
+                for fname in names:
+                    referenced.add(os.path.join(dirpath, fname).replace(os.sep, "/"))
+
+        key = "prove" if job_name in ("prove-gate", "prove") else job_name
+        graph.setdefault(key, set()).update(referenced)
+
+    return {job_name: sorted(paths) for job_name, paths in graph.items()}
+
+
 def redrive_target(changed_paths, dispatchable, uses_graph):
     """Which workflow to re-drive to prove the merged change (FR-042,
     contracts/prove-step.md "Re-drive": "the wrapper workflow that can
@@ -179,6 +235,78 @@ def redrive_target(changed_paths, dispatchable, uses_graph):
                     "wrapper reaching the changed {0}".format(hit[0]))
 
     return None, "no workflow_dispatch-capable workflow reaches the changed path(s)"
+
+
+def directed_stage(changed_paths, job_uses_graph, aimable_jobs):
+    """research.md D1/D2: which aimable job of board-loop.yml a directed
+    proof run should target, given the job-uses-graph scan_job_uses_graph()
+    produces. Only meaningful when the caller already knows redrive_target()
+    chose board-loop.yml as the workflow to re-drive (contracts/directed-proof-run.md).
+
+    - exactly one aimable job's referenced set intersects changed_paths ->
+      that job is the directed stage;
+    - more than one does (a shared helper, e.g. board_item_marker.py) -> the
+      tie is broken by pipeline order, latest-stage-wins: prove > readiness
+      > review > triage, because a later stage's own proof subsumes an
+      earlier stage's use of the same helper;
+    - none does -> None, FR-010a's "no directed run reaches the changed
+      behaviour", never a fallback to a whole iteration (FR-002b).
+
+    Returns a job name from aimable_jobs, or None."""
+    changed = set(changed_paths)
+    hits = {
+        job for job in aimable_jobs
+        if changed & set(job_uses_graph.get(job) or ())
+    }
+    for job in ("prove", "readiness", "review", "triage"):
+        if job in hits:
+            return job
+    return None
+
+
+def joins_directed_group(target_workflow_path, target_job, aimable_jobs):
+    """research.md D4, FR-001 (static): whether dispatching target_job of
+    target_workflow_path would join a concurrency group the calling run (an
+    ordinary board-loop.yml run, which holds wing-commander-board-loop)
+    already holds -- determined by reading the tree, before ever
+    dispatching, never by observing a timeout after the fact.
+
+    Self-target case (target is board-loop.yml, target_job in aimable_jobs):
+    True by construction once the per-job concurrency split ships (research.md
+    D3) -- a directed dispatch's prove-gate/prove pair always joins the
+    separate DIRECTED_GROUP, never the caller's own ORDINARY_GROUP. This
+    check exists so a future edit narrowing or removing that split fails
+    loudly here rather than silently reintroducing the deadlock.
+
+    For any other target, reads that workflow's own concurrency: block text
+    off the checked-out tree and confirms its group name is neither
+    ORDINARY_GROUP nor DIRECTED_GROUP (FR-004: correctness for a target
+    outside the caller's own group)."""
+    if target_workflow_path.rsplit("/", 1)[-1] == "board-loop.yml" and target_job in aimable_jobs:
+        return True
+    with open(target_workflow_path, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh.read()) or {}
+    group = (doc.get("concurrency") or {}).get("group") or ""
+    return group not in (ORDINARY_GROUP, DIRECTED_GROUP)
+
+
+def directed_proof_group_busy(run_list_json):
+    """research.md D4, FR-001a (dynamic): whether DIRECTED_GROUP is already
+    occupied by another directed dispatch, read from a live `gh run list
+    --workflow=board-loop.yml --json databaseId,displayTitle,status -L 20`
+    call -- the Actions API exposes no direct concurrency-group membership,
+    so the run-name marker board-loop.yml's run-name: expression embeds for
+    a directed dispatch (`[directed:<stage>]`) is the only deterministic,
+    tree-derived proxy this repository can construct for itself, generalizing
+    board_stand_down.py's own gh-run-list-occupancy idiom.
+
+    True if any row's status is not "completed" and its displayTitle
+    contains the literal "[directed:" marker."""
+    runs = json.loads(run_list_json) if isinstance(run_list_json, str) else (run_list_json or [])
+    return any(
+        row.get("status") != "completed" and "[directed:" in (row.get("displayTitle") or "")
+        for row in runs
+    )
 
 
 def main():
