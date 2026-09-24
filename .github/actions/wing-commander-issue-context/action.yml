@@ -23,13 +23,18 @@
 # `gh issue` tool of its own.
 #
 # A failed `gh api` in the paginated comments fetch (network error, rate
-# limit, permissions) FAILS THIS STEP -- `shell: bash` on a composite
-# step's `run:` gets the same `-eo pipefail` default a workflow `run:`
-# step does (matching intake.yml's own pre-extraction step, which relied
-# on the same default and never handled this differently), so the
-# `gh api ... | jq -s '.'` pipeline's failing exit code propagates rather
-# than the step silently continuing with an empty comment list. A caller
-# never sees a false "zero comments" for what was actually an API error.
+# limit, permissions) FAILS THIS STEP: `shell: bash` here gets `-eo
+# pipefail`, so the `gh api ... | jq -s '.'` pipeline's failing exit code
+# propagates instead of the step silently continuing with an empty
+# comment list. #499 round 5 review: this is a DELIBERATE fail-closed
+# choice, not a preserved invariant -- intake.yml's own pre-extraction
+# step had no explicit `shell:` key at all, so it ran under whatever the
+# default resolved to there (plain `bash -e` with no pipefail, or even
+# `sh -e` if that job's runner was containerized), under which the same
+# failure could silently yield zero comments instead of failing the
+# step. A caller of this composite never sees that false "zero comments"
+# for what was actually an API error; that is new, intended behavior,
+# not something this extraction merely happened to preserve.
 #
 # Written under /tmp/wing-commander, matching intake.yml's own established
 # convention exactly (contracts/comment-staging-format.md: "runner-local,

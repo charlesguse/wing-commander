@@ -29,19 +29,23 @@ WHAT IT CHECKS
    `--allowedTools "${{ steps.tool-args-x.outputs.allowed-tools
    }},Bash(gh issue view:*)"`, bypassing the composite entirely -- #499
    round 4 review) -- is parsed into its `gh` command tokens and checked
-   against a forbidden-prefix list, not a substring: `gh` bare (a `gh:*`
-   grant authorizes every gh subcommand), `gh issue *`, `gh api*`, and
-   `gh search issues*`. Prefix matching on whitespace-split tokens closes
-   the substring check's own holes (`Bash(gh issue:*)`,
-   `Bash(gh:*)` both slipped through the old `"gh issue view" in value`
-   test). `Bash(gh pr view:*)` is deliberately NOT forbidden here -- the
-   reviewer legitimately keeps it for now (a separate issue tracks
-   removing it); this gate only closes the issue-read hole #499 exists
-   for. Scoped to board-loop.yml only: intake.yml legitimately grants its
-   own agent `Bash(gh issue view:*)` for title/body (it never grants
-   comment access that way -- comments are staged, code-filtered, by the
-   same composite), and this gate is not the place to relitigate that
-   design.
+   against a forbidden-prefix list, not a substring: `gh` bare (any of
+   Claude Code's equivalent open-wildcard spellings -- `gh:*`, `gh*`,
+   `gh *` -- authorizes every gh subcommand; #499 round 5 review: the
+   round-4 fix only stripped a trailing `:*`, so `gh*`/`gh *` still slipped
+   through), `gh issue *`, `gh api*`, and `gh search issues*`. A bare
+   `Bash` (no argument at all) or `Bash(*)` grant is ALSO forbidden here,
+   for the same reason -- it authorizes every gh subcommand too, among
+   everything else. Prefix matching on whitespace-split tokens closes the
+   substring check's own holes (`Bash(gh issue:*)`, `Bash(gh:*)` both
+   slipped through the old `"gh issue view" in value` test).
+   `Bash(gh pr view:*)` is deliberately NOT forbidden here -- the reviewer
+   legitimately keeps it for now (a separate issue tracks removing it);
+   this gate only closes the issue-read hole #499 exists for. Scoped to
+   board-loop.yml only: intake.yml legitimately grants its own agent
+   `Bash(gh issue view:*)` for title/body (it never grants comment access
+   that way -- comments are staged, code-filtered, by the same composite),
+   and this gate is not the place to relitigate that design.
 2. single-home: no file other than
    `.github/actions/wing-commander-issue-context/action.yml` may contain
    all three fragments unique to its trust-filter idiom together --
@@ -88,6 +92,11 @@ FORBIDDEN_GH_PREFIXES = (
 )
 
 BASH_GRANT_RE = re.compile(r"Bash\(([^)]*)\)")
+# A bare `Bash` grant, no argument and no parens at all -- authorizes
+# every shell command, including any gh subcommand. Matched only where a
+# comma or the string boundary follows, so it never matches the "Bash" in
+# "Bash(...)" (the parenthesized form is handled by BASH_GRANT_RE above).
+BARE_BASH_RE = re.compile(r"(?<![\w-])Bash(?!\()(?![\w-])")
 
 TRUST_FILTER_FRAGMENTS = (
     re.compile(r'select\(\s*\.user\.type\s*!=\s*"Bot"\s*\)'),
@@ -131,31 +140,50 @@ def find_agent_steps(doc):
 
 
 def find_forbidden_gh_grants(text):
-    """Every `Bash(...)` grant in `text` whose gh command matches one of
-    FORBIDDEN_GH_PREFIXES, by whitespace-split token prefix -- not by
-    substring, which a `Bash(gh issue:*)` or bare `Bash(gh:*)` grant (#499
-    round 4 review) slips past. Returns the list of raw fragment strings
-    that matched."""
+    """Every forbidden grant in `text`: a `Bash(...)` grant whose gh
+    command matches one of FORBIDDEN_GH_PREFIXES, by whitespace-split
+    token prefix -- not by substring, which a `Bash(gh issue:*)` or bare
+    `Bash(gh:*)` grant (#499 round 4 review) slips past -- plus a bare
+    `Bash`/`Bash(*)` grant (unrestricted, authorizes every gh subcommand
+    among everything else; #499 round 5 review). Returns a list of
+    ready-to-print descriptions, one per match -- the caller does not
+    reconstruct or re-wrap them."""
     hits = []
     for m in BASH_GRANT_RE.finditer(text or ""):
         inner = m.group(1).strip()
-        # Strip a trailing ":*" / "*" wildcard suffix (the ":" separates
-        # the command from its argument wildcard, e.g. "gh issue view:*";
-        # a bare "gh:*" has no command before the colon at all beyond
-        # "gh" itself).
+        # Strip a trailing ":*" wildcard suffix (the ":" separates the
+        # command from its argument wildcard, e.g. "gh issue view:*"),
+        # THEN strip any trailing bare "*" too, repeatedly -- Claude Code
+        # accepts "gh:*", "gh*" and "gh *" as equivalent open-wildcard
+        # spellings (#499 round 5 review: the round-4 fix only handled the
+        # first), and all three must collapse to the same "gh" this
+        # function already treats as fully open below.
         command = inner.split(":", 1)[0].strip()
+        while command.endswith("*"):
+            command = command[:-1].rstrip()
         tokens = tuple(command.split())
-        if not tokens or tokens[0] != "gh":
+        if not tokens:
+            # The wildcard was the entire grant -- Bash(*).
+            hits.append(f"Bash({inner}) (unrestricted -- authorizes every "
+                       f"shell command, including any gh subcommand)")
+            continue
+        if tokens[0] != "gh":
             continue
         if len(tokens) == 1:
-            # A bare "gh" command (a `Bash(gh:*)` grant) authorizes every
-            # gh subcommand outright, including the three forbidden ones.
-            hits.append(inner)
+            # A bare "gh" command (Bash(gh:*)/Bash(gh*)/Bash(gh *))
+            # authorizes every gh subcommand outright, including the
+            # three forbidden ones.
+            hits.append(f"Bash({inner})")
             continue
         for prefix in FORBIDDEN_GH_PREFIXES:
             if tokens[:len(prefix)] == prefix:
-                hits.append(inner)
+                hits.append(f"Bash({inner})")
                 break
+
+    for _m in BARE_BASH_RE.finditer(text or ""):
+        hits.append("a bare Bash grant (unrestricted, no argument at all "
+                    "-- authorizes every shell command, including any gh "
+                    "subcommand)")
     return hits
 
 
@@ -181,10 +209,10 @@ def check_tool_grants(path):
         for key in ("default-allowed-tools", "extra-allowed-tools",
                     "allowed-tools-override"):
             value = str(with_block.get(key) or "")
-            for fragment in find_forbidden_gh_grants(value):
+            for description in find_forbidden_gh_grants(value):
                 problems.append(
                     f"{path}: step {name!r}'s {key} grants "
-                    f"Bash({fragment}) to a board-loop agent -- read the "
+                    f"{description} to a board-loop agent -- read the "
                     f"issue through wing-commander-issue-context instead "
                     f"(single home for the trust filter; #499).")
 
@@ -194,10 +222,10 @@ def check_tool_grants(path):
         if not isinstance(with_block, dict):
             continue
         claude_args = str(with_block.get("claude_args") or "")
-        for fragment in find_forbidden_gh_grants(claude_args):
+        for description in find_forbidden_gh_grants(claude_args):
             problems.append(
                 f"{path}: agent step {name!r}'s claude_args grants "
-                f"Bash({fragment}) directly -- read the issue through "
+                f"{description} directly -- read the issue through "
                 f"wing-commander-issue-context instead (single home for "
                 f"the trust filter; #499).")
     return problems
@@ -273,10 +301,13 @@ def run_self_test():
         else:
             print(f"note: fixture 1 (gh issue view grant) caught: {grant_problems}")
 
-        # Fixture 1b (#499 round 4): the exact bypasses the review found --
-        # a bare subcommand grant (Bash(gh issue:*)), a fully-open grant
-        # (Bash(gh:*)), and a literal grant appended directly inside an
-        # agent step's own claude_args --allowedTools text rather than
+        # Fixture 1b (#499 rounds 4-5): the exact bypasses the reviews
+        # found -- a bare subcommand grant (Bash(gh issue:*)), a fully-
+        # open grant spelled three equivalent ways (Bash(gh:*),
+        # Bash(gh*), Bash(gh *)), a bare Bash grant and a Bash(*) grant
+        # (both unrestricted -- authorize every gh subcommand among
+        # everything else), and a literal grant appended directly inside
+        # an agent step's own claude_args --allowedTools text rather than
         # through the tool-args composite at all. Each must be caught,
         # and the legitimate Bash(gh pr view:*) grant alongside them must
         # NOT be (reviewer keeps it; #499 round 4 explicitly carves it
@@ -292,8 +323,13 @@ def run_self_test():
                 "        uses: ./.github/actions/wing-commander-tool-args\n"
                 "        with:\n"
                 "          default-allowed-tools: \"Read,Bash(gh issue:*)\"\n"
-                "          extra-allowed-tools: \"Bash(gh:*)\"\n"
+                "          extra-allowed-tools: \"Bash(gh:*),Bash(gh*),Bash(gh *)\"\n"
                 "          step-label: \"board-loop.route-propose\"\n"
+                "      - name: Compose tool args (fixer)\n"
+                "        uses: ./.github/actions/wing-commander-tool-args\n"
+                "        with:\n"
+                "          default-allowed-tools: \"Bash,Bash(*)\"\n"
+                "          step-label: \"board-loop.fixer\"\n"
                 "      - name: Route-propose\n"
                 "        uses: anthropics/claude-code-action@v1\n"
                 "        with:\n"
@@ -311,11 +347,13 @@ def run_self_test():
             )
         bypass_problems = check_tool_grants(bypass_path)
         joined_bypass = " ".join(bypass_problems)
-        expect_all = ("gh issue:*", "gh:*", "gh issue view:*")
+        expect_all = ("gh issue:*", "gh:*", "gh*", "gh *", "gh issue view:*",
+                      "bare Bash grant (unrestricted, no argument at all",
+                      "Bash(*) (unrestricted")
         missing = [e for e in expect_all if e not in joined_bypass]
         if missing:
             failures.append(
-                f"fixture 1b did not catch all three bypasses -- missing "
+                f"fixture 1b did not catch all bypasses -- missing "
                 f"{missing!r}: {bypass_problems!r}")
         if "gh pr view" in joined_bypass:
             failures.append(
@@ -323,9 +361,9 @@ def run_self_test():
                 f"(reviewer's, carved out by #499 round 4) was wrongly "
                 f"flagged: {bypass_problems!r}")
         if not missing and "gh pr view" not in joined_bypass:
-            print(f"note: fixture 1b (bare/open/claude_args-appended "
-                  f"bypasses) caught, gh pr view left alone: "
-                  f"{bypass_problems}")
+            print(f"note: fixture 1b (bare/open-in-every-spelling/bare-"
+                  f"Bash/claude_args-appended bypasses) caught, gh pr "
+                  f"view left alone: {bypass_problems}")
 
         # Fixture 2: a second file re-implementing all three trust-filter
         # fragments.

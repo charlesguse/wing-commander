@@ -61,7 +61,11 @@ STEP = "Fetch issue and comments, apply the trust filter"
 BASH = None
 
 REPOSITORY = "acme/widgets"
-ISSUE = "gate96-test-9999999"
+# PID-suffixed (#499 round 5 review, optional item): DIR below is
+# /tmp/wing-commander/issue-context-<ISSUE>, and each fixture run() rm
+# -rf's it afterward -- a fixed value would collide with a concurrent run
+# of this same gate (or, in principle, a real issue of this number).
+ISSUE = f"gate96-test-9999999-{os.getpid()}"
 AUTHOR_ID = 1000
 AUTHOR_LOGIN = "reporter"
 
@@ -83,6 +87,16 @@ def _comment(login, uid, utype, assoc, created_at, body):
 
 # Deliberately out of created_at order in the array itself, so a harness
 # that only checks membership (not ordering) could not pass vacuously.
+#
+# bot-member (#499 round 5 review): a Bot whose author_association is
+# MEMBER, not NONE. Every other bot fixture here has NONE association, so
+# it is excluded by BOTH the bot check and the association check --
+# dropping `select(.user.type != "Bot")` from just the comments.md jq
+# (leaving it in the two counting jqs) would go unnoticed, since the
+# association check alone still excludes a NONE-association bot. A
+# MEMBER-association bot passes the association check on its own, so it
+# is excluded ONLY by the bot filter -- exactly what that specific
+# mutation removes, and exactly what makes this fixture catch it.
 ALL_COMMENTS = [
     _comment("some-bot", 9001, "Bot", "NONE", "2024-01-01T00:00:00Z", "bot noise"),
     _comment("collab1", 5000, "User", "COLLABORATOR", "2024-01-06T00:00:00Z", "collab note"),
@@ -90,11 +104,13 @@ ALL_COMMENTS = [
     _comment("rando", 2000, "User", "NONE", "2024-01-05T00:00:00Z", "random passerby"),
     _comment("member1", 3000, "User", "MEMBER", "2024-01-04T00:00:00Z", "member note"),
     _comment("owner1", 4000, "User", "OWNER", "2024-01-03T00:00:00Z", "owner note"),
+    _comment("bot-member", 9002, "Bot", "MEMBER", "2024-01-07T00:00:00Z", "bot pretending to be a member"),
 ]
 # Oldest -> newest among the four that qualify: reporter(02), owner1(03),
-# member1(04), collab1(06).
+# member1(04), collab1(06). bot-member never qualifies despite its
+# MEMBER association, and despite sorting after everything else.
 EXPECTED_ORDER = [AUTHOR_LOGIN, "owner1", "member1", "collab1"]
-EXPECTED_EXCLUDED_LOGINS = {"some-bot", "rando"}
+EXPECTED_EXCLUDED_LOGINS = {"some-bot", "rando", "bot-member"}
 
 ZERO_QUALIFYING_COMMENTS = [
     _comment("some-bot", 9001, "Bot", "NONE", "2024-01-01T00:00:00Z", "bot noise"),
@@ -178,12 +194,12 @@ def check_full_fixture(script, label_prefix=""):
     if rc != 0:
         return [f"{prefix}: step exited {rc}: {out}"]
 
-    if outputs.get("total-count") != "6":
-        failures.append(f"{prefix}: total-count={outputs.get('total-count')!r}, expected '6'")
+    if outputs.get("total-count") != "7":
+        failures.append(f"{prefix}: total-count={outputs.get('total-count')!r}, expected '7'")
     if outputs.get("qualifying-count") != "4":
         failures.append(f"{prefix}: qualifying-count={outputs.get('qualifying-count')!r}, expected '4'")
     if outputs.get("excluded-human-count") != "1":
-        failures.append(f"{prefix}: excluded-human-count={outputs.get('excluded-human-count')!r}, expected '1' (the bot must not count as excluded-human)")
+        failures.append(f"{prefix}: excluded-human-count={outputs.get('excluded-human-count')!r}, expected '1' (neither bot -- NONE-association or MEMBER-association -- may count as excluded-human)")
 
     if not comments_md:
         failures.append(f"{prefix}: comments.md was not written despite qualifying-count=4")
@@ -208,6 +224,9 @@ def check_full_fixture(script, label_prefix=""):
         for login in EXPECTED_ORDER:
             if f"@{login}" not in context_md:
                 failures.append(f"{prefix}: context.md is missing @{login}'s comment section")
+        for login in EXPECTED_EXCLUDED_LOGINS:
+            if f"@{login}" in context_md:
+                failures.append(f"{prefix}: context.md wrongly includes excluded commenter @{login}")
     return failures
 
 
@@ -252,6 +271,36 @@ def mut_drop_author_id_clause(script):
     return new_script
 
 
+# --- Mutation: drop `select(.user.type != "Bot") | ` from ONLY the
+# comments.md-writing jq (identified by its trailing `sort_by(.created_at)`,
+# which is unique to that program among the composite's three -- the two
+# counting jqs stay untouched, matching a plausible real regression where
+# only the rendering jq drifts). #499 round 5 review. ------------------
+
+COMMENTS_MD_BOT_FILTER_GOOD = (
+    'select(.user.type != "Bot") | select(.author_association == "OWNER" '
+    'or .author_association == "MEMBER" or .author_association == '
+    '"COLLABORATOR" or .user.id == $aid)] | sort_by(.created_at)'
+)
+COMMENTS_MD_BOT_FILTER_BROKEN = (
+    'select(.author_association == "OWNER" or .author_association == '
+    '"MEMBER" or .author_association == "COLLABORATOR" or .user.id == '
+    '$aid)] | sort_by(.created_at)'
+)
+
+
+def mut_drop_comments_md_bot_filter(script):
+    if script.count(COMMENTS_MD_BOT_FILTER_GOOD) != 1:
+        sys.exit(f"::error::verify-issue-context-trust-filter: expected "
+                 f"exactly one occurrence of the comments.md jq's bot "
+                 f"filter in {ACTION}, found "
+                 f"{script.count(COMMENTS_MD_BOT_FILTER_GOOD)} -- the step "
+                 f"text may have changed shape; update this harness "
+                 f"alongside it.")
+    return script.replace(COMMENTS_MD_BOT_FILTER_GOOD,
+                          COMMENTS_MD_BOT_FILTER_BROKEN, 1)
+
+
 def main():
     global BASH
     use_utf8_stdout()
@@ -285,6 +334,23 @@ def main():
         print(f"note: mutation (author-id clause dropped) confirmed "
               f"caught: {mutated_failures}")
 
+    mutated_bot = mut_drop_comments_md_bot_filter(script)
+    mutated_bot_failures = check_full_fixture(
+        mutated_bot, label_prefix="mutation (comments.md bot filter dropped): ")
+    # The mutation must let bot-member (Bot, MEMBER association) into
+    # comments.md/context.md -- the two counting jqs are untouched, so
+    # qualifying-count/excluded-human-count stay correct and only the
+    # rendered-file assertions can catch this.
+    if not mutated_bot_failures:
+        failures.append(
+            "mutation (comments.md bot filter dropped) did NOT change the "
+            "full fixture's outcome -- this gate would not catch "
+            "select(.user.type != \"Bot\") being silently dropped from "
+            "just the comments.md-writing jq.")
+    else:
+        print(f"note: mutation (comments.md bot filter dropped) confirmed "
+              f"caught: {mutated_bot_failures}")
+
     for f in failures:
         print(f"::error::Gate 96: {f}")
     if failures:
@@ -292,7 +358,8 @@ def main():
         return 1
     print("Gate 96: the trust-filter jq's counts, ordering, and "
           "zero-qualifying contract all behave correctly, and dropping "
-          "the author-id clause is caught.")
+          "either the author-id clause or the comments.md bot filter is "
+          "caught.")
     return 0
 
 
