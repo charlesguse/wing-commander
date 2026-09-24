@@ -1757,11 +1757,14 @@ jobs:
 
       # The spec-request body below carries the originating issue's
       # trust-filtered context -- see board_spec_request_body.py. It is
-      # fetched again here rather than reusing the fixer's copy: the fixer
-      # holds Write/Edit, so the file staged before it ran is no longer
-      # known to be the composite's own output. continue-on-error so a
-      # failed fetch degrades to the one-line fallback instead of skipping
-      # the breach notice and spec-request below.
+      # fetched again here rather than reusing the file staged before the
+      # fixer ran: the fixer holds Write/Edit and could have rewritten that
+      # staged file. This guards the staged file only -- the composite and
+      # the builder themselves still resolve from the checkout the fixer
+      # just edited (tooling run from the workspace is tracked in #468).
+      # continue-on-error so a failed fetch degrades to the one-line
+      # fallback instead of skipping the breach notice and spec-request
+      # below.
       - name: Fetch issue context (post-push-breach spec-request)
         id: issue-context-breach
         if: steps.push-pr.outputs.pr-url != '' && steps.final-diff-backstop.outputs.breach == 'true'
@@ -2754,14 +2757,16 @@ jobs:
           marker="$(python3 -c "import os, sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('readiness', 0, int(os.environ['PR_NUMBER']), None, None))")"
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf '%s\n\n%s' "$body" "$marker")"
 
-      # Fetched only when a backstop breach is about to file a
-      # spec-request, whose body carries this trust-filtered context -- see
-      # board_spec_request_body.py. continue-on-error so a failed fetch
-      # degrades to the one-line fallback instead of skipping the
-      # report-unmet step below.
+      # A backstop breach below files a spec-request whose body carries
+      # this trust-filtered context -- see board_spec_request_body.py.
+      # Gated exactly like report-unmet (Gate 93 requires the fetch to run
+      # whenever its spec-request site does), so a not-ready run that
+      # files no spec-request still costs one fetch. continue-on-error so
+      # a failed fetch degrades to the one-line fallback instead of
+      # skipping the report-unmet step below.
       - name: Fetch issue context (readiness-breach spec-request)
         id: issue-context-readiness
-        if: steps.decide.outputs.ready != 'true' && steps.final-diff-backstop.outputs.holds != 'true'
+        if: steps.decide.outputs.ready != 'true'
         continue-on-error: true
         uses: ./.github/actions/wing-commander-issue-context
         with:

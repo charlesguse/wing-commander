@@ -23,26 +23,36 @@ same parts and in the same order:
 The body proper is the first of these that is non-empty:
 
 1. the drafted body (`--drafted-body-file`, route-propose's `pr-body`);
-2. the originating issue's trust-filtered context, under the heading
-   "Originating issue (trust-filtered, verbatim):" -- read ONLY from the
+2. the originating issue's context, under the heading
+   "Originating issue (trust-filtered context):" -- read ONLY from the
+   file path given as `--context-file`, which Gate 93 requires to be the
    `context-file` output of wing-commander-issue-context (title, body,
-   and comments that passed the author-association trust filter);
+   and comments that passed the author-association trust filter). This
+   script cannot prove the file was not rewritten between that step and
+   this one, so the heading claims only where the text came from;
 3. the one-line fallback "No drafted body." when that composite never
    ran or its file is missing or empty.
 
-The fallback reads the composite's file and nothing else. Never an
-unfiltered `gh issue view --json body,comments`: FR-056 requires comment
-content to be filtered in code before it reaches intake, and the
-spec-request body feeds intake. Gate 93
-(verify-issue-context-single-home.py) enforces both halves: every
-spec-request creation in board-loop.yml goes through this script, and
-its `--context-file` comes from that composite's `context-file` output.
+The context goes inside a fenced code block whose fence is longer than
+the longest backtick run in the text. GitHub does not expand @mentions or
+#N references inside a code block, so a fallback body neither notifies
+every commenter (the file carries a "## Comment by @login" line per
+comment) nor adds a "mentioned this" entry to every issue or PR the text
+cites. No text inside can close the fence early.
+
+The fallback reads that file and nothing else. Never an unfiltered
+`gh issue view --json body,comments`: FR-056 requires comment content to
+be filtered in code before it reaches intake, and the spec-request body
+feeds intake. Gate 93 (verify-issue-context-single-home.py) enforces both
+halves: every spec-request creation in board-loop.yml goes through this
+script, and its `--context-file` comes from that composite's
+`context-file` output.
 
 The body proper is truncated so the whole body stays under GitHub's
-65536-character issue-body limit. When text is cut, a visible note says
-how much was omitted. Length is counted in UTF-16 code units (the way
-GitHub's limit counts characters) against a cap below 65536, which leaves
-room for newline normalisation.
+65536-character issue-body limit. When text is cut, a visible note (after
+the closing fence, so it renders) says how much was omitted. Length is
+counted in UTF-16 code units (the way GitHub's limit counts characters)
+against a cap below 65536, which leaves room for newline normalisation.
 
 USAGE
 -----
@@ -53,6 +63,7 @@ USAGE
 """
 import argparse
 import os
+import re
 import sys
 
 GITHUB_BODY_LIMIT = 65536
@@ -61,8 +72,9 @@ GITHUB_BODY_LIMIT = 65536
 MAX_BODY_UNITS = 60000
 
 NO_BODY_FALLBACK = "No drafted body."
-CONTEXT_HEADING = "Originating issue (trust-filtered, verbatim):"
+CONTEXT_HEADING = "Originating issue (trust-filtered context):"
 SEPARATOR = "\n\n---\n"
+BACKTICK_RUN_RE = re.compile(r"`+")
 
 
 def utf16_len(text):
@@ -90,18 +102,38 @@ def _cut_to_units(text, budget):
     return text
 
 
-def fit(text, budget):
-    """`text` unchanged when it fits `budget` UTF-16 units; otherwise its
-    longest fitting prefix plus a truncation note, the whole still inside
-    `budget`."""
+def truncate(text, budget):
+    """(kept, note): `text` and "" when it fits `budget` UTF-16 units;
+    otherwise its longest prefix that leaves room for the truncation
+    note, and that note. utf16_len(kept) + utf16_len(note) <= budget."""
     if utf16_len(text) <= budget:
-        return text
+        return text, ""
     # The note's own length depends on the omitted count's digit count;
     # sizing it with the largest possible count keeps the result in
     # budget whatever the final count is.
     note_budget = utf16_len(truncation_note(len(text)))
     kept = _cut_to_units(text, budget - note_budget).rstrip()
-    return kept + truncation_note(len(text) - len(kept))
+    return kept, truncation_note(len(text) - len(kept))
+
+
+def fence_for(text):
+    """A backtick fence longer than any backtick run in `text` (at least
+    three), so nothing inside can close it."""
+    longest = max((len(m.group(0)) for m in BACKTICK_RUN_RE.finditer(text)),
+                  default=0)
+    return "`" * max(3, longest + 1)
+
+
+def fenced_context(context, budget):
+    """The labelled, fenced context section, inside `budget` UTF-16
+    units. The fence is sized from the full text; cutting only shortens
+    backtick runs, so the same fence still holds after truncation."""
+    fence = fence_for(context)
+    opening = CONTEXT_HEADING + "\n\n" + fence + "\n"
+    closing = "\n" + fence
+    kept, note = truncate(
+        context, budget - utf16_len(opening) - utf16_len(closing))
+    return opening + kept + closing + note
 
 
 def read_text(path):
@@ -121,7 +153,7 @@ def build_body(drafted="", context="", notice="", footer="",
     """Assemble one spec-request body. See the module docstring for the
     layout and the order the body proper is chosen in."""
     drafted = (drafted or "").strip()
-    context = (context or "").strip()
+    context = (context or "").strip("\n").rstrip()
     notice = (notice or "").strip()
     footer = (footer or "").strip()
 
@@ -133,10 +165,10 @@ def build_body(drafted="", context="", notice="", footer="",
     budget = max_units - utf16_len(head) - utf16_len(tail)
 
     if drafted:
-        proper = fit(drafted, budget)
-    elif context:
-        label = CONTEXT_HEADING + "\n\n"
-        proper = label + fit(context, budget - utf16_len(label))
+        kept, note = truncate(drafted, budget)
+        proper = kept + note
+    elif context.strip():
+        proper = fenced_context(context, budget)
     else:
         proper = NO_BODY_FALLBACK
 
