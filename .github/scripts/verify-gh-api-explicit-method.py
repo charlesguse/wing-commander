@@ -385,7 +385,7 @@ CASES = [
      False, ()),
 
     ("no false positive: --paginate read, filter carries a | inside quotes",
-     'gh api "repos/$R/issues/$N/comments" --paginate '
+     'gh api "repos/$R/issues/$N/comments" --paginate '  # wc-pagination-exempt: gh-api-explicit-method self-test fixture text, not a real invocation
      '--jq \'.[] | {id, body}\' | jq -s \'.\'',
      False, ()),
 

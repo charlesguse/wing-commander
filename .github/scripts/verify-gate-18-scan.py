@@ -34,6 +34,23 @@ Usage: python3 .github/scripts/verify-gate-18-scan.py
 import glob, os, re, sys, yaml
 
 EXCLUDE_DIR = ".wing-commander-pipeline"
+
+# Directories the checked-in-script sweep walks past deliberately, not by
+# accident of `glob`'s dot-directory skip (that accident is #480 — this
+# list is what replaces it now that the sweep can see dot-directories at
+# all). `.github/`, `.specify/scripts/`, and `.claude/hooks|skills/` are
+# NOT here: every one of them is a tracked, maintained part of this
+# repository (`.specify/scripts/bash/*.sh` is granted directly to agents in
+# stage tool-lists; `.claude/skills/*/scripts/*.py` back the review skills
+# this very CLAUDE.md requires), so an unsafe paginated read under any of
+# them is exactly what Gate 18 exists to catch.
+SCRIPT_SWEEP_EXCLUDE_DIRS = (
+    EXCLUDE_DIR,   # a nested pipeline checkout, not part of this tree
+    ".git",        # VCS internals, never a checked-in script
+    ".claude/worktrees",  # gitignored nested worktree checkouts (see
+                          # .gitignore) — scanning one re-scans whatever
+                          # branch it holds under this repo's own findings
+)
 GH_INVOKE_RE = re.compile(r'\bgh\s+api\b.*?--paginate\b')
 JQ_ARG_RE = re.compile(
     r"--jq\s+'((?:[^'\\]|\\.)*)'|--jq\s+\"((?:[^\"\\]|\\.)*)\"")
@@ -190,11 +207,39 @@ for path in sorted(glob.glob(".github/workflows/*.yml")
     for inner_lines, offset in find_run_blocks(path):
         scan(posix(path), inner_lines, offset, failures)
 
-for path in sorted(set(glob.glob("**/*.sh", recursive=True)
-                       + glob.glob("**/*.py", recursive=True))):
+# include_hidden=True (3.11+) is required: plain `**` never descends into a
+# dot-directory, and every checked-in script in this repository lives under
+# one (.github/, .specify/scripts/, .claude/hooks|skills/) — see #480. Naming
+# ".github/**/*.py" etc. instead would silently miss the same class of
+# script the next time one is added under a different dot-directory (this
+# repository already has three); the exclude list above is where "don't
+# scan this" belongs, deliberately, not the include pattern.
+script_paths = sorted(set(
+    glob.glob("**/*.sh", recursive=True, include_hidden=True)
+    + glob.glob("**/*.py", recursive=True, include_hidden=True)))
+script_paths = [p for p in script_paths if not any(
+    posix(p) == d or posix(p).startswith(d + "/")
+    for d in SCRIPT_SWEEP_EXCLUDE_DIRS)]
+
+# A sweep that matches 0 files is not "a repository with no scripts" - this
+# repository has over a hundred, all under dot-directories. It is the exact
+# failure shape #480 filed: the include pattern silently stopped reaching
+# them and the gate went on reporting a clean scan of nothing. Fail loudly
+# instead of printing a trustworthy-looking "0 failure(s)". Skipped under
+# --fixture-root: several of verify-gate-18.py's synthetic trees
+# deliberately contain no checked-in script at all (composite-action-only,
+# workflow-only fixtures), and that absence is the coverage those cases are
+# for, not a regression of this guard.
+if "--fixture-root" not in sys.argv and not script_paths:
+    sys.exit(
+        "::error::Gate 18's checked-in-script sweep (`**/*.sh` / `**/*.py`, "
+        "include_hidden=True) matched 0 files. Every checked-in script in "
+        "this repository lives under a dot-directory, so this means the "
+        "sweep is broken again (#480), not that the repository has no "
+        "scripts. Fix discovery before trusting the rest of this gate.")
+
+for path in script_paths:
     norm = posix(path)
-    if norm == EXCLUDE_DIR or norm.startswith(EXCLUDE_DIR + "/"):
-        continue
     with open(path, encoding="utf-8") as fh:
         lines = fh.read().splitlines()
     scan(norm, lines, 0, failures)
