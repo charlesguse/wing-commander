@@ -159,10 +159,11 @@ answers that replaced them:
    stood-down run is not proof (FR-003). So under a synchronous wait, every
    proof run that exercises anything at all ends as "started-but-unfinished".
 2. **A dispatched run cannot reach the prove step, and reaches any other stage
-   only by chance.** `prove-gate` and `prove` are gated on
-   `github.event_name == 'pull_request'` and `select` on
+   only by chance.** `prove-gate` is gated on
+   `github.event_name == 'pull_request'`, `prove` runs only when `prove-gate`
+   reports the item eligible, and `select` is gated on
    `github.event_name != 'pull_request'`
-   (`.github/workflows/board-loop.yml:76`, `:2356`, `:2478`), so a
+   (`.github/workflows/board-loop.yml:76`, `:2283`, `:2405`), so a
    `workflow_dispatch` re-drive of `board-loop.yml` can never exercise a change
    to the prove step itself — including this feature's own change, which FR-022
    requires be provable — and which of triage, route, fix or review it does
