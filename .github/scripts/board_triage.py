@@ -285,10 +285,72 @@ def _record_disagreement(outcome, proposal):
     return outcome
 
 
+FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
+def _unquoted_unfenced(text):
+    """`text` with every `>`-quoted line and every fenced code block
+    removed. #505 review: a trusted author quote-replying to a stranger's
+    comment (or pasting it in a code block) carries the stranger's run link
+    into trusted text; neither is the trusted author citing that run. An
+    unclosed fence runs to the end of the text, as it renders -- that can
+    only drop a cite, never add one."""
+    kept = []
+    fence = None
+    for line in (text or "").split("\n"):
+        if fence is not None:
+            stripped = line.lstrip(" ")
+            if (len(line) - len(stripped) <= 3 and stripped.startswith(fence)
+                    and not stripped.rstrip().lstrip(fence[0])):
+                fence = None
+            continue
+        match = FENCE_OPEN_RE.match(line)
+        if match:
+            fence = match.group(1)
+            continue
+        if line.lstrip().startswith(">"):
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
+def find_cited_run(text, repository):
+    """#505: the run an issue cites, from text that already passed
+    wing-commander-issue-context's trust filter (its context-file: title,
+    body, then qualifying comments oldest first). Quoted lines and fenced
+    code blocks are ignored (see _unquoted_unfenced). A watchdog issue's own
+    `_First seen: [this run](URL)_` marker (watchdog.yml) wins over any
+    other run link; otherwise the first run link of `repository` wins.
+    Returns the run URL (https://github.com/OWNER/REPO/actions/runs/ID) or
+    None."""
+    run_url = r"https://github\.com/{0}/actions/runs/[0-9]+".format(
+        re.escape(repository))
+    scanned = _unquoted_unfenced(text)
+    first_seen = re.search(
+        r"_First seen: \[this run\]\((" + run_url + r")[^)\s]*\)_", scanned)
+    if first_seen:
+        return first_seen.group(1)
+    match = re.search(run_url + r"(?![0-9])", scanned)
+    return match.group(0) if match else None
+
+
 def main():
     """Runtime entry point: reads the same shape triage() expects from
     stdin as JSON `{"issue": {...}, "cited_run": str|None}`, prints the
-    TriageVerdict as JSON to stdout."""
+    TriageVerdict as JSON to stdout.
+
+    `find-cited-run --repository OWNER/REPO FILE` instead prints
+    find_cited_run() of FILE (nothing when no run is cited) -- the single
+    home board-loop.yml's triage `cite` step calls."""
+    if len(sys.argv) > 1 and sys.argv[1] == "find-cited-run":
+        import argparse
+        parser = argparse.ArgumentParser(prog="board_triage.py find-cited-run")
+        parser.add_argument("--repository", required=True)
+        parser.add_argument("context_file")
+        args = parser.parse_args(sys.argv[2:])
+        with open(args.context_file, encoding="utf-8") as fh:
+            print(find_cited_run(fh.read(), args.repository) or "")
+        return
     payload = json.load(sys.stdin)
     verdict = triage(payload.get("issue") or {}, payload.get("cited_run"))
     print(json.dumps(verdict))

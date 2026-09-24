@@ -721,15 +721,18 @@ jobs:
       # issue's own author, never a bot). Never a comments fetch of this
       # step's own: a public commenter's link to an old run would otherwise
       # become 429/action-bump close evidence against someone else's issue.
-      # Not comments-file: that drops the body. verify-board-triage.py
-      # (Gate 82) fails this step on any issue read of its own.
+      # Not comments-file: that drops the body. board_triage.py's
+      # find_cited_run() also skips `>`-quoted lines and fenced code (a
+      # trusted reply quoting a stranger's link is not a cite) and prefers
+      # a watchdog issue's own "First seen" run. verify-board-triage.py
+      # (Gate 82) fails this step on any other read or line.
       - name: Locate a cited run, if any
         id: cite
         env:
           ISSUE_CONTEXT_FILE: ${{ steps.issue-context-triage.outputs.context-file }}
         run: |
           set -uo pipefail
-          run_url="$(grep -oE "https://github\\.com/${GITHUB_REPOSITORY}/actions/runs/[0-9]+" "$ISSUE_CONTEXT_FILE" | head -1 || true)"
+          run_url="$(python3 .github/scripts/board_triage.py find-cited-run --repository "$GITHUB_REPOSITORY" "$ISSUE_CONTEXT_FILE" || true)"
           echo "run-url=$run_url" >> "$GITHUB_OUTPUT"
           if [ -n "$run_url" ]; then
             echo "run-id=${run_url##*/}" >> "$GITHUB_OUTPUT"

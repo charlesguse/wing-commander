@@ -56,7 +56,14 @@ The cited run is the first run URL in the issue's own title/body or in a
 comment that passed `wing-commander-issue-context`'s trust filter
 (OWNER/MEMBER/COLLABORATOR or the issue's own author, never a bot) --
 scanned from that composite's `context-file`, never from a comments fetch
-of the triage job's own. Both close grounds read only that run.
+of the triage job's own, by `board_triage.find_cited_run()`: `>`-quoted
+lines and fenced code blocks are skipped (quoting a stranger's link is not
+citing it), and a watchdog issue's own `_First seen: [this run](URL)_`
+marker wins over any other link. Both close grounds read only that run.
+
+An eligible issue's external author can choose their own issue's cited
+run; that can only close their own issue, which they can already do, so it
+grants nothing new.
 
 ## Gate: `verify-board-triage.py`
 
@@ -76,3 +83,5 @@ Fixtures (FR-064 bullet 1), each a checked-in transcript/workflow-pin pair:
 8. board-loop.yml's `cite` step reads only the trust-filtered
    `context-file`, and no triage-job step reads comments unfiltered;
    each proven by mutating the real workflow.
+9. `find_cited_run()`: a quoted or fenced link is ignored, a watchdog
+   "First seen" run is preferred, a plain body link still works.
