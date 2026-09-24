@@ -46,6 +46,7 @@ Shell lint of run: blocks is Gate 48's job (verify-stage-shell-lint.py;
 this gate's subject the schema/expression pass alone, byte-identical
 between CI and run-local-gates.py.
 """
+import contextlib
 import glob
 import os
 import re
@@ -58,6 +59,19 @@ from wc_actionlint import (  # noqa: E402
     COUNTED, CRED_SCALAR, CRED_USERPASS, IGNORED, KNOWN, ensure_actionlint)
 
 WORKFLOWS_DIR = ".github/workflows"
+# Every workflow that publishes a stage checks itself out here, pinned at
+# its own ref, so `uses: ./.wing-commander-pipeline/.github/actions/X`
+# resolves during a real run (specs/010-reusable-pipeline). CI's lint job
+# never creates this checkout, so actionlint there finds nothing at the
+# path and stays silent about it. A working tree that still carries one
+# from an earlier manual run makes actionlint resolve those `uses:` lines
+# against whatever ref that checkout happens to be pinned at instead --
+# stale relative to the tree's own .github/actions/, so a correct
+# in-flight change (a new composite input landing with its call site)
+# fails Gate 46 for a reason that has nothing to do with the change
+# (#442). Hidden for the run below so this gate's answer matches CI
+# instead of depending on the workspace.
+STALE_PIPELINE_DIR = ".wing-commander-pipeline"
 # The binding is a job-level environment sub-key: jobs(0) / <job>(2) /
 # environment(4) / deployment(6). Matched on the key's own line rather
 # than the full binding so this file never contains a literal GitHub
@@ -72,6 +86,26 @@ def ensure_binary():
     """Path to the pinned actionlint -- wc_actionlint.ensure_actionlint,
     which Gate 48 shares, so both passes lint with one binary."""
     return ensure_actionlint()
+
+
+@contextlib.contextmanager
+def hide_stale_pipeline_checkout(root="."):
+    """Rename STALE_PIPELINE_DIR out of actionlint's way for the run, if
+    a leftover one is present, and put it back afterward either way.
+
+    See STALE_PIPELINE_DIR's comment for why this exists (#442). A no-op
+    when nothing is there, which is the CI case and the common local one.
+    """
+    path = os.path.join(root, STALE_PIPELINE_DIR)
+    if not os.path.isdir(path):
+        yield
+        return
+    hidden = path + ".gate46-hidden"
+    os.rename(path, hidden)
+    try:
+        yield
+    finally:
+        os.rename(hidden, path)
 
 
 def workflow_files(root="."):
@@ -156,7 +190,8 @@ def run_gate():
         sys.exit(f"no workflow files found under {WORKFLOWS_DIR} -- "
                  f"this gate linted nothing. Run from the repository root.")
     binary = ensure_binary()
-    diags = run_actionlint(binary, files)
+    with hide_stale_pipeline_checkout():
+        diags = run_actionlint(binary, files)
     bindings = count_bindings(files)
     cred_bindings = count_cred_bindings(files)
     errors, other = classify(diags, bindings, cred_bindings)
