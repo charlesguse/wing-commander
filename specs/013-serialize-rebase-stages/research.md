@@ -190,6 +190,15 @@ inventing retry bookkeeping.
 added to the unified `wing-commander-${{ spec-dir }}` group this feature
 creates.
 
+**Superseded 2026-09-21 (#397)**: the assumption below — that cleanup runs
+strictly after a spec's terminal stage — does not hold for `mark-stalled`,
+which fires when a plan or tasks PR is closed unmerged, possibly while an
+implement cycle or a rebase is pushing the same spec branch. All three
+cleanup outcome jobs now join `wing-commander-<spec-dir>`, derived by the
+`select` job from `head-ref`, and Gate 80 holds every pusher to the group
+or to a written waiver. The rest of this section is kept as the record of
+the original decision.
+
 **Rationale**: FR-008 scopes the unified ordering to "the auto-rebase and
 every stage run," and spec.md's Key Entities define "Stage run" by example
 as plan/tasks/implement/finalize — cleanup runs strictly *after* finalize's

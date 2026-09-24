@@ -1,0 +1,8 @@
+{
+  "number": 1002,
+  "author": {"login": "some-reporter"},
+  "authorAssociation": "NONE",
+  "labels": [{"name": "spec-request"}],
+  "state": "OPEN",
+  "createdAt": "2026-01-02T00:00:00Z"
+}

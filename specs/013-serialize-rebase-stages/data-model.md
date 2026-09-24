@@ -39,10 +39,10 @@ research.md D1's table share this group per specification —
 `implement` and dispatch-next jobs, and `finalize.yml`'s `finalize` job.
 `intake.yml` (`wing-commander-intake`, global — no slug exists yet),
 `clarify.yml` (`wing-commander-${issue-number}` — keyed to the lifecycle
-issue, not a `spec/NNN-slug` branch), and `cleanup.yml`
-(`wing-commander-cleanup-${head-ref}` — runs only after a spec's terminal
-stage, D5) are explicitly **not** members; their existing groups are
-unchanged.
+issue, not a `spec/NNN-slug` branch) are explicitly **not** members;
+their existing groups are unchanged. `cleanup.yml` was excluded on the
+same terms (D5) until #397 showed its `mark-stalled` job writing the spec
+branch mid-cycle; its three outcome jobs are members since 2026-09-21.
 
 **State transitions** (all owned by GitHub Actions, not this feature's
 code):

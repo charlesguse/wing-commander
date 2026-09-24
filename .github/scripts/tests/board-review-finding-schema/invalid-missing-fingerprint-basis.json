@@ -1,0 +1,6 @@
+{
+  "title": "fingerprint_basis missing",
+  "what": "The finding omits the fingerprint_basis object entirely.",
+  "evidence": {"file_paths": ["a.py"]},
+  "in_scope": false
+}

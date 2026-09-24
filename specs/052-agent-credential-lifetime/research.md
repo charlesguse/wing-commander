@@ -456,9 +456,11 @@ already set for a narrower fix.
   gating self-review, not a maintainer-review finding).
 - **D3's "a step after it did not complete" was as specific as the design
   got.** FR-011/SC-003 ask for the step to be *named*. A new per-job
-  "Determine failed post-agent step" step (the job's actual last step,
-  reading `toJSON(steps)`) publishes which step failed, read by the
-  stall-reason branch ahead of the generic fallback.
+  "Determine failed post-agent step" step (the job's actual last step)
+  publishes which step failed, read by the stall-reason branch ahead of
+  the generic fallback. It read `toJSON(steps)` when this was written;
+  D10a records its replacement by the `wing-commander-failed-post-agent-
+  step` composite fed an explicit candidate list (#410 item 4).
 - **Cancellation window.** Every new step's guard changed from
   `always() && ...` to `!cancelled() && ...`, so a cancelled run no longer
   performs a network mint or a remote rewrite after cancellation was

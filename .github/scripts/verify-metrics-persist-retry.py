@@ -50,6 +50,7 @@ a batch the append step cannot read fails here, not on the metrics branch.
 """
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -57,6 +58,12 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# The valid schema-version-1 record and its pretty-printed writer moved to
+# wc_metrics_harness when spec 058's three sweep gates needed the same
+# fixture: a record that drifts from the emitter is a fixture that proves
+# nothing, and two copies drift on the first schema change.
+from wc_metrics_harness import (  # noqa: E402
+    metrics_record as _reusable_workflow_record, write_pretty as _write_pretty)
 from wc_shell_harness import (  # noqa: E402
     ensure_jq, find_step, resolve_bash, run_step, use_utf8_stdout)
 
@@ -77,9 +84,12 @@ MULTI_MODEL_FIXTURE = os.path.join(
 failures = []
 
 
-def fail(case, msg):
+def fail(case, msg, file=None):
+    """`file` overrides the default `::error file=ACTION::` annotation for a
+    case (like case_jq_cr_shim_has_exactly_one_home) whose finding is about
+    a different file than the shipped action this gate otherwise tests."""
     failures.append(f"{case}: {msg}")
-    print(f"::error file={ACTION}::{case}: {msg}")
+    print(f"::error file={file or ACTION}::{case}: {msg}")
 
 
 def note(msg):
@@ -437,41 +447,8 @@ def case_idempotent_repeat_persistence_is_byte_for_byte_unchanged():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def _reusable_workflow_record(run_id, job_key, step_index=0):
-    """A schema-version-1 record exactly as wing-commander-metrics-summary
-    emits it for a reusable-workflow job: job_id null, record_key in its
-    emission-time run_id:job_key:step_index form. Shape mirrors the
-    metrics-record-diagnose artifact of run 34562449781."""
-    return {
-        "schema_version": 1, "record_available": True,
-        "run": {"workflow_run_id": run_id, "job_key": job_key,
-                "job_id": None, "step_index": step_index,
-                "record_key": f"{run_id}:{job_key}:{step_index}"},
-        "stage": "watchdog", "stage_available": True, "run_label": job_key,
-        "spec": {"spec_dir": None, "issue": None, "identity_available": False},
-        "model": "claude-opus-5", "model_available": True,
-        "turns": {"counted": 2, "reported": 4, "intended_budget": 30,
-                  "enforced_ceiling": 75, "available": True},
-        "tokens": {"input": 4, "output": 663, "cache_read": 21730,
-                   "cache_creation": 21978, "available": True},
-        "cost_usd": 0.24724, "cost_available": True,
-        "duration_ms": 58418, "duration_available": True,
-        "outcome": "healthy",
-        "per_model": [{"model": "claude-opus-5", "input_tokens": 4,
-                       "output_tokens": 663, "cache_read_tokens": 21730,
-                       "cache_creation_tokens": 21978, "cost_usd": 0.24724}],
-        "per_model_available": True,
-        "emitted_at": "2026-09-11T04:32:29Z",
-    }
-
-
-def _write_pretty(path, record):
-    # indent=2, deliberately: the emitter writes its record pretty-printed
-    # (`jq -n` without -c), and a compact fixture here would pass against
-    # the exact validate step that shipped broken.
-    with open(path, "w", encoding="utf-8", newline="\n") as f:
-        json.dump(record, f, indent=2)
-        f.write("\n")
+# _reusable_workflow_record / _write_pretty: see the import at the top of
+# this file. They live in wc_metrics_harness now.
 
 
 def case_validate_then_append_persists_reusable_workflow_records():
@@ -675,6 +652,62 @@ def case_validate_then_append_persists_reusable_workflow_records():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# Second-review addition (#481): the marker-comment check alone missed a
+# copy with that one line reworded but the shim's actual behavior intact.
+# This matches the CR-strip idiom itself -- `sed 's/\r$//'`, written as a
+# regular (non-raw) Python triple-quoted string, so the source bytes carry
+# it as either one or two backslashes before the `r` depending on how the
+# copy was typed (`\\r$//` is what wc_shell_harness.py's own JQ_CR_SHIM
+# literal contains; a paste retyped as a raw string or a bash heredoc would
+# read `\r$//`) -- co-occurring with a `jq` invocation, since the bare sed
+# idiom alone is generic CRLF-stripping unrelated to jq.
+_CR_STRIP_RE = re.compile(r"s/\\+r\$//")
+_JQ_MENTION_RE = re.compile(r"\bjq\b")
+
+
+def case_jq_cr_shim_has_exactly_one_home():
+    """The jq Windows-CRLF shim (#446) has exactly one home: ensure_jq() in
+    wc_shell_harness.py, which every gate here gets jq from. #459: it used
+    to live a second time, privately, in wc_metrics_harness.py's _bindir()
+    -- undiscoverable to a future gate that reaches for ensure_jq() and
+    then builds a path from `jq -r` output the way Gates 76-78 do. Scans
+    every other .github/scripts/*.py for the shim's marker comment OR its
+    substantive shape (see _CR_STRIP_RE above) -- the marker text quoted
+    just below is never written as code in this file, only in this
+    docstring, so this case does not trip over itself."""
+    case = "jq CRLF shim single home"
+    marker = "jq whose lines never end in a carriage return (#446)"
+    this_file = os.path.normpath(os.path.abspath(__file__))
+    canonical = os.path.normpath(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                     "wc_shell_harness.py"))
+    hits = []
+    scripts_dir = os.path.dirname(os.path.abspath(__file__))
+    for name in sorted(os.listdir(scripts_dir)):
+        if not name.endswith(".py"):
+            continue
+        path = os.path.join(scripts_dir, name)
+        if os.path.normpath(path) in (canonical, this_file):
+            continue
+        text = open(path, encoding="utf-8").read()
+        if marker in text:
+            hits.append((path, "the marker comment"))
+        elif _CR_STRIP_RE.search(text) and _JQ_MENTION_RE.search(text):
+            hits.append((path, "the CR-strip idiom plus a jq invocation, "
+                              "with the marker comment reworded away"))
+    if hits:
+        for path, why in hits:
+            fail(case, "the jq CRLF shim's only home is "
+                       "wc_shell_harness.py's ensure_jq(); a copy pasted "
+                       f"here ({why}) drifts silently the next time the "
+                       "shim changes.", file=path)
+    else:
+        note("no .github/scripts/*.py other than wc_shell_harness.py "
+             "carries a copy of the jq CRLF shim, by marker comment or by "
+             "its CR-strip-plus-jq shape; every gate gets it from "
+             "ensure_jq()")
+
+
 CASES = [
     case_zero_artifact_batch_against_existing_branch_is_zero_failure,
     case_first_write_creates_missing_destination_branch,
@@ -683,6 +716,7 @@ CASES = [
     case_sustained_contention_fails_loudly_naming_the_key,
     case_idempotent_repeat_persistence_is_byte_for_byte_unchanged,
     case_validate_then_append_persists_reusable_workflow_records,
+    case_jq_cr_shim_has_exactly_one_home,
 ]
 
 

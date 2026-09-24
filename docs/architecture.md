@@ -586,21 +586,29 @@ the label).
 
 **Trigger**: `workflow_run: [completed]` across the eight other stage
 wrappers, plus manual `workflow_dispatch` with a `run-id` to re-inspect any
-past run. The thin wrapper resolves the inspected run's identity
-(`run-id`/`run-name`) and declines a source run whose conclusion is
-`skipped` — it executed nothing, so FR-026 leaves nothing to inspect, and it
-is the common case (every pipeline comment wakes the clarify wrapper, which
-skips). Every job below lives in the reusable `watchdog.yml`.
+past run. The thin wrapper is **one job** (specs/058-per-job-minute-floor,
+FR-020): it declines a source run whose conclusion is `skipped` — it
+executed nothing, so FR-026 leaves nothing to inspect, and it is the common
+case (every pipeline comment wakes the clarify wrapper, which skips) — and
+otherwise calls the stage directly. The `resolve` job it used to carry
+existed only to turn one event payload into two strings, and a wrapper job
+is a whole billed runner minute however short it runs; the same argument
+removed `wing-commander-metrics-persist.yml`'s own resolve job in spec 043.
+Gate 75 holds the one-job shape. Every job below lives in the reusable
+`watchdog.yml`.
 
-The identity the wrapper forwards as `run-name` is the inspected run's
-**workflow** name — its declared `name:` — read from the event payload's
-`workflow.name` on the event path and from `gh run view --json
-workflowName` on the dispatch path. It is never the run's own `name`: once
-a workflow sets `run-name:`, as this wrapper does, the Actions API reports
-that title in `name`, and `watchdog.yml`'s `case "$RUN_NAME"` arms and its
-FR-018 self-dispatch cap (`inputs.run-name == 'Wing Commander · 8
-watchdog'`) would silently stop matching. Gate 70 asserts the wrapper reads
-the workflow name and fails a mutation that reads the title instead.
+`run-name` is therefore **not** passed from the wrapper. The stage's input
+defaults to `''` and `collect`'s existing `gh run view` call resolves the
+name itself. What it resolves is the inspected run's **workflow** name —
+its declared `name:`, from `--json workflowName` — never the run's own
+`name`: once a workflow sets `run-name:`, as this wrapper does, the Actions
+API reports that title in `name`, and `watchdog.yml`'s `case "$RUN_NAME"`
+arms and its FR-018 self-dispatch cap (`collect`'s resolved run-name ==
+`'Wing Commander · 8 watchdog'`) would silently stop matching. Gate 70
+asserts the stage reads the workflow name and fails a mutation that reads
+the title instead; Gate 75 asserts the wrapper passes no `run-name` at all,
+so it cannot pass the wrong one. A caller that still supplies `run-name`
+explicitly sees no behavior change.
 
 Self-inspection (FR-021) lives in a **second wrapper**,
 `wing-commander-8b-watchdog-self.yml`, which listens to stage 8. It cannot be
@@ -647,7 +655,13 @@ Two constraints the wrappers must hold, both enforced by
   also adding `checks: read` to the wrapper produces a stage-8 run with zero
   jobs. See `docs/adoption.md`'s "Migrating to `@v2`" section.
 
-**Design** — four sequential jobs, `collect → diagnose → triage → act`:
+**Design** — four sequential jobs, `collect → diagnose → triage → act`,
+preceded by the `verify-image-prerequisites` check every published stage
+carries. Job counts vary by what the run actually finds: since
+specs/058-per-job-minute-floor the image check itself **skips** (billing
+nothing) when no container image is configured, and `diagnose` onward skip
+when `collect` found no signal — so the common healthy inspection is two
+billed jobs, `collect` and the always-on `report-unhandled-failure`.
 - `collect` — deterministic evidence gathering only (no agent). Five FR-006
   sources — execution-output denied-tool counts, branch drift (zero pushed
   commits on a push-expected stage), `spec-meta.json` stage vs. expected,
@@ -742,8 +756,26 @@ Two constraints the wrappers must hold, both enforced by
   before the composite the derivation was pasted into both jobs and #322's
   fallback landed in one). Only if
   *every* collector errors outright does it flip `evidence-available: false`
-  → "could not inspect this run" (FR-005); an empty-but-successful signal set
-  still proceeds to `diagnose`.
+  → "could not inspect this run" (FR-005).
+
+  An **empty but successful signal set** does not reach `diagnose` at all
+  (specs/058-per-job-minute-floor, FR-011). There is nothing to weigh, the
+  agent's only possible verdict is "passed inspection", and that is a fact
+  the aggregate step already holds — so a deterministic step in `collect`
+  posts it and `diagnose` skips. The two wordings are the ones `diagnose`'s
+  own passed-inspection reporter uses, relocated rather than reworded: a
+  full pass when every collector reported, and one naming both counts when
+  some errored but the survivors found nothing. This is the common
+  inspection, and it now bills `collect` plus `report-unhandled-failure`
+  and invokes no agent. Gate 73 holds the three conditions that balance
+  here — skip on an empty signal set, but not when every collector failed
+  (that is the "could not inspect" degradation, a different event) and not
+  when the `aggregate` step itself died (its outputs are stale then, and a
+  pass written over a crashed step is the fabricated clean bill of health
+  this stage exists to prevent). A run that skipped the agent also emits no
+  `metrics-record*` artifact, and Gate 74 holds that the cumulative rollup
+  does not list it at all — never as a record that existed and could not be
+  retrieved.
 - `diagnose` — one `claude-opus-5`, read-only, structured-output step
   (no write tools, no `git`/`gh` write access) turning signals into zero or
   more Findings. `signals.json` and anything read is framed as untrusted
@@ -1250,9 +1282,11 @@ than only ever exercised on a bare runner:
   own `pass` (data-model.md "Execution mode"). This narrows, but does not
   close, the overstatement risk: a container-mode turn whose image
   variable was left unset on the test repository still reaches a plain
-  `pass`, since `verify-image-prerequisites` vacuously succeeds and the
-  run completes outside any container with nothing in the verdict able to
-  tell — detecting that specific case needs a permission (reading the
+  `pass`, since `verify-image-prerequisites` is **skipped** with no image
+  to pull (before specs/058-per-job-minute-floor it ran and vacuously
+  succeeded; either way it raises no objection) and the run completes
+  outside any container with nothing in the verdict able to tell —
+  detecting that specific case needs a permission (reading the
   test repository's Actions run data) this verification does not have and
   has not been granted (FR-017; research.md D7, tasks.md T009).
 

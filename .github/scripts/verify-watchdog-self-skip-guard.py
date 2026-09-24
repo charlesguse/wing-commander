@@ -27,15 +27,15 @@ dispatched, and asserts:
     source that executed, or on a dispatch -- the regression case.
 
 Setting `run-name:` also changes what the Actions API reports in a run's
-`name`: it becomes the title, not the workflow's declared name. Stage 8's
-resolve step derives the inspected run's identity -- which watchdog.yml
-keys its `case "$RUN_NAME"` arms and its FR-018 self-dispatch cap on --
-so it must read the workflow's own name (the payload's `workflow.name`,
-`--json workflowName`) and never the run's `name` or the payload's
-workflow_run name. Read from the title, a dispatched re-inspection of a
-stage-8 run hands watchdog.yml "inspect ... (success)" where it expects
+`name`: it becomes the title, not the workflow's declared name. The
+inspected run's identity -- which watchdog.yml keys its `case "$RUN_NAME"`
+arms and its FR-018 self-dispatch cap on -- is derived in watchdog.yml's
+own `collect` job since spec 058 folded stage 8's `resolve` job away, so
+that step must read the workflow's own name (`--json workflowName`) and
+never the run's `name`. Read from the title, a dispatched re-inspection of
+a stage-8 run gives watchdog.yml "inspect ... (success)" where it expects
 "Wing Commander · 8 watchdog", and the cap never engages. This gate
-asserts the identity source too.
+asserts the identity source too, now on the stage rather than the wrapper.
 
 Four mutations -- 8b keyed on stage 8's conclusion alone, the run-name
 suffix changed in one file only, stage 8's skipped-source guard dropped,
@@ -43,206 +43,29 @@ the inspected run's identity read from its run title -- must each break an
 assertion, so the gate proves it can see the drift it exists for. It reads
 the two workflow files only; it makes no network call.
 """
-import math
 import os
 import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# The GitHub-expression evaluator these assertions run on lives in one place
+# (wc_gha_expr.py) -- Gate 73 evaluates watchdog.yml's guards with the same
+# semantics, and a second copy would diverge on the first fix.
+from wc_gha_expr import evaluate, interpolate, truthy  # noqa: E402
 from wc_shell_harness import find_job, use_utf8_stdout  # noqa: E402
 
 import yaml  # noqa: E402
 
 STAGE8 = os.path.join(".github", "workflows", "wing-commander-8-watchdog.yml")
 SELF = os.path.join(".github", "workflows", "wing-commander-8b-watchdog-self.yml")
-STAGE8_JOBS = ("resolve", "watchdog")
+# The stage the wrapper calls; since spec 058 it, not the wrapper, resolves
+# the inspected run's identity (the wrapper's `resolve` job was folded away).
+STAGE = os.path.join(".github", "workflows", "watchdog.yml")
+# One job, since that fold: the wrapper's whole remaining body.
+STAGE8_JOBS = ("watchdog",)
 SELF_JOB = "verify"
 PAUSE_VAR = "vars.WING_COMMANDER_WATCHDOG_PAUSED"
 SOURCE_CONCLUSIONS = ("success", "failure", "cancelled", "timed_out", "skipped")
-
-
-# --------------------------------------------------------------------------
-# A small GitHub-expression evaluator: literals, context references, ! == !=
-# && || with GitHub's precedence and loose-equality rules, and the four
-# string functions these guards can plausibly grow into. Anything else is a
-# hard error -- a guessed evaluation is the failure mode this gate exists for.
-# --------------------------------------------------------------------------
-TOKEN = re.compile(r"""\s*(?:
-    (?P<str>'(?:[^']|'')*')
-  | (?P<num>-?\d+(?:\.\d+)?)
-  | (?P<op>&&|\|\||==|!=|!|\(|\)|,)
-  | (?P<name>[A-Za-z_][A-Za-z0-9_\-]*(?:\.(?:[A-Za-z_][A-Za-z0-9_\-]*|\*))*)
-)""", re.X)
-
-
-def tokenize(src):
-    out, pos = [], 0
-    while pos < len(src):
-        if src[pos:].strip() == "":
-            break
-        m = TOKEN.match(src, pos)
-        if not m or m.end() == pos:
-            raise ValueError(f"cannot tokenize {src[pos:pos + 30]!r}")
-        pos = m.end()
-        kind = m.lastgroup
-        out.append((kind, m.group(kind)))
-    return out
-
-
-def to_str(v):
-    if v is None:
-        return ""
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, float) and v.is_integer():
-        return str(int(v))
-    return str(v)
-
-
-def to_num(v):
-    if v is None:
-        return 0.0
-    if isinstance(v, bool):
-        return 1.0 if v else 0.0
-    if isinstance(v, (int, float)):
-        return float(v)
-    s = v.strip()
-    if s == "":
-        return 0.0
-    try:
-        return float(s)
-    except ValueError:
-        return math.nan
-
-
-def truthy(v):
-    if v is None or v is False or v == "":
-        return False
-    if isinstance(v, (int, float)) and not isinstance(v, bool):
-        return v != 0 and not math.isnan(v)
-    return True
-
-
-def loose_eq(a, b):
-    if isinstance(a, str) and isinstance(b, str):
-        return a.lower() == b.lower()
-    if type(a) is type(b):
-        return a == b
-    x, y = to_num(a), to_num(b)
-    return not (math.isnan(x) or math.isnan(y)) and x == y
-
-
-def fn_format(fmt, *args):
-    def sub(m):
-        if m.group(0) == "{{":
-            return "{"
-        if m.group(0) == "}}":
-            return "}"
-        return to_str(args[int(m.group(1))])
-    return re.sub(r"\{\{|\}\}|\{(\d+)\}", sub, to_str(fmt))
-
-
-FUNCS = {
-    "format": fn_format,
-    "endswith": lambda s, x: to_str(s).lower().endswith(to_str(x).lower()),
-    "startswith": lambda s, x: to_str(s).lower().startswith(to_str(x).lower()),
-    "contains": lambda s, x: to_str(x).lower() in to_str(s).lower(),
-}
-
-
-class Parser:
-    def __init__(self, src, ctx):
-        self.toks, self.i, self.ctx = tokenize(src), 0, ctx
-
-    def peek(self):
-        return self.toks[self.i] if self.i < len(self.toks) else (None, None)
-
-    def take(self, value=None):
-        tok = self.peek()
-        if tok[0] is None or (value is not None and tok[1] != value):
-            raise ValueError(f"expected {value!r}, found {tok[1]!r}")
-        self.i += 1
-        return tok
-
-    def parse(self):
-        v = self.or_()
-        if self.i != len(self.toks):
-            raise ValueError(f"trailing tokens from {self.peek()[1]!r}")
-        return v
-
-    def or_(self):
-        v = self.and_()
-        while self.peek() == ("op", "||"):
-            self.take()
-            rhs = self.and_()
-            v = v if truthy(v) else rhs
-        return v
-
-    def and_(self):
-        v = self.unary()
-        while self.peek() == ("op", "&&"):
-            self.take()
-            rhs = self.unary()
-            v = rhs if truthy(v) else v
-        return v
-
-    def unary(self):
-        if self.peek() == ("op", "!"):
-            self.take()
-            return not truthy(self.unary())
-        return self.cmp()
-
-    def cmp(self):
-        v = self.primary()
-        if self.peek() in (("op", "=="), ("op", "!=")):
-            op = self.take()[1]
-            eq = loose_eq(v, self.primary())
-            return eq if op == "==" else not eq
-        return v
-
-    def primary(self):
-        kind, val = self.take()
-        if (kind, val) == ("op", "("):
-            v = self.or_()
-            self.take(")")
-            return v
-        if kind == "str":
-            return val[1:-1].replace("''", "'")
-        if kind == "num":
-            return float(val)
-        if kind == "name":
-            if self.peek() == ("op", "("):
-                fn = FUNCS.get(val.lower())
-                if fn is None:
-                    raise ValueError(f"unsupported function {val}()")
-                self.take()
-                args = []
-                if self.peek() != ("op", ")"):
-                    args.append(self.or_())
-                    while self.peek() == ("op", ","):
-                        self.take()
-                        args.append(self.or_())
-                self.take(")")
-                return fn(*args)
-            if val in ("true", "false"):
-                return val == "true"
-            if val == "null":
-                return None
-            return self.ctx.get(val)
-        raise ValueError(f"unexpected token {val!r}")
-
-
-def evaluate(expr, ctx):
-    """An `if:` value (bare or ${{ }}-wrapped) -> its GitHub result."""
-    s = expr.strip()
-    m = re.fullmatch(r"\$\{\{(.*)\}\}", s, re.S)
-    return Parser(m.group(1) if m else s, ctx).parse()
-
-
-def interpolate(template, ctx):
-    """A string field like run-name -> the string GitHub would render."""
-    return re.sub(r"\$\{\{(.*?)\}\}", lambda m: to_str(Parser(m.group(1), ctx).parse()),
-                  template, flags=re.S)
 
 
 # --------------------------------------------------------------------------
@@ -254,8 +77,8 @@ def load_subject():
     if not isinstance(run_name, str) or not run_name.strip():
         sys.exit(f"::error file={STAGE8}::no `run-name:` -- 8b cannot tell a "
                  f"declined skipped source from a gating regression without it.")
-    with open(STAGE8, encoding="utf-8") as fh:
-        subject = {"run-name": run_name, "stage8:text": fh.read()}
+    with open(STAGE, encoding="utf-8") as fh:
+        subject = {"run-name": run_name, "stage:text": fh.read()}
     for job in STAGE8_JOBS:
         subject[f"stage8:{job}"] = str(find_job(STAGE8, job).get("if") or "")
     subject["8b"] = str(find_job(SELF, SELF_JOB).get("if") or "")
@@ -279,9 +102,10 @@ def source_ctx(paused, conclusion):
     return ctx
 
 
-IDENTITY_MUST = ("EVENT_RUN_NAME: ${{ github.event.workflow.name }}",
-                 "--json workflowName --jq .workflowName")
-IDENTITY_MUST_NOT = ("github.event.workflow_run.name", "--json name --jq .name")
+IDENTITY_MUST = ("workflowName",
+                 "run_name=\"$(printf '%s' \"$json\" | jq -r '.workflowName // empty')\"")
+IDENTITY_MUST_NOT = ("jq -r '.name // empty'", "--json name --jq .name",
+                     "github.event.workflow_run.name")
 
 
 def identity_failures(text):
@@ -289,25 +113,26 @@ def identity_failures(text):
 
     A run's `name` in the Actions API is its run title once the workflow sets
     `run-name:` -- which stage 8 does -- so deriving identity from the run's
-    name hands watchdog.yml a title like "inspect ... (success)" where it
+    name gives watchdog.yml a title like "inspect ... (success)" where it
     expects "Wing Commander · 8 watchdog", and its FR-018 self-dispatch cap
-    never engages. Checked on the wrapper's text, comments included, so the
-    forbidden forms may not be named there either.
+    never engages. Checked on watchdog.yml's text -- the stage resolves its
+    own run-name since spec 058 -- comments included, so the forbidden forms
+    may not be named there either.
     """
     broke = []
     for needle in IDENTITY_MUST:
         if needle not in text:
-            broke.append(f"stage 8 wrapper no longer resolves identity via {needle!r}")
+            broke.append(f"watchdog.yml no longer resolves identity via {needle!r}")
     for needle in IDENTITY_MUST_NOT:
         if needle in text:
-            broke.append(f"stage 8 wrapper resolves identity via {needle!r} -- that is "
+            broke.append(f"watchdog.yml resolves identity via {needle!r} -- that is "
                          f"the run title once run-name: is set, not the workflow name")
     return broke
 
 
 def suite(subject):
     """Every broken assertion, as a message. Empty = the pair is consistent."""
-    broke = identity_failures(subject.get("stage8:text", ""))
+    broke = identity_failures(subject.get("stage:text", ""))
     for paused in (False, True):
         for source in SOURCE_CONCLUSIONS + (None,):
             where = f"paused={paused} source={source or 'dispatch'}"
@@ -372,10 +197,9 @@ def mut_stage8_guard_dropped(subject):
 
 def mut_identity_from_run_title(subject):
     s = dict(subject)
-    s["stage8:text"] = (subject["stage8:text"]
-                        .replace(IDENTITY_MUST[0],
-                                 "EVENT_RUN_NAME: ${{ github.event.workflow_run.name }}")
-                        .replace(IDENTITY_MUST[1], "--json name --jq .name"))
+    s["stage:text"] = subject["stage:text"].replace(
+        IDENTITY_MUST[1],
+        "run_name=\"$(printf '%s' \"$json\" | jq -r '.name // empty')\"")
     return s
 
 

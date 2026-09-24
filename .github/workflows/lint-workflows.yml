@@ -71,6 +71,11 @@ on:
       # (no code change) must still trigger the gate that checks
       # verify-stage-finding-schema.py's fixtures against it.
       - ".github/schemas/**"
+      # Gate 79's subject: the delta document publishes the metrics
+      # wrapper's amended trigger block literally, as the contract an
+      # adopter forking that wrapper reads. Editing the document alone is
+      # the one change that can make it disagree with the file it describes.
+      - "specs/058-per-job-minute-floor/contracts/metrics-persist-sweep-delta.md"
   # Gate 1 only — it reads how GitHub actually registered the workflows on
   # the default branch, which a PR's files cannot tell us.
   push:
@@ -883,6 +888,10 @@ jobs:
               # pull-request write, the same level as `gh issue close` above.
               ("pr", "close"):       frozenset({("pull-requests", "write")}),
               ("pr", "list"):        frozenset({("pull-requests", "read")}),
+              # board-loop.yml's reviewer step reads the PR's own diff --
+              # GET /repos/{o}/{r}/pulls/{n} with the diff media type, a
+              # pull-requests read like `pr view`.
+              ("pr", "diff"):        frozenset({("pull-requests", "read")}),
               ("pr", "ready"):       frozenset({("pull-requests", "write"),
                                                  ("contents", "write")}),
               ("search", "issues"):  frozenset({("issues", "read")}),
@@ -1759,6 +1768,11 @@ jobs:
       # was not meant to change.
       - name: implement.yml's exhausted-retry stall notice reads exactly as before
         run: python3 .github/scripts/verify-implement-stall-notice-unchanged.py
+      # #410 item 3: the gate above had no self-test. The regressions it
+      # reintroduces are listed once, in the script's own SELF-TEST
+      # section -- see verify-implement-stall-notice-unchanged.py.
+      - name: The exhausted-retry stall-notice gate detects a reworded, deleted or reshaped pinned step, a missing pin, and a dependency-reason script that drifts on either branch
+        run: python3 .github/scripts/verify-implement-stall-notice-unchanged.py --self-test
 
       # Gate 16 — every agent step's execution log survives the agent's own
       # failure. `anthropics/claude-code-action` writes its transcript to
@@ -2082,6 +2096,13 @@ jobs:
           EXPECTED_RUNS_ON = (DOLLAR_OPEN + " startsWith(inputs.runner, '[') && "
                               "fromJSON(inputs.runner) || inputs.runner " + DOLLAR_CLOSE)
           EXPECTED_IMAGE = DOLLAR_OPEN + " inputs.container-image " + DOLLAR_CLOSE
+          # spec 058 (FR-001/FR-006): the job-level if: that makes
+          # verify-image-prerequisites skip cleanly (billing nothing) when
+          # no image is configured. Asserted identical across all 13
+          # stages the same way EXPECTED_RUNS_ON/EXPECTED_IMAGE are — Gate
+          # 23 owns the deeper contract for what depends on this job; Gate
+          # 22 only owns byte-for-byte uniformity of the passthrough shape.
+          EXPECTED_VIP_IF = "inputs.container-image != ''"
           # research D3/D5 (specs/044), measured 2026-09-07 on PR #285: an
           # empty-object credentials mapping suppresses the login attempt,
           # so this single expression is unconditionally correct for every
@@ -2191,6 +2212,16 @@ jobs:
                                 f"the exact runner-passthrough ternary like every "
                                 f"other job, even though it never gets a container: "
                                 f"block (FR-002/FR-003).")
+                          failures += 1
+                          ok = False
+                      vip_if = str(job.get("if", "") or "").strip()
+                      if vip_if != EXPECTED_VIP_IF:
+                          print(f"::error file={f}::job 'verify-image-prerequisites' "
+                                f"has job-level if: {job.get('if')!r}; it must carry "
+                                f"the exact {EXPECTED_VIP_IF!r} so the job skips "
+                                f"cleanly (and bills nothing) when no image is "
+                                f"configured, identically across all 13 stages "
+                                f"(spec 058 FR-001/FR-006).")
                           failures += 1
                           ok = False
                       # Declared, never inherited. This job runs docker
@@ -2392,7 +2423,7 @@ jobs:
               it is verifying.
               """
               iftext = " ".join(str((spec or {}).get("if", "") or "").split())
-              return "needs.verify-image-prerequisites.result == 'success'" in iftext
+              return "needs.verify-image-prerequisites.result != 'failure'" in iftext
 
           failures = 0
           stages = 0
@@ -2423,21 +2454,23 @@ jobs:
                         f"container is created (FR-010/FR-011).")
                   failures += 1
               else:
-                  # The inversion of #224. A job-level `if:` here is not a
-                  # cheap no-op: GitHub's implicit success() spans a job's
-                  # whole needs-CLOSURE, so a SKIPPED check silently
-                  # suppresses every job of the stage that carries no
-                  # status-check function — which, when the condition is
-                  # `container-image != ''`, is every ordinary run. The
-                  # condition belongs on the step, one level down, where
-                  # skipping costs idle seconds instead of the pipeline.
-                  if "if" in vip:
-                      print(f"::error file={f}::verify-image-prerequisites carries a "
-                            f"job-level if: ({vip.get('if')!r}). This job must never "
-                            f"skip: a skipped job suppresses its entire descendant "
-                            f"closure regardless of what those jobs' own if: say, so "
-                            f"skip-conditioning the check turns the whole stage into a "
-                            f"silent no-op (#224). Condition the STEP instead.")
+                  # #224's ban on any job-level if: here is gone (spec
+                  # 058): the job now MUST skip cleanly when no image is
+                  # configured, billing nothing (FR-001). What #224 still
+                  # protects against is silent skip-propagation swallowing
+                  # every dependent job unnoticed — so the job-level if: is
+                  # pinned to this exact literal, and every direct
+                  # dependent's own if: is what is required (below) to
+                  # tolerate that skip explicitly, never widened further.
+                  EXPECTED_VIP_IF = "inputs.container-image != ''"
+                  vip_if = " ".join(str(vip.get("if", "") or "").split())
+                  if vip_if != EXPECTED_VIP_IF:
+                      print(f"::error file={f}::verify-image-prerequisites's "
+                            f"job-level if: is {vip.get('if')!r}, not the required "
+                            f"{EXPECTED_VIP_IF!r}. Without exactly this condition "
+                            f"the job either never skips (billing a job on every "
+                            f"no-op run, FR-001) or skips on some other condition "
+                            f"a dependent job's guard was not written to tolerate.")
                       failures += 1
                   vip_steps = [s for s in (vip.get("steps") or []) if isinstance(s, dict)]
                   unguarded = [s for s in vip_steps
@@ -2502,6 +2535,32 @@ jobs:
                             f"never stop this job (FR-010/FR-011).")
                       failures += 1
                       continue
+
+                  if is_entry:
+                      # FR-007's reversion check (Acceptance Scenario 5): an
+                      # entry job with no if: at all relies on GitHub's
+                      # implicit success() over needs:, which a SKIPPED image
+                      # check (now a normal outcome, not just a failure) also
+                      # fails — silently reverting to the pre-058 shape where
+                      # a no-op run's entry job never even started. Checked
+                      # unconditionally here, not only when a status function
+                      # is already present (has_result_guard's `guarded`
+                      # branch below), because a bare `needs:` with no if: at
+                      # all is exactly the shape that branch never sees.
+                      iftext = " ".join(str(job.get("if", "") or "").split())
+                      if ("!cancelled()" not in iftext or
+                              "needs.verify-image-prerequisites.result != 'failure'"
+                              not in iftext):
+                          print(f"::error file={f}::job {jname!r} is an entry job "
+                                f"depending on verify-image-prerequisites but its "
+                                f"if: ({job.get('if')!r}) does not contain both "
+                                f"'!cancelled()' and \"needs.verify-image-"
+                                f"prerequisites.result != 'failure'\" — with no if: "
+                                f"at all, or one narrowed back to == 'success', "
+                                f"GitHub's implicit success() would skip this job "
+                                f"outright the moment the image check itself "
+                                f"reports skipped (FR-007).")
+                          failures += 1
 
                   if guarded and not has_result_guard(job):
                       print(f"::error file={f}::job {jname!r} needs "
@@ -3050,6 +3109,9 @@ jobs:
       # literals, and had already drifted — the 026 draft was missing both
       # pr-conversation rows while its own prose cited one of them (#147).
       # The draft is now a pointer, so there is one table and one check.
+      # Since #426 it also requires every granted `.specify/scripts/bash/`
+      # script to exist: Spec Kit dropped update-agent-context.sh and both
+      # plan sites kept granting it.
       - name: Gate 27 — the documented per-stage tool lists match the call sites
         run: python3 .github/scripts/verify-stage-tool-lists.py
 
@@ -3711,6 +3773,218 @@ jobs:
       - name: Gate 72 self-test — a paragraph without a step, a step without a paragraph, a prompt that does not name the finding's keys, an untyped or widened findings.items, and a missing workflow each fail loudly
         if: "!cancelled()"
         run: python3 .github/scripts/verify-stage-findings-wiring.py --self-test
+
+      # Gate 73 — specs/058-per-job-minute-floor (FR-011/FR-012/FR-013,
+      # FR-018/FR-019): an inspection whose aggregate signal set is empty is
+      # decided by a deterministic step in `collect`, and `diagnose` skips.
+      # Three conditions balance against each other here — skip the agent on
+      # an empty signal set, but NOT when every collector failed (that is
+      # the "could not inspect" degradation) and NOT when the `aggregate`
+      # step itself died (its outputs are stale, and a pass written over a
+      # crashed step is the fabricated clean bill of health the watchdog
+      # exists to prevent) — and the signal-bearing path must be unchanged.
+      # Evaluates the shipped `if:` expressions against five aggregate
+      # shapes and executes the shipped reporter's `run:` for the two that
+      # reach it, so the wording (a partial pass names both collector
+      # counts) is asserted, not assumed.
+      - name: Gate 73 — an empty signal set skips diagnose and posts a deterministic pass from collect
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-watchdog-clean-path.py
+
+      # Gate 74 — specs/058-per-job-minute-floor (FR-031): a healthy
+      # inspection runs no agent, so it emits no metrics record — and the
+      # cumulative rollup must not list it AT ALL. "Listed as a record that
+      # could not be retrieved" is the failure that matters: to a reader it
+      # is indistinguishable from spec 043's real expired-artifact case, and
+      # it would put a permanent unexplained hole in the spend history of
+      # every healthy run. Asserts no `metrics-record*` upload is reachable
+      # on the clean path, and runs the shipped rollup region-builder over a
+      # record set without the inspection to prove the region names the runs
+      # that did emit and says nothing about the one that did not.
+      - name: Gate 74 — a healthy watchdog inspection emits no record and the rollup does not list it
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-watchdog-no-record-on-clean-path.py
+
+      # Gate 75 — specs/058-per-job-minute-floor (FR-020): the stage-8
+      # wrapper is one job and does not pass `run-name:`; the stage resolves
+      # it itself when the input is empty. Both halves can regress alone. A
+      # wrapper that passes run-name can pass the run TITLE by mistake (the
+      # defect Gate 70 owns), and a stage that silently resolves an empty
+      # name fails invisibly: watchdog.yml's `case "$RUN_NAME"` arms match
+      # nothing, every stage-scoped collector skips itself, and the run
+      # reports a clean pass having looked at almost nothing. Executes the
+      # shipped resolution block for both invocation shapes.
+      - name: Gate 75 — the watchdog wrapper is one job and the stage resolves its own run-name
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-watchdog-wrapper-resolve-fold.py
+
+      # Gate 76 — specs/058-per-job-minute-floor (FR-022, FR-027): sweep
+      # mode gives persistence a second way in, and the two overlap
+      # deliberately — the sweep's window reaches back over runs the
+      # completion trigger already persisted, and a hand-driven re-drive
+      # can run while a sweep is in flight. "Each record lands exactly
+      # once" therefore rests entirely on record_key idempotence under
+      # inputs that never occurred before this feature. Drives the shipped
+      # discover/retrieve/validate/append steps twice over a real local
+      # git remote.
+      - name: Gate 76 — a sweep persists each run exactly once, and re-sweeping adds nothing
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-metrics-sweep-idempotence.py
+
+      # Gate 77 — specs/058-per-job-minute-floor (FR-027, research.md
+      # R-C2/R-C3): the high-water mark is the only thing that makes a
+      # daily sweep bounded, and both ways it can be wrong look fine in a
+      # green run. A mark committed separately from the records can land
+      # while the records push is still losing the contention race, and the
+      # next sweep resumes past records nobody persisted — which are not
+      # late but gone, because their artifacts expire. A mark read but
+      # never applied costs more every day and fails nothing. Drives the
+      # write half through a push the destination repository's own hook
+      # rejects, and the read half against a branch that does and does not
+      # already carry a mark.
+      - name: Gate 77 — the sweep mark advances in the records commit, and the next window resumes from it
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-metrics-sweep-high-water-mark.py
+
+      # Gate 78 — specs/058-per-job-minute-floor (FR-028): the sweep trades
+      # latency for cost, so sometimes an artifact will expire before it is
+      # reached. Both wrong answers are quiet: retry it forever (the mark
+      # can never advance past it, and every later sweep drags the window
+      # back) or drop it silently (the spend history gets a hole with
+      # nothing saying why). One durable ledger line, the mark advancing
+      # regardless, and no re-logging on the next sweep.
+      - name: Gate 78 — an expired artifact is logged once, accounted for, and not chased again
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-metrics-expired-artifact-outcome.py
+
+      # Gate 79 — specs/058-per-job-minute-floor (FR-030(b)/(c)): two
+      # one-line facts in a trigger block that a later edit restores
+      # without noticing. Re-adding the watchdog to workflow_run.workflows
+      # silently reinstates a whole persistence run per inspection; a
+      # `schedule:` sharing its minute AND hour with another scheduled
+      # workflow queues behind it, which is a self-inflicted delay on the
+      # one job this feature deliberately added. Also evaluates both job
+      # guards against all four trigger shapes, so a schedule cannot reach
+      # the single-run job (it would persist run-id '') and a completion
+      # cannot reach the sweep.
+      - name: Gate 79 — the metrics wrapper drops the watchdog trigger and its sweep cron stands alone
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-metrics-wrapper-trigger-drops-watchdog.py
+
+      # Gate 80 — every job that can push (a `git push` in its own run:
+      # steps, an agent granted Bash(git push:*), or a local composite that
+      # pushes) is in the per-spec concurrency group wing-commander-<spec-dir>,
+      # or waived in .github/scripts/spec-branch-push-waivers.json with what
+      # it pushes and why. specs/013 wrote the rule into its contract and
+      # nothing held the fleet to it: cleanup.yml's mark-stalled pushed onto
+      # the spec branch from a head-ref-keyed group (#397), and tasks.yml's
+      # two survivor jobs from no group at all. Numbered 80 because spec
+      # 058 (#434) reserves 73-79 for its own gates.
+      - name: Gate 80 — every spec-branch pusher shares the per-spec concurrency group or carries a waiver
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-spec-branch-push-concurrency.py
+      - name: Gate 80 self-test — a pusher outside the group, a near-miss group, an agent grant, a composite pusher, a stale waiver and a malformed waiver each fail loudly
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-spec-branch-push-concurrency.py --self-test
+
+      # Gate 81 — specs/057-autonomous-board-loop (FR-008/FR-064 bullet 2):
+      # board_eligibility.py's classify_issue() must decide a maintainer-
+      # applied label from the `labeled` timeline event's own actor, never
+      # from the label's mere presence — the branch a bot-applied entry
+      # label (the pr-conversation stage's own spec-request spin-off, for
+      # instance) exists to prove is NOT admitted on that ground. Numbered
+      # 81 because Gate 80 (#397/#438) landed first.
+      - name: Gate 81 — board loop eligibility resolves every FR-064 bullet-2 branch
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-eligibility.py
+
+      # Gate 82 — specs/057-autonomous-board-loop (FR-012/FR-064 bullet 1):
+      # triage may close an issue on exactly two code-derived grounds, and
+      # an agent's "already fixed on main" proposal must NEVER be one of
+      # them -- the fixture this gate pins is the one case where "the agent
+      # says so" and "the gate says so" could be confused for the same
+      # thing. Numbered 82, not 81 (its original slot): landing after
+      # Gate 80 (#397/#438) shifts this whole block by one, and an earlier
+      # pass only shifted Gate 81 (eligibility) itself, leaving this gate's
+      # number colliding with it -- fixed as part of #451's own review.
+      - name: Gate 82 — board loop triage resolves every FR-064 bullet-1 branch
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-triage.py
+
+      # Gate 83 — specs/057-autonomous-board-loop T022: the shared
+      # size-path-backstop composite's own file/line-count formula, run
+      # extracted from the shipped action.yml (not a hand-copied duplicate)
+      # against fixtures parameterized by threshold, so a future caller's
+      # own numbers are exercised the same way pr-conversation.yml's 3/40
+      # and board-loop.yml's own thresholds already are.
+      - name: Gate 83 — the size-path-backstop composite measures files/lines correctly at any threshold
+        if: "!cancelled()"
+        run: bash .github/scripts/size-path-backstop-tests/run-tests.sh
+
+      # Gate 84 — specs/057-autonomous-board-loop (FR-017/FR-019/FR-021,
+      # FR-064 bullet 3): the route backstop can only narrow the
+      # route-propose agent's fix/spec proposal, never widen it, and a
+      # contract-widening diff re-routes regardless of size.
+      - name: Gate 84 — board loop route backstop resolves every FR-064 bullet-3 branch
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-route-backstop.py
+
+      # Gate 85 — specs/057-autonomous-board-loop research.md D11: the
+      # board review finding schema carries in_scope as a required field
+      # distinct from spec 056's stage-finding.schema.json -- a malformed
+      # entry (any one required field missing) must be rejected, named,
+      # never defaulted.
+      - name: Gate 85 — board review finding schema rejects every malformed required field
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-review-finding-schema.py --self-test
+
+      # Gate 86 — specs/057-autonomous-board-loop (FR-036/FR-037/FR-068,
+      # FR-064 bullet 4): readiness is reported or refused solely on
+      # re-derived head-SHA evidence, and this loop never merges, approves,
+      # or enables auto-merge -- these six fixtures are what stands between
+      # "ready" and a maintainer merging stale evidence.
+      - name: Gate 86 — board loop readiness resolves every FR-064 bullet-4 branch
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-readiness.py
+
+      # Gate 86 self-test (T066, SC-004): check_no_merge_invariant() catches
+      # every forbidden merge/approve/auto-merge shape and stays silent on a
+      # clean fixture, in both directions -- not just against board-loop.yml
+      # as it stands today.
+      - name: Gate 86 — board loop readiness no-merge invariant catches every forbidden shape
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-readiness.py --self-test
+
+      # Gate 87 — specs/057-autonomous-board-loop (research.md D17,
+      # FR-052/FR-053): a maintainer's stop comment halts the loop; a
+      # non-maintainer's cannot, and the loop never cancels its own
+      # just-posted announcement.
+      - name: Gate 87 — board loop stop-check resolves every documented branch
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-stop-check.py
+
+      # Gate 88 — specs/057-autonomous-board-loop T055 (research.md D14):
+      # the dispatch-then-correlate-then-wait idiom's own shell, run
+      # extracted from the shipped action.yml against a stub `gh`, so the
+      # three outcomes a caller has to branch on -- a correlated run, a
+      # correlation that never resolved (empty run-url), and a poll budget
+      # spent before the run reached a terminal status (conclusion:
+      # timeout) -- are each proven rather than assumed. The prove step
+      # closes an issue on this composite's conclusion; a silently-empty
+      # correlation must never read as success.
+      - name: Gate 88 — the dispatch-and-wait composite correlates, waits, and times out correctly
+        if: "!cancelled()"
+        run: bash .github/scripts/dispatch-and-wait-tests/run-tests.sh
+
+      # Gate 89 — specs/057-autonomous-board-loop (FR-041, research.md
+      # D15): whether a merged fix needs a re-driven run before its issue
+      # closes is a path-based rule, not an agent's judgement. A merge
+      # touching only docs/specs, or only a verify-*.py the merged PR's own
+      # required checks already executed, proves nothing a fresh dispatch
+      # would add; anything else does.
+      - name: Gate 89 — board loop prove resolves actions-only from the merged paths
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-prove.py
 
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and

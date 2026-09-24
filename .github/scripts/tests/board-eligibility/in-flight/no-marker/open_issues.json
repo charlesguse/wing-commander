@@ -1,0 +1,10 @@
+[
+  {
+    "number": 5001,
+    "author": {"login": "someone"},
+    "authorAssociation": "NONE",
+    "labels": [],
+    "state": "OPEN",
+    "createdAt": "2026-01-01T00:00:00Z"
+  }
+]

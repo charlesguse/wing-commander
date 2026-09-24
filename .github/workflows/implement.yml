@@ -258,8 +258,12 @@ permissions: {}
 
 jobs:
   verify-image-prerequisites:
-    # this job must NEVER skip, or the whole needs-closure silently no-ops every stage (#224)
-    # -- see specs/038-runner-container-passthrough/contracts/runner-container-passthrough.md.
+    # This job now carries `if: inputs.container-image != ''` and reports
+    # `skipped` (billing nothing) when no image is configured -- #224's old
+    # "must never skip" invariant no longer holds, because every direct
+    # dependent's `if:` now tolerates that skip explicitly -- see
+    # specs/058-per-job-minute-floor/contracts/image-check-shape-delta.md.
+    if: inputs.container-image != ''
     permissions: {}
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     steps:
@@ -359,8 +363,10 @@ jobs:
     concurrency:
       group: wing-commander-${{ inputs.spec-dir }}
       cancel-in-progress: false
-    # no `if:` -- `needs:` skip-propagation is the image gate (#224) -- see clarify.yml.
+    # if: tolerates a skipped image check without widening to run merely
+    # because the workflow was not cancelled (#224) -- see clarify.yml.
     needs: verify-image-prerequisites
+    if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure'"
     permissions:
       contents: write
       issues: write
@@ -929,7 +935,14 @@ jobs:
             Constraints: commit and push ONLY to
             ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}; open no PRs; never merge or
             approve anything; do not edit files under .github/workflows
-            unless the task list explicitly requires it.
+            unless the task list explicitly requires it. A commit message
+            longer than one line goes through the Write tool to exactly
+            ${{ runner.temp }}/implement-commit-message-cycle.txt and then
+            git commit -F with that path; never a heredoc or $(cat ...)
+            on the command line, which the permission layer denies, and
+            never a file under the repository (a path inside .git/ is
+            denied outright, and any other path there would be swept
+            into the commit).
 
             Tooling: ${{ steps.tool-args-cycle.outputs.shell-commands }} That
             statement is derived from this run's own composed allowed and
@@ -1514,7 +1527,16 @@ jobs:
             Constraints: commit and push ONLY to
             ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}; open no PRs; never merge or
             approve anything; do not edit files under .github/workflows
-            unless the task list explicitly requires it.
+            unless the task list explicitly requires it. A commit message
+            longer than one line goes through the Write tool to exactly
+            ${{ runner.temp }}/implement-commit-message-retry.txt and then
+            git commit -F with that path; never a heredoc or $(cat ...)
+            on the command line, which the permission layer denies, and
+            never a file under the repository (a path inside .git/ is
+            denied outright, and any other path there would be swept
+            into the commit). Use a name distinct from the cycle step's
+            scratch file above -- the cycle attempt may have left one
+            behind, and this is a fresh session that never read it.
 
             Tooling: ${{ steps.tool-args-retry.outputs.shell-commands }} That
             statement is derived from this run's own composed allowed and
@@ -2662,7 +2684,7 @@ jobs:
   stalled:
     needs: [verify-image-prerequisites, implement]
     if: |
-      needs.verify-image-prerequisites.result == 'success' &&
+      needs.verify-image-prerequisites.result != 'failure' &&
       !cancelled() &&
       ( needs.verify-image-prerequisites.result == 'failure' ||
         needs.implement.result == 'failure' ||

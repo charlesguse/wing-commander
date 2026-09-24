@@ -62,6 +62,11 @@ prove. Each step has a rule.
   same PR. A bug the review surfaces outside the PR's scope becomes a new
   issue carrying the line `Found by the code review of #N`, never an
   extra commit that widens the PR.
+- A review of a PR whose changed files a `specs/NNN-*/` spec references
+  should also get a pass from the `spec-cross-reference` skill, which can
+  elevate a finding into a named-requirement violation or refute one
+  outright. A finding with no governing spec — a general bug, a tooling
+  fix, an infra change — has nothing to check it against; don't force one.
 - A fix to behaviour that only runs in Actions is proven after merge by
   re-driving one run (`gh workflow run` on the wrapper that can dispatch
   it) and recording the evidence on the PR or the issue.

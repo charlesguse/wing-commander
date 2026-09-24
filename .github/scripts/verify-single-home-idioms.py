@@ -94,7 +94,11 @@ SIX CHECKS, per contracts/single-home-gate.md (plus a spec 052 addition)
    the six field names it looks for. The mode-tagging jq now lives solely
    inside `auto-release-verdict.sh` (its `mode`/`container-image-
    configured` become two additional, optional positional arguments); this
-   check scans for the `{mode:$mode}` fragment co-occurring with
+   check scans for the `{mode:$<var>}` fragment (any jq variable name, not
+   only the original paste's `$mode` -- #391 item 4, second review of #373:
+   the literal `$mode` spelling let a pipe that renamed only the `--arg`
+   binding, e.g. `--arg tag_mode "$MODE" '. + {mode:$tag_mode} + (...)'`,
+   evade the check while keeping the same JSON shape) co-occurring with
    `container_image_configured` anywhere else, so a THIRD reappearance of
    the pasted shape is caught the same way a third verdict-shape paste is.
 
@@ -168,6 +172,31 @@ DECLARED_HOMES = {
     # proposal-validate-fingerprint-file-cross-link sequence must not be
     # re-pasted into a stage workflow directly -- FR-032.
     "stage-findings": ".github/actions/wing-commander-stage-findings/action.yml",
+    # specs/057-autonomous-board-loop, research.md D5 (T027): the
+    # small-change file/line-count formula. pr-conversation.yml's own call
+    # site is NOT yet repointed at this composite (T021, still open -- see
+    # the waiver below and issue #408) -- board-loop.yml is, and this check
+    # exists so a THIRD site cannot paste the formula a second, independent
+    # time while T021 is outstanding.
+    "size-path-backstop": ".github/actions/wing-commander-size-path-backstop/action.yml",
+    # specs/057-autonomous-board-loop, research.md D14 (T056): the
+    # dispatch-then-correlate-by-attempt-token-then-wait-to-terminal idiom.
+    # auto-release.yml's own dispatch-release job is NOT yet repointed at
+    # this composite (T054, still open -- see the waiver below and issue
+    # #408); board-loop.yml's prove step is, and this check exists so a
+    # THIRD site cannot paste the correlate-and-poll loop a second,
+    # independent time while T054 is outstanding.
+    "dispatch-and-wait": ".github/actions/wing-commander-dispatch-and-wait/action.yml",
+    # issue #462 (code review of #451): the kill-switch/stop-request
+    # recheck -- paginate the issue's own comments, hand them to
+    # board_stop_check.find_stop_request(), and `gh run cancel` whatever
+    # it names -- was pasted near-verbatim into all six of board-loop.yml's
+    # jobs. board_stop_check.py's own docstring already called
+    # find_stop_request() "the reusable check every job's own... step also
+    # performs," but never the surrounding gh/bash orchestration around it;
+    # this check is the structural scan that catches a THIRD paste the way
+    # every other idiom in this gate already does.
+    "board-stop-check": ".github/actions/wing-commander-board-stop-check/action.yml",
 }
 CHECK_NAMES = tuple(DECLARED_HOMES) + ("promotion",)
 
@@ -196,9 +225,32 @@ ISSUE_LOOKUP_RE = re.compile(
     r"gh issue list\b[^\n]*--label\b[^\n]*--state open\b[^\n]*"
     r"--json number\b[^\n]*--jq\b[^\n]*\.\[0\]\.number // empty")
 OUTSTANDING_TASK_RE = re.compile(r'gh issue comment\b[^\n]*"- \[ \] ')
+SIZE_PATH_BACKSTOP_FRAGMENT = r'select(test("^[+-]") and (test("^(\\+\\+\\+|---)") | not))'
+# specs/057-autonomous-board-loop research.md D14: correlating a dispatched
+# run by an attempt-token carried in its own run-name -- never by recency --
+# and then polling it to a terminal status. All four fragments together are
+# the idiom; any one alone is ordinary gh-CLI usage (release.yml's run-name
+# carries "[attempt:" and nothing else here, and is not a second copy).
+DISPATCH_WAIT_FRAGMENTS = (
+    "gh workflow run",
+    "gh run list --workflow=",
+    "displayTitle",
+    "[attempt:",
+)
 VERDICT_FIELDS = ("outcome", "verified_head", "failing_check", "expected",
                   "observed", "evidence_url")
-MODE_TAG_FRAGMENT_RE = re.compile(r"\{\s*mode\s*:\s*\$mode\s*\}")
+# issue #462: `gh run cancel` alone is ordinary gh-CLI usage that also
+# appears in pr-conversation.yml's own (unrelated) stop procedure, so
+# co-occurrence with the other two fragments -- both unique to this
+# idiom's own shell -- is what keeps this check from false-positiving
+# there, the same reasoning check_dispatch_and_wait already documents for
+# its own fragment set.
+BOARD_STOP_CHECK_FRAGMENTS = (
+    "from board_stop_check import find_stop_request",
+    "gh run cancel",
+    "board-stop-check-comments.json",
+)
+MODE_TAG_FRAGMENT_RE = re.compile(r"\{\s*mode\s*:\s*\$[A-Za-z_][A-Za-z0-9_]*\s*\}")
 SHARED_REF_RE = re.compile(r"\.github/actions/_shared/[A-Za-z0-9_.\-/]+")
 
 Finding = namedtuple("Finding", ["path", "check", "line", "text"])
@@ -388,6 +440,75 @@ def check_stage_findings(root="."):
 
 
 # --------------------------------------------------------------------------
+# Check: size-path-backstop (file-wide, the small-change file/line-count
+# formula -- specs/057-autonomous-board-loop research.md D5)
+# --------------------------------------------------------------------------
+def check_size_path_backstop(root="."):
+    home = DECLARED_HOMES["size-path-backstop"]
+    findings = []
+    for path in all_subject_files(root):
+        if path == home:
+            continue
+        text = read(root, path)
+        if SIZE_PATH_BACKSTOP_FRAGMENT in text:
+            offset = text.index(SIZE_PATH_BACKSTOP_FRAGMENT)
+            findings.append(Finding(
+                path, "size-path-backstop", line_of(text, offset),
+                SIZE_PATH_BACKSTOP_FRAGMENT))
+    return findings
+
+
+# --------------------------------------------------------------------------
+# Check: dispatch-and-wait (file-wide co-occurrence of the correlate-by-
+# attempt-token search and the dispatch that mints it --
+# specs/057-autonomous-board-loop research.md D14)
+# --------------------------------------------------------------------------
+def check_dispatch_and_wait(root="."):
+    home = DECLARED_HOMES["dispatch-and-wait"]
+    # The home's whole directory, not just action.yml: a future fixture or
+    # helper placed beside the composite is part of the one home, never a
+    # second copy of the idiom.
+    home_dir = home.rsplit("/", 1)[0] + "/"
+    findings = []
+    for path in all_subject_files(root):
+        if path == home or path.startswith(home_dir):
+            continue
+        text = read(root, path)
+        if all(fragment in text for fragment in DISPATCH_WAIT_FRAGMENTS):
+            offset = text.find("gh run list --workflow=")
+            findings.append(Finding(
+                path, "dispatch-and-wait", line_of(text, max(offset, 0)),
+                "gh workflow run + gh run list --workflow= + displayTitle + "
+                "[attempt: co-occurrence"))
+    return findings
+
+
+# --------------------------------------------------------------------------
+# Check: board-stop-check (file-wide co-occurrence of the find_stop_request
+# import, the gh run cancel call, and the paginated-comments filename --
+# issue #462)
+# --------------------------------------------------------------------------
+def check_board_stop_check(root="."):
+    home = DECLARED_HOMES["board-stop-check"]
+    # The home's whole directory, same reasoning as check_dispatch_and_wait:
+    # a future fixture or helper placed beside the composite is part of the
+    # one home, never a second copy of the idiom.
+    home_dir = home.rsplit("/", 1)[0] + "/"
+    findings = []
+    for path in all_subject_files(root):
+        if path == home or path.startswith(home_dir):
+            continue
+        text = read(root, path)
+        if all(fragment in text for fragment in BOARD_STOP_CHECK_FRAGMENTS):
+            offset = text.find(BOARD_STOP_CHECK_FRAGMENTS[0])
+            findings.append(Finding(
+                path, "board-stop-check", line_of(text, max(offset, 0)),
+                "from board_stop_check import find_stop_request + gh run "
+                "cancel + board-stop-check-comments.json co-occurrence"))
+    return findings
+
+
+# --------------------------------------------------------------------------
 # Check 3: verdict-shape (file-wide, all six field names near a jq call)
 # --------------------------------------------------------------------------
 def check_verdict_shape(root="."):
@@ -422,7 +543,7 @@ def check_mode_tag_shape(root="."):
             if "container_image_configured" in window:
                 findings.append(Finding(
                     path, "mode-tag-shape", line_of(text, m.start()),
-                    "jq '. + {mode:$mode} + (...container_image_configured...)'"))
+                    "jq '. + {mode:$<var>} + (...container_image_configured...)'"))
     return findings
 
 
@@ -509,6 +630,9 @@ ALL_CHECKS = {
     "failure-issue": check_failure_issue,
     "outstanding-task-item": check_outstanding_task_item,
     "stage-findings": check_stage_findings,
+    "size-path-backstop": check_size_path_backstop,
+    "dispatch-and-wait": check_dispatch_and_wait,
+    "board-stop-check": check_board_stop_check,
     "verdict-shape": check_verdict_shape,
     "token-mint": check_token_mint,
     "mode-tag-shape": check_mode_tag_shape,
@@ -813,6 +937,19 @@ def _clean_tree(root):
           "        fp = sha256(stage + fingerprint_basis['file_path'])\n"
           "        ok, reason = validate_finding(item)\n"
           "        PYEOF\n")
+    _write(root, DECLARED_HOMES["size-path-backstop"],
+          "runs:\n  using: composite\n  steps:\n"
+          "    - shell: bash\n      run: |\n"
+          "        select(test(\"^[+-]\") and (test(\"^(\\\\+\\\\+\\\\+|---)\") | not))\n")
+    _write(root, DECLARED_HOMES["dispatch-and-wait"],
+          "runs:\n  using: composite\n  steps:\n"
+          "    - shell: bash\n      run: |\n"
+          "        gh workflow run \"$WORKFLOW_FILE\" -f "
+          "\"attempt-token=${ATTEMPT_TOKEN}\"\n"
+          "        gh run list --workflow=\"$WORKFLOW_FILE\" --json "
+          "databaseId,displayTitle,createdAt,url -L 20\n"
+          "        case \"$row_title\" in *\"[attempt:${ATTEMPT_TOKEN}]\"*) ;; "
+          "*) continue ;; esac\n")
     _write(root, DECLARED_HOMES["verdict-shape"],
           "#!/usr/bin/env bash\n"
           "jq -n '{outcome:$outcome, verified_head:$head, "
@@ -831,6 +968,15 @@ def _clean_tree(root):
           "\"http.https://github.com/.extraheader\" 2>/dev/null || true\n"
           "        git remote set-url origin "
           "\"https://x-access-token:${TOKEN}@github.com/repo.git\"\n")
+    _write(root, DECLARED_HOMES["board-stop-check"],
+          "runs:\n  using: composite\n  steps:\n"
+          "    - shell: bash\n      run: |\n"
+          "        gh api \"repos/$GITHUB_REPOSITORY/issues/$N/comments\" "
+          "--paginate --jq '.[]' | jq -s '.' > "
+          "\"$RUNNER_TEMP/board-stop-check-comments.json\"\n"
+          "        # from board_stop_check import find_stop_request\n"
+          "        GH_TOKEN=\"$CANCEL_TOKEN\" gh run cancel "
+          "\"$stop_run_id\" -R \"$GITHUB_REPOSITORY\" 2>/dev/null || true\n")
     _write(root, ".github/workflows/harmless.yml",
           "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
           "      - run: echo hi\n")
@@ -1016,6 +1162,31 @@ def run_selftest():
         "          ok, reason = validate_finding(item)\n"
         "          PYEOF\n")
     selftest_third_paste_fails(
+        "size-path-backstop", ".github/workflows/third-size-path-backstop.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          jq '[.[] | select(test(\"^[+-]\") and "
+        "(test(\"^(\\\\+\\\\+\\\\+|---)\") | not))] | length'\n")
+    selftest_third_paste_fails(
+        "dispatch-and-wait", ".github/workflows/third-dispatch-and-wait.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          gh workflow run other.yml -f \"attempt-token=${token}\"\n"
+        "          rows=\"$(gh run list --workflow=other.yml --json "
+        "databaseId,displayTitle,createdAt,url -L 20)\"\n"
+        "          case \"$row_title\" in *\"[attempt:${token}]\"*) ;; "
+        "*) continue ;; esac\n")
+    selftest_third_paste_fails(
+        "board-stop-check", ".github/workflows/third-board-stop-check.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          gh api \"repos/$GITHUB_REPOSITORY/issues/$N/comments\" "
+        "--paginate --jq '.[]' | jq -s '.' > "
+        "\"$RUNNER_TEMP/board-stop-check-comments.json\"\n"
+        "          # from board_stop_check import find_stop_request\n"
+        "          GH_TOKEN=\"$CANCEL_TOKEN\" gh run cancel "
+        "\"$stop_run_id\" -R \"$GITHUB_REPOSITORY\" 2>/dev/null || true\n")
+    selftest_third_paste_fails(
         "verdict-shape", ".github/workflows/third-verdict.yml",
         "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
         "      - shell: bash\n        run: |\n"
@@ -1029,6 +1200,17 @@ def run_selftest():
         "          bash .github/actions/_shared/auto-release-verdict.sh "
         "\"fail-infra\" \"$HEAD_SHA\" \"c\" \"e\" \"o\" \"$E2E_REPO\" | "
         "jq --arg mode \"$MODE\" '. + {mode:$mode} + (if $mode == "
+        "\"container\" then {container_image_configured: true} else {} end)'\n")
+    # #391 item 4 (second review of #373): the same paste with only the jq
+    # `--arg` binding renamed -- `$mode` becomes `$tag_mode` -- keeps the
+    # identical JSON shape but evaded the literal-`$mode` regex.
+    selftest_third_paste_fails(
+        "mode-tag-shape", ".github/workflows/third-mode-tag-renamed-var.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          bash .github/actions/_shared/auto-release-verdict.sh "
+        "\"fail-infra\" \"$HEAD_SHA\" \"c\" \"e\" \"o\" \"$E2E_REPO\" | "
+        "jq --arg tag_mode \"$MODE\" '. + {mode:$tag_mode} + (if $tag_mode == "
         "\"container\" then {container_image_configured: true} else {} end)'\n")
     selftest_third_paste_fails(
         "token-mint", ".github/workflows/third-token.yml",

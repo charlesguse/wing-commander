@@ -101,11 +101,13 @@ def _mut_bespoke_condition(cond):
 
 
 def _mut_remove_image_prereq_guard(cond):
-    """Strip the `needs.verify-image-prerequisites.result == 'success' &&`
-    leading conjunct — the notice would fire from inside the adopter's own
-    already-failed container again (Gate 23)."""
+    """Strip the `needs.verify-image-prerequisites.result != 'failure' &&`
+    leading conjunct (spec 058 narrowed this from `== 'success'`, since the
+    check job now legitimately reports `skipped` too) — the notice would
+    fire from inside the adopter's own already-failed container again
+    (Gate 23)."""
     pat = re.compile(
-        r"needs\.verify-image-prerequisites\.result == 'success' &&\s*")
+        r"needs\.verify-image-prerequisites\.result != 'failure' &&\s*")
     return pat.sub("", cond, count=1)
 
 

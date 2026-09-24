@@ -1,0 +1,87 @@
+# Single home for the "is this drafted change under the small-change size
+# threshold" formula (specs/057-autonomous-board-loop research.md D5):
+# extracted from pr-conversation.yml's classify-and-announce job (the
+# small-unrelated-change re-route check) so a second caller with its own,
+# larger threshold (board-loop.yml) reuses the identical file-count/
+# changed-line-count formula rather than a second, independently-drifting
+# inline jq copy (CLAUDE.md "Shared logic has exactly one home").
+#
+# pr-conversation.yml's own call site is NOT yet repointed at this
+# composite (specs/057-autonomous-board-loop tasks.md T021) -- its check is
+# embedded inside a per-classification-leg jq `map()` pipeline with no
+# existing behavioral test harness to prove a refactor byte-identical, and
+# repointing it blind, under this cycle's own turn budget, was judged too
+# large a regression risk for a live, production routing decision. See the
+# waiver recorded in single-home-waivers.json and the note left on issue
+# #408. Every OTHER caller (board-loop.yml) reaches the check only through
+# this composite, and Gate 60 (verify-single-home-idioms.py) fails on any
+# THIRD, unknown site that pastes the formula again.
+name: wing-commander-size-path-backstop
+description: >
+  Given drafted-content.file-changes (the [{"path", "diff"}, ...] shape
+  every drafting step already produces), measures the changed-file count
+  and changed-line count and reports whether either exceeds the caller's
+  own threshold. Pure measurement -- callers decide what "over threshold"
+  means for their own routing.
+
+inputs:
+  file-changes:
+    description: >
+      JSON array shaped like drafted-content.file-changes:
+      [{"path": "...", "diff": "<unified diff text>"}, ...].
+    required: true
+  max-files:
+    description: >
+      Files threshold. pr-conversation.yml's own call site omits this,
+      keeping its existing behavior (3) byte-identical.
+    required: false
+    default: '3'
+  max-lines:
+    description: >
+      Changed-lines threshold. pr-conversation.yml's own call site omits
+      this, keeping its existing behavior (40) byte-identical.
+    required: false
+    default: '40'
+
+outputs:
+  over-threshold:
+    description: "'true' when measured-files > max-files or measured-lines > max-lines."
+    value: ${{ steps.measure.outputs.over-threshold }}
+  measured-files:
+    description: "length(file-changes)."
+    value: ${{ steps.measure.outputs.measured-files }}
+  measured-lines:
+    description: >
+      Count of unified-diff lines starting with '+' or '-', excluding the
+      '+++'/'---' file-header lines, summed across every entry's diff.
+    value: ${{ steps.measure.outputs.measured-lines }}
+
+runs:
+  using: composite
+  steps:
+    - name: Measure file/line counts against the threshold
+      id: measure
+      shell: bash
+      env:
+        FILE_CHANGES: ${{ inputs.file-changes }}
+        MAX_FILES: ${{ inputs.max-files }}
+        MAX_LINES: ${{ inputs.max-lines }}
+      run: |
+        set -uo pipefail
+
+        files="$(printf '%s' "$FILE_CHANGES" | jq 'length')"
+        lines="$(printf '%s' "$FILE_CHANGES" | jq '
+          [.[] | (.diff // "") | split("\n")[]
+            | select(test("^[+-]") and (test("^(\\+\\+\\+|---)") | not))
+          ] | length')"
+
+        over=false
+        if [ "$files" -gt "$MAX_FILES" ] || [ "$lines" -gt "$MAX_LINES" ]; then
+          over=true
+        fi
+
+        {
+          echo "over-threshold=$over"
+          echo "measured-files=$files"
+          echo "measured-lines=$lines"
+        } >> "$GITHUB_OUTPUT"

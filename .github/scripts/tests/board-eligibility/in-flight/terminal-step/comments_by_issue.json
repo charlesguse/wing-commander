@@ -1,0 +1,5 @@
+{
+  "5006": [
+    {"created_at": "2026-01-05T00:00:00Z", "body": "**Run:** https://github.com/example/repo/actions/runs/1\n\n<!-- wing-commander-board-item: {\"step\": \"proven\", \"round\": 4, \"pr\": 9004, \"branch\": \"fix/5006-x\", \"base_sha\": \"deadbeef\"} -->"}
+  ]
+}

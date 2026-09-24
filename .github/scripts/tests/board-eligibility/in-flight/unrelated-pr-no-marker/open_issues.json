@@ -1,0 +1,10 @@
+[
+  {
+    "number": 5011,
+    "author": {"login": "maintainer-one"},
+    "authorAssociation": "OWNER",
+    "labels": [],
+    "state": "OPEN",
+    "createdAt": "2026-01-01T00:00:00Z"
+  }
+]
