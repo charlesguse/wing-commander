@@ -262,13 +262,26 @@ deliberately broken in-flight rule and confirm a gate fails.
     non-terminal step alone. No pull request exists yet at those steps, so
     demanding one would drop every item interrupted during triage or route
     out of in-flight status on every subsequent run.
-  - **The fix step and every step after it** (fix, review, readiness,
-    prove) additionally require the marker's recorded pull request to still
+  - **The fix step and the steps after it that a scheduled or
+    workflow_dispatch run can act on** (fix, review, readiness)
+    additionally require the marker's recorded pull request to still
     resolve to an **open** pull request. A recorded pull request that is
     closed, merged, or no longer resolvable disqualifies the item, so a
-    marker left behind by an abandoned pull request cannot pin the loop to
-    one issue forever — the same failure shape this feature exists to
+    marker left behind by an abandoned pull request cannot pin the loop
+    to one issue forever — the same failure shape this feature exists to
     remove, relocated from "no marker" to "a stale marker".
+  - **`prove`** never qualifies as in flight, even though it is
+    non-terminal and its marker is always written with no pull request
+    recorded (its fixing pull request has already merged by the time the
+    prove step runs). No job on the schedule/workflow_dispatch path this
+    decision runs on ever consumes step `prove` (only `prove-gate`/`prove`
+    do, and those run solely on the `pull_request: closed` trigger), so
+    treating a `prove` marker as in flight here would starve every other
+    candidate forever for no possible benefit. The oldest-first fallback
+    that selection falls through to (FR-004) carries this same exclusion,
+    so an issue stuck at `prove` is never selected by either path — it is
+    left untouched rather than re-selected every run with no consumer able
+    to advance it.
 
 - **FR-003**: An issue that qualifies under FR-002 MUST still be subject to
   the existing exclusion rule (closed, `disposition:*`, `board:stalled`,
@@ -410,8 +423,11 @@ deliberately broken in-flight rule and confirm a gate fails.
 - The existing exclusion rule (closed, `disposition:*`, `board:stalled`,
   `stage:*`, `spec:*`) is correct as written and is reused unchanged — the
   defect is what feeds it a candidate, not how it judges one.
-- The oldest-first eligibility scan is correct as written and is not
-  modified by this feature.
+- The oldest-first eligibility scan's ordering and its `classify_issue`/
+  exclusion test are correct as written and are not modified by this
+  feature; the one addition layered in front of them is the `prove`-marker
+  skip FR-002 already gives the priority path, extended to this fallback
+  so it does not re-select a stuck `prove` item forever.
 - Marker parsing already degrades to `None` on missing or malformed input
   and never raises; this feature relies on that behaviour rather than adding
   its own error handling.
@@ -451,7 +467,9 @@ deliberately broken in-flight rule and confirm a gate fails.
 ## Out of Scope
 
 - Changing the oldest-first ordering, the eligibility classification, or the
-  exclusion list.
+  exclusion list — the `prove`-marker skip described in FR-002 is not such
+  a change: it is the same exclusion applied on both paths that consult it,
+  not a new rule for either.
 - Changing the marker's fields or when it is written.
 - Changing the kill switch, the stand-down check, or the stop-comment
   handling.

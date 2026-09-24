@@ -58,6 +58,14 @@ env:
   # than a single unrelated-change PR would.
   BOARD_MAX_FILES: 6
   BOARD_MAX_LINES: 120
+  # CLAUDE.md "shared logic has exactly one home": GitHub's REST pulls
+  # endpoint reports state as lowercase open/closed with `merged` as a
+  # separate boolean -- this normalizes it to the OPEN/CLOSED/MERGED
+  # vocabulary data-model.md and this workflow's callers use throughout.
+  # The select job's pr_state_by_number resolution and the resume step's
+  # marker-PR resolution both point at this one filter rather than pasting
+  # their own copies.
+  BOARD_PR_STATE_JQ: 'if .merged then "MERGED" elif .state == "open" then "OPEN" else "CLOSED" end'
 
 jobs:
   # Foundational layer (specs/057-autonomous-board-loop Phase 2): entry
@@ -186,6 +194,7 @@ jobs:
 
           mapfile -t numbers < <(jq -r '.[].number' "$RUNNER_TEMP/board-open-issues.json")
           echo '{}' > "$RUNNER_TEMP/board-labeled-events.json"
+          echo '{}' > "$RUNNER_TEMP/board-comments-by-issue.json"
           for number in "${numbers[@]}"; do
             # Gate 18: a --paginate `gh api` call must not --jq an
             # array-collecting filter (each page would emit its own array
@@ -201,10 +210,19 @@ jobs:
             issue_author_assoc="$(jq -r --arg n "$number" '.[] | select(.number == ($n|tonumber)) | .authorAssociation' "$RUNNER_TEMP/board-open-issues.json")"
 
             if ! gh api "repos/$GITHUB_REPOSITORY/issues/$number/comments" --paginate \
-                --jq '.[] | {login: .user.login, association: .author_association, created_at}' 2>/dev/null | jq -s '.' \
+                --jq '.[] | {login: .user.login, association: .author_association, created_at, body}' 2>/dev/null | jq -s '.' \
                 > "$RUNNER_TEMP/board-comments-$number.json"; then
               echo '[]' > "$RUNNER_TEMP/board-comments-$number.json"
             fi
+
+            # contracts/in-flight-detection.md "Runtime caller contract":
+            # the same per-issue comments call above already carries `body`
+            # now, so this accumulation feeds board_eligibility.py's marker
+            # scan without a second per-issue comments fetch (research.md D3).
+            jq --arg number "$number" --slurpfile comments "$RUNNER_TEMP/board-comments-$number.json" \
+              '. + {($number): $comments[0]}' "$RUNNER_TEMP/board-comments-by-issue.json" \
+              > "$RUNNER_TEMP/board-comments-by-issue.tmp"
+            mv "$RUNNER_TEMP/board-comments-by-issue.tmp" "$RUNNER_TEMP/board-comments-by-issue.json"
 
             mapfile -t logins < <(jq -r '[.[].actor.login] | unique[]' "$RUNNER_TEMP/board-events-$number.json")
             echo '{}' > "$RUNNER_TEMP/board-assoc-$number.json"
@@ -232,46 +250,104 @@ jobs:
             mv "$RUNNER_TEMP/board-labeled-events.tmp" "$RUNNER_TEMP/board-labeled-events.json"
           done
 
+          # "One item at a time" (User Story 7): an item already mid-flight
+          # (fix, review round, or a post-push breach's spec-request never
+          # changes this) is finished before a fresh, merely-older item is
+          # started, so this run's own oldest-first fallback below never
+          # starves an in-progress item. FR-001/FR-011: this decision reads
+          # only the board item marker, never a pull request body --
+          # board_eligibility.in_flight_candidate() (see the canonical
+          # comment above that function) is the single home for it.
+          #
+          # contracts/in-flight-detection.md "Runtime caller contract" step
+          # 2: a narrow second pass, scoped to exactly the PR numbers a
+          # fix-or-later-step marker names -- never a `gh pr list` call,
+          # never a body/text search.
+          pr_numbers_to_check="$(COMMENTS_BY_ISSUE_PATH="$RUNNER_TEMP/board-comments-by-issue.json" python3 - <<'PYEOF'
+          import json
+          import os
+          import sys
+
+          sys.path.insert(0, ".github/scripts")
+          from board_eligibility import FIX_OR_LATER_STEPS
+          from board_item_marker import read_marker_with_timestamp
+
+          with open(os.environ["COMMENTS_BY_ISSUE_PATH"], encoding="utf-8") as fh:
+              comments_by_issue = json.load(fh)
+
+          pr_numbers = set()
+          for comments in comments_by_issue.values():
+              pair = read_marker_with_timestamp(comments)
+              if pair is None:
+                  continue
+              _created_at, marker = pair
+              if marker.get("step") not in FIX_OR_LATER_STEPS:
+                  continue
+              try:
+                  pr_numbers.add(int(marker.get("pr")))
+              except (TypeError, ValueError):
+                  continue
+
+          for number in sorted(pr_numbers):
+              print(number)
+          PYEOF
+          )"
+
+          echo '{}' > "$RUNNER_TEMP/board-pr-state-by-number.json"
+          if [ -n "$pr_numbers_to_check" ]; then
+            while IFS= read -r pr_number; do
+              [ -z "$pr_number" ] && continue
+              # BOARD_PR_STATE_JQ -- see this workflow's top-level env: block.
+              pr_state="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr_number" \
+                --jq "$BOARD_PR_STATE_JQ" 2>/dev/null || true)"
+              [ -z "$pr_state" ] && continue
+              jq --arg n "$pr_number" --arg s "$pr_state" '. + {($n): $s}' \
+                "$RUNNER_TEMP/board-pr-state-by-number.json" > "$RUNNER_TEMP/board-pr-state-by-number.tmp"
+              mv "$RUNNER_TEMP/board-pr-state-by-number.tmp" "$RUNNER_TEMP/board-pr-state-by-number.json"
+            done <<< "$pr_numbers_to_check"
+          fi
+
           jq -n --slurpfile issues "$RUNNER_TEMP/board-open-issues.json" \
             --slurpfile events "$RUNNER_TEMP/board-labeled-events.json" \
-            '{open_issues: $issues[0], labeled_events_by_issue: $events[0]}' \
+            --slurpfile comments "$RUNNER_TEMP/board-comments-by-issue.json" \
+            --slurpfile pr_states "$RUNNER_TEMP/board-pr-state-by-number.json" \
+            '{open_issues: $issues[0], labeled_events_by_issue: $events[0],
+              comments_by_issue: $comments[0], pr_state_by_number: $pr_states[0]}' \
             > "$RUNNER_TEMP/board-eligibility-input.json"
 
-          # "One item at a time" (User Story 7): an item already mid-flight
-          # (an open PR citing it -- fix, review round, or a post-push
-          # breach's spec-request never changes this) is finished before a
-          # fresh, merely-older item is started, so this run's own
-          # oldest-first fallback below never starves an in-progress item.
-          # Excluded exactly like board_eligibility.py's own is_excluded()
-          # (closed/disposition/board:stalled/stage:*/spec:*), reusing that
-          # same function rather than a second exclusion rule.
-          in_flight_issue="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --json number,body --limit 200 \
-            | jq -r '[.[].body // "" | capture("(?:Fixes|fixes) #(?<n>[0-9]+)")? | .n] | .[0] // empty' 2>/dev/null || true)"
-          if [ -n "$in_flight_issue" ]; then
-            excluded="$(python3 -c "
-          import json, sys
-          sys.path.insert(0, '.github/scripts')
-          from board_eligibility import is_excluded
-          issues = json.load(open('$RUNNER_TEMP/board-open-issues.json', encoding='utf-8'))
-          match = [i for i in issues if i.get('number') == int('$in_flight_issue')]
-          excluded, _ = is_excluded(match[0]) if match else (True, 'not-open')
-          print('true' if excluded else 'false')
-          ")"
-            if [ "$excluded" = "false" ]; then
-              issue_number="$in_flight_issue"
-            fi
+          # An unhandled exception here has no traceback on stdout, and
+          # $RUNNER_TEMP/board-eligibility-provenance.json is otherwise
+          # only ever read for .decided_by_marker/.multiple_found below --
+          # without this check, a crash would leave issue_number empty and
+          # this step would silently report "nothing to do" instead of
+          # surfacing the crash.
+          if ! issue_number="$(python3 .github/scripts/board_eligibility.py < "$RUNNER_TEMP/board-eligibility-input.json" 2>"$RUNNER_TEMP/board-eligibility-provenance.json")"; then
+            echo "::error::board_eligibility.py failed -- stderr follows" >&2
+            cat "$RUNNER_TEMP/board-eligibility-provenance.json" >&2
+            exit 1
           fi
 
-          if [ -z "${issue_number:-}" ]; then
-            issue_number="$(python3 .github/scripts/board_eligibility.py < "$RUNNER_TEMP/board-eligibility-input.json")"
-          fi
+          # FR-005/spec.md US1 AS3: the run's record says the marker is
+          # why, not just which issue -- board_eligibility.py's main()
+          # already computed this alongside the selection itself (single
+          # home; not re-derived here).
+          decided_by_marker="$(jq -r '.decided_by_marker' "$RUNNER_TEMP/board-eligibility-provenance.json")"
+          multiple_found="$(jq -r '.multiple_found' "$RUNNER_TEMP/board-eligibility-provenance.json")"
 
           if [ -z "$issue_number" ]; then
             echo "board-loop: nothing to do -- no eligible, non-excluded open issue." >> "$GITHUB_STEP_SUMMARY"
             echo "issue-number=" >> "$GITHUB_OUTPUT"
           else
-            echo "board-loop: selected issue #$issue_number." >> "$GITHUB_STEP_SUMMARY"
+            if [ "$decided_by_marker" = "true" ]; then
+              echo "board-loop: selected issue #$issue_number -- in-flight board item marker." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "board-loop: selected issue #$issue_number -- oldest-first eligibility scan." >> "$GITHUB_STEP_SUMMARY"
+            fi
             echo "issue-number=$issue_number" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ "$multiple_found" = "true" ]; then
+            echo "board-loop: more than one issue qualified as in-flight -- selected the one with the newest marker (FR-005)." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       # Board Item Marker (contracts/board-item-marker.md, research.md D21):
@@ -309,23 +385,152 @@ jobs:
           marker_step="$(printf '%s' "$marker_json" | jq -r '.step // empty')"
           marker_round="$(printf '%s' "$marker_json" | jq -r '.round // 0')"
           marker_base_sha="$(printf '%s' "$marker_json" | jq -r '.base_sha // empty')"
+          marker_pr="$(printf '%s' "$marker_json" | jq -r '.pr // empty')"
 
           branch=""
           if [ -n "$marker_branch" ] && git ls-remote --exit-code --heads origin "$marker_branch" >/dev/null 2>&1; then
             branch="$marker_branch"
           fi
 
+          # contracts/resume-recovery.md "PR recovery" (FR-006/FR-007):
+          # (1) a direct by-number lookup of the marker's own recorded PR,
+          # re-validated live -- never a search; a 404 falls through to (2).
           pr_number=""
           pr_state=""
-          pr_json="$(gh pr list --repo "$GITHUB_REPOSITORY" --search "$ISSUE_NUMBER in:body" --state all --json number,state --jq '.[0] // empty')"
-          if [ -n "$pr_json" ]; then
-            pr_number="$(printf '%s' "$pr_json" | jq -r '.number')"
-            pr_state="$(printf '%s' "$pr_json" | jq -r '.state')"
+          pr_from_marker="false"
+          if [ -n "$marker_pr" ]; then
+            # BOARD_PR_STATE_JQ -- see this workflow's top-level env: block.
+            pr_state_raw="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$marker_pr" \
+              --jq "$BOARD_PR_STATE_JQ" 2>/dev/null || true)"
+            if [ -n "$pr_state_raw" ]; then
+              pr_number="$marker_pr"
+              pr_state="$pr_state_raw"
+              pr_from_marker="true"
+            fi
           fi
 
-          step="$marker_step"
-          if [ -z "$branch" ] && [ -z "$pr_number" ]; then
-            step="triage"
+          # (2) the FR-007 fallback: an open PR carrying this loop's own
+          # board:owned label AND citing this issue -- only when no
+          # marker-named PR resolved (never a body-only or label-only
+          # match, and never when the marker's own PR resolved but simply
+          # disqualified -- contracts/resume-recovery.md "PR recovery").
+          pr_from_fallback="false"
+          if [ -z "$pr_number" ]; then
+            fallback_number="$(gh api "repos/$GITHUB_REPOSITORY/issues" -X GET --paginate \
+                -f state=open -f labels=board:owned \
+                --jq '.[] | {number, body}' 2>/dev/null | jq -s '.' \
+              | jq -r --arg n "$ISSUE_NUMBER" \
+                '[.[] | select((.body // "") | test("(?:Fixes|fixes) #" + $n + "\\b"))] | (.[0].number // empty)')"
+            if [ -n "$fallback_number" ]; then
+              pr_number="$fallback_number"
+              pr_state="OPEN"
+              pr_from_fallback="true"
+            fi
+          fi
+
+          # contracts/resume-recovery.md "Step resolution" (FR-008/FR-009/
+          # FR-014): priority by strongest live signal -- a resolved
+          # marker-named PR outranks the fallback PR, which outranks a
+          # bare re-derived branch, which outranks nothing at all. `step`
+          # is never left empty. Reuses board_eligibility.py's own
+          # PRE_FIX_STEPS/FIX_OR_LATER_STEPS rather than a second,
+          # parallel step-vocabulary list.
+          step_resolution_json="$(MARKER_STEP="$marker_step" MARKER_JSON="$marker_json" BRANCH="$branch" \
+              MARKER_PR="$marker_pr" PR_FROM_MARKER="$pr_from_marker" PR_FROM_FALLBACK="$pr_from_fallback" \
+              PR_STATE="$pr_state" PR_NUMBER="$pr_number" MARKER_ROUND="$marker_round" \
+              MARKER_BASE_SHA="$marker_base_sha" python3 - <<'PYEOF'
+          import json
+          import os
+          import sys
+
+          sys.path.insert(0, ".github/scripts")
+          from board_eligibility import PRE_FIX_STEPS, FIX_OR_LATER_STEPS
+
+          marker_step = os.environ.get("MARKER_STEP") or None
+          branch = os.environ.get("BRANCH") or ""
+          marker_pr_field = os.environ.get("MARKER_PR") or ""
+          pr_from_marker = os.environ.get("PR_FROM_MARKER") == "true"
+          pr_from_fallback = os.environ.get("PR_FROM_FALLBACK") == "true"
+          pr_state = os.environ.get("PR_STATE") or ""
+          pr_number = os.environ.get("PR_NUMBER") or ""
+          marker_present = os.environ.get("MARKER_JSON") != "null"
+          round_ = os.environ.get("MARKER_ROUND") or "0"
+          base_sha = os.environ.get("MARKER_BASE_SHA") or ""
+
+          reason = ""
+          if marker_step == "prove" and not marker_pr_field:
+              # Matches in_flight_candidate()'s prove exception
+              # (board_eligibility.py): a prove marker is always written
+              # with pr=None (the fixing PR has already merged by the time
+              # prove runs), so it resolves on the step alone rather than
+              # falling through to clause 4's triage.
+              step = "prove"
+          elif pr_from_marker and marker_step and (
+              marker_step in PRE_FIX_STEPS
+              or (marker_step in FIX_OR_LATER_STEPS and pr_state == "OPEN")
+          ):
+              step = marker_step
+          elif pr_from_marker and marker_step in FIX_OR_LATER_STEPS:
+              # Resolved by number but not OPEN -- disqualified. Falls to
+              # the triage clause below, never the fallback clause: the
+              # marker named a real PR, so a different loop-owned PR must
+              # not be adopted in its place (SC-007). None of this
+              # abandoned attempt's state -- PR number/state, branch,
+              # round, base-sha -- must leak into this triage output
+              # (FR-022): a fresh triage->route->fix must cut a new branch
+              # off current main and a fresh review must start at round 0.
+              step = "triage"
+              reason = "stale marker -- recorded pr {0} is {1}, not open".format(
+                  pr_number, pr_state)
+              pr_number = ""
+              pr_state = ""
+              branch = ""
+              round_ = "0"
+              base_sha = ""
+          elif pr_from_fallback:
+              step = "review"
+          elif branch:
+              step = "fix"
+          else:
+              step = "triage"
+              if marker_present and marker_step not in PRE_FIX_STEPS:
+                  # Same FR-022 concern as the branch above: the marker's
+                  # branch and PR are both gone, so its round/base-sha
+                  # belong to that same abandoned attempt and must not
+                  # leak into a fresh triage (branch is already empty here
+                  # -- the `elif branch:` clause above would have matched
+                  # otherwise -- but round/base-sha are cleared explicitly).
+                  reason = "stale marker -- recorded branch/pr could not be re-derived live"
+                  round_ = "0"
+                  base_sha = ""
+
+          print(json.dumps({
+              "step": step,
+              "recovered_via_fallback": pr_from_fallback,
+              "disqualified_reason": reason,
+              "pr_number": pr_number,
+              "pr_state": pr_state,
+              "branch": branch,
+              "round": round_,
+              "base_sha": base_sha,
+          }))
+          PYEOF
+          )"
+
+          step="$(printf '%s' "$step_resolution_json" | jq -r '.step')"
+          recovered_via_fallback="$(printf '%s' "$step_resolution_json" | jq -r '.recovered_via_fallback')"
+          disqualified_reason="$(printf '%s' "$step_resolution_json" | jq -r '.disqualified_reason')"
+          pr_number="$(printf '%s' "$step_resolution_json" | jq -r '.pr_number')"
+          pr_state="$(printf '%s' "$step_resolution_json" | jq -r '.pr_state')"
+          branch="$(printf '%s' "$step_resolution_json" | jq -r '.branch')"
+          marker_round="$(printf '%s' "$step_resolution_json" | jq -r '.round')"
+          marker_base_sha="$(printf '%s' "$step_resolution_json" | jq -r '.base_sha')"
+
+          if [ "$recovered_via_fallback" = "true" ]; then
+            echo "board-loop: resume recovered PR #$pr_number for issue #$ISSUE_NUMBER via the board:owned label fallback (no board item marker named it)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -n "$disqualified_reason" ]; then
+            echo "board-loop: resume falling back to triage for issue #$ISSUE_NUMBER -- $disqualified_reason." >> "$GITHUB_STEP_SUMMARY"
           fi
 
           {
@@ -1291,12 +1496,13 @@ jobs:
           BRANCH: ${{ steps.base.outputs.branch }}
           BASE_SHA: ${{ steps.base.outputs.base-sha }}
         run: |
-          set -uo pipefail
+          set -euo pipefail
           git push origin "HEAD:refs/heads/$BRANCH"
 
+          gh label create "board:owned" -R "$GITHUB_REPOSITORY" --color 0E8A16 --description "Board loop: this PR was opened by board-loop.yml" --force
           issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)"
           pr_body="$(printf 'Fixes #%s.\n\nOpened by board-loop.yml on branch %s (base %s).' "$ISSUE_NUMBER" "$BRANCH" "$BASE_SHA")"
-          pr_url="$(gh pr create -R "$GITHUB_REPOSITORY" --title "Fix #$ISSUE_NUMBER: $issue_title" --body "$pr_body" --head "$BRANCH" --base main)"
+          pr_url="$(gh pr create -R "$GITHUB_REPOSITORY" --title "Fix #$ISSUE_NUMBER: $issue_title" --body "$pr_body" --head "$BRANCH" --base main --label board:owned)"
           pr_number="${pr_url##*/}"
           echo "pr-number=$pr_number" >> "$GITHUB_OUTPUT"
           echo "pr-url=$pr_url" >> "$GITHUB_OUTPUT"

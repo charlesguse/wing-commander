@@ -16,6 +16,34 @@ MARKER_RE = re.compile(
     r"<!--\s*wing-commander-board-item:\s*(\{.*?\})\s*-->", re.DOTALL)
 
 
+def read_marker_with_timestamp(issue_comments):
+    """issue_comments: a list of {"created_at": "...", "body": "..."}
+    dicts (an issue's own comments, any order). Returns
+    (created_at, marker) for the most recent well-formed board-item marker
+    found in any comment body, or None when no comment carries one, or the
+    newest one is not valid JSON (missing/unparsable marker -- degrade to
+    None, never raise; the caller falls back to live GitHub state per
+    FR-054)."""
+    dated_matches = []
+    for comment in issue_comments or []:
+        body = comment.get("body") or ""
+        match = MARKER_RE.search(body)
+        if not match:
+            continue
+        dated_matches.append((comment.get("created_at") or "", match.group(1)))
+    if not dated_matches:
+        return None
+    dated_matches.sort(key=lambda pair: pair[0])
+    created_at, raw = dated_matches[-1]
+    try:
+        marker = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(marker, dict):
+        return None
+    return created_at, marker
+
+
 def read_marker(issue_comments):
     """issue_comments: a list of {"created_at": "...", "body": "..."}
     dicts (an issue's own comments, any order). Returns the most recent
@@ -23,23 +51,8 @@ def read_marker(issue_comments):
     when no comment carries one, or the newest one is not valid JSON
     (missing/unparsable marker -- degrade to None, never raise; the caller
     falls back to live GitHub state per FR-054)."""
-    dated_markers = []
-    for comment in issue_comments or []:
-        body = comment.get("body") or ""
-        match = MARKER_RE.search(body)
-        if not match:
-            continue
-        try:
-            marker = json.loads(match.group(1))
-        except ValueError:
-            continue
-        if not isinstance(marker, dict):
-            continue
-        dated_markers.append((comment.get("created_at") or "", marker))
-    if not dated_markers:
-        return None
-    dated_markers.sort(key=lambda pair: pair[0])
-    return dated_markers[-1][1]
+    pair = read_marker_with_timestamp(issue_comments)
+    return pair[1] if pair else None
 
 
 def write_marker(step, round, pr, branch, base_sha):

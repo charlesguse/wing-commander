@@ -1,0 +1,5 @@
+{
+  "5011": [
+    {"created_at": "2026-01-02T00:00:00Z", "body": "An unrelated PR says Fixes #5011 in its own body, but that is never read here -- no marker on this comment."}
+  ]
+}
