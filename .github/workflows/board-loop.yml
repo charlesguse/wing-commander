@@ -770,10 +770,6 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ env.WC_BOT_TOKEN }}
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
-          model: ${{ needs.resolve-model.outputs.model }}
-          max_turns: ${{ steps.triage-ceiling.outputs.ceiling }}
-          allowed_tools: ${{ steps.tool-args-triage.outputs.allowed-tools }}
-          disallowed_tools: ${{ steps.tool-args-triage.outputs.disallowed-tools }}
           prompt: |
             You are the board loop's triage-propose step for issue
             #${{ needs.select.outputs.issue-number }} in ${{ github.repository }}.
@@ -808,6 +804,11 @@ jobs:
              "proposed_commit_sha": "<full sha>"|null,
              "reasoning": "one paragraph, your own words"}
             ```
+          claude_args: |
+            --model ${{ needs.resolve-model.outputs.model }}
+            --max-turns ${{ steps.triage-ceiling.outputs.ceiling }}
+            --allowedTools "${{ steps.tool-args-triage.outputs.allowed-tools }}"
+            --disallowedTools "${{ steps.tool-args-triage.outputs.disallowed-tools }}"
 
       - name: Re-establish Wing Commander context (post-agent, triage-propose)
         id: reestablish-triage
@@ -846,6 +847,22 @@ jobs:
           verdict-reason: ${{ steps.triage-verdict.outputs.reason }}
           stage: board-loop
 
+      # #499/Gate 23: continue-on-error: true (review-step-gating resolution
+      # 4), not a hard exit -- the deterministic extract/decide/act steps
+      # below are this job's own fallback path (a bad or missing proposal
+      # already degrades to a safe default there) and must still run and
+      # own this item's outcome even on a non-healthy agent verdict.
+      - name: Fail loud on non-healthy agent verdict (triage-propose)
+        id: triage-verdict-fail
+        if: always() && steps.propose.outcome != 'skipped' && steps.triage-verdict.outputs.verdict != 'healthy'
+        continue-on-error: true
+        env:
+          VERDICT: ${{ steps.triage-verdict.outputs.verdict }}
+          REASON: ${{ steps.triage-verdict.outputs.reason }}
+        run: |
+          echo "::error::wing-commander board-loop triage-propose: agent step rejected -- verdict=$VERDICT: $REASON"
+          exit 1
+
       - name: Extract the triage-propose fenced proposal
         id: extract
         run: |
@@ -875,6 +892,14 @@ jobs:
                               proposal.update(parsed)
                       except ValueError:
                           pass
+                  else:
+                      # #499: a denied tool or an exhausted allowlist can end
+                      # the run with no fenced block at all, and the default
+                      # proposal below then silently stands in for it --
+                      # make that observable instead of a silent fallback.
+                      print("::warning::board-loop triage-propose: no ```board-triage-proposal``` block found in the agent's result text -- falling back to the default triage verdict (close=False)")
+              else:
+                  print("::warning::board-loop triage-propose: claude-execution-output.json has no terminal result record -- falling back to the default triage verdict (close=False)")
 
           with open(os.path.join(os.environ["RUNNER_TEMP"], "board-triage-proposal.json"), "w", encoding="utf-8") as fh:
               json.dump(proposal, fh)
@@ -1056,10 +1081,6 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ env.WC_BOT_TOKEN }}
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
-          model: ${{ needs.resolve-model.outputs.model }}
-          max_turns: ${{ steps.route-ceiling.outputs.ceiling }}
-          allowed_tools: ${{ steps.tool-args-route.outputs.allowed-tools }}
-          disallowed_tools: ${{ steps.tool-args-route.outputs.disallowed-tools }}
           prompt: |
             You are the board loop's route-propose step for issue
             #${{ needs.select.outputs.issue-number }} in ${{ github.repository }}.
@@ -1088,6 +1109,11 @@ jobs:
             array when category is "spec"); it is never applied to the
             repository by you or by this step -- it exists only so the
             backstop can measure it.
+          claude_args: |
+            --model ${{ needs.resolve-model.outputs.model }}
+            --max-turns ${{ steps.route-ceiling.outputs.ceiling }}
+            --allowedTools "${{ steps.tool-args-route.outputs.allowed-tools }}"
+            --disallowedTools "${{ steps.tool-args-route.outputs.disallowed-tools }}"
 
       - name: Re-establish Wing Commander context (post-agent, route-propose)
         id: reestablish-route
@@ -1126,6 +1152,22 @@ jobs:
           verdict-reason: ${{ steps.route-verdict.outputs.reason }}
           stage: board-loop
 
+      # #499/Gate 23: continue-on-error: true (review-step-gating resolution
+      # 4), not a hard exit -- the deterministic extract/decide/act steps
+      # below are this job's own fallback path (a bad or missing proposal
+      # already degrades to a safe default there) and must still run and
+      # own this item's outcome even on a non-healthy agent verdict.
+      - name: Fail loud on non-healthy agent verdict (route-propose)
+        id: route-verdict-fail
+        if: always() && steps.propose.outcome != 'skipped' && steps.route-verdict.outputs.verdict != 'healthy'
+        continue-on-error: true
+        env:
+          VERDICT: ${{ steps.route-verdict.outputs.verdict }}
+          REASON: ${{ steps.route-verdict.outputs.reason }}
+        run: |
+          echo "::error::wing-commander board-loop route-propose: agent step rejected -- verdict=$VERDICT: $REASON"
+          exit 1
+
       - name: Extract the route-propose fenced proposal
         id: extract
         run: |
@@ -1155,6 +1197,15 @@ jobs:
                               proposal.update(parsed)
                       except ValueError:
                           pass
+                  else:
+                      # #499: a denied tool or an exhausted allowlist can end
+                      # the run with no fenced block at all, and the default
+                      # proposal below (category="spec") then silently stands
+                      # in for it -- make that observable instead of a
+                      # silent all-spec route. See triage-propose above.
+                      print("::warning::board-loop route-propose: no ```board-route-proposal``` block found in the agent's result text -- falling back to the default proposal (category=spec)")
+              else:
+                  print("::warning::board-loop route-propose: claude-execution-output.json has no terminal result record -- falling back to the default proposal (category=spec)")
 
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "board-route-proposal.json"), "w", encoding="utf-8") as fh:
@@ -1404,10 +1455,6 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ env.WC_BOT_TOKEN }}
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
-          model: ${{ needs.resolve-model.outputs.model }}
-          max_turns: ${{ steps.fix-ceiling.outputs.ceiling }}
-          allowed_tools: ${{ steps.tool-args-fix.outputs.allowed-tools }}
-          disallowed_tools: ${{ steps.tool-args-fix.outputs.disallowed-tools }}
           prompt: |
             You are the board loop's fixer step for issue
             #${{ needs.select.outputs.issue-number }} in
@@ -1425,6 +1472,11 @@ jobs:
             push` -- you do not have that tool, and a deterministic step
             after you runs the full local gate suite and pushes only if it
             is green). Do not open a PR yourself.
+          claude_args: |
+            --model ${{ needs.resolve-model.outputs.model }}
+            --max-turns ${{ steps.fix-ceiling.outputs.ceiling }}
+            --allowedTools "${{ steps.tool-args-fix.outputs.allowed-tools }}"
+            --disallowedTools "${{ steps.tool-args-fix.outputs.disallowed-tools }}"
 
       - name: Re-establish Wing Commander context (post-agent, fixer)
         id: reestablish-fix
@@ -1471,6 +1523,22 @@ jobs:
           verdict: ${{ steps.fix-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.fix-verdict.outputs.reason }}
           stage: board-loop
+
+      # #499/Gate 23: continue-on-error: true (review-step-gating resolution
+      # 4), not a hard exit -- the gate-suite/push/PR steps below are this
+      # job's own fallback path and must still run (or safely no-op on a
+      # missing commit) and own this item's outcome even on a non-healthy
+      # agent verdict.
+      - name: Fail loud on non-healthy agent verdict (fixer)
+        id: fix-verdict-fail
+        if: always() && steps.fixer.outcome != 'skipped' && steps.fix-verdict.outputs.verdict != 'healthy'
+        continue-on-error: true
+        env:
+          VERDICT: ${{ steps.fix-verdict.outputs.verdict }}
+          REASON: ${{ steps.fix-verdict.outputs.reason }}
+        run: |
+          echo "::error::wing-commander board-loop fixer: agent step rejected -- verdict=$VERDICT: $REASON"
+          exit 1
 
       # FR-024/FR-025/research.md D8: the exact CI invocation, run
       # deterministically -- before any push, not merely before any agent
@@ -1766,10 +1834,6 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ env.WC_BOT_TOKEN }}
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
-          model: ${{ needs.resolve-model.outputs.model }}
-          max_turns: ${{ steps.review-ceiling.outputs.ceiling }}
-          allowed_tools: ${{ steps.tool-args-review.outputs.allowed-tools }}
-          disallowed_tools: ${{ steps.tool-args-review.outputs.disallowed-tools }}
           prompt: |
             You are the board loop's reviewer for PR #${{ steps.pr.outputs.pr-number }}
             in ${{ github.repository }} (originating issue
@@ -1797,6 +1861,11 @@ jobs:
               "in_scope": true|false,
               "fingerprint_basis": {"file_path": "...", "gate_or_artifact": "one line naming what this is"}}]
             ```
+          claude_args: |
+            --model ${{ needs.resolve-model.outputs.model }}
+            --max-turns ${{ steps.review-ceiling.outputs.ceiling }}
+            --allowedTools "${{ steps.tool-args-review.outputs.allowed-tools }}"
+            --disallowedTools "${{ steps.tool-args-review.outputs.disallowed-tools }}"
 
       - name: Re-establish Wing Commander context (post-agent, reviewer)
         id: reestablish-review
@@ -1834,6 +1903,22 @@ jobs:
           verdict: ${{ steps.review-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.review-verdict.outputs.reason }}
           stage: board-loop
+
+      # #499/Gate 23: continue-on-error: true (review-step-gating resolution
+      # 4), not a hard exit -- the extract/post-review steps below are this
+      # job's own fallback path (a bad or missing findings block degrades to
+      # "found nothing" there) and must still run and own this item's
+      # outcome even on a non-healthy agent verdict.
+      - name: Fail loud on non-healthy agent verdict (reviewer)
+        id: review-verdict-fail
+        if: always() && steps.reviewer.outcome != 'skipped' && steps.review-verdict.outputs.verdict != 'healthy'
+        continue-on-error: true
+        env:
+          VERDICT: ${{ steps.review-verdict.outputs.verdict }}
+          REASON: ${{ steps.review-verdict.outputs.reason }}
+        run: |
+          echo "::error::wing-commander board-loop reviewer: agent step rejected -- verdict=$VERDICT: $REASON"
+          exit 1
 
       # T041: extract, then filter every finding through
       # verify-board-review-finding-schema.py's validate_finding() --
@@ -1875,6 +1960,14 @@ jobs:
                               raw = parsed
                       except ValueError:
                           pass
+                  else:
+                      # #499: see triage-propose/route-propose above -- a
+                      # denied tool or an exhausted allowlist can end the
+                      # run with no fenced block at all, which silently
+                      # reads as "reviewer found nothing" below.
+                      print("::warning::board-loop reviewer: no ```wing-commander-review-findings``` block found in the agent's result text -- treating this review as finding nothing")
+              else:
+                  print("::warning::board-loop reviewer: claude-execution-output.json has no terminal result record -- treating this review as finding nothing")
 
           kept = []
           dropped = 0
@@ -2177,10 +2270,6 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ env.WC_BOT_TOKEN }}
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
-          model: ${{ needs.resolve-model.outputs.model }}
-          max_turns: ${{ steps.review-fixup-ceiling.outputs.ceiling }}
-          allowed_tools: ${{ steps.tool-args-review-fixup.outputs.allowed-tools }}
-          disallowed_tools: ${{ steps.tool-args-review-fixup.outputs.disallowed-tools }}
           prompt: |
             You are the board loop's review-fixup step for PR
             #${{ steps.pr.outputs.pr-number }} in ${{ github.repository }},
@@ -2196,6 +2285,11 @@ jobs:
             -- a deterministic step after you runs the full local gate
             suite and pushes only if it is green). Do not open or edit any
             PR yourself.
+          claude_args: |
+            --model ${{ needs.resolve-model.outputs.model }}
+            --max-turns ${{ steps.review-fixup-ceiling.outputs.ceiling }}
+            --allowedTools "${{ steps.tool-args-review-fixup.outputs.allowed-tools }}"
+            --disallowedTools "${{ steps.tool-args-review-fixup.outputs.disallowed-tools }}"
 
       - name: Re-establish Wing Commander context (post-agent, review-fixup)
         id: reestablish-review-fixup
@@ -2242,6 +2336,22 @@ jobs:
           verdict: ${{ steps.review-fixup-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.review-fixup-verdict.outputs.reason }}
           stage: board-loop
+
+      # #499/Gate 23: continue-on-error: true (review-step-gating resolution
+      # 4), not a hard exit -- the gate-suite/push steps below are this
+      # job's own fallback path and must still run (or safely no-op on a
+      # missing commit) and own this item's outcome even on a non-healthy
+      # agent verdict.
+      - name: Fail loud on non-healthy agent verdict (review-fixup)
+        id: review-fixup-verdict-fail
+        if: always() && steps.review-fixup.outcome != 'skipped' && steps.review-fixup-verdict.outputs.verdict != 'healthy'
+        continue-on-error: true
+        env:
+          VERDICT: ${{ steps.review-fixup-verdict.outputs.verdict }}
+          REASON: ${{ steps.review-fixup-verdict.outputs.reason }}
+        run: |
+          echo "::error::wing-commander board-loop review-fixup: agent step rejected -- verdict=$VERDICT: $REASON"
+          exit 1
 
       # FR-024's discipline applies to every push this loop makes, not only
       # the first one.

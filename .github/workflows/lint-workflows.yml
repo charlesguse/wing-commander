@@ -4014,6 +4014,19 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-auto-release-specs-fallback.py
 
+      # Gate 92 — #499: board-loop.yml's five claude-code-action@v1 steps
+      # passed model:/max_turns:/allowed_tools:/disallowed_tools: as bare
+      # `with:` inputs, which v1 silently ignores (an
+      # `##[warning]Unexpected input(s)` line, never a failure), so the
+      # resolved model tier, turn ceiling and tool allowlist were never
+      # applied -- see verify-claude-code-action-inputs.py's own docstring
+      # for the accepted-input list's source. Fails any claude-code-action@v1
+      # step, anywhere in workflows/ or actions/, that passes an input v1
+      # does not accept.
+      - name: "Gate 92 — every claude-code-action@v1 step's with: keys are inputs v1 accepts"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-claude-code-action-inputs.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when
