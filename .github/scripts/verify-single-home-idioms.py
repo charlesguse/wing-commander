@@ -543,7 +543,7 @@ def check_mode_tag_shape(root="."):
             if "container_image_configured" in window:
                 findings.append(Finding(
                     path, "mode-tag-shape", line_of(text, m.start()),
-                    "jq '. + {mode:$mode} + (...container_image_configured...)'"))
+                    "jq '. + {mode:$<var>} + (...container_image_configured...)'"))
     return findings
 
 
