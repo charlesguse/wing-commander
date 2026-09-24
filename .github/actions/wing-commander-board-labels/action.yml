@@ -1,12 +1,16 @@
-# #488: board-loop.yml's own labels (board:stalled, board:owned) were
-# never created anywhere -- on a repo that starts without them, every
-# `gh issue edit --add-label "board:stalled"` / `gh pr create --label
-# board:owned` call failed, the source issue never carried the stalled
-# label, and board_eligibility.py's STALLED_LABEL check kept re-selecting
-# it, re-opening a duplicate spec-request on every scheduled run. This is
-# the single home (CLAUDE.md "shared logic has exactly one home") for
-# creating both labels; board-loop.yml calls it once per job that can
-# reach one of those call sites (triage, route, fix, review, readiness),
+# #488: board:stalled was never created anywhere -- on a repo that starts
+# without it, every `gh issue edit --add-label "board:stalled"` call
+# failed, the source issue never carried the stalled label, and
+# board_eligibility.py's STALLED_LABEL check kept re-selecting it,
+# re-opening a duplicate spec-request on every scheduled run. (board:owned
+# was not broken the same way: main's fix job already runs `gh label
+# create "board:owned" ... --force` inline, right before the `gh pr
+# create --label board:owned` that needs it -- see board-loop.yml's
+# push-pr step, kept as its one-line fallback.) This is the single home
+# (CLAUDE.md "shared logic has exactly one home") for creating both
+# labels together, so a future board:* label doesn't repeat board:stalled's
+# mistake; board-loop.yml calls it once per job that can reach one of
+# their own apply call sites (triage, route, fix, review, readiness),
 # right after minting the bot token that owns the create. `--force` makes
 # the create idempotent, so calling it from more than one job in the same
 # run is safe and cheap.
@@ -30,5 +34,20 @@ runs:
         GH_TOKEN: ${{ inputs.token }}
       run: |
         set -uo pipefail
-        gh label create "board:stalled" -R "$GITHUB_REPOSITORY" --color B60205 --description "Board loop: stalled awaiting a human (CLAUDE.md board-loop rules)" --force
-        gh label create "board:owned" -R "$GITHUB_REPOSITORY" --color 0E8A16 --description "Board loop: this PR was opened by board-loop.yml" --force
+        # Both creates always run -- a failed board:stalled create must
+        # never skip the board:owned create (or vice versa). The caller
+        # step is continue-on-error: true (board-loop.yml), so exiting
+        # non-zero here is safe and is what makes a failed create visible
+        # in the log instead of silently vanishing into the same bug #488
+        # already was (wing-commander-durable-failure-issue/action.yml's
+        # own ::warning:: pattern, action.yml:228-229).
+        status=0
+        if ! gh label create "board:stalled" -R "$GITHUB_REPOSITORY" --color B60205 --description "Board loop: stalled awaiting a human (CLAUDE.md board-loop rules)" --force; then
+          echo "::warning::wing-commander-board-labels: gh label create failed for board:stalled -- board-loop.yml's --add-label \"board:stalled\" call sites may fail until this label exists."
+          status=1
+        fi
+        if ! gh label create "board:owned" -R "$GITHUB_REPOSITORY" --color 0E8A16 --description "Board loop: this PR was opened by board-loop.yml" --force; then
+          echo "::warning::wing-commander-board-labels: gh label create failed for board:owned -- board-loop.yml's --label board:owned call sites may fail until this label exists."
+          status=1
+        fi
+        exit "$status"

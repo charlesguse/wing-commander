@@ -1527,6 +1527,12 @@ jobs:
           set -euo pipefail
           git push origin "HEAD:refs/heads/$BRANCH"
 
+          # One-line fallback (CLAUDE.md "shared logic has exactly one
+          # home") for the case the composite step above never ran: this
+          # step is `set -e`, so a missing board:owned would otherwise
+          # abort before `gh pr create --label board:owned` below.
+          # wing-commander-board-labels is canonical for this label's
+          # color/description -- keep the two strings identical.
           gh label create "board:owned" -R "$GITHUB_REPOSITORY" --color 0E8A16 --description "Board loop: this PR was opened by board-loop.yml" --force
           issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)"
           pr_body="$(printf 'Fixes #%s.\n\nOpened by board-loop.yml on branch %s (base %s).' "$ISSUE_NUMBER" "$BRANCH" "$BASE_SHA")"
