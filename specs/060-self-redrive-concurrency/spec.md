@@ -112,7 +112,9 @@ eligibility and decides the item is not one of the loop's. GitHub also keeps
 at most one *pending* run per group, so a queued proof dispatch can be
 displaced outright by the next hourly schedule tick. Both are consequences of
 the same block and are in this feature's scope to account for, even if the
-chosen resolution leaves them unchanged.
+chosen resolution leaves them unchanged. The same pending-slot rule can also
+cancel the `pull_request: closed` run that would have hosted the prove step
+itself. FR-010b covers that case.
 
 ### What the owner decided
 
@@ -390,6 +392,15 @@ permits and the pairs it forbids.
   hourly schedule tick, and if directed proof runs share a group with each
   other, a second merge proven close behind the first. The prove step must not
   read that as a failure of the fix (Story 2 scenario 2, Story 3 scenario 2).
+- **The prove run itself is displaced.** A board fix PR's `pull_request:
+  closed` run can go pending in the item group and then be cancelled when the
+  hourly tick or another PR's close takes the pending slot. No prove step
+  runs for that merge, so nothing on the issue explains the missing proof
+  unless something else records it (FR-010b).
+- **Two directed proof runs contend for one group.** When two merges are
+  proven close together, the second target group is already occupied. The
+  prove step learns this before dispatching (FR-001a), rather than after a
+  full wait.
 - **A non-board PR closes during a proof wait.** Every `pull_request: closed`
   event in the repository creates a `board-loop` run that joins the item group
   even though `prove-gate` will find it ineligible. It queues behind a prove run
@@ -436,6 +447,14 @@ permits and the pairs it forbids.
   determined before the dispatch, by deterministic code reading the tree
   (Principle IX), never by an agent and never by observing the timeout after
   the fact.
+- **FR-001a**: The tree alone cannot say whether the target's concurrency
+  group is free *now*: another directed proof run may already be running or
+  pending in it, and a dispatch would then queue behind that run or displace
+  it. Before dispatching, the prove step MUST read the target group's current
+  state from the Actions API, using deterministic code rather than an agent.
+  If the group is occupied, it MUST record a distinct "proof group busy"
+  reason on the issue instead of dispatching into a wait it cannot win, and
+  leave the issue open (FR-008).
 - **FR-002**: The conflict this feature resolves is that the prove step runs
   inside the concurrency group its only re-drive target joins. The resolution is
   that the loop re-drives **only the changed behaviour**, not a whole board
@@ -498,6 +517,16 @@ permits and the pairs it forbids.
   unattended, and MUST NOT substitute a whole board iteration for the directed
   run (FR-002b). This condition MUST be recorded distinctly from "nothing in
   the repository reaches this change" (FR-006).
+- **FR-010b**: The `pull_request: closed` run that hosts the prove step can
+  itself be cancelled from the item group's pending slot before it starts:
+  the hourly schedule tick or another PR's close event takes the slot. In that
+  case no prove step exists to record anything. Such a merge MUST NOT leave
+  its issue open with no record. Deterministic code MUST detect a merged board
+  fix PR whose issue carries neither a proof record nor a prove-step marker,
+  and record that on the issue as a displaced prove run. That record MUST be
+  distinct from every FR-006/FR-007 reason and MUST leave the issue open. The
+  detecting mechanism is left to plan; it MUST NOT be an agent's judgement
+  (Principle IX).
 
 ### Functional Requirements — the abandoned dispatch
 
@@ -519,10 +548,17 @@ permits and the pairs it forbids.
   executes MUST receive a re-drive decision whose recorded reason is true.
   "Nothing reaches this change" MUST NOT be recorded for a script the target
   workflow runs on every invocation.
-- **FR-014**: The uses-graph MUST capture `.github/scripts/**` references, so a
-  merge that changes only a board helper selects the dispatchable workflow that
-  references that script and is re-driven like any other Actions-only change,
-  rather than recording "nothing reaches this change". This routes many more
+- **FR-014**: The uses-graph MUST capture every way a workflow executes a
+  `.github/scripts/**` helper, not only a literal path. Most board helpers
+  are loaded as Python modules (`sys.path.insert(0, '.github/scripts')`
+  followed by `from board_item_marker import …`) and never appear as a
+  `.github/scripts/<name>.py` path in `board-loop.yml`. So the graph MUST
+  resolve module imports, including imports between helpers, and helpers
+  executed inside a composite the workflow uses. A merge that changes only a
+  board helper then aims a directed proof run (FR-002) at the stage or stages
+  that execute that helper, rather than recording "nothing reaches this
+  change". FR-021's real-tree assertion MUST include that every
+  `.github/scripts/board_*.py` helper resolves to at least one stage. This routes many more
   merges into the re-drive branch, which is safe only because FR-002's
   resolution lands in the same feature; FR-014 MUST NOT ship ahead of FR-002.
 - **FR-015**: The reachability rule MUST be derived from the checked-out
@@ -623,14 +659,16 @@ permits and the pairs it forbids.
   started.
 - **SC-003**: Each of the no-proof conditions — never started, displaced,
   stood down, started-but-unfinished, nothing reaches the change, no directed
-  run reaches the changed behaviour — renders a distinct, named reason on the
+  run reaches the changed behaviour, proof group busy (FR-001a), prove run
+  displaced (FR-010b) — renders a distinct, named reason on the
   issue, verified by a fixture per condition rather than by observing production
   runs.
 - **SC-004**: Zero board iterations run against an issue with no record
   anywhere of why that run exists, and zero proof dispatches take a board item.
 - **SC-005**: The time a prove step spends waiting on a proof run that cannot
   start is reduced from the full ~11-minute budget to the time it takes the
-  deterministic pre-dispatch check to say so.
+  deterministic pre-dispatch checks (FR-001's tree check and FR-001a's
+  runtime check of the target group) to say so.
 - **SC-006**: The statement of which board-loop runs may overlap is the same in
   the concurrency blocks' comments, in `contracts/prove-step.md`, and in the
   check that enforces it — verified by a gate, not by reading.
