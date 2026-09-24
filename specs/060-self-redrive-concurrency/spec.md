@@ -114,7 +114,7 @@ displaced outright by the next hourly schedule tick. Both are consequences of
 the same block and are in this feature's scope to account for, even if the
 chosen resolution leaves them unchanged.
 
-### What the owner decided, and what is open again
+### What the owner decided
 
 The lifecycle issue is explicit that this needs an owner decision rather than a
 unilateral fix, and names three candidate shapes — a separate concurrency group
@@ -126,7 +126,7 @@ on the same issue. A fifth, raised on the second pass, is a proof run that
 executes only the changed behaviour instead of a whole board iteration. The
 three questions were posted to lifecycle issue
 [#460](https://github.com/charlesguse/wing-commander/issues/460) rather than
-guessed at.
+guessed at, and all three are now answered.
 
 **FR-014 is decided.** Board helper scripts join the uses-graph: the graph
 captures `.github/scripts/**` references, so a board-helper-only merge
@@ -139,14 +139,15 @@ internal to it rather than something a follow-up has to get right later. User
 Story 4, FR-013 and FR-015 therefore stay in this spec's scope. The answer was
 confirmed again on 2026-09-24 and is not re-opened.
 
-**FR-002 and FR-010 are open again.** They were first answered on 2026-09-23 as
-"(a) re-drive dispatches get their own concurrency group" and "the evidence bar
-is unchanged", and both answers rested on a single premise: that once the group
-conflict is removed, the proof run completes inside the prove step's existing
-synchronous wait (12 correlation attempts over 60s, then 60 poll attempts over
-600s). Both were withdrawn on 2026-09-24, because the review of the draft spec
-PR established that the premise does not hold on the current tree. Four facts
-now govern any answer, each read off the tree rather than argued:
+**FR-002 and FR-010 were re-answered on 2026-09-24.** They were first answered
+on 2026-09-23 as "(a) re-drive dispatches get their own concurrency group" and
+"the evidence bar is unchanged", and both answers rested on a single premise:
+that once the group conflict is removed, the proof run completes inside the
+prove step's existing synchronous wait (12 correlation attempts over 60s, then
+60 poll attempts over 600s). Both were withdrawn on 2026-09-24, because the
+review of the draft spec PR established that the premise does not hold on the
+current tree. Four facts, each read off the tree rather than argued, govern the
+answers that replaced them:
 
 1. **A proof run that does real work cannot finish inside the wait.** A
    `board-loop.yml` run that works an item runs the triage, route, fix and
@@ -174,11 +175,33 @@ now govern any answer, each read off the tree rather than argued:
    iteration.** Under shape (a) that is the usual outcome rather than a rare
    one, and it is exactly the Story 3 behaviour FR-011 forbids.
 
-The asynchronous shape and per-trigger scoping were rejected on the withdrawn
-premise, so they are on the table again alongside (a) and accept-as-is. The two
-open questions are carried at FR-002 and FR-010 below, and every requirement,
-scenario and edge case that had named shape (a) as adopted is stated
-resolution-neutrally again until they are answered.
+**FR-002 is decided: the directed proof run.** The loop re-drives *only the
+changed behaviour*, not a whole board iteration — a proof run directed at the
+changed stage. A directed proof run is not a board iteration: it does not select
+a board item and it does not open a fix PR. Spec 057 FR-048's "one board item in
+flight repository-wide" therefore **holds unchanged** — it is neither narrowed
+nor revoked, because the only run this feature lets overlap a board-loop run
+takes no board item. The directed run MUST be able to exercise the prove step
+itself, so that this feature's own change is provable (FR-022); that is a
+constraint on the mechanism, answering fact 2. Facts 1, 3 and 4 are what ruled
+out the alternatives: a whole-iteration proof run cannot finish inside a bounded
+wait, a separate group for it admits two complete iterations at once, and an
+abandoned one carries on as the unrelated iteration FR-011 forbids. No way to
+direct a run at one stage exists in the tree today; building it is this
+feature's work.
+
+**FR-010 is decided: the terminal-conclusion bar is kept.** The issue closes
+only on an observed terminal conclusion, exactly as spec 057 FR-043 requires
+today. This is consistent with FR-002 only because a directed proof run is
+bounded: it MUST finish inside a bounded wait, and the prove step itself MUST
+observe its conclusion before the issue closes. No asynchronous observer is
+introduced, and the bar is not lowered to "observed to start".
+
+**The fallback, for a change no directed run can reach.** When no directed run
+reaches the changed behaviour, the prove step records on the issue that no
+directed run reaches it, names what changed, and leaves the issue open. A human
+reads the evidence and closes it. The loop never closes such an issue unattended,
+and it never dispatches a full board iteration as a stand-in for proof.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -203,12 +226,13 @@ and that its terminal conclusion is recorded on the issue.
 
 1. **Given** a merged fix PR whose changed paths make `actions_only` true and
    whose re-drive target is the same workflow the prove step is running in,
-   **When** the prove step dispatches the proof run, **Then** that run is able
-   to start while the dispatching run is alive rather than queuing behind it, by
-   whatever means FR-002's resolution establishes.
-2. **Given** that proof run started, **When** it finishes, **Then** its terminal
-   conclusion is recorded on the issue with the run URL — by the prove step
-   itself, or by whatever observer FR-010's answer names.
+   **When** the prove step dispatches the directed proof run, **Then** that run
+   is able to start while the dispatching run is alive rather than queuing
+   behind it, and it takes no board item.
+2. **Given** that directed proof run started, **When** it finishes — which it
+   does inside the prove step's bounded wait — **Then** the prove step itself
+   observes its terminal conclusion and records it on the issue with the run
+   URL.
 3. **Given** the proof run concluded successfully, **When** the outcome is
    recorded, **Then** the issue closes citing that run URL and conclusion,
    exactly as spec 057 FR-043's success branch requires.
@@ -221,9 +245,10 @@ and that its terminal conclusion is recorded on the issue.
 ### User Story 2 - A proof that could not be produced says why, in terms a maintainer can act on (Priority: P1)
 
 A maintainer reading the issue can tell the difference between "the proof run
-ran and the fix is not proven", "the proof run could not start", and "nothing
-in the repository reaches this change". Today the first two are both rendered
-as `conclusion=timeout` against a plausible-looking run URL.
+ran and the fix is not proven", "the proof run could not start", "nothing in
+the repository reaches this change", and "no directed run reaches the changed
+behaviour, so a human has to read the evidence". Today the first two are both
+rendered as `conclusion=timeout` against a plausible-looking run URL.
 
 **Why this priority**: Spec 057 SC-001 promises the whole item history is
 readable from the issue alone. A timeout that actually means "the loop
@@ -233,8 +258,8 @@ part of this feature that would have had to hold under any resolution of
 Story 1 — the recorded reason has to be truthful whether or not the proof run
 can start.
 
-**Independent Test**: Force each of the three no-proof conditions and read the
-issue comment for each; each must name its own distinct condition.
+**Independent Test**: Force each of the no-proof conditions and read the issue
+comment for each; each must name its own distinct condition.
 
 **Acceptance Scenarios**:
 
@@ -248,9 +273,14 @@ issue comment for each; each must name its own distinct condition.
 3. **Given** a merged change nothing in the repository can re-drive, **When**
    the prove step records the outcome, **Then** the issue comment names that
    condition and the issue stays open, unchanged from today.
-4. **Given** any of the above, **When** the maintainer reads the issue, **Then**
-   the recorded reason is enough to decide whether to re-run the proof or to
-   look at the fix, without opening the Actions tab.
+4. **Given** a merged change that no directed proof run can be aimed at,
+   **When** the prove step records the outcome, **Then** the issue comment says
+   so, names what changed, and the issue stays open for a human to read the
+   evidence and close — distinctly from the three conditions above, and never
+   as a proof produced by a full board iteration run as a stand-in.
+5. **Given** any of the above, **When** the maintainer reads the issue, **Then**
+   the recorded reason is enough to decide whether to re-run the proof, to look
+   at the fix, or to close the issue by hand, without opening the Actions tab.
 
 ---
 
@@ -265,15 +295,12 @@ merge it was dispatched to prove.
 minutes after the maintainer is told "not proven", a full board iteration runs
 against an unrelated issue with nothing on any issue explaining where it came
 from. It is lower priority than Stories 1 and 2 because it is a side effect
-rather than the broken guarantee. How much of it survives depends on FR-002's
-answer, and not in the direction first assumed: a separate group for proof
-dispatches removes the commonest cause today — a dispatch queued behind its own
-caller — but because a dispatched `board-loop.yml` run is a full iteration that
-outlasts any wait the caller can afford (see fact 1), it makes "the proof run
-carried on as an unrelated iteration" the usual outcome rather than the rare
-one. A shape in which no dispatch outlives its caller removes the cause
-outright. Under every shape, a proof dispatch displaced from its group's
-pending slot by a second one remains possible.
+rather than the broken guarantee. FR-002's resolution removes the cause rather
+than containing it: a directed proof run takes no board item and opens no fix
+PR, so even one that outlives the caller's wait cannot become someone else's
+board iteration. What remains to be specified is that this holds by
+construction and is checked — and that a proof dispatch displaced from its
+group's pending slot, which stays possible, is not read as a failing proof.
 
 **Independent Test**: Dispatch a proof run, let the caller stop waiting, and
 check both that the dispatched run's eventual behaviour is accounted for and
@@ -322,16 +349,20 @@ rule the feature adopts.
 
 ### User Story 5 - One board item in flight is still a guarantee a maintainer can rely on (Priority: P1)
 
-Whatever FR-002 resolves to, a maintainer can still state in one sentence what
-the loop guarantees about simultaneity — which board-loop runs may overlap and
-which must queue — and a fixture holds the loop to it.
+A maintainer can state in one sentence what the loop guarantees about
+simultaneity — which board-loop runs may overlap and which must queue — and a
+fixture holds the loop to it. After this change that sentence still says one
+board item is in flight repository-wide; the only thing that may overlap a
+board-loop run is a directed proof run, which takes no item.
 
 **Why this priority**: Spec 057 FR-048 exists because two board iterations
 racing can select the same issue, open two fix PRs, or close an issue another
-run is still working. A resolution that quietly weakens that to make the proof
-run start would trade a visible bug for an invisible one — and because a
+run is still working. A resolution that quietly weakened that to make the proof
+run start would have traded a visible bug for an invisible one — and because a
 dispatched `board-loop.yml` proof run is itself a complete iteration, "let the
-proof run overlap" weakens more than it first appears to.
+proof run overlap" would have weakened more than it first appears to. The
+directed shape avoids that trade, but only if "takes no board item" is checked
+rather than asserted.
 
 **Independent Test**: State the post-change guarantee and exercise the pairs it
 permits and the pairs it forbids.
@@ -356,37 +387,40 @@ permits and the pairs it forbids.
 - **The proof dispatch is displaced from the pending slot.** GitHub keeps at
   most one pending run per concurrency group, so a queued proof dispatch is
   cancelled without ever running when a later one takes the slot — today the
-  hourly schedule tick, and under any resolution that leaves proof dispatches
-  sharing a group with each other, a second merge proven close behind the
-  first. The prove step must not read that as a failure of the fix (Story 2
-  scenario 2, Story 3 scenario 2).
+  hourly schedule tick, and if directed proof runs share a group with each
+  other, a second merge proven close behind the first. The prove step must not
+  read that as a failure of the fix (Story 2 scenario 2, Story 3 scenario 2).
 - **A non-board PR closes during a proof wait.** Every `pull_request: closed`
   event in the repository creates a `board-loop` run that joins the item group
-  even though `prove-gate` will find it ineligible. Whether it competes with
-  the proof dispatch depends on FR-002's resolution; under every resolution it
-  queues behind a prove run that is still waiting.
-- **The changed behaviour is in a job a dispatch cannot reach.** A
-  `workflow_dispatch` re-drive of `board-loop.yml` runs `select` and whichever
-  of triage, route, fix or review the selected item calls for; it never runs
-  `prove-gate` or `prove`, which are gated on the `pull_request` event. A
-  change to the prove step — this feature's own change among them (FR-022) —
-  has no dispatchable path that executes it, and a change to any other stage is
-  executed only if `select` happens to pick an item at that stage.
-- **The proof run itself stands down.** A proof re-drive of `board-loop.yml`
-  runs the loop's own entry gates: the kill switch, an implement cycle in
-  flight (spec 057 FR-049), or an empty eligible board. It can therefore
-  conclude `success` having stood down without exercising the changed
-  behaviour at all. A stood-down run is not proof.
+  even though `prove-gate` will find it ineligible. It queues behind a prove run
+  that is still waiting; it does not compete with the directed proof run, which
+  does not hold the item group.
+- **The changed behaviour is in a job an undirected dispatch cannot reach.** A
+  plain `workflow_dispatch` re-drive of `board-loop.yml` runs `select` and
+  whichever of triage, route, fix or review the selected item calls for; it
+  never runs `prove-gate` or `prove`, which are gated on the `pull_request`
+  event. This is why FR-002's resolution directs the proof run at the changed
+  stage, and why FR-022 requires that the prove step itself be among the stages
+  a directed run can exercise.
+- **No directed run reaches the changed behaviour.** Where the changed stage is
+  one the directed mechanism cannot aim at, the prove step records that fact and
+  what changed, leaves the issue open for a human, and does not fall back to
+  dispatching a whole board iteration.
+- **The directed proof run stands down.** A directed run must not be admitted
+  as proof merely for concluding `success`: if the loop's own entry gates — the
+  kill switch, an implement cycle in flight (spec 057 FR-049) — stop it before
+  the changed behaviour executes, it has proved nothing. A stood-down run is not
+  proof.
 - **The kill switch is set between the dispatch and the wait.** The prove job
   re-checks the kill switch before any durable action; a dispatch already in
   flight is not recalled by that check.
 - **The merge changes both a board helper and a workflow.** Reachability and
   direct-target rules can both match; the chosen target must be deterministic.
 - **The proof run picks up the very issue being proven.** The issue stays open
-  until proof arrives, so a proof run that selects an item may select that same
-  issue and re-triage it from the top rather than resuming its prove step, as
-  may an ordinary iteration running alongside it under any resolution that lets
-  the two overlap. FR-017's check covers exactly this case.
+  until proof arrives, so a proof run that selected an item could select that
+  same issue and re-triage it from the top rather than resuming its prove step.
+  A directed proof run selects no item, which is what forecloses this; FR-017's
+  check is what establishes that it selects none.
 - **A second dispatchable target appears.** The dispatchable set is one
   workflow today; a future workflow that adds the run-name/attempt-token wiring
   joins it and may not share the board loop's concurrency group. The rule must
@@ -403,42 +437,27 @@ permits and the pairs it forbids.
   (Principle IX), never by an agent and never by observing the timeout after
   the fact.
 - **FR-002**: The conflict this feature resolves is that the prove step runs
-  inside the concurrency group its only re-drive target joins.
-  [NEEDS CLARIFICATION: which resolution shape does the owner want, now that a
-  dispatched `board-loop.yml` proof run is known to be a full board iteration
-  that runs agents for far longer than the prove step's 600s wait and that
-  cannot reach the `prove` job at all? (a) give re-drive dispatches their own
-  concurrency group — which admits two complete board iterations at once, so it
-  revokes rather than narrows spec 057 FR-048, turns FR-017's guard into a
-  cross-run in-flight check, doubles concurrent agent spend, and makes an
-  abandoned dispatch carrying on as an unrelated iteration (FR-011) the usual
-  outcome rather than a rare one; (b) scope the board loop's concurrency group
-  per trigger so a `pull_request: closed` prove run never holds the item slot —
-  narrower than (a) in that only the prove run's own grip on the group changes,
-  at the cost of a prove-vs-selection race on the same issue that needs its own
-  guard, and still leaving the proof run a full iteration the caller cannot
-  outlast; (c) stop waiting synchronously for a self-re-drive — treat a
-  correlated, successfully queued or started dispatch as the evidence and let a
-  later run or a human read the conclusion, the only shape fact 1 leaves
-  intact, at the cost of reopening FR-010 and spec 057 FR-043's three-way
-  conclusion; (d) re-drive only the changed behaviour rather than a whole board
-  iteration — a proof run directed at the changed stage, the only shape that
-  answers fact 2 and could finish inside a bounded wait, but needing a way to
-  direct a run at one stage that does not exist in the tree today; (e) accept
-  the current behaviour and specify only the legibility and cost requirements
-  below, leaving the re-drive branch permanently unable to produce proof.
-  Whichever is chosen MUST also say how a proof run is directed at the changed
-  behaviour, or what counts as proof when it cannot be — including for a change
-  to the prove step itself (FR-022).]
-  Whatever shape is adopted MUST state what it does to spec 057 FR-048's "one
-  board item in flight repository-wide" — hold it, narrow it, or revoke it —
-  and MUST leave the serialization of triage, route, fix, review and readiness
-  otherwise unchanged.
-- **FR-003**: Whatever resolution is adopted, a proof run that starts MUST
-  execute the changed behaviour rather than merely starting. A proof run that
-  concludes `success` after standing down at an entry gate MUST NOT be recorded
-  as proof, and neither MUST a proof run that started, selected an unrelated
-  item, and exercised a stage the merge did not change.
+  inside the concurrency group its only re-drive target joins. The resolution is
+  that the loop re-drives **only the changed behaviour**, not a whole board
+  iteration: the prove step dispatches a *directed proof run* aimed at the stage
+  the merge changed. A directed proof run MUST NOT select a board item and MUST
+  NOT open a fix PR, and MUST be able to start while the dispatching run is
+  alive. Spec 057 FR-048's "one board item in flight repository-wide"
+  **holds unchanged** — neither narrowed nor revoked — because the only run this
+  feature permits to overlap a board-loop run takes no board item; and the
+  serialization of triage, route, fix, review and readiness is otherwise
+  unchanged.
+- **FR-002a**: The directed proof run MUST be able to exercise the prove step
+  itself, not only the stages a plain `workflow_dispatch` of `board-loop.yml`
+  can reach today (fact 2), so that a change to the prove step — including this
+  feature's own — is provable (FR-022).
+- **FR-002b**: The loop MUST NOT dispatch a whole board iteration as a stand-in
+  for proof under any condition, including the condition of FR-010a where no
+  directed run reaches the changed behaviour.
+- **FR-003**: A proof run that starts MUST execute the changed behaviour rather
+  than merely starting. A proof run that concludes `success` after standing down
+  at an entry gate MUST NOT be recorded as proof, and neither MUST a run that
+  started but exercised a stage the merge did not change.
 - **FR-004**: The rule MUST be correct for a re-drive target that does **not**
   share the caller's concurrency group, not only for the self-target case.
   A target in an unrelated group MUST continue to be dispatched and waited on
@@ -454,7 +473,7 @@ permits and the pairs it forbids.
   the wait budget MUST be recorded on the issue as a run that did not start,
   distinctly from a run that started and exhausted the budget while executing.
   Both MUST remain distinct from "nothing in the repository reaches this
-  change".
+  change" and from FR-010a's "no directed run reaches this changed behaviour".
 - **FR-007**: A proof dispatch that was cancelled before starting — including
   displacement from the concurrency group's pending slot — MUST be recorded as
   a dispatch that did not run, never as a failing proof.
@@ -464,35 +483,31 @@ permits and the pairs it forbids.
 - **FR-009**: The recorded reason MUST be sufficient for a maintainer to decide
   whether to look at the fix or at the loop, without leaving the issue
   (spec 057 SC-001).
-- **FR-010**: The evidence bar for closing the issue is
-  [NEEDS CLARIFICATION: may the issue close on a proof run that was dispatched,
-  correlated, and observed to *start*, without a terminal conclusion having been
-  observed — with the run URL recorded and the outcome left for a human or a
-  later run to read? Or must a terminal conclusion be observed before any close,
-  as spec 057 FR-043 requires today? This was answered "a terminal conclusion
-  must be observed" on 2026-09-23, on the premise that removing the group
-  conflict lets the proof run finish inside the existing ~11-minute synchronous
-  wait. That premise does not hold: a proof run that works an item runs agents
-  for far longer than the wait (fact 1), so under an unchanged bar and a
-  synchronous wait every real proof ends as started-but-unfinished under FR-006
-  and no Actions-only issue ever closes on proof evidence. So: (a) keep the
-  terminal-conclusion bar and require FR-002 to pick a shape whose proof run
-  genuinely finishes inside a bounded wait; (b) keep the bar but let the
-  conclusion be observed by something other than the dispatching prove step — a
-  later board run, or a follow-up triggered by the proof run's completion —
-  which closes the issue asynchronously and needs that observer named and
-  specified; (c) lower the bar to "dispatched, correlated, and observed to
-  start", recording the run URL and leaving the conclusion for a human to read;
-  (d) keep the bar and accept that an Actions-only board issue closes only when
-  a human reads the proof run and says so. Whichever is chosen MUST also say
-  what "proven" means for a change no dispatch can direct a run at (fact 2).]
+- **FR-010**: The evidence bar for closing the issue is unchanged from spec 057
+  FR-043: a terminal conclusion MUST be observed before the issue closes on
+  proof evidence. "Dispatched, correlated and observed to start" is NOT
+  sufficient. The dispatching prove step itself MUST be the observer — no later
+  board run and no completion-triggered follow-up is introduced — which is
+  consistent with FR-002 only because a directed proof run is bounded: it MUST
+  reach a terminal conclusion inside the prove step's wait budget, and the
+  feature MUST establish that bound rather than assume it.
+- **FR-010a**: Where no directed proof run can be aimed at the changed
+  behaviour, the prove step MUST record on the issue that no directed run
+  reaches it, name what changed, and leave the issue open. Closing such an issue
+  is a human's act after reading the evidence; the loop MUST NOT close it
+  unattended, and MUST NOT substitute a whole board iteration for the directed
+  run (FR-002b). This condition MUST be recorded distinctly from "nothing in
+  the repository reaches this change" (FR-006).
 
 ### Functional Requirements — the abandoned dispatch
 
 - **FR-011**: A proof dispatch the prove step has stopped waiting for MUST NOT
-  later run as an unattributable ordinary board iteration. It MUST either not
-  start at all, or be attributable — from the run itself and from the issue it
-  acts on — to the merge it was dispatched to prove.
+  later run as an unattributable ordinary board iteration. Under FR-002's
+  directed shape this holds by construction — a directed proof run selects no
+  board item — and the feature MUST establish that by a check rather than by
+  argument (FR-017). A directed proof run MUST additionally be attributable,
+  from the run itself and from the issue, to the merge it was dispatched to
+  prove.
 - **FR-012**: The cost of an abandoned proof dispatch MUST be visible: the
   wasted wait and any run that results from it MUST appear in the loop's
   existing cost line and durable metrics record, under a run label that names
@@ -516,20 +531,22 @@ permits and the pairs it forbids.
 
 ### Functional Requirements — the concurrency guarantee
 
-- **FR-016**: Whatever simultaneity guarantee holds after this change — which
-  board-loop runs may overlap and which must queue — MUST be stated in one
-  sentence in every concurrency block's own comment, and that sentence MUST
-  describe the behaviour that actually holds afterwards rather than the one
+- **FR-016**: The simultaneity guarantee that holds after this change — one
+  board item in flight repository-wide, with a directed proof run, which takes
+  no item, the only run permitted to overlap a board-loop run — MUST be stated
+  in one sentence in every concurrency block's own comment, and that sentence
+  MUST describe the behaviour that actually holds afterwards rather than the one
   that used to.
-- **FR-017**: For every overlap FR-002's resolution permits that spec 057
-  FR-048 forbids today, the feature MUST establish by a check, rather than by
-  argument, that the overlap cannot (a) cause the two runs to act on the same
-  issue as their board item, (b) result in two fix PRs open for one issue, or
-  (c) let either run close an issue the other is acting on. The check MUST
-  cover the specific case that the issue being proven is still open — and
-  therefore still eligible for ordinary selection — while its proof run is in
-  flight. Where the permitted overlap is between two complete board iterations,
-  the check MUST hold across two concurrent runs, not only within one.
+- **FR-017**: The one overlap FR-002 permits that spec 057 FR-048 forbids today
+  is a directed proof run running alongside the prove run that dispatched it.
+  The feature MUST establish by a check, rather than by argument, that this
+  overlap cannot (a) cause the two runs to act on the same issue as their board
+  item, (b) result in two fix PRs open for one issue, or (c) let either run
+  close an issue the other is acting on. The check MUST cover the specific case
+  that the issue being proven is still open — and therefore still eligible for
+  ordinary selection — while its proof run is in flight. Because the directed
+  run's not selecting an item and not opening a fix PR is what makes all three
+  hold, that property in particular MUST be checked, not assumed.
 - **FR-018**: Any pair of runs the post-change rule forbids from overlapping
   MUST queue, never cancel or race, unchanged from FR-048's existing behaviour.
 
@@ -549,10 +566,11 @@ permits and the pairs it forbids.
 - **FR-022**: A merge that proves this feature's own change MUST itself be
   provable by the mechanism the feature ships; the feature MUST NOT leave the
   loop unable to prove a fix to the loop. Fact 2 above makes this a constraint
-  on FR-002's answer rather than a detail: a `workflow_dispatch` re-drive of
-  `board-loop.yml` never reaches the prove step, so a resolution that only
-  dispatches `board-loop.yml` cannot prove this feature's own change and MUST
-  say what does.
+  on the directed mechanism rather than a detail: a plain `workflow_dispatch`
+  re-drive of `board-loop.yml` never reaches the prove step, so the directed
+  proof run MUST be able to exercise the prove step itself (FR-002a). Falling
+  back to FR-010a's human-read path for this feature's own change does NOT
+  satisfy FR-022.
 
 ### Out of Scope
 
@@ -574,14 +592,20 @@ permits and the pairs it forbids.
 
 - **Re-drive target**: the workflow the prove step dispatches to exercise a
   merged change, with the case that selected it, the reason, and — new in this
-  feature — whether it can start while the caller is alive.
+  feature — whether it can start while the caller is alive, and which changed
+  stage the run is directed at.
+- **Directed proof run**: a run aimed at the stage a merge changed, which
+  selects no board item and opens no fix PR, reaches a terminal conclusion
+  inside the prove step's wait budget, and is attributable to the merge it
+  proves. It is the only run permitted to overlap a board-loop run.
 - **Dispatchable set**: the workflows the composite can dispatch *and*
   correlate unattended. One member today; the feature must behave correctly at
   one member and at more than one.
 - **Proof record**: the dispatched run's URL and terminal outcome, or the
   recorded reason no re-drive was required, extended by this feature with the
   reasons a dispatched run produced no outcome — never started, displaced,
-  stood down, or abandoned.
+  stood down, or abandoned — and with the reason no run was dispatched at all:
+  no directed run reaches the changed behaviour.
 - **Concurrency guarantee**: the sentence that says which board-loop runs may
   overlap and which must queue, and the check that holds the loop to it.
 
@@ -591,25 +615,28 @@ permits and the pairs it forbids.
 
 - **SC-001**: A merged Actions-only board fix produces a recorded proof outcome
   that is a statement about the fix rather than about a queue, under the
-  evidence bar FR-010 settles — the re-drive branch goes from zero working
-  cases to working for every case the dispatchable set admits.
+  unchanged terminal-conclusion evidence bar (FR-010) — the re-drive branch goes
+  from zero working cases to working for every changed stage a directed proof
+  run can be aimed at, with the rest recorded under FR-010a rather than
+  mis-recorded.
 - **SC-002**: No issue closes on proof evidence that names a run which never
   started.
 - **SC-003**: Each of the no-proof conditions — never started, displaced,
-  stood down, started-but-unfinished, nothing reaches the change — renders a
-  distinct, named reason on the issue, verified by a fixture per condition
-  rather than by observing production runs.
+  stood down, started-but-unfinished, nothing reaches the change, no directed
+  run reaches the changed behaviour — renders a distinct, named reason on the
+  issue, verified by a fixture per condition rather than by observing production
+  runs.
 - **SC-004**: Zero board iterations run against an issue with no record
-  anywhere of why that run exists.
+  anywhere of why that run exists, and zero proof dispatches take a board item.
 - **SC-005**: The time a prove step spends waiting on a proof run that cannot
   start is reduced from the full ~11-minute budget to the time it takes the
   deterministic pre-dispatch check to say so.
 - **SC-006**: The statement of which board-loop runs may overlap is the same in
   the concurrency blocks' comments, in `contracts/prove-step.md`, and in the
   check that enforces it — verified by a gate, not by reading.
-- **SC-009**: A change to the prove step itself is either exercised by a proof
-  run or recorded as unprovable with the reason; it is never recorded as proven
-  by a run that could not have executed it.
+- **SC-009**: A change to the prove step itself is exercised by a directed proof
+  run (FR-002a); it is never recorded as proven by a run that could not have
+  executed it, and never left to FR-010a's human-read path (FR-022).
 - **SC-007**: A maintainer can read an item's proof outcome and its reason from
   the originating issue alone, without opening the Actions tab (spec 057
   SC-001, held for the branches this feature adds).
@@ -618,10 +645,10 @@ permits and the pairs it forbids.
 
 ## Assumptions
 
-- The board loop keeps some stated, checked repository-wide simultaneity
-  guarantee. FR-002's answer may hold, narrow or revoke FR-048's current
-  wording, but "any number of board-loop runs may race freely, unchecked" is
-  not an acceptable outcome.
+- The board loop keeps a stated, checked repository-wide simultaneity
+  guarantee. FR-002's answer holds FR-048's current wording unchanged — one
+  board item in flight repository-wide — because a directed proof run takes no
+  board item.
 - The human-merge rule (spec 057 FR-003) is unchanged: the prove step is still
   entered by a human's merge reaching the `pull_request: closed` trigger.
 - The proof of an Actions-only change is still "a real run of the changed
@@ -639,9 +666,13 @@ permits and the pairs it forbids.
   blocking the intake stage, and were answered there on 2026-09-23. The FR-002
   and FR-010 answers were withdrawn on 2026-09-24 when the premise they rested
   on — that a proof run completes inside the prove step's synchronous wait —
-  was shown not to hold; both markers are open again and carry the four facts
-  that now govern them. Two clarifications remain open; see "What the owner
-  decided, and what is open again".
+  was shown not to hold, and were re-answered the same day against the four
+  facts that now govern them. No clarification remains open; see "What the owner
+  decided".
+- A mechanism for directing a run at one stage of the board loop does not exist
+  in the tree today. FR-002's resolution requires one, including a path that
+  reaches the prove step, and building it is this feature's work rather than a
+  precondition it can assume.
 - FR-014 was answered in favour of capturing `.github/scripts/**`, and that
   answer was confirmed again on 2026-09-24, so the reachability gap stays in
   this feature: User Story 4, FR-013 and FR-015 are in scope and no separate
