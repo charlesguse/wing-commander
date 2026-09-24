@@ -1177,10 +1177,23 @@ jobs:
           if [ -z "$slug" ]; then
             missing_file="specs/<slug>/"
           else
+            # #396 item 3: a non-404 failure on this existence probe used to
+            # land here indistinguishable from a genuine "not found," and
+            # the missing-file check below reported fail-wrong-output for
+            # what was really an infrastructure problem. `gh api` writes
+            # "Not Found (HTTP 404)" to stderr on a real 404 (see the
+            # cleanup sweep's own 404 probe for the same distinction); any
+            # other stderr here is a read failure, not a legitimately
+            # missing file, and goes through fail_infra_on_read like the
+            # other pass-path reads.
             for name in spec.md plan.md tasks.md; do
-              if ! gh api "repos/${E2E_REPO}/contents/specs/${slug}/${name}" >/dev/null 2>&1; then
-                missing_file="specs/${slug}/${name}"
-                break
+              if ! gh api "repos/${E2E_REPO}/contents/specs/${slug}/${name}" >/dev/null 2>"$RUNNER_TEMP/auto-release-specfile-err.txt"; then
+                if grep -q 'HTTP 404' "$RUNNER_TEMP/auto-release-specfile-err.txt"; then
+                  missing_file="specs/${slug}/${name}"
+                  break
+                fi
+                fail_infra_on_read "reading specs/${slug}/${name} to confirm it exists after stage:done" \
+                  "gh api repos/contents/specs/<slug>/<name> succeeds or 404s" "$RUNNER_TEMP/auto-release-specfile-err.txt"
               fi
             done
           fi
@@ -1220,8 +1233,16 @@ jobs:
           # failed and the very same iteration's terminal-state check
           # already found the issue closed) -- the same one-shot fallback
           # idiom slug's own resolution above already uses.
+          # #396 item 3: `|| true` swallowed a genuine `gh api` read failure
+          # here the same way as the slug and timeline fallbacks above --
+          # an empty, successfully-read author_id (nothing to fall back to)
+          # keeps today's behaviour, but a failed call now goes through
+          # fail_infra_on_read instead of silently leaving author_id empty.
           if [ -z "$author_id" ]; then
-            author_id="$(gh api "repos/${E2E_REPO}/issues/${ISSUE}" --jq '.user.id' 2>/dev/null || true)"
+            if ! author_id="$(gh api "repos/${E2E_REPO}/issues/${ISSUE}" --jq '.user.id' 2>"$RUNNER_TEMP/auto-release-author-id2-err.txt")"; then
+              fail_infra_on_read "reading the issue's author id for the pass-path clarification assertion" \
+                "gh api issues/<issue> succeeds" "$RUNNER_TEMP/auto-release-author-id2-err.txt"
+            fi
           fi
           clarification_satisfied="$(printf '%s' "$comments_json" \
             | bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh satisfied "$author_id" 2>/dev/null || echo unsatisfied)"
