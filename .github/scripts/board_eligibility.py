@@ -148,10 +148,16 @@ def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number):
     Skips (never raises on): an issue with no comments, an issue whose
     newest marker is unparsable (per board_item_marker.read_marker's own
     degrade rule), a marker naming a fix-or-later step whose pr is absent
-    from pr_state_by_number or not OPEN there -- except `prove`, whose
-    marker is always written with `pr=None` (the fixing PR has already
-    merged by the time the prove step runs), so it qualifies on the step
-    alone like a pre-fix step rather than being unconditionally dropped.
+    from pr_state_by_number or not OPEN there. `prove` never qualifies as a
+    candidate here at all, even though it is non-terminal: this function
+    only ever runs from the select job, which only runs off the schedule/
+    workflow_dispatch triggers (never pull_request), and no job on that
+    path consumes step == "prove" (only prove-gate/prove do, and those run
+    solely on pull_request: closed). Prioritizing a stuck prove marker here
+    would starve every other candidate forever for no possible benefit.
+    Resume's own step-resolution (board-loop.yml) still reports step=
+    "prove" correctly -- independent of this function -- if such an issue
+    is ever selected via the oldest-first fallback below.
     """
     candidates = []
     for issue in open_issues:
@@ -164,17 +170,13 @@ def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number):
             continue
         created_at, marker = pair
         step = marker.get("step")
-        if step in TERMINAL_STEPS:
+        if step in TERMINAL_STEPS or step == "prove":
             continue
         if step in PRE_FIX_STEPS:
             candidates.append((created_at, number))
         elif step in FIX_OR_LATER_STEPS:
-            pr_field = marker.get("pr")
-            if step == "prove" and pr_field is None:
-                candidates.append((created_at, number))
-                continue
             try:
-                pr = int(pr_field)
+                pr = int(marker.get("pr"))
             except (TypeError, ValueError):
                 continue
             if pr_state_by_number.get(pr) == "OPEN":

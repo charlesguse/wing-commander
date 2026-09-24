@@ -262,17 +262,25 @@ deliberately broken in-flight rule and confirm a gate fails.
     non-terminal step alone. No pull request exists yet at those steps, so
     demanding one would drop every item interrupted during triage or route
     out of in-flight status on every subsequent run.
-  - **The fix step and every step after it** (fix, review, readiness,
-    prove) additionally require the marker's recorded pull request to still
-    resolve to an **open** pull request — except `prove`, whose marker is
-    always written with no pull request recorded (its fixing pull request
-    has already merged by the time the prove step runs), so it qualifies
-    on the non-terminal step alone like a pre-fix step. For `fix`,
-    `review`, and `readiness`, a recorded pull request that is closed,
-    merged, or no longer resolvable disqualifies the item, so a marker
-    left behind by an abandoned pull request cannot pin the loop to one
-    issue forever — the same failure shape this feature exists to remove,
-    relocated from "no marker" to "a stale marker".
+  - **The fix step and the steps after it that a scheduled or
+    workflow_dispatch run can act on** (fix, review, readiness)
+    additionally require the marker's recorded pull request to still
+    resolve to an **open** pull request. A recorded pull request that is
+    closed, merged, or no longer resolvable disqualifies the item, so a
+    marker left behind by an abandoned pull request cannot pin the loop
+    to one issue forever — the same failure shape this feature exists to
+    remove, relocated from "no marker" to "a stale marker".
+  - **`prove`** never qualifies as in flight, even though it is
+    non-terminal and its marker is always written with no pull request
+    recorded (its fixing pull request has already merged by the time the
+    prove step runs). No job on the schedule/workflow_dispatch path this
+    decision runs on ever consumes step `prove` (only `prove-gate`/`prove`
+    do, and those run solely on the `pull_request: closed` trigger), so
+    treating a `prove` marker as in flight here would starve every other
+    candidate forever for no possible benefit. Resume's own step
+    resolution (a separate decision, FR-008) still reports step `prove`
+    correctly, independent of this rule, on whichever issue the
+    oldest-first fallback selects.
 
 - **FR-003**: An issue that qualifies under FR-002 MUST still be subject to
   the existing exclusion rule (closed, `disposition:*`, `board:stalled`,

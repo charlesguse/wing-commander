@@ -315,7 +315,17 @@ jobs:
               comments_by_issue: $comments[0], pr_state_by_number: $pr_states[0]}' \
             > "$RUNNER_TEMP/board-eligibility-input.json"
 
-          issue_number="$(python3 .github/scripts/board_eligibility.py < "$RUNNER_TEMP/board-eligibility-input.json" 2>"$RUNNER_TEMP/board-eligibility-provenance.json")"
+          # An unhandled exception here has no traceback on stdout, and
+          # $RUNNER_TEMP/board-eligibility-provenance.json is otherwise
+          # only ever read for .decided_by_marker/.multiple_found below --
+          # without this check, a crash would leave issue_number empty and
+          # this step would silently report "nothing to do" instead of
+          # surfacing the crash.
+          if ! issue_number="$(python3 .github/scripts/board_eligibility.py < "$RUNNER_TEMP/board-eligibility-input.json" 2>"$RUNNER_TEMP/board-eligibility-provenance.json")"; then
+            echo "::error::board_eligibility.py failed -- stderr follows" >&2
+            cat "$RUNNER_TEMP/board-eligibility-provenance.json" >&2
+            exit 1
+          fi
 
           # FR-005/spec.md US1 AS3: the run's record says the marker is
           # why, not just which issue -- board_eligibility.py's main()
@@ -427,7 +437,8 @@ jobs:
           # parallel step-vocabulary list.
           step_resolution_json="$(MARKER_STEP="$marker_step" MARKER_JSON="$marker_json" BRANCH="$branch" \
               MARKER_PR="$marker_pr" PR_FROM_MARKER="$pr_from_marker" PR_FROM_FALLBACK="$pr_from_fallback" \
-              PR_STATE="$pr_state" PR_NUMBER="$pr_number" python3 - <<'PYEOF'
+              PR_STATE="$pr_state" PR_NUMBER="$pr_number" MARKER_ROUND="$marker_round" \
+              MARKER_BASE_SHA="$marker_base_sha" python3 - <<'PYEOF'
           import json
           import os
           import sys
@@ -443,6 +454,8 @@ jobs:
           pr_state = os.environ.get("PR_STATE") or ""
           pr_number = os.environ.get("PR_NUMBER") or ""
           marker_present = os.environ.get("MARKER_JSON") != "null"
+          round_ = os.environ.get("MARKER_ROUND") or "0"
+          base_sha = os.environ.get("MARKER_BASE_SHA") or ""
 
           reason = ""
           if marker_step == "prove" and not marker_pr_field:
@@ -461,14 +474,19 @@ jobs:
               # Resolved by number but not OPEN -- disqualified. Falls to
               # the triage clause below, never the fallback clause: the
               # marker named a real PR, so a different loop-owned PR must
-              # not be adopted in its place (SC-007). The disqualified PR's
-              # number/state must not leak into this triage output (it is
-              # not the PR the run is now acting on).
+              # not be adopted in its place (SC-007). None of this
+              # abandoned attempt's state -- PR number/state, branch,
+              # round, base-sha -- must leak into this triage output
+              # (FR-022): a fresh triage->route->fix must cut a new branch
+              # off current main and a fresh review must start at round 0.
               step = "triage"
               reason = "stale marker -- recorded pr {0} is {1}, not open".format(
                   pr_number, pr_state)
               pr_number = ""
               pr_state = ""
+              branch = ""
+              round_ = "0"
+              base_sha = ""
           elif pr_from_fallback:
               step = "review"
           elif branch:
@@ -476,7 +494,15 @@ jobs:
           else:
               step = "triage"
               if marker_present and marker_step not in PRE_FIX_STEPS:
+                  # Same FR-022 concern as the branch above: the marker's
+                  # branch and PR are both gone, so its round/base-sha
+                  # belong to that same abandoned attempt and must not
+                  # leak into a fresh triage (branch is already empty here
+                  # -- the `elif branch:` clause above would have matched
+                  # otherwise -- but round/base-sha are cleared explicitly).
                   reason = "stale marker -- recorded branch/pr could not be re-derived live"
+                  round_ = "0"
+                  base_sha = ""
 
           print(json.dumps({
               "step": step,
@@ -484,6 +510,9 @@ jobs:
               "disqualified_reason": reason,
               "pr_number": pr_number,
               "pr_state": pr_state,
+              "branch": branch,
+              "round": round_,
+              "base_sha": base_sha,
           }))
           PYEOF
           )"
@@ -493,6 +522,9 @@ jobs:
           disqualified_reason="$(printf '%s' "$step_resolution_json" | jq -r '.disqualified_reason')"
           pr_number="$(printf '%s' "$step_resolution_json" | jq -r '.pr_number')"
           pr_state="$(printf '%s' "$step_resolution_json" | jq -r '.pr_state')"
+          branch="$(printf '%s' "$step_resolution_json" | jq -r '.branch')"
+          marker_round="$(printf '%s' "$step_resolution_json" | jq -r '.round')"
+          marker_base_sha="$(printf '%s' "$step_resolution_json" | jq -r '.base_sha')"
 
           if [ "$recovered_via_fallback" = "true" ]; then
             echo "board-loop: resume recovered PR #$pr_number for issue #$ISSUE_NUMBER via the board:owned label fallback (no board item marker named it)." >> "$GITHUB_STEP_SUMMARY"

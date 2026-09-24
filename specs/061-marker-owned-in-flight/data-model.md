@@ -34,11 +34,15 @@ plus three terminal outcomes, none of which are "in flight":
 **Pre-fix** = `{triage, route}` — qualifies as in flight on the marker's step
 alone (FR-002 bullet 1); no PR can exist yet at these steps.
 
-**Fix-or-later** = `{fix, review, readiness, prove}` — additionally requires
-the marker's recorded PR to still resolve to state `OPEN` (FR-002 bullet 2),
-except `prove`, whose marker is always written with `pr: null` (its fixing
-PR has already merged by the time the prove step runs) and so qualifies on
-the step alone, like a pre-fix step.
+**Fix-or-later** = `{fix, review, readiness, prove}` — the steps
+`in_flight_candidate()`'s "resolved PR required" branch groups together
+(FR-002 bullet 2), but `prove` never actually qualifies as a candidate:
+`in_flight_candidate()` only ever runs from the `select` job (schedule/
+workflow_dispatch), and no job on that path consumes step `prove` (only
+`prove-gate`/`prove` do, on `pull_request: closed` alone), so a `prove`
+marker is skipped outright rather than being prioritized with no possible
+benefit. `fix`, `review`, and `readiness` still require the marker's
+recorded PR to resolve `OPEN`.
 
 This ordering lives as a plain constant inside `board_eligibility.py`
 (e.g. `PRE_FIX_STEPS`/`FIX_OR_LATER_STEPS` frozensets) — not a new shared
@@ -84,13 +88,14 @@ picks by marker recency, not issue age):
    if unparsable (already `None` from `read_marker`'s own degrade rule).
 3. Skip if the marker's `step` is terminal (`closed`/`stalled`/`proven`).
 4. If `step` is pre-fix: candidate, keyed by the marker's own `created_at`.
-5. If `step` is fix-or-later: candidate only if `marker["pr"]` is present in
-   `pr_state_by_number` with value `OPEN`; otherwise skip (this is the
-   "stale marker" disqualification FR-002 exists for) — except `step ==
-   "prove"` with `marker["pr"]` absent (`None`), which is a candidate on
-   the step alone, like a pre-fix step (its fixing PR has already merged
-   by the time prove runs, so it never records one).
-6. Among all candidates found across all issues, return the one with the
+5. Skip outright if `step == "prove"` — never a candidate, regardless of
+   `pr` (no consumer exists for it off the `pull_request: closed` trigger
+   this decision never runs on; see the Fix-or-later note above).
+6. If `step` is fix-or-later (excluding `prove`, already handled): candidate
+   only if `marker["pr"]` is present in `pr_state_by_number` with value
+   `OPEN`; otherwise skip (this is the "stale marker" disqualification
+   FR-002 exists for).
+7. Among all candidates found across all issues, return the one with the
    lexicographically greatest `created_at` (ISO-8601 timestamps sort
    lexicographically); `multiple_found` is `len(candidates) > 1`.
 

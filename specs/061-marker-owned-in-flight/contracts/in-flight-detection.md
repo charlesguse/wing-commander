@@ -28,9 +28,12 @@ def in_flight_candidate(
     Skips (never raises on): an issue with no comments, an issue whose
     newest marker is unparsable (per board_item_marker.read_marker's own
     degrade rule), a marker naming a fix-or-later step whose pr is absent
-    from pr_state_by_number or not OPEN there -- except `prove`, whose
-    marker is always written with pr=None (its fixing PR has already
-    merged by the time prove runs), which qualifies on the step alone.
+    from pr_state_by_number or not OPEN there. `prove` never qualifies as a
+    candidate here at all: this function only ever runs from the `select`
+    job (schedule/workflow_dispatch, never pull_request), and no job on
+    that path consumes step == "prove" (only prove-gate/prove do, solely
+    on pull_request: closed) -- prioritizing a stuck prove marker would
+    starve every other candidate forever for no possible benefit.
     """
 
 def select(
@@ -103,9 +106,10 @@ expressed as a single `issue.json` the way Gate 81's existing
     `pr_state_by_number`/PR data present for an unrelated open PR that cites
     it in body text → `(null, false)` — proves the decision never reads PR
     body text at all (FR-001), only markers.
-11. `prove-no-pr` — marker at `prove`, no `pr` recorded → that issue,
-    `false` — the fix-or-later step whose marker never carries a PR
-    qualifies on the step alone, like a pre-fix step.
+11. `prove-no-pr` — marker at `prove`, no `pr` recorded → `(null, false)` —
+    `prove` never qualifies as a candidate, regardless of `pr`, since no
+    job consumes step `prove` off the schedule/workflow_dispatch path this
+    decision runs on.
 
 Each fixture directory's four files are all required; the gate fails loudly
 (non-zero exit, `::error::` annotation) if any is missing, per Gate 81's

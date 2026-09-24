@@ -52,7 +52,12 @@ fires only when the ones above it don't apply:
      -> step = the marker's own step.
    (A fix-or-later marker whose pr's state != OPEN does NOT match this
    clause -- it falls through to clause 4, WITH the reason recorded,
-   FR-009: "stale marker -- recorded pr <n> is <state>, not open".)
+   FR-009: "stale marker -- recorded pr <n> is <state>, not open". This
+   disqualification also clears branch/round/base-sha, not just pr/
+   pr-state (FR-022): they describe the same abandoned attempt as the
+   disqualified pr, so leaking them would resume the fix job on an
+   abandoned branch or start review partway through a stale round
+   budget instead of 0.)
 
 2. No marker-named pr resolved, but the FR-007 fallback recovers an open
    board:owned pr citing this issue
@@ -74,7 +79,10 @@ fires only when the ones above it don't apply:
    disqualified fix-or-later marker from clause 1; an unparsable marker)
      -> step = "triage", and, whenever a marker was present but
         disqualified rather than simply absent, the run records why
-        (FR-009).
+        (FR-009). branch is already empty by construction here (clause 3
+        would have matched otherwise); when the reason is recorded,
+        round/base-sha are cleared too (FR-022), for the same reason as
+        clause 1 -- they belong to the same disqualified attempt.
 ```
 
 `step` is never left empty (FR-008) — every branch above ends in one of the
