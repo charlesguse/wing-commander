@@ -1170,15 +1170,22 @@ jobs:
           # `gh api` also exits non-zero on a 404, which is what a
           # specs/ directory the pipeline never created looks like, and
           # that is a genuine missing-file (pipeline defect) outcome, not
-          # an infrastructure one. This applies the same "Not Found (HTTP
-          # 404)" distinction the per-file probe below already makes (one
-          # home, not a second copy): a 404 leaves slug empty and falls
-          # through to the missing-file check below exactly as it did
-          # before #469; any other failure still goes through
-          # fail_infra_on_read.
+          # an infrastructure one. This mirrors the per-file probe's own
+          # "Not Found (HTTP 404)" idiom below: a 404 falls through to the
+          # missing-file check below exactly as it did before #469; any
+          # other failure still goes through fail_infra_on_read.
+          #
+          # #482 code review: on an HTTP error `gh api ... --jq` still
+          # prints the raw JSON error body to STDOUT (only the "Not Found
+          # (HTTP 404)" line goes to stderr) -- `slug="$(gh ... )"`
+          # captures that body regardless of the command's exit status, so
+          # slug must be cleared explicitly on the 404 branch rather than
+          # assumed empty.
           if [ -z "$slug" ]; then
             if ! slug="$(gh api "repos/${E2E_REPO}/contents/specs" --jq '[.[] | select(.type=="dir")][0].name // empty' 2>"$RUNNER_TEMP/auto-release-slug-err.txt")"; then
-              if ! grep -q 'HTTP 404' "$RUNNER_TEMP/auto-release-slug-err.txt"; then
+              if grep -q 'HTTP 404' "$RUNNER_TEMP/auto-release-slug-err.txt"; then
+                slug=""
+              else
                 fail_infra_on_read "reading the E2E repository's specs/ directory to resolve the pass-path slug" \
                   "gh api repos/contents/specs succeeds" "$RUNNER_TEMP/auto-release-slug-err.txt"
               fi

@@ -32,9 +32,16 @@ polling loop (an immediately CLOSED/stage:done issue, an empty open-PR list
 so `slug` stays unresolved) straight into the two reads under test: the slug
 fallback and, with an already-resolved slug, the per-file existence probe.
 
-Ends with a MUTATION that restores the pre-#482 slug-fallback text (no 404
-distinction) and asserts the 404 scenario then fails, proving this harness
-can see the regression it exists to catch.
+Ends with two MUTATIONS: one restores the pre-#482 slug-fallback text (no
+404 distinction at all) and one reproduces the #482 code review's own B1
+finding (the 404 branch taken but `slug` left uncleared, so it keeps
+whatever `gh api ... --jq` printed to stdout on its way to a non-zero exit
+-- a real `gh` error prints the raw JSON error body there, only the "Not
+Found (HTTP 404)" line goes to stderr). Both assert the 404 scenario then
+fails, proving this harness can see each regression it exists to catch.
+The stub `gh` mirrors that two-channel behavior for every error arm (404
+and 5xx) so a fix that only clears slug in the success path, or a stub
+that leaves stdout empty, cannot pass this harness vacuously.
 
 Usage: python3 .github/scripts/verify-auto-release-specs-fallback.py
 Requires: bash, jq. See wc_shell_harness.py for running this on Windows.
@@ -110,16 +117,46 @@ case "$*" in
     exit 0
     ;;
   "api repos/"*"/contents/specs --jq"*)
+    # Real `gh api ... --jq` on an HTTP error still prints the raw JSON
+    # error body to STDOUT (the --jq filter is never applied) -- only the
+    # "gh: <message> (HTTP <code>)" line goes to stderr. #482 code review
+    # (B2): a stub that leaves stdout empty on error lets a slug capture
+    # bug (B1: `slug="$(gh ... )"` picking up that stdout body on a 404
+    # instead of staying empty) pass vacuously, so this mirrors both
+    # channels the way real `gh` does.
     case "$STUB_SLUG_MODE" in
-      404) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
-      error) printf '%s\n' "$STUB_SLUG_ERROR" >&2; exit 1 ;;
-      *) printf '%s\n' "$STUB_SLUG_VALUE"; exit 0 ;;
+      404)
+        printf '%s\n' '{"message":"Not Found","documentation_url":"https://docs.github.com/rest","status":"404"}'
+        echo "gh: Not Found (HTTP 404)" >&2
+        exit 1
+        ;;
+      error)
+        printf '%s\n' '{"message":"Internal Server Error","documentation_url":"https://docs.github.com/rest","status":"500"}'
+        printf '%s\n' "$STUB_SLUG_ERROR" >&2
+        exit 1
+        ;;
+      *)
+        printf '%s\n' "$STUB_SLUG_VALUE"
+        exit 0
+        ;;
     esac
     ;;
   "api repos/"*"/contents/specs/"*)
+    # Same two-channel realism as the slug fallback's stub arm above (this
+    # call's stdout is redirected to /dev/null by the step itself, but a
+    # future edit that captured it should see the same shape a real `gh`
+    # error produces).
     case "$STUB_FILE_MODE" in
-      404) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
-      error) printf '%s\n' "$STUB_FILE_ERROR" >&2; exit 1 ;;
+      404)
+        printf '%s\n' '{"message":"Not Found","documentation_url":"https://docs.github.com/rest","status":"404"}'
+        echo "gh: Not Found (HTTP 404)" >&2
+        exit 1
+        ;;
+      error)
+        printf '%s\n' '{"message":"Internal Server Error","documentation_url":"https://docs.github.com/rest","status":"500"}'
+        printf '%s\n' "$STUB_FILE_ERROR" >&2
+        exit 1
+        ;;
       *) exit 0 ;;
     esac
     ;;
@@ -248,8 +285,10 @@ NEW_SLUG_FALLBACK = (
     '  if ! slug="$(gh api "repos/${E2E_REPO}/contents/specs" '
     '--jq \'[.[] | select(.type=="dir")][0].name // empty\' '
     '2>"$RUNNER_TEMP/auto-release-slug-err.txt")"; then\n'
-    '    if ! grep -q \'HTTP 404\' '
+    '    if grep -q \'HTTP 404\' '
     '"$RUNNER_TEMP/auto-release-slug-err.txt"; then\n'
+    '      slug=""\n'
+    '    else\n'
     '      fail_infra_on_read "reading the E2E repository\'s specs/ '
     'directory to resolve the pass-path slug" \\\n'
     '        "gh api repos/contents/specs succeeds" '
@@ -272,9 +311,40 @@ def mut_no_404_distinction(script):
     return script.replace(NEW_SLUG_FALLBACK, OLD_SLUG_FALLBACK, 1)
 
 
+# The B1 regression the #482 code review caught: the 404 branch taken but
+# `slug` never explicitly cleared, so it keeps whatever `gh api ... --jq`
+# printed to stdout on the way to a non-zero exit (a real `gh` error prints
+# the raw JSON error body there, not nothing) instead of the empty string
+# the missing-file check below requires.
+B1_UNCLEARED_SLUG = (
+    'if grep -q \'HTTP 404\' "$RUNNER_TEMP/auto-release-slug-err.txt"; then\n'
+    '      slug=""\n'
+    '    else\n'
+)
+B1_UNCLEARED_SLUG_BROKEN = (
+    'if grep -q \'HTTP 404\' "$RUNNER_TEMP/auto-release-slug-err.txt"; then\n'
+    '      :\n'
+    '    else\n'
+)
+
+
+def mut_slug_not_cleared_on_404(script):
+    """B1: the 404 branch taken, but slug left holding whatever `gh api`
+    printed to stdout on its way to a non-zero exit."""
+    if script.count(B1_UNCLEARED_SLUG) != 1:
+        sys.exit("::error::verify-auto-release-specs-fallback: expected "
+                 "exactly one occurrence of the slug='' 404 branch in "
+                 f"{WORKFLOW}, found {script.count(B1_UNCLEARED_SLUG)} -- "
+                 "the step text may have changed shape; update this "
+                 "harness alongside it.")
+    return script.replace(B1_UNCLEARED_SLUG, B1_UNCLEARED_SLUG_BROKEN, 1)
+
+
 MUTATIONS = [
     ("the slug fallback's 404 distinction removed (#482's own regression)",
      mut_no_404_distinction),
+    ("the 404 branch taken but slug left uncleared (B1, #482 code review)",
+     mut_slug_not_cleared_on_404),
 ]
 
 
