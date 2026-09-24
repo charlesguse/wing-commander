@@ -46,10 +46,16 @@ def find_stop_request(comments, current_run_id):
       own marker (skipping this run's own, current_run_id) when one
       exists -- that is a genuinely different, still-possibly-running
       attempt worth cancelling. When no earlier run announced itself yet
-      (an item's first pass through this run, the common case), the
-      target is this run's own id: cancelling it is a harmless best-effort
-      (the call site already ignores cancel errors) and `paused=true`
-      alongside it is what actually halts further durable action.
+      (an item's first pass through this run, the common case), this
+      function still returns current_run_id -- the caller (issue #461
+      review, wing-commander-board-stop-check/action.yml) is the one that
+      recognizes that case and skips the `gh run cancel` call rather than
+      cancelling the run executing its own step; `paused=true` is what
+      actually halts further durable action either way. (Earlier, the App
+      token this call ran under had no `actions` permission, so the
+      cancel silently 403'd regardless of target -- fixed in #461, which
+      is what made this self-cancel case reachable for the first time and
+      is why the caller now guards against it explicitly.)
 
     Only a `**Run:**`-prefixed marker (board_item_marker.write_marker()'s
     own convention) counts as a run announcement -- an unrelated
