@@ -25,7 +25,7 @@ ownership label the fix step now applies at PR-creation time, for the case
 where a run died before writing its marker. Resume's step resolution is
 corrected so no state resolves to an empty step (the other half of the live
 failure: six downstream jobs silently reporting `skipped`). The whole
-decision is covered by ten checked-in fixtures under the existing Gate 81
+decision is covered by eleven checked-in fixtures under the existing Gate 81
 (`verify-board-eligibility.py`), per FR-012 and Constitution VIII.
 
 ## Technical Context
@@ -81,7 +81,7 @@ VIII: gates must run identically, offline, in CI and locally).
 
 **Scale/Scope**: One workflow (`board-loop.yml`), two Python modules
 (`board_eligibility.py`, `board_item_marker.py`), one gate script
-(`verify-board-eligibility.py`), ten new fixture directories, one new label,
+(`verify-board-eligibility.py`), eleven new fixture directories, one new label,
 one documentation table row (`docs/setup.md`). No other workflow, stage, or
 published contract is touched.
 
@@ -116,7 +116,7 @@ published contract is touched.
   Story 3 exists to satisfy directly. The in-flight decision moves from an
   inline shell pipeline no fixture could exercise (Gate 81 could not fail on
   it because it was not part of Gate 81's subject) into `board_eligibility.
-  py`, gaining ten checked-in fixtures (FR-012) that assert exact results
+  py`, gaining eleven checked-in fixtures (FR-012) that assert exact results
   and fail loudly on a missing fixture file, mirroring Gate 81's own
   existing "fail loudly, not vacuously" pattern for `classify_issue()`.
   Pass, once implemented per this plan's contracts.
@@ -169,7 +169,7 @@ specs/[###-feature]/
 │   ├── verify-board-eligibility.py     # new fixture cases + assertions for in_flight_candidate()
 │   └── tests/
 │       └── board-eligibility/
-│           └── in-flight/              # new: 10 fixture case directories (FR-012)
+│           └── in-flight/              # new: 11 fixture case directories (FR-012)
 │               └── <case>/
 │                   ├── open_issues.json
 │                   ├── comments_by_issue.json

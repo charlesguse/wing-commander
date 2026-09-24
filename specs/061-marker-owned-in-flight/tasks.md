@@ -439,7 +439,7 @@ Task: "Create fixture case fix-or-later-pr-open under .../in-flight/fix-or-later
 
 ## Phase 8: Convergence
 
-- [ ] T030 Add a `prove` clause to `board-loop.yml`'s resume step-resolution
+- [X] T030 Add a `prove` clause to `board-loop.yml`'s resume step-resolution
   logic (contracts/resume-recovery.md "Step resolution") so a selected
   issue whose newest marker records `step="prove"` with `pr=null`/
   `branch=null` resolves to `step="prove"` (matching
@@ -450,7 +450,7 @@ Task: "Create fixture case fix-or-later-pr-open under .../in-flight/fix-or-later
   lifecycle for an issue whose fix has already merged, contradicting
   FR-002/FR-006 (contradicts).
 
-- [ ] T031 Reconcile spec.md FR-002, data-model.md "Fix-or-later",
+- [X] T031 Reconcile spec.md FR-002, data-model.md "Fix-or-later",
   contracts/in-flight-detection.md, and plan.md's fixture-count
   references with `in_flight_candidate()`'s implemented `prove`-with-
   `pr=null` exception (the Maintainer Feedback fix plus the new

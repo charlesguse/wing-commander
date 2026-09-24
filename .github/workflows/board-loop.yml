@@ -426,7 +426,7 @@ jobs:
           # PRE_FIX_STEPS/FIX_OR_LATER_STEPS rather than a second,
           # parallel step-vocabulary list.
           step_resolution_json="$(MARKER_STEP="$marker_step" MARKER_JSON="$marker_json" BRANCH="$branch" \
-              PR_FROM_MARKER="$pr_from_marker" PR_FROM_FALLBACK="$pr_from_fallback" \
+              MARKER_PR="$marker_pr" PR_FROM_MARKER="$pr_from_marker" PR_FROM_FALLBACK="$pr_from_fallback" \
               PR_STATE="$pr_state" PR_NUMBER="$pr_number" python3 - <<'PYEOF'
           import json
           import os
@@ -437,6 +437,7 @@ jobs:
 
           marker_step = os.environ.get("MARKER_STEP") or None
           branch = os.environ.get("BRANCH") or ""
+          marker_pr_field = os.environ.get("MARKER_PR") or ""
           pr_from_marker = os.environ.get("PR_FROM_MARKER") == "true"
           pr_from_fallback = os.environ.get("PR_FROM_FALLBACK") == "true"
           pr_state = os.environ.get("PR_STATE") or ""
@@ -444,7 +445,14 @@ jobs:
           marker_present = os.environ.get("MARKER_JSON") != "null"
 
           reason = ""
-          if pr_from_marker and marker_step and (
+          if marker_step == "prove" and not marker_pr_field:
+              # Matches in_flight_candidate()'s prove exception
+              # (board_eligibility.py): a prove marker is always written
+              # with pr=None (the fixing PR has already merged by the time
+              # prove runs), so it resolves on the step alone rather than
+              # falling through to clause 4's triage.
+              step = "prove"
+          elif pr_from_marker and marker_step and (
               marker_step in PRE_FIX_STEPS
               or (marker_step in FIX_OR_LATER_STEPS and pr_state == "OPEN")
           ):

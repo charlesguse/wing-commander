@@ -28,7 +28,9 @@ def in_flight_candidate(
     Skips (never raises on): an issue with no comments, an issue whose
     newest marker is unparsable (per board_item_marker.read_marker's own
     degrade rule), a marker naming a fix-or-later step whose pr is absent
-    from pr_state_by_number or not OPEN there.
+    from pr_state_by_number or not OPEN there -- except `prove`, whose
+    marker is always written with pr=None (its fixing PR has already
+    merged by the time prove runs), which qualifies on the step alone.
     """
 
 def select(
@@ -71,7 +73,7 @@ network).
 
 ## Gate: `verify-board-eligibility.py` (Gate 81, extended — no new gate)
 
-FR-012's ten fixture cases, each a checked-in directory under
+FR-012's eleven fixture cases, each a checked-in directory under
 `.github/scripts/tests/board-eligibility/in-flight/<case>/` containing
 `open_issues.json`, `comments_by_issue.json`, `pr_state_by_number.json`, and
 `expected.json` (`{"issue_number": <int|null>, "multiple_found":
@@ -101,6 +103,9 @@ expressed as a single `issue.json` the way Gate 81's existing
     `pr_state_by_number`/PR data present for an unrelated open PR that cites
     it in body text → `(null, false)` — proves the decision never reads PR
     body text at all (FR-001), only markers.
+11. `prove-no-pr` — marker at `prove`, no `pr` recorded → that issue,
+    `false` — the fix-or-later step whose marker never carries a PR
+    qualifies on the step alone, like a pre-fix step.
 
 Each fixture directory's four files are all required; the gate fails loudly
 (non-zero exit, `::error::` annotation) if any is missing, per Gate 81's

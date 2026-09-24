@@ -35,7 +35,10 @@ plus three terminal outcomes, none of which are "in flight":
 alone (FR-002 bullet 1); no PR can exist yet at these steps.
 
 **Fix-or-later** = `{fix, review, readiness, prove}` — additionally requires
-the marker's recorded PR to still resolve to state `OPEN` (FR-002 bullet 2).
+the marker's recorded PR to still resolve to state `OPEN` (FR-002 bullet 2),
+except `prove`, whose marker is always written with `pr: null` (its fixing
+PR has already merged by the time the prove step runs) and so qualifies on
+the step alone, like a pre-fix step.
 
 This ordering lives as a plain constant inside `board_eligibility.py`
 (e.g. `PRE_FIX_STEPS`/`FIX_OR_LATER_STEPS` frozensets) — not a new shared
@@ -83,7 +86,10 @@ picks by marker recency, not issue age):
 4. If `step` is pre-fix: candidate, keyed by the marker's own `created_at`.
 5. If `step` is fix-or-later: candidate only if `marker["pr"]` is present in
    `pr_state_by_number` with value `OPEN`; otherwise skip (this is the
-   "stale marker" disqualification FR-002 exists for).
+   "stale marker" disqualification FR-002 exists for) — except `step ==
+   "prove"` with `marker["pr"]` absent (`None`), which is a candidate on
+   the step alone, like a pre-fix step (its fixing PR has already merged
+   by the time prove runs, so it never records one).
 6. Among all candidates found across all issues, return the one with the
    lexicographically greatest `created_at` (ISO-8601 timestamps sort
    lexicographically); `multiple_found` is `len(candidates) > 1`.
