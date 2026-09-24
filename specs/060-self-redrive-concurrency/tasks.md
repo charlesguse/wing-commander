@@ -532,7 +532,7 @@ and check both that the dispatched run's eventual behaviour is accounted
 for and that its origin is recoverable from the issue or the run itself
 (spec.md).
 
-- [ ] T042 [US3] `.github/workflows/board-loop.yml`: every comment a
+- [X] T042 [US3] `.github/workflows/board-loop.yml`: every comment a
   directed proof run posts to the issue it acts on — `triage`'s
   close/proceed comments, `review`'s findings comment, `readiness`'s
   report comment, `prove`'s outcome comment (T030) — states it is a
@@ -540,11 +540,11 @@ for and that its origin is recoverable from the issue or the run itself
   contracts/directed-proof-run.md "Attribution"). Compose one attribution
   string (gated on `inputs.directed-stage != ''`) and prepend it, rather
   than writing four separately-worded copies (CLAUDE.md single-home).
-- [ ] T043 [US3] Cross-reference note (no new code): FR-011's "selects no
+- [X] T043 [US3] Cross-reference note (no new code): FR-011's "selects no
   board item"/"opens no fix PR" claims are exactly the properties Gate 91
   (T040) checks structurally. This task exists only so a future reader
   does not add a second, redundant gate for the same property.
-- [ ] T044 [US3] Confirm that T031's metrics-record `run-label` mapping
+- [X] T044 [US3] Confirm that T031's metrics-record `run-label` mapping
   (FR-012) makes an abandoned proof dispatch's cost visible under a label
   naming its condition (e.g. `proof: group-busy`, `proof: displaced`)
   rather than folded into a generic label — verify against the fixtures
