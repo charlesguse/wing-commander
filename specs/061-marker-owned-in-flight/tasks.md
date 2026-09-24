@@ -458,3 +458,7 @@ Task: "Create fixture case fix-or-later-pr-open under .../in-flight/fix-or-later
   step including `prove` requires the marker's recorded PR to resolve
   OPEN, and count fixture coverage as ten cases; both are now inaccurate,
   per FR-002 (contradicts).
+
+## Maintainer Feedback
+
+- [ ] Fix: a stuck `prove`-step marker with `pr=None` is treated as in-flight forever by `in_flight_candidate()` (`.github/scripts/board_eligibility.py:140`), permanently pinning the board loop because no job on the scheduled/`workflow_dispatch` path ever consumes `step == 'prove'` -- confirmed none of the `triage` (line 632), `fix` (1245), `review` (1609), or `readiness` (2224) `if:` conditions in `board-loop.yml` check for it, and `prove-gate`/`prove` themselves only run `if: github.event_name == 'pull_request'`. This converts the documented FR-043 "could not correlate/conclude" degrade branch into a permanent stall of the whole board loop, with no `board:stalled` applied to break the cycle. Exclude `prove`-marker issues from `in_flight_candidate()`'s priority path unless a real consumer for `step=prove` exists off the scheduled trigger, or apply a stalled-style exclusion after some bound. (Found by review of PR #475)

@@ -2,8 +2,8 @@
   "issue": 473,
   "spec_dir": "specs/061-marker-owned-in-flight",
   "feature_num": "061",
-  "stage": "review",
+  "stage": "implement",
   "iteration": 4,
   "spec_branch": "spec/061-marker-owned-in-flight",
-  "pending_re_review_from": []
+  "pending_re_review_from": ["charlesguse"]
 }
