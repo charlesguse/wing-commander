@@ -1327,11 +1327,21 @@ jobs:
       # kill-switch re-check gates every branch below that takes a durable
       # GitHub write. The marker itself is rendered once, by this job's own
       # deterministic code, never derived from agent text (FR-056).
+      # FR-011, contracts/directed-proof-run.md "Attribution": one
+      # canonical attribution string (CLAUDE.md single-home), gated on
+      # inputs.directed-stage != '', prepended rather than a separately-
+      # worded copy per job -- so a maintainer reading a directed triage
+      # dispatch's comment never mistakes it for an ordinary lifecycle
+      # comment.
       - name: Act on the verdict and post the outcome
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
           PAUSED: ${{ steps.killswitch-recheck.outputs.paused }}
+          DIRECTED_ATTRIBUTION: >-
+            ${{ inputs.directed-stage != '' && format('_Directed proof run
+            (stage: `{0}`), dispatched to prove PR #{1} -- selects no board
+            item, opens no fix PR._', inputs.directed-stage, inputs.directed-pr) || '' }}
         run: |
           set -uo pipefail
           outcome="$(jq -r '.outcome' "$RUNNER_TEMP/board-triage-verdict.json")"
@@ -1361,6 +1371,7 @@ jobs:
               evidence="$(jq -c '.evidence' "$RUNNER_TEMP/board-triage-verdict.json")"
               body="$(printf 'Triage closed this issue on ground %s, with evidence read directly from the cited run/main:\n\nevidence: %s\n\n%s' \
                 "$ground" "$evidence" "$marker")"
+              [ -n "$DIRECTED_ATTRIBUTION" ] && body="$(printf '%s\n\n%s' "$DIRECTED_ATTRIBUTION" "$body")"
               gh issue close "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --comment "$body"
               ;;
             handover)
@@ -1371,6 +1382,7 @@ jobs:
                 || evidence="(the evidence could not be rendered)"
               body="$(printf 'Triage read a proposal that this issue is already fixed on main, and is handing it to a maintainer rather than closing it itself (FR-012):\n\n%s\n\n%s' \
                 "$evidence" "$marker")"
+              [ -n "$DIRECTED_ATTRIBUTION" ] && body="$(printf '%s\n\n%s' "$DIRECTED_ATTRIBUTION" "$body")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
               gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
               ;;
@@ -1382,6 +1394,7 @@ jobs:
                 || disagreement=$'\n\n(the proposal could not be rendered)'
               body="$(printf 'Triage found no code-derived close ground; proceeding to route.%s\n\n%s' \
                 "$disagreement" "$marker")"
+              [ -n "$DIRECTED_ATTRIBUTION" ] && body="$(printf '%s\n\n%s' "$DIRECTED_ATTRIBUTION" "$body")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
               ;;
           esac
@@ -2891,12 +2904,25 @@ jobs:
               fh.write("\n".join(lines) + "\n")
           PYEOF
 
+      # FR-011, contracts/directed-proof-run.md "Attribution": one
+      # canonical attribution string (CLAUDE.md single-home), gated on
+      # inputs.directed-stage != '', prepended rather than a separately-
+      # worded copy per job -- see triage's own "Act on the verdict" step
+      # above in this file.
       - name: Post the review on the PR
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           PR_NUMBER: ${{ steps.pr.outputs.pr-number }}
+          DIRECTED_ATTRIBUTION: >-
+            ${{ inputs.directed-stage != '' && format('_Directed proof run
+            (stage: `{0}`), dispatched to prove PR #{1} -- selects no board
+            item, opens no fix PR._', inputs.directed-stage, inputs.directed-pr) || '' }}
         run: |
           set -uo pipefail
+          if [ -n "$DIRECTED_ATTRIBUTION" ]; then
+            { printf '%s\n\n' "$DIRECTED_ATTRIBUTION"; cat "$RUNNER_TEMP/board-review-body.md"; } > "$RUNNER_TEMP/board-review-body-attributed.md"
+            mv "$RUNNER_TEMP/board-review-body-attributed.md" "$RUNNER_TEMP/board-review-body.md"
+          fi
           gh api -X POST "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
             -f event=COMMENT -F body=@"$RUNNER_TEMP/board-review-body.md" >/dev/null
 
@@ -3566,17 +3592,27 @@ jobs:
       # writes records step awaiting-merge, not readiness (#532): the
       # handover releases the board, so select() moves on to other issues
       # instead of re-running readiness on this PR every run.
+      # FR-011, contracts/directed-proof-run.md "Attribution": one
+      # canonical attribution string (CLAUDE.md single-home), gated on
+      # inputs.directed-stage != '', prepended rather than a separately-
+      # worded copy per job -- see triage's own "Act on the verdict" step
+      # above in this file.
       - name: Post the readiness report (ready)
         if: steps.decide.outputs.ready == 'true'
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
           PR_NUMBER: ${{ steps.pr.outputs.pr-number }}
+          DIRECTED_ATTRIBUTION: >-
+            ${{ inputs.directed-stage != '' && format('_Directed proof run
+            (stage: `{0}`), dispatched to prove PR #{1} -- selects no board
+            item, opens no fix PR._', inputs.directed-stage, inputs.directed-pr) || '' }}
         run: |
           set -uo pipefail
           decision="$(cat "$RUNNER_TEMP/board-readiness-decision.json")"
           body="$(printf 'Readiness: all conditions hold on head_sha %s.\n\ndecision: %s\n\nAwaiting a human merge -- this loop never merges, approves, or enables auto-merge.' \
             "$(jq -r '.head_sha' "$RUNNER_TEMP/board-readiness-decision.json")" "$decision")"
+          [ -n "$DIRECTED_ATTRIBUTION" ] && body="$(printf '%s\n\n%s' "$DIRECTED_ATTRIBUTION" "$body")"
           gh pr comment "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
           marker="$(python3 -I -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_eligibility import AWAITING_MERGE_STEP; from board_item_marker import write_marker; print(write_marker(AWAITING_MERGE_STEP, 0, int(os.environ['PR_NUMBER']), None, None))")"
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf '%s\n\n%s' "$body" "$marker")"
@@ -3657,6 +3693,10 @@ jobs:
           EXISTING_SPEC_URL: ${{ steps.breach-retry-lookup.outputs.existing-spec-url }}
           MEASURED: ${{ steps.final-diff-backstop.outputs.measured }}
           ISSUE_CONTEXT_FILE: ${{ steps.issue-context-readiness.outputs.context-file }}
+          DIRECTED_ATTRIBUTION: >-
+            ${{ inputs.directed-stage != '' && format('_Directed proof run
+            (stage: `{0}`), dispatched to prove PR #{1} -- selects no board
+            item, opens no fix PR._', inputs.directed-stage, inputs.directed-pr) || '' }}
         run: |
           set -uo pipefail
           unmet="$(jq -r '.unmet_reason' "$RUNNER_TEMP/board-readiness-decision.json")"
@@ -3695,9 +3735,13 @@ jobs:
             gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled" \
               || { echo "::error::board-loop readiness (backstop breach): spec-request $spec_url was filed but board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted, so a later run retries (#530)."; exit 1; }
             marker="$(python3 -I -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, None, None))")"
-            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf '%s on PR #%s (measured: %s) -- the branch/PR are left open, unmerged; a spec-request now covers finishing this at the right size.\n\n%s' "$breach_what" "$PR_NUMBER" "$MEASURED" "$marker")"
+            body="$(printf '%s on PR #%s (measured: %s) -- the branch/PR are left open, unmerged; a spec-request now covers finishing this at the right size.\n\n%s' "$breach_what" "$PR_NUMBER" "$MEASURED" "$marker")"
+            [ -n "$DIRECTED_ATTRIBUTION" ] && body="$(printf '%s\n\n%s' "$DIRECTED_ATTRIBUTION" "$body")"
+            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
           else
-            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Not ready on PR #%s: %s. Picked up again on a later run.' "$PR_NUMBER" "$unmet")"
+            body="$(printf 'Not ready on PR #%s: %s. Picked up again on a later run.' "$PR_NUMBER" "$unmet")"
+            [ -n "$DIRECTED_ATTRIBUTION" ] && body="$(printf '%s\n\n%s' "$DIRECTED_ATTRIBUTION" "$body")"
+            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
           fi
 
       # FR-045 (T068): the identical artifact the route job (T028) and the
@@ -4089,12 +4133,16 @@ jobs:
           # -- directed-stage is only ever non-empty when redrive-workflow
           # is board-loop.yml itself. GitHub Actions expressions have no
           # object-literal syntax for toJSON() to serialize, so the JSON
-          # object is built directly with format() instead.
+          # object is built directly with format() instead. directed-pr
+          # (the originating merge's own PR) is passed for every directed
+          # stage, not only prove -- FR-011's attribution (T042) needs it
+          # to name the merge a directed triage/review/readiness dispatch
+          # is proving too, not only a directed prove dispatch.
           workflow-inputs: >-
             ${{ steps.decide.outputs.directed-stage != '' &&
             format('{{"directed-stage":"{0}","directed-issue":"{1}","directed-pr":"{2}"}}',
             steps.decide.outputs.directed-stage, needs.prove-gate.outputs.issue-number,
-            (steps.decide.outputs.directed-stage == 'prove' && github.event.pull_request.number || '')) ||
+            github.event.pull_request.number) ||
             '{}' }}
 
       - name: Cross-link the proof run onto the originating issue
@@ -4176,6 +4224,15 @@ jobs:
           DIRECTED_STAGE: ${{ steps.decide.outputs.directed-stage }}
           BUSY: ${{ steps.busy-check.outputs.busy }}
           DISAMBIGUATED_REASON: ${{ steps.disambiguate.outputs.reason }}
+          # FR-011, contracts/directed-proof-run.md "Attribution": one
+          # canonical attribution string (CLAUDE.md single-home), gated on
+          # inputs.directed-stage != '', prepended rather than a
+          # separately-worded copy per job -- see triage's own "Act on the
+          # verdict" step above in this file.
+          DIRECTED_ATTRIBUTION: >-
+            ${{ inputs.directed-stage != '' && format('_Directed proof run
+            (stage: `{0}`), dispatched to prove PR #{1} -- selects no board
+            item, opens no fix PR._', inputs.directed-stage, inputs.directed-pr) || '' }}
         run: |
           set -uo pipefail
           reason="$(python3 -c "
@@ -4189,53 +4246,55 @@ jobs:
               os.environ.get('CONCLUSION') or None,
               os.environ.get('DISAMBIGUATED_REASON') or None))
           ")"
+          attr_prefix=""
+          [ -n "$DIRECTED_ATTRIBUTION" ] && attr_prefix="$(printf '%s\n\n' "$DIRECTED_ATTRIBUTION")"
 
           case "$reason" in
             success)
               marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('proven', 0, None, None, None))")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$(printf 'Proven: %s was re-driven after the merge of PR #%s and concluded success -- %s\n\n%s' "$REDRIVE_WORKFLOW" "$PR_NUMBER" "$RUN_URL" "$marker")"
+                --body "$attr_prefix$(printf 'Proven: %s was re-driven after the merge of PR #%s and concluded success -- %s\n\n%s' "$REDRIVE_WORKFLOW" "$PR_NUMBER" "$RUN_URL" "$marker")"
               gh issue close "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY"
               ;;
             failure)
               marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('prove', 0, None, None, None))")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$(printf 'Not proven: %s was re-driven after the merge of PR #%s and concluded failure -- %s. This issue stays open.\n\n%s' "$REDRIVE_WORKFLOW" "$PR_NUMBER" "$RUN_URL" "$marker")"
+                --body "$attr_prefix$(printf 'Not proven: %s was re-driven after the merge of PR #%s and concluded failure -- %s. This issue stays open.\n\n%s' "$REDRIVE_WORKFLOW" "$PR_NUMBER" "$RUN_URL" "$marker")"
               ;;
             group-busy)
               marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('prove', 0, None, None, None))")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$(printf 'PR #%s merged, but the directed proof group was already occupied by another proof run -- nothing was dispatched. Picked up again on a later run.\n\n%s' "$PR_NUMBER" "$marker")"
+                --body "$attr_prefix$(printf 'PR #%s merged, but the directed proof group was already occupied by another proof run -- nothing was dispatched. Picked up again on a later run.\n\n%s' "$PR_NUMBER" "$marker")"
               ;;
             no-target)
               marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('prove', 0, None, None, None))")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$(printf 'PR #%s merged, but no directed run of board-loop.yml reaches the changed behaviour -- nothing was dispatched. This issue stays open for a maintainer to review.\n\n%s' "$PR_NUMBER" "$marker")"
+                --body "$attr_prefix$(printf 'PR #%s merged, but no directed run of board-loop.yml reaches the changed behaviour -- nothing was dispatched. This issue stays open for a maintainer to review.\n\n%s' "$PR_NUMBER" "$marker")"
               ;;
             nothing-reaches)
               marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('prove', 0, None, None, None))")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$(printf 'PR #%s merged, but no workflow in the repository reaches the changed behaviour (%s) -- nothing was dispatched. This issue stays open for a maintainer to review.\n\n%s' "$PR_NUMBER" "$REDRIVE_REASON" "$marker")"
+                --body "$attr_prefix$(printf 'PR #%s merged, but no workflow in the repository reaches the changed behaviour (%s) -- nothing was dispatched. This issue stays open for a maintainer to review.\n\n%s' "$PR_NUMBER" "$REDRIVE_REASON" "$marker")"
               ;;
             not-started)
               marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('prove', 0, None, None, None))")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$(printf 'PR #%s merged, and %s was dispatched to prove it (%s), but that run never left the queue within the wait budget. This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_WORKFLOW" "$RUN_URL" "$marker")"
+                --body "$attr_prefix$(printf 'PR #%s merged, and %s was dispatched to prove it (%s), but that run never left the queue within the wait budget. This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_WORKFLOW" "$RUN_URL" "$marker")"
               ;;
             unfinished)
               marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('prove', 0, None, None, None))")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$(printf 'PR #%s merged, and %s was dispatched to prove it (%s), but it did not reach a terminal conclusion within the wait budget. This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_WORKFLOW" "$RUN_URL" "$marker")"
+                --body "$attr_prefix$(printf 'PR #%s merged, and %s was dispatched to prove it (%s), but it did not reach a terminal conclusion within the wait budget. This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_WORKFLOW" "$RUN_URL" "$marker")"
               ;;
             displaced)
               marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('prove', 0, None, None, None))")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$(printf 'PR #%s merged, but the proof run dispatched to prove it was evicted before it could ever be correlated. This issue stays open.\n\n%s' "$PR_NUMBER" "$marker")"
+                --body "$attr_prefix$(printf 'PR #%s merged, but the proof run dispatched to prove it was evicted before it could ever be correlated. This issue stays open.\n\n%s' "$PR_NUMBER" "$marker")"
               ;;
             uncorrelated|*)
               marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('prove', 0, None, None, None))")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$(printf 'PR #%s merged, but the proof run could not be correlated (%s). This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_REASON" "$marker")"
+                --body "$attr_prefix$(printf 'PR #%s merged, but the proof run could not be correlated (%s). This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_REASON" "$marker")"
               ;;
           esac
 
