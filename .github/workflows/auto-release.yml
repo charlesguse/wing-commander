@@ -1166,11 +1166,22 @@ jobs:
           # #396 item 3: `|| true` swallowed a genuine `gh api` read failure
           # the same way as the timeline fallback above, leaving slug empty
           # and the missing-file check below reporting fail-wrong-output
-          # for an infrastructure problem.
+          # for an infrastructure problem. #482: that fix over-corrected --
+          # `gh api` also exits non-zero on a 404, which is what a
+          # specs/ directory the pipeline never created looks like, and
+          # that is a genuine missing-file (pipeline defect) outcome, not
+          # an infrastructure one. This applies the same "Not Found (HTTP
+          # 404)" distinction the per-file probe below already makes (one
+          # home, not a second copy): a 404 leaves slug empty and falls
+          # through to the missing-file check below exactly as it did
+          # before #469; any other failure still goes through
+          # fail_infra_on_read.
           if [ -z "$slug" ]; then
             if ! slug="$(gh api "repos/${E2E_REPO}/contents/specs" --jq '[.[] | select(.type=="dir")][0].name // empty' 2>"$RUNNER_TEMP/auto-release-slug-err.txt")"; then
-              fail_infra_on_read "reading the E2E repository's specs/ directory to resolve the pass-path slug" \
-                "gh api repos/contents/specs succeeds" "$RUNNER_TEMP/auto-release-slug-err.txt"
+              if ! grep -q 'HTTP 404' "$RUNNER_TEMP/auto-release-slug-err.txt"; then
+                fail_infra_on_read "reading the E2E repository's specs/ directory to resolve the pass-path slug" \
+                  "gh api repos/contents/specs succeeds" "$RUNNER_TEMP/auto-release-slug-err.txt"
+              fi
             fi
           fi
           missing_file=""
@@ -1183,7 +1194,8 @@ jobs:
             # what was really an infrastructure problem. `gh api` writes
             # "Not Found (HTTP 404)" to stderr on a real 404 (see
             # wing-commander-resolve-checkout-ref's branch probe for the
-            # same distinction); any
+            # same distinction, and the slug fallback above -- #482 -- for
+            # the same check one gh call earlier); any
             # other stderr here is a read failure, not a legitimately
             # missing file, and goes through fail_infra_on_read like the
             # other pass-path reads.
