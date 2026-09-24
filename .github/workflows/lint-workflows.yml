@@ -4090,14 +4090,17 @@ jobs:
       # carried no status function, so the implicit success() skipped each
       # of them on every cross-run resume (an ancestor is always skipped
       # there) and wedged the board on #396 (run 36055743563). Each `if:`
-      # must carry `!cancelled()`/`always()`, test every upstream's result
-      # before reading its outputs, and review must not take a fix whose
-      # post-push backstop breached. A simulator also runs the real `if:`s
-      # over the fresh path and every resume scenario.
+      # must carry `!cancelled()` (not `always()`, which would start agent
+      # work on a cancelled run), test every upstream's result before
+      # reading its outputs, and review must not take a fix whose post-push
+      # backstop breached -- a `breach` output that a real
+      # final-diff-backstop step writes. A simulator also runs the real
+      # `if:`s over the fresh path, every resume scenario, and upstreams
+      # that fail after setting their outputs.
       - name: "Gate 97 — board-loop's resume jobs run on a resume, and read an upstream's outputs only after it succeeded"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-resume-gating.py
-      - name: "Gate 97 self-test — dropping !cancelled(), a result guard, the breach exclusion or output, or restoring the pre-#525 conditions each fail"
+      - name: "Gate 97 self-test — dropping !cancelled() or swapping in always(), a result guard, the breach exclusion, output or its writer, or restoring the pre-#525 conditions each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-resume-gating.py --self-test
 

@@ -25,7 +25,8 @@ WHAT IT CHECKS (static)
 -----------------------
 For each of fix / review / readiness, the job-level `if:` is parsed as a
 GitHub expression and must:
-  1. carry `!cancelled()` or `always()` as a top-level conjunct;
+  1. carry `!cancelled()` as a top-level conjunct, and no other status
+     function (`always()` would start agent work on a cancelled run);
   2. carry `needs.select.result == 'success'` as a top-level conjunct, and
      `needs.resolve-model.result == 'success'` too when the job needs
      resolve-model (it runs an agent);
@@ -277,6 +278,14 @@ def _branches_reading(node, path_prefix):
     return found
 
 
+def _writes_output(run, key):
+    """True when a run: block writes `key=` (exactly that key, as a
+    shell echo or an inline Python write) and routes to GITHUB_OUTPUT."""
+    if "GITHUB_OUTPUT" not in run:
+        return False
+    return re.search(r"""(?:^|["'\s]){0}=""".format(re.escape(key)), run, re.M) is not None
+
+
 def static_findings(doc):
     findings = []
     jobs = doc.get("jobs") or {}
@@ -298,14 +307,19 @@ def static_findings(doc):
         needs = job.get("needs") or []
         needs = [needs] if isinstance(needs, str) else list(needs)
 
-        has_status = any(
-            p == ("not", ("call", "cancelled", [])) or p == ("call", "always", [])
-            for p in top)
-        if not has_status:
+        # Exactly `!cancelled()`: `always()` would also lift the implicit
+        # success(), but would start the fixer/reviewer/readiness work on
+        # a run someone cancelled.
+        if not any(p == ("not", ("call", "cancelled", [])) for p in top):
             findings.append(
-                "{0}: if: has no top-level `!cancelled()` / `always()` conjunct -- the "
-                "implicit success() skips this job whenever any ancestor was skipped, "
-                "i.e. on every cross-run resume (#525)".format(name))
+                "{0}: if: has no top-level `!cancelled()` conjunct -- the implicit "
+                "success() skips this job whenever any ancestor was skipped, i.e. on "
+                "every cross-run resume (#525); `always()` is not a substitute, it runs "
+                "on a cancelled run too".format(name))
+        if uses_status_func(("and", [p for p in top if p != ("not", ("call", "cancelled", []))])):
+            findings.append(
+                "{0}: if: uses a status function other than the one `!cancelled()` "
+                "conjunct".format(name))
         for up in ["select"] + (["resolve-model"] if "resolve-model" in needs else []):
             if not any(_is_cmp(p, "==", "needs.{0}.result".format(up), "success") for p in top):
                 findings.append(
@@ -327,6 +341,17 @@ def static_findings(doc):
     breach_out = str((fix.get("outputs") or {}).get("breach", ""))
     if "steps.final-diff-backstop.outputs.breach" not in breach_out:
         findings.append("fix: outputs: lacks `breach: ${{ steps.final-diff-backstop.outputs.breach }}` (#526)")
+    # The output line alone proves nothing: it must name a step that
+    # exists and actually writes `breach=` to GITHUB_OUTPUT, or `breach`
+    # is always empty and review's exclusion never fires.
+    backstop = [s for s in (fix.get("steps") or [])
+                if isinstance(s, dict) and s.get("id") == "final-diff-backstop"]
+    if not backstop:
+        findings.append("fix: no step with id `final-diff-backstop` -- the `breach` output reads "
+                        "a step that does not exist (#526)")
+    elif not _writes_output(str(backstop[0].get("run", "")), "breach"):
+        findings.append("fix: step `final-diff-backstop` never writes `breach=` to GITHUB_OUTPUT "
+                        "-- the `breach` output is always empty (#526)")
 
     review = jobs.get("review") or {}
     try:
@@ -499,6 +524,38 @@ SCENARIOS = [
      {"outputs": {"select": _item("review", pr="42", branch="board/396", round_="2"),
                   "review": {"pr-number": "42", "outcome": "converged"}}},
      ("select", "resolve-model", "review", "readiness")),
+    # An upstream that FAILS after setting its outputs: those outputs are
+    # still readable, so only the explicit result guard keeps the next job
+    # from acting on them.
+    ("select fails after setting step=readiness",
+     {"fail": ("select",),
+      "outputs": {"select": _item("readiness", pr="42", branch="board/396")}},
+     ("select",)),
+    ("fresh: triage fails after outcome=proceed",
+     {"fail": ("triage",),
+      "outputs": {"select": _item("triage"), "triage": {"outcome": "proceed"},
+                  "route": {"decision": "fix"}}},
+     ("select", "resolve-model", "triage")),
+    ("fresh: route fails after decision=fix",
+     {"fail": ("route",),
+      "outputs": {"select": _item("triage"), "triage": {"outcome": "proceed"},
+                  "route": {"decision": "fix"}}},
+     ("select", "resolve-model", "triage", "route")),
+    ("fresh: review fails after outcome=converged",
+     {"fail": ("review",),
+      "outputs": {"select": _item("triage"), "triage": {"outcome": "proceed"},
+                  "route": {"decision": "fix"}, "fix": {"pr-number": "42", "breach": "false"},
+                  "review": {"pr-number": "42", "outcome": "converged"}}},
+     ("select", "resolve-model", "triage", "route", "fix", "review")),
+    ("resume step=review, review fails after outcome=converged",
+     {"fail": ("review",),
+      "outputs": {"select": _item("review", pr="42", branch="board/396", round_="2"),
+                  "review": {"pr-number": "42", "outcome": "converged"}}},
+     ("select", "resolve-model", "review")),
+    ("resume step=readiness, resolve-model fails (readiness runs no agent)",
+     {"fail": ("resolve-model",),
+      "outputs": {"select": _item("readiness", pr="42", branch="board/396")}},
+     ("select", "resolve-model", "readiness")),
     ("resume step=readiness (run 36055743563, #396)",
      {"outputs": {"select": _item("readiness", pr="42", branch="board/396")}},
      ("select", "resolve-model", "readiness")),
@@ -614,6 +671,19 @@ def _mutations(text):
         "        || (needs.select.outputs.step == 'fix'",
         "(needs.route.outputs.decision == 'fix')\n"
         "        || (needs.route.result == 'success' && needs.select.outputs.step == 'fix'")
+    # always() lifts the implicit success() too, but also runs on a
+    # cancelled run -- it is not an accepted substitute.
+    sub("readiness with always() in place of !cancelled()",
+        "      !cancelled()\n      && needs.select.result == 'success'",
+        "      always()\n      && needs.select.result == 'success'", after="\n  readiness:\n")
+    sub("fix with always() in place of !cancelled()",
+        "      !cancelled()\n      && needs.select.result == 'success'",
+        "      always()\n      && needs.select.result == 'success'", after="\n  fix:\n")
+    # The breach output must name a real step that really writes breach=.
+    sub("final-diff-backstop step id renamed",
+        "        id: final-diff-backstop\n", "        id: final-diff-backstop-renamed\n")
+    sub("final-diff-backstop writes breached= instead of breach=",
+        'fh.write("breach={0}\\n"', 'fh.write("breached={0}\\n"', after="\n  fix:\n")
     # main's pre-#525 conditions, verbatim.
     muts.append(("fix restored to pre-#525", _replace_job_if(text, "fix", PRE_525["fix"])))
     muts.append(("review restored to pre-#525", _replace_job_if(text, "review",
@@ -634,16 +704,6 @@ def run_selftest(text):
     base = all_findings(text)
     if base:
         failures.append("unmutated board-loop.yml is not clean: {0}".format(base))
-    # always() is an accepted status function, not a finding.
-    swapped = text.replace("      !cancelled()\n      && needs.select.result == 'success'\n"
-                           "      && (\n        (needs.review.result",
-                           "      always()\n      && needs.select.result == 'success'\n"
-                           "      && (\n        (needs.review.result", 1)
-    if swapped == text:
-        failures.append("self-test: could not build the always() variant")
-    elif all_findings(swapped):
-        failures.append("readiness with always() in place of !cancelled() was flagged: {0}".format(
-            all_findings(swapped)))
     for label, mutated in _mutations(text):
         if mutated == text:
             failures.append("mutation `{0}` changed nothing".format(label))
