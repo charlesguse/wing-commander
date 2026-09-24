@@ -46,10 +46,10 @@ Shell lint of run: blocks is Gate 48's job (verify-stage-shell-lint.py;
 this gate's subject the schema/expression pass alone, byte-identical
 between CI and run-local-gates.py.
 """
-import contextlib
 import glob
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -61,16 +61,19 @@ from wc_actionlint import (  # noqa: E402
 WORKFLOWS_DIR = ".github/workflows"
 # Every workflow that publishes a stage checks itself out here, pinned at
 # its own ref, so `uses: ./.wing-commander-pipeline/.github/actions/X`
-# resolves during a real run (specs/010-reusable-pipeline). CI's lint job
-# never creates this checkout, so actionlint there finds nothing at the
-# path and stays silent about it. A working tree that still carries one
-# from an earlier manual run makes actionlint resolve those `uses:` lines
-# against whatever ref that checkout happens to be pinned at instead --
-# stale relative to the tree's own .github/actions/, so a correct
-# in-flight change (a new composite input landing with its call site)
-# fails Gate 46 for a reason that has nothing to do with the change
-# (#442). Hidden for the run below so this gate's answer matches CI
-# instead of depending on the workspace.
+# resolves during a real run (specs/010-reusable-pipeline). This gate must
+# still check those call sites' inputs (a real diagnostic there is exactly
+# what it exists to catch), but it must never resolve them against
+# whatever this checkout happens to carry on disk: CI's lint job never
+# creates it, so a real run always lints the SAME ref the workflow files
+# themselves are at, and this gate has to match that or it answers a
+# different question than CI does. It also must never touch the real
+# directory in place -- during a live implement.yml run (implement.yml
+# running the gate suite under a 10-minute timeout) this IS the running
+# job's own checkout, and every later `uses: ./.wing-commander-pipeline/
+# ...` step, including the failure reporter, depends on it staying put.
+# See _lint_tree() (#442, and the review of #479 that replaced an earlier
+# rename-based attempt).
 STALE_PIPELINE_DIR = ".wing-commander-pipeline"
 # The binding is a job-level environment sub-key: jobs(0) / <job>(2) /
 # environment(4) / deployment(6). Matched on the key's own line rather
@@ -88,24 +91,42 @@ def ensure_binary():
     return ensure_actionlint()
 
 
-@contextlib.contextmanager
-def hide_stale_pipeline_checkout(root="."):
-    """Rename STALE_PIPELINE_DIR out of actionlint's way for the run, if
-    a leftover one is present, and put it back afterward either way.
+def _lint_tree(root="."):
+    """A scratch copy of `root`'s .github/, plus a second copy of
+    .github/actions/ laid down at .wing-commander-pipeline/.github/actions/,
+    so actionlint resolves BOTH `uses: ./.github/actions/X` and `uses:
+    ./.wing-commander-pipeline/.github/actions/X` against this same
+    working tree's own actions -- always the ref being linted, never
+    whatever a real or leftover self-checkout happens to carry (#442).
 
-    See STALE_PIPELINE_DIR's comment for why this exists (#442). A no-op
-    when nothing is there, which is the CI case and the common local one.
+    A real copy, not a symlink: actionlint reads `uses:` paths through
+    Go's directory walk, which does not follow a symlinked ancestor
+    directory the way a shell `cd` would, so a symlinked
+    .wing-commander-pipeline resolves to nothing and the call sites under
+    it go unchecked again -- the same blind spot this replaces.
+
+    The real STALE_PIPELINE_DIR, if one is present in `root` (a running
+    implement.yml job's own live checkout, or a leftover from one), is
+    never opened, moved or deleted -- only .github/ is copied out of
+    `root`. Caller removes the returned directory.
+
+    actionlint resolves a local `uses:` path only inside a directory it
+    can root at a `.git` -- measured empirically fixing #442's fix: the
+    "action" rule runs (it logs every `uses:` it checks) but silently
+    skips local ones with no diagnostic and no error, gate-shaped or
+    otherwise, when `.git` is missing, which would have made this gate
+    stop checking every local composite call site rather than just the
+    self-checkout ones. A directory-only `git init` supplies that marker
+    without a commit, an index, or reading anything from `root`'s own
+    .git.
     """
-    path = os.path.join(root, STALE_PIPELINE_DIR)
-    if not os.path.isdir(path):
-        yield
-        return
-    hidden = path + ".gate46-hidden"
-    os.rename(path, hidden)
-    try:
-        yield
-    finally:
-        os.rename(hidden, path)
+    td = tempfile.mkdtemp(prefix="wc-gate46-")
+    shutil.copytree(os.path.join(root, ".github"), os.path.join(td, ".github"))
+    shutil.copytree(os.path.join(td, ".github", "actions"),
+                     os.path.join(td, STALE_PIPELINE_DIR, ".github", "actions"))
+    subprocess.run(["git", "init", "-q"], cwd=td, check=True,
+                   capture_output=True)
+    return td
 
 
 def workflow_files(root="."):
@@ -130,14 +151,19 @@ def count_cred_bindings(files):
     return total
 
 
-def run_actionlint(binary, files, extra_ignores=()):
-    """Diagnostic lines from the schema/expression pass, one per line."""
+def run_actionlint(binary, files, extra_ignores=(), cwd=None):
+    """Diagnostic lines from the schema/expression pass, one per line.
+
+    `cwd`, with `files` given relative to it, keeps the printed paths
+    (and so this gate's ordinary output) identical whether `files` came
+    straight from the working tree or from a _lint_tree() copy.
+    """
     cmd = [binary, "-no-color", "-oneline", "-shellcheck=", "-pyflakes=",
            "-ignore", IGNORED]
     for pat in extra_ignores:
         cmd += ["-ignore", pat]
     proc = subprocess.run(cmd + list(files), capture_output=True, text=True,
-                          encoding="utf-8", errors="replace")
+                          encoding="utf-8", errors="replace", cwd=cwd)
     out = (proc.stdout or "") + (proc.stderr or "")
     return [l for l in out.splitlines() if l.strip()]
 
@@ -190,8 +216,13 @@ def run_gate():
         sys.exit(f"no workflow files found under {WORKFLOWS_DIR} -- "
                  f"this gate linted nothing. Run from the repository root.")
     binary = ensure_binary()
-    with hide_stale_pipeline_checkout():
-        diags = run_actionlint(binary, files)
+    tree = _lint_tree()
+    try:
+        tree_files = ["./" + os.path.relpath(f, tree)
+                      for f in workflow_files(tree)]
+        diags = run_actionlint(binary, tree_files, cwd=tree)
+    finally:
+        shutil.rmtree(tree, ignore_errors=True)
     bindings = count_bindings(files)
     cred_bindings = count_cred_bindings(files)
     errors, other = classify(diags, bindings, cred_bindings)
@@ -299,6 +330,69 @@ def self_test():
               f"cred_bindings={cred_bindings} diags={diags!r}")
         errors, _ = classify(diags, 0, cred_bindings)
         check("and balances to a clean pass", not errors, f"got {errors!r}")
+
+        typo_root = os.path.join(td, "typo-fixture")
+        act_dir = os.path.join(typo_root, ".github", "actions", "wc-typo-test")
+        os.makedirs(os.path.join(typo_root, ".github", "workflows"))
+        os.makedirs(act_dir)
+        with open(os.path.join(act_dir, "action.yml"), "w",
+                  encoding="utf-8", newline="\n") as f:
+            f.write(
+                "name: wc-typo-test\n"
+                "inputs:\n"
+                "  sweep-runs:\n"
+                "    required: false\n"
+                "runs:\n"
+                "  using: composite\n"
+                "  steps:\n"
+                "    - run: echo ok\n"
+                "      shell: bash\n")
+        with open(os.path.join(typo_root, ".github", "workflows", "typo.yml"),
+                  "w", encoding="utf-8", newline="\n") as f:
+            f.write(
+                "on: push\n"
+                "jobs:\n"
+                "  a:\n"
+                "    runs-on: ubuntu-latest\n"
+                "    steps:\n"
+                "      - uses: ./.wing-commander-pipeline/.github/actions/wc-typo-test\n"
+                "        with:\n"
+                "          sweep-runz: x\n")
+        # A stale, differently-typo'd decoy checkout sitting in the fixture
+        # root (the #442/#479-review shape) -- must not change the answer:
+        # _lint_tree() always copies from the fixture's own .github/actions,
+        # never from whatever a leftover checkout happens to carry.
+        decoy_dir = os.path.join(typo_root, STALE_PIPELINE_DIR, ".github",
+                                 "actions", "wc-typo-test")
+        os.makedirs(decoy_dir)
+        with open(os.path.join(decoy_dir, "action.yml"), "w",
+                  encoding="utf-8", newline="\n") as f:
+            f.write(
+                "name: wc-typo-test\n"
+                "inputs:\n"
+                "  sweep-runz:\n"
+                "    required: false\n"
+                "runs:\n"
+                "  using: composite\n"
+                "  steps:\n"
+                "    - run: echo ok\n"
+                "      shell: bash\n")
+
+        tree = _lint_tree(typo_root)
+        try:
+            typo_files = ["./" + os.path.relpath(f, tree)
+                          for f in workflow_files(tree)]
+            diags = run_actionlint(binary, typo_files, cwd=tree)
+        finally:
+            shutil.rmtree(tree, ignore_errors=True)
+        check("a call-site input typo through "
+              "./.wing-commander-pipeline/... is caught, even with a "
+              "stale, differently-typo'd checkout present in the tree",
+              any('"sweep-runz" is not defined' in l for l in diags),
+              f"got {diags!r}")
+        check("the fixture's own stale checkout was never touched",
+              os.path.isdir(os.path.join(typo_root, STALE_PIPELINE_DIR)),
+              "decoy directory missing after the run")
 
     # The accounting's failure branches, driven directly (pure function).
     errors, _ = classify([], 3)
