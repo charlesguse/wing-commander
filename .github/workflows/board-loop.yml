@@ -695,19 +695,41 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
 
-      # A cited run is read from the issue's own body/comments -- a plain
-      # URL scan, never an agent's paraphrase of what it cited (FR-011).
+      # #499 code review (round 3, B1): the step had no way to read the
+      # issue it was triaging at all. Fetching it with the agent's own
+      # `gh issue view --comments` (round 2's fix) read every comment
+      # unfiltered on a public repository, bypassing intake.yml's own
+      # trust filter in spirit (FR-056). wing-commander-issue-context
+      # (this repository's own composite actions directory) is the
+      # single home for that filter now. No `gh issue` tool is granted to
+      # this step at all (below); the agent Reads the pre-filtered file
+      # instead.
+      - name: Fetch issue context (triage-propose)
+        id: issue-context-triage
+        uses: ./.github/actions/wing-commander-issue-context
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          issue-number: ${{ needs.select.outputs.issue-number }}
+
+      # A cited run is read from the issue's own text -- a plain URL scan,
+      # never an agent's paraphrase of what it cited (FR-011). #505: only
+      # from text the trust filter above already passed, i.e. the
+      # composite's context-file: the issue's own title and body (written
+      # by its author -- the one source a watchdog-filed issue cites its run
+      # in, bot author or not -- or edited by a maintainer), then the
+      # qualifying comments oldest first (OWNER/MEMBER/COLLABORATOR or the
+      # issue's own author, never a bot). Never a comments fetch of this
+      # step's own: a public commenter's link to an old run would otherwise
+      # become 429/action-bump close evidence against someone else's issue.
+      # Not comments-file: that drops the body. verify-board-triage.py
+      # (Gate 82) fails this step on any issue read of its own.
       - name: Locate a cited run, if any
         id: cite
         env:
-          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
-          ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}
+          ISSUE_CONTEXT_FILE: ${{ steps.issue-context-triage.outputs.context-file }}
         run: |
           set -uo pipefail
-          gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json body --jq .body > "$RUNNER_TEMP/board-triage-issue-body.txt"
-          gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate --jq '.[].body' >> "$RUNNER_TEMP/board-triage-issue-body.txt" || true
-
-          run_url="$(grep -oE "https://github\\.com/${GITHUB_REPOSITORY}/actions/runs/[0-9]+" "$RUNNER_TEMP/board-triage-issue-body.txt" | head -1 || true)"
+          run_url="$(grep -oE "https://github\\.com/${GITHUB_REPOSITORY}/actions/runs/[0-9]+" "$ISSUE_CONTEXT_FILE" | head -1 || true)"
           echo "run-url=$run_url" >> "$GITHUB_OUTPUT"
           if [ -n "$run_url" ]; then
             echo "run-id=${run_url##*/}" >> "$GITHUB_OUTPUT"
@@ -725,8 +747,13 @@ jobs:
           RUN_ID: ${{ steps.cite.outputs.run-id }}
         run: |
           set -uo pipefail
-          commit_sha="$(gh run view "$RUN_ID" -R "$GITHUB_REPOSITORY" --json headSha --jq .headSha 2>/dev/null || true)"
+          # #505: the run's own workflow `path` scopes board_triage.py's
+          # action-bump comparison to the workflow this run actually ran.
+          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" 2>/dev/null || true)"
+          commit_sha="$(printf '%s' "$run_json" | jq -r '.head_sha // empty' 2>/dev/null || true)"
+          workflow_path="$(printf '%s' "$run_json" | jq -r '.path // empty' 2>/dev/null || true)"
           echo "commit-sha=$commit_sha" >> "$GITHUB_OUTPUT"
+          echo "workflow-path=$workflow_path" >> "$GITHUB_OUTPUT"
 
           artifact_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts" --jq '.artifacts[] | select(.name | startswith("claude-execution-output")) | .id' 2>/dev/null | head -1 || true)"
           if [ -z "$artifact_id" ]; then
@@ -741,22 +768,6 @@ jobs:
           else
             echo "transcript-path=" >> "$GITHUB_OUTPUT"
           fi
-
-      # #499 code review (round 3, B1): the step had no way to read the
-      # issue it was triaging at all. Fetching it with the agent's own
-      # `gh issue view --comments` (round 2's fix) read every comment
-      # unfiltered on a public repository, bypassing intake.yml's own
-      # trust filter in spirit (FR-056). wing-commander-issue-context
-      # (this repository's own composite actions directory) is the
-      # single home for that filter now. No `gh issue` tool is granted to
-      # this step at all (below); the agent Reads the pre-filtered file
-      # instead.
-      - name: Fetch issue context (triage-propose)
-        id: issue-context-triage
-        uses: ./.github/actions/wing-commander-issue-context
-        with:
-          token: ${{ env.WC_BOT_TOKEN }}
-          issue-number: ${{ needs.select.outputs.issue-number }}
 
       - name: Compose tool args (triage-propose)
         id: tool-args-triage
@@ -938,6 +949,7 @@ jobs:
         env:
           RUN_URL: ${{ steps.cite.outputs.run-url }}
           COMMIT_SHA: ${{ steps.fetch.outputs.commit-sha }}
+          WORKFLOW_PATH: ${{ steps.fetch.outputs.workflow-path }}
           TRANSCRIPT_PATH: ${{ steps.fetch.outputs.transcript-path }}
         run: |
           set -uo pipefail
@@ -962,6 +974,7 @@ jobs:
           issue = {
               "cited_run_transcript_path": os.environ.get("TRANSCRIPT_PATH") or None,
               "cited_run_commit_sha": os.environ.get("COMMIT_SHA") or None,
+              "cited_run_workflow_path": os.environ.get("WORKFLOW_PATH") or None,
               "workflow_files": workflow_files,
               "agent_proposal": proposal,
           }
