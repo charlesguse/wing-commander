@@ -55,6 +55,12 @@ string.
 - Separate job/step; no fixer transcript, memory, or prompt continuation.
 - Prompt input: the PR diff, the originating issue's body (framed as
   data), the fix's own commit messages. Never the fixer's session.
+- Every input is a file a deterministic step stages before the agent runs
+  (#503): the diff, commit list and PR title/body under
+  `/tmp/wing-commander/`, and the issue through
+  `wing-commander-issue-context`. The reviewer has no `gh` grant, so PR
+  comments, which `gh pr view --comments` returns unfiltered, never reach
+  it (FR-056). Gate 93 enforces both.
 - Posts via `gh api repos/:owner/:repo/pulls/:number/reviews -f
   event=COMMENT -F body=@review-body.md` — never `APPROVE`/`REQUEST_CHANGES`
   (GitHub rejects both from the PR's own author identity, FR-029).

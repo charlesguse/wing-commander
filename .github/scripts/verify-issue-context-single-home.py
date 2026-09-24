@@ -33,15 +33,16 @@ WHAT IT CHECKS
    Claude Code's equivalent open-wildcard spellings -- `gh:*`, `gh*`,
    `gh *` -- authorizes every gh subcommand; #499 round 5 review: the
    round-4 fix only stripped a trailing `:*`, so `gh*`/`gh *` still slipped
-   through), `gh issue *`, `gh api*`, and `gh search issues*`. A bare
-   `Bash` (no argument at all) or `Bash(*)` grant is ALSO forbidden here,
-   for the same reason -- it authorizes every gh subcommand too, among
-   everything else. Prefix matching on whitespace-split tokens closes the
+   through), `gh issue *`, `gh api*`, `gh search issues*`, and `gh pr *`.
+   A bare `Bash` (no argument at all) or `Bash(*)` grant is ALSO forbidden
+   here, for the same reason -- it authorizes every gh subcommand too,
+   among everything else. Prefix matching on whitespace-split tokens closes the
    substring check's own holes (`Bash(gh issue:*)`, `Bash(gh:*)` both
    slipped through the old `"gh issue view" in value` test).
-   `Bash(gh pr view:*)` is deliberately NOT forbidden here -- the reviewer
-   legitimately keeps it for now (a separate issue tracks removing it);
-   this gate only closes the issue-read hole #499 exists for. Scoped to
+   `gh pr *` joined the list with #503: `gh pr view N --comments` returns
+   every PR comment unfiltered (FR-056), and the reviewer that held
+   `Bash(gh pr view:*)` feeds review-fixup, which commits. The reviewer
+   now reads files its job's gather step stages (check 5). Scoped to
    board-loop.yml only: intake.yml legitimately grants its own agent
    `Bash(gh issue view:*)` for title/body (it never grants comment access
    that way -- comments are staged, code-filtered, by the same composite),
@@ -123,7 +124,26 @@ WHAT IT CHECKS
    (its value can be a file this gate cannot read), and no `settings:`
    input on the action step that carries `permissions` or is not inline
    JSON. The check fails if a label is missing, so a
-   rename cannot make it pass without checking anything.
+   rename cannot make it pass without checking anything. Since #503 the
+   list holds only the wrapper and `cat`: a read-only agent gets no `gh`
+   command at all.
+
+5. reviewer-staged-inputs (#503). The reviewer prompt named
+   `${{ github.workspace }}/../board-review-diff.txt` while its gather
+   step wrote `$RUNNER_TEMP/board-review-diff.txt` (runner.temp is
+   /home/runner/work/_temp, not the workspace's parent), so the reviewer
+   was pointed at a missing file and fell back to `gh pr view`. In the
+   job whose agent step is fed by the `board-loop.reviewer` tool-args
+   site, the step with id `gather` must start `set -euo pipefail`, fail
+   (`if [ ! -s PATH ]; then ... exit 1`) on an empty diff -- an empty
+   diff makes the reviewer find nothing and readiness run on an
+   unreviewed PR -- and write each file it stages exactly once, to a
+   literal path under /tmp/wing-commander/. Every prompt token ending in
+   one of those files' basenames must be that exact path, so a prompt
+   naming `${{ runner.temp }}/board-review-pr.md` fails as the workspace-
+   parent diff path did. Every /tmp/wing-commander/ path the prompt names
+   must be one the gather step writes, and the prompt must not tell the
+   agent to run `gh`.
 
 `--self-test`: synthetic tempdir fixtures prove each check can fail (a
 board-loop tool-args grant carrying `gh issue view`, a second file
@@ -155,11 +175,13 @@ AGENT_ACTION_PREFIX = "anthropics/claude-code-action@"
 # command must NOT start with (checked against multi-token commands only
 # -- a bare `gh:*` grant, with no subcommand argument at all, is checked
 # separately below since it is not a "prefix" of anything, it authorizes
-# every gh subcommand outright, including these three).
+# every gh subcommand outright, including these four). `gh pr` is here
+# because `gh pr view N --comments` reads PR comments unfiltered (#503).
 FORBIDDEN_GH_PREFIXES = (
     ("gh", "issue"),
     ("gh", "api"),
     ("gh", "search", "issues"),
+    ("gh", "pr"),
 )
 
 BASH_GRANT_RE = re.compile(r"Bash\(([^)]*)\)")
@@ -260,7 +282,7 @@ def find_forbidden_gh_grants(text):
 
 def check_tool_grants(path):
     """Gate 93 check 1: no board-loop.yml agent step may be granted
-    `gh`/`gh issue`/`gh api`/`gh search issues`, whether through a
+    `gh`/`gh issue`/`gh api`/`gh search issues`/`gh pr`, whether through a
     wing-commander-tool-args call site's inputs or appended literally
     inside an agent step's own claude_args text."""
     problems = []
@@ -285,7 +307,8 @@ def check_tool_grants(path):
                     f"{path}: step {name!r}'s {key} grants "
                     f"{description} to a board-loop agent -- read the "
                     f"issue through wing-commander-issue-context instead "
-                    f"(single home for the trust filter; #499).")
+                    f"(single home for the trust filter; #499), and a PR "
+                    f"through files the job stages (#503).")
 
     for step in find_agent_steps(doc):
         name = step.get("name") or step.get("id") or "(unnamed step)"
@@ -298,7 +321,8 @@ def check_tool_grants(path):
                 f"{path}: agent step {name!r}'s claude_args grants "
                 f"{description} directly -- read the issue through "
                 f"wing-commander-issue-context instead (single home for "
-                f"the trust filter; #499).")
+                f"the trust filter; #499), and a PR through files the "
+                f"job stages (#503).")
     return problems
 
 
@@ -308,9 +332,11 @@ RAW_GIT_DENY = "Bash(git:*)"
 # The only Bash grants a read-only board-loop agent may hold. Each one was
 # checked to write nothing: the wrapper refuses git's --output (#513);
 # `cat` has no write option, and Claude Code denies a `>`/`>>` redirect
-# when Edit is denied (checked with 2.1.282); `gh pr view` only prints. A
-# new grant goes here only after the same check.
-READ_ONLY_BASH_GRANTS = (GIT_READ_GRANT, "Bash(cat:*)", "Bash(gh pr view:*)")
+# when Edit is denied (checked with 2.1.282). A new grant goes here only
+# after the same check. No `gh` command belongs here: `gh pr view N
+# --comments` returns every PR comment unfiltered (FR-056), so a read-only
+# agent reads the PR from files its job stages instead (#503).
+READ_ONLY_BASH_GRANTS = (GIT_READ_GRANT, "Bash(cat:*)")
 # The agent steps that must stay read-only. Any other tool-args site whose
 # allowed list has neither Write nor Edit is held to the same rules.
 READ_ONLY_STEP_LABELS = ("board-loop.triage-propose",
@@ -349,6 +375,12 @@ def _bash_grant_problems(text, where):
                 f"log/diff/show take --output=<path>, which writes a file, "
                 f"and an allow rule does not stop it (#513). Grant "
                 f"{GIT_READ_GRANT} instead.")
+        elif tokens and os.path.basename(tokens[0]) == "gh":
+            problems.append(
+                f"{where} grants {grant} to a read-only agent. `gh pr view "
+                f"--comments` and its kin return comments from anyone, "
+                f"unfiltered (FR-056); stage what the agent needs as a "
+                f"file in a deterministic step instead (#503).")
         else:
             problems.append(
                 f"{where} grants {grant} to a read-only agent, which is "
@@ -483,6 +515,145 @@ def check_read_only_git(path):
     if not os.path.isfile(GIT_READ_WRAPPER):
         problems.append(f"{GIT_READ_WRAPPER} is missing, but read-only "
                         f"board-loop agents are granted it.")
+    return problems
+
+
+REVIEWER_LABEL = "board-loop.reviewer"
+REVIEW_GATHER_ID = "gather"
+REVIEW_DIFF_BASENAME = "board-review-diff.txt"
+STAGING_DIR = "/tmp/wing-commander/"
+# A redirect target in the gather step's `run:` -- `> path`, `>> path`,
+# quoted or not.
+REDIRECT_TARGET_RE = re.compile(r">>?\s*(\"[^\"]+\"|'[^']+'|[^\s;|&]+)")
+STAGED_PATH_RE = re.compile(r"/tmp/wing-commander/[\w./-]*[\w-]")
+PROMPT_DIFF_PATH_RE = re.compile(
+    r"[^\s`'\"(]*" + re.escape(REVIEW_DIFF_BASENAME))
+PROMPT_GH_RE = re.compile(r"(?<![\w-])gh\s+(?:pr|issue|api|search)\b")
+
+
+def check_reviewer_staged_inputs(path):
+    """Gate 93 check 5 (#503): the job's gather step runs under
+    `set -euo pipefail`, fails on an empty diff, and writes each staged
+    file exactly once to a literal /tmp/wing-commander path; every prompt
+    token ending in one of those files' basenames is that exact path;
+    every staged path the prompt names is written there; and the prompt
+    never tells the agent to run gh."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh)
+    except yaml.YAMLError as exc:
+        return [f"{path}: could not parse as YAML ({exc})"]
+    jobs = doc.get("jobs") if isinstance(doc, dict) else None
+    if not isinstance(jobs, dict):
+        return [f"{path}: no jobs -- check 5 found nothing to check."]
+
+    found = []
+    for job_name, job in jobs.items():
+        steps = job.get("steps") if isinstance(job, dict) else None
+        if not isinstance(steps, list):
+            continue
+        tool_ids = set()
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            with_block = step.get("with") or {}
+            if (TOOL_ARGS_USES in str(step.get("uses") or "")
+                    and isinstance(with_block, dict)
+                    and with_block.get("step-label") == REVIEWER_LABEL
+                    and step.get("id")):
+                tool_ids.add(str(step["id"]))
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            if not str(step.get("uses") or "").startswith(AGENT_ACTION_PREFIX):
+                continue
+            with_block = step.get("with") or {}
+            if not isinstance(with_block, dict):
+                continue
+            refs = {m.group(1) for m in TOOL_ARGS_OUTPUT_RE.finditer(
+                str(with_block.get("claude_args") or ""))}
+            if refs & tool_ids:
+                found.append((job_name, steps, step, with_block))
+
+    if len(found) != 1:
+        return [f"{path}: expected exactly one agent step fed by the "
+                f"{REVIEWER_LABEL!r} tool-args site, found {len(found)} -- "
+                f"check 5 would pass without checking it."]
+    job_name, steps, agent, with_block = found[0]
+    where = f"{path}: job {job_name!r}"
+    problems = []
+
+    gather = [s for s in steps if isinstance(s, dict)
+              and s.get("id") == REVIEW_GATHER_ID]
+    if len(gather) != 1:
+        return [f"{where} has {len(gather)} steps with id "
+                f"{REVIEW_GATHER_ID!r}, want 1 -- the reviewer's staged "
+                f"inputs have no single writer."]
+    if steps.index(gather[0]) > steps.index(agent):
+        problems.append(f"{where}: the {REVIEW_GATHER_ID!r} step runs after "
+                        f"the reviewer, so nothing is staged when it reads.")
+    run = str(gather[0].get("run") or "")
+    first = next((ln.strip() for ln in run.splitlines() if ln.strip()), "")
+    if first != "set -euo pipefail":
+        problems.append(
+            f"{where}: the {REVIEW_GATHER_ID!r} step's run: starts with "
+            f"{first!r}, not `set -euo pipefail` -- a failed write would "
+            f"leave the reviewer an empty or missing file and the step "
+            f"green (#503 review).")
+    written = [m.group(1).strip("\"'") for m in REDIRECT_TARGET_RE.finditer(run)]
+    by_base = {}
+    for w in written:
+        by_base.setdefault(os.path.basename(w), []).append(w)
+    if REVIEW_DIFF_BASENAME not in by_base:
+        problems.append(f"{where}: the {REVIEW_GATHER_ID!r} step never "
+                        f"writes {REVIEW_DIFF_BASENAME}.")
+    for base, paths in sorted(by_base.items()):
+        if len(paths) != 1:
+            problems.append(f"{where}: the {REVIEW_GATHER_ID!r} step writes "
+                            f"{base} {len(paths)} times ({paths!r}), want "
+                            f"exactly once.")
+        for w in paths:
+            if not w.startswith(STAGING_DIR) or "$" in w:
+                problems.append(
+                    f"{where}: the {REVIEW_GATHER_ID!r} step writes {base} "
+                    f"to {w!r}, not a literal path under {STAGING_DIR} "
+                    f"(where wing-commander-issue-context stages, and the "
+                    f"agent's Read reaches; #503).")
+
+    diff_paths = by_base.get(REVIEW_DIFF_BASENAME, [])
+    if len(diff_paths) == 1:
+        guard = re.compile(
+            r"if \[ ! -s \"?" + re.escape(diff_paths[0]) + r"\"? \]; then\n"
+            r"(?:(?![ \t]*fi\b)[^\n]*\n){0,3}?[ \t]*exit [1-9]")
+        if not guard.search(run):
+            problems.append(
+                f"{where}: the {REVIEW_GATHER_ID!r} step does not fail on an "
+                f"empty {diff_paths[0]} (`if [ ! -s PATH ]; then ... exit "
+                f"1`). An empty diff makes the reviewer find nothing and "
+                f"readiness run on an unreviewed PR (#503 review).")
+
+    prompt = str(with_block.get("prompt") or "")
+    if not PROMPT_DIFF_PATH_RE.search(prompt):
+        problems.append(f"{where}: the reviewer prompt does not name "
+                        f"{REVIEW_DIFF_BASENAME} at all.")
+    for base, paths in sorted(by_base.items()):
+        token_re = re.compile(r"[^\s`'\"(]*" + re.escape(base))
+        for n in token_re.findall(prompt):
+            if len(paths) == 1 and n != paths[0]:
+                problems.append(
+                    f"{where}: the reviewer prompt names {base} at {n!r}, "
+                    f"but the {REVIEW_GATHER_ID!r} step writes {paths[0]!r} "
+                    f"-- the reviewer would read a missing file (#503).")
+    for n in sorted(set(STAGED_PATH_RE.findall(prompt))):
+        if n not in written:
+            problems.append(
+                f"{where}: the reviewer prompt names {n!r}, which the "
+                f"{REVIEW_GATHER_ID!r} step does not write (#503).")
+    for m in PROMPT_GH_RE.finditer(prompt):
+        problems.append(
+            f"{where}: the reviewer prompt tells the agent to run "
+            f"{m.group(0)!r}, but it has no gh grant; stage what it needs "
+            f"in the {REVIEW_GATHER_ID!r} step instead (#503).")
     return problems
 
 
@@ -790,6 +961,7 @@ def check_repo():
     problems.extend(check_tool_grants(BOARD_LOOP))
     problems.extend(check_spec_request_bodies(BOARD_LOOP))
     problems.extend(check_read_only_git(BOARD_LOOP))
+    problems.extend(check_reviewer_staged_inputs(BOARD_LOOP))
     for path in gather_scannable_files():
         problems.extend(check_single_home(path, ISSUE_CONTEXT_ACTION))
     return problems
@@ -1185,8 +1357,7 @@ def _read_only_fixture(allowed=_RO_ALLOWED, denied=_RO_DENIED,
             "    steps:\n"
             + site("board-loop.triage-propose", "tt", _RO_ALLOWED, _RO_DENIED)
             + site("board-loop.route-propose", "ta", allowed, denied)
-            + site("board-loop.reviewer", "tr",
-                   _RO_ALLOWED + ",Bash(gh pr view:*)", _RO_DENIED)
+            + site("board-loop.reviewer", "tr", _RO_ALLOWED, _RO_DENIED)
             + site("board-loop.fixer", "tf",
                    "Read,Write,Edit,Bash(git log:*),Bash(git commit:*)",
                    "WebFetch")
@@ -1221,6 +1392,13 @@ def _self_test_read_only_git(tmpdir):
         ("git by absolute path",
          _read_only_fixture(allowed=_RO_ALLOWED + ",Bash(/usr/bin/git show:*)"),
          "grants raw Bash(/usr/bin/git show:*)"),
+        ("Bash(gh pr view:*) grant (the #503 shape)",
+         _read_only_fixture(allowed=_RO_ALLOWED + ",Bash(gh pr view:*)"),
+         "grants Bash(gh pr view:*) to a read-only agent. `gh pr view"),
+        ("gh appended in claude_args",
+         _read_only_fixture(claude_allowed=(
+             '"${{ steps.ta.outputs.allowed-tools }},Bash(gh pr diff:*)"')),
+         "claude_args grants Bash(gh pr diff:*) to a read-only agent"),
         ("an unlisted Bash grant that can write",
          _read_only_fixture(allowed=_RO_ALLOWED + ",Bash(python3:*)"),
          "not in this gate's READ_ONLY_BASH_GRANTS"),
@@ -1419,11 +1597,21 @@ READ_ONLY_GIT_MUTATIONS = (
      '          default-disallowed-tools: "WebSearch,WebFetch,Write,Edit,'
      'Bash(git:*),Bash(git push:*),Bash(gh issue close:*)'),
     ("reviewer stops denying Bash(git:*)",
-     'Bash(gh pr view:*)"\n'
+     '"WebSearch,WebFetch,Write,Edit,Bash(git:*),Bash(git push:*),'
+     'Bash(git commit:*)"\n'
+     '          step-label: "board-loop.reviewer"',
+     '"WebSearch,WebFetch,Write,Edit,Bash(git push:*),'
+     'Bash(git commit:*)"\n'
+     '          step-label: "board-loop.reviewer"'),
+    ("reviewer regains Bash(gh pr view:*) (#503)",
+     f'"Read,Grep,Glob,{GIT_READ_GRANT},Bash(cat:*)"\n'
      '          default-disallowed-tools: "WebSearch,WebFetch,Write,Edit,'
-     'Bash(git:*),',
-     'Bash(gh pr view:*)"\n'
-     '          default-disallowed-tools: "WebSearch,WebFetch,Write,Edit,'),
+     'Bash(git:*),Bash(git push:*),Bash(git commit:*)"\n'
+     '          step-label: "board-loop.reviewer"',
+     f'"Read,Grep,Glob,{GIT_READ_GRANT},Bash(cat:*),Bash(gh pr view:*)"\n'
+     '          default-disallowed-tools: "WebSearch,WebFetch,Write,Edit,'
+     'Bash(git:*),Bash(git push:*),Bash(git commit:*)"\n'
+     '          step-label: "board-loop.reviewer"'),
     ("route agent's claude_args appends raw git",
      '--allowedTools "${{ steps.tool-args-route.outputs.allowed-tools }}"',
      '--allowedTools "${{ steps.tool-args-route.outputs.allowed-tools }},'
@@ -1454,6 +1642,64 @@ def _mutation_check_read_only_git():
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(original.replace(old, new, 1))
             if not check_read_only_git(path):
+                failures.append(f"mutation {label!r} was NOT caught")
+            else:
+                print(f"note: mutation caught ({label}).")
+    return failures
+
+
+# Each mutation rewrites the REAL board-loop.yml in memory the way a later
+# edit could reopen #503; check 5 must catch every one.
+REVIEWER_STAGING_MUTATIONS = (
+    ("prompt names the workspace parent again (the #503 shape)",
+     "diff is at\n            /tmp/wing-commander/board-review-diff.txt,",
+     "diff is at\n            ${{ github.workspace }}/../board-review-diff.txt,"),
+    ("gather writes the diff to $RUNNER_TEMP again",
+     "> /tmp/wing-commander/board-review-diff.txt; then",
+     '> "$RUNNER_TEMP/board-review-diff.txt"; then'),
+    ("gather writes the PR title/body somewhere the prompt does not name",
+     "> /tmp/wing-commander/board-review-pr.md; then",
+     "> /tmp/wing-commander/board-review-pr.txt; then"),
+    ("prompt names the PR file under runner.temp",
+     "title and body at\n            /tmp/wing-commander/board-review-pr.md,",
+     "title and body at\n            ${{ runner.temp }}/board-review-pr.md,"),
+    ("gather writes the commit list to $RUNNER_TEMP",
+     "> /tmp/wing-commander/board-review-commits.txt;",
+     '> "$RUNNER_TEMP/board-review-commits.txt";'),
+    ("gather drops -e (the fail-open shape)",
+     "          set -euo pipefail\n          if ! git fetch origin main",
+     "          set -uo pipefail\n          if ! git fetch origin main"),
+    ("gather drops the empty-diff check",
+     "          if [ ! -s /tmp/wing-commander/board-review-diff.txt ]; then\n",
+     "          if false; then\n"),
+    ("empty-diff check no longer exits",
+     "is empty -- refusing to review nothing.\"\n            exit 1\n",
+     "is empty -- refusing to review nothing.\"\n"),
+    ("prompt tells the reviewer to run gh pr view again",
+     "no `gh` access.",
+     "no `gh` access. Or run `gh pr view --comments`."),
+)
+
+
+def _mutation_check_reviewer_staging():
+    failures = []
+    try:
+        with open(BOARD_LOOP, encoding="utf-8") as fh:
+            original = fh.read()
+    except OSError as exc:
+        return [f"mutation check: could not read {BOARD_LOOP}: {exc}"]
+    with tempfile.TemporaryDirectory() as tmpdir:
+        for label, old, new in REVIEWER_STAGING_MUTATIONS:
+            if original.count(old) != 1:
+                failures.append(
+                    f"mutation {label!r} no longer applies ({old!r} is not "
+                    f"in {BOARD_LOOP} exactly once) -- update "
+                    f"REVIEWER_STAGING_MUTATIONS so this gate stays proven.")
+                continue
+            path = os.path.join(tmpdir, "board-loop-mutated.yml")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(original.replace(old, new, 1))
+            if not check_reviewer_staged_inputs(path):
                 failures.append(f"mutation {label!r} was NOT caught")
             else:
                 print(f"note: mutation caught ({label}).")
@@ -1498,10 +1744,9 @@ def run_self_test():
         # (both unrestricted -- authorize every gh subcommand among
         # everything else), and a literal grant appended directly inside
         # an agent step's own claude_args --allowedTools text rather than
-        # through the tool-args composite at all. Each must be caught,
-        # and the legitimate Bash(gh pr view:*) grant alongside them must
-        # NOT be (reviewer keeps it; #499 round 4 explicitly carves it
-        # out, a separate issue tracks removing it).
+        # through the tool-args composite at all, and (#503) a
+        # Bash(gh pr view:*) grant, which reads PR comments unfiltered.
+        # Each must be caught.
         bypass_path = os.path.join(tmpdir, "gate-93-fixture-bypass.yml")
         with open(bypass_path, "w", encoding="utf-8") as fh:
             fh.write(
@@ -1538,6 +1783,7 @@ def run_self_test():
         bypass_problems = check_tool_grants(bypass_path)
         joined_bypass = " ".join(bypass_problems)
         expect_all = ("gh issue:*", "gh:*", "gh*", "gh *", "gh issue view:*",
+                      "gh pr view:*",
                       "bare Bash grant (unrestricted, no argument at all",
                       "Bash(*) (unrestricted")
         missing = [e for e in expect_all if e not in joined_bypass]
@@ -1545,15 +1791,10 @@ def run_self_test():
             failures.append(
                 f"fixture 1b did not catch all bypasses -- missing "
                 f"{missing!r}: {bypass_problems!r}")
-        if "gh pr view" in joined_bypass:
-            failures.append(
-                f"fixture 1b's legitimate Bash(gh pr view:*) grant "
-                f"(reviewer's, carved out by #499 round 4) was wrongly "
-                f"flagged: {bypass_problems!r}")
-        if not missing and "gh pr view" not in joined_bypass:
+        if not missing:
             print(f"note: fixture 1b (bare/open-in-every-spelling/bare-"
-                  f"Bash/claude_args-appended bypasses) caught, gh pr "
-                  f"view left alone: {bypass_problems}")
+                  f"Bash/claude_args-appended/gh pr view bypasses) "
+                  f"caught: {bypass_problems}")
 
         # Fixture 2: a second file re-implementing all three trust-filter
         # fragments.
@@ -1593,6 +1834,7 @@ def run_self_test():
     failures.extend(_mutation_check_spec_request_sites())
     failures.extend(_self_test_git_read_wrapper())
     failures.extend(_mutation_check_read_only_git())
+    failures.extend(_mutation_check_reviewer_staging())
 
     # Re-confirm the real fleet still passes, so a self-test fixture
     # leaking into the real check cannot read as green.
@@ -1619,12 +1861,13 @@ def main():
         print(f"Gate 93: {len(real_problems)} problem(s).")
         return 1
     print("Gate 93: board-loop.yml grants no agent step gh issue view/gh "
-          "api, wing-commander-issue-context's trust filter has exactly "
+          "api/gh pr, wing-commander-issue-context's trust filter has exactly "
           "one home, and every spec-request board-loop.yml files takes "
           "its body from board_spec_request_body.py with the "
           "composite's context-file as its fallback. Its read-only agents "
           "get git only through board_git_read.py, with Bash(git:*), Write "
-          "and Edit denied.")
+          "and Edit denied. The reviewer prompt names only files its "
+          "gather step writes.")
 
     if not self_test:
         return 0
@@ -1642,8 +1885,9 @@ def main():
           "trust-filtered fallback, every raw-git or missing-deny grant "
           "to a read-only agent, and every mutation of the real "
           "sites) was caught, board_git_read.py refused every --output "
-          "spelling, the legitimate gh pr view grant, the "
-          "exempt file and the well-formed site were left alone, the "
+          "spelling, the exempt file and the well-formed site were "
+          "left alone, every mutation of the reviewer's staged inputs "
+          "was caught, the "
           "spec-request body builder passed its unit tests, and the "
           "real fleet passes.")
     return 0
