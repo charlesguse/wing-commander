@@ -134,11 +134,16 @@ WHAT IT CHECKS
    /home/runner/work/_temp, not the workspace's parent), so the reviewer
    was pointed at a missing file and fell back to `gh pr view`. In the
    job whose agent step is fed by the `board-loop.reviewer` tool-args
-   site, the step with id `gather` must write the diff to exactly one
-   literal path under /tmp/wing-commander/, and the prompt must name that
-   path and no other `board-review-diff.txt`. Every /tmp/wing-commander/
-   path the prompt names must be one the gather step writes, and the
-   prompt must not tell the agent to run `gh`.
+   site, the step with id `gather` must start `set -euo pipefail`, fail
+   (`if [ ! -s PATH ]; then ... exit 1`) on an empty diff -- an empty
+   diff makes the reviewer find nothing and readiness run on an
+   unreviewed PR -- and write each file it stages exactly once, to a
+   literal path under /tmp/wing-commander/. Every prompt token ending in
+   one of those files' basenames must be that exact path, so a prompt
+   naming `${{ runner.temp }}/board-review-pr.md` fails as the workspace-
+   parent diff path did. Every /tmp/wing-commander/ path the prompt names
+   must be one the gather step writes, and the prompt must not tell the
+   agent to run `gh`.
 
 `--self-test`: synthetic tempdir fixtures prove each check can fail (a
 board-loop tool-args grant carrying `gh issue view`, a second file
@@ -527,9 +532,11 @@ PROMPT_GH_RE = re.compile(r"(?<![\w-])gh\s+(?:pr|issue|api|search)\b")
 
 
 def check_reviewer_staged_inputs(path):
-    """Gate 93 check 5 (#503): the diff path the reviewer prompt names is
-    the literal /tmp/wing-commander path its job's gather step writes,
-    every staged path the prompt names is written there, and the prompt
+    """Gate 93 check 5 (#503): the job's gather step runs under
+    `set -euo pipefail`, fails on an empty diff, and writes each staged
+    file exactly once to a literal /tmp/wing-commander path; every prompt
+    token ending in one of those files' basenames is that exact path;
+    every staged path the prompt names is written there; and the prompt
     never tells the agent to run gh."""
     try:
         with open(path, encoding="utf-8") as fh:
@@ -585,32 +592,58 @@ def check_reviewer_staged_inputs(path):
     if steps.index(gather[0]) > steps.index(agent):
         problems.append(f"{where}: the {REVIEW_GATHER_ID!r} step runs after "
                         f"the reviewer, so nothing is staged when it reads.")
-    written = [m.group(1).strip("\"'") for m in
-               REDIRECT_TARGET_RE.finditer(str(gather[0].get("run") or ""))]
-    diff_written = [w for w in written if w.endswith(REVIEW_DIFF_BASENAME)]
-    if len(diff_written) != 1:
-        problems.append(f"{where}: the {REVIEW_GATHER_ID!r} step writes "
-                        f"{REVIEW_DIFF_BASENAME} {len(diff_written)} times "
-                        f"({diff_written!r}), want exactly once.")
-    for w in diff_written:
-        if not w.startswith(STAGING_DIR) or "$" in w:
+    run = str(gather[0].get("run") or "")
+    first = next((ln.strip() for ln in run.splitlines() if ln.strip()), "")
+    if first != "set -euo pipefail":
+        problems.append(
+            f"{where}: the {REVIEW_GATHER_ID!r} step's run: starts with "
+            f"{first!r}, not `set -euo pipefail` -- a failed write would "
+            f"leave the reviewer an empty or missing file and the step "
+            f"green (#503 review).")
+    written = [m.group(1).strip("\"'") for m in REDIRECT_TARGET_RE.finditer(run)]
+    by_base = {}
+    for w in written:
+        by_base.setdefault(os.path.basename(w), []).append(w)
+    if REVIEW_DIFF_BASENAME not in by_base:
+        problems.append(f"{where}: the {REVIEW_GATHER_ID!r} step never "
+                        f"writes {REVIEW_DIFF_BASENAME}.")
+    for base, paths in sorted(by_base.items()):
+        if len(paths) != 1:
+            problems.append(f"{where}: the {REVIEW_GATHER_ID!r} step writes "
+                            f"{base} {len(paths)} times ({paths!r}), want "
+                            f"exactly once.")
+        for w in paths:
+            if not w.startswith(STAGING_DIR) or "$" in w:
+                problems.append(
+                    f"{where}: the {REVIEW_GATHER_ID!r} step writes {base} "
+                    f"to {w!r}, not a literal path under {STAGING_DIR} "
+                    f"(where wing-commander-issue-context stages, and the "
+                    f"agent's Read reaches; #503).")
+
+    diff_paths = by_base.get(REVIEW_DIFF_BASENAME, [])
+    if len(diff_paths) == 1:
+        guard = re.compile(
+            r"if \[ ! -s \"?" + re.escape(diff_paths[0]) + r"\"? \]; then\n"
+            r"(?:(?![ \t]*fi\b)[^\n]*\n){0,3}?[ \t]*exit [1-9]")
+        if not guard.search(run):
             problems.append(
-                f"{where}: the {REVIEW_GATHER_ID!r} step writes the diff to "
-                f"{w!r}, not a literal path under {STAGING_DIR} (where "
-                f"wing-commander-issue-context stages, and the agent's Read "
-                f"reaches; #503).")
+                f"{where}: the {REVIEW_GATHER_ID!r} step does not fail on an "
+                f"empty {diff_paths[0]} (`if [ ! -s PATH ]; then ... exit "
+                f"1`). An empty diff makes the reviewer find nothing and "
+                f"readiness run on an unreviewed PR (#503 review).")
 
     prompt = str(with_block.get("prompt") or "")
-    named = PROMPT_DIFF_PATH_RE.findall(prompt)
-    if not named:
+    if not PROMPT_DIFF_PATH_RE.search(prompt):
         problems.append(f"{where}: the reviewer prompt does not name "
                         f"{REVIEW_DIFF_BASENAME} at all.")
-    for n in named:
-        if diff_written and n != diff_written[0]:
-            problems.append(
-                f"{where}: the reviewer prompt names the diff at {n!r}, but "
-                f"the {REVIEW_GATHER_ID!r} step writes {diff_written[0]!r} "
-                f"-- the reviewer would read a missing file (#503).")
+    for base, paths in sorted(by_base.items()):
+        token_re = re.compile(r"[^\s`'\"(]*" + re.escape(base))
+        for n in token_re.findall(prompt):
+            if len(paths) == 1 and n != paths[0]:
+                problems.append(
+                    f"{where}: the reviewer prompt names {base} at {n!r}, "
+                    f"but the {REVIEW_GATHER_ID!r} step writes {paths[0]!r} "
+                    f"-- the reviewer would read a missing file (#503).")
     for n in sorted(set(STAGED_PATH_RE.findall(prompt))):
         if n not in written:
             problems.append(
@@ -1622,11 +1655,26 @@ REVIEWER_STAGING_MUTATIONS = (
      "diff is at\n            /tmp/wing-commander/board-review-diff.txt,",
      "diff is at\n            ${{ github.workspace }}/../board-review-diff.txt,"),
     ("gather writes the diff to $RUNNER_TEMP again",
-     "> /tmp/wing-commander/board-review-diff.txt\n",
-     '> "$RUNNER_TEMP/board-review-diff.txt"\n'),
+     "> /tmp/wing-commander/board-review-diff.txt; then",
+     '> "$RUNNER_TEMP/board-review-diff.txt"; then'),
     ("gather writes the PR title/body somewhere the prompt does not name",
-     "> /tmp/wing-commander/board-review-pr.md\n",
-     "> /tmp/wing-commander/board-review-pr.txt\n"),
+     "> /tmp/wing-commander/board-review-pr.md; then",
+     "> /tmp/wing-commander/board-review-pr.txt; then"),
+    ("prompt names the PR file under runner.temp",
+     "title and body at\n            /tmp/wing-commander/board-review-pr.md,",
+     "title and body at\n            ${{ runner.temp }}/board-review-pr.md,"),
+    ("gather writes the commit list to $RUNNER_TEMP",
+     "> /tmp/wing-commander/board-review-commits.txt;",
+     '> "$RUNNER_TEMP/board-review-commits.txt";'),
+    ("gather drops -e (the fail-open shape)",
+     "          set -euo pipefail\n          if ! git fetch origin main",
+     "          set -uo pipefail\n          if ! git fetch origin main"),
+    ("gather drops the empty-diff check",
+     "          if [ ! -s /tmp/wing-commander/board-review-diff.txt ]; then\n",
+     "          if false; then\n"),
+    ("empty-diff check no longer exits",
+     "is empty -- refusing to review nothing.\"\n            exit 1\n",
+     "is empty -- refusing to review nothing.\"\n"),
     ("prompt tells the reviewer to run gh pr view again",
      "no `gh` access.",
      "no `gh` access. Or run `gh pr view --comments`."),

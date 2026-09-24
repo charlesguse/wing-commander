@@ -1917,28 +1917,62 @@ jobs:
       # about the PR is staged here as a file. `gh pr view N --comments`
       # would return every PR comment unfiltered (FR-056), and the
       # reviewer's in-scope findings drive review-fixup, which commits.
-      # Only the PR's title and body are staged -- this loop's fixer wrote
-      # them and only a maintainer can edit them; the PR conversation is
-      # deliberately not staged. Written under /tmp/wing-commander, the
-      # same place wing-commander-issue-context stages its file (see that
-      # action's header), never $RUNNER_TEMP (/home/runner/work/_temp,
-      # which the prompt once named as the workspace's parent and so
-      # pointed the reviewer at a missing file) and never inside the
-      # checkout. Gate 93 check 5 holds every path the reviewer prompt
-      # names to one this step writes.
+      # Only the PR's title and body are staged, and neither admits text
+      # the issue-context trust filter would drop: the fixer titles the PR
+      # `Fix #N: <issue title>`, and the issue's own title and body are in
+      # the context file already (its author is trusted there); anyone who
+      # can edit the PR's title or body afterwards has write access, i.e.
+      # is a COLLABORATOR, whom that filter also trusts. The PR
+      # conversation is deliberately not staged. Written under
+      # /tmp/wing-commander, the same place wing-commander-issue-context
+      # stages its file (see that action's header), never $RUNNER_TEMP
+      # (/home/runner/work/_temp, which the prompt once named as the
+      # workspace's parent and so pointed the reviewer at a missing file)
+      # and never inside the checkout. Gate 93 check 5 holds every path
+      # the reviewer prompt names to one this step writes.
+      #
+      # Fails closed (Gate 93 check 5 holds `set -euo pipefail` and the
+      # empty-diff check): an empty diff would make the reviewer find
+      # nothing, the round converge, and readiness run on an unreviewed
+      # PR. The diff is built from the checkout (fetch-depth: 0) against
+      # a freshly fetched origin/main, three-dot so main's own later
+      # commits never show up as reversed changes, and no API call (a
+      # 5xx, a 429, or a 406 "diff too large") can empty it. A failure
+      # here fails the job, so readiness (needs.review.result ==
+      # 'success') does not run; no later step is stranded, since each is
+      # either gated on success or on the reviewer having run, and none
+      # has anything to record or act on when no agent ran. The next run
+      # resumes this round from the marker.
       - name: Gather review inputs (diff, commit messages, PR title/body)
         id: gather
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           PR_NUMBER: ${{ steps.pr.outputs.pr-number }}
         run: |
-          set -uo pipefail
+          set -euo pipefail
+          if ! git fetch origin main --quiet; then
+            echo "::error::wing-commander board-loop review: could not fetch origin/main for PR #$PR_NUMBER's review diff."
+            exit 1
+          fi
           mkdir -p /tmp/wing-commander
-          gh pr diff "$PR_NUMBER" -R "$GITHUB_REPOSITORY" > /tmp/wing-commander/board-review-diff.txt
-          git log origin/main..HEAD --format='%H %s' > /tmp/wing-commander/board-review-commits.txt
-          gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json number,title,body,author \
+          if ! git diff origin/main...HEAD > /tmp/wing-commander/board-review-diff.txt; then
+            echo "::error::wing-commander board-loop review: could not build PR #$PR_NUMBER's diff against origin/main."
+            exit 1
+          fi
+          if [ ! -s /tmp/wing-commander/board-review-diff.txt ]; then
+            echo "::error::wing-commander board-loop review: PR #$PR_NUMBER's diff against origin/main is empty -- refusing to review nothing."
+            exit 1
+          fi
+          if ! git log origin/main..HEAD --format='%H %s' > /tmp/wing-commander/board-review-commits.txt; then
+            echo "::error::wing-commander board-loop review: could not list PR #$PR_NUMBER's commits."
+            exit 1
+          fi
+          if ! gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json number,title,body,author \
             --jq '"# PR #\(.number): \(.title)\n\nAuthor: @\(.author.login)\n\n\(.body)"' \
-            > /tmp/wing-commander/board-review-pr.md
+            > /tmp/wing-commander/board-review-pr.md; then
+            echo "::error::wing-commander board-loop review: could not stage PR #$PR_NUMBER's title and body."
+            exit 1
+          fi
 
       # #499 code review (round 3, B1): replaces this job's own inline
       # `gh issue view ... --json body` (round 2's fix, body-only) with the
@@ -1996,7 +2030,7 @@ jobs:
             /tmp/wing-commander/board-review-pr.md, and this branch's commits
             (sha and subject) at /tmp/wing-commander/board-review-commits.txt.
             To look further, run
-            `python3 .github/scripts/board_git_read.py diff origin/main..HEAD`
+            `python3 .github/scripts/board_git_read.py diff origin/main...HEAD`
             (or its log/show; plain `git` is denied, and that script runs
             only log, diff and show). Read the originating issue at
             ${{ steps.issue-context-review.outputs.context-file }} (its own
