@@ -50,7 +50,8 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from board_eligibility import classify_issue, in_flight_candidate, select  # noqa: E402
+from board_eligibility import (  # noqa: E402
+    AWAITING_MERGE_STEP, FIX_OR_LATER_STEPS, classify_issue, in_flight_candidate, select)
 
 FIXTURES_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "tests", "board-eligibility")
@@ -204,6 +205,20 @@ def run():
             else:
                 print("[ok] in-flight/{0}: select() == {1!r} (oldest-first "
                       "fallback)".format(case, selected))
+
+    # #532: the select job's PR-state lookup pass resolves only PRs named
+    # by FIX_OR_LATER_STEPS markers. Without awaiting-merge in that set,
+    # _awaiting_merge_holds() only ever sees an unknown state and a
+    # handed-over item drops off the board forever, even after its PR
+    # closes. (Gate 97 also runs the workflow's lookup heredoc itself.)
+    if AWAITING_MERGE_STEP not in FIX_OR_LATER_STEPS:
+        failures += 1
+        print("::error::verify-board-eligibility: AWAITING_MERGE_STEP is not in "
+              "FIX_OR_LATER_STEPS -- the select job would never look up an "
+              "awaiting-merge marker's PR, so the item could never become "
+              "eligible again (#532).")
+    else:
+        print("[ok] AWAITING_MERGE_STEP is in FIX_OR_LATER_STEPS (select looks up its PR)")
 
     print("verify-board-eligibility: {0} failure(s).".format(failures))
     return 1 if failures else 0

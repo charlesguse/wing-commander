@@ -485,8 +485,11 @@ jobs:
               if not pr_from_marker:
                   pr_number = ""
                   pr_state = ""
-              note = "recorded pr {0} is awaiting a human merge ({1}) -- nothing to do this run".format(
-                  marker_pr_field, pr_state or "state unresolved")
+              if marker_pr_field:
+                  note = "recorded pr {0} is awaiting a human merge ({1}) -- nothing to do this run".format(
+                      marker_pr_field, pr_state or "state unresolved")
+              else:
+                  note = "awaiting-merge marker records no pr -- nothing to do this run"
           elif pr_from_marker and marker_step and (
               marker_step in PRE_FIX_STEPS
               or (marker_step in FIX_OR_LATER_STEPS and pr_state == "OPEN")
