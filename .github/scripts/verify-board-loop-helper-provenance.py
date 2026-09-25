@@ -35,11 +35,14 @@ In each of fix, review and readiness:
      directory; a block that imports a board_*, wc_* or verify module must
      make that insert; a spec_from_file_location path must be under the
      snapshot; and PYTHONPATH, runpy, __import__,
-     importlib.import_module, exec (with or without a space before the
-     parenthesis), the site module (import site, site.addsitedir),
+     importlib.import_module, exec, eval and compile (with or without a
+     space before the parenthesis), the site module (import site,
+     site.addsitedir),
      sys.executable (a child interpreter started without -I) and os.chdir
      are refused. The working tree's .github/scripts must not be named at
-     all.
+     all. The interpreter and refused-pattern checks skip whole-line `#`
+     comments (shell, or Python after indentation): a comment never runs,
+     and prose such as "the python heredoc below" would otherwise trip them.
 Then it runs the real snapshot step in a scratch git repository whose
 working tree differs from the commit: the copy must hold the commit's
 content, not the working tree's, and must be read-only.
@@ -85,11 +88,16 @@ ALLOWED_SYS_PATH = (
     "sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts'))",
     'sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))',
 )
+# A whole-line comment in shell or Python: `#` after optional indentation.
+# A trailing comment after code is left in place, so no code is hidden.
+COMMENT_LINE_RE = re.compile(r"^[ \t]*#[^\n]*$", re.MULTILINE)
 HELPER_IMPORT_RE = re.compile(r"\b(?:from|import)\s+(?:board_|wc_|verify)\w*")
 FORBIDDEN = ("PYTHONPATH", "runpy", "__import__", "import_module", "os.chdir")
 # (pattern, what the problem names) -- spellings a plain substring misses.
 FORBIDDEN_RES = (
     (re.compile(r"\bexec\s*\("), "exec("),
+    (re.compile(r"\beval\s*\("), "eval("),
+    (re.compile(r"\bcompile\s*\("), "compile("),
     (re.compile(r"\baddsitedir\b"), "site.addsitedir"),
     (re.compile(r"\bsite[ \t]*\.[ \t]*[A-Za-z_]"), "the site module"),
     (re.compile(r"\b(?:import|from)[ \t]+(?:[\w.]+[ \t]*(?:as[ \t]+\w+[ \t]*)?,[ \t]*)*site\b"),
@@ -102,9 +110,10 @@ def run_problems(run, is_gate_suite):
     """Allowlist problems for one run: block (see WHAT IT CHECKS, 3)."""
     problems = []
     scan = run.replace(GATE_SUITE_CALL, "") if is_gate_suite else run
-    for m in PYTHON_CALL_RE.finditer(scan):
+    code = COMMENT_LINE_RE.sub("", scan)
+    for m in PYTHON_CALL_RE.finditer(code):
         if (m.group("prefix") is not None or m.group("name") != ALLOWED_PYTHON_NAME
-                or scan[m.start() - 1:m.start()] == "/"):
+                or code[m.start() - 1:m.start()] == "/"):
             problems.append("python interpreter not spelled `python3` (no path, no "
                             "version): {0!r}".format(m.group(0)[:80]))
         elif not ALLOWED_PYTHON_ARGS_RE.match(m.group("args")):
@@ -127,7 +136,7 @@ def run_problems(run, is_gate_suite):
         if token in scan:
             problems.append("uses {0}".format(token))
     for pattern, what in FORBIDDEN_RES:
-        if pattern.search(scan):
+        if pattern.search(code):
             problems.append("uses {0}".format(what))
     if WORKTREE_SCRIPTS_RE.search(scan):
         problems.append("names the working tree's .github/scripts")
@@ -299,6 +308,33 @@ mut_from_site = _heredoc_append("from site import addsitedir as a; a('.')")
 mut_import_site = _heredoc_append("import os, site")
 mut_sys_executable = _heredoc_append(
     "import subprocess; subprocess.run([sys.executable, '-c', 'import helper'])")
+mut_eval = _heredoc_append('eval (compile_src)')
+mut_compile = _heredoc_append('code = compile(open("helper.py").read(), "h", "exec")')
+
+# Comment prose that tripped the pattern checks before comments were
+# skipped. Each must pass as a comment and still be caught as code.
+COMMENT_PROSE = (
+    "data copied from site config",
+    "sys.executable is not used here",
+    "the python heredoc below",
+    "exec (it) and eval (it) and compile (it) are not used here",
+)
+
+
+def comment_case_failures():
+    failures = []
+    for prose in COMMENT_PROSE:
+        for indent in ("", "          "):
+            comment = "echo start\n{0}# {1}\necho done\n".format(indent, prose)
+            got = run_problems(comment, False)
+            if got:
+                failures.append("comment {0!r} (indent {1}) trips the gate: {2}".format(
+                    prose, len(indent), got[0]))
+        if not run_problems("echo start\n{0}\necho done\n".format(prose), False):
+            failures.append("the same text as code is not caught: {0!r}".format(prose))
+        else:
+            print("note: comment skipped, code caught: {0!r}".format(prose))
+    return failures
 
 
 def _job_steps(doc, job_id):
@@ -358,6 +394,8 @@ MUTATIONS = [
     ("from site import addsitedir", mut_from_site, False, "site"),
     ("import os, site", mut_import_site, False, "uses the site module"),
     ("subprocess.run([sys.executable, ...])", mut_sys_executable, False, "uses sys.executable"),
+    ("eval (...)", mut_eval, False, "uses eval("),
+    ("compile(...)", mut_compile, False, "uses compile("),
     ("readiness's snapshot step is removed", mut_snapshot_dropped, True, None),
     ("the review job's snapshot is taken after the reviewer agent", mut_snapshot_after_agent, True, None),
     ("the snapshot copies the working tree instead of $GITHUB_SHA", mut_snapshot_from_worktree, False,
@@ -380,6 +418,7 @@ def main():
         if self_test:
             if base:
                 failures += ["the shipped workflow already fails: {0}".format(p) for p in base]
+            failures += comment_case_failures()
             for label, mutate, on_doc, expect in MUTATIONS:
                 doc = mutate(yaml.safe_load(text)) if on_doc else yaml.safe_load(mutate(text))
                 caught = check(doc, bash, tmproot)
@@ -407,7 +446,8 @@ def main():
     if failures:
         return 1
     if self_test:
-        print("Gate 98 self-test: {0} mutation(s), each caught.".format(len(MUTATIONS)))
+        print("Gate 98 self-test: {0} mutation(s), each caught; {1} comment case(s) "
+              "skipped as comments and caught as code.".format(len(MUTATIONS), len(COMMENT_PROSE)))
     else:
         print("Gate 98: fix, review and readiness import helpers only from the "
               "pristine $GITHUB_SHA snapshot, taken before any agent runs.")
