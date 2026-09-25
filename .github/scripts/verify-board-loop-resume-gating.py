@@ -108,6 +108,28 @@ and resume's meaning unchanged (falls to the fallback, then branch, then
 triage) and the step succeeds; a 500, a failed fallback search, or
 ls-remote exit 128 fails the step with `::error::` and no decision output.
 
+WHAT IT CHECKS (#530)
+---------------------
+A failed spec-request create at fix's post-push breach must be retried,
+not reviewed. Before #530 the breach wrote no marker before the create
+(push-pr's step=review marker is never posted on a breach), so the newest
+marker stayed triage's step=route. The next run's resume adopted the open
+PR through the board:owned fallback as step=review, and the reviewer ran
+on a PR the size check had already rejected. Now:
+  - fix's post-push-breach step posts a board_eligibility.BREACH_STEP
+    marker (with the PR) before its `gh issue create` (static);
+  - BREACH_STEP is in FIX_OR_LATER_STEPS, so select looks up its PR
+    (executed, select lookup), and resume resolves it to step=breach --
+    also when only the board:owned fallback finds the PR, never review
+    (executed, RESUME_CASES);
+  - readiness, never review, runs on step=breach (simulated), and its
+    backstop step is forced to breach there with breach-retry=true
+    whatever the fresh measure says (executed on an empty diff);
+  - the retry looks for a spec-request already filed first: a lookup
+    step gated on breach-retry feeds report-unmet's EXISTING_SPEC_URL,
+    which report-unmet reuses in place of a create (static), and the
+    lookup's BREACH_SPEC_REQUEST_JQ is run on SPEC_REQUEST_CASES.
+
 --self-test mutates the shipped workflow text (drops `!cancelled()`, a
 result guard, the breach exclusion, the breach output, restores main's
 pre-#525 conditions, ...) and asserts every mutation fails.
@@ -664,6 +686,16 @@ SCENARIOS = [
      {"fail": ("resolve-model",),
       "outputs": {"select": _item("review", pr="42", branch="board/396")}},
      ("select", "resolve-model")),
+    # #530: fix's post-push breach posted step=breach, then its spec-request
+    # create failed. The next run retries the spec-request in readiness's
+    # forced-breach path; the oversized PR is never reviewed.
+    ("resume after a failed post-push breach create (step=breach) -> no review (#530)",
+     {"outputs": {"select": _item("breach", pr="42", branch="fix/396-board-item")}},
+     ("select", "resolve-model", "readiness")),
+    ("resume step=breach, board paused (#530)",
+     {"vars": {"WING_COMMANDER_BOARD_LOOP_PAUSED": "true"},
+      "outputs": {"select": _item("breach", pr="42", branch="fix/396-board-item")}},
+     ("select", "resolve-model")),
 ]
 
 
@@ -796,6 +828,27 @@ RESUME_CASES = [
     ("awaiting-merge, PR OPEN not board:owned -> no-op, PR not passed on (#555)",
      _resume_env("awaiting-merge", "42", True, "OPEN", "42", pr_owned=False),
      {"step": "awaiting-merge", "recovered_via_fallback": False, "pr_number": ""}),
+    # #530: a step=breach marker (fix's post-push breach, spec-request not
+    # yet filed) resumes at breach -- never review, even when only the
+    # board:owned fallback finds its PR.
+    ("breach, PR OPEN -> breach, never review (#530)",
+     _resume_env("breach", "42", True, "OPEN", "42"),
+     {"step": "breach", "pr_number": "42", "recovered_via_fallback": False}),
+    ("breach, PR unresolved, board:owned fallback PR found -> breach, never review (#530)",
+     _resume_env("breach", "42", False, "OPEN", "42", from_fallback=True),
+     {"step": "breach", "pr_number": "42"}),
+    ("breach, PR CLOSED -> triage, FR-022 cleared (#530)",
+     _resume_env("breach", "42", True, "CLOSED", "42"),
+     dict(_CLEARED, step="triage")),
+    ("breach, PR OPEN not board:owned -> no-op hold (#530, #555)",
+     _resume_env("breach", "42", True, "OPEN", "42", pr_owned=False),
+     dict(_CLEARED, step="awaiting-merge")),
+    # The pre-#530 shape of the same item (step=route newest, the breach's
+    # PR found by the fallback) still resolves to review: the retry needs
+    # the breach marker, which fix now posts before its create.
+    ("regression: route marker, board:owned fallback PR -> review",
+     _resume_env("route", "", False, "OPEN", "42", from_fallback=True, branch=""),
+     {"step": "review", "pr_number": "42", "recovered_via_fallback": True}),
 ]
 
 # #555: the resume step's PR-ownership jq, run on these PR payloads
@@ -928,7 +981,8 @@ def select_lookup_findings(doc, scripts_root=ROOT):
 
     comments = {"1": [marker("awaiting-merge", 42)], "2": [marker("review", 43)],
                 "3": [marker("route", None)],
-                "4": [marker("review", 44, {"login": "outsider", "type": "User"})]}
+                "4": [marker("review", 44, {"login": "outsider", "type": "User"})],
+                "5": [marker("breach", 45)]}
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "comments.json")
         with open(path, "w", encoding="utf-8") as fh:
@@ -949,6 +1003,161 @@ def select_lookup_findings(doc, scripts_root=ROOT):
     if "44" in listed:
         findings.append("select: pr_numbers_to_check lists a PR named by a marker another "
                         "author posted (#555)")
+    if "45" not in listed:
+        findings.append(
+            "select: pr_numbers_to_check does not list a breach marker's PR -- the item is "
+            "then never in-flight and resume cannot confirm its PR is open (BREACH_STEP must "
+            "stay in FIX_OR_LATER_STEPS, #530)")
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# #530: a failed post-push-breach spec-request create is retried in
+# readiness's forced-breach path, never reviewed, and the retry reuses a
+# spec-request that create already filed.
+# ---------------------------------------------------------------------------
+
+_SERVER_REPO = "https://github.com/example/wing-commander"
+_FOOTER = "Originating issue: {0}/issues/396".format(_SERVER_REPO)
+
+
+def _spec_request(body, login=BOT_LOGIN, type_="Bot", created="2026-01-05T00:00:00Z",
+                  url="{0}/issues/900".format(_SERVER_REPO)):
+    return {"html_url": url, "created_at": created, "body": body,
+            "user": {"login": login, "type": type_}}
+
+
+_FIX_NOTICE = ("The fix at {0}/pull/42 grew past the board's size-and-path backstop "
+               "on its final diff (measured={{}}).\n\nNo drafted body.\n\n---\n{1}").format(
+                   _SERVER_REPO, _FOOTER)
+_READINESS_NOTICE = ("PR #42 grew past the board's size-and-path backstop by readiness time."
+                     "\n\nNo drafted body.\n\n---\n{0}").format(_FOOTER)
+
+# (title, issues listing, expected html_url or "") -- BREACH_SPEC_REQUEST_JQ
+# run with bot=BOT_LOGIN, footer=_FOOTER, pr=42.
+SPEC_REQUEST_CASES = [
+    ("fix's post-push-breach spec-request for PR 42", [_spec_request(_FIX_NOTICE)],
+     _SERVER_REPO + "/issues/900"),
+    ("readiness's breach spec-request for PR 42", [_spec_request(_READINESS_NOTICE)],
+     _SERVER_REPO + "/issues/900"),
+    ("nothing filed yet", [], ""),
+    ("same text, posted by someone else",
+     [_spec_request(_FIX_NOTICE, login="outsider", type_="User")], ""),
+    ("same login, not a Bot", [_spec_request(_FIX_NOTICE, type_="User")], ""),
+    ("another PR (420)", [_spec_request(_FIX_NOTICE.replace("/pull/42 ", "/pull/420 "))], ""),
+    ("another issue's footer (3960)",
+     [_spec_request(_FIX_NOTICE.replace("/issues/396", "/issues/3960"))], ""),
+    ("footer only quoted inside a line",
+     [_spec_request(_FIX_NOTICE.replace("\n" + _FOOTER, "\n> " + _FOOTER))], ""),
+    ("two filed -> the oldest",
+     [_spec_request(_FIX_NOTICE, created="2026-01-06T00:00:00Z", url=_SERVER_REPO + "/issues/902"),
+      _spec_request(_FIX_NOTICE, created="2026-01-05T00:00:00Z", url=_SERVER_REPO + "/issues/901")],
+     _SERVER_REPO + "/issues/901"),
+]
+
+
+def _step(doc, job, step_id):
+    for s in ((doc.get("jobs") or {}).get(job) or {}).get("steps") or []:
+        if isinstance(s, dict) and s.get("id") == step_id:
+            return s
+    return {}
+
+
+def _run_readiness_backstop(code, resume_step, scripts_root):
+    """Runs readiness's final-diff-backstop heredoc on an empty diff with
+    RESUME_STEP set; returns (rc, {output: value}, stderr)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        pristine = os.path.join(tmp, "wc-pristine")
+        os.makedirs(pristine)
+        os.symlink(os.path.join(os.path.abspath(scripts_root), ".github", "scripts"),
+                   os.path.join(pristine, "scripts"))
+        for name in ("board-readiness-final-diff.patch", "board-readiness-final-diff-paths.txt"):
+            open(os.path.join(tmp, name), "w").close()
+        out_path = os.path.join(tmp, "github_output")
+        env = dict(os.environ, RUNNER_TEMP=tmp, GITHUB_OUTPUT=out_path,
+                   BOARD_MAX_FILES="6", BOARD_MAX_LINES="120", RESUME_STEP=resume_step)
+        proc = subprocess.run([sys.executable, "-"], input=code, text=True,
+                              capture_output=True, env=env, cwd=tmp)
+        outputs = {}
+        if os.path.exists(out_path):
+            with open(out_path, encoding="utf-8") as fh:
+                for line in fh:
+                    key, _, value = line.rstrip("\n").partition("=")
+                    outputs[key] = value
+        return proc.returncode, outputs, proc.stderr
+
+
+def breach_retry_findings(doc, scripts_root=ROOT):
+    findings = []
+
+    # Fix: the step=breach marker is posted before the create.
+    run = str(_step(doc, "fix", "post-push-breach").get("run", ""))
+    lines = run.split("\n")
+    create_at = next((i for i, l in enumerate(lines) if "gh issue create" in l), None)
+    marker_at = next((i for i, l in enumerate(lines)
+                      if "from board_eligibility import BREACH_STEP" in l
+                      and "write_marker(BREACH_STEP, 0, int(os.environ['PR_NUMBER'])" in l), None)
+    post_at = next((i for i, l in enumerate(lines)
+                    if "gh issue comment" in l and "$breach_marker" in l), None)
+    if create_at is None:
+        findings.append("fix/post-push-breach: no `gh issue create` found (#530)")
+    elif marker_at is None or post_at is None or not (marker_at < post_at < create_at):
+        findings.append(
+            "fix/post-push-breach: does not post a write_marker(BREACH_STEP, ..., PR, ...) "
+            "marker before its `gh issue create` -- a failed create leaves step=route newest "
+            "and the next run reviews the oversized PR (#530)")
+
+    # Readiness: forced breach on step=breach, executed.
+    backstop = _step(doc, "readiness", "final-diff-backstop")
+    if (backstop.get("env") or {}).get("RESUME_STEP") != "${{ needs.select.outputs.step }}":
+        findings.append("readiness/final-diff-backstop: env RESUME_STEP is not "
+                        "`${{ needs.select.outputs.step }}` (#530)")
+    m = re.search(r"<<'PYEOF'\n(.*?)\nPYEOF", str(backstop.get("run", "")), re.S)
+    if m is None:
+        findings.append("readiness/final-diff-backstop: no heredoc found (#530)")
+    else:
+        for resume_step, want in (("breach", {"holds": "false", "breach-retry": "true"}),
+                                  ("readiness", {"holds": "true", "breach-retry": "false"})):
+            rc, outputs, err = _run_readiness_backstop(m.group(1), resume_step, scripts_root)
+            got = {k: outputs.get(k) for k in want}
+            if rc != 0 or got != want:
+                findings.append(
+                    "readiness/final-diff-backstop on an empty diff with step={0}: expected {1}, "
+                    "got {2} {3} (#530: a breach resume must never report ready)".format(
+                        resume_step, want, got, err.strip()[-200:]))
+
+    # Readiness: the retry looks for an existing spec-request first.
+    lookup = _step(doc, "readiness", "breach-retry-lookup")
+    cond = str(lookup.get("if", "")).replace(" ", "")
+    if "steps.final-diff-backstop.outputs.breach-retry=='true'" not in cond:
+        findings.append("readiness: no step `breach-retry-lookup` gated on "
+                        "`steps.final-diff-backstop.outputs.breach-retry == 'true'` (#530)")
+    unmet = _step(doc, "readiness", "report-unmet")
+    unmet_env = unmet.get("env") or {}
+    unmet_run = str(unmet.get("run", ""))
+    if (unmet_env.get("EXISTING_SPEC_URL") != "${{ steps.breach-retry-lookup.outputs.existing-spec-url }}"
+            or unmet_env.get("BREACH_RETRY") != "${{ steps.final-diff-backstop.outputs.breach-retry }}"):
+        findings.append("readiness/report-unmet: env does not carry EXISTING_SPEC_URL from "
+                        "breach-retry-lookup and BREACH_RETRY from final-diff-backstop (#530)")
+    reuse_at = unmet_run.find('existing_spec_url="$EXISTING_SPEC_URL"')
+    guard_at = unmet_run.find('if [ -n "$existing_spec_url" ]; then')
+    create_at = unmet_run.find("gh issue create")
+    if not (0 <= reuse_at < guard_at < create_at):
+        findings.append("readiness/report-unmet: does not reuse EXISTING_SPEC_URL in place of "
+                        "`gh issue create` -- a retry after a create that succeeded files a "
+                        "second spec-request (#530)")
+    prog = (lookup.get("env") or {}).get("BREACH_SPEC_REQUEST_JQ")
+    if not prog:
+        findings.append("readiness/breach-retry-lookup: no env BREACH_SPEC_REQUEST_JQ (#530)")
+    else:
+        for title, issues, want in SPEC_REQUEST_CASES:
+            proc = subprocess.run(["jq", "-r", "--arg", "bot", BOT_LOGIN, "--arg", "footer", _FOOTER,
+                                   "--arg", "pr", "42", prog],
+                                  input=json.dumps(issues), text=True, capture_output=True)
+            got = proc.stdout.strip()
+            if proc.returncode != 0 or got != want:
+                findings.append("BREACH_SPEC_REQUEST_JQ `{0}`: expected {1!r}, got {2!r} {3}".format(
+                    title, want, got, proc.stderr.strip()))
     return findings
 
 
@@ -1331,7 +1540,7 @@ def all_findings(text, table=None, scripts_root=ROOT):
             + resume_findings(doc, scripts_root) + select_lookup_findings(doc, scripts_root)
             + owned_jq_findings(doc, scripts_root) + marker_reader_findings(doc)
             + fetch_handling_findings(doc) + lookup_handling_findings(doc)
-            + fetch_behaviour_findings(doc))
+            + fetch_behaviour_findings(doc) + breach_retry_findings(doc, scripts_root))
 
 
 def print_table(table):
@@ -1563,6 +1772,42 @@ def _mutations(text):
         'elif [ "$ls_remote_rc" -ne 2 ]; then', 'elif [ "$ls_remote_rc" -ne 0 ]; then')
     sub("select eligibility payload without bot_login",
         ",\n              bot_login: $bot_login}", "}")
+    # #530: the breach retry -- its marker, its resume, its consumer, its
+    # forced breach and its duplicate check.
+    sub("fix posts no step=breach marker before the create",
+        '          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf \'Post-push '
+        'backstop breach on %s (measured=%s) -- the PR will not be reviewed;',
+        '          : "$(printf \'Post-push backstop breach on %s (measured=%s) -- the PR will not be reviewed;')
+    sub("fix step=breach marker written as step=review",
+        "from board_eligibility import BREACH_STEP; from board_item_marker import write_marker; "
+        "print(write_marker(BREACH_STEP,",
+        "from board_item_marker import write_marker; print(write_marker('review',")
+    sub("resume fallback sends a breach marker to review",
+        'step = BREACH_STEP if marker_step == BREACH_STEP else "review"', 'step = "review"')
+    sub("readiness without the step=breach resume branch",
+        "        || (needs.select.outputs.step == 'breach' && needs.select.outputs.pr != '')\n", "",
+        after="\n  readiness:\n")
+    sub("review resumes on a breach marker",
+        "|| (needs.select.outputs.step == 'review' && needs.select.outputs.pr != '')",
+        "|| ((needs.select.outputs.step == 'review' || needs.select.outputs.step == 'breach') "
+        "&& needs.select.outputs.pr != '')", after="\n  review:\n")
+    sub("readiness backstop does not force a breach on step=breach",
+        "          if breach_retry:\n              holds = False\n", "")
+    sub("readiness backstop without RESUME_STEP",
+        "          RESUME_STEP: ${{ needs.select.outputs.step }}\n", "", after="\n  readiness:\n")
+    sub("breach-retry lookup not gated on breach-retry",
+        " && steps.final-diff-backstop.outputs.breach-retry == 'true'", "", after="\n  readiness:\n")
+    sub("report-unmet ignores the spec-request already filed",
+        'existing_spec_url="$EXISTING_SPEC_URL"', 'existing_spec_url=""')
+    sub("breach lookup jq ignores the author",
+        'select(.user.type == "Bot" and .user.login == $bot)', "select(true)")
+    sub("breach lookup jq ignores the PR number",
+        '| select((.body // "") | test("(/pull/|PR #)" + $pr + "([^0-9]|$)"))', "")
+    sub("breach lookup jq matches the PR number as a prefix",
+        '"([^0-9]|$)"', '""')
+    sub("breach lookup jq matches the footer as a substring",
+        'any((.body // "") | split("\\n")[] | rtrimstr("\\r"); . == $footer)',
+        '(.body // "") | contains($footer)')
     # main's pre-#525 conditions, verbatim.
     muts.append(("fix restored to pre-#525", _replace_job_if(text, "fix", PRE_525["fix"])))
     muts.append(("review restored to pre-#525", _replace_job_if(text, "review",
@@ -1595,7 +1840,8 @@ def run_selftest(text):
         # The simulator must see the live behaviour on its own, not only
         # through the static rules: main's pre-#525 conditions and a
         # missing breach exclusion each change which jobs run.
-        if "pre-#525" in label or "breach exclusion" in label or "awaiting-merge marker" in label:
+        if ("pre-#525" in label or "breach exclusion" in label or "awaiting-merge marker" in label
+                or "step=breach resume branch" in label or "resumes on a breach marker" in label):
             sim = simulation_findings(yaml.safe_load(mutated))
             if not sim:
                 failures.append("mutation `{0}`: the simulation alone did NOT detect it".format(label))
@@ -1619,6 +1865,29 @@ def run_selftest(text):
             with open(module, "w", encoding="utf-8") as fh:
                 fh.write(src.replace(old, '"readiness", "prove"', 1))
             found = select_lookup_findings(yaml.safe_load(text), tmp)
+            if not found:
+                failures.append("mutation `{0}` was NOT detected".format(label))
+            else:
+                print("  detected: {0} -> {1}".format(label, found[0]))
+    # board_eligibility.py mutation (#530): without BREACH_STEP in
+    # FIX_OR_LATER_STEPS select never looks up a breach marker's PR and
+    # resume cannot resolve step=breach.
+    label = "BREACH_STEP dropped from FIX_OR_LATER_STEPS"
+    with tempfile.TemporaryDirectory() as tmp:
+        scripts = os.path.join(tmp, ".github", "scripts")
+        shutil.copytree(os.path.join(ROOT, ".github", "scripts"), scripts,
+                        ignore=shutil.ignore_patterns("tests", "fixtures", "__pycache__"))
+        module = os.path.join(scripts, "board_eligibility.py")
+        with open(module, encoding="utf-8") as fh:
+            src = fh.read()
+        old = '{"fix", BREACH_STEP, "review",'
+        if old not in src:
+            failures.append("mutation `{0}`: fixture text not found in board_eligibility.py".format(label))
+        else:
+            with open(module, "w", encoding="utf-8") as fh:
+                fh.write(src.replace(old, '{"fix", "review",', 1))
+            doc = yaml.safe_load(text)
+            found = select_lookup_findings(doc, tmp) + resume_findings(doc, tmp)
             if not found:
                 failures.append("mutation `{0}` was NOT detected".format(label))
             else:

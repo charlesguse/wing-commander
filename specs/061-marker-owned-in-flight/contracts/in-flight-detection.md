@@ -10,8 +10,9 @@ workflow's `run:` step.
 
 ```python
 AWAITING_MERGE_STEP = "awaiting-merge"   # #532
+BREACH_STEP = "breach"                   # #530
 PRE_FIX_STEPS = frozenset({"triage", "route"})
-FIX_OR_LATER_STEPS = frozenset({"fix", "review", "readiness", AWAITING_MERGE_STEP, "prove"})
+FIX_OR_LATER_STEPS = frozenset({"fix", BREACH_STEP, "review", "readiness", AWAITING_MERGE_STEP, "prove"})
 TERMINAL_STEPS = frozenset({"closed", "stalled", "proven"})
 
 def in_flight_candidate(
@@ -194,6 +195,10 @@ expressed as a single `issue.json` the way Gate 81's existing
     with a bare `[bot]`. `unowned-open-pr`: the oldest eligible issue's
     `review` marker names a PR recorded as `OPEN_UNOWNED` → `(null,
     false)`, and `select()` returns the newer issue.
+14. `breach-pr-open`, `breach-pr-closed` (#530). A `breach` marker (fix's
+    post-push breach, spec-request not yet filed) naming a PR is in
+    flight like any other fix-or-later marker: `OPEN` → that issue,
+    `CLOSED` → `(null, false)`.
 
 Each fixture directory's four files are all required; the gate fails loudly
 (non-zero exit, `::error::` annotation) if any is missing, per Gate 81's
