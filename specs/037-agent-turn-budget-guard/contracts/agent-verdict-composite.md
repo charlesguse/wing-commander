@@ -95,7 +95,12 @@ across the fleet (research.md R3/R4).
   normalised once to a single flat array (`jq -s`, splicing any document
   that is itself an array), and every classification read and the
   `count-turns.sh` call use that copy. Non-object elements are skipped
-  before any `.type` selection.
+  before any `.type` selection. The normalisation (splice and
+  non-object skip) lives solely in `_shared/normalise-transcript.sh`
+  (#572), which this composite, `count-turns.sh` and
+  `wing-commander-metrics-summary` all call; Gate 60 fails on an inline
+  copy. `count-turns.sh` prints `reported` only when `.num_turns` is an
+  integer >= 0.
 - Output format (#551): every `$GITHUB_OUTPUT` value is a single line,
   enforced in two layers. (1) At the read site: CR/LF in `run-label` and
   in the transcript's `subtype` become spaces, a non-string `subtype` is

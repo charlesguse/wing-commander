@@ -95,16 +95,16 @@ runs:
         reason="transcript missing or unparseable${label_suffix}"
         result_json=""
 
-        # The transcript is read once into a single flat JSON array, and
-        # every jq and count-turns.sh call below reads that copy (#551).
-        # One array, one object, NDJSON and several concatenated documents
-        # all normalise to the same shape: `jq -s` collects the documents
-        # and any document that is itself an array is spliced in. Fed the
-        # raw file, NDJSON made each per-document jq print one line per
-        # document, and the `eval` of count-turns.sh's output then ran a
-        # bare "0" as a command -- exit 127 under the runner's `bash -e`.
-        # When the file does not parse, counting still gets the raw path,
-        # where count-turns.sh's own parse check empties all three values.
+        # The transcript is read once into a single flat JSON array of
+        # objects, and every jq and count-turns.sh call below reads that
+        # copy (#551). The normalisation itself -- which shapes it accepts
+        # and why -- lives solely in _shared/normalise-transcript.sh (#572),
+        # which count-turns.sh also runs, so the flat copy passes through it
+        # unchanged. When no copy could be written (the temp dir is
+        # unwritable, or the shared script is absent), the reads below fall
+        # back to the raw file, per document, still skipping non-objects.
+        # When the file does not parse, the reads are skipped and
+        # count-turns.sh empties all three values.
         # The parse check is `jq empty`, not `jq -e .`. Under -e, jq takes
         # its exit status from the LAST document only, so NDJSON ending in
         # `null` or `false` would read as unparseable.
@@ -114,7 +114,7 @@ runs:
            && jq empty "$TRANSCRIPT" >/dev/null 2>&1; then
           normalised="$(mktemp "${RUNNER_TEMP:-/tmp}/wc-agent-verdict.XXXXXX" 2>/dev/null || true)"
           if [ -n "$normalised" ] \
-             && jq -cs 'map(if type=="array" then .[] else . end)' \
+             && bash "$GITHUB_ACTION_PATH/../_shared/normalise-transcript.sh" \
                   "$TRANSCRIPT" > "$normalised" 2>/dev/null; then
             TRANSCRIPT="$normalised"
             COUNT_SOURCE="$normalised"

@@ -74,6 +74,12 @@ SCRIPT = shipped_script()
 with open(SHARED_SCRIPT_PATH, encoding="utf-8") as _f:
     SHARED_SCRIPT = _f.read()
 
+# count-turns.sh and both composites call the transcript normaliser beside
+# it (#572); it is staged, and mutated, the same way.
+NORMALISE_SCRIPT_PATH = ".github/actions/_shared/normalise-transcript.sh"
+with open(NORMALISE_SCRIPT_PATH, encoding="utf-8") as _f:
+    NORMALISE_SCRIPT = _f.read()
+
 
 # --- transcript builders (mirrors Gate 11's) --------------------------------
 def assistant(mid, parent=None, chunks=1):
@@ -109,7 +115,7 @@ BASH = None
 
 
 def run_case(name, records, intended_turns="40", raw=None, with_shared=True,
-             run_label="", runner_temp=None):
+             run_label="", runner_temp=None, counter=None):
     tmp = tempfile.mkdtemp(prefix="wc-verdict-")
     if raw is not None:
         with open(os.path.join(tmp, TRANSCRIPT_NAME), "w",
@@ -130,10 +136,16 @@ def run_case(name, records, intended_turns="40", raw=None, with_shared=True,
     os.makedirs(shared_dir, exist_ok=True)
     # with_shared=False leaves _shared/ empty, standing in for a partial or
     # misplaced .wing-commander-pipeline/ self-checkout.
+    # counter= stages a stand-in count-turns.sh instead of the shipped one,
+    # for the case that proves the eval's own filter without leaning on
+    # the counter's validation.
     if with_shared:
         with open(os.path.join(shared_dir, "count-turns.sh"), "w",
                   encoding="utf-8", newline="\n") as f:
-            f.write(SHARED_SCRIPT)
+            f.write(SHARED_SCRIPT if counter is None else counter)
+        with open(os.path.join(shared_dir, "normalise-transcript.sh"), "w",
+                  encoding="utf-8", newline="\n") as f:
+            f.write(NORMALISE_SCRIPT)
 
     rc, output, outputs, _summary = run_step(
         BASH, SCRIPT, tmp,
@@ -650,6 +662,37 @@ def case_non_object_elements_are_skipped():
          "hiding the result record or a rejected event")
 
 
+def case_non_object_elements_skipped_on_fallback_path():
+    """The shared normaliser drops non-object elements (#572), so the
+    `objects` filters in this composite's own reads only matter on the
+    fallback path, where no normalised copy could be written and the reads
+    see the raw file. Force that path (RUNNER_TEMP unwritable) and check
+    both reads still skip a bare number or string."""
+    missing = os.path.join(tempfile.mkdtemp(prefix="wc-verdict-rt-"),
+                           "does-not-exist")
+    for case, records, verdict, needle in (
+            ("fallback path: non-object elements before the result record",
+             [1, "x"] + transcript(main=2, num_turns=2), "healthy",
+             "subtype=success"),
+            ("fallback path: non-object elements before a rejected "
+             "rate_limit_event",
+             [1, "x"] + rate_limit_event(rateLimitType="five_hour") + [2]
+             + result(is_error=True, subtype="error_during_execution",
+                      num_turns=1),
+             "rate-limited", "five_hour")):
+        rc, output, outputs = run_case(case, records, runner_temp=missing)
+        if rc != 0:
+            fail(case, f"exited {rc}: {output.strip()[:300]}")
+            continue
+        if outputs.get("verdict") != verdict:
+            fail(case, f"expected verdict={verdict!r}, got "
+                       f"{outputs.get('verdict')!r} "
+                       f"(reason={outputs.get('reason')!r})")
+        if needle not in (outputs.get("reason") or ""):
+            fail(case, f"expected reason to contain {needle!r}, got "
+                       f"{outputs.get('reason')!r}")
+
+
 def case_subtype_newline_cannot_inject_output():
     """The reason interpolates the transcript's subtype: a newline in it
     must not add a second `verdict=` line to $GITHUB_OUTPUT."""
@@ -747,13 +790,61 @@ def case_ndjson_ending_in_null_is_parseable():
                           subtype="error_during_execution", num_turns=2)
         outputs = expect(case, None, "failed", raw=_ndjson(recs) + tail + "\n",
                          reason_contains="is_error=true")
-        # A trailing `false` still leaves counted-turns empty: count-turns.sh
-        # reads `.type` on every element and errors on a boolean (non-object
-        # handling there is tracked in #572), so only `null` is checked.
-        if tail == "null" and outputs.get("counted-turns") != "2":
+        # count-turns.sh drops non-object elements itself (#572), so a
+        # trailing `false` counts the same as a trailing `null`.
+        if outputs.get("counted-turns") != "2":
             fail(case, f"expected counted-turns=2, got "
                        f"{outputs.get('counted-turns')!r}")
         _expect_output_lines_intact(case, "failed")
+
+
+def case_ndjson_last_result_record_decides():
+    """NDJSON carrying two result records, a failed one then a successful
+    one. Read per document instead of as one normalised array, each
+    document's jq prints its own result record, so result_json holds both
+    and is_error reads back as two lines."""
+    case = "NDJSON with two result records classifies from the last"
+    recs = assistant("msg_main_0") \
+        + result(is_error=True, subtype="error_during_execution",
+                 num_turns=1) \
+        + assistant("msg_main_1") \
+        + result(is_error=False, subtype="success", num_turns=2)
+    outputs = expect(case, None, "healthy", raw=_ndjson(recs),
+                     reason_contains="subtype=success")
+    if outputs.get("counted-turns") != "2":
+        fail(case, f"expected counted-turns=2, got "
+                   f"{outputs.get('counted-turns')!r}")
+    _expect_output_lines_intact(case, "healthy")
+
+
+def case_hostile_counter_output_is_filtered():
+    """count-turns.sh validates its own values (#572), so the digits-only
+    filter before the eval here is defence in depth. A stand-in counter
+    that prints what the old one could (a string num_turns verbatim, a
+    per-document line) proves that filter on its own: no command runs, no
+    variable outside the three is reassigned, and only valid lines bind."""
+    case = "hostile counter output is filtered before the eval"
+    marker = os.path.join(tempfile.mkdtemp(prefix="wc-verdict-ctr-"), "ran")
+    counter = (
+        "printf '%s\\n' 'main_turns=5' '0' 'sub_turns=$(touch "
+        + marker + ")' 'verdict=failed' 'reported=1; touch " + marker
+        + "'\n")
+    rc, output, outputs = run_case(case, transcript(main=1, num_turns=1),
+                                   counter=counter)
+    if rc != 0:
+        fail(case, f"exited {rc}: {output.strip()[:300]}")
+        return
+    if os.path.exists(marker):
+        fail(case, "the eval ran a command from the counter's output")
+    if outputs.get("verdict") != "healthy":
+        fail(case, f"expected verdict=healthy, got {outputs.get('verdict')!r}")
+    if outputs.get("counted-turns") != "5":
+        fail(case, f"expected counted-turns=5, got "
+                   f"{outputs.get('counted-turns')!r}")
+    for key in ("subagent-turns", "reported-turns"):
+        if outputs.get(key) not in ("", None):
+            fail(case, f"expected {key} empty, got {outputs.get(key)!r}")
+    _expect_output_lines_intact(case, "healthy")
 
 
 def case_shared_counter_absent():
@@ -827,12 +918,15 @@ CASES = [
     case_ndjson_transcript,
     case_multi_document_transcript,
     case_non_object_elements_are_skipped,
+    case_non_object_elements_skipped_on_fallback_path,
     case_subtype_newline_cannot_inject_output,
     case_num_turns_newline_cannot_inject_output,
     case_run_label_newline_cannot_inject_output,
     case_non_string_subtype_stays_one_line,
     case_normaliser_failure_keeps_output_lines,
     case_ndjson_ending_in_null_is_parseable,
+    case_ndjson_last_result_record_decides,
+    case_hostile_counter_output_is_filtered,
     case_never_fails,
 ]
 
@@ -919,11 +1013,15 @@ MUTATIONS = [
      lambda s: without_write_site(s).replace(
          'tostring | gsub("[\\r\\n]"; " ") end;', 'tostring end;', 1)),
     # #551: transcript shape and $GITHUB_OUTPUT line injection.
-    ("reads the raw transcript instead of the normalised array, so NDJSON "
-     "and multi-document input reach count-turns.sh's eval", "action",
+    ("reads the raw transcript instead of the normalised array, so an "
+     "NDJSON transcript's result records are read per document", "action",
      lambda s: s.replace(
-         "jq -cs 'map(if type==\"array\" then .[] else . end)'",
+         'bash "$GITHUB_ACTION_PATH/../_shared/normalise-transcript.sh"',
          "jq -c '.'", 1)),
+    ("normalises per document instead of into one flat array", "normalise",
+     lambda s: s.replace(
+         """jq -cs 'map(if type=="array" then .[] else . end)""",
+         """jq -c 'if type=="array" then . else [.] end""", 1)),
     ("selects the result record without skipping non-object elements",
      "action",
      lambda s: s.replace('map(objects | select(.type=="result"))',
@@ -979,14 +1077,18 @@ def main():
         print(f"Gate 22: {len(real)} failure(s) against the shipped action.")
         return 1
 
-    global SCRIPT, SHARED_SCRIPT, MUTATING
+    global SCRIPT, SHARED_SCRIPT, NORMALISE_SCRIPT, MUTATING
     original_script = SCRIPT
     original_shared = SHARED_SCRIPT
+    original_normalise = NORMALISE_SCRIPT
     mutation_failures = 0
     MUTATING = True
     for label, target, mutate in MUTATIONS:
-        original = original_script if target == "action" else original_shared
-        source_file = ACTION if target == "action" else SHARED_SCRIPT_PATH
+        original, source_file = {
+            "action": (original_script, ACTION),
+            "shared": (original_shared, SHARED_SCRIPT_PATH),
+            "normalise": (original_normalise, NORMALISE_SCRIPT_PATH),
+        }[target]
         mutated = mutate(original)
         if mutated == original:
             print(f"::error file={source_file}::gate 22's mutation {label!r} "
@@ -997,11 +1099,14 @@ def main():
             continue
         if target == "action":
             SCRIPT = mutated
-        else:
+        elif target == "shared":
             SHARED_SCRIPT = mutated
+        else:
+            NORMALISE_SCRIPT = mutated
         caught = run_suite()
         SCRIPT = original_script
         SHARED_SCRIPT = original_shared
+        NORMALISE_SCRIPT = original_normalise
         if not caught:
             print(f"::error file={source_file}::gate 22 mutation {label!r} "
                   f"was NOT caught — the suite passed against a knowingly "

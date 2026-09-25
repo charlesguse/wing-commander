@@ -42,8 +42,12 @@ action that already implements it correctly):
 ```
 main_turns  = count(distinct .message.id where .type=="assistant" and (.parent_tool_use_id // null) == null)
 sub_turns   = count(distinct .message.id where .type=="assistant" and (.parent_tool_use_id // null) != null)
-reported    = (last .type=="result" record).num_turns
+reported    = (last .type=="result" record).num_turns, only when an integer >= 0; else empty
 ```
+
+The transcript may be one array, one object, NDJSON or several
+concatenated documents; `_shared/normalise-transcript.sh` turns it into
+one flat array of objects before any of the three reads (#572).
 
 ## Intended turn budget / Runaway ceiling
 
