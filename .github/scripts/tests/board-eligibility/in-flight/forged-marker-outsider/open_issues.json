@@ -1,0 +1,22 @@
+[
+  {
+    "number": 5031,
+    "author": {
+      "login": "author-5031"
+    },
+    "authorAssociation": "MEMBER",
+    "labels": [],
+    "state": "OPEN",
+    "createdAt": "2026-01-01T00:00:00Z"
+  },
+  {
+    "number": 5032,
+    "author": {
+      "login": "author-5032"
+    },
+    "authorAssociation": "NONE",
+    "labels": [],
+    "state": "OPEN",
+    "createdAt": "2026-01-02T00:00:00Z"
+  }
+]

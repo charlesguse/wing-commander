@@ -66,6 +66,11 @@ env:
   # marker-PR resolution both point at this one filter rather than pasting
   # their own copies.
   BOARD_PR_STATE_JQ: 'if .merged then "MERGED" elif .state == "open" then "OPEN" else "CLOSED" end'
+  # Issue #555: true when a pulls/N payload is this loop's own PR --
+  # labelled board:owned, head in this repository (jq --arg repo). The
+  # select job's PR lookup and the resume step's marker-PR resolution both
+  # point at this one filter.
+  BOARD_PR_OWNED_JQ: 'any(.labels[]?; .name == "board:owned") and ((.head.repo.full_name // "") == $repo)'
 
 jobs:
   # Foundational layer (specs/057-autonomous-board-loop Phase 2): entry
@@ -164,6 +169,9 @@ jobs:
         if: steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight'
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          # Board item markers are read only from this App's own comments
+          # (board_item_marker.is_loop_marker_author(), issue #555).
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -uo pipefail
 
@@ -210,7 +218,7 @@ jobs:
             issue_author_assoc="$(jq -r --arg n "$number" '.[] | select(.number == ($n|tonumber)) | .authorAssociation' "$RUNNER_TEMP/board-open-issues.json")"
 
             if ! gh api "repos/$GITHUB_REPOSITORY/issues/$number/comments" --paginate \
-                --jq '.[] | {login: .user.login, association: .author_association, created_at, body}' 2>/dev/null | jq -s '.' \
+                --jq '.[] | {login: .user.login, association: .author_association, created_at, body, user: {login: .user.login, type: .user.type}}' 2>/dev/null | jq -s '.' \
                 > "$RUNNER_TEMP/board-comments-$number.json"; then
               echo '[]' > "$RUNNER_TEMP/board-comments-$number.json"
             fi
@@ -279,7 +287,7 @@ jobs:
 
           pr_numbers = set()
           for comments in comments_by_issue.values():
-              pair = read_marker_with_timestamp(comments)
+              pair = read_marker_with_timestamp(comments, os.environ["BOT_LOGIN"])
               if pair is None:
                   continue
               _created_at, marker = pair
@@ -299,10 +307,19 @@ jobs:
           if [ -n "$pr_numbers_to_check" ]; then
             while IFS= read -r pr_number; do
               [ -z "$pr_number" ] && continue
-              # BOARD_PR_STATE_JQ -- see this workflow's top-level env: block.
-              pr_state="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr_number" \
-                --jq "$BOARD_PR_STATE_JQ" 2>/dev/null || true)"
+              gh api "repos/$GITHUB_REPOSITORY/pulls/$pr_number" \
+                > "$RUNNER_TEMP/board-lookup-pr.json" 2>/dev/null || continue
+              # BOARD_PR_STATE_JQ / BOARD_PR_OWNED_JQ -- see this workflow's
+              # top-level env: block.
+              pr_state="$(jq -r "$BOARD_PR_STATE_JQ" "$RUNNER_TEMP/board-lookup-pr.json")"
               [ -z "$pr_state" ] && continue
+              # Issue #555: an OPEN PR that is not this loop's own (e.g.
+              # board:owned removed) is recorded as
+              # board_eligibility.UNOWNED_OPEN_PR_STATE: never in-flight,
+              # and passed over by select()'s fallback until it closes.
+              if [ "$pr_state" = "OPEN" ] && [ "$(jq -r --arg repo "$GITHUB_REPOSITORY" "$BOARD_PR_OWNED_JQ" "$RUNNER_TEMP/board-lookup-pr.json")" != "true" ]; then
+                pr_state="OPEN_UNOWNED"
+              fi
               jq --arg n "$pr_number" --arg s "$pr_state" '. + {($n): $s}' \
                 "$RUNNER_TEMP/board-pr-state-by-number.json" > "$RUNNER_TEMP/board-pr-state-by-number.tmp"
               mv "$RUNNER_TEMP/board-pr-state-by-number.tmp" "$RUNNER_TEMP/board-pr-state-by-number.json"
@@ -313,8 +330,10 @@ jobs:
             --slurpfile events "$RUNNER_TEMP/board-labeled-events.json" \
             --slurpfile comments "$RUNNER_TEMP/board-comments-by-issue.json" \
             --slurpfile pr_states "$RUNNER_TEMP/board-pr-state-by-number.json" \
+            --arg bot_login "$BOT_LOGIN" \
             '{open_issues: $issues[0], labeled_events_by_issue: $events[0],
-              comments_by_issue: $comments[0], pr_state_by_number: $pr_states[0]}' \
+              comments_by_issue: $comments[0], pr_state_by_number: $pr_states[0],
+              bot_login: $bot_login}' \
             > "$RUNNER_TEMP/board-eligibility-input.json"
 
           # An unhandled exception here has no traceback on stdout, and
@@ -363,10 +382,11 @@ jobs:
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE_NUMBER: ${{ steps.select.outputs.issue-number }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -uo pipefail
           gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate \
-            --jq '.[] | {created_at, body}' | jq -s '.' > "$RUNNER_TEMP/board-issue-comments.json"
+            --jq '.[] | {created_at, body, user: {login: .user.login, type: .user.type}}' | jq -s '.' > "$RUNNER_TEMP/board-issue-comments.json"
 
           marker_json="$(COMMENTS_PATH="$RUNNER_TEMP/board-issue-comments.json" python3 - <<'PYEOF'
           import json
@@ -378,7 +398,7 @@ jobs:
 
           with open(os.environ["COMMENTS_PATH"], encoding="utf-8") as fh:
               comments = json.load(fh)
-          marker = read_marker(comments)
+          marker = read_marker(comments, os.environ["BOT_LOGIN"])
           print(json.dumps(marker) if marker else "null")
           PYEOF
           )"
@@ -400,14 +420,21 @@ jobs:
           pr_number=""
           pr_state=""
           pr_from_marker="false"
-          if [ -n "$marker_pr" ]; then
-            # BOARD_PR_STATE_JQ -- see this workflow's top-level env: block.
-            pr_state_raw="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$marker_pr" \
-              --jq "$BOARD_PR_STATE_JQ" 2>/dev/null || true)"
+          pr_owned="false"
+          if [[ "$marker_pr" =~ ^[0-9]+$ ]] && gh api "repos/$GITHUB_REPOSITORY/pulls/$marker_pr" \
+              > "$RUNNER_TEMP/board-marker-pr.json" 2>/dev/null; then
+            # BOARD_PR_STATE_JQ / BOARD_PR_OWNED_JQ -- see this workflow's
+            # top-level env: block.
+            pr_state_raw="$(jq -r "$BOARD_PR_STATE_JQ" "$RUNNER_TEMP/board-marker-pr.json")"
             if [ -n "$pr_state_raw" ]; then
               pr_number="$marker_pr"
               pr_state="$pr_state_raw"
               pr_from_marker="true"
+              # Issue #555: the step resolution below adopts this PR only
+              # when it carries board:owned and its head is in this
+              # repository.
+              pr_owned="$(jq -r --arg repo "$GITHUB_REPOSITORY" "$BOARD_PR_OWNED_JQ" \
+                "$RUNNER_TEMP/board-marker-pr.json")"
             fi
           fi
 
@@ -438,7 +465,7 @@ jobs:
           # PRE_FIX_STEPS/FIX_OR_LATER_STEPS rather than a second,
           # parallel step-vocabulary list.
           step_resolution_json="$(MARKER_STEP="$marker_step" MARKER_JSON="$marker_json" BRANCH="$branch" \
-              MARKER_PR="$marker_pr" PR_FROM_MARKER="$pr_from_marker" PR_FROM_FALLBACK="$pr_from_fallback" \
+              MARKER_PR="$marker_pr" PR_FROM_MARKER="$pr_from_marker" PR_FROM_FALLBACK="$pr_from_fallback" PR_OWNED="$pr_owned" \
               PR_STATE="$pr_state" PR_NUMBER="$pr_number" MARKER_ROUND="$marker_round" \
               MARKER_BASE_SHA="$marker_base_sha" python3 - <<'PYEOF'
           import json
@@ -447,6 +474,7 @@ jobs:
 
           sys.path.insert(0, ".github/scripts")
           from board_eligibility import PRE_FIX_STEPS, FIX_OR_LATER_STEPS, AWAITING_MERGE_STEP
+          from board_item_marker import is_loop_branch
 
           marker_step = os.environ.get("MARKER_STEP") or None
           branch = os.environ.get("BRANCH") or ""
@@ -458,9 +486,25 @@ jobs:
           marker_present = os.environ.get("MARKER_JSON") != "null"
           round_ = os.environ.get("MARKER_ROUND") or "0"
           base_sha = os.environ.get("MARKER_BASE_SHA") or ""
+          pr_owned = os.environ.get("PR_OWNED") == "true"
+          issue_number = os.environ.get("ISSUE_NUMBER") or ""
 
           reason = ""
           note = ""
+          # Issue #555: a marker's branch is adopted only when it has this
+          # loop's own fix/<issue>-<slug> name, and its PR only when that PR
+          # carries board:owned and its head is in this repository.
+          # Otherwise the marker is stale: triage, FR-022 cleared (below) --
+          # except while that PR is OPEN, which holds (FR-054).
+          foreign = ""
+          foreign_pr = pr_from_marker and not pr_owned
+          if branch and not is_loop_branch(branch, issue_number):
+              foreign = "recorded branch {0} is not this loop's branch for issue #{1}".format(
+                  branch, issue_number)
+              branch = ""
+          if foreign_pr:
+              foreign = "recorded pr {0} is not a board:owned pull request from this repository".format(
+                  pr_number)
           if marker_step == "prove" and not marker_pr_field:
               # Matches in_flight_candidate()'s prove exception
               # (board_eligibility.py): a prove marker is always written
@@ -479,10 +523,12 @@ jobs:
               # the report or re-review a PR a human now owns), never the
               # board:owned fallback below (it would adopt the same PR as
               # step=review), and never triage (it would cut a second
-              # branch/PR beside the open one).
+              # branch/PR beside the open one). This hold also applies when
+              # the PR fails the #555 check above: it adopts nothing, and
+              # that PR is not passed on.
               step = AWAITING_MERGE_STEP
               pr_from_fallback = False
-              if not pr_from_marker:
+              if not pr_from_marker or foreign:
                   pr_number = ""
                   pr_state = ""
               if marker_pr_field:
@@ -490,6 +536,32 @@ jobs:
                       marker_pr_field, pr_state or "state unresolved")
               else:
                   note = "awaiting-merge marker records no pr -- nothing to do this run"
+          elif foreign_pr and pr_state == "OPEN":
+              # Issue #555 / FR-054: the marker's PR is open but no longer
+              # this loop's own (e.g. board:owned removed). Triage could
+              # cut a second branch/PR beside it, so hold instead: the
+              # no-op step awaiting-merge, with nothing passed on. select
+              # does not pick this item while the PR stays open
+              # (board_eligibility.UNOWNED_OPEN_PR_STATE), so this is
+              # reached only on a race, never every run.
+              step = AWAITING_MERGE_STEP
+              note = "recorded pr {0} is open but not a board:owned pull request from this repository -- held, nothing to do this run".format(
+                  pr_number)
+              pr_from_fallback = False
+              pr_number = ""
+              pr_state = ""
+              branch = ""
+              round_ = "0"
+              base_sha = ""
+          elif foreign:
+              step = "triage"
+              reason = "stale marker -- " + foreign
+              pr_from_fallback = False
+              pr_number = ""
+              pr_state = ""
+              branch = ""
+              round_ = "0"
+              base_sha = ""
           elif pr_from_marker and marker_step and (
               marker_step in PRE_FIX_STEPS
               or (marker_step in FIX_OR_LATER_STEPS and pr_state == "OPEN")
@@ -3139,6 +3211,7 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           MERGED: ${{ github.event.pull_request.merged }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -uo pipefail
           issue_number="$(python3 -c "
@@ -3158,7 +3231,7 @@ jobs:
           fi
 
           gh api "repos/$GITHUB_REPOSITORY/issues/$issue_number/comments" --paginate \
-            --jq '.[] | {created_at, body}' | jq -s '.' > "$RUNNER_TEMP/board-prove-comments.json"
+            --jq '.[] | {created_at, body, user: {login: .user.login, type: .user.type}}' | jq -s '.' > "$RUNNER_TEMP/board-prove-comments.json"
           has_marker="$(COMMENTS_PATH="$RUNNER_TEMP/board-prove-comments.json" python3 - <<'PYEOF'
           import json
           import os
@@ -3169,7 +3242,7 @@ jobs:
 
           with open(os.environ["COMMENTS_PATH"], encoding="utf-8") as fh:
               comments = json.load(fh)
-          print("true" if read_marker(comments) else "false")
+          print("true" if read_marker(comments, os.environ["BOT_LOGIN"]) else "false")
           PYEOF
           )"
 

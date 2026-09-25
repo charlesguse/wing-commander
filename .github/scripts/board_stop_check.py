@@ -68,10 +68,16 @@ that does not start with stop (`Hold on, stop`, `Wait — stop`).
 An `@someone stop - ...` addressed to another human also counts; that is
 accepted (the handle is dropped before matching).
 """
+import os
 import re
 import sys
 
 import json
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# The one author predicate for the loop's own comments (issue #555); it is
+# looked up here as a module global so find_stop_request() uses it.
+from board_item_marker import is_loop_marker_author  # noqa: E402,F401
 
 MAINTAINER_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 STOP_COMMAND_RE = re.compile(
@@ -122,20 +128,6 @@ def is_stop_command(body):
     one predicate every board-loop stop check uses."""
     line = _command_line(body)
     return bool(line and STOP_COMMAND_RE.match(line))
-
-
-def is_loop_marker_author(comment, bot_login):
-    """True when `comment` was posted by the board loop's own GitHub App --
-    `user.type == "Bot"` AND `user.login == bot_login` (the caller's
-    `<app-slug>[bot]`, from wing-commander-context's `bot-slug` output).
-    Only such a comment's `**Run:**` line is a run announcement (issue
-    #547): anyone can comment on a public repository's issue, and a forged
-    `**Run:** .../actions/runs/N` would otherwise move the stop baseline
-    and choose the run a maintainer's genuine stop hands to `gh run
-    cancel`. An empty/missing bot_login matches nothing. The one predicate
-    find_stop_request() uses for marker authorship."""
-    user = comment.get("user") or {}
-    return bool(bot_login) and user.get("type") == "Bot" and user.get("login") == bot_login
 
 
 def find_stop_request(comments, current_run_id, bot_login):

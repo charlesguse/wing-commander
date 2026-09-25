@@ -18,6 +18,7 @@ def in_flight_candidate(
     open_issues: list[dict],
     comments_by_issue: dict[int, list[dict]],
     pr_state_by_number: dict[int, str],
+    bot_login: str,
 ) -> tuple[int | None, bool]:
     """FR-001/FR-002/FR-003/FR-005. Returns (issue_number, multiple_found).
 
@@ -45,6 +46,7 @@ def select(
     labeled_events_by_issue: dict[int, list[dict]],
     comments_by_issue: dict[int, list[dict]],
     pr_state_by_number: dict[int, str],
+    bot_login: str,
 ) -> int | None:
     """FR-004/FR-011: in_flight_candidate() first; falls through to the
     existing oldest-first/classify_issue/is_excluded scan when it returns
@@ -66,6 +68,23 @@ def select(
     (resume-recovery.md)."""
 ```
 
+`bot_login` (#555) is the loop's own App login, `<app-slug>[bot]`. Both
+functions read markers only through `board_item_marker.
+read_marker_with_timestamp(comments, bot_login)`, which ignores any comment
+not posted by that App (`is_loop_marker_author()`, see spec 057's
+board-item-marker.md "Author rule"). A marker from anyone else, an OWNER
+included, neither makes an issue in-flight nor triggers the fallback's
+`prove`/`awaiting-merge` skip.
+
+`UNOWNED_OPEN_PR_STATE = "OPEN_UNOWNED"` (#555): the select job's PR
+lookup records an OPEN PR that fails `BOARD_PR_OWNED_JQ` (no `board:owned`,
+or head in another repository) as this state instead of `OPEN`. It is not
+`OPEN`, so the marker does not make its issue in-flight, and `select()`'s
+fallback passes over an issue whose fix-or-later marker names such a PR
+(`_unowned_open_pr_holds()`) until the PR is CLOSED or MERGED. Resume holds
+that item as a no-op (resume-recovery.md), so without this skip the item
+would be re-selected and do nothing every run (cf. #532).
+
 `classify_issue()` and `is_excluded()` keep their existing signatures and
 behavior verbatim (Out of Scope: "the exclusion rule... is reused
 unchanged"). The oldest-first ordering and its `classify_issue`/
@@ -83,17 +102,22 @@ network).
 
 1. `comments_by_issue`: for each open issue already being visited to resolve
    label-actor associations (FR-008), the same `gh api .../comments` call's
-   `--jq` projection additionally extracts `body`, alongside the
-   `login`/`association`/`created_at` fields it already keeps — one API
-   round-trip serves both purposes.
+   `--jq` projection additionally extracts `body` and (#555)
+   `user: {login, type}`, alongside the `login`/`association`/`created_at`
+   fields it already keeps — one API round-trip serves both purposes.
+   The step's `BOT_LOGIN` env is `${{ steps.ctx.outputs.bot-slug }}[bot]`
+   from `wing-commander-context`; the stdin payload to
+   `board_eligibility.py` carries it as `bot_login`, and `main()` exits
+   non-zero without it.
 2. `pr_state_by_number`: after calling `board_item_marker.
-   read_marker_with_timestamp()` (via `in_flight_candidate`'s own internal
+   read_marker_with_timestamp(comments, bot_login)` (via `in_flight_candidate`'s own internal
    scan, or a pre-pass over `comments_by_issue` before calling `select()` —
    implementation's choice) to find markers naming a fix-or-later step
    (`FIX_OR_LATER_STEPS`, which includes `awaiting-merge`) and a
    `pr` number, resolve exactly those PR numbers' `state` via `gh api
-   repos/:owner/:repo/pulls/:number --jq .state`. Never a `gh pr list` call,
-   never a body/text search (FR-001).
+   repos/:owner/:repo/pulls/:number` (`BOARD_PR_STATE_JQ`; an OPEN PR that
+   fails `BOARD_PR_OWNED_JQ` is recorded as `UNOWNED_OPEN_PR_STATE`, #555).
+   Never a `gh pr list` call, never a body/text search (FR-001).
 3. The old unrestricted `gh pr list --state open --json number,body |
    ...capture("Fixes #...")` shortcut is deleted; `select()`'s return value
    is the run's only source of the selected issue number.
@@ -147,6 +171,23 @@ expressed as a single `issue.json` the way Gate 81's existing
     issue when the PR is `OPEN` or absent from `pr_state_by_number`, and
     the `awaiting-merge` issue itself when the PR is `CLOSED` or `MERGED`.
 
+13. `forged-marker-outsider`, `forged-marker-owner-human`,
+    `forged-marker-other-app` (#555). Markers posted by an outside (NONE)
+    user, an OWNER human and a different App's bot: a `triage`/`route`/
+    `review` marker on an ineligible issue does not make it in-flight
+    (`(null, false)`), and a `prove`/`awaiting-merge` marker on the
+    oldest eligible issue does not make `select()` pass it over.
+    `own-marker-newer-forged-ignored`: the loop's own `triage` marker
+    stays in force when newer markers from another App and from a User
+    account carrying the App's login follow it. Every fixture marker
+    comment carries `user: {login, type}`; the gate's bot login is
+    `wing-commander-bot[bot]`. The gate also swaps weaker author
+    predicates into `board_item_marker` and requires each to fail a case,
+    and requires `main()` to refuse a payload without `bot_login` or
+    with a bare `[bot]`. `unowned-open-pr`: the oldest eligible issue's
+    `review` marker names a PR recorded as `OPEN_UNOWNED` → `(null,
+    false)`, and `select()` returns the newer issue.
+
 Each fixture directory's four files are all required; the gate fails loudly
 (non-zero exit, `::error::` annotation) if any is missing, per Gate 81's
 existing pattern (`verify-board-eligibility.py` already does this for its
@@ -158,8 +199,10 @@ against `select()`'s own return value.
 ## `.github/scripts/board_item_marker.py` (addition)
 
 ```python
-def read_marker_with_timestamp(issue_comments: list[dict]) -> tuple[str, dict] | None:
+def read_marker_with_timestamp(issue_comments: list[dict], bot_login: str) -> tuple[str, dict] | None:
     """Same well-formed-marker scan as read_marker(), returning
     (created_at, marker) for the newest one, or None. read_marker()
-    becomes a thin wrapper over this."""
+    becomes a thin wrapper over this. #555: bot_login is required, and
+    only comments is_loop_marker_author(comment, bot_login) accepts are
+    scanned."""
 ```

@@ -11,11 +11,22 @@ job) — not part of `board_eligibility.py`'s in-flight decision
 different question ("which issue") from this one ("what step is the
 already-selected issue at").
 
-## Branch recovery (unchanged)
+## Marker source (#555)
+
+The marker is read with `read_marker(comments, bot_login)` from a comments
+fetch that projects `user: {login, type}`; only the loop's own App
+comments count (spec 057 board-item-marker.md "Author rule").
+
+## Branch recovery
 
 `git ls-remote --exit-code --heads origin <marker's branch>` — if the
 marker names no branch, or the named branch no longer exists, `branch` is
 empty. Unchanged from spec 057.
+
+#555: a re-derived branch is adopted only when it is named
+`fix/<issue>-<slug>` for this issue, the name the fix job cuts
+(`board_item_marker.is_loop_branch()`). Otherwise the marker is foreign
+(see "Foreign marker fields" below).
 
 ## PR recovery (FR-006/FR-007 — replaces the repository-wide body search)
 
@@ -39,6 +50,26 @@ empty. Unchanged from spec 057.
 ```
 
 `state` is GitHub's own value: `OPEN`, `CLOSED`, or `MERGED`.
+
+#555: the step-1 lookup fetches the PR once and also computes whether it
+carries `board:owned` and its head repository is this repository. A
+marker-named PR that fails this is not adopted, and the step-2 fallback
+is not taken in its place (the marker named a real PR).
+
+## Foreign marker fields (#555)
+
+A marker branch that fails the naming check, or a marker PR that fails
+the ownership check, makes the marker stale. Clause 0 below still applies
+first (the awaiting-merge hold adopts nothing, and the PR is not passed
+on). Then, when the marker's PR fails the ownership check but resolves
+OPEN (e.g. a maintainer removed `board:owned`), the step is the no-op
+`awaiting-merge` with a note and pr, pr-state, branch, round and base-sha
+cleared: triage could cut a second branch/PR beside that open PR
+(FR-054). select does not choose such an item while the PR stays open
+(in-flight-detection.md `UNOWNED_OPEN_PR_STATE`), so this hold is reached
+only on a race. Otherwise (a foreign branch, or a foreign PR that is
+CLOSED or MERGED) the step is `triage`, with the reason recorded and the
+same fields cleared (FR-022). This check runs before clauses 1-4.
 
 ## Step resolution (FR-008/FR-009/FR-014 — replaces "force triage when
 branch and pr are both empty")
@@ -117,3 +148,4 @@ live state, not the marker's say-so, decides which clause applies.
 | US2 AS6 (step never empty) | every clause above ends in a named step |
 | #532 (awaiting-merge, PR open or unresolved) | clause 0 → awaiting-merge, no job runs |
 | #532 (awaiting-merge, PR closed/merged, issue open) | clause 1 does not match → clause 4, reason recorded → triage |
+| #555 (marker branch not `fix/<issue>-<slug>`, or marker PR not board:owned / from another repository) | foreign marker fields → triage, reason recorded, FR-022 cleared; a foreign PR still OPEN, or an awaiting-merge marker: no-op hold, nothing passed on |
