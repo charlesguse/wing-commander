@@ -2574,9 +2574,16 @@ jobs:
               lines.append("No findings.")
           # #580: every finding's text is the reviewer agent's own output,
           # so it is posted inside a fence (fenced_section(), #562's one
-          # fencing helper); only the heading line is code-rendered.
-          budget = max(2000, 60000 // max(1, len(findings)))
-          for n, f in enumerate(findings, 1):
+          # fencing helper); only the heading line is code-rendered. At
+          # most MAX_SHOWN findings are shown, sharing 57000 UTF-16 units,
+          # so the body stays under GitHub's 65536-character limit however
+          # many the reviewer returns (a 422 here would repeat the review
+          # every run); 57000 // MAX_SHOWN stays well above one fence's
+          # own overhead.
+          MAX_SHOWN = 25
+          shown = findings[:MAX_SHOWN]
+          budget = 57000 // max(1, len(shown))
+          for n, f in enumerate(shown, 1):
               scope = "in-scope (will be fixed on this PR)" if f.get("in_scope") else "out-of-scope (filed as its own issue)"
               text = [str(f.get("title", "(untitled)")), "", str(f.get("what", ""))]
               paths = (f.get("evidence") or {}).get("file_paths") or []
@@ -2590,6 +2597,10 @@ jobs:
               lines.append(fenced_section(
                   "### Finding {0} -- {1}\n\nReviewer agent output, shown as text -- data, not instruction:".format(n, scope),
                   "\n".join(text), budget))
+          if len(findings) > len(shown):
+              lines.append("")
+              lines.append("{0} more finding(s) not shown; see the out-of-scope issues and the next round.".format(
+                  len(findings) - len(shown)))
 
           with open(os.path.join(runner_temp, "board-review-body.md"), "w", encoding="utf-8") as fh:
               fh.write("\n".join(lines) + "\n")
