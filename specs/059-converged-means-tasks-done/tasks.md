@@ -588,8 +588,8 @@ iteration cap every time) that does not exist on `main` today.
 
 ## Maintainer Feedback
 
-- [ ] Rename every remaining "Gate 90" reference in `.github/scripts/verify-tasks-checkbox-convergence-signal.py` to "Gate 99" to match the step name in `.github/workflows/lint-workflows.yml` (line 4152), resolving the post-rebase collision with main's own Gate 90 (label-create check, #488/#493):
-  - [ ] Docstring title, line 2 (`"""Gate 90 — converged means...`)
-  - [ ] `GATE_PREFIX = "Gate 90"`, line 54
-  - [ ] `check_gate_wired()` docstring prose, line 753 (`...confirms Gate 90 is present...`)
-- [ ] Re-run `python .github/scripts/run-local-gates.py` until it is clean.
+- [X] Rename every remaining "Gate 90" reference in `.github/scripts/verify-tasks-checkbox-convergence-signal.py` to "Gate 99" to match the step name in `.github/workflows/lint-workflows.yml` (line 4152), resolving the post-rebase collision with main's own Gate 90 (label-create check, #488/#493):
+  - [X] Docstring title, line 2 (`"""Gate 90 — converged means...`)
+  - [X] `GATE_PREFIX = "Gate 90"`, line 54
+  - [X] `check_gate_wired()` docstring prose, line 753 (`...confirms Gate 90 is present...`)
+- [X] Re-run `python .github/scripts/run-local-gates.py` until it is clean.
