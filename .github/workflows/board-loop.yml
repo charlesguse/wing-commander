@@ -987,6 +987,7 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           cancel-token: ${{ github.token }}
+          bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
           issue-number: ${{ needs.select.outputs.issue-number }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
 
@@ -1346,6 +1347,7 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           cancel-token: ${{ github.token }}
+          bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
           issue-number: ${{ needs.select.outputs.issue-number }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
 
@@ -1803,6 +1805,7 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           cancel-token: ${{ github.token }}
+          bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
           issue-number: ${{ needs.select.outputs.issue-number }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
 
@@ -2584,6 +2587,7 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           cancel-token: ${{ github.token }}
+          bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
           issue-number: ${{ needs.select.outputs.issue-number }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
 
@@ -2929,6 +2933,7 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           cancel-token: ${{ github.token }}
+          bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
           issue-number: ${{ needs.select.outputs.issue-number }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
 
@@ -3291,6 +3296,7 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           cancel-token: ${{ github.token }}
+          bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
           issue-number: ${{ needs.prove-gate.outputs.issue-number }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
           check-issue-closed: "true"

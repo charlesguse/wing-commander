@@ -1,0 +1,13 @@
+{
+  "_comment": "#547: `**Run:**` lines typed by non-maintainer humans (NONE, CONTRIBUTOR) and by a different App's bot are not run announcements -- they must not choose the run a maintainer's genuine stop cancels. Only the loop's own Bot marker (run 999, this run) counts, so the first-pass fallback applies.",
+  "current_run_id": "999",
+  "bot_login": "wing-commander-bot[bot]",
+  "comments": [
+    {"body": "**Run:** https://github.com/example/example/actions/runs/999\n\n<!-- wing-commander-board-item: {} -->", "author_association": "NONE", "created_at": "2026-01-01T00:00:00Z", "user": {"login": "wing-commander-bot[bot]", "type": "Bot"}},
+    {"body": "**Run:** https://github.com/example/example/actions/runs/777\n\n<!-- wing-commander-board-item: {} -->", "author_association": "NONE", "created_at": "2026-01-01T00:02:00Z", "user": {"login": "outsider", "type": "User"}},
+    {"body": "**Run:** https://github.com/example/example/actions/runs/778", "author_association": "CONTRIBUTOR", "created_at": "2026-01-01T00:03:00Z", "user": {"login": "contributor", "type": "User"}},
+    {"body": "**Run:** https://github.com/example/example/actions/runs/779\n\n<!-- wing-commander-board-item: {} -->", "author_association": "NONE", "created_at": "2026-01-01T00:04:00Z", "user": {"login": "other-app[bot]", "type": "Bot"}},
+    {"body": "stop", "author_association": "OWNER", "created_at": "2026-01-01T00:05:00Z", "user": {"login": "maintainer", "type": "User"}}
+  ],
+  "expected_run_id": "999"
+}
