@@ -103,6 +103,7 @@ def transcript(main=0, sub=0, chunks=1, **result_kw):
 
 
 TRANSCRIPT_NAME = "claude-execution-output.json"
+LAST_RAW_OUTPUT = ""
 BASH = None
 
 
@@ -139,6 +140,14 @@ def run_case(name, records, intended_turns="40", raw=None, with_shared=True):
          "RUN_LABEL": "",
          "GITHUB_ACTION_PATH": action_dir},
         tmp)
+    # The raw $GITHUB_OUTPUT text, for cases that must assert on the line
+    # structure itself (an injected line) rather than the parsed dict.
+    global LAST_RAW_OUTPUT
+    try:
+        with open(os.path.join(tmp, "gh_output"), encoding="utf-8") as f:
+            LAST_RAW_OUTPUT = f.read()
+    except OSError:
+        LAST_RAW_OUTPUT = ""
     return rc, output, outputs
 
 
@@ -456,6 +465,73 @@ def case_terminal_429_without_event_rate_limited():
          "unknown")
 
 
+def case_epoch_reset_becomes_iso():
+    """The runtime's nested shape carries resetsAt as epoch seconds; the
+    reset output and reason must carry ISO-8601 (data-model.md)."""
+    case = "numeric nested resetsAt -> ISO-8601 reset"
+    recs = nested_rate_limit_event("rejected", resetsAt=1757671800,
+                                   rateLimitType="five_hour") \
+        + result(is_error=True, subtype="success", num_turns=1)
+    outputs = expect(case, recs, "rate-limited",
+                     reason_contains="2025-09-12T10:10:00Z")
+    if outputs.get("rate-limit-reset") != "2025-09-12T10:10:00Z":
+        fail(case, f"expected rate-limit-reset=2025-09-12T10:10:00Z, got "
+                   f"{outputs.get('rate-limit-reset')!r}")
+
+
+def case_terminal_429_reset_from_informational_event():
+    """FR-003: a terminal 429 whose only event is informational still
+    exposes that event's reset time and window; the 429 alone classifies."""
+    case = "allowed_warning event then terminal 429 -> reset from the event"
+    recs = rate_limit_event(status="allowed_warning",
+                            resetsAt="2026-09-12T10:10:00Z",
+                            rateLimitType="five_hour") \
+        + result(is_error=True, subtype="success", terminal_reason="api_error",
+                 api_error_status=429, num_turns=0)
+    outputs = expect(case, recs, "rate-limited", reason_contains="five_hour")
+    if outputs.get("rate-limit-reset") != "2026-09-12T10:10:00Z":
+        fail(case, f"expected rate-limit-reset=2026-09-12T10:10:00Z, got "
+                   f"{outputs.get('rate-limit-reset')!r}")
+
+
+def case_status_case_insensitive():
+    for status in ("Rejected", "REJECTED"):
+        for shape, event in (
+                ("top-level", rate_limit_event(
+                    status=status, resetsAt="2026-09-12T10:10:00Z")),
+                ("nested", nested_rate_limit_event(
+                    status, resetsAt="2026-09-12T10:10:00Z"))):
+            expect(f"status {status!r} ({shape}) -> rate-limited",
+                   event + result(is_error=True,
+                                  subtype="error_during_execution",
+                                  num_turns=1),
+                   "rate-limited")
+
+
+def case_reset_newline_cannot_inject_output():
+    """A resetsAt/rateLimitType carrying CR/LF must not add lines to
+    $GITHUB_OUTPUT: a second `verdict=` line would override the real one."""
+    case = "resetsAt carrying a newline cannot inject an output line"
+    recs = rate_limit_event(resetsAt="2026-09-12T10:10:00Z\nverdict=healthy",
+                            rateLimitType="five_hour\r\nover-budget=true") \
+        + result(is_error=True, subtype="error_during_execution", num_turns=1)
+    outputs = expect(case, recs, "rate-limited")
+    lines = LAST_RAW_OUTPUT.splitlines()
+    verdict_lines = [ln for ln in lines if ln.startswith("verdict=")]
+    if verdict_lines != ["verdict=rate-limited"]:
+        fail(case, f"expected exactly one verdict line, got {verdict_lines!r}")
+    budget_lines = [ln for ln in lines if ln.startswith("over-budget=")]
+    if budget_lines != ["over-budget=false"]:
+        fail(case, f"expected exactly one over-budget line, got "
+                   f"{budget_lines!r}")
+    if len(lines) != 7:
+        fail(case, f"expected exactly 7 output lines, got {len(lines)}: "
+                   f"{lines!r}")
+    if outputs.get("rate-limit-reset") != "2026-09-12T10:10:00Z verdict=healthy":
+        fail(case, f"expected the newline flattened to a space, got "
+                   f"{outputs.get('rate-limit-reset')!r}")
+
+
 def case_shared_counter_absent():
     """_shared/count-turns.sh is not in the checkout at all.
 
@@ -517,6 +593,10 @@ CASES = [
     case_rejected_event_nested_rate_limited,
     case_statusless_event_rate_limited,
     case_terminal_429_without_event_rate_limited,
+    case_epoch_reset_becomes_iso,
+    case_terminal_429_reset_from_informational_event,
+    case_status_case_insensitive,
+    case_reset_newline_cannot_inject_output,
     case_shared_counter_absent,
     case_never_fails,
 ]
@@ -545,23 +625,35 @@ MUTATIONS = [
      lambda s: s.replace(
          '[ "$rate_limit_evidence" = "true" ]; then\n      verdict="rate-limited"',
          '[ "$rate_limit_evidence" = "bogus" ]; then\n      verdict="rate-limited"')),
-    # #544: the three arms of the rate_limit_event status filter.
+    # #544: the rate_limit_event status filter and the reset/window read.
     ("counts any rate_limit_event as evidence, whatever its status "
      "(the #544 defect)", "action",
-     lambda s: s.replace('// .status // "rejected") == "rejected"))',
-                         '// .status // "rejected") != "__any__"))', 1)),
+     lambda s: s.replace('else . end) == "rejected";',
+                         'else . end) != "__any__";', 1)),
     ("reads status only at the top level, ignoring rate_limit_info.status",
      "action",
      lambda s: s.replace('then .rate_limit_info.status else null end',
                          'then null else null end', 1)),
     ("stops counting a statusless rate_limit_event as evidence", "action",
-     lambda s: s.replace('// .status // "rejected") == "rejected"))',
-                         '// .status // "none") == "rejected"))', 1)),
-    ("reads the reset time only at the top level, ignoring "
-     "rate_limit_info.resetsAt", "action",
+     lambda s: s.replace('// .status // "rejected";',
+                         '// .status // "none";', 1)),
+    ("matches the status case-sensitively", "action",
+     lambda s: s.replace('if type=="string" then ascii_downcase else . end',
+                         'if type=="string" then . else . end', 1)),
+    ("reads reset/window only at the top level, ignoring rate_limit_info",
+     "action",
+     lambda s: s.replace('then .rate_limit_info[$k] else null end',
+                         'then null else null end', 1)),
+    ("drops the any-status fallback for the reset time (FR-003)", "action",
+     lambda s: s.replace('(($q // ($ev | last)) // {}) as $src',
+                         '($q // {}) as $src', 1)),
+    ("prints an epoch resetsAt raw instead of as ISO-8601", "action",
      lambda s: s.replace(
-         "rlget '.resetsAt // (.rate_limit_info | objects | .resetsAt)'",
-         "rlget '.resetsAt'", 1)),
+         'if type=="number" then (try todate catch tostring) else . end',
+         'if type=="number" then . else . end', 1)),
+    ("stops stripping CR/LF from the reset/window values", "action",
+     lambda s: s.replace('| tostring | gsub("[\\r\\n]"; " ") end;',
+                         '| tostring end;', 1)),
 ]
 
 

@@ -110,12 +110,13 @@ runs:
             # result record (specs/047-rate-limited-verdict/research.md R1).
             #
             # A rate_limit_event qualifies only when its status is
-            # "rejected" (#544). The runtime also emits informational events
-            # ("allowed", "allowed_warning") during ordinary runs; counting
-            # those let a run that failed for an unrelated reason read as
-            # rate-limited. The status is read from .rate_limit_info.status
-            # (the runtime's nested shape), falling back to a top-level
-            # .status (the shape spec 047's fixtures use).
+            # "rejected", compared case-insensitively (#544). The runtime
+            # also emits informational events ("allowed",
+            # "allowed_warning") during ordinary runs; counting those let a
+            # run that failed for an unrelated reason read as rate-limited.
+            # The status is read from .rate_limit_info.status (the runtime's
+            # nested shape), falling back to a top-level .status (the shape
+            # spec 047's fixtures use).
             #
             # An event carrying NO status in either place still qualifies.
             # Every informational event the runtime writes names its status,
@@ -125,28 +126,45 @@ runs:
             # in verify-truncated-cycle-carry-forward.py) -- dropping it
             # would demote a real rejection to "failed". It also keeps
             # data-model.md's "status tolerated absent" rule.
-            rate_limit_event_json="$(jq -c 'if type=="array" then . else [.] end
-              | map(select(.type=="rate_limit_event"))
-              | map(select(((if (.rate_limit_info|type)=="object"
-                               then .rate_limit_info.status else null end)
-                            // .status // "rejected") == "rejected"))
-              | last // empty' "$TRANSCRIPT" 2>/dev/null || true)"
+            #
+            # Reset time and window come from the last qualifying event;
+            # when none qualifies they fall back to the last event of any
+            # status (FR-003: expose the reset whenever the transcript
+            # carries one -- reachable as rate-limited only via a terminal
+            # api_error 429). That fallback never feeds classification. A
+            # numeric (epoch-seconds) resetsAt becomes ISO-8601, and CR/LF
+            # become spaces so neither value can inject a $GITHUB_OUTPUT
+            # line.
+            rate_limit_json="$(jq -c '
+              def status_of: (if (.rate_limit_info|type)=="object"
+                                then .rate_limit_info.status else null end)
+                             // .status // "rejected";
+              def qualifies: (status_of | if type=="string" then ascii_downcase else . end) == "rejected";
+              def field($k): .[$k] // (if (.rate_limit_info|type)=="object"
+                                           then .rate_limit_info[$k] else null end);
+              def clean: if . == null then ""
+                         else (if type=="number" then (try todate catch tostring) else . end)
+                              | tostring | gsub("[\r\n]"; " ") end;
+              if type=="array" then . else [.] end
+              | map(select(.type=="rate_limit_event")) as $ev
+              | ($ev | map(select(qualifies)) | last) as $q
+              | (($q // ($ev | last)) // {}) as $src
+              | {qualifying: ($q != null),
+                 reset: ($src | field("resetsAt") | clean),
+                 window: ($src | field("rateLimitType") | clean)}' \
+              "$TRANSCRIPT" 2>/dev/null || true)"
+            rlget() { printf '%s' "$rate_limit_json" | jq -r "$1" 2>/dev/null || true; }
 
             rate_limit_evidence="false"
             if [ "$terminal_reason" = "api_error" ] && [ "$api_error_status" = "429" ]; then
               rate_limit_evidence="true"
-            elif [ -n "$rate_limit_event_json" ] && [ "$rate_limit_event_json" != "null" ]; then
+            elif [ "$(rlget '.qualifying')" = "true" ]; then
               rate_limit_evidence="true"
             fi
 
-            rate_limit_reset="unknown"
-            rate_limit_window=""
-            if [ -n "$rate_limit_event_json" ] && [ "$rate_limit_event_json" != "null" ]; then
-              rlget() { printf '%s' "$rate_limit_event_json" | jq -r "$1 // empty" 2>/dev/null || true; }
-              rl_resets_at="$(rlget '.resetsAt // (.rate_limit_info | objects | .resetsAt)')"
-              [ -n "$rl_resets_at" ] && rate_limit_reset="$rl_resets_at"
-              rate_limit_window="$(rlget '.rateLimitType // (.rate_limit_info | objects | .rateLimitType)')"
-            fi
+            rate_limit_reset="$(rlget '.reset // ""')"
+            [ -n "$rate_limit_reset" ] || rate_limit_reset="unknown"
+            rate_limit_window="$(rlget '.window // ""')"
 
             # Order matters: error_max_turns is checked BEFORE is_error, since
             # a genuine exhaustion is a real, distinguishable outcome

@@ -38,7 +38,7 @@ record" entities define the field shapes referenced below;
   `rate_limit_evidence_present` = `(result_json.terminal_reason ==
   "api_error" AND result_json.api_error_status == 429)` OR (transcript
   contains a `.type=="rate_limit_event"` record whose status is
-  `"rejected"` or absent). The status is read from
+  `"rejected"` (case-insensitive) or absent). The status is read from
   `.rate_limit_info.status`, falling back to a top-level `.status`. An
   event whose status is anything else (the runtime's informational
   `"allowed"` / `"allowed_warning"`) is not evidence (#544): counting it
@@ -49,7 +49,14 @@ record" entities define the field shapes referenced below;
   second file read, no network call (FR-002).
 - `rate-limit-reset` is computed once, from the *last* qualifying
   (rejected or statusless) `.type=="rate_limit_event"` record's
-  `.resetsAt`, or its `.rate_limit_info.resetsAt` (mirrors the
+  `.resetsAt`, or its `.rate_limit_info.resetsAt`. When no event
+  qualifies (a terminal api_error 429 whose only events are
+  informational), it falls back to the last event of any status (FR-003:
+  expose the reset whenever the transcript carries one). That fallback
+  feeds only the reset time and window, never classification. A numeric
+  (epoch-seconds) `resetsAt` is converted to ISO-8601, and CR/LF in the
+  reset time or window become spaces, so neither can inject a
+  `$GITHUB_OUTPUT` line (mirrors the
   "last record is authoritative" rule the classifier already applies to
   `result` records) — `"unknown"` when no such record exists, is empty,
   or is unparseable as non-empty text. Never epoch-zero, never a
