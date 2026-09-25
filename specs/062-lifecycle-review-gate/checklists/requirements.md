@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,18 +31,29 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain, and are the three the
-  lifecycle issue itself flagged as owner decisions rather than defaults:
-  **FR-002** (which lifecycle pull request types are in scope — final only,
-  or also spec and plan), **FR-017** (how the pipeline's own review reaches
-  the existing fold loop, given that the fold path is entered by a non-bot
-  `CHANGES_REQUESTED` review and the pipeline's review can only be a
-  bot-authored `COMMENT`), and **FR-024** (the auto-merge setting's default
-  and granularity). Each changes scope or merge authority, so none has a
-  safe default; they are carried into the clarify stage rather than guessed.
-  Two further questions the issue raised are resolved here without a marker:
-  additional review context is deferred explicitly (Out of Scope, FR-012),
-  and the kill switch is specified as this feature's own
+- All three [NEEDS CLARIFICATION] markers are resolved by the owner's reply
+  on lifecycle issue #476, and the requirements they blocked now state the
+  decision:
+  - **FR-002** — scope is the **final implementation pull request only**.
+    The spec and plan pull requests are excluded because neither has an
+    implement stage to fold a not-clean outcome back into. This also
+    settles the corresponding edge case and the *Lifecycle pull request*
+    entity.
+  - **FR-017** — the gate **calls the fold logic directly through one
+    shared composite**, never through the review event. The
+    pull-request-conversation wrapper's bot-author exclusion is left
+    untouched, which is now stated as an explicit prohibition in FR-018
+    rather than a constraint on an undecided design.
+  - **FR-024** — the auto-merge setting is **off by default behind one
+    repository-wide switch** in the `WING_COMMANDER_*` family, with no
+    per-pull-request-type granularity; the *Assumptions* section no longer
+    hedges on the default.
+  The reply also restated that the constitutional amendment (Principles V
+  and X) must be human-merged before the capability ships — already
+  required by FR-031 to FR-033, so no change was needed for it.
+- Two further questions the issue raised were resolved at intake without a
+  marker: additional review context is deferred explicitly (Out of Scope,
+  FR-012), and the kill switch is specified as this feature's own
   `WING_COMMANDER_*_PAUSED`-family variable (FR-034).
 - Named principles, spec directories, workflow roles and repository
   variable families appear as *the governing constraints and the boundary

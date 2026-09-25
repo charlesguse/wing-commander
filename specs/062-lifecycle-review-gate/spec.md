@@ -101,8 +101,11 @@ cannot simply be dropped into the existing review-event path:
 
 Neither is a bug to route around silently: the bot exclusion is a Principle
 V security gate, and widening it generally would let any bot's review drive
-the pipeline. How the pipeline's own review re-enters the fold loop without
-widening that gate is the third open question below.
+the pipeline. So the gate does not try to re-enter the fold loop through the
+review event at all: it calls the fold logic directly, through the one
+shared home that the review-event path also calls (FR-017). Both facts above
+stay exactly as they are — the wrapper keeps its bot filter, and the
+pipeline's review stays a `COMMENT` posted for a human to read.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -343,9 +346,9 @@ normal operation resumes.
   clean round.** The conditions are re-derived before merging; a stale
   clean round does not authorize a merge.
 - **The pull request is a spec or plan pull request with no implementation
-  branch behind it.** If such pull requests are in scope (open question 1),
-  a not-clean outcome has no implement stage to dispatch — the findings
-  must still reach a human, and the gate must not report a pass.
+  branch behind it.** Out of scope by FR-002: the gate does not attach, no
+  review runs, no status is reported, and the pull request behaves exactly
+  as it does today.
 
 ## Requirements *(mandatory)*
 
@@ -355,13 +358,13 @@ normal operation resumes.
   a lifecycle pull request only after the conditions it already uses to
   call a pull request ready are satisfied, re-derived against the pull
   request's exact head SHA.
-- **FR-002**: The pull request types in scope MUST be
-  [NEEDS CLARIFICATION: the request explicitly includes the final
-  implementation pull request ("specs being merged in"); it is not stated
-  whether the spec pull request (`spec-draft/…` → `main`) and the plan
-  pull request are also in scope. The answer changes which stages open
-  pull requests the gate attaches to, and whether a not-clean outcome has
-  an implement stage to dispatch at all].
+- **FR-002**: The only pull request type in scope MUST be the final
+  implementation pull request of the feature lifecycle — the one the
+  finalize stage opens. The spec pull request (`spec-draft/…` → `main`)
+  and the plan pull request MUST NOT have the gate attached: they have no
+  implement stage behind them, so a not-clean outcome would have nothing
+  to fold findings into (FR-016). Those pull requests behave exactly as
+  they do today.
 - **FR-003**: The gate MUST NOT run during an implement stage's cycles, and
   MUST NOT run between cycles — no cycle start, cycle completion, or
   convergence decision may trigger a review.
@@ -416,19 +419,17 @@ normal operation resumes.
   post-review fold mechanism (spec 042) so they become tasks and
   re-dispatch implement. The feature MUST NOT introduce a second, parallel
   findings-to-tasks mechanism.
-- **FR-017**: The mechanism by which the pipeline's own review reaches that
-  fold path MUST be
-  [NEEDS CLARIFICATION: the fold path is entered by a non-bot maintainer's
-  `CHANGES_REQUESTED` review; the pipeline's review is authored by the same
-  bot identity that opened the pull request, so it is excluded by the
-  wrapper's bot filter and can only be a `COMMENT` review. Options: teach
-  the fold path to accept the pipeline's own review identified by a
-  pipeline-owned marker; have the gate invoke the fold logic directly
-  rather than through the review event; or give the gate its own outcome
-  shape that feeds the same task-generation step].
-- **FR-018**: Whatever FR-017 resolves to MUST NOT widen the existing
-  security gate to bot-authored reviews generally — only the pipeline's own
-  review, identified deterministically, may drive the fold.
+- **FR-017**: The gate MUST reach that fold path by invoking the fold logic
+  directly, not by posting a review and relying on the review event to
+  carry it. The fold logic MUST live in a single shared home (FR-035) that
+  both the existing review-event path and this gate call, so the two paths
+  cannot drift apart.
+- **FR-018**: The existing security gate MUST NOT be widened to
+  bot-authored reviews: the pull-request-conversation wrapper's
+  `review.user.type != 'Bot'` exclusion MUST be left exactly as it is, and
+  this feature MUST NOT add a `workflow_dispatch` entry point to that
+  wrapper. Only the gate's own in-pipeline invocation, reached through the
+  shared fold home, may drive the fold on the pipeline's behalf.
 - **FR-019**: Out-of-scope findings MUST be filed as issues carrying the
   line `Found by the code review of #N`, through the pipeline's existing
   durable filing path, and MUST NOT become extra commits that widen the
@@ -448,13 +449,13 @@ normal operation resumes.
 ### Functional Requirements — auto-merge
 
 - **FR-024**: The pipeline MUST NOT merge a lifecycle pull request unless
-  an explicit repository setting enabling it is present. The setting's
-  default and granularity MUST be
-  [NEEDS CLARIFICATION: off by default and repository-wide, off by default
-  with a per-pull-request-type switch, or on by default. This decides
-  whether adopting a release silently changes who merges, and whether a
-  maintainer can enable it for the final pull request while keeping spec
-  pull requests human-merged].
+  an explicit repository setting enabling it is present. That setting MUST
+  be a single repository-wide switch, named in the same
+  `WING_COMMANDER_*` family as the pipeline's other controls, and MUST
+  default to off — adopting a release MUST NOT change who merges until a
+  maintainer sets it. It MUST NOT carry per-pull-request-type granularity:
+  with only the final implementation pull request in scope (FR-002), one
+  switch governs the one class.
 - **FR-025**: When the setting is off, the gate MUST still run and report
   its status; only the merge is withheld, and the human merge path is
   unchanged.
@@ -518,9 +519,10 @@ normal operation resumes.
 
 ### Key Entities
 
-- **Lifecycle pull request**: A pull request the feature lifecycle opens on
-  the way to `main` — at minimum the final implementation pull request; the
-  spec and plan pull requests pending FR-002.
+- **Lifecycle pull request**: For this feature, the final implementation
+  pull request the finalize stage opens on the way to `main` (FR-002). The
+  spec and plan pull requests are lifecycle pull requests too, but the gate
+  does not attach to them.
 - **Review round**: One invocation of the review against one head SHA,
   carrying a round number, the SHA, its findings and an outcome
   (clean / findings / failed / budget-exhausted).
@@ -572,9 +574,8 @@ normal operation resumes.
 
 ## Assumptions
 
-- The auto-merge setting ships **off**, so that adopting a release never
-  silently changes who merges; FR-024's clarification may confirm or
-  override this, and nothing else in the spec depends on the default.
+- The auto-merge setting ships **off** and is repository-wide (FR-024), so
+  that adopting a release never silently changes who merges.
 - The review gate is additive: with it absent, disabled or paused, the
   lifecycle behaves exactly as it does today, and a maintainer can always
   merge by hand.
@@ -588,8 +589,9 @@ normal operation resumes.
   discipline; this feature adds no new concurrency model.
 - The round budget has a conservative default (single digits) and is
   configurable the way the pipeline's other loop caps are.
-- The final implementation pull request is in scope regardless of how
-  FR-002 resolves — it is the case the request names explicitly.
+- The final implementation pull request always has an implement stage and a
+  `tasks.md` behind it, which is what makes the fold-back of FR-016
+  available to every not-clean round.
 - Findings the review produces are proposals; whether one is well-formed,
   novel, or safe to act on is decided by deterministic code, not by the
   reviewing agent (constitution IX).
@@ -603,8 +605,8 @@ normal operation resumes.
   return-for-re-review path this feature must feed rather than duplicate
   (FR-016).
 - The pull-request-conversation stage and its wrapper — the bot-author
-  exclusion and the absence of a dispatch entry point are what FR-017 must
-  resolve around without widening (FR-018).
+  exclusion and the absence of a dispatch entry point are why FR-017 routes
+  around the review event entirely; this feature changes neither (FR-018).
 - The board loop's review and readiness machinery — the precedent for
   structured findings, out-of-scope filing, exact-head-SHA condition
   re-derivation, and the kill switch this feature copies (FR-010, FR-019,
