@@ -227,9 +227,9 @@ select an issue and leave `step` empty.
 
 ## Phase 5: User Story 3 - The rule has a home and a gate that can fail it (Priority: P2)
 
-**Goal**: `in_flight_candidate()` is covered by eleven checked-in fixtures
-under Gate 81 (`verify-board-eligibility.py`), so a future change to the
-rule fails a gate rather than a scheduled run three weeks later.
+**Goal**: `in_flight_candidate()` is covered by FR-012's eleven checked-in
+fixtures under Gate 81 (`verify-board-eligibility.py`), so a future change
+to the rule fails a gate rather than a scheduled run three weeks later.
 
 **Independent Test**: Run the repository's PR-time gate suite against a
 deliberately broken in-flight rule and confirm a gate fails (spec.md US3
@@ -241,7 +241,11 @@ Each case is a directory under
 `.github/scripts/tests/board-eligibility/in-flight/<case>/` containing
 `open_issues.json`, `comments_by_issue.json`, `pr_state_by_number.json`,
 and `expected.json` (`{"issue_number": <int|null>, "multiple_found":
-<bool>}`), per contracts/in-flight-detection.md's fixture list:
+<bool>}`), per contracts/in-flight-detection.md's fixture list. FR-012
+requires exactly these eleven cases; Gate 81 iterates every directory
+present under `in-flight/`, so later, unrelated fixes to other defects may
+add further cases to that same directory without changing FR-012's own
+count:
 
 - [X] T014 [P] [US3] Create fixture case `no-marker` — no issue anywhere
   carries a marker → `{"issue_number": null, "multiple_found": false}`.
