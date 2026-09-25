@@ -2,8 +2,8 @@
   "issue": 460,
   "spec_dir": "specs/060-self-redrive-concurrency",
   "feature_num": "060",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 3,
   "spec_branch": "spec/060-self-redrive-concurrency",
-  "pending_re_review_from": ["charlesguse"]
+  "pending_re_review_from": []
 }
