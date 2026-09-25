@@ -24,7 +24,8 @@ WHAT IT COVERS
 --------------
 Just enough of JSON Schema draft 2020-12 to express this one document:
 object (required/additionalProperties/properties), array
-(minItems/items), and string (minLength/maxLength/pattern). Not a
+(minItems/items), and string (minLength/maxLength/pattern; a pattern's
+final `$` is read as ECMA's end of input via wc_schema_pattern, #593). Not a
 general-purpose validator — stage-finding.schema.json is the only
 subject, and if that document ever needs a keyword this does not
 understand, it needs to grow here deliberately, not silently accept
@@ -41,6 +42,9 @@ import json
 import os
 import re
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_schema_pattern import python_pattern  # noqa: E402
 
 SCHEMA_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "schemas",
@@ -60,7 +64,7 @@ def _validate_string(value, spec, where):
     if max_length is not None and len(value) > max_length:
         return "{0} must be at most {1} character(s) long".format(where, max_length)
     pattern = spec.get("pattern")
-    if pattern is not None and re.search(pattern, value) is None:
+    if pattern is not None and re.search(python_pattern(pattern), value) is None:
         return "{0} does not match the required pattern {1!r}".format(where, pattern)
     return None
 
@@ -138,8 +142,8 @@ def _fixture_files():
     # Pinned count (verify-metrics-record-schema.py precedent): a bare glob
     # makes a deleted fixture read as a smaller clean pass. Update
     # deliberately with the fixture set.
-    if len(found) != 8:
-        sys.exit("::error::stage-finding-schema: expected exactly 8 fixtures "
+    if len(found) != 9:
+        sys.exit("::error::stage-finding-schema: expected exactly 9 fixtures "
                  "under {0}, found {1} — a fixture was added or removed "
                  "without updating this pin.".format(FIXTURES_DIR, len(found)))
     return found
@@ -177,7 +181,70 @@ def self_test():
         return 1
     print("verify-stage-finding-schema self-test: {0}/{1} fixtures behaved "
           "as specified.".format(total - bad, total))
+    bad += _trailing_newline_mutation()
+    bad += _pattern_translation_single_home()
     return 1 if bad else 0
+
+
+SCHEMA_GATES = ("verify-stage-finding-schema.py", "verify-board-review-finding-schema.py")
+PATTERN_HOME = "wc_schema_pattern.py"
+PATTERN_COPY_RE = re.compile(r"""endswith\(\s*(['"])\$\1\s*\)""")
+
+
+def _pattern_translation_single_home():
+    """The `$` -> `\\Z` translation has one home, wc_schema_pattern.py
+    (#593): both schema gates import it, and no other script, composite
+    or workflow under .github carries its own copy."""
+    bad = 0
+    scripts_dir = os.path.dirname(os.path.abspath(__file__))
+    for name in SCHEMA_GATES:
+        with open(os.path.join(scripts_dir, name), encoding="utf-8") as fh:
+            if "from wc_schema_pattern import python_pattern" not in fh.read():
+                bad += 1
+                print("[FAIL] single home: {0} does not import python_pattern from "
+                      "{1}".format(name, PATTERN_HOME))
+    github_dir = os.path.dirname(scripts_dir)
+    for root, _dirs, files in os.walk(github_dir):
+        for fname in files:
+            if not fname.endswith((".py", ".yml", ".yaml")) or fname == PATTERN_HOME:
+                continue
+            path = os.path.join(root, fname)
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                if PATTERN_COPY_RE.search(fh.read()):
+                    bad += 1
+                    print("[FAIL] single home: {0} carries its own `$` -> `\\Z` "
+                          "translation; import python_pattern from {1}".format(
+                              os.path.relpath(path, github_dir), PATTERN_HOME))
+    if not bad:
+        print("[ok] single home: the `$` -> `\\Z` translation lives only in {0}, "
+              "imported by both schema gates".format(PATTERN_HOME))
+    return bad
+
+
+TRAILING_NEWLINE_FIXTURE = "invalid-trailing-newline-title.json"
+
+
+def _trailing_newline_mutation():
+    """Mutation (#593): with the `$` -> `\\Z` translation removed, Python's
+    `$` matches before a final newline, so the trailing-newline fixture
+    must then validate. If it does not, the fixture no longer exercises
+    that difference and its rejection above proves nothing."""
+    global python_pattern
+    with open(os.path.join(FIXTURES_DIR, TRAILING_NEWLINE_FIXTURE), encoding="utf-8") as fh:
+        finding = json.load(fh)
+    translated = python_pattern
+    python_pattern = lambda pattern: pattern  # noqa: E731
+    try:
+        ok, _reason = validate_finding(finding)
+    finally:
+        python_pattern = translated
+    if not ok:
+        print("[FAIL] mutation (no \\Z translation): {0} is still rejected, so it "
+              "no longer tests the trailing-newline case".format(TRAILING_NEWLINE_FIXTURE))
+        return 1
+    print("[ok] mutation (no \\Z translation): {0} validates, so the "
+          "translation is what rejects it".format(TRAILING_NEWLINE_FIXTURE))
+    return 0
 
 
 def main():

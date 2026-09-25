@@ -33,6 +33,9 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_schema_pattern import python_pattern  # noqa: E402
+
 SCHEMA_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "schemas",
     "board-review-finding.schema.json")
@@ -40,21 +43,6 @@ SCHEMA_PATH = os.path.join(
 with open(SCHEMA_PATH, encoding="utf-8") as _fh:
     SCHEMA = json.load(_fh)
 ITEM_SCHEMA = SCHEMA["items"]
-
-
-def _python_pattern(pattern):
-    """`pattern` (ECMA-262, as JSON Schema uses) for Python's re. A final
-    `$` in ECMA matches only at the end of input; in Python it also matches
-    before a trailing newline, which would let "title\\n" pass the schema's
-    single-line title pattern (#583). It becomes `\\Z`.
-
-    Only a `$` that ends the pattern is translated. A `$` elsewhere (inside
-    an alternation or group, e.g. `^(a$|b)`) keeps Python's meaning, and no
-    other ECMA/Python difference is handled; a schema pattern that needs
-    either must not rely on this function."""
-    if pattern.endswith("$") and not pattern.endswith("\\$"):
-        return pattern[:-1] + r"\Z"
-    return pattern
 
 
 def _validate_string(value, spec, where):
@@ -70,7 +58,7 @@ def _validate_string(value, spec, where):
     if max_length is not None and len(value) > max_length:
         return "{0} must be at most {1} character(s) long".format(where, max_length)
     pattern = spec.get("pattern")
-    if pattern is not None and re.search(_python_pattern(pattern), value) is None:
+    if pattern is not None and re.search(python_pattern(pattern), value) is None:
         return "{0} does not match the required pattern {1!r}".format(where, pattern)
     return None
 

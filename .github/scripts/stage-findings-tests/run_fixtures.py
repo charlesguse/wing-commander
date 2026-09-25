@@ -179,6 +179,18 @@ def case_empty_file_paths_dropped():
           proc.returncode == 1, proc.stdout + proc.stderr)
 
 
+def case_trailing_newline_title_dropped():
+    case = "a title ending in a newline is dropped (Python's `$` alone would pass it, #593)"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-")
+    bad = valid_finding(title="a finding title\n")
+    rc, outputs, state, out = run_prepare(tmp, "structured-array", findings=[bad])
+    check(case + ": exit 0", rc == 0, out)
+    check(case + ": zero survivors", outputs.get("survivor-count") == "0", out)
+    check(case + ": one dropped_malformed naming the title",
+          state and len(state["dropped_malformed"]) == 1
+          and "title" in state["dropped_malformed"][0])
+
+
 def case_cap_overflow_keeps_proposal_order():
     case = "cap overflow keeps the first `cap` in proposal order"
     tmp = tempfile.mkdtemp(prefix="wc-sf-")
@@ -840,6 +852,7 @@ CASES = [
     case_well_formed_finding_survives,
     case_malformed_finding_dropped,
     case_empty_file_paths_dropped,
+    case_trailing_newline_title_dropped,
     case_cap_overflow_keeps_proposal_order,
     case_cap_input_clamped_to_three_slots,
     case_no_findings_is_silent,
