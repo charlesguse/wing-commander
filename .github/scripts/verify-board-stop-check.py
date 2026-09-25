@@ -31,7 +31,10 @@ CONTRIBUTOR and OWNER humans and as another App's bot, before a stop
 (the cancel target) and after one (the baseline); run-line-in-prose-
 ignored.json puts one mid-sentence and one in a `>` quote. Two more
 mutations -- dropping the author check, un-anchoring MARKER_RUN_RE -- must
-each be caught. Finally the composite's own shell
+each be caught. Issue #580: only the LAST `**Run:**` line in the loop's
+comment is its own (last_run_match()); forged-run-line-in-own-comment.json
+puts a `**Run:**` line in the agent text of the loop's own comment, before
+the real one, and a mutation restoring the first match must be caught. Finally the composite's own shell
 (wing-commander-board-stop-check/action.yml, step `check`) is extracted and
 run under bash -eo pipefail against a stub `gh`, proving its cancel guard:
 a board-loop run of this repository is cancelled with the cancel-token; a
@@ -72,6 +75,7 @@ EXPECTED_FILES = {
     "forged-marker-owner-human-target-ignored.json",
     "forged-marker-owner-human-baseline-ignored.json",
     "bot-marker-honoured.json", "run-line-in-prose-ignored.json",
+    "forged-run-line-in-own-comment.json",
 }
 COMMAND_CASES_FILE = "stop-command-cases.json"
 MARKER_BODY = ("**Run:** https://github.com/example/example/actions/runs/111"
@@ -133,6 +137,8 @@ MUTATIONS = (
      lambda: (lambda comment, bot_login: True)),
     ("MARKER_RUN_RE un-anchored, pre-#547", "MARKER_RUN_RE",
      lambda: re.compile(r"\*\*Run:\*\*\s*(https://\S+/actions/runs/(\d+))")),
+    ("first `**Run:**` line in a comment read, pre-#580", "last_run_match",
+     lambda: (lambda body: board_stop_check.MARKER_RUN_RE.search(body or ""))),
 )
 
 

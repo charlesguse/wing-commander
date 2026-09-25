@@ -272,9 +272,10 @@ def one_line_rationale(proposal, limit=RATIONALE_MAX_CHARS):
     code span it is rendered in, and HTML comment delimiters are removed
     so it can never forge or break the board item marker, whose structure
     only code renders (write_marker). `*` becomes `\u2217` so no
-    `**Run:**` line can form (board_stop_check's MARKER_RUN_RE takes the
-    first match), and every Unicode format (Cf) character -- bidi
-    overrides, zero-width joiners/spaces -- is dropped."""
+    `**Run:**` line can form (board_stop_check reads the last
+    MARKER_RUN_RE match, and the route comment puts this line after the
+    marker), and every Unicode format (Cf) character -- bidi overrides,
+    zero-width joiners/spaces -- is dropped."""
     if not isinstance(proposal, dict):
         return ""
     text = proposal.get("reasoning")

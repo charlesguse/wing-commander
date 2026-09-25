@@ -38,6 +38,12 @@ post it through fenced_section() (#562): its body= printf passes
 raw-evidence mutations (the fenced line replaced, the printf inlining a
 jq read, a second read overwriting the fenced text) must be caught.
 
+#580: the `proceed)` arm posts an unsupported close proposal -- also the
+agent's own reasoning -- the same way (check_proceed_fence(): only through
+fenced_section(), no other statement reads `agent_proposal`, the body=
+printf passes "$disagreement"). The same three raw mutations, plus the
+pre-#580 arm restored (the reasoning after `> `), must be caught.
+
 #505: both close grounds are only as trustworthy as the run they read. The
 triage job's "Locate a cited run" step used to scan the issue body AND
 every comment unfiltered, and check_action_bump() compared every
@@ -393,10 +399,28 @@ def _mutation_check_handover_order():
 
 
 HANDOVER_ACT_STEP = "Act on the verdict and post the outcome"
-HANDOVER_ARM_RE = re.compile(r"^\s*handover\)\s*$(.*?)^\s*;;\s*$",
-                             re.MULTILINE | re.DOTALL)
-HANDOVER_RAW_EVIDENCE = "jq -c '.evidence'"
 FENCED_SECTION_IMPORT = "from board_spec_request_body import fenced_section"
+VERDICT_FILE = '"$RUNNER_TEMP/board-triage-verdict.json"'
+
+# (arm, the verdict field that carries agent text, the shell variable the
+# fenced text lands in, a raw read of that field) -- #578 (handover) and
+# #580 (proceed): each arm posts its agent text only through
+# fenced_section().
+FENCED_ARMS = (
+    ("handover", ".evidence", "evidence", "jq -c '.evidence'"),
+    ("proceed", "agent_proposal", "disagreement", "jq -r '.agent_proposal // empty'"),
+)
+
+# The proceed arm as it stood before #580: the agent's reasoning after `> `.
+PRE_580_PROCEED_ARM = [
+    '''disagreement="$(jq -r '.agent_proposal // empty' "$RUNNER_TEMP/board-triage-verdict.json")"''',
+    '''summary="Triage found no code-derived close ground; proceeding to route."''',
+    '''if [ -n "$disagreement" ]; then''',
+    '''  summary="$(printf '%s The triage-propose agent proposed a close this gate does not support -- recorded verbatim, not acted on:\\n\\n> %s' "$summary" "$disagreement")"''',
+    '''fi''',
+    '''body="$(printf '%s\\n\\n%s' "$summary" "$marker")"''',
+    '''gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"''',
+]
 
 
 def _logical_lines(code):
@@ -413,63 +437,93 @@ def _logical_lines(code):
     return out
 
 
-def check_handover_fence(text):
-    """#578: with no cited run a handover's evidence is the agent's own
-    reasoning (FR-056), so the act step's `handover)` arm must post it
-    through fenced_section() (#562's one fencing helper) and never raw:
-      - the arm renders its evidence with fenced_section();
-      - no other statement in the arm reads `.evidence` (a raw
-        `jq -c '.evidence'` beside the fenced line, or inlined into the
-        printf, bypasses the fence);
-      - the arm's one `body=` printf passes "$evidence", the fenced text.
+def check_arm_fence(text, arm, field, var):
+    """The act step's `<arm>)` arm posts the agent text in `field` only
+    through fenced_section() (#562's one fencing helper), never raw:
+      - the arm renders it with fenced_section();
+      - no other statement in the arm reads `field` (a raw jq read beside
+        the fenced line, or inlined into the printf, bypasses the fence);
+      - the arm's one `body=` printf passes "$<var>", the fenced text.
     Returns a list of problem strings."""
+    label = "{0} fence".format(arm)
     try:
         doc = yaml.safe_load(text)
     except yaml.YAMLError as exc:
-        return ["handover fence: board-loop.yml does not parse: {0}".format(exc)]
+        return ["{0}: board-loop.yml does not parse: {1}".format(label, exc)]
     steps = (((doc or {}).get("jobs") or {}).get("triage") or {}).get("steps") or []
     act = [s for s in steps if isinstance(s, dict) and s.get("name") == HANDOVER_ACT_STEP]
     if len(act) != 1:
-        return ["handover fence: expected one triage step named {0!r}, found "
-                "{1}".format(HANDOVER_ACT_STEP, len(act))]
-    arm = HANDOVER_ARM_RE.search(str(act[0].get("run") or ""))
-    if not arm:
-        return ["handover fence: the act step has no `handover)` arm"]
-    statements = _logical_lines(_code_lines(arm.group(1)))
+        return ["{0}: expected one triage step named {1!r}, found "
+                "{2}".format(label, HANDOVER_ACT_STEP, len(act))]
+    arm_re = re.compile(r"^\s*{0}\)\s*$(.*?)^\s*;;\s*$".format(re.escape(arm)),
+                        re.MULTILINE | re.DOTALL)
+    found = arm_re.search(str(act[0].get("run") or ""))
+    if not found:
+        return ["{0}: the act step has no `{1})` arm".format(label, arm)]
+    statements = _logical_lines(_code_lines(found.group(1)))
     fenced = [st for st in statements if "fenced_section(" in st]
     problems = []
     if not fenced:
-        problems.append("handover fence: the `handover)` arm does not post "
-                        "its evidence through fenced_section()")
+        problems.append("{0}: the `{1})` arm does not post its agent text "
+                        "through fenced_section()".format(label, arm))
     for st in statements:
         if st in fenced:
             continue
-        if ".evidence" in st:
-            problems.append("handover fence: the `handover)` arm reads "
-                            ".evidence outside the fenced_section() line: "
-                            "{0!r}".format(st.strip()))
+        if field in st:
+            problems.append("{0}: the `{1})` arm reads {2} outside the "
+                            "fenced_section() line: {3!r}".format(
+                                label, arm, field, st.strip()))
     bodies = [st for st in statements if st.strip().startswith("body=")]
     if len(bodies) != 1:
-        problems.append("handover fence: expected one `body=` statement in "
-                        "the `handover)` arm, found {0}".format(len(bodies)))
-    elif '"$evidence"' not in bodies[0]:
-        problems.append("handover fence: the `handover)` arm's body= printf "
-                        'does not pass "$evidence" (the fenced text)')
+        problems.append("{0}: expected one `body=` statement in the `{1})` "
+                        "arm, found {2}".format(label, arm, len(bodies)))
+    elif '"${0}"'.format(var) not in bodies[0]:
+        problems.append('{0}: the `{1})` arm\'s body= printf does not pass '
+                        '"${2}" (the fenced text)'.format(label, arm, var))
     return problems
 
 
-def _fence_mutations(text):
-    """(label, mutated text) pairs, each built from the real board-loop.yml,
-    or a problem string when an anchor line is missing."""
+def check_handover_fence(text):
+    """#578: with no cited run a handover's evidence is the agent's own
+    reasoning (FR-056) -- check_arm_fence() on the `handover)` arm."""
+    return check_arm_fence(text, "handover", ".evidence", "evidence")
+
+
+def check_proceed_fence(text):
+    """#580: an unsupported close proposal is the agent's own reasoning
+    (FR-056) -- check_arm_fence() on the `proceed)` arm."""
+    return check_arm_fence(text, "proceed", "agent_proposal", "disagreement")
+
+
+def _arm_range(lines, arm):
+    """(start, end) line indexes of the act step's `<arm>)` arm, the `;;`
+    line excluded, or None."""
+    starts = [i for i, line in enumerate(lines) if line.strip() == arm + ")"]
+    if len(starts) != 1:
+        return None
+    for j in range(starts[0] + 1, len(lines)):
+        if lines[j].strip() == ";;":
+            return starts[0], j
+    return None
+
+
+def _fence_mutations(text, arm, var, raw_read):
+    """(label, mutated text) pairs for the `<arm>)` arm, each built from
+    the real board-loop.yml, or a problem string when an anchor line is
+    missing."""
     lines = text.split("\n")
-    idx = [i for i, line in enumerate(lines) if FENCED_SECTION_IMPORT in line]
-    body_arg = [i for i, line in enumerate(lines)
-                if line.strip() == '"$evidence" "$marker")"']
+    span = _arm_range(lines, arm)
+    if span is None:
+        return "{0} fence mutation: no single `{0})` arm ending in `;;` in " \
+               "board-loop.yml".format(arm)
+    body_arg_line = '"${0}" "$marker")"'.format(var)
+    idx = [i for i in range(*span) if FENCED_SECTION_IMPORT in lines[i]]
+    body_arg = [i for i in range(*span) if lines[i].strip() == body_arg_line]
     if len(idx) != 1 or len(body_arg) != 1:
-        return "handover fence mutation: expected one fenced_section() line " \
-               "and one '\"$evidence\" \"$marker\")\"' line in board-loop.yml, " \
-               "found {0} and {1}".format(len(idx), len(body_arg))
-    raw = HANDOVER_RAW_EVIDENCE + ' "$RUNNER_TEMP/board-triage-verdict.json"'
+        return "{0} fence mutation: expected one fenced_section() line and " \
+               "one {1!r} line in the `{0})` arm, found {2} and {3}".format(
+                   arm, body_arg_line, len(idx), len(body_arg))
+    raw = raw_read + " " + VERDICT_FILE
     indent = lines[idx[0]][:len(lines[idx[0]]) - len(lines[idx[0]].lstrip())]
     arg_indent = lines[body_arg[0]][:len(lines[body_arg[0]])
                                     - len(lines[body_arg[0]].lstrip())]
@@ -484,30 +538,37 @@ def _fence_mutations(text):
         mutated.insert(i + 1, new_line)
         return "\n".join(mutated)
 
-    fallback = idx[0] + 1  # the `|| evidence=...` continuation line
-    return [
-        ("handover evidence posted raw (fenced line replaced)",
-         replaced(idx[0], indent + 'evidence="$(' + raw + ')" \\')),
-        ("printf passes a raw .evidence read instead of \"$evidence\"",
-         replaced(body_arg[0], arg_indent + '"$(jq -c .evidence '
-                  '"$RUNNER_TEMP/board-triage-verdict.json")" "$marker")"')),
-        ("a second raw .evidence read overwrites the fenced text",
-         inserted_after(fallback, indent + 'evidence="$(' + raw + ')"')),
+    fallback = idx[0] + 1  # the `|| <var>=...` continuation line
+    mutations = [
+        ("agent text posted raw (fenced line replaced)",
+         replaced(idx[0], indent + var + '="$(' + raw + ')" \\')),
+        ("printf passes a raw read instead of \"${0}\"".format(var),
+         replaced(body_arg[0], arg_indent + '"$(' + raw + ')" "$marker")"')),
+        ("a second raw read overwrites the fenced text",
+         inserted_after(fallback, indent + var + '="$(' + raw + ')"')),
     ]
+    if arm == "proceed":
+        start, end = span
+        mutated = lines[:start + 1] + [indent + line for line in PRE_580_PROCEED_ARM] + lines[end:]
+        mutations.append(("the pre-#580 arm restored (reasoning posted raw after `> `)",
+                          "\n".join(mutated)))
+    return mutations
 
 
-def _mutation_check_handover_fence(text):
-    """Every way of posting the handover evidence raw must be caught."""
-    mutations = _fence_mutations(text)
-    if isinstance(mutations, str):
-        return [mutations]
+def _mutation_check_arm_fences(text):
+    """Every way of posting a fenced arm's agent text raw must be caught."""
     failures = []
-    for label, mutated in mutations:
-        if check_handover_fence(mutated):
-            print("note: mutation caught (handover fence: {0}).".format(label))
-        else:
-            failures.append("mutation 'handover fence: {0}' was NOT caught"
-                            .format(label))
+    for arm, field, var, raw_read in FENCED_ARMS:
+        mutations = _fence_mutations(text, arm, var, raw_read)
+        if isinstance(mutations, str):
+            failures.append(mutations)
+            continue
+        for label, mutated in mutations:
+            if check_arm_fence(mutated, arm, field, var):
+                print("note: mutation caught ({0} fence: {1}).".format(arm, label))
+            else:
+                failures.append("mutation '{0} fence: {1}' was NOT caught"
+                                .format(arm, label))
     return failures
 
 
@@ -1059,7 +1120,12 @@ def run():
         print("[ok] handover fence: {0}'s handover comment posts its "
               "evidence through fenced_section()".format(BOARD_LOOP))
     problems.extend(fence_problems)
-    problems.extend(_mutation_check_handover_fence(board_loop_text))
+    proceed_problems = check_proceed_fence(board_loop_text)
+    if not proceed_problems:
+        print("[ok] proceed fence: {0}'s proceed comment posts the agent's "
+              "unsupported close proposal through fenced_section()".format(BOARD_LOOP))
+    problems.extend(proceed_problems)
+    problems.extend(_mutation_check_arm_fences(board_loop_text))
     problems.extend(run_find_cited_run_cases())
     problems.extend(_mutation_check_find_cited_run())
 

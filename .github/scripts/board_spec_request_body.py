@@ -163,7 +163,11 @@ def fenced_section(heading, text, budget):
     runs, so the same fence still holds after truncation. The truncation
     note goes after the closing fence, where it renders. Long backtick
     runs are split first (split_long_backtick_runs()), so the fence stays
-    within cmark-gfm's 255 cap and still no line inside can close it."""
+    within cmark-gfm's 255 cap and still no line inside can close it.
+    Every CR is normalised to LF first (#580 review): GitHub ends a line
+    at a lone CR too, so after this the fenced text's lines are exactly
+    the lines GitHub renders."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = split_long_backtick_runs(text)
     fence = fence_for(text)
     opening = heading + "\n\n" + fence + "\n"

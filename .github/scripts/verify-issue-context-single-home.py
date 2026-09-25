@@ -1556,6 +1556,15 @@ def _self_test_builder():
 
     failures.extend(_drafted_fence_problems(b))
 
+    # #580 review: GitHub ends a line at a lone CR as well as at LF, so
+    # fenced_section() normalises every CR to LF before fencing.
+    cr_text = "a\r\nb\r```\r@x #12\rc"
+    cr_body = b.fenced_section("H:", cr_text, 1000)
+    fence, inner = _fenced_inner(b, cr_body, "H:")
+    if "\r" in cr_body or inner != "a\nb\n```\n@x #12\nc":
+        failures.append(f"builder: fenced_section() left a CR in (or "
+                        f"mangled) {cr_text!r}: {cr_body!r}")
+
     body = b.build_body(drafted="  \n", context="", notice="N", footer="F")
     if body != "N\n\nNo drafted body.\n\n---\nF":
         failures.append(f"builder: missing context did not produce the "
