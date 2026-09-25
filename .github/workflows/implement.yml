@@ -1628,7 +1628,9 @@ jobs:
       # See "Compute agent run verdict (cycle)" above — same shared
       # composite, same steps.retry.outcome != 'skipped' guard so this
       # doesn't misclassify a leftover transcript when retry never ran
-      # (e.g. the primary attempt already succeeded).
+      # (e.g. the primary attempt already succeeded). It also keeps its
+      # normalised copy of the retry's transcript for the refusal probe in
+      # "Consolidate final outcome" below (#575).
       - name: Compute agent run verdict (retry)
         id: retry-verdict
         if: always() && steps.retry.outcome != 'skipped'
@@ -1636,6 +1638,7 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
           run-label: retry
+          keep-normalised-transcript: 'true'
 
       # continue-on-error — see "Fail loud on non-healthy agent verdict
       # (cycle)" above (research.md R13). "Read back retry outcome" and
@@ -1887,6 +1890,7 @@ jobs:
       # see the refusal probe below.
       - name: Consolidate final outcome
         id: final
+        shell: bash
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
         env:
           RETRY_RAN: ${{ (steps.retry.outcome == 'success' || steps.retry.outcome == 'failure') && 'true' || 'false' }}
@@ -1902,6 +1906,7 @@ jobs:
           PRIMARY_REASON: ${{ steps.outcome.outputs.reason }}
           RETRY_REASON: ${{ steps.retry-outcome.outputs.reason }}
           ESCALATION_MODEL: ${{ inputs.escalation-model }}
+          RETRY_NORMALISED: ${{ steps.retry-verdict.outputs.normalised-transcript }}
         run: |
           if [ "$RETRY_RAN" = "true" ]; then
             ok="$RETRY_OK"; truncated="$RETRY_TRUNCATED"; converged="$RETRY_CONVERGED"; remaining="$RETRY_REMAINING"; tier="$ESCALATION_MODEL"; reason="$RETRY_REASON"
@@ -1923,14 +1928,25 @@ jobs:
           # $RUNNER_TEMP/claude-execution-output.json is the LAST attempt's
           # transcript (a retry overwrites the primary's — see "Extract agent
           # final message" below), so with RETRY_RAN=true it is the retry's.
+          # The probe reads the retry verdict's normalised copy of it (#575):
+          # one flat array of objects, so an NDJSON transcript yields one
+          # `refused` line, not one per document, and a non-object record
+          # is dropped instead of erroring into `|| true`. The normalisation
+          # lives solely in _shared/normalise-transcript.sh, which this
+          # published stage may not resolve itself (Gate 60's promotion
+          # check), so wing-commander-agent-verdict hands the copy over.
+          # With no copy (that step never ran, or could not write one) the
+          # probe reads the raw file per document, exactly as before.
           if [ "$RETRY_RAN" = "true" ] && [ "$ok" != "true" ]; then
+            probe_source="$RUNNER_TEMP/claude-execution-output.json"
+            if [ -n "$RETRY_NORMALISED" ] && [ -s "$RETRY_NORMALISED" ]; then probe_source="$RETRY_NORMALISED"; fi
             refused=$(jq -r '
               if type=="array" then . else [.] end
               | map(select(.type=="result")) | last
               | if . == null then false
                 else ((.modelUsage // {} | length) == 0)
                      and ((.total_cost_usd // 0) == 0)
-                end' "$RUNNER_TEMP/claude-execution-output.json" 2>/dev/null || true)
+                end' "$probe_source" 2>/dev/null || true)
             if [ "$refused" = "true" ]; then
               tier="$PRIMARY_TIER"
               refusal_note="the $ESCALATION_MODEL retry was refused before its first model response (its transcript records no model usage), so the last attempt that actually ran a model was the $PRIMARY_TIER cycle"
