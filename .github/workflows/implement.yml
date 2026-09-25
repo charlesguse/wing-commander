@@ -2032,14 +2032,16 @@ jobs:
       # since git log/diff/show take `--output=<path>`, which writes a
       # file; git goes through the pipeline checkout's
       # .github/scripts/git_read.py (log/diff/show only, --output
-      # refused), and Bash(git:*), Write and Edit are denied. Gate 93
-      # enforces this for every read-only agent step.
+      # refused), run under `python3 -I`. Bash(git:*), Write and Edit are
+      # denied, and so are cd/pushd/popd, so the relative wrapper path
+      # cannot be made to name a planted copy. Gate 93 enforces this for
+      # every read-only agent step.
       - name: Compose tool args (implement.post-progress-comment)
         id: tool-args-post-progress-comment
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
         with:
-          default-allowed-tools: "Bash(python3 .wing-commander-pipeline/.github/scripts/git_read.py:*)"
-          default-disallowed-tools: "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage,Write,Edit,Bash(git:*)"
+          default-allowed-tools: "Bash(python3 -I .wing-commander-pipeline/.github/scripts/git_read.py:*)"
+          default-disallowed-tools: "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage,Write,Edit,Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*)"
           extra-allowed-tools: ${{ inputs.extra-allowed-tools }}
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
           allowed-tools-override: ${{ inputs.allowed-tools-override }}
@@ -2104,8 +2106,8 @@ jobs:
             at the iteration cap, a non-converged finalize).
 
             Inspect the cycle's commits with:
-              python3 .wing-commander-pipeline/.github/scripts/git_read.py log --oneline ${{ steps.base.outputs.base-sha }}..origin/${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
-              python3 .wing-commander-pipeline/.github/scripts/git_read.py diff --stat ${{ steps.base.outputs.base-sha }} origin/${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
+              python3 -I .wing-commander-pipeline/.github/scripts/git_read.py log --oneline ${{ steps.base.outputs.base-sha }}..origin/${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
+              python3 -I .wing-commander-pipeline/.github/scripts/git_read.py diff --stat ${{ steps.base.outputs.base-sha }} origin/${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
             (plain `git` is denied; that script runs only git log, diff
             and show).
 

@@ -24,15 +24,23 @@ name a file to write.
 WHERE IT LIVES AND HOW AGENTS REACH IT
 --------------------------------------
 This file is the one copy (#518 moved it here from board_git_read.py).
-An agent runs it by the path its job checked the pipeline out at,
-relative to the workspace:
-- board-loop.yml runs in this repository's own checkout, so its agents
-  run `python3 .github/scripts/git_read.py`;
+An agent runs it with `python3 -I` (no PYTHON* environment, no script
+directory on sys.path) by a path its job put a trusted copy at:
+- board-loop.yml's triage-propose and route-propose run in a checkout of
+  this repository's default branch, so they run
+  `python3 -I .github/scripts/git_read.py`;
+- board-loop.yml's reviewer runs in a checkout of a branch an agent
+  wrote, so it runs the read-only snapshot its job takes from
+  $GITHUB_SHA before any agent step (#583/#589):
+  `python3 -I <runner.temp>/wc-pristine/scripts/git_read.py`;
 - the published stages (workflow_call) check the pipeline repository out
   at `.wing-commander-pipeline` beside the consumer's tree, so their
-  agents run `python3 .wing-commander-pipeline/.github/scripts/git_read.py`.
-The step's grant and its prompt must name the same path. Gate 93
-(verify-issue-context-single-home.py) checks the grant.
+  agents run
+  `python3 -I .wing-commander-pipeline/.github/scripts/git_read.py`.
+The relative paths are relative to the workspace, so every such agent
+also has `cd`, `pushd` and `popd` denied. The step's grant and its prompt
+must name the same path. Gate 93 (verify-issue-context-single-home.py)
+checks both.
 
 WHAT IT REFUSES
 ---------------
@@ -52,30 +60,75 @@ WHAT IT REFUSES
   VALUE_LETTERS, because the rest of the cluster is that option's value
   (`-Sfoo`, `-Gfoo.*`, `-U3`, `-L1,5:foo.py`, `-Oorderfile`). So
   `-Sfoo` and `-pSfoo` pass (the `o` is pickaxe text), but `-po` and
-  `-poS` are refused.
+  `-poS` are refused;
+- any long option that reads or runs something outside the repository's
+  history, under any abbreviation or longer spelling: `--no-index`
+  (diffs two arbitrary files, `.git/config` with its persisted token
+  header included), `--ext-diff` and `--textconv` (run configured
+  commands). `--text` stays allowed;
+- for `diff`, any path argument outside the work tree (lexically or once
+  symlinks resolve): given one, git diff compares plain files, an
+  implicit `--no-index`. The wrapper also refuses to run outside a work
+  tree at all, where every diff is one.
+`log` and `show` read only objects, so a path outside the repository
+there is an error, not a read.
 
 Every argument is checked, including those after `--`: a path named like
 one of these options is refused too.
 
-The script runs git as `git --no-pager <subcommand> <args...>` and exits
-with git's own status. A refused call exits 2 and runs nothing.
+The script runs git as `git --no-pager -c diff.external= -c
+core.pager=cat <subcommand> --no-ext-diff --no-textconv <args...>`, with
+GIT_EXTERNAL_DIFF, GIT_PAGER and every GIT_CONFIG* variable dropped from
+its environment, and exits with git's own status. A refused call exits 2
+and runs nothing.
 
 Gate 93 (verify-issue-context-single-home.py) fails if a read-only
 agent step in any workflow is granted raw `Bash(git ...)`, and its
 `--self-test` runs this script's refusal cases.
 """
 import os
+import subprocess
 import sys
 
 ALLOWED_SUBCOMMANDS = ("log", "diff", "show")
 WRITE_OPTION = "output"
-USAGE = ("usage: python3 <pipeline checkout>/.github/scripts/git_read.py "
+# Long options refused because they read or run something outside the
+# repository's object store: `--no-index` diffs two arbitrary files, and
+# `--ext-diff`/`--textconv` run configured commands. Each is refused under
+# every abbreviation git could accept (a prefix of the name) and every
+# longer spelling (a name that starts with it). `--text` (-a) is a real
+# option and a prefix of `textconv`, so a textconv abbreviation must be
+# longer than `text` to be refused.
+READ_OUTSIDE_OPTIONS = {"no-index": 1, "ext-diff": 1, "textconv": 5}
+# Always passed: no external diff driver, no textconv filter, no pager.
+GIT_GLOBAL_OPTIONS = ("--no-pager", "-c", "diff.external=",
+                      "-c", "core.pager=cat")
+SUBCOMMAND_OPTIONS = ("--no-ext-diff", "--no-textconv")
+# Environment that could point git at another config, diff driver or
+# pager. Dropped before git runs.
+DROPPED_ENV = ("GIT_EXTERNAL_DIFF", "GIT_PAGER")
+DROPPED_ENV_PREFIXES = ("GIT_CONFIG",)
+USAGE = ("usage: python3 -I <pipeline checkout>/.github/scripts/git_read.py "
          "{log|diff|show} [<git options and arguments>...]")
 
 
-def refusal(argv):
+def _outside(arg, cwd, toplevel):
+    """Whether `arg`, read as a path from `cwd`, lies outside `toplevel`,
+    lexically or once symlinks are resolved."""
+    for resolve in (os.path.abspath, os.path.realpath):
+        path = resolve(os.path.join(cwd, arg))
+        top = resolve(toplevel)
+        if path != top and not path.startswith(top.rstrip(os.sep) + os.sep):
+            return True
+    return False
+
+
+def refusal(argv, cwd=None, toplevel=None):
     """Why `argv` (the arguments after the script name) is refused, or
-    None when it may run."""
+    None when it may run. With `toplevel` (the work tree's root) and
+    `cwd`, a `diff` path argument outside the work tree is refused too:
+    git then diffs the two paths as plain files (an implicit
+    `--no-index`), which reads any file, `.git/config` included."""
     if not argv:
         return USAGE
     subcommand = argv[0]
@@ -90,9 +143,25 @@ def refusal(argv):
                 return (f"refused: {arg!r} can write a file (git's "
                         f"--output option or an abbreviation of it). "
                         f"This wrapper is read-only.")
+            for option, min_len in READ_OUTSIDE_OPTIONS.items():
+                if len(name) >= min_len and (option.startswith(name)
+                                             or name.startswith(option)):
+                    return (f"refused: {arg!r} (--{option} or an "
+                            f"abbreviation of it) reads or runs something "
+                            f"outside the repository's history. This "
+                            f"wrapper reads commits only.")
         elif arg.startswith("-") and _cluster_uses_o(arg[1:]):
             return (f"refused: {arg!r} uses -o, which can name an output "
                     f"file. This wrapper is read-only.")
+    if subcommand == "diff" and toplevel is not None:
+        for arg in argv[1:]:
+            if arg == "--" or (arg.startswith("-") and arg != "-"):
+                continue
+            if _outside(arg, cwd or os.getcwd(), toplevel):
+                return (f"refused: {arg!r} is outside the work tree, and "
+                        f"git diff given such a path compares plain files "
+                        f"(an implicit --no-index). This wrapper reads "
+                        f"commits only.")
     return None
 
 
@@ -113,13 +182,36 @@ def _cluster_uses_o(letters):
     return False
 
 
+def clean_env(environ):
+    """`environ` without the variables in DROPPED_ENV/DROPPED_ENV_PREFIXES."""
+    return {k: v for k, v in environ.items()
+            if k not in DROPPED_ENV
+            and not k.startswith(DROPPED_ENV_PREFIXES)}
+
+
+def command(argv):
+    """The git command line a permitted `argv` runs."""
+    return ["git", *GIT_GLOBAL_OPTIONS, argv[0], *SUBCOMMAND_OPTIONS,
+            *argv[1:]]
+
+
 def main(argv):
+    env = clean_env(os.environ)
     reason = refusal(argv)
+    if reason is None:
+        top = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                             capture_output=True, text=True, env=env)
+        if top.returncode != 0 or not top.stdout.strip():
+            reason = ("refused: not inside a git work tree, where git diff "
+                      "compares plain files. This wrapper reads commits "
+                      "only.")
+        else:
+            reason = refusal(argv, os.getcwd(), top.stdout.strip())
     if reason is not None:
         print(f"git_read: {reason}", file=sys.stderr)
         return 2
-    os.execvp("git", ["git", "--no-pager", *argv])
-    return 127  # not reached: execvp replaces this process or raises
+    os.execvpe("git", command(argv), env)
+    return 127  # not reached: execvpe replaces this process or raises
 
 
 if __name__ == "__main__":
