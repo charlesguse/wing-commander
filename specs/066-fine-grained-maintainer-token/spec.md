@@ -54,10 +54,11 @@ drives all four gates with it unchanged.
 feature exists to keep the change safe and legible; without this the
 credential's blast radius stays bounded only by account memberships.
 
-**Independent Test**: issue the credential, set the secret (and, if ownership
-moves, the test-repository variable and the App installation that follow it),
-dispatch one auto-release verification attempt, and observe the credential
-precheck passing and all four gates driven to a terminal verdict.
+**Independent Test**: transfer the fixture to the machine account, issue the
+credential, set the secret and the test-repository variable and the App
+installation that follow the move, dispatch one auto-release verification
+attempt, and observe the credential precheck passing and all four gates driven
+to a terminal verdict.
 
 **Acceptance Scenarios**:
 
@@ -78,8 +79,9 @@ precheck passing and all four gates driven to a terminal verdict.
 ### User Story 2 - A wrong or expired credential is named before any spend (Priority: P1)
 
 Every way the new credential shape can be misconfigured — expired, missing one
-of the permissions the harness needs, scoped to the wrong repository, issued
-by the wrong account, or unset — is detected before the attempt starts a
+of the permissions the harness needs, carrying the Administration permission it
+must not, scoped to the wrong repository, issued by the wrong account, or
+unset — is detected before the attempt starts a
 lifecycle it cannot finish, and is reported as a named infrastructure outcome
 rather than as a stalled gate hours later.
 
@@ -109,7 +111,12 @@ the credential.
    falls within the configured warning window, **When** the attempt runs,
    **Then** it proceeds normally and its report states that the credential is
    approaching expiry.
-4. **Given** any failing precheck branch, **When** its verdict is produced,
+4. **Given** a fine-grained credential that is correctly scoped but grants the
+   Administration permission on the test repository, **When** the precheck
+   runs, **Then** the attempt ends with an infrastructure verdict that names
+   the over-granted permission and drives no gate, distinguishably from a
+   containment failure.
+5. **Given** any failing precheck branch, **When** its verdict is produced,
    **Then** the verdict text contains no part of the credential and no
    unredacted machine-account login.
 
@@ -186,10 +193,14 @@ statement is reintroduced.
 
 ### Edge Cases
 
-- **Ownership implies Admin.** If the machine account owns the test
-  repository, its permission there is necessarily Admin, which the current
-  prerequisite explicitly avoids ("Write — never Admin", `docs/setup.md` §2).
-  What must be true for that to be acceptable is an open question (Q3).
+- **Ownership implies Admin.** The machine account owns the test repository,
+  so its permission there is necessarily Admin, which the current prerequisite
+  explicitly avoids ("Write — never Admin", `docs/setup.md` §2). The account's
+  Admin is accepted; a fine-grained credential's is not — the precheck asserts
+  such a credential grants no Administration permission (FR-016), and one that
+  does must end the attempt with its own named verdict. A classic credential
+  accepted during the transition cannot express that bound and is held to
+  containment alone (FR-003).
 - **A credential scoped to "all repositories of this account".** Fine-grained
   tokens allow it; the containment check must still catch it, and the
   precheck's expectation text must describe per-repository selection rather
@@ -229,19 +240,27 @@ statement is reintroduced.
   own scope is the end-to-end test repository alone and whose granted
   permissions are no broader than the acts the harness performs (comment on an
   issue, merge a pull request, and read what the precheck reads). A
-  self-scoping credential is only issuable if the account owns the fixture:
-  [NEEDS CLARIFICATION: does the end-to-end test repository move under the
-  machine account's own ownership (making a single-repository fine-grained
-  token issuable, at the cost of Admin there), move under an organization that
-  pre-approves fine-grained access, or stay where it is (in which case the
-  classic shape stands and this feature records the refusal — FR-020)?]
+  self-scoping credential is only issuable if the account owns the fixture, so
+  the end-to-end test repository MUST be transferred to the machine account's
+  own ownership, which necessarily confers Admin there (bounded by FR-016).
+  The resulting credential MUST carry an expiry and MUST have a stated rotation
+  procedure (FR-006).
 - **FR-003**: The set of credential shapes the verification job accepts MUST
-  be stated explicitly and enforced by the precheck. Whether the classic shape
-  remains accepted alongside the repository-scoped one is
-  [NEEDS CLARIFICATION: is the classic PAT still an accepted shape after this
-  change (dual acceptance, so a credential can be rotated without a code
-  change), or is the repository-scoped fine-grained token the only accepted
-  shape from the moment this ships?]
+  be stated explicitly and enforced by the precheck. During the transition the
+  precheck MUST accept **both** shapes — the classic personal access token and
+  the repository-scoped fine-grained token — so that a credential can be
+  rotated, or the migration reversed, by setting a secret and nothing else. A
+  classic credential accepted under this dual acceptance is still subject in
+  full to the prechecks of FR-007 through FR-011 and to the containment
+  requirement of FR-012 through FR-015; dual acceptance widens the accepted
+  shape, never the accepted reach. It does, however, admit a weaker per-act
+  bound: once the account owns the fixture, a classic token conveys
+  admin-level access there by construction, so the no-Administration assertion
+  of FR-016 is a property only the fine-grained shape can satisfy and applies
+  only to it. That asymmetry MUST be stated in the canonical statement
+  (FR-017), which MUST name dual acceptance as a transitional state, so that
+  narrowing to the fine-grained shape alone is a later, deliberate decision
+  rather than a silent one.
 - **FR-004**: The credential MUST continue to be read only by
   `auto-release.yml`'s verification job, and MUST NOT be granted any access to
   this repository.
@@ -258,15 +277,17 @@ statement is reintroduced.
   verification job MUST confirm: the credential secret and the login secret are
   set; the credential authenticates; it authenticates as the login the login
   secret names (compared case-insensitively, whitespace-stripped, as today); it
-  carries at least the access each of the four gate-driving acts needs; and it
-  is contained to the test repository alone.
+  carries at least the access each of the four gate-driving acts needs; if it
+  is of the fine-grained shape, that it carries no Administration permission
+  (FR-016); and it is contained to the test repository alone.
 - **FR-008**: Each distinct failure above MUST end the attempt with a
   `fail-infra` verdict that names the secret or prerequisite to fix and the
   observed condition, and MUST NOT crash the job or leave a lifecycle running.
   Distinct causes MUST produce distinguishable verdicts — in particular
   "rejected/expired credential", "authenticated as a different account",
-  "insufficient permission on the test repository", and "containment could not
-  be established" MUST not collapse into one message.
+  "insufficient permission on the test repository", "the credential grants
+  Administration permission", and "containment could not be established" MUST
+  not collapse into one message.
 - **FR-009**: No verdict, step output, log line, or job summary produced by
   these checks may contain the credential, and none may contain the machine
   account's login unredacted — a masked value in a step output is dropped
@@ -299,15 +320,22 @@ statement is reintroduced.
   covered by a gate that runs the real precheck and that demonstrates it can
   fail — a mutation of the precheck must break at least one of the gate's
   assertions.
-- **FR-016**: If the accepted shape requires the machine account to own the
-  test repository, the repository MUST state what the resulting Admin
-  permission there is allowed to be used for and what it must not, and the
-  containment requirement MUST be restated in terms of the account's whole
-  repository set, not of its permission level on one repository.
-  [NEEDS CLARIFICATION: is Admin on the fixture (unavoidable under ownership)
-  acceptable as a restatement of today's "Write — never Admin" prerequisite, or
-  must the precheck additionally assert a bound — that the credential grants no
-  Administration permission, and that the account owns no other repository?]
+- **FR-016**: Because the machine account owns the test repository (FR-002),
+  its permission there is Admin by construction. That Admin permission MUST be
+  bounded by the credential rather than merely described: for a fine-grained
+  credential the precheck MUST additionally assert that it grants **no
+  Administration permission** on the test repository, and MUST end the attempt
+  under FR-008 with a distinguishable verdict when it does. (A classic
+  credential cannot express that bound — see FR-003 — and is held only to
+  containment; this is the security cost dual acceptance carries, and the
+  reason it is transitional.) The repository MUST state what the account's
+  Admin permission is allowed to be used for (maintainer acts performed by hand
+  outside the pipeline — creating, resetting, and deleting the fixture) and
+  what it must not (anything the harness's own credential performs). The
+  containment requirement MUST be restated in terms of the
+  account's whole repository set, not of its permission level on one
+  repository, so that "Write — never Admin" is replaced by "one repository,
+  and no Administration permission on it".
 
 #### Single home and record
 
@@ -323,11 +351,13 @@ statement is reintroduced.
   (research.md D1/D2 and its Clarifications session) MUST be preserved as
   history and annotated with a pointer to this feature's decision; it MUST NOT
   be rewritten to read as though the new shape had always been chosen.
-- **FR-020**: If the decision is that the credential shape does **not**
-  change, the canonical statement MUST record the machine-account-ownership
-  option and why it was refused, so the same question does not need
-  re-deriving; FR-007 through FR-015 still apply to the credential as it
-  stands.
+- **FR-020**: The canonical statement MUST record the two ownership options
+  that were **not** taken — leaving the fixture where it is (which keeps the
+  classic shape as the only issuable one) and moving it under an organization
+  that pre-approves fine-grained access (which works but adds an organization
+  to administer) — and why, so the same question does not need re-deriving.
+  FR-007 through FR-016 apply to whichever accepted shape (FR-003) the secret
+  currently holds.
 
 #### Boundaries
 
@@ -342,8 +372,8 @@ statement is reintroduced.
 
 - **Fixture maintainer identity**: the dedicated GitHub user account the
   harness acts as. Attributes: login (held in a masked secret), relationship to
-  the test repository (owner or invited collaborator), the complete set of
-  repositories it can reach.
+  the test repository (owner, after the transfer FR-002 requires; invited Write
+  collaborator before it), the complete set of repositories it can reach.
 - **Maintainer credential**: the secret the harness authenticates with.
   Attributes: shape (classic / repository-scoped fine-grained), repository
   selection, granted permissions, expiry.
@@ -359,8 +389,10 @@ statement is reintroduced.
 ### Measurable Outcomes
 
 - **SC-001**: The credential the harness authenticates with reaches exactly
-  one repository — the end-to-end test repository — and this is confirmed at
-  runtime on every attempt, before any gate is driven.
+  one repository — the end-to-end test repository — confirmed at runtime on
+  every attempt before any gate is driven; and when it is of the fine-grained
+  shape, the same attempt confirms it carries no Administration permission
+  there.
 - **SC-002**: Every misconfiguration listed in the Edge Cases ends the attempt
   with a named infrastructure verdict and zero gate-driving agent cost; none
   produces a crashed job, a stalled gate, or a verdict that fails to parse.
@@ -373,9 +405,9 @@ statement is reintroduced.
 - **SC-005**: The containment check is demonstrably able to fail: mutating the
   precheck so that an over-scoped or unverifiable credential would pass makes
   at least one gate assertion fail.
-- **SC-006**: One unattended end-to-end run completes under the credential
-  shape this feature settles on, with all four gates driven and the evidence
-  recorded.
+- **SC-006**: One unattended end-to-end run completes under the
+  repository-scoped fine-grained credential, with all four gates driven and the
+  evidence recorded.
 - **SC-007**: No adopter-facing behaviour changes: the published stage
   workflows and their documented configuration surface are identical before and
   after, apart from the setup row describing this repository-only secret.
@@ -391,7 +423,9 @@ statement is reintroduced.
   account owns, or organization-owned repositories an organization owner has
   pre-approved. Making the credential self-scoping therefore requires changing
   **who owns the test repository**, not just which token type is issued — which
-  is why Q1 below is a scope question rather than a detail.
+  is why Q1 was a scope question rather than a detail, and why its answer
+  (transfer the fixture to the machine account) puts a one-time repository
+  transfer inside this feature's prerequisites.
 - The permissions the harness needs on the test repository are those the four
   gate-driving acts require (issue comment write, pull request merge, and the
   reads the precheck performs); no Administration permission is needed for the
@@ -401,6 +435,12 @@ statement is reintroduced.
   shortest lifetime that does not force rotation more often than the release
   cadence, treat an expired credential as `fail-infra`, and state an
   approaching expiry in the attempt's report when it is observable.
+- Dual acceptance (FR-003) has no automatic sunset inside this feature:
+  nothing in the pipeline withdraws the classic shape on a schedule or after a
+  successful run. Narrowing to the fine-grained shape alone is a later,
+  separately decided change; this feature's obligation is that the canonical
+  statement marks dual acceptance as transitional so the narrowing is a choice
+  someone makes rather than one that quietly never happens.
 - The existing runtime containment check is kept rather than deleted, even
   though a correctly scoped credential makes it redundant on paper — it is what
   turns the scoping claim into an observation (Constitution Principle VIII).
@@ -422,18 +462,23 @@ statement is reintroduced.
 
 ## Clarifications
 
-### Session 2026-09-24 — open questions (not yet answered)
+### Session 2026-09-25 — answered on issue #506
 
 **Q1 — Which ownership shape does the test repository take?** (FR-002,
 FR-003, FR-016, Assumptions)
 
 A fine-grained token can only be scoped to a repository its own account owns,
-so this is the decision that determines whether the request is buildable at
+so this was the decision that determined whether the request is buildable at
 all: keep the fixture where it is and the credential stays classic; move it
 under the machine account and the credential becomes self-scoping but the
 account necessarily holds Admin there; move it under an organization and
 scoping works via owner pre-approval at the cost of an organization to
 administer.
+
+**Answer**: transfer the test repository to the machine account, which then
+holds Admin there; the fine-grained token carries an expiry and a stated
+rotation procedure. Folded into FR-002, FR-006, FR-016 and FR-020, the
+Assumptions, and the "Ownership implies Admin" edge case.
 
 **Q2 — Does the classic shape remain accepted?** (FR-003, FR-006, FR-017)
 
@@ -441,6 +486,13 @@ Dual acceptance keeps rotation a secret-only act and makes the migration
 reversible without a code change, but leaves the weaker shape available
 indefinitely; single acceptance makes the guarantee unconditional but turns
 any fallback into a code change under time pressure.
+
+**Answer**: dual acceptance during the transition — the precheck accepts both
+the classic and the repository-scoped fine-grained shape, with every other
+precheck and the containment requirement applying to both. Folded into FR-003;
+the canonical statement marks dual acceptance as transitional, and the
+Assumptions record that nothing in the pipeline withdraws the classic shape on
+its own.
 
 **Q3 — Is the Admin permission that ownership confers acceptable, and what
 must bound it?** (FR-016, FR-012, specs/055 FR-011)
@@ -451,3 +503,21 @@ rule is restated as "Admin on the fixture only, never elsewhere", or the
 containment check must additionally assert something about what the credential
 may not do (for instance, that it grants no Administration permission and that
 the account owns no other repository).
+
+**Answer**: bound it — the precheck additionally asserts that the credential
+grants no Administration permission on the test repository, with its own
+distinguishable `fail-infra` verdict. The account's Admin (from ownership) is
+accepted and its permitted uses are stated; the credential's is refused.
+Folded into FR-007, FR-008, FR-016 and SC-001, and into User Story 2's fourth
+acceptance scenario.
+
+Combining this answer with Q2's leaves one consequence worth stating, since
+it is a cost of the pair rather than of either answer alone: once the account
+owns the fixture, a **classic** token conveys admin-level access there by
+construction, so the no-Administration assertion is a property only the
+fine-grained shape can satisfy. Rather than let the assertion silently reject
+every classic credential and make dual acceptance vacuous, FR-003 and FR-016
+scope the assertion to the fine-grained shape and record that a classic
+credential accepted during the transition is bounded by containment alone.
+That is the security cost dual acceptance carries, and the reason the
+canonical statement must mark it transitional.

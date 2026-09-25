@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,16 +31,17 @@
 
 ## Notes
 
-- **Three `[NEEDS CLARIFICATION]` markers remain by design** (FR-002, FR-003,
-  FR-016), one per open question in the Clarifications section. Each is a
-  trade-off only the repository owner can settle: where the fixture repository
-  lives (Q1, which decides whether a self-scoping credential is issuable at
-  all), whether the classic shape stays accepted (Q2), and whether the Admin
-  permission ownership confers is acceptable or must be bounded by an
-  additional runtime assertion (Q3). The intake stage does not wait for
-  answers; the questions are posted to lifecycle issue #506 and folded in by
-  the clarify stage. FR-020 keeps the spec buildable under the "no change"
-  answer to Q1, so the spec is not blocked on any one answer.
+- **All three `[NEEDS CLARIFICATION]` markers are resolved** (2026-09-25).
+  The three markers stood at FR-002, FR-003 and FR-016, one per open question
+  in the Clarifications section — each a trade-off only the repository owner
+  could settle. The answers on lifecycle issue #506 settled all three: the
+  fixture transfers to the machine account (Q1), the precheck accepts both the
+  classic and the repository-scoped shape during the transition (Q2), and the
+  Admin that ownership confers is bounded by a precheck assertion that the
+  credential grants no Administration permission (Q3). Each answer is recorded
+  under its question in the Clarifications section alongside the requirements
+  it changed; FR-020 now records the two ownership options that were not taken
+  rather than a conditional refusal path.
 - **"No implementation details"** is judged against this repository's subject
   matter: the deliverable *is* CI configuration, so secret names, variable
   names, and permission levels are the feature's own vocabulary, not leaked
