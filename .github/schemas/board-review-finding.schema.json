@@ -6,7 +6,7 @@
     "required": ["title", "what", "evidence", "in_scope", "fingerprint_basis"],
     "additionalProperties": false,
     "properties": {
-      "title": {"type": "string", "maxLength": 120},
+      "title": {"type": "string", "maxLength": 120, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]*$"},
       "what": {"type": "string"},
       "evidence": {
         "type": "object",

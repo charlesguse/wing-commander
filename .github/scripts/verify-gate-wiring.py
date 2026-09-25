@@ -86,17 +86,17 @@ SUBJECT_PATH_RE = re.compile(
 # script arguments before the delimiter (watchdog.yml's signal-id stamp
 # passes `"$f"`) and a redirect after it (Gate 23's does), and the
 # terminator is matched at any indentation so the YAML block's own nesting
-# is irrelevant.
+# is irrelevant. Interpreter flags before the `-` are read too: board-
+# loop.yml's post-agent heredocs run `python3 -I -` (#583).
 PY_HEREDOC_RE = re.compile(
-    r"^[ \t]*python3? +- +[^\n<]*<<'(\w+)'[^\n]*\n(.*?)^[ \t]*\1[ \t]*$",
+    r"^[ \t]*python3?(?: +-[A-Za-z]+)* +- +[^\n<]*<<'(\w+)'[^\n]*\n(.*?)^[ \t]*\1[ \t]*$",
     re.S | re.M)
 
 # The dumber reader of the same thing, and the one that decides whether a
 # heredoc was MISSED: "a line invoking python that opens a heredoc". It
 # knows nothing about how the opener is spelled, so any spelling
-# PY_HEREDOC_RE cannot read (an interpreter flag before the `-`, an
-# unquoted delimiter, `python -` instead of `python3 -`) shows up here and
-# nowhere else, which is exactly the disagreement _check_heredoc_reader
+# PY_HEREDOC_RE cannot read (an unquoted delimiter, say) shows up here
+# and nowhere else, which is exactly the disagreement _check_heredoc_reader
 # reports. Same one-precise-one-loose technique as LOOSE_PATH_RE. The
 # pattern itself lives in wc_gate_registry (LOOSE_PY_HEREDOC_RE, imported
 # above): pr_time_inline_steps decides local-suite membership with the
@@ -164,8 +164,8 @@ def _check_heredoc_reader(scanned):
     if this reader silently stopped matching, every subject document would
     still be found and this check would still print 0 failures. That is the
     same "green while proving nothing" shape the whole file exists to stop.
-    A style change to the heredocs (an interpreter flag, a different
-    delimiter) must therefore be a loud failure here, not a quiet loss of
+    A style change to the heredocs (a different delimiter, an unquoted
+    one) must therefore be a loud failure here, not a quiet loss of
     coverage.
 
     Per heredoc, and not "did ANY of them parse", because the repository has

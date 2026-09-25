@@ -909,7 +909,8 @@ def check_cite_source(path, reassignment_res):
         problems.append("the decide step never sets the issue's "
                         '"cited_run_workflow_path" key from WORKFLOW_PATH')
     fetch = steps[by_id["fetch"]] if "fetch" in by_id else {}
-    if "workflow-path=" not in str(fetch.get("run") or ""):
+    # #583: emitted through wc_step_output.py (control characters removed).
+    if not re.search(r"workflow-path=|wc_step_output\.py workflow-path ", str(fetch.get("run") or "")):
         problems.append("the fetch step never emits workflow-path")
     return problems
 

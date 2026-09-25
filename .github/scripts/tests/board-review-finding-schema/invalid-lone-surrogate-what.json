@@ -1,0 +1,15 @@
+{
+  "title": "off-by-one in the round counter",
+  "what": "a lone surrogate \ud800 here",
+  "evidence": {
+    "file_paths": [
+      ".github/workflows/board-loop.yml"
+    ],
+    "detail": "round = round + 1 runs before the round < budget check"
+  },
+  "in_scope": true,
+  "fingerprint_basis": {
+    "file_path": ".github/workflows/board-loop.yml",
+    "gate_or_artifact": "review round loop"
+  }
+}
