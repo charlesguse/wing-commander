@@ -57,7 +57,10 @@ bespoke: in the clarify stage, for the agent's early-STOP path (issue #366),
 and in the plan and tasks stages, for auto-mode hand-offs (issue #377). The
 request explicitly raises the question of whether a third bespoke copy is
 the right answer or whether one uniform per-stage cost report should replace
-all of them.
+all of them. **The requester chose the uniform answer**: one cost report per
+cost-bearing stage, emitted from the existing cost-line single home, with
+the outcome callouts no longer carrying the cost line and the two bespoke
+copies retiring in the same change.
 
 ### Why this is not cosmetic
 
@@ -151,15 +154,57 @@ statements on the lifecycle issue: each path yields exactly one.
 5. **Given** an intake run whose metrics could not be read, **When** the run
    finishes, **Then** the issue still carries one cost statement, saying
    the metrics were unavailable rather than omitting the line.
+6. **Given** an intake run the workflow deliberately fails — the readiness
+   veto over unresolved clarification markers, or the contradiction veto —
+   **When** the run finishes red, **Then** the issue still carries exactly
+   one statement of the run's cost, and the run's conclusion is still red.
+7. **Given** an intake run cancelled in flight, **When** the run ends,
+   **Then** no cost statement is posted, matching what the supervision
+   layer already skips.
 
 ---
 
-### User Story 3 - The cost report cannot quietly disappear again (Priority: P2)
+### User Story 3 - One cost report, not a fourth copy of one (Priority: P1)
 
-The rule "an intake run that ran its agent reports its cost" is checked by a
-gate that fails when the report is removed, ungated, or left carrying an
-empty body — the same way the clarify and plan/tasks versions of this rule
-are checked today.
+A maintainer reading the repository finds a single place where a stage's
+cost report is defined and gated, shared by every cost-bearing stage. The
+clarify stage's early-STOP report (#366) and the plan/tasks auto-mode
+hand-off reports (#377) are that same shared report rather than three
+private lookalikes, and the outcome callouts that used to embed the cost
+line no longer carry it.
+
+**Why this priority**: This is the answer the requester chose over a third
+bespoke copy, and it is the reason the change is worth more than a one-line
+patch. Shipping intake's fix as a fourth private copy would satisfy US1 and
+US2 while leaving the next rounding fix to land in four places.
+
+**Independent Test**: Search the repository for places that format or gate a
+per-stage cost report; find exactly one, consumed by intake, clarify, plan
+and tasks.
+
+**Acceptance Scenarios**:
+
+1. **Given** the shipped change, **When** the repository is searched for
+   per-stage cost-report definitions, **Then** exactly one is found and
+   every cost-bearing stage consumes it.
+2. **Given** a clarify run that takes the agent's early-STOP path, **When**
+   the run finishes, **Then** its cost is reported once, by the shared
+   report rather than the retired bespoke copy.
+3. **Given** a plan or tasks run that hands off in auto mode, **When** the
+   run finishes, **Then** its cost is reported once, by the shared report
+   rather than the retired bespoke copy.
+4. **Given** an outcome callout on any stage, **When** it is posted,
+   **Then** it no longer carries an embedded cost line, and the run's single
+   cost statement comes from the shared report instead.
+
+---
+
+### User Story 4 - The cost report cannot quietly disappear again (Priority: P2)
+
+The rule "a run that ran its agent reports its cost" is checked by a gate
+that fails when the report is removed, ungated, or left carrying an empty
+body, and the nearest existing gate also fails when a copy of the shared
+report reappears in a workflow.
 
 **Why this priority**: This defect existed because the silent paths were
 recorded as "nothing is posted here, by design" with no distinction between
@@ -182,6 +227,9 @@ confirm the PR-time gate suite fails.
    **Then** "this path announces no outcome" is expressed distinctly from
    "this path posts nothing at all", so a future silent path cannot inherit
    a cost exemption it was never granted.
+4. **Given** a workflow into which a private copy of the cost report has
+   been pasted, **When** the gate suite runs, **Then** a gate fails on the
+   duplicate, so the single home cannot erode after this change ships.
 
 ---
 
@@ -206,8 +254,12 @@ confirm the PR-time gate suite fails.
   never be the thing that turns a good spec run red, nor the thing that
   lets a bad one pass.
 - **A run the workflow deliberately fails** (an announced-readiness veto
-  over unresolved markers). Whether these report cost is an open question
-  below; today they post nothing.
+  over unresolved markers, or the contradiction veto). The agent ran and the
+  money was spent, so the cost is reported and the run still ends red; the
+  report must sit below the failing step without being stranded by it.
+- **A cancelled run.** Nothing is posted — the supervision layer already
+  skips cancelled runs, so a cancelled run carries no missing-cost signal to
+  answer.
 - **Two intake runs on one issue.** Each run's cost statement is
   attributable to its own run, so a reader with two comments can tell which
   run each figure belongs to.
@@ -220,21 +272,31 @@ confirm the PR-time gate suite fails.
   cost on the lifecycle issue, on every outcome path — including the four
   paths that deliberately announce no outcome.
 
-- **FR-002**: The scope of this change is
-  [NEEDS CLARIFICATION: intake only — a fourth stage-local cost report
-  mirroring the clarify (#366) and plan/tasks (#377) fixes — or one uniform
-  per-stage cost report adopted across every cost-bearing stage, replacing
-  the existing bespoke copies and folding #377 and #381 into a single
-  mechanism?]
+- **FR-001a**: The same rule MUST hold for every other cost-bearing stage:
+  a run that invoked its agent reports that run's cost on the lifecycle
+  issue, whatever the stage decided and whatever the run's conclusion.
+
+- **FR-002**: The scope of this change is one uniform per-stage cost report,
+  adopted across every cost-bearing stage rather than a fourth stage-local
+  copy. The report MUST be defined once, in the same single home the cost
+  line already lives in, and MUST replace the bespoke copies added for the
+  clarify stage (#366) and the plan/tasks stages (#377), folding them and
+  this request (#381) into one mechanism.
+
+- **FR-002a**: Outcome callouts MUST stop carrying the cost line. After this
+  change the cost reaches the lifecycle issue only through the uniform
+  report, so that no path can lose its cost statement by changing what it
+  announces.
 
 - **FR-003**: Exactly one cost statement MUST reach the lifecycle issue per
-  intake run. A path that already announces an outcome MUST NOT also post a
-  separate cost statement, and a path that announces nothing MUST NOT be
-  left without one.
+  run of a cost-bearing stage. A path that announces an outcome MUST NOT
+  also post a separate cost statement, and a path that announces nothing
+  MUST NOT be left without one.
 
 - **FR-004**: The reported figure MUST come from the run's single existing
   cost-line source. This feature MUST NOT introduce a second place where a
-  cost figure is formatted or rounded.
+  cost figure is formatted or rounded; it MUST reduce the count by retiring
+  the bespoke copies FR-002 names.
 
 - **FR-005**: The reported text MUST keep the existing cost-line format that
   the supervision layer validates (a currency amount, two decimal places at
@@ -252,8 +314,8 @@ confirm the PR-time gate suite fails.
 
 - **FR-008**: Adding the cost report MUST NOT change which outcome callout
   fires on any path, MUST NOT change the wording of any existing outcome
-  callout beyond removing a cost line the uniform option would relocate, and
-  MUST NOT change any path's decision to stay silent about its outcome.
+  callout beyond removing the cost line FR-002a relocates, and MUST NOT
+  change any path's decision to stay silent about its outcome.
 
 - **FR-009**: A failure to post the cost report MUST NOT change the run's
   conclusion — it can neither turn a healthy run red nor mask a run that
@@ -264,21 +326,30 @@ confirm the PR-time gate suite fails.
   mis-gated, or carries an empty body. Each failure branch MUST be exercised
   by a checked-in fixture rather than a one-time manual demonstration.
 
+- **FR-010a**: The single home MUST itself be gated: the nearest existing
+  gate MUST fail when a copy of the cost report or its formatter reappears
+  inside a workflow, the same way the existing metrics-summary check guards
+  the cost line's formatter today.
+
 - **FR-011**: The existing record of intake's deliberately silent paths MUST
   be restated so that "announces no outcome" and "posts nothing at all" are
   distinguishable, and a path may opt out of the outcome announcement
   without inheriting an exemption from the cost report.
 
 - **FR-012**: Runs that intake deliberately fails — the readiness veto over
-  unresolved clarification markers, and the contradiction veto — MUST
-  [NEEDS CLARIFICATION: also report their cost on the lifecycle issue, or
-  stay as they are today (nothing posted) on the grounds that a red run is
-  already a loud signal? The supervision layer's cost collector skips only
-  skipped and cancelled runs, so a failed run with an unreported cost is
-  indistinguishable to it from the green silent paths this feature fixes.]
+  unresolved clarification markers, and the contradiction veto — MUST also
+  report their cost on the lifecycle issue. The rule is conclusion-blind: a
+  run that invoked its agent reports what it spent whether it ends green or
+  red, which is also what the supervision layer's cost collector expects,
+  since it skips only skipped and cancelled runs.
+
+- **FR-012a**: The cost report MUST NOT be strandable by a failing step
+  above it. A step that deliberately fails the run MUST still leave the
+  report to run, and the report's own gating MUST be reviewed for that
+  property before it ships.
 
 - **FR-013**: A run that invoked no agent (and therefore spent nothing) MUST
-  NOT post a cost report.
+  NOT post a cost report. A cancelled run MUST NOT post one either.
 
 - **FR-014**: The run's own summary MUST continue to carry the same metrics
   it carries today; this feature adds a report on the issue, it does not
@@ -291,7 +362,11 @@ confirm the PR-time gate suite fails.
   fallback when metrics are unavailable.
 - **Outcome callout**: a comment intake posts on the lifecycle issue
   announcing what the requester should do next (answer questions, review the
-  spec PR). Today it is the only carrier of the cost line.
+  spec PR). Today it is the only carrier of the cost line; after this change
+  it carries no cost line at all.
+- **Uniform cost report**: the one shared per-stage report that delivers the
+  cost line to the lifecycle issue, defined in a single home and consumed by
+  every cost-bearing stage.
 - **Silent outcome path**: an intake result that deliberately announces no
   outcome — four of them today, each a recorded decision rather than an
   oversight.
@@ -305,10 +380,12 @@ confirm the PR-time gate suite fails.
 
 - **SC-001**: 100% of intake runs that invoke their agent end with exactly
   one cost statement on the lifecycle issue — measured across every outcome
-  path the gate suite enumerates, not just the announcing ones.
+  path the gate suite enumerates, not just the announcing ones, and
+  regardless of the run's conclusion.
 
-- **SC-002**: Zero missing-cost defects are filed against intake runs whose
-  cost was available, over the first ten such runs after the change ships.
+- **SC-002**: Zero missing-cost defects are filed against runs of any
+  cost-bearing stage whose cost was available, over the first ten such runs
+  after the change ships.
 
 - **SC-003**: A maintainer reading only the lifecycle issue of a run that
   found no feature request can state what that run cost, without opening the
@@ -318,10 +395,15 @@ confirm the PR-time gate suite fails.
   PR-time gate suite to fail, and the failure message names the path that
   would have gone silent.
 
-- **SC-005**: No intake outcome path posts two cost statements for one run.
+- **SC-005**: No outcome path of any cost-bearing stage posts two cost
+  statements for one run.
 
-- **SC-006**: The number of distinct places a cost figure is formatted in
-  this repository does not increase; under the uniform option it decreases.
+- **SC-006**: The number of distinct places a per-stage cost report is
+  defined in this repository decreases to one, and the number of places a
+  cost figure is formatted does not increase.
+
+- **SC-007**: Every cost-bearing stage's cost report is the shared one: no
+  workflow contains its own copy, and a pasted copy fails a gate.
 
 ## Assumptions
 
@@ -343,8 +425,15 @@ confirm the PR-time gate suite fails.
   (skipping runs with no resolved lifecycle issue and runs whose conclusion
   is skipped or cancelled); this feature changes what the stages post, not
   what the collector looks for.
-- Stages other than intake are in scope only if the uniform option in FR-002
-  is chosen; otherwise their behaviour is untouched.
+- Every cost-bearing stage is in scope, because FR-002 resolved to the
+  uniform report. What changes for the stages other than intake is where
+  their cost statement comes from, not whether they make one: clarify's
+  early-STOP report and plan/tasks' auto-mode reports keep reporting, from
+  the shared mechanism instead of their own copies.
+- The requester's answer also directs that the report survive a failing step
+  above it and that its gating get a `review-step-gating` pass before
+  merge; that is recorded here as a constraint on the implementation, not as
+  a behaviour this spec prescribes a mechanism for.
 
 ## Dependencies
 
@@ -355,11 +444,13 @@ confirm the PR-time gate suite fails.
   where intake's silent paths are recorded today and where the new
   requirement is most naturally enforced.
 - The precedent fixes for the same shape in the clarify stage (#366) and the
-  plan/tasks stages (#377), which the uniform option in FR-002 would absorb.
+  plan/tasks stages (#377), which FR-002's uniform report absorbs.
+- The existing single-home check on the cost line's formatter, which the new
+  single-home check for the report joins rather than duplicates.
 
 ## Out of Scope
 
 - Changing how cost is computed, rounded, or formatted.
-- Changing which outcome intake announces on any path.
+- Changing which outcome any stage announces on any path.
 - Reporting cost for runs that never invoked an agent.
 - The supervision layer's own behaviour, fingerprints, or defect wording.

@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,22 +31,25 @@
 
 ## Notes
 
-- Two [NEEDS CLARIFICATION] markers remain and are deliberately left for the
-  requester, per the intake stage's contract: the questions are posted to
-  lifecycle issue #495 rather than resolved here.
-  - **FR-002 (scope)**: a fourth stage-local cost report versus one uniform
-    per-stage mechanism that absorbs the clarify (#366) and plan/tasks
-    (#377) copies. The request itself raises this as the decision worth
-    making before a third bespoke copy ships, and the two answers produce
-    materially different work — one stage touched versus every
-    cost-bearing stage, with the existing outcome callouts losing their
-    embedded cost line under the uniform answer.
-  - **FR-012 (coverage of deliberately failed runs)**: intake's two veto
-    paths end the run red having posted nothing. They match the
-    supervision layer's missing-cost description exactly, so including
-    them is defensible; so is leaving them alone on the grounds that a red
-    run is already loud. No reasonable default exists — the answer changes
-    how many paths the gate must enumerate.
+- Both [NEEDS CLARIFICATION] markers were answered on lifecycle issue #495
+  and are now folded into the spec; no markers remain.
+  - **FR-002 (scope)** — answered: the uniform option. One cost report per
+    cost-bearing stage, emitted from the cost line's existing single home;
+    the outcome callouts stop carrying the cost line (FR-002a) and the
+    clarify (#366) and plan/tasks (#377) bespoke copies retire in the same
+    change. Recorded as FR-001a, FR-002, FR-002a, FR-004, FR-010a, User
+    Story 3, SC-006 and SC-007. The single-home check joins the nearest
+    existing gate, per CLAUDE.md's "shared logic has exactly one home".
+  - **FR-012 (coverage of deliberately failed runs)** — answered: include
+    them. Every run that invoked its agent reports its cost whatever its
+    conclusion, both veto paths included, and the report must not be
+    strandable by the failing step above it (FR-012a). Cancelled runs stay
+    exempt, matching what the supervision layer already skips (FR-013).
+    Recorded also as US2 scenarios 6 and 7 and a rewritten edge case.
+- The requester's answer carries two implementation directions that the spec
+  records as constraints rather than prescribed mechanisms (under
+  Assumptions): gate the report so a failing step above it cannot strand it,
+  and give that gating a `review-step-gating` pass before merge.
 - Every other gap was closed with a documented default rather than a
   marker: the delivery shape (a short comment of its own, following the
   clarify precedent), the metrics-unavailable wording, the treatment of
@@ -57,5 +60,4 @@
   as *evidence of the reported defect* and as the boundary of the change,
   not as prescribed implementation. The functional requirements themselves
   name behaviours, not mechanisms.
-- Items marked incomplete require spec updates before `/speckit-clarify` or
-  `/speckit-plan`.
+- No items remain incomplete; the spec is ready for `/speckit-plan`.
