@@ -90,6 +90,27 @@ Constitution VIII: the evidence half of the D6 cross-check is supposed to
 be independently load-bearing. While one run can satisfy it with another
 run's commit, it is not.
 
+## Clarifications
+
+### Session 2026-09-25 — answered on [#565](https://github.com/charlesguse/wing-commander/issues/565)
+
+- Q: Does this feature eliminate the two-run overlap (serialize stage 9 per
+  PR), tolerate it with self-identifying fold evidence, or both? → A:
+  **Tolerate it.** Runs may overlap on one PR; each fold commit identifies
+  the run that produced it, and stage 9 is not serialized per PR for this
+  purpose. The maintainer's recorded reason: #560 was answered with one
+  shared cycle rather than per-run serialization, so fold evidence must
+  identify its own run. #415's pending-job race is therefore untouched here.
+  (FR-006)
+- Q: Is the dispatch *decision* run-scoped alongside the fold *list*? → A:
+  **Both, plus a notice.** This run's own folds decide both what the fold
+  list names and whether an implement cycle is dispatched; and a run that
+  declines to dispatch because it folded nothing of its own says so on the
+  PR, so the absent cycle is legible from the PR rather than inferred
+  (Constitution III). The incidental re-dispatch that another run's commits
+  used to produce is removed deliberately — recovering a cycle lost to
+  #415's race belongs to that issue. (US2 AC-2, FR-008, FR-014, FR-015)
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - A lost item is still reported as lost when two runs overlap (Priority: P1)
@@ -143,7 +164,9 @@ and it is what a maintainer reads to decide whether their comment was
 acted on.
 
 **Independent Test**: With two overlapping runs' fold commits on one
-branch, confirm each run's PR comment lists only the items it folded.
+branch, confirm each run's PR comment lists only the items it folded, and
+that a run with no folds of its own dispatches no implement cycle and says
+so on the PR.
 
 **Acceptance Scenarios**:
 
@@ -153,12 +176,10 @@ branch, confirm each run's PR comment lists only the items it folded.
 2. **Given** run A folded nothing at all (every leg was a reply, a question,
    or died) while run B folded item Z in the same window, **When** run A
    reaches its dispatch decision, **Then** run A does not treat Z as
-   evidence that its own review folded something.
-   [NEEDS CLARIFICATION: is the dispatch *decision* in scope, or only the
-   *list* the comment shows? Making the decision run-scoped means a run
-   that folded nothing dispatches nothing even when the branch moved —
-   which removes a duplicate cycle but also removes the incidental
-   re-dispatch that recovered PR #414's cancelled cycle.]
+   evidence that its own review folded something, dispatches no implement
+   cycle, **and** posts a notice saying it folded nothing and therefore
+   dispatched nothing — so a maintainer reads the absent cycle as this run's
+   decision rather than as a lost dispatch.
 
 ---
 
@@ -208,7 +229,9 @@ deliberately unscoped fold-evidence read and confirm a gate fails.
 - **The branch moved between the pre-fold read and the post-fold read for
   reasons unrelated to folding** — a rebase stage, a human push. Attribution
   is per-commit, so unrelated commits in the range are simply not fold
-  evidence for any leg.
+  evidence for any leg, and a run whose window contains only such commits
+  dispatches nothing and says so (FR-014, FR-015) rather than dispatching on
+  a moved tip.
 - **Three or more stage-9 runs overlap on one PR.** Nothing about the rule
   is specific to two; each run reads only its own.
 - **A run is cancelled after its legs folded but before it reports.** No
@@ -253,15 +276,12 @@ deliberately unscoped fold-evidence read and confirm a gate fails.
   nothing is the report's entire purpose (FR-006a of spec 042).
 
 - **FR-006**: Two stage-9 runs on the same PR MUST NOT be able to read each
-  other's fold evidence as their own, by either of two means:
-  [NEEDS CLARIFICATION: eliminate the overlap, or tolerate it? Option A —
-  serialize the whole stage-9 run per PR, so two runs never overlap and no
-  cross-run evidence can exist; this is issue #415's option 1 and it delays
-  the second review by the first's full duration. Option B — allow runs to
-  overlap and make each fold commit self-identifying as to its run; this is
-  #415's "run id in the fold trailer" and leaves the #415 pending-job race
-  untouched. Option C — both. The maintainer's triage of #416 on 2026-09-21
-  recorded that this decision is #415's to make.]
+  other's fold evidence as their own, and MUST achieve that by **tolerating
+  the overlap rather than eliminating it**: two runs MAY be in flight on one
+  PR, and each fold commit MUST be self-identifying as to the run that
+  produced it. Stage 9 MUST NOT be serialized per PR for this purpose — a
+  second review is not delayed by the first run's full duration — and
+  #415's pending-job race is left exactly as it is (see Out of Scope).
 
 - **FR-007**: A fold commit with no run attribution MUST be treated as not
   belonging to the reporting run. The report MUST NOT fall back to
@@ -285,7 +305,9 @@ deliberately unscoped fold-evidence read and confirm a gate fails.
   commit of its own and another run's commit under the same id present
   (**not folded**); this run's leg succeeded with no commit of its own
   (**partly folded**); a fold commit bearing no attribution at all (not
-  this run's); and the single-run baseline (unchanged from today). The gate
+  this run's); this run folded nothing of its own while another run's fold
+  commit sits in its range (no dispatch, and the declined-dispatch notice of
+  FR-015); and the single-run baseline (unchanged from today). The gate
   MUST fail loudly when a fixture is missing rather than skipping it
   (Constitution VIII).
 
@@ -293,13 +315,35 @@ deliberately unscoped fold-evidence read and confirm a gate fails.
   as the sole fold evidence MUST fail the PR-time gate suite.
 
 - **FR-012**: Single-run behaviour MUST be unchanged. A stage-9 run with no
-  concurrent sibling on its PR MUST produce the same report and the same
-  fold list it produces today.
+  concurrent sibling on its PR MUST produce the same report, the same fold
+  list and the same dispatch decision it produces today, for the ordinary
+  case where the branch moved only by that run's own folds. The one
+  deliberate difference is the case where the branch moved without this run
+  folding anything — a rebase stage, a human push, a sibling run: such a run
+  now declines to dispatch and says so (FR-014, FR-015) instead of
+  dispatching a cycle for commits that are not its own.
 
 - **FR-013**: Fold commits made before this change carry no attribution and
   become invisible as evidence (FR-007). The change MUST NOT retroactively
   reinterpret them, and the transition MUST NOT make a run in flight during
   rollout report a false "folded cleanly".
+
+- **FR-014**: The dispatch decision MUST be scoped to this run's own fold
+  evidence under the same attribution rule as FR-001. A run with no fold
+  evidence of its own MUST dispatch no implement cycle, even when the branch
+  tip moved during its window. The incidental re-dispatch that another run's
+  commits used to produce is removed deliberately; recovering an implement
+  cycle lost to #415's cancellation race is that issue's to fix, not a side
+  effect of unattributed evidence.
+
+- **FR-015**: A run that declines to dispatch under FR-014 because it folded
+  nothing of its own, while the branch moved during its window, MUST post
+  one notice on the PR recording that this run folded nothing and therefore
+  dispatched no implement cycle. A maintainer MUST be able to tell from the
+  PR alone that the missing cycle was this run's decision and not a lost
+  dispatch (Constitution III). This notice is distinct from the
+  concurrency-cancellation notice of #415 option 4, which stays out of
+  scope.
 
 ### Key Entities
 
@@ -334,9 +378,9 @@ deliberately unscoped fold-evidence read and confirm a gate fails.
   pair after merge.
 - **SC-003**: Every branch named in FR-010 is covered by a checked-in
   fixture, and an unscoped-range mutation fails the PR-time gate suite.
-- **SC-004**: A stage-9 run with no concurrent sibling produces byte-identical
-  report and fold-list output to the pre-change behaviour, across the
-  existing single-run fixtures.
+- **SC-004**: A stage-9 run with no concurrent sibling whose branch moved
+  only by its own folds produces byte-identical report and fold-list output
+  to the pre-change behaviour, across the existing single-run fixtures.
 - **SC-005**: A maintainer reading a review's fold list can tell, without
   opening the branch history or the Actions tab, which items that review
   folded — no item from another review appears in it.
@@ -344,6 +388,9 @@ deliberately unscoped fold-evidence read and confirm a gate fails.
   attribution signal and its report reads it, proving the mechanism works
   in Actions and not only in fixtures (this repository's "prove it after
   merge" rule for Actions-only behaviour).
+- **SC-007**: A run that folded nothing of its own while the branch moved
+  dispatches zero implement cycles and posts exactly one declined-dispatch
+  notice — 100% of the time across the FR-010 fixture set.
 
 ## Assumptions
 
@@ -351,9 +398,9 @@ deliberately unscoped fold-evidence read and confirm a gate fails.
   correct as shipped and is not revisited here; its Gate 34 fixtures and
   its bare-equality mutation stay as they are.
 - Leg ids remain per-run and keep restarting at `leg-0`. Making them
-  globally unique is one possible mechanism for FR-006 Option B, but the
-  requirement is attribution, not id uniqueness — a unique id is an
-  implementation of the former, not a separate goal.
+  globally unique is one possible mechanism for FR-006's self-identifying
+  evidence, but the requirement is attribution, not id uniqueness — a unique
+  id is an implementation of the former, not a separate goal.
 - The report's existing outcome vocabulary ("not folded" / "partly folded"
   / silence) is right and is not extended. An unattributable commit
   collapses into the existing outcomes (FR-007) rather than earning a
@@ -362,8 +409,8 @@ deliberately unscoped fold-evidence read and confirm a gate fails.
   acceptable direction of error and the conservative one; reporting a leg
   as folded when it did not is the error this feature removes.
 - Stage 9's leg matrix keeps `max-parallel: 1` and the per-spec concurrency
-  group for `act`; whatever FR-006 resolves to, it layers onto that rather
-  than replacing it.
+  group for `act`; FR-006's attribution layers onto that rather than
+  replacing it, and adds no per-PR serialization of its own.
 - The spec branch's history is readable by the reporting job at the time it
   reports (it checks the branch out at its current tip today), so evidence
   can be read from history rather than needing to be carried in a separate
@@ -378,9 +425,9 @@ deliberately unscoped fold-evidence read and confirm a gate fails.
   vocabulary, and the fold-once/dispatch-once shape. This feature is a
   correction inside that feature's boundary.
 - **Issue #415** (open, `board:stalled`): the two-run concurrency race that
-  creates the overlap this defect exploits. FR-006's decision is the same
-  decision #415 is waiting on; whichever way #415 is resolved determines
-  whether this feature eliminates the overlap or survives it.
+  creates the overlap this defect exploits. FR-006 resolves to surviving that
+  overlap rather than eliminating it, so this feature does not block on #415
+  and does not change what #415 describes.
 - **Issue #416 / PR #417**: the originating report and the already-merged
   classification half of the fix.
 - **Gate 34** (`verify-fold-dispatch-once.py`) and its shell harness: the
@@ -395,16 +442,18 @@ deliberately unscoped fold-evidence read and confirm a gate fails.
 - Fixing issue #415's pending-job cancellation race itself — the lost leg
   and the cancelled implement cycle. This feature makes the *report*
   truthful about what happened; it does not stop the thing it reports on,
-  except insofar as FR-006 Option A would.
+  and FR-006's resolution (tolerate the overlap) leaves that race untouched.
 - Changing the job-conclusion half of the cross-check, including the
   caller-prefixed job-name matching from #417.
 - Changing the categories the report judges, the outcome vocabulary, or the
   wording of the warning comment beyond what attribution requires.
-- Changing when at most one implement cycle is dispatched per run, the
-  iteration accounting, or the standalone (`implement-workflow` empty)
-  path's behaviour.
+- Changing the at-most-one-implement-cycle-per-run cap, the iteration
+  accounting, or the standalone (`implement-workflow` empty) path's
+  behaviour. FR-014 changes what evidence the dispatch decision reads, not
+  the cap, the accounting or the standalone path.
 - Retrofitting attribution onto fold commits already on existing spec
   branches.
 - Posting a notice when a run's implement dispatch is cancelled by
   concurrency replacement (#415 option 4) — a separate signal with a
-  separate owner.
+  separate owner. FR-015's notice covers only the run that *chose* not to
+  dispatch because it folded nothing of its own.

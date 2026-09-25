@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,22 +31,22 @@
 
 ## Notes
 
-- Two [NEEDS CLARIFICATION] markers remain, both deliberate and both posted
-  to lifecycle issue #565 for the maintainer rather than guessed at:
-  1. **FR-006** — eliminate the two-run overlap (serialize stage 9 per PR),
-     tolerate it with self-identifying fold evidence, or both. This is the
-     same trade-off issue #415 is waiting on, and the maintainer's
-     2026-09-21 triage of #416 explicitly deferred it there. No reasonable
-     default exists: the two options differ in latency, in blast radius,
-     and in whether #415's own race is affected.
-  2. **User Story 2, AC-2** — whether the dispatch *decision* is
-     run-scoped alongside the fold *list*. Scoping the decision removes a
-     duplicate implement cycle but also removes the incidental re-dispatch
-     that recovered PR #414's cancelled cycle, so the choice is a
-     trade-off rather than a detail.
+- Both [NEEDS CLARIFICATION] markers were answered on lifecycle issue #565
+  on 2026-09-25 and are folded in; see the spec's **Clarifications** section:
+  1. **FR-006** — resolved to *tolerate* the two-run overlap with
+     self-identifying fold evidence rather than serializing stage 9 per PR
+     (#560 was answered with one shared cycle, not per-run serialization).
+     #415's race is untouched, and this feature no longer waits on it.
+  2. **User Story 2, AC-2** — resolved to scope *both* the fold list and the
+     dispatch decision to this run's own folds (FR-008, FR-014), plus a
+     notice when a run declines to dispatch (FR-015), so the removed
+     incidental re-dispatch is legible on the PR rather than silent.
+- The folded answers added FR-014 and FR-015, one FR-010 fixture branch, and
+  SC-007; FR-012 and SC-004 now state the one deliberate single-run
+  difference (a run whose branch moved without it folding declines to
+  dispatch instead of dispatching on a moved tip).
 - Per this repository's house style, the spec names the stage workflow, its
   jobs and the governing gate. These are the subject under specification,
   not implementation choices leaking in; the *mechanism* of attribution is
   deliberately left to `/speckit-plan`.
-- Items marked incomplete require spec updates before `/speckit-clarify` or
-  `/speckit-plan`.
+- No items remain incomplete; the spec is ready for `/speckit-plan`.
