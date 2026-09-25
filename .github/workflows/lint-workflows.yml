@@ -3401,7 +3401,8 @@ jobs:
       # the two answers cannot drift (the Gate 31 arrangement). The
       # shellcheck binary is pinned and downloaded by the script itself,
       # not taken from the image, so the local sweep lints with the same
-      # one CI does.
+      # one CI does. It also fails any workflow or composite step naming a
+      # fixed /tmp/<name> scratch path instead of $RUNNER_TEMP (#598).
       - name: Gate 48 — every published stage is shell-linted or knowingly exempt, and the linted ones pass shellcheck
         if: "!cancelled()"
         run: python3 .github/scripts/verify-stage-shell-lint.py

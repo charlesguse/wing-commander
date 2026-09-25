@@ -110,8 +110,8 @@ runs:
         [ "$AGENT_RAN" = "true" ] && commit_note="post-agent step failed"
 
         status="marked"
-        if jq '.stage = "stalled"' "$SPEC_DIR/spec-meta.json" > /tmp/wcsn-meta.json 2>/tmp/wcsn-jq-err; then
-          mv /tmp/wcsn-meta.json "$SPEC_DIR/spec-meta.json"
+        if jq '.stage = "stalled"' "$SPEC_DIR/spec-meta.json" > "$RUNNER_TEMP/wcsn-meta.json" 2>"$RUNNER_TEMP/wcsn-jq-err"; then
+          mv "$RUNNER_TEMP/wcsn-meta.json" "$SPEC_DIR/spec-meta.json"
           git config user.name  "wing-commander-bot[bot]"
           git config user.email "wing-commander-bot[bot]@users.noreply.github.com"
           git add "$SPEC_DIR/spec-meta.json"
@@ -126,7 +126,7 @@ runs:
             fi
           fi
         else
-          echo "::warning::wing-commander-chain-stop-notice: jq could not read $SPEC_DIR/spec-meta.json — $(cat /tmp/wcsn-jq-err 2>/dev/null)"
+          echo "::warning::wing-commander-chain-stop-notice: jq could not read $SPEC_DIR/spec-meta.json — $(cat "$RUNNER_TEMP/wcsn-jq-err" 2>/dev/null)"
           status="unwritable"
         fi
         echo "record-status=$status" >> "$GITHUB_OUTPUT"
@@ -210,6 +210,6 @@ runs:
           echo "$body"
           echo ""
           echo "$restart"
-        } > /tmp/wcsn-notice.md
+        } > "$RUNNER_TEMP/wcsn-notice.md"
 
-        gh issue comment "$ISSUE" --body-file /tmp/wcsn-notice.md
+        gh issue comment "$ISSUE" --body-file "$RUNNER_TEMP/wcsn-notice.md"
