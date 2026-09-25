@@ -117,9 +117,12 @@ Fixtures (FR-064 bullet 1), each a checked-in transcript/workflow-pin pair:
     evidence exactly. Removing any one guard, or hard-coding the evidence,
     must fail these.
 11. Order (#578): "already fixed" with no cited run → `handover`; with a
-    cited run whose transcript is missing → `handover`; with a cited run
+    cited run whose transcript file is missing, or whose transcript path
+    is empty (an expired artifact) → `handover`; with a cited run
     carrying 429 evidence → `closed, rate_limit`; an unsupported close
     with no cited run → `proceed` with the proposal recorded. Restoring
     the pre-#578 order, or moving the handover ahead of the close
-    grounds, must fail these; so must posting the handover evidence raw
-    instead of through `fenced_section()`.
+    grounds, or reverting only the empty-transcript-path exit, must fail
+    these; so must posting the handover evidence raw instead of through
+    `fenced_section()`, whether by replacing the fenced line, inlining a
+    `.evidence` read into the comment's printf, or reading it again.

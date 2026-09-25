@@ -24,15 +24,19 @@ guard -- plus one hard-coding the evidence -- must be caught.
 #578: an "already fixed" proposal was handed over only after the cited-run
 and evidence checks, so on an issue citing no run (most human-filed ones)
 it fell into the disagreement path and route filed an empty spec-request.
-Fixtures pin the handover with no cited run and with a missing
-transcript, the rate_limit close still winning over the proposal when the
+Fixtures pin the handover with no cited run, with a missing transcript
+file, and with a cited run whose transcript path is empty (production's
+expired-artifact case), the rate_limit close still winning over the proposal when the
 cited run carries 429 evidence, and an unsupported close with no cited
-run proceeding with the disagreement recorded. Two mutations must be
-caught: the pre-#578 ordering restored, and the handover moved ahead of
-the close grounds. With no cited run the handover's evidence is the
+run proceeding with the disagreement recorded. Three mutations must be
+caught: the pre-#578 ordering restored, the handover moved ahead of the
+close grounds, and the empty-transcript-path exit alone reverted to
+_record_disagreement(). With no cited run the handover's evidence is the
 agent's own reasoning (FR-056), so board-loop.yml's `handover)` arm must
-post it through fenced_section() (#562), never raw `jq -c '.evidence'`
-text; putting the raw line back is a mutation that must be caught.
+post it through fenced_section() (#562): its body= printf passes
+"$evidence", and no other statement in the arm reads `.evidence`. Three
+raw-evidence mutations (the fenced line replaced, the printf inlining a
+jq read, a second read overwriting the fenced text) must be caught.
 
 #505: both close grounds are only as trustworthy as the run they read. The
 triage job's "Locate a cited run" step used to scan the issue body AND
@@ -143,6 +147,10 @@ AF_HANDOVER = {"outcome": "handover", "ground": "already_fixed_proposal",
 HANDOVER_ORDER_CASES = {
     "already-fixed-no-cited-run": dict(AF_HANDOVER, cited_run=None),
     "already-fixed-transcript-missing": dict(AF_HANDOVER),
+    # Production's evidence-unavailable exit: the fetch step writes an
+    # empty transcript-path when the cited run's artifact is missing or
+    # expired, so the issue arrives with a cited run and a null path.
+    "already-fixed-no-transcript-path": dict(AF_HANDOVER),
     "already-fixed-rate-limit": {
         "outcome": "closed", "ground": "rate_limit",
         "evidence": dict(TRIAGE_CASES["429-present"]["evidence"])},
@@ -323,10 +331,40 @@ def _handover_first(original):
     return mutated
 
 
+def _revert_exit_after(marker_line):
+    """The real triage() with ONE line reverted: the first
+    `return _not_closed(outcome, proposal)` after `marker_line` goes back
+    to `return _record_disagreement(outcome, proposal)`. Built from
+    board_triage.py's own source, so it tracks the code under test."""
+    def factory(original):
+        path = board_triage.__file__
+        with open(path, encoding="utf-8") as fh:
+            lines = fh.read().split("\n")
+        start = [i for i, line in enumerate(lines) if line.strip() == marker_line]
+        if len(start) != 1:
+            raise RuntimeError("expected one {0!r} line in {1}, found {2}"
+                               .format(marker_line, path, len(start)))
+        exit_line = "return _not_closed(outcome, proposal)"
+        for i in range(start[0] + 1, len(lines)):
+            if lines[i].strip() == exit_line:
+                lines[i] = lines[i].replace(
+                    exit_line, "return _record_disagreement(outcome, proposal)")
+                break
+        else:
+            raise RuntimeError("no {0!r} after {1!r} in {2}".format(
+                exit_line, marker_line, path))
+        namespace = {"__name__": "board_triage_mutated", "__file__": path}
+        exec(compile("\n".join(lines), path, "exec"), namespace)
+        return namespace["triage"]
+    return factory
+
+
 HANDOVER_ORDER_MUTATIONS = (
     ("pre-#578 ordering restored (handover only after the evidence checks)",
      lambda orig: _pre_578_triage),
     ("handover moved ahead of the close grounds", _handover_first),
+    ("empty-transcript-path exit alone reverted to _record_disagreement",
+     _revert_exit_after("if not transcript_path:")),
 )
 
 
@@ -335,7 +373,13 @@ def _mutation_check_handover_order():
     failures = []
     original = board_triage.triage
     for label, factory in HANDOVER_ORDER_MUTATIONS:
-        board_triage.triage = factory(original)
+        try:
+            mutated = factory(original)
+        except (OSError, RuntimeError, SyntaxError) as exc:
+            failures.append("mutation 'handover order: {0}' could not be "
+                            "built: {1}".format(label, exc))
+            continue
+        board_triage.triage = mutated
         try:
             caught = bool(run_triage_cases(HANDOVER_ORDER_CASES, verbose=False))
         finally:
@@ -352,13 +396,33 @@ HANDOVER_ACT_STEP = "Act on the verdict and post the outcome"
 HANDOVER_ARM_RE = re.compile(r"^\s*handover\)\s*$(.*?)^\s*;;\s*$",
                              re.MULTILINE | re.DOTALL)
 HANDOVER_RAW_EVIDENCE = "jq -c '.evidence'"
+FENCED_SECTION_IMPORT = "from board_spec_request_body import fenced_section"
+
+
+def _logical_lines(code):
+    """Shell lines with backslash continuations joined."""
+    out, pending = [], ""
+    for line in code.split("\n"):
+        if line.rstrip().endswith("\\"):
+            pending += line.rstrip()[:-1] + " "
+            continue
+        out.append(pending + line)
+        pending = ""
+    if pending:
+        out.append(pending)
+    return out
 
 
 def check_handover_fence(text):
     """#578: with no cited run a handover's evidence is the agent's own
     reasoning (FR-056), so the act step's `handover)` arm must post it
-    through fenced_section() (#562's one fencing helper) and never as raw
-    `jq -c '.evidence'` text. Returns a list of problem strings."""
+    through fenced_section() (#562's one fencing helper) and never raw:
+      - the arm renders its evidence with fenced_section();
+      - no other statement in the arm reads `.evidence` (a raw
+        `jq -c '.evidence'` beside the fenced line, or inlined into the
+        printf, bypasses the fence);
+      - the arm's one `body=` printf passes "$evidence", the fenced text.
+    Returns a list of problem strings."""
     try:
         doc = yaml.safe_load(text)
     except yaml.YAMLError as exc:
@@ -371,33 +435,80 @@ def check_handover_fence(text):
     arm = HANDOVER_ARM_RE.search(str(act[0].get("run") or ""))
     if not arm:
         return ["handover fence: the act step has no `handover)` arm"]
-    code = _code_lines(arm.group(1))
+    statements = _logical_lines(_code_lines(arm.group(1)))
+    fenced = [st for st in statements if "fenced_section(" in st]
     problems = []
-    if "fenced_section(" not in code:
+    if not fenced:
         problems.append("handover fence: the `handover)` arm does not post "
                         "its evidence through fenced_section()")
-    if HANDOVER_RAW_EVIDENCE in code:
-        problems.append("handover fence: the `handover)` arm posts the "
-                        "evidence raw via {0}".format(HANDOVER_RAW_EVIDENCE))
+    for st in statements:
+        if st in fenced:
+            continue
+        if ".evidence" in st:
+            problems.append("handover fence: the `handover)` arm reads "
+                            ".evidence outside the fenced_section() line: "
+                            "{0!r}".format(st.strip()))
+    bodies = [st for st in statements if st.strip().startswith("body=")]
+    if len(bodies) != 1:
+        problems.append("handover fence: expected one `body=` statement in "
+                        "the `handover)` arm, found {0}".format(len(bodies)))
+    elif '"$evidence"' not in bodies[0]:
+        problems.append("handover fence: the `handover)` arm's body= printf "
+                        'does not pass "$evidence" (the fenced text)')
     return problems
 
 
-def _mutation_check_handover_fence(text):
-    """The pre-#578 raw-evidence line put back must be caught."""
+def _fence_mutations(text):
+    """(label, mutated text) pairs, each built from the real board-loop.yml,
+    or a problem string when an anchor line is missing."""
     lines = text.split("\n")
-    idx = [i for i, line in enumerate(lines)
-           if "from board_spec_request_body import fenced_section" in line]
-    if len(idx) != 1:
-        return ["handover fence mutation: expected one fenced_section() line "
-                "in board-loop.yml, found {0}".format(len(idx))]
+    idx = [i for i, line in enumerate(lines) if FENCED_SECTION_IMPORT in line]
+    body_arg = [i for i, line in enumerate(lines)
+                if line.strip() == '"$evidence" "$marker")"']
+    if len(idx) != 1 or len(body_arg) != 1:
+        return "handover fence mutation: expected one fenced_section() line " \
+               "and one '\"$evidence\" \"$marker\")\"' line in board-loop.yml, " \
+               "found {0} and {1}".format(len(idx), len(body_arg))
+    raw = HANDOVER_RAW_EVIDENCE + ' "$RUNNER_TEMP/board-triage-verdict.json"'
     indent = lines[idx[0]][:len(lines[idx[0]]) - len(lines[idx[0]].lstrip())]
-    mutated = list(lines)
-    mutated[idx[0]] = (indent + "evidence=\"$(" + HANDOVER_RAW_EVIDENCE
-                       + " \"$RUNNER_TEMP/board-triage-verdict.json\")\" \\")
-    if check_handover_fence("\n".join(mutated)):
-        print("note: mutation caught (handover evidence posted raw).")
-        return []
-    return ["mutation 'handover evidence posted raw' was NOT caught"]
+    arg_indent = lines[body_arg[0]][:len(lines[body_arg[0]])
+                                    - len(lines[body_arg[0]].lstrip())]
+
+    def replaced(i, new_line):
+        mutated = list(lines)
+        mutated[i] = new_line
+        return "\n".join(mutated)
+
+    def inserted_after(i, new_line):
+        mutated = list(lines)
+        mutated.insert(i + 1, new_line)
+        return "\n".join(mutated)
+
+    fallback = idx[0] + 1  # the `|| evidence=...` continuation line
+    return [
+        ("handover evidence posted raw (fenced line replaced)",
+         replaced(idx[0], indent + 'evidence="$(' + raw + ')" \\')),
+        ("printf passes a raw .evidence read instead of \"$evidence\"",
+         replaced(body_arg[0], arg_indent + '"$(jq -c .evidence '
+                  '"$RUNNER_TEMP/board-triage-verdict.json")" "$marker")"')),
+        ("a second raw .evidence read overwrites the fenced text",
+         inserted_after(fallback, indent + 'evidence="$(' + raw + ')"')),
+    ]
+
+
+def _mutation_check_handover_fence(text):
+    """Every way of posting the handover evidence raw must be caught."""
+    mutations = _fence_mutations(text)
+    if isinstance(mutations, str):
+        return [mutations]
+    failures = []
+    for label, mutated in mutations:
+        if check_handover_fence(mutated):
+            print("note: mutation caught (handover fence: {0}).".format(label))
+        else:
+            failures.append("mutation 'handover fence: {0}' was NOT caught"
+                            .format(label))
+    return failures
 
 
 def run_fixtures():
