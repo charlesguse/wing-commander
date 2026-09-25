@@ -1107,6 +1107,28 @@ def breach_retry_findings(doc, scripts_root=ROOT):
             "marker before its `gh issue create` -- a failed create leaves step=route newest "
             "and the next run reviews the oversized PR (#530)")
 
+    # Both breach sites: board:stalled is added, failing the step when it
+    # cannot be, BEFORE the stalled marker is posted. A stalled marker
+    # (pr=None) without the label is re-admitted by select and adopted by
+    # resume's fallback as step=review -- the same oversized-PR review.
+    for job, step_id in (("fix", "post-push-breach"), ("readiness", "report-unmet")):
+        logical = re.sub(r"\\\n\s*", " ", str(_step(doc, job, step_id).get("run", ""))).split("\n")
+        label_at = next((i for i, l in enumerate(logical)
+                         if '--add-label "board:stalled"' in l), None)
+        stalled_at = next((i for i, l in enumerate(logical)
+                           if "write_marker('stalled'" in l), None)
+        where = "{0}/{1}".format(job, step_id)
+        if label_at is None or stalled_at is None:
+            findings.append("{0}: no board:stalled label add or no stalled marker found (#530)".format(where))
+            continue
+        label_line = logical[label_at]
+        if label_at > stalled_at or not re.search(
+                r"\|\|\s*\{\s*echo\s+\"::error::.*;\s*exit\s+1;\s*\}\s*$", label_line):
+            findings.append(
+                "{0}: board:stalled is not added (with `|| {{ echo ::error::; exit 1; }}`) before "
+                "the stalled marker is written -- a failed label add leaves a stalled marker with "
+                "no exclusion label, and the next run reviews the oversized PR (#530)".format(where))
+
     # Readiness: forced breach on step=breach, executed.
     backstop = _step(doc, "readiness", "final-diff-backstop")
     if (backstop.get("env") or {}).get("RESUME_STEP") != "${{ needs.select.outputs.step }}":
@@ -1799,6 +1821,24 @@ def _mutations(text):
         " && steps.final-diff-backstop.outputs.breach-retry == 'true'", "", after="\n  readiness:\n")
     sub("report-unmet ignores the spec-request already filed",
         'existing_spec_url="$EXISTING_SPEC_URL"', 'existing_spec_url=""')
+    # #530 review: the label add must precede the stalled marker and fail
+    # the step. Each site restored to its pre-review order (marker, then an
+    # unchecked label add), and each with only the failure check dropped.
+    for site, indent, err_head in (
+            ("fix", "          ", "board-loop fix (post-push breach)"),
+            ("readiness", "            ", "board-loop readiness (backstop breach)")):
+        label_start = text.index(indent + 'gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" '
+                                 '--add-label "board:stalled" \\\n' + indent + '  || { echo "::error::'
+                                 + err_head)
+        label_end = text.index("\n", text.index("exit 1; }", label_start)) + 1
+        label_block = text[label_start:label_end]
+        comment_start = text.index(indent + "marker=\"$(python3 -I -c", label_end)
+        comment_end = text.index("\n", text.index(indent + "gh issue comment", comment_start)) + 1
+        bare_label = indent + 'gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"\n'
+        muts.append(("{0} breach: stalled marker before an unchecked board:stalled (pre-review)".format(site),
+                     text[:label_start] + text[label_end:comment_end] + bare_label + text[comment_end:]))
+        muts.append(("{0} breach: board:stalled label failure not checked".format(site),
+                     text[:label_start] + bare_label + text[label_end:]))
     sub("breach lookup jq ignores the author",
         'select(.user.type == "Bot" and .user.login == $bot)', "select(true)")
     sub("breach lookup jq ignores the PR number",

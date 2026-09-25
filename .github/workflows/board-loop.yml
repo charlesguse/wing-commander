@@ -2175,9 +2175,15 @@ jobs:
           echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
           echo "measured=$measured" >> "$GITHUB_OUTPUT"
 
+          # #530: board:stalled goes on BEFORE the stalled marker. A stalled
+          # marker (pr=None) with no label would let select re-admit the
+          # item and resume adopt the PR as step=review; failing here
+          # instead leaves the breach marker newest, and readiness retries
+          # (reusing the spec-request just filed).
+          gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled" \
+            || { echo "::error::board-loop fix (post-push breach): spec-request $spec_url was filed but board:stalled could not be added to issue #$ISSUE_NUMBER -- the breach marker stays newest, so a later run retries through readiness (#530)."; exit 1; }
           marker="$(python3 -I -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, None, None))")"
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Post-push backstop breach on %s (measured=%s) -- the branch/PR are left open, unmerged; a spec-request now covers finishing this at the right size.\n\n%s' "$PR_URL" "$measured" "$marker")"
-          gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
 
       - name: Cross-link the post-push-breach spec-request onto the originating issue
         if: steps.post-push-breach.outputs.spec-url != ''
@@ -3378,6 +3384,7 @@ jobs:
           footer="$(printf 'Originating issue: %s/%s/issues/%s' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$ISSUE_NUMBER")"
           if ! pr_created_at="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json createdAt --jq .createdAt)" \
               || ! gh api "repos/$GITHUB_REPOSITORY/issues" -X GET --paginate -f state=all -f since="$pr_created_at" \
+                -f per_page=100 -f creator="$BOT_LOGIN" \
                 --jq '.[] | select(.pull_request == null) | {html_url, created_at, body, user: {login: .user.login, type: .user.type}}' \
                 | jq -s '.' > "$RUNNER_TEMP/board-breach-spec-requests.json"; then
             echo "::error::board-loop readiness (breach retry): could not look for a spec-request already filed for PR #$PR_NUMBER -- none is filed this run, so a later run retries rather than risk a duplicate (#530)."
@@ -3420,6 +3427,9 @@ jobs:
             else
               issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)"
               notice="$(printf 'PR #%s grew past the board'"'"'s size-and-path backstop by readiness time (measured: %s). The branch/PR are left open, unmerged, under a notice -- this spec request covers finishing the work at the size a human plan should decide.' "$PR_NUMBER" "$MEASURED")"
+              if [ "$BREACH_RETRY" = "true" ]; then
+                notice="$(printf 'PR #%s grew past the board'"'"'s size-and-path backstop on its final diff at the fix step (measured now: %s); the fix job could not file this spec request, so readiness retried it (#530). The branch/PR are left open, unmerged, under a notice -- this spec request covers finishing the work at the size a human plan should decide.' "$PR_NUMBER" "$MEASURED")"
+              fi
               spec_body_file="$RUNNER_TEMP/board-spec-request-body.md"
               python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_spec_request_body.py" --context-file "$ISSUE_CONTEXT_FILE" \
                 --notice "$notice" --footer "$footer" --out "$spec_body_file" \
@@ -3432,9 +3442,12 @@ jobs:
             fi
             echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
             echo "measured=$MEASURED" >> "$GITHUB_OUTPUT"
+            # #530: label before the stalled marker -- see the fix job's
+            # post-push-breach step.
+            gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled" \
+              || { echo "::error::board-loop readiness (backstop breach): spec-request $spec_url was filed but board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted, so a later run retries (#530)."; exit 1; }
             marker="$(python3 -I -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, None, None))")"
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf '%s on PR #%s (measured: %s) -- the branch/PR are left open, unmerged; a spec-request now covers finishing this at the right size.\n\n%s' "$breach_what" "$PR_NUMBER" "$MEASURED" "$marker")"
-            gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
           else
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Not ready on PR #%s: %s. Picked up again on a later run.' "$PR_NUMBER" "$unmet")"
           fi

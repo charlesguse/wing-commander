@@ -74,6 +74,12 @@ next run's resume found the open PR only through the board:owned
 fallback and sent it to `review`, so the reviewer ran on a PR the size
 check had already rejected.
 
+At both breach sites (fix's post-push breach and readiness's backstop
+breach) `board:stalled` is added before the `stalled` marker is posted,
+and a failed label add fails the step. A `stalled` marker (pr null) with
+no label would be re-admitted and adopted by resume's fallback as
+`review`; failing first leaves the `breach` marker newest instead.
+
 `breach` is a fix-or-later step: the item is in flight while its PR
 resolves OPEN, and resume resolves it to step `breach`. That holds even
 when only the board:owned fallback finds the PR
