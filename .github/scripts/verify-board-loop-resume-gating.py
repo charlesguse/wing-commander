@@ -80,6 +80,20 @@ nothing passed on (FR-054: triage could cut a second branch/PR), and the
 select lookup must record such a PR as UNOWNED_OPEN_PR_STATE so select
 does not re-choose the held item every run (Gate 81 pins that side).
 
+WHAT IT CHECKS (#557)
+---------------------
+"Fetch failed" is not "no marker". Every issue-comments fetch in a
+marker-reading step (select, resume, prove-gate) must be the condition of
+an `if ! gh api ...; then` whose branch emits `::error::` and exits 1 --
+no `||` swallow, no `[]` written in the comments' place. The three steps
+are also RUN, under `bash -e` against a stub gh: a failed fetch must fail
+each step loudly without writing its decision output, and a successful
+one must not. prove-gate must apply BOARD_PR_OWNED_JQ to the event's
+pull_request: a merged PR without board:owned, or from another
+repository, is not a board item (and its issue's comments are never
+fetched). A simulator scenario pins that a select job failed in resume
+runs nothing after it.
+
 --self-test mutates the shipped workflow text (drops `!cancelled()`, a
 result guard, the breach exclusion, the breach output, restores main's
 pre-#525 conditions, ...) and asserts every mutation fails.
@@ -587,6 +601,12 @@ SCENARIOS = [
      {"fail": ("select",),
       "outputs": {"select": _item("readiness", pr="42", branch="board/396")}},
      ("select",)),
+    # #557: resume's comments fetch failed -- select's issue-number is set,
+    # resume wrote nothing, and the job is red.
+    ("select fails in resume (comments fetch) after choosing an issue",
+     {"fail": ("select",),
+      "outputs": {"select": {"issue-number": "396", "step": "", "pr": "", "branch": "", "round": ""}}},
+     ("select",)),
     ("fresh: triage fails after outcome=proceed",
      {"fail": ("triage",),
       "outputs": {"select": _item("triage"), "triage": {"outcome": "proceed"},
@@ -811,9 +831,9 @@ def owned_jq_findings(doc, scripts_root=ROOT):
         return ["workflow env has no BOARD_PR_OWNED_JQ (#555)"]
     findings = []
     use = 'jq -r --arg repo "$GITHUB_REPOSITORY" "$BOARD_PR_OWNED_JQ"'
-    for step_id in ("select", "resume"):
-        if use not in _step_run(doc, "select", step_id):
-            findings.append("select/{0}: does not apply `{1}` (#555)".format(step_id, use))
+    for job, step_id in (("select", "select"), ("select", "resume"), ("prove-gate", "gate")):
+        if use not in _step_run(doc, job, step_id):
+            findings.append("{0}/{1}: does not apply `{2}` (#555, #557)".format(job, step_id, use))
     rc, const, err = _exec_heredoc(
         "import sys\nsys.path.insert(0, '.github/scripts')\n"
         "from board_eligibility import UNOWNED_OPEN_PR_STATE\nprint(UNOWNED_OPEN_PR_STATE)\n",
@@ -918,6 +938,202 @@ def select_lookup_findings(doc, scripts_root=ROOT):
     return findings
 
 
+# ---------------------------------------------------------------------------
+# #557: a comments fetch that feeds a marker reader fails its step on error
+# (never `[]`, never a null marker), and prove-gate enters prove only for a
+# PR that passes BOARD_PR_OWNED_JQ. Checked statically on the text and by
+# running the three shipped steps against a stub gh.
+# ---------------------------------------------------------------------------
+
+_COMMENTS_FETCH = re.compile(r'gh api "repos/\$GITHUB_REPOSITORY/issues/\$\w+/comments"')
+
+
+def fetch_handling_findings(doc):
+    """Every comments fetch in a marker-reading step is the condition of an
+    `if ! ...; then` whose body emits ::error:: and exits 1 -- no `||`
+    swallow in the command, no `[]` written in its place (#557)."""
+    findings = []
+    for job, step_id in MARKER_READERS:
+        where = "{0}/{1}".format(job, step_id)
+        run = _step_run(doc, job, step_id)
+        for m in _COMMENTS_FETCH.finditer(run):
+            line_start = run.rfind("\n", 0, m.start()) + 1
+            if run[line_start:m.start()].strip() != "if !":
+                findings.append(
+                    "{0}: comments fetch is not the condition of `if ! gh api ...; then` -- a "
+                    "failed fetch is not handled explicitly (#557)".format(where))
+                continue
+            then_at = run.find("; then\n", m.end())
+            fi = re.compile(r"\n[ \t]*fi\b").search(run, then_at) if then_at >= 0 else None
+            if fi is None:
+                findings.append("{0}: comments fetch has no `; then ... fi` failure branch (#557)".format(where))
+                continue
+            cmd, body = run[m.start():then_at], run[then_at:fi.start()]
+            if "||" in cmd:
+                findings.append("{0}: comments fetch swallows its failure with `||` (#557)".format(where))
+            if "'[]'" in body or "exit 1" not in body or "::error::" not in body:
+                findings.append(
+                    "{0}: comments fetch failure branch does not emit ::error:: and `exit 1` "
+                    "(or writes `[]` in place of the comments) (#557)".format(where))
+    return findings
+
+
+_STUB_GH = r"""#!/usr/bin/env bash
+# Gate 97 stub gh (#557). Emits the already --jq-projected lines.
+echo "gh $*" >> "$STUB_LOG"
+case "$*" in
+  "api repos/$GITHUB_REPOSITORY/issues/"*"/comments"*)
+    if [ "${STUB_COMMENTS_FAIL:-}" = "1" ]; then
+      echo "gh: Server Error (HTTP 502)" >&2
+      exit 1
+    fi
+    cat "$STUB_COMMENTS" ;;
+  "api repos/$GITHUB_REPOSITORY/issues/"*"/timeline"*) ;;
+  "api repos/$GITHUB_REPOSITORY/issues -X GET"*"labels=board:owned"*) ;;
+  "api repos/$GITHUB_REPOSITORY/issues -X GET"*)
+    echo '{"number":7,"author":{"login":"alice"},"authorAssociation":"OWNER","labels":[],"state":"OPEN","createdAt":"2026-01-01T00:00:00Z"}' ;;
+  "api repos/$GITHUB_REPOSITORY/pulls/"*) exit 1 ;;
+  "issue comment"*) ;;
+  *) echo "stub gh: unexpected call: $*" >&2; exit 3 ;;
+esac
+"""
+
+_STUB_REPO = "example/wing-commander"
+
+
+def _pr_event(labels, head_repo):
+    return {"pull_request": {"number": 42, "merged": True, "body": "Fixes #7",
+                             "labels": [{"name": n} for n in labels],
+                             "head": {"repo": {"full_name": head_repo} if head_repo else None}}}
+
+
+def _fetch_cases():
+    """(title, job, step id, env overrides, pull_request event or None,
+    comments fetch fails, check(rc, out, outputs, gh_log) -> problem|None)."""
+    owned = _pr_event(["board:owned"], _STUB_REPO)
+
+    def failed_loudly(key, bad):
+        def check(rc, out, outputs, log):
+            if rc == 0:
+                return "step succeeded on a failed comments fetch (#557)"
+            if "::error::" not in out:
+                return "step failed without an ::error:: annotation (#557)"
+            if outputs.get(key, "") == bad:
+                return "step still wrote {0}={1}".format(key, bad)
+            return None
+        return check
+
+    def ok_with(key, want):
+        def check(rc, out, outputs, log):
+            if rc != 0:
+                return "step failed (rc {0}): {1}".format(rc, out.strip().splitlines()[-3:])
+            if want is not None and outputs.get(key) != want:
+                return "expected {0}={1}, got {2!r}".format(key, want, outputs.get(key))
+            return None
+        return check
+
+    def not_owned(rc, out, outputs, log):
+        if rc != 0:
+            return "step failed (rc {0})".format(rc)
+        if outputs.get("eligible") != "false":
+            return "a PR that fails BOARD_PR_OWNED_JQ entered prove (eligible={0!r})".format(
+                outputs.get("eligible"))
+        if "/comments" in log:
+            return "fetched the issue's comments for a PR that is not a board item"
+        return None
+
+    return [
+        ("select: per-issue comments fetch fails", "select", "select", {}, None, True,
+         failed_loudly("issue-number", "7")),
+        ("select: comments fetch succeeds (stub sanity)", "select", "select", {}, None, False,
+         ok_with("issue-number", None)),
+        ("resume: comments fetch fails", "select", "resume", {"ISSUE_NUMBER": "7"}, None, True,
+         failed_loudly("step", "triage")),
+        ("resume: comments fetch succeeds (stub sanity)", "select", "resume", {"ISSUE_NUMBER": "7"},
+         None, False, ok_with("step", None)),
+        ("prove-gate: owned PR, marker present -> prove", "prove-gate", "gate", {}, owned, False,
+         ok_with("eligible", "true")),
+        ("prove-gate: owned PR, comments fetch fails", "prove-gate", "gate", {}, owned, True,
+         failed_loudly("eligible", "true")),
+        ("prove-gate: merged PR without board:owned -> not a board item", "prove-gate", "gate", {},
+         _pr_event(["bug"], _STUB_REPO), False, not_owned),
+        ("prove-gate: board:owned PR from another repository -> not a board item", "prove-gate",
+         "gate", {}, _pr_event(["board:owned"], "someone/fork"), False, not_owned),
+    ]
+
+
+def _marker_comment_line():
+    return json.dumps({
+        "created_at": "2026-01-05T00:00:00Z", "user": {"login": BOT_LOGIN, "type": "Bot"},
+        "body": "<!-- wing-commander-board-item: " + json.dumps(
+            {"step": "review", "round": 1, "pr": None, "branch": None,
+             "base_sha": None}) + " -->"})
+
+
+def fetch_behaviour_findings(doc):
+    """Runs select/select, select/resume and prove-gate/gate for real under
+    `bash -e` (the runner's default shell) against a stub gh (#557)."""
+    try:
+        from wc_shell_harness import ensure_jq, resolve_bash, run_step
+    except ImportError as exc:
+        return ["cannot import wc_shell_harness: {0}".format(exc)]
+    env_block = doc.get("env") or {}
+    runs = {(j, s): _step_run(doc, j, s) for j, s in MARKER_READERS}
+    key = ("fetch-behaviour", tuple(sorted(env_block.items())), tuple(sorted(runs.items())))
+    if key in _RUN_CACHE:
+        return list(_RUN_CACHE[key])
+    ensure_jq()
+    bash = resolve_bash()
+    findings = []
+    with tempfile.TemporaryDirectory() as tmp:
+        workdir = os.path.join(tmp, "work")
+        shutil.copytree(os.path.join(ROOT, ".github", "scripts"),
+                        os.path.join(workdir, ".github", "scripts"),
+                        ignore=shutil.ignore_patterns("tests", "fixtures", "__pycache__"))
+        bindir = os.path.join(tmp, "bin")
+        os.makedirs(bindir)
+        gh = os.path.join(bindir, "gh")
+        with open(gh, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(_STUB_GH)
+        os.chmod(gh, 0o755)
+        comments = os.path.join(tmp, "comments.jsonl")
+        with open(comments, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(_marker_comment_line() + "\n")
+        for idx, (title, job, step_id, env_over, event, fail, check) in enumerate(_fetch_cases()):
+            run = runs[(job, step_id)]
+            if not run:
+                findings.append("fetch `{0}`: step {1}/{2} not found".format(title, job, step_id))
+                continue
+            runner_temp = os.path.join(tmp, "rt{0}".format(idx))
+            os.makedirs(runner_temp)
+            log = os.path.join(tmp, "gh{0}.log".format(idx))
+            open(log, "w").close()
+            event_path = os.path.join(tmp, "event{0}.json".format(idx))
+            with open(event_path, "w", encoding="utf-8") as fh:
+                json.dump(event or {}, fh)
+            env = {"PATH": bindir + os.pathsep + os.environ["PATH"],
+                   "GITHUB_REPOSITORY": _STUB_REPO, "GITHUB_EVENT_PATH": event_path,
+                   "GH_TOKEN": "stub", "BOT_LOGIN": BOT_LOGIN,
+                   "BOARD_PR_OWNED_JQ": str(env_block.get("BOARD_PR_OWNED_JQ", "")),
+                   "BOARD_PR_STATE_JQ": str(env_block.get("BOARD_PR_STATE_JQ", "")),
+                   "STUB_LOG": log, "STUB_COMMENTS": comments,
+                   "STUB_COMMENTS_FAIL": "1" if fail else "0",
+                   "PR_BODY": "Fixes #7", "PR_NUMBER": "42", "MERGED": "true"}
+            env.update(env_over)
+            rc, out, outputs, _summary = run_step(bash, run, workdir, env, runner_temp)
+            with open(log, encoding="utf-8") as fh:
+                gh_log = fh.read()
+            unexpected = [l for l in out.splitlines() if "stub gh: unexpected call" in l]
+            if unexpected:
+                findings.append("fetch `{0}`: {1}".format(title, unexpected[0]))
+                continue
+            problem = check(rc, out, outputs, gh_log)
+            if problem:
+                findings.append("fetch `{0}`: {1}".format(title, problem))
+    _RUN_CACHE[key] = tuple(findings)
+    return findings
+
+
 def all_findings(text, table=None, scripts_root=ROOT):
     try:
         doc = yaml.safe_load(text)
@@ -925,7 +1141,8 @@ def all_findings(text, table=None, scripts_root=ROOT):
         return ["board-loop.yml does not parse: {0}".format(exc)]
     return (static_findings(doc) + simulation_findings(doc, table)
             + resume_findings(doc, scripts_root) + select_lookup_findings(doc, scripts_root)
-            + owned_jq_findings(doc, scripts_root) + marker_reader_findings(doc))
+            + owned_jq_findings(doc, scripts_root) + marker_reader_findings(doc)
+            + fetch_handling_findings(doc) + fetch_behaviour_findings(doc))
 
 
 def print_table(table):
@@ -1057,6 +1274,34 @@ def _mutations(text):
     sub("prove-gate BOT_LOGIN env dropped",
         "          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]\n", "",
         after="\n  prove-gate:\n")
+    # #557: a comments fetch feeding a marker reader swallowed or left
+    # bare, and prove-gate without its ownership check.
+    sub("select comments fetch swallowed as [] (pre-#557)",
+        "              echo \"::error::board-loop: could not fetch the comments of issue #$number -- its "
+        "board item marker cannot be read, so no item is selected this run (#557).\"\n"
+        "              exit 1\n",
+        "              echo '[]' > \"$RUNNER_TEMP/board-comments-$number.json\"\n")
+    sub("select comments fetch failure branch without exit 1",
+        "selected this run (#557).\"\n              exit 1\n",
+        "selected this run (#557).\"\n")
+    sub("resume comments fetch swallowed with || true",
+        "> \"$RUNNER_TEMP/board-issue-comments.json\"; then",
+        "> \"$RUNNER_TEMP/board-issue-comments.json\" || true; then")
+    sub("resume comments fetch left bare (pre-#557)",
+        "          if ! gh api \"repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments\" --paginate \\\n"  # wc-pagination-exempt: Gate 97 self-test mutation text, not a real invocation
+        "            --jq '.[] | {created_at, body, user: {login: .user.login, type: .user.type}}' | jq -s '.' > "
+        "\"$RUNNER_TEMP/board-issue-comments.json\"; then\n",
+        "          gh api \"repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments\" --paginate \\\n"  # wc-pagination-exempt: Gate 97 self-test mutation text, not a real invocation
+        "            --jq '.[] | {created_at, body, user: {login: .user.login, type: .user.type}}' | jq -s '.' > "
+        "\"$RUNNER_TEMP/board-issue-comments.json\"\n          if false; then\n")
+    sub("prove-gate comments fetch swallowed with || echo '[]'",
+        "> \"$RUNNER_TEMP/board-prove-comments.json\"; then",
+        "> \"$RUNNER_TEMP/board-prove-comments.json\" || echo '[]' > \"$RUNNER_TEMP/board-prove-comments.json\"; then")
+    sub("prove-gate without the BOARD_PR_OWNED_JQ check (pre-#557)",
+        'if [ "$(jq -r --arg repo "$GITHUB_REPOSITORY" "$BOARD_PR_OWNED_JQ" "$RUNNER_TEMP/board-prove-pr.json")" != "true" ]; then',
+        'if false; then')
+    sub("prove-gate ownership read off the wrong object",
+        "jq '.pull_request' \"$GITHUB_EVENT_PATH\"", "jq '.' \"$GITHUB_EVENT_PATH\"")
     sub("select eligibility payload without bot_login",
         ",\n              bot_login: $bot_login}", "}")
     # main's pre-#525 conditions, verbatim.
