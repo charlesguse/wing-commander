@@ -32,7 +32,7 @@ comments_by_issue.json + pr_state_by_number.json + expected.json set under
 contracts/in-flight-detection.md for the eleven-case list contracts/061
 documents, plus the four awaiting-merge-* cases (#532) and
 directed-proof-in-flight (specs/060-self-redrive-concurrency FR-017,
-Gate 91's own structural check that aimable_jobs cannot widen this
+Gate 101's own structural check that aimable_jobs cannot widen this
 exclusion). A case whose expected.json also carries "select_issue_number"
 additionally requires a labeled_events_by_issue.json and gets its result
 asserted against select() itself, not just in_flight_candidate() -- used by

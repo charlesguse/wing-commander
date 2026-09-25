@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 91 — a directed proof run never conflicts with the board item it is
+"""Gate 101 — a directed proof run never conflicts with the board item it is
 proving (FR-017, specs/060-self-redrive-concurrency research.md D7).
 
 WHY THIS EXISTS
@@ -19,7 +19,7 @@ This gate has two parts:
    `select`/`route`/`fix`.
 2. A pointer to the `directed-proof-in-flight` fixture under
    `.github/scripts/tests/board-eligibility/in-flight/`, which
-   `verify-board-eligibility.py` already exercises (Gate 91 itself does
+   `verify-board-eligibility.py` already exercises (Gate 101 itself does
    not re-run it -- doing so would be a second, redundant assertion of the
    same fixture rather than a second home for it, CLAUDE.md's single-home
    rule) -- proving `select()` never returns an issue whose only open

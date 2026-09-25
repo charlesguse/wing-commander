@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 90 — the FR-016 guarantee sentence (SC-006) is identical everywhere
+"""Gate 100 — the FR-016 guarantee sentence (SC-006) is identical everywhere
 it is stated (specs/060-self-redrive-concurrency
 contracts/concurrency-groups.md "The guarantee").
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 92 — board_prove_displacement.find_undetected_merges() resolves
+"""Gate 102 — board_prove_displacement.find_undetected_merges() resolves
 FR-010b correctly (specs/060-self-redrive-concurrency research.md D8).
 """
 import os
