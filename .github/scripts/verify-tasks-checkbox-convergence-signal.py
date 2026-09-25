@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 90 — converged means no task is left, and the signal reads tasks.md.
+"""Gate 99 — converged means no task is left, and the signal reads tasks.md.
 
 WHY THIS EXISTS
 ----------------
@@ -51,7 +51,7 @@ from wc_shell_harness import (ensure_jq, find_step, resolve_bash, run_step,
 
 STAGE = ".github/workflows/implement.yml"
 LINT_WORKFLOW = ".github/workflows/lint-workflows.yml"
-GATE_PREFIX = "Gate 90"
+GATE_PREFIX = "Gate 99"
 THIS_SCRIPT = ".github/scripts/verify-tasks-checkbox-convergence-signal.py"
 COUNT_TASKS_CHECKBOXES = ".github/actions/_shared/count-tasks-checkboxes.sh"
 COMPOSITE = ".github/actions/wing-commander-tasks-checkbox-count/action.yml"
@@ -750,7 +750,7 @@ def run_mutations(steps, root):
 def check_gate_wired():
     """FR-020's reflexive check (mirrors Gate 30's own check_gate_wired):
     this script cannot see its own absence from a workflow it isn't in, so
-    it reads lint-workflows.yml directly and confirms Gate 90 is present,
+    it reads lint-workflows.yml directly and confirms Gate 99 is present,
     enabled, and invokes this script by path."""
     wf = yaml.safe_load(open(LINT_WORKFLOW, encoding="utf-8")) or {}
     for job in (wf.get("jobs") or {}).values():
