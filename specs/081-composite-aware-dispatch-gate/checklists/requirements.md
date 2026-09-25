@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -39,23 +39,23 @@
   retired — and deliberately does not prescribe how the gate resolves a
   composite reference, what its fixtures look like, or how outputs are
   serialised. Where the shape of an artifact is a genuine trade-off rather
-  than an implementation detail (the output contract, FR-026), it is raised
-  as a clarification instead of being decided here.
-- **Three [NEEDS CLARIFICATION] markers remain** (FR-025, FR-026, FR-027),
-  at the cap of three. Each is a decision the owner should make rather than
-  a gap in the description:
-  - FR-025 (scope): does the fix also owe runtime proof, or is a resolving
-    textual gate the intended bound? The originating issue names both the
-    pinning *and* the absence of an execution harness as parts of the
-    defect, and only the owner can say whether the second is in scope.
-  - FR-026 (published surface): the composite is on the adopter-pinned
-    surface, so the shape of the widening is a compatibility decision.
-  - FR-027 (scope boundary): whether release-specific tag verification
-    belongs inside a deliberately generic shared composite. This one also
-    determines whether one of the three invariants stays pinned to the
-    workflow, so it changes what the gate is being asked to do.
-- All three are posted to the lifecycle issue by the intake stage rather
-  than resolved here; the clarify stage encodes the answers back into the
-  spec. Re-run this checklist after that point.
+  than an implementation detail (the output contract, FR-026), it was raised
+  as a clarification rather than decided here, and now records the owner's
+  answer.
+- **The three clarifications are resolved** (issue #595) and encoded into
+  the spec; no markers remain:
+  - FR-025 (scope): runtime proof *is* in scope. The textual resolving gate
+    is joined by harness cases that execute the shipped shell and assert
+    each of the three spec 048 invariants at runtime (SC-010) — the issue
+    names both halves of the defect.
+  - FR-026 (published surface): discrete named outputs, one per fact,
+    matching the composite's existing style; the widening of the
+    adopter-pinned surface is deliberate and recorded (FR-016).
+  - FR-027 (scope boundary): tag-state verification stays in
+    `auto-release.yml`'s own job and the composite stays generic. The gate
+    therefore resolves checks 3 and 5 through composites but requires
+    check 4 inline (User Story 1 scenario 7, SC-001), and the deferral of
+    a generic post-wait hook is recorded on the composite's contract so a
+    second caller does not paste a copy (FR-028).
 - Everything else passes as written; no iteration was needed on the other
   items.

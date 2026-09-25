@@ -40,12 +40,13 @@ dictates.
 
 ### User Story 1 - The gate follows the idiom into a composite (Priority: P1)
 
-A maintainer moves the correlation search, the wait-for-status, or the
-tag-state comparison out of `auto-release.yml` and into a composite
-action that the `dispatch-release` job calls. Gate 59 resolves that call
-and checks the invariants where the shell actually is, so a pure
-relocation passes and a deletion or weakening still fails — from either
-location.
+A maintainer moves the correlation search or the wait-for-status out of
+`auto-release.yml` and into a composite action that the
+`dispatch-release` job calls. Gate 59 resolves that call and checks the
+invariants where the shell actually is, so a pure relocation passes and a
+deletion or weakening still fails — from either location. The tag-state
+comparison is the exception: it stays in the job by FR-027, and the gate
+enforces that.
 
 **Why this priority**: This is the blocking defect. Nothing else in this
 feature can land while a relocation is indistinguishable from a
@@ -54,19 +55,21 @@ shipped, the gate has stopped being a pin on one file's text and the
 waiver above it has a path to removal, even if no shell has moved yet.
 
 **Independent Test**: Run the gate against the tree unchanged (passes),
-against a fixture where the checked shell has been relocated into a
-composite the job calls (passes), and against fixtures where each
+against a fixture where the correlation and wait shell has been relocated
+into a composite the job calls (passes), against fixtures where each
 invariant is weakened in whichever location it now occupies (fails,
-naming only its own clause).
+naming only its own clause), and against a fixture that relocates the
+tag-state verification into a composite (fails, per FR-027).
 
 **Acceptance Scenarios**:
 
 1. **Given** the dispatch shell sits inline in `auto-release.yml` exactly as it does today, **When** the gate runs, **Then** it passes and reports which location each invariant was satisfied in.
 2. **Given** the dispatch shell has been relocated verbatim into a composite the `dispatch-release` job calls, **When** the gate runs, **Then** it passes.
 3. **Given** the relocated shell has had its attempt-token match removed, leaving only a time-bound comparison, **When** the gate runs, **Then** it fails naming the recency-based-selection clause (FR-001–FR-003 of spec 048) and no other clause.
-4. **Given** the relocated shell decides `released` from a run's conclusion rather than a `refs/tags/` comparison, **When** the gate runs, **Then** it fails naming the tag-state clause and no other clause.
+4. **Given** the job's own shell decides `released` from a run's conclusion rather than a `refs/tags/` comparison, **When** the gate runs, **Then** it fails naming the tag-state clause and no other clause.
 5. **Given** the relocated shell reads tag state with no prior wait on the correlated run's status, **When** the gate runs, **Then** it fails naming the mid-flight-read clause and no other clause.
 6. **Given** the `dispatch-release` job names a composite that does not exist, or whose expected shell cannot be located within it, **When** the gate runs, **Then** it fails loudly as an unresolvable reference rather than reporting a pass it did not earn (Constitution VIII).
+7. **Given** the tag-state verification has been moved out of the `dispatch-release` job and into a called composite, **When** the gate runs, **Then** it fails naming the tag-state clause, because that invariant is required to be satisfied by the job's own steps (FR-027).
 
 ---
 
@@ -90,8 +93,9 @@ repoint happens.
 
 **Independent Test**: Drive the composite's shell through its existing
 behavioural harness with a stubbed GitHub CLI across the found /
-ambiguous / not-observed / dispatch-rejected / wait-exhausted cases, and
-assert each declared output for each case.
+ambiguous / not-observed / dispatch-rejected / wait-exhausted cases,
+assert each declared named output for each case, and assert at runtime
+that the correlation and wait invariants hold (FR-025).
 
 **Acceptance Scenarios**:
 
@@ -119,10 +123,11 @@ above and is the only part that changes production release behaviour, so
 it lands last and behind the behavioural evidence the first two stories
 produce.
 
-**Independent Test**: Run the composite's behavioural harness and the
-release-dispatch gate against the repointed tree, confirm the waiver is
-gone and Gate 60 is green, and confirm Gate 60 fails on a fixture where
-the inline copy is restored.
+**Independent Test**: Run the composite's behavioural harness, the
+runtime assertion of the tag-state invariant against the job's own shell
+(FR-025), and the release-dispatch gate against the repointed tree;
+confirm the waiver is gone and Gate 60 is green, and confirm Gate 60
+fails on a fixture where the inline copy is restored.
 
 **Acceptance Scenarios**:
 
@@ -142,7 +147,7 @@ the inline copy is restored.
 - A dispatch is rejected outright: the correlation search never runs, so no correlation-based invariant can be satisfied at runtime — the gate checks the shipped shell, not a particular run, and must not be confused by the rejected path's early exit.
 - Today's uncorrelated path waits a fixed bounded interval before reading tag state; the shared composite does not wait at all on that path. A repoint that drops the wait would reintroduce exactly the mid-flight tag read spec 048's check 5 exists to prevent.
 - Both `auto-release.yml` and the composite are edited in the same pull request: the gate must be triggered by a change to either file, not only by a change to the workflow.
-- The gate's own self-test must exercise every failure branch in both the inline-satisfied and composite-satisfied forms, or half the shipped branches are uncovered (Constitution VIII).
+- The gate's own self-test must exercise every failure branch that can occur in both the inline-satisfied and composite-satisfied forms in both of them, or half the shipped branches are uncovered (Constitution VIII); the tag-state branches have only the inline form, plus the fixture that proves a move into a composite fails.
 
 ## Requirements *(mandatory)*
 
@@ -150,13 +155,13 @@ the inline copy is restored.
 
 **The gate resolves rather than pins**
 
-- **FR-001**: The release-dispatch regression gate MUST verify spec 048's correlation, tag-state-outcome and wait-before-tag-read invariants against the effective implementation of `auto-release.yml`'s `dispatch-release` job — the job's own steps plus the shell of any composite action those steps call — rather than against `auto-release.yml`'s raw text alone.
-- **FR-002**: The gate MUST pass when an invariant is satisfied entirely inside a called composite and no longer appears in `auto-release.yml`'s own text.
+- **FR-001**: The release-dispatch regression gate MUST verify spec 048's correlation, tag-state-outcome and wait-before-tag-read invariants against the effective implementation of `auto-release.yml`'s `dispatch-release` job — the job's own steps plus the shell of any composite action those steps call — rather than against `auto-release.yml`'s raw text alone, subject to FR-027's location constraint on the tag-state invariant.
+- **FR-002**: The gate MUST pass when the correlation or wait-before-tag-read invariant is satisfied entirely inside a called composite and no longer appears in `auto-release.yml`'s own text.
 - **FR-003**: The gate MUST still fail when an invariant is weakened or removed, regardless of which of those locations the shell occupies, and each failure MUST name only its own clause and the spec 048 requirement it protects.
 - **FR-004**: When the gate cannot resolve a referenced composite, or resolves it but cannot locate the shell it is meant to inspect, it MUST fail with a message that says so, naming the unresolvable reference. It MUST NOT treat an unresolvable reference as either a pass or as evidence the invariant was deleted.
 - **FR-005**: The gate MUST attribute each satisfied invariant to the location that satisfied it, so a maintainer reading a pass can see whether the guarantee currently lives in the workflow or in a composite.
 - **FR-006**: The gate MUST only credit a composite that the `dispatch-release` job itself reaches; a composite satisfying the invariant but called only from elsewhere in the repository MUST NOT count.
-- **FR-007**: The gate's self-test MUST exercise every failure branch it ships in both the inline-satisfied and composite-satisfied arrangements, using checked-in fixtures, and MUST fail if any branch is unreachable.
+- **FR-007**: The gate's self-test MUST exercise every failure branch it ships, using checked-in fixtures, in both the inline-satisfied and composite-satisfied arrangements for every branch that can occur in both; the tag-state branches, inline-only by FR-027, MUST be exercised in the one arrangement they have, including the fixture that moves tag-state verification into a composite. The self-test MUST fail if any branch is unreachable.
 - **FR-008**: The gate MUST be triggered by changes to any file it reads — the workflow and every composite it resolves through — not by changes to the workflow alone.
 - **FR-009**: Spec 048's checks 1 and 2, which concern `release.yml` rather than `auto-release.yml`, MUST retain their current behaviour and failure messages unchanged.
 - **FR-010**: The gate MUST run identically locally and in CI, with the same subject and arguments, and remain reachable through the gate registry.
@@ -184,16 +189,17 @@ the inline copy is restored.
 - **FR-023**: Spec 057's T054 and the withheld half of its T056, and spec 048's gate contract, MUST be updated to record that the blocker is resolved and how — no task or contract may keep describing a constraint that no longer holds.
 - **FR-024**: The gate MUST document, in its own header, that it resolves through composites and which locations it searches, so the next maintainer to move this shell learns the rule from the gate rather than from a failure.
 
-**Open questions carried into planning**
+**Runtime proof, contract shape and scope boundary** *(resolved in clarification, issue #595)*
 
-- **FR-025**: The gate MUST establish, beyond the textual invariants above, [NEEDS CLARIFICATION: whether the resolved-through-composite arrangement must additionally be proven by executing the shipped shell — extending the composite's behavioural harness to assert the three spec 048 invariants at runtime — or whether a resolving textual gate plus the existing harness coverage is the intended bound. The originating issue names "cannot prove an extraction behaviour-preserving" as part of the defect.]
-- **FR-026**: The widened composite contract MUST take the shape of [NEEDS CLARIFICATION: discrete named outputs, one per fact (matching today's style, growing the adopter-pinned output surface by four), or a single structured outcome output the caller destructures (one new output, but callers must parse it)?]
-- **FR-027**: The tag-state verification that decides `released` MUST live [NEEDS CLARIFICATION: in `auto-release.yml`'s own job, as release-specific logic the generic composite has no business knowing about — in which case the gate resolves checks 3 and 5 through the composite but keeps check 4 pinned to the workflow — or inside the composite behind an optional "expected ref" input, so one home covers the whole idiom?]
+- **FR-025**: The three spec 048 invariants MUST be proven at runtime as well as resolved textually. A behavioural harness MUST execute the shipped shell that satisfies each invariant — the composite's shell for the correlation search and the wait-before-tag-read, `auto-release.yml`'s own job shell for the tag-state verdict — against a stubbed command surface, and assert the invariant holds rather than asserting that particular text is present. A textual pass with no runtime assertion for a given invariant MUST NOT be treated as sufficient evidence that an extraction was behaviour-preserving (Constitution VIII).
+- **FR-026**: The widened composite contract MUST take the shape of discrete named outputs, one per fact, matching the composite's existing output style; no caller may be required to parse a structured value to read a single fact. The resulting growth of the adopter-pinned output surface is a deliberate, recorded widening (Constitution VII, FR-016).
+- **FR-027**: The tag-state verification that decides `released` MUST live in `auto-release.yml`'s own `dispatch-release` job. The shared composite stays generic and gains no release-specific "expected ref" input. Accordingly the gate resolves the correlation and wait-before-tag-read invariants through composites (FR-001, FR-002), but MUST require the tag-state invariant to be satisfied by the job's own steps and MUST fail if that shell is found only inside a composite.
+- **FR-028**: The deferral of a generic post-wait verification hook on the composite MUST be recorded on the composite's contract, so that the next caller needing to verify state the dispatched run was expected to change reaches for that deferred decision rather than pasting a second copy of the verification shell.
 
 ### Key Entities
 
 - **Release-dispatch regression gate**: The deterministic check protecting spec 048's invariants. Owns the resolution rule, the failure clauses, and its own self-test fixtures.
-- **Dispatch-and-wait composite**: The single home for the dispatch-correlate-wait idiom. Owns the outcome contract every caller reads.
+- **Dispatch-and-wait composite**: The single home for the dispatch-correlate-wait idiom. Owns the outcome contract every caller reads — discrete named outputs, one per fact — and the record of what it deliberately does not carry.
 - **`dispatch-release` job**: `auto-release.yml`'s call site. Owns the release-specific concerns the generic idiom does not cover — the verified head, the expected version tag.
 - **`report` job**: The only maintainer-facing writer for this feature. Consumes the outcome facts and is the reason the contract must widen.
 - **Single-home waiver register**: The open record of known, temporary deviations from the one-home rule, stale-checked in both directions. Holds the entry this feature retires.
@@ -202,19 +208,23 @@ the inline copy is restored.
 
 ### Measurable Outcomes
 
-- **SC-001**: Relocating any of the three checked invariants out of the workflow and into a composite the job calls produces a passing gate run, where today it produces a failing one — demonstrated by a checked-in fixture, not by a one-time manual run.
-- **SC-002**: Every failure branch the gate ships fails on a checked-in fixture in both the inline-satisfied and composite-satisfied arrangements; zero branches are reachable only in one of the two.
+- **SC-001**: Relocating the correlation search or the wait-for-status out of the workflow and into a composite the job calls produces a passing gate run, where today it produces a failing one — demonstrated by a checked-in fixture, not by a one-time manual run; relocating the tag-state comparison the same way produces a failing run naming that clause (FR-027).
+- **SC-002**: Every failure branch the gate ships fails on a checked-in fixture; every branch that can occur in both the inline-satisfied and composite-satisfied arrangements has a fixture in each, and the inline-only tag-state branches are the only ones with a single arrangement.
 - **SC-003**: Each of the three invariant failures names exactly one clause; no fixture produces a failure naming a clause it did not mutate.
 - **SC-004**: A composite reference that cannot be resolved produces a failure that names the reference, in 100% of the unresolvable cases the fixtures cover — never a pass.
 - **SC-005**: Every dispatch outcome the release report distinguishes today is reproducible from the composite's reported facts alone; a side-by-side comparison of report text for each outcome shows zero differences after the repoint.
 - **SC-006**: The repository contains exactly one copy of the dispatch-correlate-wait shell, and the single-home register contains zero `dispatch-and-wait` waivers.
 - **SC-007**: The full pull-request gate suite is green on the final head, with no gate skipped, waived, or newly excluded to accommodate this change.
 - **SC-008**: One real dispatch run is re-driven after merge and its outcome recorded on the pull request or the lifecycle issue.
-- **SC-009**: No existing caller of the composite requires an edit to keep working, and no input or output is removed or renamed.
+- **SC-009**: No existing caller of the composite requires an edit to keep working, and no input or output is removed or renamed; every new fact is readable as its own named output, with zero callers parsing a structured value.
+- **SC-010**: Each of the three spec 048 invariants has a harness case that executes the shipped shell against a stubbed command surface and asserts the invariant at runtime; mutating that shipped shell to violate the invariant makes its case fail.
 
 ## Assumptions
 
 - The three invariants at issue are exactly spec 048's checks 3, 4 and 5 (correlation on evidence, tag-state outcome, wait-before-tag-read). Checks 1 and 2 concern `release.yml`, are not implicated by any extraction, and are out of scope beyond leaving them working.
+- Of those three, only checks 3 and 5 are relocatable. Check 4's shell stays in `auto-release.yml`'s job by the clarified FR-027, so "resolves through composites" describes the gate's rule for checks 3 and 5 and an enforced inline requirement for check 4.
+- The shared composite stays release-agnostic: it gains no "expected ref" input and no post-wait verification hook in this feature. That hook is a deliberate deferral recorded on the composite's contract (FR-028), not an oversight, so a future second caller asks for it rather than pasting the verification shell.
+- Runtime proof (FR-025) is behavioural-harness proof — the shipped shell executed against a stubbed command surface — not a live Actions run. The one live run remains the post-merge re-drive of FR-022.
 - Composite resolution follows calls made by the `dispatch-release` job one level deep. A composite that itself delegates the checked shell to a further composite is treated as unresolvable and fails loudly (FR-004) rather than being followed indefinitely or silently abandoned; deepening that later is a separate decision.
 - The gate remains deterministic code with checked-in fixtures. Nothing in this feature moves a judgment that gates a durable action into a prompt (Constitution IX).
 - Today's fixed bounded wait on the uncorrelated path is behaviour worth preserving, not an accident; the composite gains a caller-settable equivalent (FR-014) whose default leaves the existing prove-job caller unchanged.
