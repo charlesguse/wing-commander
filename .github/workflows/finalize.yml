@@ -1317,8 +1317,8 @@ jobs:
           ISSUE: ${{ inputs.issue-number }}
           BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
         run: |
-          jq '.stage = "review" | .pending_re_review_from = []' "$SPEC_DIR/spec-meta.json" > /tmp/meta.json
-          mv /tmp/meta.json "$SPEC_DIR/spec-meta.json"
+          jq '.stage = "review" | .pending_re_review_from = []' "$SPEC_DIR/spec-meta.json" > "$RUNNER_TEMP/meta.json"
+          mv "$RUNNER_TEMP/meta.json" "$SPEC_DIR/spec-meta.json"
           git add "$SPEC_DIR/spec-meta.json"
           # FR-010a: a repeat refresh with no intervening fold already has
           # stage=review and an empty pending_re_review_from, so there is

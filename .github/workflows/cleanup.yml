@@ -897,11 +897,11 @@ jobs:
           IMPL_PREFIX: ${{ inputs.impl-prefix }}
         run: |
           delete_branch() {
-            if git push origin --delete "$1" 2>/tmp/delete-err; then
+            if git push origin --delete "$1" 2>"$RUNNER_TEMP/delete-err"; then
               echo "Deleted $1." >> "$GITHUB_STEP_SUMMARY"
             else
               echo "$1 already absent (or could not be deleted) — treated as success:" >> "$GITHUB_STEP_SUMMARY"
-              sed 's/^/  /' /tmp/delete-err >> "$GITHUB_STEP_SUMMARY"
+              sed 's/^/  /' "$RUNNER_TEMP/delete-err" >> "$GITHUB_STEP_SUMMARY"
             fi
           }
           delete_branch "${SPEC_DRAFT_PREFIX}$SLUG"
@@ -1228,11 +1228,11 @@ jobs:
           SLUG: ${{ steps.spec.outputs.slug }}
           SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
         run: |
-          if git push origin --delete "${SPEC_DRAFT_PREFIX}$SLUG" 2>/tmp/delete-err; then
+          if git push origin --delete "${SPEC_DRAFT_PREFIX}$SLUG" 2>"$RUNNER_TEMP/delete-err"; then
             echo "Deleted ${SPEC_DRAFT_PREFIX}$SLUG." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "${SPEC_DRAFT_PREFIX}$SLUG already absent (or could not be deleted) — treated as success:" >> "$GITHUB_STEP_SUMMARY"
-            sed 's/^/  /' /tmp/delete-err >> "$GITHUB_STEP_SUMMARY"
+            sed 's/^/  /' "$RUNNER_TEMP/delete-err" >> "$GITHUB_STEP_SUMMARY"
           fi
 
   # Built work rejected (final PR closed unmerged) or a non-final
@@ -1518,8 +1518,8 @@ jobs:
           ARM: ${{ steps.spec.outputs.arm }}
           BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
         run: |
-          jq '.stage = "stalled"' "$SPEC_DIR/spec-meta.json" > /tmp/meta.json
-          mv /tmp/meta.json "$SPEC_DIR/spec-meta.json"
+          jq '.stage = "stalled"' "$SPEC_DIR/spec-meta.json" > "$RUNNER_TEMP/meta.json"
+          mv "$RUNNER_TEMP/meta.json" "$SPEC_DIR/spec-meta.json"
           git config user.name  "${BOT_SLUG}[bot]"
           git config user.email "${BOT_SLUG}[bot]@users.noreply.github.com"
           git add "$SPEC_DIR/spec-meta.json"
@@ -1592,5 +1592,5 @@ jobs:
             echo "gh issue edit $ISSUE --add-label stage:done --remove-label stage:stalled"
             echo "gh issue close $ISSUE --comment \"Specification torn down manually.\""
             echo '```'
-          } > /tmp/stall-comment.md
-          gh issue comment "$ISSUE" --body-file /tmp/stall-comment.md
+          } > "$RUNNER_TEMP/stall-comment.md"
+          gh issue comment "$ISSUE" --body-file "$RUNNER_TEMP/stall-comment.md"

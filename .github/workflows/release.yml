@@ -285,9 +285,9 @@ jobs:
               echo "None."
             fi
             echo ""
-          } > /tmp/release-notes-head.md
+          } > "$RUNNER_TEMP/release-notes-head.md"
           gh release create "$TAG" \
             --title "$TAG" \
-            --notes-file /tmp/release-notes-head.md \
+            --notes-file "$RUNNER_TEMP/release-notes-head.md" \
             --generate-notes
           echo "Release $TAG published." >> "$GITHUB_STEP_SUMMARY"
