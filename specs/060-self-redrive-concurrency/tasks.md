@@ -747,3 +747,9 @@ Task: "New Gate 92: verify-board-prove-displacement.py fixtures"
 - [ ] Renumber this branch's "Gate 91" (the directed proof run never conflicts with the item it is proving, FR-017) to **Gate 101** everywhere it appears, same scope as above. Collides with main's existing Gate 91 (auto-release.yml pass-path specs/ fallback, #482).
 - [ ] Renumber this branch's "Gate 99" (board loop prove-displacement detects a merge whose proof run never started, FR-010b) to **Gate 102** everywhere it appears, same scope as above. Collides with the Gate 99 claimed by PR #463 (converged means no task is left).
 - [ ] Re-run `python .github/scripts/run-local-gates.py` after the renumber and confirm a clean pass before the next push.
+
+---
+
+## Maintainer Feedback (PR #490 review, 2026-09-25, @charlesguse)
+
+- [ ] Finish T055 (still unchecked): update `.claude/skills/spec-cross-reference/SKILL.md`'s "Over-rated" example (lines 23-28), which still describes `group: wing-commander-board-loop` as "applied to every trigger in the file" — the single workflow-level block T009 replaced with per-job groups. Restate it in terms of the per-job split (the refutation itself still stands) and point at `specs/060-self-redrive-concurrency/contracts/concurrency-groups.md`.
