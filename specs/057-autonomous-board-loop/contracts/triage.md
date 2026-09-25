@@ -89,6 +89,42 @@ An eligible issue's external author can choose their own issue's cited
 run; that can only close their own issue, which they can already do, so it
 grants nothing new.
 
+## Recurred defects (#520)
+
+Watchdog records a recurrence of a `pipeline-defect` (reopening it when
+closed) as a comment by its GitHub App, and the trust filter drops every
+bot comment, so the cite above alone would judge a recurred defect on its
+original `_First seen_` run -- whose action pins main may since have
+bumped. `board_triage.cite_run()` therefore decides the cited run:
+
+```python
+def cite_run(context_text: str, occurrences: list[dict],
+             last_reopened_at: str, repository: str
+             ) -> tuple[str | None, str | None]:
+    """(run_url, reason). The newest occurrence (latest_occurrence())
+    wins over find_cited_run(); when the issue was reopened after the run
+    it would cite, no run is cited (reason says why)."""
+```
+
+- **Newest occurrence wins.** `wing-commander-issue-context` called with
+  `occurrence-bot-login` (triage passes its own App's `<slug>[bot]`)
+  stages `bot-occurrences-file`: only comments whose author has exactly
+  that login and `user.type == "Bot"` -- matched on author, never on body
+  text, and never widening `comments-file`/`context-file`. A comment in it
+  counts when its first line is watchdog's
+  `🐕 New occurrence of this fingerprint — [this run](URL):` naming a run
+  of this repository; the newest such run is cited. The board loop and
+  watchdog post as the same App (`WING_COMMANDER_APP_ID`); Gate 82 pins
+  that.
+- **Reopened after the cite → no cite.** The same call's
+  `last-reopened-at` is the issue's newest `reopened` event. When it is
+  newer than the cited occurrence, or the issue was reopened and no
+  occurrence was staged at all (another bot's or a human's "occurrence"
+  never is), no run is cited: triage proceeds, and neither `action_bump`
+  nor `rate_limit` can close on a run older than the recurrence.
+- An issue never reopened and with no occurrence is cited exactly as
+  before.
+
 ## Gate: `verify-board-triage.py`
 
 Fixtures (FR-064 bullet 1), each a checked-in transcript/workflow-pin pair:
@@ -126,3 +162,16 @@ Fixtures (FR-064 bullet 1), each a checked-in transcript/workflow-pin pair:
     these; so must posting the handover evidence raw instead of through
     `fenced_section()`, whether by replacing the fenced line, inlining a
     `.evidence` read into the comment's printf, or reading it again.
+12. Recurred defects (#520): a reopened defect whose newer App occurrence
+    ran on current pins → NOT closed as `action_bump`; the same with its
+    occurrence posted by a different bot or a human NONE (never staged)
+    → no run cited, `proceed`; a reopened defect whose First-seen run
+    was a 429 → NOT closed as `rate_limit`; a defect never reopened still
+    closes on its First-seen run's bump or 429. Ignoring occurrences,
+    citing the oldest, accepting the occurrence line past a comment's
+    first line, or dropping either half of the reopen rule must fail
+    these; so must the cite step losing either new operand, reading them
+    from anywhere but the same composite call, or that call dropping or
+    changing `occurrence-bot-login`, and the triage job or watchdog
+    changing App. Gate 96 proves the composite stages only that login's
+    Bot comments and the newest reopen.

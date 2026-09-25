@@ -83,6 +83,28 @@ closed. Two checks keep that shut:
    marker wins over an earlier link, and a plain body link still works.
    Removing the quote/fence stripping or the First-seen preference must
    fail these.
+4. reopened defects (#520). Watchdog records a recurrence as a comment by
+   its App, which the trust filter drops, so triage cited the original
+   First-seen run and could close a defect that had just recurred on
+   current pins as an action bump. Now:
+   - cite_run() (behavioural): the newest occurrence in the composite's
+     bot-occurrences-file wins; a reopen newer than the run it would cite
+     (no occurrence staged, or one older than the reopen) cites no run;
+     an occurrence line in a human's comment, not on a comment's first
+     line, or naming another repository's run, is not an occurrence.
+   - end to end, in a throwaway repo: a reopened defect whose App
+     occurrence ran on main's pins, or whose occurrence was posted by
+     another bot or a human NONE (never staged), is NOT closed as an
+     action_bump; nor is one closed as a rate_limit on its First-seen
+     run's 429. An issue that never recurred still closes on both.
+   - the cite step passes one composite call's bot-occurrences-file,
+     last-reopened-at and context-file, and that call passes
+     occurrence-bot-login `${{ steps.ctx.outputs.bot-slug }}[bot]`;
+     check_occurrence_app(): the triage job's App is the one
+     wing-commander-8-watchdog.yml hands watchdog.yml, and watchdog.yml
+     still writes the occurrence line board_triage.OCCURRENCE_LINE parses.
+   Every REOPENED_MUTATIONS rewrite, each occurrence-App mutation and the
+   #520 CITE_MUTATIONS must be caught.
 
 Fixtures (FR-064 bullet 1), each a checked-in transcript/workflow-pin pair
 under .github/scripts/tests/board-triage/<case>/. Fails loudly, not
@@ -765,8 +787,14 @@ def _load_reassignment_res():
     return module._reassignment_res
 
 
-CONTEXT_FILE_RE = re.compile(
-    r"^\$\{\{\s*steps\.([A-Za-z0-9_-]+)\.outputs\.context-file\s*\}\}$")
+# The three wing-commander-issue-context outputs the cite step reads (#520
+# added the last two): all from ONE earlier, un-gated call of it.
+ISSUE_CONTEXT_OUTPUT_RE = re.compile(
+    r"^\$\{\{\s*steps\.([A-Za-z0-9_-]+)\.outputs\."
+    r"(context-file|bot-occurrences-file|last-reopened-at)\s*\}\}$")
+# #520: that call must stage occurrences from this job's own App only --
+# the App watchdog posts its occurrence comments as (check_occurrence_app).
+OCCURRENCE_BOT_LOGIN = "${{ steps.ctx.outputs.bot-slug }}[bot]"
 OWN_READ_RE = re.compile(r"(?:^|[\s;|&(`])(?:gh|curl|wget)(?:\s|$)")
 # Scanned in every triage step's run: text AND its env:/with: values -- a
 # comments URL staged in env: and fetched as `gh api "$URL"` has no
@@ -782,10 +810,13 @@ UNFILTERED_COMMENT_RES = (
 # The cite step's whole run: body, line by line (comments and blank lines
 # aside). Anything else -- a second file operand, a raw grep that skips
 # find_cited_run()'s quote/fence handling, a read of its own -- fails.
+_SHELL_VAR = r'"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?"'
 CITE_CALL_RE = re.compile(
     r'^run_url="\$\(python3 \.github/scripts/board_triage\.py find-cited-run '
-    r'--repository "\$GITHUB_REPOSITORY" "\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?"'
-    r'(?: \|\| true)?\)"$')
+    r'--repository "\$GITHUB_REPOSITORY" '
+    r'--bot-occurrences-file ' + _SHELL_VAR + ' '
+    r'--last-reopened-at ' + _SHELL_VAR + ' '
+    + _SHELL_VAR + r'(?: \|\| true)?\)"$')
 CITE_ALLOWED_LINES = frozenset((
     "set -uo pipefail",
     'echo "run-url=$run_url" >> "$GITHUB_OUTPUT"',
@@ -856,22 +887,25 @@ def check_cite_source(path, reassignment_res):
                         " -- it must scan only the context-file")
 
     env = cite.get("env") or {}
-    ctx_vars = []
+    # var -> (output name, source step id), for env vars mapped to an
+    # earlier, un-gated wing-commander-issue-context step's output.
+    mapped = {}
     for var, value in env.items():
-        m = CONTEXT_FILE_RE.match(_expr(value))
+        m = ISSUE_CONTEXT_OUTPUT_RE.match(_expr(value))
         if not m:
             continue
         src = by_id.get(m.group(1))
         if (src is not None and src < cite_index
                 and ISSUE_CONTEXT_USES in str(steps[src].get("uses") or "")
                 and "if" not in steps[src]):
-            ctx_vars.append(var)
+            mapped[var] = (m.group(2), m.group(1))
+    ctx_vars = [v for v, (out, _) in mapped.items() if out == "context-file"]
     if not ctx_vars:
         problems.append(
             "the cite step's env maps no variable to "
             "`${{ steps.ID.outputs.context-file }}` of an earlier, un-gated "
             "wing-commander-issue-context step")
-    for var in ctx_vars:
+    for var in mapped:
         if any(p.search(code) for p in reassignment_res(var)):
             problems.append("the cite step reassigns {0}".format(var))
 
@@ -881,13 +915,28 @@ def check_cite_source(path, reassignment_res):
         if not line or line in CITE_ALLOWED_LINES:
             continue
         m = CITE_CALL_RE.match(line)
-        if m and m.group(1) in ctx_vars:
+        # #520: each operand is the matching output of the SAME composite
+        # call -- occurrences staged for a different login, or a second
+        # call's context-file, would not be what that call filtered.
+        want = ("bot-occurrences-file", "last-reopened-at", "context-file")
+        if m and all(mapped.get(var, ("",))[0] == out
+                     for var, out in zip(m.groups(), want)) \
+                and len({mapped[var][1] for var in m.groups()}) == 1:
             calls += 1
+            src_step = steps[by_id[mapped[m.group(3)][1]]]
+            login = _expr((src_step.get("with") or {}).get("occurrence-bot-login"))
+            if login != _expr(OCCURRENCE_BOT_LOGIN):
+                problems.append(
+                    "the cite step's wing-commander-issue-context call must "
+                    "pass occurrence-bot-login: {0} -- this job's own App, the "
+                    "one watchdog posts as (got {1!r})".format(
+                        OCCURRENCE_BOT_LOGIN, login))
             continue
         problems.append(
             "the cite step has a line outside its allowed shape: {0!r} -- "
-            "its only read is `board_triage.py find-cited-run` with the "
-            "context-file variable as the sole file operand".format(line))
+            "its only read is `board_triage.py find-cited-run` with one "
+            "wing-commander-issue-context call's bot-occurrences-file, "
+            "last-reopened-at and context-file as its operands".format(line))
     if calls != 1:
         problems.append("the cite step must call `board_triage.py "
                         "find-cited-run` on its context-file variable exactly "
@@ -921,7 +970,9 @@ _UNFILTERED_READ = ('          gh api "repos/$GITHUB_REPOSITORY/issues/'
 _CITE_RUN_HEAD = ("        run: |\n          set -uo pipefail\n"
                   "          run_url=\"$(python3 .github/scripts/"
                   "board_triage.py find-cited-run")
-_CITE_OPERAND = '--repository "$GITHUB_REPOSITORY" "$ISSUE_CONTEXT_FILE" || true)"'
+_CITE_OPERAND = ('--repository "$GITHUB_REPOSITORY" --bot-occurrences-file '
+                 '"$BOT_OCCURRENCES_FILE" --last-reopened-at "$LAST_REOPENED_AT" '
+                 '"$ISSUE_CONTEXT_FILE" || true)"')
 _CITE_STEP = "      - name: Locate a cited run, if any\n"
 _ENV_STAGED_READ = (
     "      - name: Stage extra context\n"
@@ -970,8 +1021,8 @@ CITE_MUTATIONS = (
      _CITE_STEP, _ENV_STAGED_READ + _CITE_STEP),
     ("cite scans a second file beside the context-file",
      _CITE_OPERAND,
-     '--repository "$GITHUB_REPOSITORY" "$ISSUE_CONTEXT_FILE" '
-     '"$RUNNER_TEMP/extra.txt" || true)"'),
+     _CITE_OPERAND.replace('"$ISSUE_CONTEXT_FILE"',
+                           '"$ISSUE_CONTEXT_FILE" "$RUNNER_TEMP/extra.txt"')),
     ("cite also greps a second file",
      _CITE_RUN_HEAD,
      _CITE_RUN_HEAD.replace(
@@ -995,6 +1046,28 @@ CITE_MUTATIONS = (
     ("cite step renamed away",
      "        id: cite\n",
      "        id: cite-any\n"),
+    # #520: the recurrence must reach the cite, and only from the App.
+    ("cite drops the bot occurrences",
+     '--bot-occurrences-file "$BOT_OCCURRENCES_FILE" ', ""),
+    ("cite drops the reopen guard",
+     '--last-reopened-at "$LAST_REOPENED_AT" ', ""),
+    ("occurrences fed the trusted comments-file instead",
+     "BOT_OCCURRENCES_FILE: ${{ steps.issue-context-triage.outputs.bot-occurrences-file }}",
+     "BOT_OCCURRENCES_FILE: ${{ steps.issue-context-triage.outputs.comments-file }}"),
+    ("occurrences read from a step other than the context-file's composite call",
+     "BOT_OCCURRENCES_FILE: ${{ steps.issue-context-triage.outputs.bot-occurrences-file }}",
+     "BOT_OCCURRENCES_FILE: ${{ steps.other.outputs.bot-occurrences-file }}"),
+    ("occurrence-bot-login dropped",
+     "          occurrence-bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]\n",
+     ""),
+    ("occurrence-bot-login names another bot",
+     "          occurrence-bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]\n",
+     "          occurrence-bot-login: github-actions[bot]\n"),
+    ("cite reassigns its occurrences variable",
+     _CITE_RUN_HEAD,
+     _CITE_RUN_HEAD.replace(
+         "set -uo pipefail\n",
+         "set -uo pipefail\n          BOT_OCCURRENCES_FILE=/tmp/any.json\n")),
 )
 
 
@@ -1109,6 +1182,273 @@ def _mutation_check_find_cited_run():
     return failures
 
 
+# ---------------------------------------------------------------------------
+# Check 4 -- a reopened pipeline-defect is judged on its newest occurrence,
+# never closed on a run older than the recurrence (#520).
+# ---------------------------------------------------------------------------
+
+_T0, _T1, _T2, _T3 = ("2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z",
+                      "2026-03-01T00:00:00Z", "2026-04-01T00:00:00Z")
+_FIRST_SEEN = _ISSUE_HEAD + "_First seen: [this run]({0}100)_\n".format(_RUN)
+
+
+def _occ(run_id, created_at, repo_run=_RUN):
+    """One entry of wing-commander-issue-context's bot-occurrences-file, as
+    watchdog.yml's "Ensure pipeline-defect issue" step writes the body."""
+    return {"created_at": created_at,
+            "body": board_triage.OCCURRENCE_LINE + "{0}{1}):\n\n- log: x\n"
+                    .format(repo_run, run_id)}
+
+
+# The same line in a trusted human's comment: it reaches only the
+# context-file (the composite never stages a human or another bot as an
+# occurrence), where it is just another link the First-seen marker beats.
+_HUMAN_OCCURRENCE = (_FIRST_SEEN + "\n## Comment by @owner (t)\n\n"
+                     + _occ(300, _T2)["body"])
+
+# (label, context text, occurrences, last_reopened_at, expected run or None)
+CITE_RUN_CASES = (
+    ("never reopened, no occurrence: the First seen run",
+     _FIRST_SEEN, [], "", _RUN + "100"),
+    ("reopened, newer App occurrence: that occurrence's run",
+     _FIRST_SEEN, [_occ(200, _T2)], _T1, _RUN + "200"),
+    ("open recurrence (no reopen): the newest occurrence's run",
+     _FIRST_SEEN, [_occ(200, _T1)], "", _RUN + "200"),
+    ("several occurrences, out of order: the newest",
+     _FIRST_SEEN, [_occ(300, _T3), _occ(200, _T2)], _T1, _RUN + "300"),
+    ("reopen and occurrence in the same second: the occurrence",
+     _FIRST_SEEN, [_occ(200, _T1)], _T1, _RUN + "200"),
+    ("reopened, no App occurrence (another bot or a human NONE posted it): "
+     "no run cited",
+     _FIRST_SEEN, [], _T1, None),
+    ("reopened, the occurrence only in a trusted human's comment: no run cited",
+     _HUMAN_OCCURRENCE, [], _T1, None),
+    ("never reopened, the occurrence only in a human's comment: First seen",
+     _HUMAN_OCCURRENCE, [], "", _RUN + "100"),
+    ("reopened after the newest occurrence: no run cited",
+     _FIRST_SEEN, [_occ(200, _T1)], _T2, None),
+    ("an occurrence line that is not the comment's first line is ignored",
+     _FIRST_SEEN, [{"created_at": _T2, "body": "note\n" + _occ(200, _T2)["body"]}],
+     _T1, None),
+    ("another repository's occurrence run is ignored",
+     _FIRST_SEEN, [_occ(200, _T2, "https://github.com/other/repo/actions/runs/")],
+     "", _RUN + "100"),
+)
+
+
+def run_cite_run_cases(verbose=True):
+    failures = []
+    for label, text, occurrences, reopened, expected in CITE_RUN_CASES:
+        got, _reason = board_triage.cite_run(text, occurrences, reopened, _REPO)
+        if got != expected:
+            failures.append("cite_run: {0}: expected {1!r}, got {2!r}".format(
+                label, expected, got))
+        elif verbose:
+            print("[ok] cite_run: {0} ({1!r})".format(label, got))
+    return failures
+
+
+# End to end, in a throwaway repo: the First-seen run 100 ran at the old
+# commit (ci.yml's checkout pin since bumped on main), the recurrence 200
+# ran at main's own commit. The 429-present transcript stands in for 100's
+# rate-limit evidence; 200's transcript is a genuine failure.
+RATE_LIMIT_TRANSCRIPT = os.path.join(FIXTURES_DIR, "429-present", "transcript.json")
+
+# (label, occurrences, last_reopened_at, first-seen transcript, outcome)
+REOPENED_CASES = (
+    ("reopened, App occurrence on current pins: no action_bump close",
+     [_occ(200, _T2)], _T1, GENUINE_FAILURE_TRANSCRIPT, "proceed"),
+    ("reopened, occurrence posted by another bot or a human NONE (never "
+     "staged): no action_bump close",
+     [], _T1, GENUINE_FAILURE_TRANSCRIPT, "proceed"),
+    ("reopened, First seen run was a 429, no App occurrence: no rate_limit close",
+     [], _T1, RATE_LIMIT_TRANSCRIPT, "proceed"),
+    ("reopened, First seen run was a 429, App occurrence a genuine failure: "
+     "no rate_limit close",
+     [_occ(200, _T2)], _T1, RATE_LIMIT_TRANSCRIPT, "proceed"),
+    # Controls: an issue that never recurred still closes on its own bump
+    # or 429, so the cases above do not pass because nothing ever closes.
+    ("never reopened: the First seen run's bump still closes",
+     [], "", GENUINE_FAILURE_TRANSCRIPT, "closed"),
+    ("never reopened: the First seen run's 429 still closes",
+     [], "", RATE_LIMIT_TRANSCRIPT, "closed"),
+)
+
+
+def run_reopened_cases(verbose=True):
+    failures = []
+    with tempfile.TemporaryDirectory() as repo:
+        try:
+            old_sha = _build_repo(repo, bump_ci=True)
+            main_sha = subprocess.run(
+                ["git", "-C", repo, "rev-parse", "HEAD"],
+                check=True, capture_output=True, text=True).stdout.strip()
+        except (OSError, subprocess.CalledProcessError) as exc:
+            return ["reopened: could not build the fixture repo: {0}".format(exc)]
+        prev = os.getcwd()
+        os.chdir(repo)
+        try:
+            for label, occurrences, reopened, first_transcript, want in REOPENED_CASES:
+                runs = {_RUN + "100": (old_sha, first_transcript),
+                        _RUN + "200": (main_sha, GENUINE_FAILURE_TRANSCRIPT)}
+                run_url, _reason = board_triage.cite_run(
+                    _FIRST_SEEN, occurrences, reopened, _REPO)
+                sha, transcript = runs.get(run_url, (None, None))
+                verdict = board_triage.triage({
+                    "cited_run_transcript_path": transcript,
+                    "cited_run_commit_sha": sha,
+                    "cited_run_workflow_path": WF + "ci.yml",
+                    "workflow_files": ALL_WORKFLOWS,
+                    "agent_proposal": {},
+                }, cited_run=run_url)
+                if verdict.get("outcome") != want:
+                    failures.append("reopened: {0}: expected {1!r}, got {2!r} "
+                                    "(cited {3!r})".format(label, want, verdict, run_url))
+                elif verbose:
+                    print("[ok] reopened: {0} ({1!r}, cited {2!r})".format(
+                        label, verdict.get("outcome"), run_url))
+        finally:
+            os.chdir(prev)
+    return failures
+
+
+def _run_520_cases():
+    return run_cite_run_cases(verbose=False) + run_reopened_cases(verbose=False)
+
+
+def _oldest_occurrence(original):
+    def mutated(occurrences, repository):
+        ordered = sorted((o for o in occurrences if isinstance(o, dict)),
+                         key=lambda o: str(o.get("created_at")), reverse=True)
+        return original(ordered[-1:], repository)
+    return mutated
+
+
+def _unanchored_occurrence(original):
+    """The occurrence line accepted anywhere in the body."""
+    def mutated(occurrences, repository):
+        lifted = []
+        for o in occurrences:
+            body = str(o.get("body") or "")
+            at = body.find(board_triage.OCCURRENCE_LINE)
+            lifted.append(dict(o, body=body[at:] if at >= 0 else body))
+        return original(lifted, repository)
+    return mutated
+
+
+def _no_reopen_guard(original):
+    def mutated(context_text, occurrences, last_reopened_at, repository):
+        return original(context_text, occurrences, "", repository)
+    return mutated
+
+
+def _guard_only_without_occurrence(original):
+    """Option B alone, ignoring a reopen newer than the newest occurrence."""
+    def mutated(context_text, occurrences, last_reopened_at, repository):
+        if board_triage.latest_occurrence(occurrences, repository) is not None:
+            last_reopened_at = ""
+        return original(context_text, occurrences, last_reopened_at, repository)
+    return mutated
+
+
+REOPENED_MUTATIONS = (
+    ("occurrences ignored (the pre-#520 First seen cite)", "latest_occurrence",
+     lambda orig: lambda occurrences, repository: None),
+    ("the oldest occurrence cited instead of the newest", "latest_occurrence",
+     _oldest_occurrence),
+    ("the occurrence line accepted past the first line", "latest_occurrence",
+     _unanchored_occurrence),
+    ("the reopen guard dropped", "cite_run", _no_reopen_guard),
+    ("a reopen after the newest occurrence ignored", "cite_run",
+     _guard_only_without_occurrence),
+)
+
+
+def _mutation_check_reopened():
+    failures = []
+    for label, name, factory in REOPENED_MUTATIONS:
+        original = getattr(board_triage, name)
+        setattr(board_triage, name, factory(original))
+        try:
+            caught = bool(_run_520_cases())
+        finally:
+            setattr(board_triage, name, original)
+        if caught:
+            print("note: mutation caught (reopened: {0}).".format(label))
+        else:
+            failures.append("mutation 'reopened: {0}' was NOT caught".format(label))
+    return failures
+
+
+WATCHDOG_WRAPPER = os.path.join(".github", "workflows", "wing-commander-8-watchdog.yml")
+WATCHDOG = os.path.join(".github", "workflows", "watchdog.yml")
+BOARD_APP_ID = "${{ secrets.WING_COMMANDER_APP_ID }}"
+WATCHDOG_OCCURRENCE_ECHO = ('echo "' + board_triage.OCCURRENCE_LINE
+                            + '$RUN_URL):"')
+
+
+def check_occurrence_app(board_text, wrapper_text, watchdog_text):
+    """#520: option A trusts the occurrence comments of board-loop's own
+    App (occurrence-bot-login is `<its slug>[bot]`), so that App must be
+    the one watchdog posts as: the triage job's ctx step mints its token
+    from WING_COMMANDER_APP_ID, the watchdog wrapper passes the same
+    secret as watchdog.yml's speckit-app-id, and watchdog.yml still writes
+    the occurrence line latest_occurrence() parses."""
+    problems = []
+    try:
+        board = yaml.safe_load(board_text) or {}
+        wrapper = yaml.safe_load(wrapper_text) or {}
+    except yaml.YAMLError as exc:
+        return ["occurrence App: a workflow does not parse: {0}".format(exc)]
+    steps = (((board.get("jobs") or {}).get("triage") or {}).get("steps")) or []
+    ctx = [s for s in steps if isinstance(s, dict) and s.get("id") == "ctx"]
+    if len(ctx) != 1 or _expr((ctx[0].get("with") or {}).get("app-id")) != BOARD_APP_ID:
+        problems.append("occurrence App: board-loop.yml's triage ctx step must "
+                        "mint its token with app-id: {0}".format(BOARD_APP_ID))
+    callers = [j for j in (wrapper.get("jobs") or {}).values()
+               if isinstance(j, dict)
+               and str(j.get("uses") or "").endswith("/watchdog.yml")]
+    if len(callers) != 1 or _expr(((callers[0].get("secrets") or {})
+                                   .get("speckit-app-id"))) != BOARD_APP_ID:
+        problems.append("occurrence App: {0} must call watchdog.yml once with "
+                        "speckit-app-id: {1} -- the App board-loop's triage "
+                        "trusts for occurrence comments".format(
+                            WATCHDOG_WRAPPER, BOARD_APP_ID))
+    if watchdog_text.count(WATCHDOG_OCCURRENCE_ECHO) != 1:
+        problems.append("occurrence App: {0} no longer writes {1!r} exactly "
+                        "once -- board_triage.OCCURRENCE_LINE must match it"
+                        .format(WATCHDOG, WATCHDOG_OCCURRENCE_ECHO))
+    return problems
+
+
+def _triage_ctx_app_id_mutated(board_text):
+    head, sep, rest = board_text.partition("\n  triage:\n")
+    return head + sep + rest.replace(
+        "app-id: " + BOARD_APP_ID, "app-id: ${{ secrets.OTHER_APP_ID }}", 1)
+
+
+def _mutation_check_occurrence_app(board_text, wrapper_text, watchdog_text):
+    mutations = (
+        ("triage mints its token from another App",
+         (_triage_ctx_app_id_mutated(board_text), wrapper_text, watchdog_text)),
+        ("watchdog posts as another App",
+         (board_text, wrapper_text.replace(
+             "speckit-app-id: " + BOARD_APP_ID,
+             "speckit-app-id: ${{ secrets.OTHER_APP_ID }}", 1), watchdog_text)),
+        ("watchdog's occurrence line reworded",
+         (board_text, wrapper_text, watchdog_text.replace(
+             "New occurrence of this fingerprint", "Recurrence", 1))),
+    )
+    failures = []
+    for label, args in mutations:
+        if check_occurrence_app(*args):
+            print("note: mutation caught (occurrence App: {0}).".format(label))
+        else:
+            failures.append("mutation 'occurrence App: {0}' was NOT caught"
+                            .format(label))
+    return failures
+
+
 def run():
     failures = run_fixtures()
 
@@ -1132,6 +1472,21 @@ def run():
 
     problems.extend(run_scoping_cases())
     problems.extend(_mutation_check_scoping())
+
+    problems.extend(run_cite_run_cases())
+    problems.extend(run_reopened_cases())
+    problems.extend(_mutation_check_reopened())
+    with open(WATCHDOG_WRAPPER, encoding="utf-8") as fh:
+        wrapper_text = fh.read()
+    with open(WATCHDOG, encoding="utf-8") as fh:
+        watchdog_text = fh.read()
+    app_problems = check_occurrence_app(board_loop_text, wrapper_text, watchdog_text)
+    if not app_problems:
+        print("[ok] occurrence App: board-loop's triage trusts occurrence "
+              "comments from the same App watchdog posts them as")
+    problems.extend(app_problems)
+    problems.extend(_mutation_check_occurrence_app(
+        board_loop_text, wrapper_text, watchdog_text))
 
     reassignment_res = _load_reassignment_res()
     cite_problems = check_cite_source(BOARD_LOOP, reassignment_res)

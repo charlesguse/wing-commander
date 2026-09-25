@@ -36,6 +36,19 @@
 # for what was actually an API error; that is new, intended behavior,
 # not something this extraction merely happened to preserve.
 #
+# #520: a separate, narrower rule for ONE bot. A watchdog recurrence is
+# recorded as a comment by the App that posted it, and the rule above
+# drops every bot comment -- so board-loop.yml's triage never saw that a
+# pipeline-defect had recurred and cited the original "First seen" run
+# instead. When a caller passes `occurrence-bot-login` (board-loop.yml's
+# triage passes its own App's `<slug>[bot]`, the same App watchdog posts
+# as), `bot-occurrences-file` holds only comments whose author is exactly
+# that login AND `user.type == "Bot"` -- matched on author, never on body
+# text; no other bot's or human's comment reaches it -- and
+# `last-reopened-at` is the newest `reopened` event on the issue. Neither
+# widens `comments-file` or `context-file`. With the input unset (every
+# other caller), no extra fetch is made and both outputs are empty.
+#
 # Written under /tmp/wing-commander, matching intake.yml's own established
 # convention exactly (contracts/comment-staging-format.md: "runner-local,
 # matching clarify.yml's /tmp/wing-commander/ convention") rather than
@@ -64,6 +77,13 @@ inputs:
     description: "owner/repo to read from. Defaults to the current repository."
     required: false
     default: ${{ github.repository }}
+  occurrence-bot-login:
+    description: >
+      Optional. The `<slug>[bot]` login of the one App whose comments are
+      staged in bot-occurrences-file (#520). Unset: no events fetch, and
+      bot-occurrences-file and last-reopened-at are empty.
+    required: false
+    default: ""
 
 outputs:
   comments-file:
@@ -90,6 +110,18 @@ outputs:
   excluded-human-count:
     description: Non-bot comments where the trust filter's association/author-id clause failed.
     value: ${{ steps.fetch.outputs.excluded-human-count }}
+  bot-occurrences-file:
+    description: >
+      Path to a JSON array of {created_at, body}, oldest to newest, of the
+      comments authored by occurrence-bot-login with user.type "Bot" and
+      no one else (#520). Empty string when the input is unset or that
+      bot has not commented -- no file is written in that case.
+    value: ${{ steps.fetch.outputs.bot-occurrences-file }}
+  last-reopened-at:
+    description: >
+      created_at of the issue's newest `reopened` event, or empty when it
+      was never reopened or occurrence-bot-login is unset (#520).
+    value: ${{ steps.fetch.outputs.last-reopened-at }}
 
 runs:
   using: composite
@@ -101,6 +133,7 @@ runs:
         GH_TOKEN: ${{ inputs.token }}
         REPOSITORY: ${{ inputs.repository }}
         ISSUE: ${{ inputs.issue-number }}
+        OCCURRENCE_BOT_LOGIN: ${{ inputs.occurrence-bot-login }}
       run: |
         DIR="/tmp/wing-commander/issue-context-$ISSUE"
         mkdir -p "$DIR"
@@ -143,5 +176,28 @@ runs:
           cat "$DIR/comments.md" >> "$DIR/context.md"
         fi
         echo "context-file=$DIR/context.md" >> "$GITHUB_OUTPUT"
+
+        # #520: see the header. Author login AND type, never body text.
+        rm -f "$DIR/bot-occurrences.json"
+        BOT_OCCURRENCES_FILE=""
+        LAST_REOPENED_AT=""
+        if [ -n "${OCCURRENCE_BOT_LOGIN:-}" ]; then
+          jq -c --arg login "$OCCURRENCE_BOT_LOGIN" \
+            '[.[] | select(.user.type == "Bot" and .user.login == $login)] | sort_by(.created_at) | map({created_at, body})' \
+            "$DIR/comments-raw.json" > "$DIR/bot-occurrences.json"
+          if [ "$(jq 'length' "$DIR/bot-occurrences.json")" -gt 0 ]; then
+            BOT_OCCURRENCES_FILE="$DIR/bot-occurrences.json"
+          else
+            rm -f "$DIR/bot-occurrences.json"
+          fi
+          gh api "repos/${REPOSITORY}/issues/${ISSUE}/events" --paginate --jq '.[]' \
+            | jq -s '.' > "$DIR/events-raw.json"
+          LAST_REOPENED_AT=$(jq -r '[.[] | select(.event == "reopened") | .created_at] | max // ""' "$DIR/events-raw.json")
+          rm -f "$DIR/events-raw.json"
+        fi
+        {
+          echo "bot-occurrences-file=$BOT_OCCURRENCES_FILE"
+          echo "last-reopened-at=$LAST_REOPENED_AT"
+        } >> "$GITHUB_OUTPUT"
 
         rm -f "$DIR/comments-raw.json" "$DIR/issue-raw.json"

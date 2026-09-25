@@ -35,6 +35,18 @@ A second fixture (only the Bot and the NONE non-author comment) asserts
 the zero-qualifying contract: comments-file is the empty string and
 comments.md is NOT written at all (context.md still is, title+body only).
 
+A third fixture (#520) sets OCCURRENCE_BOT_LOGIN (the composite's
+occurrence-bot-login input) and adds a stubbed issue-events fetch:
+bot-occurrences-file must hold exactly that login's Bot-type comments,
+oldest first -- never another bot's, never a User-type comment carrying
+the same login, never a human NONE comment with the occurrence text --
+last-reopened-at must be the newest `reopened` event, and every
+pre-existing output must be unchanged. The first two fixtures run with
+the input unset and assert both new outputs are empty; their stub
+refuses the events call, so no fetch is made without the input.
+OCCURRENCE_MUTATIONS (the Bot-type check dropped, the login check
+dropped, the sort dropped, the oldest reopen taken) must each be caught.
+
 MUTATION: `or .user.id == $aid` dropped from all three jq programs (the
 qualifying-count filter, the excluded-human-count filter, and the
 comments.md template) -- the issue author's own NONE-association comment
@@ -127,7 +139,7 @@ case "$*" in
     printf '%%s\n' %(comment_lines)s
     exit 0
     ;;
-  *)
+%(events_case)s  *)
     echo "gate-96 stub gh: unrecognized invocation: $*" >&2
     exit 1
     ;;
@@ -135,25 +147,34 @@ esac
 '''
 
 
-def _build_stub_gh(comments):
+def _build_stub_gh(comments, events=None):
     lines = " ".join(f"'{json.dumps(c)}'" for c in comments)
+    events_case = ""
+    if events is not None:
+        event_lines = " ".join(f"'{json.dumps(e)}'" for e in events)
+        events_case = (
+            f'  "api repos/{REPOSITORY}/issues/{ISSUE}/events --paginate --jq .[]")\n'
+            f"    printf '%s\\n' {event_lines}\n"
+            "    exit 0\n"
+            "    ;;\n")
     text = STUB_GH_TEMPLATE % {
         "repo": REPOSITORY,
         "issue": ISSUE,
         "issue_json": ISSUE_JSON,
         "comment_lines": lines,
+        "events_case": events_case,
     }
     return text
 
 
-def run_fixture(script, comments, tmproot):
+def run_fixture(script, comments, tmproot, bot_login=None, events=None):
     workdir = tempfile.mkdtemp(dir=tmproot)
     runner_temp = tempfile.mkdtemp(dir=tmproot)
     bindir = tempfile.mkdtemp(dir=tmproot)
     dest_dir = f"/tmp/wing-commander/issue-context-{ISSUE}"
     gh_path = os.path.join(bindir, "gh")
     with open(gh_path, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(_build_stub_gh(comments))
+        fh.write(_build_stub_gh(comments, events))
     os.chmod(gh_path, 0o755)
     env = {
         "GH_TOKEN": "dummy-token",
@@ -161,6 +182,8 @@ def run_fixture(script, comments, tmproot):
         "ISSUE": ISSUE,
         "PATH": bindir + os.pathsep + os.environ["PATH"],
     }
+    if bot_login is not None:
+        env["OCCURRENCE_BOT_LOGIN"] = bot_login
     try:
         rc, out, outputs, _summary = run_step(BASH, script, workdir, env, runner_temp)
         comments_md = None
@@ -173,6 +196,12 @@ def run_fixture(script, comments, tmproot):
         if os.path.isfile(context_md_path):
             with open(context_md_path, encoding="utf-8") as fh:
                 context_md = fh.read()
+        occurrences = None
+        occurrences_path = outputs.get("bot-occurrences-file") or ""
+        if occurrences_path and os.path.isfile(occurrences_path):
+            with open(occurrences_path, encoding="utf-8") as fh:
+                occurrences = json.load(fh)
+        run_fixture.occurrences = occurrences
         return rc, out, outputs, comments_md, context_md
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
@@ -193,6 +222,10 @@ def check_full_fixture(script, label_prefix=""):
     prefix = f"{label_prefix}full fixture"
     if rc != 0:
         return [f"{prefix}: step exited {rc}: {out}"]
+
+    for key in ("bot-occurrences-file", "last-reopened-at"):
+        if outputs.get(key, None) != "":
+            failures.append(f"{prefix}: {key}={outputs.get(key)!r}, expected '' with occurrence-bot-login unset")
 
     if outputs.get("total-count") != "7":
         failures.append(f"{prefix}: total-count={outputs.get('total-count')!r}, expected '7'")
@@ -254,6 +287,98 @@ def check_zero_qualifying_fixture(script, label_prefix=""):
     elif "## Issue" not in context_md:
         failures.append(f"{prefix}: context.md has no '## Issue' section: {context_md!r}")
     return failures
+
+
+# --- #520: occurrence-bot-login stages one App's comments, nothing else. ---
+
+BOT_LOGIN = "wing-commander-bot[bot]"
+OCCURRENCE = ("\U0001F415 New occurrence of this fingerprint \u2014 "
+              "[this run](https://github.com/acme/widgets/actions/runs/{0}):")
+OCCURRENCE_COMMENTS = ALL_COMMENTS + [
+    _comment(BOT_LOGIN, 7000, "Bot", "NONE", "2024-01-09T00:00:00Z", OCCURRENCE.format(2)),
+    _comment(BOT_LOGIN, 7000, "Bot", "NONE", "2024-01-08T00:00:00Z", OCCURRENCE.format(1)),
+    _comment("other-app[bot]", 7001, "Bot", "MEMBER", "2024-01-10T00:00:00Z", OCCURRENCE.format(3)),
+    # Not a real GitHub shape (a User cannot hold a [bot] login); it is
+    # here so the `.user.type == "Bot"` half of the rule is exercised on
+    # its own.
+    _comment(BOT_LOGIN, 7002, "User", "NONE", "2024-01-11T00:00:00Z", OCCURRENCE.format(4)),
+    _comment("drive-by", 2001, "User", "NONE", "2024-01-12T00:00:00Z", OCCURRENCE.format(5)),
+]
+EVENTS = [
+    {"event": "closed", "created_at": "2024-01-05T00:00:00Z"},
+    {"event": "reopened", "created_at": "2024-01-08T00:00:00Z"},
+    {"event": "reopened", "created_at": "2024-01-03T00:00:00Z"},
+    {"event": "labeled", "created_at": "2024-01-20T00:00:00Z"},
+]
+EXPECTED_OCCURRENCES = [
+    {"created_at": "2024-01-08T00:00:00Z", "body": OCCURRENCE.format(1)},
+    {"created_at": "2024-01-09T00:00:00Z", "body": OCCURRENCE.format(2)},
+]
+
+
+def check_occurrence_fixture(script, label_prefix=""):
+    failures = []
+    tmproot = tempfile.mkdtemp()
+    try:
+        rc, out, outputs, comments_md, _context_md = run_fixture(
+            script, OCCURRENCE_COMMENTS, tmproot, bot_login=BOT_LOGIN,
+            events=EVENTS)
+        occurrences = run_fixture.occurrences
+    finally:
+        shutil.rmtree(tmproot, ignore_errors=True)
+    prefix = f"{label_prefix}occurrence fixture"
+    if rc != 0:
+        return [f"{prefix}: step exited {rc}: {out}"]
+    if occurrences != EXPECTED_OCCURRENCES:
+        failures.append(f"{prefix}: bot-occurrences-file holds {occurrences!r}, "
+                        f"expected only {BOT_LOGIN}'s Bot comments, oldest "
+                        f"first: {EXPECTED_OCCURRENCES!r}")
+    if outputs.get("last-reopened-at") != "2024-01-08T00:00:00Z":
+        failures.append(f"{prefix}: last-reopened-at={outputs.get('last-reopened-at')!r}, "
+                        f"expected the newest reopened event '2024-01-08T00:00:00Z'")
+    # The existing outputs are unchanged by the input: the seven original
+    # comments' counts plus the two extra User-type NONE comments (each
+    # excluded-human, never qualifying); the bots count in neither.
+    want = {"total-count": "12", "qualifying-count": "4",
+            "excluded-human-count": "3"}
+    for key, value in want.items():
+        if outputs.get(key) != value:
+            failures.append(f"{prefix}: {key}={outputs.get(key)!r}, expected {value!r}")
+    if comments_md and BOT_LOGIN in comments_md:
+        failures.append(f"{prefix}: comments.md wrongly includes @{BOT_LOGIN}")
+    return failures
+
+
+def check_no_occurrence_fixture(script):
+    """occurrence-bot-login set, but that App never commented and the issue
+    was never reopened: both outputs empty, no file written."""
+    tmproot = tempfile.mkdtemp()
+    try:
+        rc, out, outputs, _c, _x = run_fixture(
+            script, ZERO_QUALIFYING_COMMENTS, tmproot, bot_login=BOT_LOGIN,
+            events=[{"event": "closed", "created_at": "2024-01-05T00:00:00Z"}])
+    finally:
+        shutil.rmtree(tmproot, ignore_errors=True)
+    if rc != 0:
+        return [f"no-occurrence fixture: step exited {rc}: {out}"]
+    return [f"no-occurrence fixture: {key}={outputs.get(key)!r}, expected ''"
+            for key in ("bot-occurrences-file", "last-reopened-at")
+            if outputs.get(key, None) != ""]
+
+
+OCCURRENCE_MUTATIONS = (
+    ("occurrence filter drops the Bot-type check",
+     'select(.user.type == "Bot" and .user.login == $login)',
+     'select(.user.login == $login)'),
+    ("occurrence filter drops the login check (any bot)",
+     'select(.user.type == "Bot" and .user.login == $login)',
+     'select(.user.type == "Bot")'),
+    ("occurrences unsorted",
+     '.user.login == $login)] | sort_by(.created_at) |',
+     '.user.login == $login)] |'),
+    ("last-reopened-at takes the oldest reopen",
+     '| .created_at] | max // ""', '| .created_at] | min // ""'),
+)
 
 
 # --- Mutation: drop `or .user.id == $aid` from all three jq programs. ----
@@ -351,13 +476,30 @@ def main():
         print(f"note: mutation (comments.md bot filter dropped) confirmed "
               f"caught: {mutated_bot_failures}")
 
+    failures += check_occurrence_fixture(script)
+    failures += check_no_occurrence_fixture(script)
+    for label, old, new in OCCURRENCE_MUTATIONS:
+        if script.count(old) != 1:
+            failures.append(f"mutation ({label}): expected one {old!r} in "
+                            f"{ACTION}, found {script.count(old)} -- update "
+                            f"this harness alongside the step.")
+            continue
+        caught = check_occurrence_fixture(script.replace(old, new, 1),
+                                          label_prefix=f"mutation ({label}): ")
+        if caught:
+            print(f"note: mutation ({label}) confirmed caught: {caught}")
+        else:
+            failures.append(f"mutation ({label}) did NOT change the occurrence "
+                            f"fixture's outcome")
+
     for f in failures:
         print(f"::error::Gate 96: {f}")
     if failures:
         print(f"Gate 96: {len(failures)} failure(s).")
         return 1
     print("Gate 96: the trust-filter jq's counts, ordering, and "
-          "zero-qualifying contract all behave correctly, and dropping "
+          "zero-qualifying contract and the #520 occurrence staging all "
+          "behave correctly, and dropping "
           "either the author-id clause or the comments.md bot filter is "
           "caught.")
     return 0
