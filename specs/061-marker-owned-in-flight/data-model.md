@@ -31,13 +31,18 @@ triage < route < fix < review < readiness < awaiting-merge < prove
 (`awaiting-merge` was added by #532: the step readiness records when it
 reports ready and hands the PR to a human.)
 
+`breach` (#530) is not on this line. It branches off `fix`: fix records
+it on a post-push backstop breach before filing the spec-request, and a
+later run's `readiness` retries that spec-request if the create failed.
+It never reaches `review`.
+
 plus three terminal outcomes, none of which are "in flight":
 `closed`, `stalled`, `proven`.
 
 **Pre-fix** = `{triage, route}` — qualifies as in flight on the marker's step
 alone (FR-002 bullet 1); no PR can exist yet at these steps.
 
-**Fix-or-later** = `{fix, review, readiness, awaiting-merge, prove}` — the steps
+**Fix-or-later** = `{fix, breach, review, readiness, awaiting-merge, prove}` — the steps
 `in_flight_candidate()`'s "resolved PR required" branch groups together
 (FR-002 bullet 2), but `prove` never actually qualifies as a candidate:
 `in_flight_candidate()` only ever runs from the `select` job (schedule/
@@ -48,8 +53,8 @@ benefit. `awaiting-merge` never qualifies either: the item has been
 handed to a human and no job consumes that step (#532). It stays in this
 set because its marker carries a PR, and the `select` job's PR-state
 lookup pass reads this set to decide which PRs to resolve. `fix`,
-`review`, and `readiness` still require the marker's recorded PR to
-resolve `OPEN`.
+`breach`, `review`, and `readiness` still require the marker's recorded PR
+to resolve `OPEN`.
 
 This ordering lives as a plain constant inside `board_eligibility.py`
 (e.g. `PRE_FIX_STEPS`/`FIX_OR_LATER_STEPS` frozensets) — not a new shared

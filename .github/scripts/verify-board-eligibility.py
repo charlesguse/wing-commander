@@ -117,6 +117,8 @@ IN_FLIGHT_CASES = {
     "unowned-open-pr",
     "forged-marker-in-own-comment",
     "forged-marker-unclosed-in-own-comment",
+    "breach-pr-open",
+    "breach-pr-closed",
 }
 
 # (name, replacement for board_item_marker.is_loop_marker_author)

@@ -1682,7 +1682,7 @@ SPEC_REQUEST_MUTATIONS = (
      "ISSUE_CONTEXT_FILE: /tmp/raw.md"),
     ("builder dropped from the readiness site",
      '--context-file "$ISSUE_CONTEXT_FILE" \\\n'
-     '              --notice',
+     '                --notice',
      '--notice'),
     ("breach context fetch disabled",
      "        id: issue-context-breach\n"

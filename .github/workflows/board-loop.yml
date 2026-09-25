@@ -538,7 +538,7 @@ jobs:
           import sys
 
           sys.path.insert(0, ".github/scripts")
-          from board_eligibility import PRE_FIX_STEPS, FIX_OR_LATER_STEPS, AWAITING_MERGE_STEP
+          from board_eligibility import PRE_FIX_STEPS, FIX_OR_LATER_STEPS, AWAITING_MERGE_STEP, BREACH_STEP
           from board_item_marker import is_loop_branch
 
           marker_step = os.environ.get("MARKER_STEP") or None
@@ -652,7 +652,9 @@ jobs:
               round_ = "0"
               base_sha = ""
           elif pr_from_fallback:
-              step = "review"
+              # #530: a breach marker whose own PR did not resolve still
+              # never reviews the PR the fallback finds.
+              step = BREACH_STEP if marker_step == BREACH_STEP else "review"
           elif branch:
               step = "fix"
           else:
@@ -2130,6 +2132,15 @@ jobs:
       # FR-021: a newly introduced breach on the final diff leaves the
       # branch/PR open under a notice and spins off a spec-request pointing
       # at both -- NEVER deletes the branch or PR.
+      #
+      # #530: the step=breach marker is posted BEFORE the create. The
+      # push-pr step's step=review marker is never posted on a breach, so
+      # without it a failed create left the triage-written step=route
+      # marker newest, and the next run's resume adopted the open PR via
+      # the board:owned fallback as step=review -- the reviewer then ran on
+      # a PR the size check had already rejected. step=breach instead
+      # resumes into readiness's forced-breach path, which retries only the
+      # spec-request (checking first for one this create already filed).
       - name: On a post-push breach, leave the branch/PR open and spin off a spec-request
         id: post-push-breach
         if: steps.push-pr.outputs.pr-url != '' && steps.final-diff-backstop.outputs.breach == 'true'
@@ -2137,10 +2148,17 @@ jobs:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}
           PR_URL: ${{ steps.push-pr.outputs.pr-url }}
+          PR_NUMBER: ${{ steps.push-pr.outputs.pr-number }}
+          BRANCH: ${{ steps.base.outputs.branch }}
+          BASE_SHA: ${{ steps.base.outputs.base-sha }}
           ISSUE_CONTEXT_FILE: ${{ steps.issue-context-breach.outputs.context-file }}
         run: |
           set -uo pipefail
           measured="$(jq -c '.measured' "$RUNNER_TEMP/board-fix-final-diff-decision.json")"
+          # A failed post only costs the retry path; the create is still attempted.
+          breach_marker="$(python3 -I -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_eligibility import BREACH_STEP; from board_item_marker import write_marker; print(write_marker(BREACH_STEP, 0, int(os.environ['PR_NUMBER']), os.environ['BRANCH'], os.environ['BASE_SHA']))")"
+          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Post-push backstop breach on %s (measured=%s) -- the PR will not be reviewed; filing a spec-request to cover finishing this at the right size.\n\n%s' "$PR_URL" "$measured" "$breach_marker")" \
+            || echo "::warning::board-loop fix (post-push breach): could not post the step=breach marker on issue #$ISSUE_NUMBER -- if the spec-request create below fails too, a later run may resume this PR at review (#530)."
           issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)"
           notice="$(printf 'The fix at %s grew past the board'"'"'s size-and-path backstop on its final diff (measured=%s). The branch/PR are left open, unmerged, under a notice -- this spec request covers finishing the work at the size a human plan should decide.' "$PR_URL" "$measured")"
           footer="$(printf 'Originating issue: %s/%s/issues/%s' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$ISSUE_NUMBER")"
@@ -2157,9 +2175,15 @@ jobs:
           echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
           echo "measured=$measured" >> "$GITHUB_OUTPUT"
 
+          # #530: board:stalled goes on BEFORE the stalled marker. A stalled
+          # marker (pr=None) with no label would let select re-admit the
+          # item and resume adopt the PR as step=review; failing here
+          # instead leaves the breach marker newest, and readiness retries
+          # (reusing the spec-request just filed).
+          gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled" \
+            || { echo "::error::board-loop fix (post-push breach): spec-request $spec_url was filed but board:stalled could not be added to issue #$ISSUE_NUMBER -- the breach marker stays newest, so a later run retries through readiness (#530)."; exit 1; }
           marker="$(python3 -I -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, None, None))")"
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Post-push backstop breach on %s (measured=%s) -- the branch/PR are left open, unmerged; a spec-request now covers finishing this at the right size.\n\n%s' "$PR_URL" "$measured" "$marker")"
-          gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
 
       - name: Cross-link the post-push-breach spec-request onto the originating issue
         if: steps.post-push-breach.outputs.spec-url != ''
@@ -3109,13 +3133,17 @@ jobs:
   # auto-merge (FR-068) anywhere in this job's own API calls.
   readiness:
     needs: [select, review]
-    # Resume gating (#525) -- see fix's job-level `if:`.
+    # Resume gating (#525) -- see fix's job-level `if:`. The step=breach
+    # branch (#530) is the retry of a post-push breach's spec-request the
+    # fix job could not file: readiness forces the backstop to breach and
+    # files it through its own spec-request site, and review never runs.
     if: >-
       !cancelled()
       && needs.select.result == 'success'
       && (
         (needs.review.result == 'success' && needs.review.outputs.outcome == 'converged')
         || (needs.select.outputs.step == 'readiness' && needs.select.outputs.pr != '')
+        || (needs.select.outputs.step == 'breach' && needs.select.outputs.pr != '')
       ) && vars.WING_COMMANDER_BOARD_LOOP_PAUSED != 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -3177,11 +3205,16 @@ jobs:
       # much-earlier fix-job run this job has no durable channel to read
       # back -- strictly safer than a stale re-read, since a review-fixup
       # round can grow the diff after the fix job's own check ran.
+      #
+      # #530: on a step=breach resume the fix job's post-push check has
+      # already breached (FR-021, final); that verdict is kept whatever the
+      # fresh measure says, so an unreviewed PR is never reported ready.
       - name: Re-apply the route backstop to the current final diff
         id: final-diff-backstop
         env:
           BOARD_MAX_FILES: ${{ env.BOARD_MAX_FILES }}
           BOARD_MAX_LINES: ${{ env.BOARD_MAX_LINES }}
+          RESUME_STEP: ${{ needs.select.outputs.step }}
         run: |
           set -uo pipefail
           base_sha="$(git merge-base origin/main HEAD)"
@@ -3194,6 +3227,7 @@ jobs:
           import sys
 
           sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
+          from board_eligibility import BREACH_STEP
           from board_route_backstop import contract_widened
 
           runner_temp = os.environ["RUNNER_TEMP"]
@@ -3215,10 +3249,14 @@ jobs:
           board_max_lines = int(os.environ["BOARD_MAX_LINES"])
           widened = contract_widened(diff_paths, diff_text, file_contents)
           holds = files <= board_max_files and lines <= board_max_lines and not widened
+          breach_retry = os.environ.get("RESUME_STEP") == BREACH_STEP
+          if breach_retry:
+              holds = False
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
               fh.write("holds={0}\n".format("true" if holds else "false"))
               fh.write("measured=files={0},lines={1}\n".format(files, lines))
+              fh.write("breach-retry={0}\n".format("true" if breach_retry else "false"))
           PYEOF
 
       - name: Re-check kill switch and stop requests
@@ -3236,7 +3274,10 @@ jobs:
       # round loop already converged (needs.review.outputs.outcome ==
       # 'converged') or from a marker step already set to "readiness" by
       # that same convergence on an earlier run -- there is no path into
-      # this job with an open in-scope finding.
+      # this job with an open in-scope finding. The one other entry, a
+      # step=breach resume (#530), never reached review, so its backstop is
+      # forced to breach above: it can only file the spec-request, never
+      # report ready.
       - name: Evaluate readiness
         id: decide
         env:
@@ -3313,6 +3354,49 @@ jobs:
       # uses, rather than merely reporting "not ready" -- any other unmet
       # condition just names the reason (FR-067) and the item is picked up
       # again on a later scheduled run, never polled in a loop here.
+      #
+      # #530: on a step=breach resume (breach-retry) the report below is the
+      # retry of the fix job's post-push-breach spec-request, and the fix
+      # job's create may in fact have succeeded before a later write failed.
+      # So this step first looks for a spec-request this App already filed
+      # for this issue and PR since the PR opened (BREACH_SPEC_REQUEST_JQ:
+      # author, the footer line, the PR's number), and the report reuses it
+      # instead of filing a second one. It is a step of its own because a
+      # spec-request site must not call `gh api` (Gate 93); only the URL
+      # leaves it. A failed lookup fails this step, so the report is
+      # skipped and a later run retries rather than risk a duplicate (#527
+      # bounds the retries themselves).
+      - name: Look for a spec-request already filed for this breach
+        id: breach-retry-lookup
+        if: steps.decide.outputs.ready != 'true' && steps.final-diff-backstop.outputs.breach-retry == 'true'
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}
+          PR_NUMBER: ${{ steps.pr.outputs.pr-number }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
+          BREACH_SPEC_REQUEST_JQ: >-
+            [.[] | select(.user.type == "Bot" and .user.login == $bot)
+            | select(any((.body // "") | split("\n")[] | rtrimstr("\r"); . == $footer))
+            | select((.body // "") | test("(/pull/|PR #)" + $pr + "([^0-9]|$)"))]
+            | sort_by(.created_at) | (.[0].html_url // empty)
+        run: |
+          set -uo pipefail
+          footer="$(printf 'Originating issue: %s/%s/issues/%s' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$ISSUE_NUMBER")"
+          if ! pr_created_at="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json createdAt --jq .createdAt)" \
+              || ! gh api "repos/$GITHUB_REPOSITORY/issues" -X GET --paginate -f state=all -f since="$pr_created_at" \
+                -f per_page=100 -f creator="$BOT_LOGIN" \
+                --jq '.[] | select(.pull_request == null) | {html_url, created_at, body, user: {login: .user.login, type: .user.type}}' \
+                | jq -s '.' > "$RUNNER_TEMP/board-breach-spec-requests.json"; then
+            echo "::error::board-loop readiness (breach retry): could not look for a spec-request already filed for PR #$PR_NUMBER -- none is filed this run, so a later run retries rather than risk a duplicate (#530)."
+            exit 1
+          fi
+          existing="$(jq -r --arg bot "$BOT_LOGIN" --arg footer "$footer" --arg pr "$PR_NUMBER" \
+            "$BREACH_SPEC_REQUEST_JQ" "$RUNNER_TEMP/board-breach-spec-requests.json")" || {
+            echo "::error::board-loop readiness (breach retry): could not read the spec-request lookup for PR #$PR_NUMBER (#530)."
+            exit 1
+          }
+          echo "existing-spec-url=$existing" >> "$GITHUB_OUTPUT"
+
       - name: Report the unmet condition (not ready)
         id: report-unmet
         if: steps.decide.outputs.ready != 'true'
@@ -3321,6 +3405,8 @@ jobs:
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}
           PR_NUMBER: ${{ steps.pr.outputs.pr-number }}
           BACKSTOP_HOLDS: ${{ steps.final-diff-backstop.outputs.holds }}
+          BREACH_RETRY: ${{ steps.final-diff-backstop.outputs.breach-retry }}
+          EXISTING_SPEC_URL: ${{ steps.breach-retry-lookup.outputs.existing-spec-url }}
           MEASURED: ${{ steps.final-diff-backstop.outputs.measured }}
           ISSUE_CONTEXT_FILE: ${{ steps.issue-context-readiness.outputs.context-file }}
         run: |
@@ -3328,23 +3414,40 @@ jobs:
           unmet="$(jq -r '.unmet_reason' "$RUNNER_TEMP/board-readiness-decision.json")"
 
           if [ "$BACKSTOP_HOLDS" != "true" ]; then
-            issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)"
-            notice="$(printf 'PR #%s grew past the board'"'"'s size-and-path backstop by readiness time (measured: %s). The branch/PR are left open, unmerged, under a notice -- this spec request covers finishing the work at the size a human plan should decide.' "$PR_NUMBER" "$MEASURED")"
             footer="$(printf 'Originating issue: %s/%s/issues/%s' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$ISSUE_NUMBER")"
-            spec_body_file="$RUNNER_TEMP/board-spec-request-body.md"
-            python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_spec_request_body.py" --context-file "$ISSUE_CONTEXT_FILE" \
-              --notice "$notice" --footer "$footer" --out "$spec_body_file" \
-              || printf '%s\n\nNo drafted body.\n\n---\n%s\n' "$notice" "$footer" > "$spec_body_file"
-            spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$issue_title" \
-              --body-file "$spec_body_file" \
-              --label spec-request)"
-            # #514 -- see route's spec-request site.
-            [[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] || { echo "::error::board-loop readiness (backstop breach): creating the spec-request returned no issue URL (got '$spec_url') -- no spec-request was filed; the issue is left without board:stalled so a later run retries it."; exit 1; }
+            breach_what="Readiness backstop breach"
+            existing_spec_url=""
+            if [ "$BREACH_RETRY" = "true" ]; then
+              breach_what="Post-push backstop breach (spec-request retried by readiness, #530)"
+              existing_spec_url="$EXISTING_SPEC_URL"
+            fi
+            if [ -n "$existing_spec_url" ]; then
+              spec_url="$existing_spec_url"
+              echo "board-loop: issue #$ISSUE_NUMBER -- reusing spec-request $spec_url, already filed for PR #$PR_NUMBER (#530)." >> "$GITHUB_STEP_SUMMARY"
+            else
+              issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)"
+              notice="$(printf 'PR #%s grew past the board'"'"'s size-and-path backstop by readiness time (measured: %s). The branch/PR are left open, unmerged, under a notice -- this spec request covers finishing the work at the size a human plan should decide.' "$PR_NUMBER" "$MEASURED")"
+              if [ "$BREACH_RETRY" = "true" ]; then
+                notice="$(printf 'PR #%s grew past the board'"'"'s size-and-path backstop on its final diff at the fix step (measured now: %s); the fix job could not file this spec request, so readiness retried it (#530). The branch/PR are left open, unmerged, under a notice -- this spec request covers finishing the work at the size a human plan should decide.' "$PR_NUMBER" "$MEASURED")"
+              fi
+              spec_body_file="$RUNNER_TEMP/board-spec-request-body.md"
+              python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_spec_request_body.py" --context-file "$ISSUE_CONTEXT_FILE" \
+                --notice "$notice" --footer "$footer" --out "$spec_body_file" \
+                || printf '%s\n\nNo drafted body.\n\n---\n%s\n' "$notice" "$footer" > "$spec_body_file"
+              spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$issue_title" \
+                --body-file "$spec_body_file" \
+                --label spec-request)"
+              # #514 -- see route's spec-request site.
+              [[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] || { echo "::error::board-loop readiness (backstop breach): creating the spec-request returned no issue URL (got '$spec_url') -- no spec-request was filed; the issue is left without board:stalled so a later run retries it."; exit 1; }
+            fi
             echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
             echo "measured=$MEASURED" >> "$GITHUB_OUTPUT"
+            # #530: label before the stalled marker -- see the fix job's
+            # post-push-breach step.
+            gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled" \
+              || { echo "::error::board-loop readiness (backstop breach): spec-request $spec_url was filed but board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted, so a later run retries (#530)."; exit 1; }
             marker="$(python3 -I -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, None, None))")"
-            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Readiness backstop breach on PR #%s (measured: %s) -- the branch/PR are left open, unmerged; a spec-request now covers finishing this at the right size.\n\n%s' "$PR_NUMBER" "$MEASURED" "$marker")"
-            gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
+            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf '%s on PR #%s (measured: %s) -- the branch/PR are left open, unmerged; a spec-request now covers finishing this at the right size.\n\n%s' "$breach_what" "$PR_NUMBER" "$MEASURED" "$marker")"
           else
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Not ready on PR #%s: %s. Picked up again on a later run.' "$PR_NUMBER" "$unmet")"
           fi

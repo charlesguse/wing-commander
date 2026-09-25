@@ -67,9 +67,17 @@ LIFECYCLE_PREFIXES = ("stage:", "spec:")
 # "PR-bearing steps" list. Unlike the other fix-or-later steps it never
 # makes its issue in-flight, and select()'s oldest-first fallback passes it
 # over while its PR may still be open -- see _awaiting_merge_holds().
+#
+# BREACH_STEP (#530) is the step the fix job records when its post-push
+# backstop breaches, BEFORE it files the spec-request. A failed create then
+# leaves the item at step=breach with its PR, and resume sends it to
+# readiness's forced-breach path (the retry of that one spec-request),
+# never to review. Like fix/review/readiness it makes its issue in-flight
+# only while its PR resolves OPEN.
 AWAITING_MERGE_STEP = "awaiting-merge"
+BREACH_STEP = "breach"
 PRE_FIX_STEPS = frozenset({"triage", "route"})
-FIX_OR_LATER_STEPS = frozenset({"fix", "review", "readiness", AWAITING_MERGE_STEP, "prove"})
+FIX_OR_LATER_STEPS = frozenset({"fix", BREACH_STEP, "review", "readiness", AWAITING_MERGE_STEP, "prove"})
 TERMINAL_STEPS = frozenset({"closed", "stalled", "proven"})
 
 # Issue #555: the select job's PR lookup records an OPEN PR that is not this
