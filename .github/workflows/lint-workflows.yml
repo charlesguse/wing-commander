@@ -4258,31 +4258,44 @@ jobs:
       # own pending slot before it began -- is a distinct, detectable
       # condition from anything the directed-proof mechanism itself
       # produces, since that mechanism only ever runs once prove-gate has
-      # already executed. Numbered 117, not the 101 this branch's own commit
-      # picked: Gate 116 (#611) claimed 101-115 as reserved and 116 as used
-      # before this branch's rebase landed.
+      # already executed. Numbered 117: originally Gate 99, renumbered to
+      # Gate 102 for the collision with the Gate 99 PR #463 claimed (PR #490
+      # review, 2026-09-25), renumbered to Gate 103 for the collision with
+      # Gates 99 and 100 that specs/059-converged-means-tasks-done (#587)
+      # claimed, and renumbered again here for the collision with Gate 116
+      # (#611), which claimed 101-115 as reserved and 116 as used, before
+      # this branch's rebase landed.
       - name: Gate 117 — board loop prove-displacement detects a merge whose proof run never started
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-prove-displacement.py
 
-      # Gate 90 — specs/060-self-redrive-concurrency (SC-006): the FR-016
+      # Gate 101 — specs/060-self-redrive-concurrency (SC-006): the FR-016
       # one-board-item-in-flight guarantee sentence is restated verbatim in
       # three places (board-loop.yml's own per-job concurrency: comments,
       # board-loop-workflow.md's "Concurrency" section, and
       # concurrency-groups.md itself) -- a paraphrase drifting in any one of
       # them is a silent contract violation nothing else in the gate suite
-      # would catch.
-      - name: Gate 90 — the concurrency guarantee sentence is identical everywhere it is stated
+      # would catch. Numbered 101: originally Gate 90, renumbered to Gate 100
+      # for the collision with main's existing Gate 90, every applied label
+      # has a matching gh label create (PR #490 review, 2026-09-25), and
+      # renumbered again here for the collision with Gate 100
+      # (specs/059-converged-means-tasks-done, #587) that this branch's
+      # rebase landed.
+      - name: Gate 101 — the concurrency guarantee sentence is identical everywhere it is stated
         if: "!cancelled()"
         run: python3 .github/scripts/verify-concurrency-guarantee-statement.py
 
-      # Gate 91 — specs/060-self-redrive-concurrency (FR-017, research.md
+      # Gate 102 — specs/060-self-redrive-concurrency (FR-017, research.md
       # D7): a directed proof run never selects a board item or opens a fix
       # PR (D2's aimable_jobs exclusion), checked structurally rather than
       # only argued in prose, plus accounting for the directed-proof-in-flight
       # regression fixture verify-board-eligibility.py already asserts
-      # against.
-      - name: Gate 91 — a directed proof run never conflicts with the item it is proving
+      # against. Numbered 102: originally Gate 91, renumbered to Gate 101
+      # for the collision with main's existing Gate 91, auto-release.yml's
+      # pass-path specs/ fallback (PR #490 review, 2026-09-25), and
+      # renumbered again here to stay clear of this rebase's Gate 101
+      # (the concurrency guarantee sentence gate above).
+      - name: Gate 102 — a directed proof run never conflicts with the item it is proving
         if: "!cancelled()"
         run: python3 .github/scripts/verify-directed-proof-no-item-conflict.py
 

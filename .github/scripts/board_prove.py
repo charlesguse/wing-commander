@@ -51,7 +51,7 @@ ORDINARY_GROUP = "wing-commander-board-loop"
 # NOT select a board item". route can push a branch/PR for the
 # size-and-path backstop's post-push breach case, and fix exists to open
 # the fix PR -- both are mutating actions FR-002 forbids a directed proof
-# run from taking. Read directly (never re-derived) by Gate 91's own
+# run from taking. Read directly (never re-derived) by Gate 101's own
 # structural assertion.
 aimable_jobs = frozenset({"triage", "review", "readiness", "prove"})
 
