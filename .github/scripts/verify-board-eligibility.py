@@ -49,7 +49,10 @@ forged-marker-* cases put markers from an outside (NONE) user, an OWNER
 human and a different App's bot on the issues; each must be ignored both
 for in-flight detection and for the fallback's prove/awaiting-merge skip.
 own-marker-newer-forged-ignored keeps the loop's own marker authoritative
-when newer foreign ones follow it. AUTHOR_MUTATIONS swap weaker
+when newer foreign ones follow it. unowned-open-pr: a marker whose PR the
+select lookup reported as UNOWNED_OPEN_PR_STATE (open, not the loop's own)
+is not in-flight, and the fallback passes its issue over, so the resume
+step's no-op hold for it is not re-selected every run. AUTHOR_MUTATIONS swap weaker
 predicates into board_item_marker and must each fail a case, and
 board_eligibility.py's main() must refuse a payload with no bot_login.
 
@@ -102,6 +105,7 @@ IN_FLIGHT_CASES = {
     "forged-marker-owner-human",
     "forged-marker-other-app",
     "own-marker-newer-forged-ignored",
+    "unowned-open-pr",
 }
 
 # (name, replacement for board_item_marker.is_loop_marker_author)
@@ -210,22 +214,28 @@ def author_mutation_check():
 
 def main_requires_bot_login():
     """#555: board_eligibility.py's main() exits non-zero, selecting
-    nothing, when its stdin payload has no bot_login."""
+    nothing, when its stdin payload has no bot_login, or a bare "[bot]"
+    (an empty App slug plus the suffix)."""
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "board_eligibility.py")
-    payload = {"open_issues": [{"number": 1, "author": {"login": "a"},
-                                "authorAssociation": "OWNER", "labels": [],
-                                "state": "OPEN", "createdAt": "2026-01-01T00:00:00Z"}],
-               "labeled_events_by_issue": {}, "comments_by_issue": {},
-               "pr_state_by_number": {}}
-    proc = subprocess.run([sys.executable, script], input=json.dumps(payload),
-                          text=True, capture_output=True)
-    if proc.returncode == 0 or proc.stdout.strip():
-        print("::error::verify-board-eligibility: board_eligibility.py accepted a payload "
-              "with no bot_login (exit {0}, stdout {1!r}) (#555).".format(
-                  proc.returncode, proc.stdout.strip()))
-        return 1
-    print("[ok] board_eligibility.py refuses a payload with no bot_login")
-    return 0
+    failures = 0
+    for label, extra in (("no bot_login", {}), ("bot_login \"\"", {"bot_login": ""}),
+                         ("bot_login \"[bot]\"", {"bot_login": "[bot]"})):
+        payload = {"open_issues": [{"number": 1, "author": {"login": "a"},
+                                    "authorAssociation": "OWNER", "labels": [],
+                                    "state": "OPEN", "createdAt": "2026-01-01T00:00:00Z"}],
+                   "labeled_events_by_issue": {}, "comments_by_issue": {},
+                   "pr_state_by_number": {}}
+        payload.update(extra)
+        proc = subprocess.run([sys.executable, script], input=json.dumps(payload),
+                              text=True, capture_output=True)
+        if proc.returncode == 0 or proc.stdout.strip():
+            failures += 1
+            print("::error::verify-board-eligibility: board_eligibility.py accepted a payload "
+                  "with {0} (exit {1}, stdout {2!r}) (#555).".format(
+                      label, proc.returncode, proc.stdout.strip()))
+        else:
+            print("[ok] board_eligibility.py refuses a payload with {0}".format(label))
+    return failures
 
 
 def run():

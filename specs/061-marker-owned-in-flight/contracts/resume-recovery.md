@@ -61,9 +61,15 @@ is not taken in its place (the marker named a real PR).
 A marker branch that fails the naming check, or a marker PR that fails
 the ownership check, makes the marker stale. Clause 0 below still applies
 first (the awaiting-merge hold adopts nothing, and the PR is not passed
-on). Otherwise the step is `triage`, with the reason recorded and pr,
-pr-state, branch, round and base-sha cleared (FR-022). This check runs
-before clauses 1-4.
+on). Then, when the marker's PR fails the ownership check but resolves
+OPEN (e.g. a maintainer removed `board:owned`), the step is the no-op
+`awaiting-merge` with a note and pr, pr-state, branch, round and base-sha
+cleared: triage could cut a second branch/PR beside that open PR
+(FR-054). select does not choose such an item while the PR stays open
+(in-flight-detection.md `UNOWNED_OPEN_PR_STATE`), so this hold is reached
+only on a race. Otherwise (a foreign branch, or a foreign PR that is
+CLOSED or MERGED) the step is `triage`, with the reason recorded and the
+same fields cleared (FR-022). This check runs before clauses 1-4.
 
 ## Step resolution (FR-008/FR-009/FR-014 — replaces "force triage when
 branch and pr are both empty")
@@ -142,4 +148,4 @@ live state, not the marker's say-so, decides which clause applies.
 | US2 AS6 (step never empty) | every clause above ends in a named step |
 | #532 (awaiting-merge, PR open or unresolved) | clause 0 → awaiting-merge, no job runs |
 | #532 (awaiting-merge, PR closed/merged, issue open) | clause 1 does not match → clause 4, reason recorded → triage |
-| #555 (marker branch not `fix/<issue>-<slug>`, or marker PR not board:owned / from another repository) | foreign marker fields → triage, reason recorded, FR-022 cleared (awaiting-merge: clause 0 hold, PR not passed on) |
+| #555 (marker branch not `fix/<issue>-<slug>`, or marker PR not board:owned / from another repository) | foreign marker fields → triage, reason recorded, FR-022 cleared; a foreign PR still OPEN, or an awaiting-merge marker: no-op hold, nothing passed on |

@@ -76,6 +76,15 @@ board-item-marker.md "Author rule"). A marker from anyone else, an OWNER
 included, neither makes an issue in-flight nor triggers the fallback's
 `prove`/`awaiting-merge` skip.
 
+`UNOWNED_OPEN_PR_STATE = "OPEN_UNOWNED"` (#555): the select job's PR
+lookup records an OPEN PR that fails `BOARD_PR_OWNED_JQ` (no `board:owned`,
+or head in another repository) as this state instead of `OPEN`. It is not
+`OPEN`, so the marker does not make its issue in-flight, and `select()`'s
+fallback passes over an issue whose fix-or-later marker names such a PR
+(`_unowned_open_pr_holds()`) until the PR is CLOSED or MERGED. Resume holds
+that item as a no-op (resume-recovery.md), so without this skip the item
+would be re-selected and do nothing every run (cf. #532).
+
 `classify_issue()` and `is_excluded()` keep their existing signatures and
 behavior verbatim (Out of Scope: "the exclusion rule... is reused
 unchanged"). The oldest-first ordering and its `classify_issue`/
@@ -106,8 +115,9 @@ network).
    implementation's choice) to find markers naming a fix-or-later step
    (`FIX_OR_LATER_STEPS`, which includes `awaiting-merge`) and a
    `pr` number, resolve exactly those PR numbers' `state` via `gh api
-   repos/:owner/:repo/pulls/:number --jq .state`. Never a `gh pr list` call,
-   never a body/text search (FR-001).
+   repos/:owner/:repo/pulls/:number` (`BOARD_PR_STATE_JQ`; an OPEN PR that
+   fails `BOARD_PR_OWNED_JQ` is recorded as `UNOWNED_OPEN_PR_STATE`, #555).
+   Never a `gh pr list` call, never a body/text search (FR-001).
 3. The old unrestricted `gh pr list --state open --json number,body |
    ...capture("Fixes #...")` shortcut is deleted; `select()`'s return value
    is the run's only source of the selected issue number.
@@ -173,7 +183,10 @@ expressed as a single `issue.json` the way Gate 81's existing
     comment carries `user: {login, type}`; the gate's bot login is
     `wing-commander-bot[bot]`. The gate also swaps weaker author
     predicates into `board_item_marker` and requires each to fail a case,
-    and requires `main()` to refuse a payload without `bot_login`.
+    and requires `main()` to refuse a payload without `bot_login` or
+    with a bare `[bot]`. `unowned-open-pr`: the oldest eligible issue's
+    `review` marker names a PR recorded as `OPEN_UNOWNED` → `(null,
+    false)`, and `select()` returns the newer issue.
 
 Each fixture directory's four files are all required; the gate fails loudly
 (non-zero exit, `::error::` annotation) if any is missing, per Gate 81's

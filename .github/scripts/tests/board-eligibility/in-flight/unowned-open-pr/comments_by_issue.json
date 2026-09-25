@@ -1,0 +1,14 @@
+{
+  "5071": [
+    {
+      "created_at": "2026-01-05T00:00:00Z",
+      "author_association": "NONE",
+      "user": {
+        "login": "wing-commander-bot[bot]",
+        "type": "Bot"
+      },
+      "body": "**Run:** https://github.com/example/repo/actions/runs/1\n\n<!-- wing-commander-board-item: {\"base_sha\": null, \"branch\": \"fix/5071-board-item\", \"pr\": 9071, \"round\": 1, \"step\": \"review\"} -->"
+    }
+  ],
+  "5072": []
+}

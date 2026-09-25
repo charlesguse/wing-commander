@@ -74,7 +74,11 @@ another author posted. RESUME_CASES also pin the resume guards: a marker
 branch not named fix/<issue>-<slug>, or a marker PR that is not
 board:owned with its head in this repository, is not adopted (triage,
 FR-022 cleared; an awaiting-merge marker still holds as a no-op). The
-resume step's PR-ownership jq is run on OWNED_CASES.
+resume step's PR-ownership jq is run on OWNED_CASES. A marker PR that is
+OPEN but not the loop's own holds as the no-op step awaiting-merge with
+nothing passed on (FR-054: triage could cut a second branch/PR), and the
+select lookup must record such a PR as UNOWNED_OPEN_PR_STATE so select
+does not re-choose the held item every run (Gate 81 pins that side).
 
 --self-test mutates the shipped workflow text (drops `!cancelled()`, a
 result guard, the breach exclusion, the breach output, restores main's
@@ -738,11 +742,22 @@ RESUME_CASES = [
     ("fix, another issue's fix branch -> triage, FR-022 cleared (#555)",
      _resume_env("fix", "", False, "", "", branch="fix/3960-board-item"),
      dict(_CLEARED, step="triage")),
-    ("review, PR OPEN without board:owned or from another repo -> triage, FR-022 cleared (#555)",
+    # FR-054: an OPEN PR that is not the loop's own (e.g. board:owned
+    # removed) holds as a no-op; triage could cut a second branch/PR.
+    ("review, PR OPEN without board:owned or from another repo -> no-op hold, nothing passed on (#555)",
      _resume_env("review", "42", True, "OPEN", "42", pr_owned=False),
-     dict(_CLEARED, step="triage", recovered_via_fallback=False)),
-    ("readiness, PR OPEN not board:owned -> triage, FR-022 cleared (#555)",
+     dict(_CLEARED, step="awaiting-merge", recovered_via_fallback=False)),
+    ("readiness, PR OPEN not board:owned -> no-op hold, nothing passed on (#555)",
      _resume_env("readiness", "42", True, "OPEN", "42", pr_owned=False),
+     dict(_CLEARED, step="awaiting-merge")),
+    ("fix, PR OPEN not board:owned, foreign branch too -> no-op hold (#555)",
+     _resume_env("fix", "42", True, "OPEN", "42", pr_owned=False, branch="main"),
+     dict(_CLEARED, step="awaiting-merge")),
+    ("review, PR CLOSED not board:owned -> triage, FR-022 cleared (#555)",
+     _resume_env("review", "42", True, "CLOSED", "42", pr_owned=False),
+     dict(_CLEARED, step="triage")),
+    ("review, PR MERGED not board:owned -> triage, FR-022 cleared (#555)",
+     _resume_env("review", "42", True, "MERGED", "42", pr_owned=False),
      dict(_CLEARED, step="triage")),
     ("awaiting-merge, PR OPEN not board:owned -> no-op, PR not passed on (#555)",
      _resume_env("awaiting-merge", "42", True, "OPEN", "42", pr_owned=False),
@@ -787,15 +802,30 @@ def resume_findings(doc, scripts_root=ROOT):
     return findings
 
 
-def owned_jq_findings(doc):
-    """The resume step's jq that sets pr_owned (#555), run on OWNED_CASES."""
-    run = _step_run(doc, "select", "resume")
-    m = re.search(r"pr_owned=\"\$\(jq -r --arg repo \"\$GITHUB_REPOSITORY\" \\\n\s*'([^']*)'", run)
-    if not m:
-        return ["resume: no `pr_owned=$(jq -r --arg repo ...)` PR-ownership check found (#555)"]
+def owned_jq_findings(doc, scripts_root=ROOT):
+    """The workflow-level BOARD_PR_OWNED_JQ (#555), run on OWNED_CASES; the
+    resume step and the select lookup both apply it, and the select lookup
+    records an OPEN, not-owned PR as board_eligibility.UNOWNED_OPEN_PR_STATE."""
+    prog = (doc.get("env") or {}).get("BOARD_PR_OWNED_JQ")
+    if not prog:
+        return ["workflow env has no BOARD_PR_OWNED_JQ (#555)"]
     findings = []
+    use = 'jq -r --arg repo "$GITHUB_REPOSITORY" "$BOARD_PR_OWNED_JQ"'
+    for step_id in ("select", "resume"):
+        if use not in _step_run(doc, "select", step_id):
+            findings.append("select/{0}: does not apply `{1}` (#555)".format(step_id, use))
+    rc, const, err = _exec_heredoc(
+        "import sys\nsys.path.insert(0, '.github/scripts')\n"
+        "from board_eligibility import UNOWNED_OPEN_PR_STATE\nprint(UNOWNED_OPEN_PR_STATE)\n",
+        {}, scripts_root)
+    const = const.strip()
+    if rc != 0 or not const:
+        findings.append("board_eligibility.UNOWNED_OPEN_PR_STATE not importable: {0}".format(err.strip()))
+    elif 'pr_state="{0}"'.format(const) not in _step_run(doc, "select", "select"):
+        findings.append("select/select: an OPEN PR that fails BOARD_PR_OWNED_JQ is not recorded "
+                        "as {0!r} -- select would keep choosing an item resume only holds (#555)".format(const))
     for title, payload, want in OWNED_CASES:
-        proc = subprocess.run(["jq", "-r", "--arg", "repo", _REPO, m.group(1)],
+        proc = subprocess.run(["jq", "-r", "--arg", "repo", _REPO, prog],
                               input=json.dumps(payload), text=True, capture_output=True)
         got = proc.stdout.strip()
         if proc.returncode != 0 or got != want:
@@ -895,7 +925,7 @@ def all_findings(text, table=None, scripts_root=ROOT):
         return ["board-loop.yml does not parse: {0}".format(exc)]
     return (static_findings(doc) + simulation_findings(doc, table)
             + resume_findings(doc, scripts_root) + select_lookup_findings(doc, scripts_root)
-            + owned_jq_findings(doc) + marker_reader_findings(doc))
+            + owned_jq_findings(doc, scripts_root) + marker_reader_findings(doc))
 
 
 def print_table(table):
@@ -1006,7 +1036,14 @@ def _mutations(text):
     sub("resume branch-name guard dropped",
         "if branch and not is_loop_branch(branch, issue_number):", "if False:")
     sub("resume PR-ownership guard dropped",
-        "if pr_from_marker and not pr_owned:", "if False:")
+        "foreign_pr = pr_from_marker and not pr_owned", "foreign_pr = False")
+    sub("resume open-unowned-PR hold dropped (FR-054)",
+        "elif foreign_pr and pr_state == \"OPEN\":", "elif False:")
+    sub("select lookup does not mark an open, unowned PR",
+        'pr_state="OPEN_UNOWNED"', 'pr_state="OPEN"')
+    sub("select lookup does not apply BOARD_PR_OWNED_JQ",
+        '"$(jq -r --arg repo "$GITHUB_REPOSITORY" "$BOARD_PR_OWNED_JQ" "$RUNNER_TEMP/board-lookup-pr.json")"',
+        '"true"')
     sub("resume PR-ownership jq ignores the head repository",
         " and ((.head.repo.full_name // \"\") == $repo)", "")
     sub("resume PR-ownership jq ignores board:owned",
