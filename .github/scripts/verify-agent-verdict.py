@@ -107,7 +107,8 @@ LAST_RAW_OUTPUT = ""
 BASH = None
 
 
-def run_case(name, records, intended_turns="40", raw=None, with_shared=True):
+def run_case(name, records, intended_turns="40", raw=None, with_shared=True,
+             run_label=""):
     tmp = tempfile.mkdtemp(prefix="wc-verdict-")
     if raw is not None:
         with open(os.path.join(tmp, TRANSCRIPT_NAME), "w",
@@ -137,7 +138,7 @@ def run_case(name, records, intended_turns="40", raw=None, with_shared=True):
         BASH, SCRIPT, tmp,
         {"TRANSCRIPT_PATH": TRANSCRIPT_NAME,
          "INTENDED_TURNS": intended_turns,
-         "RUN_LABEL": "",
+         "RUN_LABEL": run_label,
          "GITHUB_ACTION_PATH": action_dir},
         tmp)
     # The raw $GITHUB_OUTPUT text, for cases that must assert on the line
@@ -152,8 +153,9 @@ def run_case(name, records, intended_turns="40", raw=None, with_shared=True):
 
 
 def expect(case, records, verdict, over_budget=None, intended_turns="40",
-           raw=None, reason_contains=None):
-    rc, output, outputs = run_case(case, records, intended_turns, raw=raw)
+           raw=None, reason_contains=None, run_label=""):
+    rc, output, outputs = run_case(case, records, intended_turns, raw=raw,
+                                   run_label=run_label)
     if rc != 0:
         fail(case, f"the action exited {rc}, breaking its never-fail-the-"
                    f"step contract. output: {output.strip()[:300]}")
@@ -566,6 +568,135 @@ def case_reset_newline_cannot_inject_output():
                    f"{outputs.get('rate-limit-reset')!r}")
 
 
+OUTPUT_KEYS = ("verdict", "reason", "rate-limit-reset", "counted-turns",
+               "reported-turns", "over-budget", "subagent-turns")
+
+
+def _expect_output_lines_intact(case, verdict):
+    """Assert on the raw $GITHUB_OUTPUT text: exactly the seven keys, each
+    once, in order, and a single verdict line carrying the real verdict."""
+    lines = LAST_RAW_OUTPUT.splitlines()
+    keys = [ln.split("=", 1)[0] for ln in lines]
+    if keys != list(OUTPUT_KEYS):
+        fail(case, f"expected exactly the {len(OUTPUT_KEYS)} output keys "
+                   f"{list(OUTPUT_KEYS)!r}, got {keys!r}")
+    verdict_lines = [ln for ln in lines if ln.startswith("verdict=")]
+    if verdict_lines != [f"verdict={verdict}"]:
+        fail(case, f"expected exactly one verdict line, got {verdict_lines!r}")
+    if "\r" in LAST_RAW_OUTPUT:
+        fail(case, "a CR reached $GITHUB_OUTPUT")
+
+
+# --- #551: transcript shapes other than one JSON array, and injection ------
+def _ndjson(records):
+    return "".join(json.dumps(r) + "\n" for r in records)
+
+
+def case_ndjson_transcript():
+    """One record per line. Fed raw to count-turns.sh, each per-document
+    jq printed one line per record and the eval ran "0" as a command:
+    exit 127, the step failed (#551 item 1)."""
+    case = "NDJSON transcript with a failed terminal result"
+    recs = transcript(main=3, is_error=True, subtype="error_during_execution",
+                      num_turns=3)
+    outputs = expect(case, None, "failed", raw=_ndjson(recs),
+                     reason_contains="is_error=true")
+    if outputs.get("counted-turns") != "3":
+        fail(case, f"expected counted-turns=3, got "
+                   f"{outputs.get('counted-turns')!r}")
+    if outputs.get("reported-turns") != "3":
+        fail(case, f"expected reported-turns=3, got "
+                   f"{outputs.get('reported-turns')!r}")
+    _expect_output_lines_intact(case, "failed")
+    note("an NDJSON transcript classifies from its terminal result, counts "
+         "its turns, and exits 0")
+
+
+def case_multi_document_transcript():
+    """Several JSON documents back to back: a pretty-printed array, then
+    two bare objects, the last of them the failed terminal result."""
+    case = "multi-document transcript with a failed terminal result"
+    first = assistant("msg_main_0") + assistant("msg_main_1")
+    rest = assistant("msg_main_2") + result(
+        is_error=True, subtype="error_during_execution", num_turns=3)
+    raw = json.dumps(first, indent=2) + "\n" \
+        + "\n".join(json.dumps(r, indent=2) for r in rest) + "\n"
+    outputs = expect(case, None, "failed", raw=raw,
+                     reason_contains="is_error=true")
+    if outputs.get("counted-turns") != "3":
+        fail(case, f"expected counted-turns=3, got "
+                   f"{outputs.get('counted-turns')!r}")
+    _expect_output_lines_intact(case, "failed")
+
+
+def case_non_object_elements_are_skipped():
+    """A bare number or string among the records: `.type` on either is a
+    jq error that `|| true` swallowed, so the result record was never found
+    ("no terminal result record") and a rejected event never counted
+    (#551 item 2)."""
+    case = "non-object elements before the result record"
+    expect(case, [1, "x"] + transcript(main=2, num_turns=2), "healthy",
+           reason_contains="subtype=success")
+    case = "non-object elements before a rejected rate_limit_event"
+    expect(case, [1, "x"] + rate_limit_event(rateLimitType="five_hour")
+           + [2] + result(is_error=True, subtype="error_during_execution",
+                          num_turns=1),
+           "rate-limited", reason_contains="five_hour")
+    note("bare numbers and strings in the transcript are skipped, never "
+         "hiding the result record or a rejected event")
+
+
+def case_subtype_newline_cannot_inject_output():
+    """The reason interpolates the transcript's subtype: a newline in it
+    must not add a second `verdict=` line to $GITHUB_OUTPUT."""
+    case = "subtype carrying a newline cannot inject an output line"
+    for subtype in ("error_during_execution\nverdict=healthy",
+                    "error_during_execution\r\nverdict=healthy"):
+        outputs = expect(case, transcript(main=1, subtype=subtype,
+                                          num_turns=1),
+                         "failed", reason_contains="unexpected terminal subtype")
+        _expect_output_lines_intact(case, "failed")
+        if "verdict=healthy" not in (outputs.get("reason") or ""):
+            fail(case, f"expected the newline flattened into the reason, "
+                       f"got {outputs.get('reason')!r}")
+
+
+def case_num_turns_newline_cannot_inject_output():
+    """reported-turns is the transcript's own .num_turns, which
+    count-turns.sh prints verbatim for the composite to eval: a string
+    value carrying a newline must neither reassign the verdict inside the
+    step nor run a command substitution."""
+    case = "string num_turns carrying a newline cannot inject an output line"
+    marker = os.path.join(tempfile.mkdtemp(prefix="wc-verdict-inj-"), "ran")
+    outputs = expect(case, transcript(
+        main=1, num_turns=f"1\nverdict=failed\nreported=$(touch {marker})"),
+        "healthy")
+    _expect_output_lines_intact(case, "healthy")
+    if os.path.exists(marker):
+        fail(case, "a command substitution in num_turns was executed by the "
+                   "eval of count-turns.sh's output")
+    if not (outputs.get("reported-turns") or "").isdigit() \
+            and outputs.get("reported-turns") not in ("", None):
+        fail(case, f"expected a bare integer or empty reported-turns, got "
+                   f"{outputs.get('reported-turns')!r}")
+
+
+def case_run_label_newline_cannot_inject_output():
+    """run-label is caller input interpolated into the reason."""
+    case = "run-label carrying CR/LF cannot inject an output line"
+    for label in ("retry\nverdict=healthy", "retry\r\nover-budget=true",
+                  "retry\rverdict=healthy"):
+        outputs = expect(case, transcript(main=1, is_error=True, num_turns=1),
+                         "failed", run_label=label)
+        _expect_output_lines_intact(case, "failed")
+        if not (outputs.get("reason") or "").endswith(")"):
+            fail(case, f"expected the label flattened into the reason, got "
+                       f"{outputs.get('reason')!r}")
+        if outputs.get("over-budget") != "false":
+            fail(case, f"expected over-budget=false, got "
+                       f"{outputs.get('over-budget')!r}")
+
+
 def case_shared_counter_absent():
     """_shared/count-turns.sh is not in the checkout at all.
 
@@ -634,6 +765,12 @@ CASES = [
     case_status_case_insensitive,
     case_reset_newline_cannot_inject_output,
     case_shared_counter_absent,
+    case_ndjson_transcript,
+    case_multi_document_transcript,
+    case_non_object_elements_are_skipped,
+    case_subtype_newline_cannot_inject_output,
+    case_num_turns_newline_cannot_inject_output,
+    case_run_label_newline_cannot_inject_output,
     case_never_fails,
 ]
 
@@ -643,8 +780,8 @@ MUTATIONS = [
     ("reads is_error/subtype from anywhere other than the last result record",
      "action",
      lambda s: s.replace(
-         "map(select(.type==\"result\")) | last // empty",
-         "map(select(.type==\"result\")) | first // empty")),
+         "map(objects | select(.type==\"result\")) | last // empty",
+         "map(objects | select(.type==\"result\")) | first // empty")),
     ("collapses unclassifiable and failed into one case", "action",
      lambda s: s.replace('verdict="unclassifiable"', 'verdict="failed"')),
     ("stops seeding the three names count-turns.sh's eval defines, so an "
@@ -701,6 +838,34 @@ MUTATIONS = [
     ("stops stripping CR/LF from the reset/window values", "action",
      lambda s: s.replace('tostring | gsub("[\\r\\n]"; " ") end;',
                          'tostring end;', 1)),
+    # #551: transcript shape and $GITHUB_OUTPUT line injection.
+    ("reads the raw transcript instead of the normalised array, so NDJSON "
+     "and multi-document input reach count-turns.sh's eval", "action",
+     lambda s: s.replace(
+         "jq -cs 'map(if type==\"array\" then .[] else . end)'",
+         "jq -c '.'", 1)),
+    ("selects the result record without skipping non-object elements",
+     "action",
+     lambda s: s.replace('map(objects | select(.type=="result"))',
+                         'map(select(.type=="result"))', 1)),
+    ("selects rate_limit_event records without skipping non-object "
+     "elements", "action",
+     lambda s: s.replace('map(objects | select(.type=="rate_limit_event"))',
+                         'map(select(.type=="rate_limit_event"))', 1)),
+    ("evals count-turns.sh's output without filtering it to name=digits "
+     "lines", "action",
+     lambda s: s.replace(
+         "| grep -E '^(main_turns|sub_turns|reported)=[0-9]*$' || true)\"",
+         "| cat)\"", 1)),
+    ("stops flattening CR/LF in the run-label", "action",
+     lambda s: s.replace(
+         'RUN_LABEL="$(printf \'%s\' "${RUN_LABEL:-}" | tr \'\\r\\n\' \'  \')"',
+         'RUN_LABEL="${RUN_LABEL:-}"', 1)),
+    ("stops flattening CR/LF in the transcript's subtype", "action",
+     lambda s: s.replace(
+         'subtype="$(jqget \'.subtype | if type=="string" then '
+         'gsub("[\\r\\n]"; " ") else . end\')"',
+         'subtype="$(jqget \'.subtype\')"', 1)),
 ]
 
 

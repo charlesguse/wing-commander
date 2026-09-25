@@ -59,7 +59,8 @@ record" entities define the field shapes referenced below;
   ISO-8601 only when greater than 0 and less than 1e11; zero, negative,
   millisecond-scale or unconvertible values give `"unknown"`. CR/LF in
   the reset time or window become spaces, so neither can inject a
-  `$GITHUB_OUTPUT` line (mirrors the
+  `$GITHUB_OUTPUT` line; #551 extends the same rule to `run-label`
+  and `subtype`, which the `reason` text also interpolates (mirrors the
   "last record is authoritative" rule the classifier already applies to
   `result` records) — `"unknown"` when no such record exists, is empty,
   or is unparseable as non-empty text. Never epoch-zero, never a

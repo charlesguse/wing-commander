@@ -90,6 +90,16 @@ across the fleet (research.md R3/R4).
   genuinely healthy result to a lesser verdict (spec.md edge case:
   "budget comparison must be suppressed rather than computed from the
   wrong counter").
+- Transcript shape (#551): one JSON array, one object, NDJSON, or
+  several concatenated JSON documents are all accepted. The file is
+  normalised once to a single flat array (`jq -s`, splicing any document
+  that is itself an array), and every classification read and the
+  `count-turns.sh` call use that copy. Non-object elements are skipped
+  before any `.type` selection.
+- Output format (#551): every `$GITHUB_OUTPUT` value is a single line.
+  CR/LF in `run-label` and in the transcript's `subtype` become spaces,
+  and only `name=<digits or empty>` lines of `count-turns.sh`'s output
+  are evaluated, so no input or transcript value can add an output line.
 - Does **not** validate any call site's declared JSON Schema
   (research.md R2) — that remains each site's own existing shape-check
   step, now gated on this action's `verdict` output.
