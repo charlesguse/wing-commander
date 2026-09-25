@@ -43,7 +43,12 @@ expand @mentions or #N references inside a code block, and renders no
 link, image or HTML there, so the body neither notifies every commenter
 (the context file carries a "## Comment by @login" line per comment, and
 the draft can quote anyone) nor adds a "mentioned this" entry to every
-issue or PR the text cites. No text inside can close the fence early.
+issue or PR the text cites. No text inside can close the fence early:
+GitHub's cmark-gfm caps a fence at 255 backticks (a longer one is read
+as 255, so a lone line of 255 inside would close it), so before sizing,
+fenced_section() splits every run of 255 or more backticks with a U+200B
+zero-width space every 254 characters. The longest run left is 254 and
+the fence is at most MAX_FENCE_LEN (255) backticks.
 Intake reads the body as raw text (`gh issue view --json body`) and
 treats it as an untrusted feature description, so the fence changes
 nothing it relies on.
@@ -84,6 +89,11 @@ CONTEXT_HEADING = "Originating issue (trust-filtered context):"
 DRAFTED_HEADING = "Drafted request (route agent output, shown as text):"
 SEPARATOR = "\n\n---\n"
 BACKTICK_RUN_RE = re.compile(r"`+")
+# cmark-gfm (GitHub's renderer) reads a fence of more than 255 backticks
+# as 255, so no run inside the text may reach 255.
+MAX_FENCE_LEN = 255
+LONG_BACKTICK_RUN_RE = re.compile(r"`{%d,}" % MAX_FENCE_LEN)
+RUN_SPLITTER = "\u200b"
 
 
 def utf16_len(text):
@@ -125,6 +135,19 @@ def truncate(text, budget):
     return kept, truncation_note(len(text) - len(kept))
 
 
+def split_long_backtick_runs(text):
+    """`text` with every run of MAX_FENCE_LEN or more backticks broken
+    into chunks of MAX_FENCE_LEN - 1 joined by RUN_SPLITTER, so no run can
+    close a fence of at most MAX_FENCE_LEN."""
+    chunk = MAX_FENCE_LEN - 1
+
+    def _split(match):
+        run = match.group(0)
+        return RUN_SPLITTER.join(run[i:i + chunk]
+                                 for i in range(0, len(run), chunk))
+    return LONG_BACKTICK_RUN_RE.sub(_split, text)
+
+
 def fence_for(text):
     """A backtick fence longer than any backtick run in `text` (at least
     three), so nothing inside can close it."""
@@ -138,7 +161,10 @@ def fenced_section(heading, text, budget):
     UTF-16 units -- the one home for fencing any part of the body. The
     fence is sized from the full text; cutting only shortens backtick
     runs, so the same fence still holds after truncation. The truncation
-    note goes after the closing fence, where it renders."""
+    note goes after the closing fence, where it renders. Long backtick
+    runs are split first (split_long_backtick_runs()), so the fence stays
+    within cmark-gfm's 255 cap and still no line inside can close it."""
+    text = split_long_backtick_runs(text)
     fence = fence_for(text)
     opening = heading + "\n\n" + fence + "\n"
     closing = "\n" + fence

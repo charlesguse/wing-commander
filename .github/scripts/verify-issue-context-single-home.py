@@ -112,7 +112,8 @@ WHAT IT CHECKS
    images and HTML stay inert (#548), truncation under 65536 characters
    with a visible note) is exercised by `--self-test`, and each
    BUILDER_MUTATIONS rewrite of the builder (the draft unfenced, the
-   fence no longer sized from the content) must be caught.
+   fence no longer sized from the content, long backtick runs no longer
+   split so the fence passes cmark-gfm's 255 cap) must be caught.
 
 4. read-only-git (#513). triage-propose, route-propose and the reviewer
    are read-only, but were granted `Bash(git log:*)`/`Bash(git diff:*)`/
@@ -1402,9 +1403,12 @@ def _fenced_inner(b, body, heading=None):
     fence = lines[start] if start < len(lines) else ""
     if not re.fullmatch(r"`{3,}", fence):
         return None, None
+    # cmark-gfm reads a fence of more than 255 backticks as 255 (#548
+    # review), so a line of 255 or more closes any longer fence.
+    effective = min(len(fence), CMARK_MAX_FENCE)
     for end in range(start + 1, len(lines)):
         m = re.fullmatch(r" {0,3}(`{3,})\s*", lines[end])
-        if m and len(m.group(1)) >= len(fence):
+        if m and len(m.group(1)) >= effective:
             if lines[end] != fence:
                 return None, None  # closed early by the content
             return fence, "\n".join(lines[start + 1:end])
@@ -1424,6 +1428,12 @@ DRAFTED_HOSTILE = (
     "   `````\nend")
 # What must never appear outside the fence of a drafted body.
 LIVE_MARKDOWN_RE = re.compile(r"@\w|#\d|\]\(|!\[|<[A-Za-z/!]")
+# cmark-gfm's cap on fence length (#548 review): a longer fence is read as
+# this long, so a lone line of this many backticks inside would close it.
+CMARK_MAX_FENCE = 255
+# A lone 300-backtick line, then live markdown: with an unbounded fence
+# (301) cmark reads the fence as 255 and this line closes it.
+LONG_RUN_HOSTILE = ("`" * 300 + "\n@x #12 ![i](http://e/i.png) <b>h</b>")
 
 
 def _drafted_fence_problems(b):
@@ -1461,6 +1471,44 @@ def _drafted_fence_problems(b):
     if b.CONTEXT_HEADING in body:
         problems.append("builder: a drafted body should win over the "
                         "context, not sit beside it")
+    problems.extend(_long_run_problems(b))
+    return problems
+
+
+def _long_run_problems(b):
+    """A lone line of 300 backticks followed by live markdown, in both the
+    drafted and the context path: one fence of at most CMARK_MAX_FENCE
+    holds all of it (U+200B splits aside), nothing is live outside it,
+    and the footer sits after the closing fence."""
+    problems = []
+    footer = "Routed from x"
+    for label, heading, kwargs in (
+            ("drafted", getattr(b, "DRAFTED_HEADING", None),
+             {"drafted": LONG_RUN_HOSTILE}),
+            ("context", b.CONTEXT_HEADING,
+             {"context": "## Issue\n\n" + LONG_RUN_HOSTILE})):
+        text = next(iter(kwargs.values()))
+        body = b.build_body(footer=footer, **kwargs)
+        fence, inner = _fenced_inner(b, body, heading)
+        if inner is None or inner.replace("\u200b", "") != text:
+            problems.append(f"builder: a {label} body with a lone 300-"
+                            f"backtick line escaped (or mangled) its fence: "
+                            f"{body[-400:]!r}")
+            continue
+        if len(fence) > CMARK_MAX_FENCE:
+            problems.append(f"builder: {label} fence is {len(fence)} "
+                            f"backticks, over cmark-gfm's cap of "
+                            f"{CMARK_MAX_FENCE}")
+        outside = body.replace(inner, "", 1)
+        live = LIVE_MARKDOWN_RE.findall(outside)
+        if live:
+            problems.append(f"builder: live markdown {live!r} sits outside "
+                            f"the {label} fence")
+        close = body.index("\n" + fence + "\n", body.index(inner))
+        if body.rfind(footer) < close or not body.endswith(
+                "\n\n---\n" + footer):
+            problems.append(f"builder: the footer is not after the {label} "
+                            f"fence's closing line")
     return problems
 
 
@@ -1552,6 +1600,15 @@ def _self_test_builder():
             failures.append(f"builder: the truncation note for an oversized "
                             f"{label} landed inside the fence, where it "
                             f"would not render")
+    # U+200B splits add units: a body that is nothing but backticks must
+    # still come in under the cap.
+    for label in ("context", "drafted"):
+        body = b.build_body(footer="f" * 300, **{label: "`" * 70000})
+        units = b.utf16_len(body)
+        if units > b.MAX_BODY_UNITS:
+            failures.append(f"builder: a {label} of 70000 backticks "
+                            f"produced {units} UTF-16 units, over "
+                            f"{b.MAX_BODY_UNITS}")
     if not failures:
         print("note: builder unit tests passed (fallback order, one-line "
               "fallback, inert @/#/links/images/HTML inside an unbreakable "
@@ -1570,6 +1627,9 @@ BUILDER_MUTATIONS = (
     ("fence no longer sized from the content",
      '    return "`" * max(3, longest + 1)\n',
      '    return "```"\n'),
+    ("long backtick runs no longer split (fence over cmark's 255 cap)",
+     "    text = split_long_backtick_runs(text)\n",
+     ""),
 )
 
 

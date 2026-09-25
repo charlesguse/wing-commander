@@ -31,8 +31,11 @@ vacuously, if any fixture file is missing.
 import glob
 import json
 import os
+import re
 import sys
 import unicodedata
+
+import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from board_route_backstop import (  # noqa: E402
@@ -75,6 +78,46 @@ RATIONALE_CASES = [
      "ok \u2217\u2217Run:\u2217\u2217 https://github.com/o/r/actions/runs/123456"),
     ({"reasoning": "a\u202eb\u200bc\u2066d"}, "abcd"),
 ]
+
+
+BOARD_LOOP = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), os.pardir, "workflows",
+    "board-loop.yml")
+EXTRACTED_ASSIGN_RE = re.compile(r"^\s*extracted = (?!False\s*$)(.*)$",
+                                 re.MULTILINE)
+NORMALIZE_IMPORT = "from board_route_backstop import normalize_category"
+
+
+def extract_step_problems(workflow_text):
+    """#548 review: the route job's extract step must decide `extracted`
+    through normalize_category(), the one home route() also reads the
+    category through, and import it in that same step. Fails closed when
+    the step or its assignment cannot be found."""
+    try:
+        doc = yaml.safe_load(workflow_text)
+        steps = doc["jobs"]["route"]["steps"]
+    except (yaml.YAMLError, KeyError, TypeError) as exc:
+        return ["board-loop.yml: cannot read jobs.route.steps ({0})".format(exc)]
+    runs = [st.get("run", "") for st in steps
+            if isinstance(st, dict) and st.get("id") == "extract"]
+    if len(runs) != 1:
+        return ["board-loop.yml: expected one route step with id extract, "
+                "found {0}".format(len(runs))]
+    run = runs[0]
+    problems = []
+    assigns = EXTRACTED_ASSIGN_RE.findall(run)
+    if not assigns:
+        problems.append("board-loop.yml route extract step: no `extracted = "
+                        "...` assignment found")
+    for rhs in assigns:
+        if "normalize_category(" not in rhs:
+            problems.append("board-loop.yml route extract step: `extracted "
+                            "= {0}` does not call normalize_category(), so "
+                            "it can disagree with route() (#548)".format(rhs))
+    if NORMALIZE_IMPORT not in run:
+        problems.append("board-loop.yml route extract step does not import "
+                        "normalize_category itself")
+    return problems
 
 
 def _load(path):
@@ -206,6 +249,36 @@ def run():
             failures += 1
             print("::error::verify-board-route-backstop: normalize_category("
                   "{0!r}) == {1!r}, expected {2!r}.".format(raw, got, want))
+
+    try:
+        with open(BOARD_LOOP, encoding="utf-8") as fh:
+            workflow_text = fh.read()
+    except OSError as exc:
+        workflow_text = ""
+        failures += 1
+        print("::error::verify-board-route-backstop: cannot read {0}: "
+              "{1}".format(BOARD_LOOP, exc))
+    if workflow_text:
+        for problem in extract_step_problems(workflow_text):
+            failures += 1
+            print("::error::verify-board-route-backstop: " + problem)
+        # The check must be able to fail: the pre-#548 line, and the
+        # import dropped, are both caught.
+        good = "extracted = normalize_category(parsed.get(\"category\")) is not None"
+        for label, old, new in (
+                ("exact-match extracted line",
+                 good, 'extracted = parsed.get("category") in ("fix", "spec")'),
+                ("import dropped", NORMALIZE_IMPORT + "\n", "")):
+            if old not in workflow_text:
+                failures += 1
+                print("::error::verify-board-route-backstop: mutation {0!r} "
+                      "no longer applies -- update it.".format(label))
+            elif not extract_step_problems(workflow_text.replace(old, new)):
+                failures += 1
+                print("::error::verify-board-route-backstop: mutation {0!r} "
+                      "was NOT caught.".format(label))
+            else:
+                print("[ok] mutation caught ({0})".format(label))
 
     print("verify-board-route-backstop: {0} failure(s).".format(failures))
     return 1 if failures else 0

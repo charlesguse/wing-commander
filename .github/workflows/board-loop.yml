@@ -1021,7 +1021,6 @@ jobs:
           import sys
 
           sys.path.insert(0, ".github/scripts")
-          from board_route_backstop import normalize_category
           from wc_fence_extract import extract_fenced_json
 
           path = os.path.join(os.environ["RUNNER_TEMP"], "claude-execution-output.json")
@@ -1349,6 +1348,7 @@ jobs:
           import sys
 
           sys.path.insert(0, ".github/scripts")
+          from board_route_backstop import normalize_category
           from wc_fence_extract import extract_fenced_json
 
           path = os.path.join(os.environ["RUNNER_TEMP"], "claude-execution-output.json")
