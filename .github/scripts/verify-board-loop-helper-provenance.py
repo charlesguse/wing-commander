@@ -21,19 +21,25 @@ In each of fix, review and readiness:
      actions/checkout step, before any agent step and before any other
      step that references the snapshot;
   2. the three snapshot steps' run: blocks are identical;
-  3. an allowlist over every other run: block. Each python3 call is
+  3. an allowlist over every other run: block. Each python call is
      `python3 -I -`, `python3 -I -c`, or `python3 -I` on a script under
      "$RUNNER_TEMP/wc-pristine/scripts/"; the one exception is the
      gate-suite steps' `python3 .github/scripts/run-local-gates.py` (the
      gate suite checks the agent's change, so it runs the agent's tree by
-     design). -I keeps the working directory off sys.path, so a json.py
-     the agent writes cannot shadow the stdlib. The only sys.path change
-     allowed is inserting the snapshot's scripts directory; a block that
-     imports a board_*, wc_* or verify module must make that insert; a
-     spec_from_file_location path must be under the snapshot; and
-     PYTHONPATH, runpy, __import__, importlib.import_module, exec( and
-     os.chdir are refused. The working tree's .github/scripts must not be
-     named at all.
+     design). The interpreter must be spelled exactly `python3`: a path
+     to it (/usr/bin/python3, venv/bin/python3), a versioned name
+     (python3.12) or plain `python` is refused, so every spelling reaches
+     the same argument check (#593). -I keeps the working directory off
+     sys.path, so a json.py the agent writes cannot shadow the stdlib. The
+     only sys.path change allowed is inserting the snapshot's scripts
+     directory; a block that imports a board_*, wc_* or verify module must
+     make that insert; a spec_from_file_location path must be under the
+     snapshot; and PYTHONPATH, runpy, __import__,
+     importlib.import_module, exec (with or without a space before the
+     parenthesis), the site module (import site, site.addsitedir),
+     sys.executable (a child interpreter started without -I) and os.chdir
+     are refused. The working tree's .github/scripts must not be named at
+     all.
 Then it runs the real snapshot step in a scratch git repository whose
 working tree differs from the commit: the copy must hold the commit's
 content, not the working tree's, and must be read-only.
@@ -65,7 +71,14 @@ GATE_SUITE_CALL = "python3 .github/scripts/run-local-gates.py"
 PRISTINE = "wc-pristine"
 WORKTREE_SCRIPTS_RE = re.compile(
     r"\.github/scripts|\.github['\"]\s*,\s*['\"]scripts")
-PYTHON_CALL_RE = re.compile(r"(?<![\w./-])python3?(?![\w.-])([^\n]*)")
+# Every spelling of a python interpreter: an optional path before it
+# (/usr/bin/, venv/bin/, $HOME/bin/), then python, python3 or python3.N.
+# Only a bare `python3` is allowed (see WHAT IT CHECKS, 3); matching the
+# other spellings is what lets the gate refuse them (#593).
+PYTHON_CALL_RE = re.compile(
+    r"(?<![\w.-])(?P<prefix>[^\s\"'`()=;|&<>]*/)?"
+    r"(?P<name>python(?:3(?:\.\d+)?)?)(?![\w./-])(?P<args>[^\n]*)")
+ALLOWED_PYTHON_NAME = "python3"
 ALLOWED_PYTHON_ARGS_RE = re.compile(
     r" -I (?:- |- *$|-c |\"\$RUNNER_TEMP/wc-pristine/scripts/[A-Za-z0-9_-]+\.py\")")
 ALLOWED_SYS_PATH = (
@@ -73,7 +86,16 @@ ALLOWED_SYS_PATH = (
     'sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))',
 )
 HELPER_IMPORT_RE = re.compile(r"\b(?:from|import)\s+(?:board_|wc_|verify)\w*")
-FORBIDDEN = ("PYTHONPATH", "runpy", "__import__", "import_module", "exec(", "os.chdir")
+FORBIDDEN = ("PYTHONPATH", "runpy", "__import__", "import_module", "os.chdir")
+# (pattern, what the problem names) -- spellings a plain substring misses.
+FORBIDDEN_RES = (
+    (re.compile(r"\bexec\s*\("), "exec("),
+    (re.compile(r"\baddsitedir\b"), "site.addsitedir"),
+    (re.compile(r"\bsite[ \t]*\.[ \t]*[A-Za-z_]"), "the site module"),
+    (re.compile(r"\b(?:import|from)[ \t]+(?:[\w.]+[ \t]*(?:as[ \t]+\w+[ \t]*)?,[ \t]*)*site\b"),
+     "the site module"),
+    (re.compile(r"\bsys[ \t]*\.[ \t]*executable\b"), "sys.executable"),
+)
 
 
 def run_problems(run, is_gate_suite):
@@ -81,7 +103,11 @@ def run_problems(run, is_gate_suite):
     problems = []
     scan = run.replace(GATE_SUITE_CALL, "") if is_gate_suite else run
     for m in PYTHON_CALL_RE.finditer(scan):
-        if not ALLOWED_PYTHON_ARGS_RE.match(m.group(1)):
+        if (m.group("prefix") is not None or m.group("name") != ALLOWED_PYTHON_NAME
+                or scan[m.start() - 1:m.start()] == "/"):
+            problems.append("python interpreter not spelled `python3` (no path, no "
+                            "version): {0!r}".format(m.group(0)[:80]))
+        elif not ALLOWED_PYTHON_ARGS_RE.match(m.group("args")):
             problems.append("python call not in the allowlist (python3 -I -/-c, or "
                             "python3 -I on a snapshot script): {0!r}".format(m.group(0)[:80]))
     rest = scan
@@ -100,6 +126,9 @@ def run_problems(run, is_gate_suite):
     for token in FORBIDDEN:
         if token in scan:
             problems.append("uses {0}".format(token))
+    for pattern, what in FORBIDDEN_RES:
+        if pattern.search(scan):
+            problems.append("uses {0}".format(what))
     if WORKTREE_SCRIPTS_RE.search(scan):
         problems.append("names the working tree's .github/scripts")
     return problems
@@ -247,6 +276,31 @@ def mut_no_isolation(text):
     return _replace_once(text, "python3 -I - <<'PYEOF'", "python3 - <<'PYEOF'")
 
 
+# #593: interpreter spellings and import routes the first allowlist missed.
+# Each is caught by the rule its expected substring names, not by another.
+def _heredoc_call(spelling):
+    return lambda text: _replace_once(text, "python3 -I - <<'PYEOF'", spelling + " <<'PYEOF'")
+
+
+def _heredoc_append(code):
+    return lambda text: _replace_once(text, HEREDOC, HEREDOC + "; " + code)
+
+
+mut_absolute_path = _heredoc_call("/usr/bin/python3 -")
+mut_absolute_path_isolated = _heredoc_call("/usr/bin/python3 -I -")
+mut_env_python = _heredoc_call("/usr/bin/env python3 -")
+mut_venv_path = _heredoc_call("venv/bin/python3 -I -")
+mut_versioned = _heredoc_call("python3.11 -")
+mut_versioned_isolated = _heredoc_call("python3.12 -I -")
+mut_bare_python = _heredoc_call("python -I -")
+mut_exec_space = _heredoc_append('exec (open("helper.py").read())')
+mut_addsitedir = _heredoc_append("import site; site.addsitedir('.')")
+mut_from_site = _heredoc_append("from site import addsitedir as a; a('.')")
+mut_import_site = _heredoc_append("import os, site")
+mut_sys_executable = _heredoc_append(
+    "import subprocess; subprocess.run([sys.executable, '-c', 'import helper'])")
+
+
 def _job_steps(doc, job_id):
     return doc["jobs"][job_id]["steps"]
 
@@ -280,18 +334,35 @@ def mut_snapshot_writable(text):
     return text.replace('chmod -R a-w "$dest"', 'true')
 
 
-# (label, mutation, True when it edits the parsed document rather than text)
+NAME = "not spelled `python3`"
+ARGS = "not in the allowlist"
+
+# (label, mutation, True when it edits the parsed document rather than text,
+#  a substring the first problem must contain, or None for any problem)
 MUTATIONS = [
-    ("a post-agent one-liner imports from the working tree", mut_one_liner_worktree, False),
-    ("a post-agent heredoc imports from the working tree", mut_heredoc_worktree, False),
-    ("the spec-request builder runs from the working tree", mut_spec_builder_worktree, False),
-    ("sys.path gets pathlib.Path(\".github\") / \"scripts\"", mut_pathlib_worktree, False),
-    ("cd .github && python3 -I scripts/board_spec_request_body.py", mut_cd_worktree, False),
-    ("a heredoc python3 runs without -I (the stdlib can be shadowed)", mut_no_isolation, False),
-    ("readiness's snapshot step is removed", mut_snapshot_dropped, True),
-    ("the review job's snapshot is taken after the reviewer agent", mut_snapshot_after_agent, True),
-    ("the snapshot copies the working tree instead of $GITHUB_SHA", mut_snapshot_from_worktree, False),
-    ("the snapshot is left writable", mut_snapshot_writable, False),
+    ("a post-agent one-liner imports from the working tree", mut_one_liner_worktree, False, None),
+    ("a post-agent heredoc imports from the working tree", mut_heredoc_worktree, False, None),
+    ("the spec-request builder runs from the working tree", mut_spec_builder_worktree, False, None),
+    ("sys.path gets pathlib.Path(\".github\") / \"scripts\"", mut_pathlib_worktree, False, None),
+    ("cd .github && python3 -I scripts/board_spec_request_body.py", mut_cd_worktree, False, None),
+    ("a heredoc python3 runs without -I (the stdlib can be shadowed)", mut_no_isolation, False, ARGS),
+    ("/usr/bin/python3 - (absolute path, no -I)", mut_absolute_path, False, NAME),
+    ("/usr/bin/python3 -I - (absolute path)", mut_absolute_path_isolated, False, NAME),
+    ("/usr/bin/env python3 - (no -I)", mut_env_python, False, ARGS),
+    ("venv/bin/python3 -I - (relative path)", mut_venv_path, False, NAME),
+    ("python3.11 - (versioned, no -I)", mut_versioned, False, NAME),
+    ("python3.12 -I - (versioned)", mut_versioned_isolated, False, NAME),
+    ("python -I - (no 3)", mut_bare_python, False, NAME),
+    ("exec (...) with a space", mut_exec_space, False, "uses exec("),
+    ("import site; site.addsitedir(...)", mut_addsitedir, False, "site"),
+    ("from site import addsitedir", mut_from_site, False, "site"),
+    ("import os, site", mut_import_site, False, "uses the site module"),
+    ("subprocess.run([sys.executable, ...])", mut_sys_executable, False, "uses sys.executable"),
+    ("readiness's snapshot step is removed", mut_snapshot_dropped, True, None),
+    ("the review job's snapshot is taken after the reviewer agent", mut_snapshot_after_agent, True, None),
+    ("the snapshot copies the working tree instead of $GITHUB_SHA", mut_snapshot_from_worktree, False,
+     None),
+    ("the snapshot is left writable", mut_snapshot_writable, False, None),
 ]
 
 
@@ -309,11 +380,16 @@ def main():
         if self_test:
             if base:
                 failures += ["the shipped workflow already fails: {0}".format(p) for p in base]
-            for label, mutate, on_doc in MUTATIONS:
+            for label, mutate, on_doc, expect in MUTATIONS:
                 doc = mutate(yaml.safe_load(text)) if on_doc else yaml.safe_load(mutate(text))
                 caught = check(doc, bash, tmproot)
+                if expect is not None:
+                    caught = [p for p in caught if expect in p]
                 if caught:
                     print("note: mutation caught ({0}): {1}".format(label, caught[0]))
+                elif expect is not None:
+                    failures.append("mutation {0!r} was NOT caught by its rule ({1!r})".format(
+                        label, expect))
                 else:
                     failures.append("mutation {0!r} was NOT caught".format(label))
         else:

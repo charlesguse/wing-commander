@@ -91,7 +91,7 @@ COMPOSE_STEP = "Compose the review body"
 BASH = None
 
 SHARED_SCRIPTS = ("wc_fence_extract.py", "verify-board-review-finding-schema.py",
-                  "board_spec_request_body.py")
+                  "wc_schema_pattern.py", "board_spec_request_body.py")
 SHARED_SCHEMAS = ("board-review-finding.schema.json",)
 PRISTINE_DIR = "wc-pristine"
 PRISTINE_SCRIPTS = SHARED_SCRIPTS + ("board_item_marker.py", "wc_step_output.py")
