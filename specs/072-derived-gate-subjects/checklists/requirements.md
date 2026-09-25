@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,20 +31,21 @@
 
 ## Notes
 
-- Three `[NEEDS CLARIFICATION]` markers remain, by design — each is a
-  scope decision the owner must make, not a gap a reasonable default
-  covers:
-  - **FR-002** — the derivation rule, which decides whether
+- All three `[NEEDS CLARIFICATION]` markers are resolved, answered on
+  the lifecycle issue and folded back into the spec (see
+  **Clarifications / Session 2026-09-25**):
+  - **FR-002** — the derivation rule: every job in every
+    `.github/workflows/` file that contains an agent step, which brings
     `board-loop.yml`, `cleanup.yml`, `rebase.yml` and `watchdog.yml`
-    come into scope at all.
-  - **FR-004** — what the derived set is compared against so a dropped
-    subject fails, given that derivation destroys the evidence a job was
-    ever a subject.
-  - **FR-014** — the disposition of the four workflows derivation
-    surfaces: adopt the contract, exclude with a reason, or per-workflow.
-- The markers are posted to the lifecycle issue by the intake stage
-  rather than resolved in-session; `/speckit-clarify` folds the answers
-  back into the spec.
+    into scope.
+  - **FR-004** — the derived set is compared against a checked-in floor
+    of known agent-bearing jobs, which derivation must cover and may
+    exceed; a dropped subject fails, an un-updated floor fails safe.
+  - **FR-014** — the four surfaced workflows are dispositioned per
+    workflow: adopt the contract where the agent step has no wall-clock
+    bound and a bot-acting step follows it, exclude the rest with a
+    recorded reason (`watchdog.yml`'s `diagnose` on its
+    `timeout-minutes: 10`).
 - **Content Quality / "No implementation details"**: the spec names
   existing files, gate constants and mutation names in its Overview,
   Dependencies and Assumptions. These identify the *subject under

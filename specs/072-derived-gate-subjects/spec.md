@@ -67,6 +67,41 @@ They are therefore out of scope here and named in Out of Scope below, so
 that the record shows they were checked rather than forgotten. This
 feature is item 1 only.
 
+## Clarifications
+
+### Session 2026-09-25
+
+- Q: Which structural rule defines the derived subject set? → A: Every
+  job in every `.github/workflows/` file that contains an agent step is
+  a subject — no behavioural narrowing. A job is a subject on the
+  presence of an agent step alone, so any agent job the repository grows
+  is covered the day it ships (Constitution Principle VIII), and
+  `board-loop.yml`, `cleanup.yml`, `rebase.yml` and `watchdog.yml` come
+  into scope and each needs a disposition. Narrowing to "an agent step
+  *and* a later bot-acting step" would make the gate's reach depend on a
+  second reading of each job, and restricting derivation to the eight
+  sweep-stage files would leave a new workflow file uncovered — the same
+  hole one level up. (FR-002)
+- Q: What is the derived set compared against so a disappearing subject
+  fails? → A: A checked-in floor naming the agent-bearing jobs known to
+  exist. Derivation MUST cover every member of the floor and MAY exceed
+  it: a job the floor names that derivation no longer yields fails
+  loudly, while a job derivation yields that the floor does not name is
+  still inspected — so forgetting to update the floor fails safe rather
+  than silently shrinking coverage. A minimum subject count was rejected
+  because it tolerates one job disappearing while another appears.
+  (FR-004, FR-009, SC-002, SC-004)
+- Q: What disposition do the agent-bearing jobs derivation newly
+  surfaces get? → A: Decide per workflow, following spec 052's
+  precedent: adopt the post-agent credential contract where the agent
+  step carries no wall-clock bound and a step that acts as the bot
+  follows it; exclude every other job with its reason recorded in place.
+  `watchdog.yml`'s `diagnose` is excluded on the stated basis that its
+  agent step carries `timeout-minutes: 10`. Adopting the contract
+  everywhere would touch four workflows outside the original sweep for
+  jobs that cannot hold a stale credential; excluding everything would
+  leave real gaps recorded as intentional. (FR-012, FR-013, FR-014)
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - A new agent-bearing job is checked the day it ships (Priority: P1)
@@ -182,8 +217,10 @@ entry naming it with a reason.
   comments and gate fixtures, not as a step. Derivation must read
   structure, not text, so a mention is never mistaken for a subject.
 - **A job whose agent step is its last step and which never acts as the
-  bot afterwards.** There is no stale credential to hold. Whether such a
-  job is a subject at all is the scope question in FR-002.
+  bot afterwards.** There is no stale credential to hold, but under
+  FR-002 it is still a subject — the agent step alone makes it one. Its
+  disposition is settled by FR-014's rule: no bot-acting step follows,
+  so it is excluded with that reason recorded, never silently skipped.
 - **A job whose agent step carries a short wall-clock bound.** Spec 052
   excluded two jobs on exactly this basis (`timeout-minutes: 10`, an
   order of magnitude under the credential's one-hour lifetime);
@@ -213,16 +250,14 @@ entry naming it with a reason.
   gate.
 
 - **FR-002**: The gate MUST define the derived subject set by a stated,
-  structural rule over the workflow files.
-  [NEEDS CLARIFICATION: which rule — (a) every job in every
-  `.github/workflows/` file that contains an agent step, which brings
-  `board-loop.yml`, `cleanup.yml`, `rebase.yml` and `watchdog.yml` into
-  scope and requires US3's disposition for each; (b) only jobs that
-  contain an agent step **and** a later step that acts as the bot, the
-  originating issue's own wording, which narrows the set by behaviour;
-  or (c) derivation restricted to the eight sweep-stage workflow files,
-  which removes the per-job hand-keeping but leaves a new workflow file
-  uncovered?]
+  structural rule over the workflow files: every job in every
+  `.github/workflows/` file that contains an agent step is a subject.
+  The presence of an agent step in the job is the whole condition — no
+  further reading of the job narrows the set, whether or not a later
+  step acts as the bot, and no restriction to a subset of workflow files
+  applies. `board-loop.yml`, `cleanup.yml`, `rebase.yml` and
+  `watchdog.yml` are therefore in scope, and each of their agent-bearing
+  jobs needs the disposition FR-012 through FR-014 require.
 
 - **FR-003**: A job that satisfies the derivation rule MUST be subjected
   to the gate's existing post-agent credential checks with no further
@@ -232,14 +267,21 @@ entry naming it with a reason.
 - **FR-004**: The gate MUST fail when the derived subject set loses a
   member relative to the set the repository is known to contain —
   including an agent step removed from a job, an agent step renamed to a
-  reference the rule no longer matches, and a workflow file deleted.
-  [NEEDS CLARIFICATION: what the derived set is compared against —
-  (a) a checked-in floor naming the agent-bearing jobs known to exist,
-  which derivation must cover and may exceed (new jobs covered
-  automatically, a dropped job fails, but the floor is itself
-  hand-kept); (b) a minimum subject count (cheap, but tolerates one job
-  disappearing while another appears); or (c) something else the
-  maintainer prefers?]
+  reference the rule no longer matches, and a workflow file deleted. The
+  comparison MUST be against a checked-in floor that names the
+  agent-bearing jobs the repository is known to contain — including the
+  jobs the exclusion record covers, since the floor answers "is this job
+  still here" and the exclusion record answers "does the contract apply
+  to it". Derivation MUST cover every member of the floor and MAY exceed
+  it:
+
+  - a job the floor names that derivation no longer yields MUST fail the
+    gate, naming that job;
+  - a job derivation yields that the floor does not name MUST be
+    inspected like any other subject and MUST NOT fail the gate merely
+    for being absent from the floor, so a newly added agent-bearing job
+    is covered with no edit to the gate and an un-updated floor fails
+    safe.
 
 - **FR-005**: The gate MUST fail when derivation yields zero subjects,
   reporting that it is misconfigured or cannot reach its subject, rather
@@ -260,9 +302,10 @@ entry naming it with a reason.
 
 - **FR-009**: The gate's `--self-test` MUST cover the regressions
   derivation newly makes possible, at minimum: a subject dropped
-  (FR-004), a derived set emptied (FR-005), and an agent step spelled in
-  a way the derivation rule fails to recognise. Each mutation MUST be
-  asserted to fail the gate.
+  (FR-004 — a job the floor names that derivation no longer yields), a
+  derived set emptied (FR-005), and an agent step spelled in a way the
+  derivation rule fails to recognise. Each mutation MUST be asserted to
+  fail the gate.
 
 - **FR-010**: The `--self-test` MUST preserve the intent of the existing
   subject-list mutations (`the subject list pointed at a 9th,
@@ -290,15 +333,19 @@ entry naming it with a reason.
 - **FR-014**: The disposition of the agent-bearing jobs derivation newly
   surfaces — `board-loop.yml`'s five agent steps, `cleanup.yml`'s
   `Completion summary`, `rebase.yml`'s `Resolve conflicts`, and
-  `watchdog.yml`'s `diagnose` — MUST be decided and recorded.
-  [NEEDS CLARIFICATION: which disposition — (a) bring every one into
-  full post-agent compliance in this feature, which is the largest
-  change and touches four workflows outside the original sweep;
-  (b) exclude each with a stated reason and open follow-up issues for
-  the ones that genuinely need the contract, keeping this feature to the
-  gate; or (c) per-workflow — adopt the contract where the agent step
-  has no wall-clock bound and a bot-acting step follows it, exclude the
-  rest with a reason?]
+  `watchdog.yml`'s `diagnose` — MUST be decided per workflow, following
+  spec 052's precedent, by this rule: a job whose agent step carries no
+  wall-clock bound **and** which is followed by a step that acts as the
+  bot MUST adopt the post-agent credential contract in this feature;
+  every other agent-bearing job MUST be excluded with its reason
+  recorded per FR-012. `watchdog.yml`'s `diagnose` is excluded on the
+  stated basis that its agent step carries `timeout-minutes: 10`, an
+  order of magnitude under the credential's one-hour lifetime — the same
+  reason spec 052 recorded for the two `auto-update-spec-kit.yml` jobs.
+  `board-loop.yml`'s five agent steps, `cleanup.yml`'s `Completion
+  summary` and `rebase.yml`'s `Resolve conflicts` MUST each be assessed
+  against the rule and land in whichever of the two states it yields,
+  with the outcome recorded either way.
 
 - **FR-015**: Any companion map inside the gate that is keyed to the
   same jobs as the subject list — the stall-reason job map, the
@@ -333,8 +380,10 @@ entry naming it with a reason.
 - **Exclusion record**: the checked-in statement that a given
   agent-bearing job is deliberately not subject to the post-agent
   credential contract, with the reason the defect cannot occur there.
-- **Subject floor**: whatever the derived set is compared against so a
-  disappearing subject fails (FR-004).
+- **Subject floor**: the checked-in list of agent-bearing jobs the
+  repository is known to contain, which the derived set is compared
+  against so a disappearing subject fails. Derivation must cover it and
+  may exceed it (FR-004).
 - **Mutation**: a deliberate, reversible edit to an in-memory copy of
   the shipped tree that the gate's `--self-test` asserts must fail the
   gate.
@@ -357,8 +406,9 @@ entry naming it with a reason.
 
 - **SC-004**: Zero workflow paths or job names are enumerated by hand in
   the gate for the purpose of selecting subjects; any remaining
-  enumeration exists for a stated reason other than subject selection
-  (FR-015).
+  enumeration exists for a stated reason other than subject selection —
+  the FR-004 floor (drop detection), the FR-012 exclusion record
+  (disposition), or an FR-015 companion map with its reason stated.
 
 - **SC-005**: The gate's `--self-test` reports that every documented
   mutation fails, and the mutation count does not decrease relative to
