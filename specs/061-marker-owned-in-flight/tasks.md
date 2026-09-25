@@ -10,7 +10,7 @@ description: "Task list template for feature implementation"
 **Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/,
 quickstart.md (all present)
 
-**Tests**: FR-012 makes the ten checked-in fixtures a hard functional
+**Tests**: FR-012 makes the eleven checked-in fixtures a hard functional
 requirement of this feature (they are User Story 3's own deliverable, not
 optional test coverage) — they are scheduled as that story's phase below.
 
@@ -227,7 +227,7 @@ select an issue and leave `step` empty.
 
 ## Phase 5: User Story 3 - The rule has a home and a gate that can fail it (Priority: P2)
 
-**Goal**: `in_flight_candidate()` is covered by ten checked-in fixtures
+**Goal**: `in_flight_candidate()` is covered by eleven checked-in fixtures
 under Gate 81 (`verify-board-eligibility.py`), so a future change to the
 rule fails a gate rather than a scheduled run three weeks later.
 
