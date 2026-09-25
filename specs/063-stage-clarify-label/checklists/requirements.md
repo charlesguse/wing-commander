@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,32 +31,30 @@
 
 ## Notes
 
-- Three `[NEEDS CLARIFICATION]` markers remain open, by design for this
-  stage. Intake does not block on them; they are posted to lifecycle issue
-  [#483](https://github.com/charlesguse/wing-commander/issues/483) and the
-  clarify stage encodes the answers back into the spec.
-  - **FR-002 — the direction.** Apply the label, retire it, or restate it as
-    maintainer-applied. This is the trade-off the originating issue (#361)
-    explicitly declined to decide locally ("Worth a maintainer call on
-    whether to (a) actually wire up applying/removing the label ... or (b)
-    drop it from the documented label taxonomy"), and it is what routed the
-    request into the pipeline rather than a local fix PR. No reasonable
-    default exists: both directions close the defect, and they close it in
-    opposite directions.
-  - **FR-012 — flip or coexist**, under Direction A only. Every other stage
-    transition in the pipeline removes its predecessor label
-    (`plan.yml:1153-1155`), which argues for a flip; but `stage:spec` is the
-    label the clarify wrapper's working disjunct matches today and the one
-    the end-to-end run's timeline assertion reads, which argues for
-    coexistence. The two readings leave different label sets on every
-    clarification-needed issue, so a maintainer filter written against
-    either one behaves differently. Asked rather than assumed.
-  - **FR-021 — the end-to-end assertion.** Closing
-    `specs/055-unattended-e2e-gates/`'s recorded gap is only possible under
-    Direction A, and only as a conditional assertion; an unconditional one
-    reproduces the impossible-pass bug `auto-release.yml:1143-1147` exists to
-    record. Whether that work belongs in this feature or its own is a scope
-    call with real cost on either side.
+- All three `[NEEDS CLARIFICATION]` markers were resolved on lifecycle issue
+  [#483](https://github.com/charlesguse/wing-commander/issues/483) and folded
+  into the spec's Clarifications section. None remain.
+  - **FR-002 — the direction: (a) wire it up.** The pipeline applies and
+    clears the label, so the lifecycle is readable from the issue and the
+    end-to-end clarify gate becomes assertable. This was the trade-off the
+    originating issue (#361) explicitly declined to decide locally ("Worth a
+    maintainer call on whether to (a) actually wire up applying/removing the
+    label ... or (b) drop it from the documented label taxonomy"), and it is
+    what routed the request into the pipeline rather than a local fix PR.
+    Direction B (FR-016..FR-020) is dropped; its numbers are left unreused so
+    existing citations still resolve.
+  - **FR-012 — flip.** `stage:clarify` replaces `stage:spec`: one current
+    stage label at a time, as with every other transition
+    (`plan.yml:1153-1155`). The coexistence reading was rejected, so a
+    maintainer filter on `stage:spec` now means "awaiting spec review" only.
+    The clarify wrapper's second disjunct — dead until now — becomes the one a
+    pipeline-driven run matches, which is the load-bearing consequence
+    planning must carry (FR-003, FR-004).
+  - **FR-021 — (a) in scope here.** The conditional end-to-end assertion lands
+    in this same change, gated on that run's intake having actually posted a
+    questionnaire; an unconditional one would reproduce the impossible-pass
+    bug `auto-release.yml:1143-1147` exists to record. SC-007 was added so the
+    skip path is observable rather than silent.
 - Judgment calls made rather than marked, to stay inside the three-marker
   limit:
   - The enforcement gate covers the whole documented lifecycle taxonomy
@@ -69,19 +67,20 @@
     and flip-before-PR-mirror ordering (FR-023) each follow an existing,
     cited precedent in the repository, so they are specified rather than
     asked about.
-  - Whether the `stage:clarify` disjunct in the clarify wrapper's trigger is
-    removed under Direction B is specified as conditional on recorded
+  - Whether the `stage:clarify` disjunct in the clarify wrapper's trigger was
+    removed under Direction B was specified as conditional on recorded
     evidence that no open issue carries the label (FR-018) rather than left
-    open — the invariants FR-003 and FR-004 decide it either way.
-- Direction-conditional requirements are grouped under explicit "Direction A"
-  / "Direction B" headings rather than interleaved, so whichever branch the
-  answer selects, the other is dropped wholesale at planning time and no
-  requirement silently applies to both.
+    open — the invariants FR-003 and FR-004 decided it either way. Moot now
+    that Direction A is in force: the disjunct stays and starts doing work.
+- Direction-conditional requirements were grouped under explicit "Direction A"
+  / "Direction B" headings rather than interleaved, so the unselected branch
+  could be dropped wholesale once the answer arrived. Direction B's heading is
+  retained marked NOT TAKEN, carrying no planning or implementation work.
 - Domain-vocabulary note: this repository's product is pipeline machinery, so
   "lifecycle issue", "stage label", "gate", and "adopter" are the
   stakeholder's own language. The requirements state outcomes — the label is
   applied, the trigger still fires, the gate fails on the pre-change tree —
   and the `file:line` citations are evidence for where the defect lives, not
   instructions for how to fix it.
-- Requirement completeness is otherwise met; the spec is ready for
-  `/speckit-clarify`, and ready for `/speckit-plan` once FR-002 is answered.
+- Requirement completeness is met and all clarifications are resolved; the
+  spec is ready for `/speckit-plan`.

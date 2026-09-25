@@ -88,27 +88,32 @@ closing it has two opposite, defensible shapes:
   reference to it goes with it. The taxonomy shrinks to what the pipeline
   actually writes, and one fewer label is asked of every adopter.
 
-Choosing between them is the owner's trade-off, which is why #361 was left
-unrouted with "Worth a maintainer call" rather than fixed. This
-specification pins everything that is true under either choice, marks the
-choice itself, and states the requirements each branch carries so planning
-can start the moment it is answered.
+Choosing between them was the owner's trade-off, which is why #361 was left
+unrouted with "Worth a maintainer call" rather than fixed. **The owner chose
+"wire it up"** (see Clarifications): the pipeline applies the label while
+questions are open, replacing `stage:spec`, and restores `stage:spec` when
+they are answered. The requirements below keep the invariant set, carry
+Direction A in force, and retain Direction B's heading only to record that it
+was not taken.
 
 ## Clarifications
 
-### Session 2026-09-24 — open, posted to lifecycle issue #483
+### Session 2026-09-25 — resolved on lifecycle issue #483
 
-Three questions are open and are carried as `[NEEDS CLARIFICATION]` markers
-in the requirements below. They are posted to the lifecycle issue; the
-clarify stage encodes the answers back into this spec.
+All three open questions were answered. No `[NEEDS CLARIFICATION]` markers
+remain.
 
-- **FR-002** — the direction: apply the label, retire it, or restate it as
-  maintainer-applied. Scope-defining; every requirement under "Direction A"
-  or "Direction B" below is conditional on it.
-- **FR-012** — under Direction A only: does `stage:clarify` *replace*
-  `stage:spec` while questions are open, or coexist with it?
-- **FR-021** — does this feature also close the end-to-end run's missing
-  clarification-gate assertion, or is that left to a later change?
+- **FR-002 — the direction**: **(a) wire it up.** The pipeline applies
+  `stage:clarify` while clarification questions are open and clears it when
+  they are answered, so the lifecycle is readable from the issue itself and
+  the end-to-end clarify gate becomes assertable. Direction A (FR-010..FR-015,
+  FR-023) is in force; Direction B (FR-016..FR-020) is dropped.
+- **FR-012 — flip or coexist**: **flip.** `stage:clarify` *replaces*
+  `stage:spec` while questions are open — one current stage label at a time,
+  as with every other stage transition.
+- **FR-021 — the end-to-end assertion**: **(a) in scope here.** A conditional
+  clarification assertion lands in this same change, gated on that run's
+  intake having actually posted a questionnaire.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -136,7 +141,9 @@ Deliverable is met when the count of labels with neither is zero.
    states that no workflow applies it and who does.
 2. **Given** the merged change, **When** a reader greps the shipped
    workflows and composite actions for `stage:clarify`, **Then** every
-   surviving reference is consistent with the direction chosen in FR-002 —
+   surviving reference is consistent with a label the pipeline writes — the
+   clarify wrapper's disjunct, `plan.yml`'s two removal lines and
+   `clarify.yml:1292`'s `stage-label` all have something real to act on, and
    no reader or remover is left pointing at a label nothing writes.
 3. **Given** the pre-change tree, **When** the new taxonomy gate runs,
    **Then** it fails and names `stage:clarify` as documented-but-unapplied.
@@ -147,8 +154,8 @@ Deliverable is met when the count of labels with neither is zero.
 
 A requester answers the clarification questionnaire on their lifecycle
 issue. The clarify stage picks the reply up, folds the answers into the draft
-spec, and the lifecycle continues — exactly as it does today, whichever
-direction FR-002 takes.
+spec, and the lifecycle continues — exactly as it does today, now driven by
+an issue carrying `stage:clarify` instead of `stage:spec`.
 
 **Why this priority**: The label change touches the trigger condition of the
 one stage that is driven by a human reply. `docs/architecture.md:358-364`
@@ -163,10 +170,11 @@ run starts and folds.
 
 **Acceptance Scenarios**:
 
-1. **Given** an issue carrying the label set the chosen direction leaves
-   while questions are open, **When** the requester or a maintainer replies,
-   **Then** `wing-commander-2-clarify.yml`'s trigger condition evaluates
-   true and the clarify stage runs.
+1. **Given** an issue carrying `stage:clarify` alone while questions are
+   open, **When** the requester or a maintainer replies, **Then**
+   `wing-commander-2-clarify.yml`'s trigger condition evaluates true — via
+   its second disjunct, which a pipeline-driven run now reaches for the first
+   time — and the clarify stage runs.
 2. **Given** a lifecycle issue that was already mid-clarification when the
    change merged (it carries `stage:spec`, or a hand-applied
    `stage:clarify`), **When** the requester replies, **Then** the clarify
@@ -213,19 +221,21 @@ label row to the docs with no writer and confirm the gate goes red.
 
 ### Edge Cases
 
-- **A questionnaire is posted and never answered.** Whatever label state the
-  chosen direction leaves must be terminal-safe: the issue must still be
-  advanceable by hand, and `plan.yml`'s stage flip must still leave exactly
-  one `stage:*` label behind when the spec is eventually merged.
+- **A questionnaire is posted and never answered.** The issue sits at
+  `stage:clarify` indefinitely, which must be terminal-safe: the issue must
+  still be advanceable by hand, and `plan.yml`'s stage flip must still leave
+  exactly one `stage:*` label behind when the spec is eventually merged — its
+  two existing `stage:clarify` removal lines now being the ones that clear
+  it.
 - **A second clarification round.** The clarify stage can itself end in
   `needs-clarification` (`clarify.yml:960`) and post a follow-up
   questionnaire. Applying a label that is already present, or removing one
   that is already absent, must be a no-op rather than a failure.
 - **A clarify stall while questions are open.** `clarify.yml:1292` passes
   `stage-label: "stage:clarify"` to the stall notice, which adds
-  `stage:stalled` and removes the named label. Under Direction A this input
-  starts doing what it says; under Direction B it must be emptied rather
-  than left naming a retired label.
+  `stage:stalled` and removes the named label. This input now starts doing
+  what it says, and the issue is left carrying `stage:stalled` alone rather
+  than `stage:stalled` beside a `stage:clarify` that was never removed.
 - **An adopter repository with no label taxonomy at all.** `plan.yml:1151`
   records the rule: create-before-add, because "single-stage adopters have no
   label taxonomy". A new `--add-label` that assumes the label exists fails
@@ -234,7 +244,9 @@ label row to the docs with no writer and confirm the gate goes red.
   drafted with zero open questions never enters the clarification state, so
   any assertion that demands the label unconditionally makes a genuine pass
   impossible — the precise regression `auto-release.yml:1143-1147`'s comment
-  was written to record.
+  was written to record. The FR-021 assertion must therefore read that run's
+  own clarification-needed signal and assert only when a questionnaire was
+  actually posted.
 - **A spec PR mirroring issue labels.** `intake.yml:1278` copies the issue's
   labels onto the spec PR (clarify has no such step). A stage flip must
   happen before that mirror, or the PR snapshots the label set the issue just
@@ -249,20 +261,19 @@ label row to the docs with no writer and confirm the gate goes red.
   composite action, or be documented in the same table as applied by a human
   with the reason no workflow writes it. `stage:clarify` MUST satisfy one of
   those two; today it satisfies neither.
-- **FR-002**: The direction taken for `stage:clarify` MUST be one of the
-  following, chosen once and applied consistently to code, documentation and
-  gates: [NEEDS CLARIFICATION: (a) wire it up — the pipeline applies the
-  label while clarification questions are open and clears it when they are
-  answered (FR-010..FR-015); (b) retire it — remove it from the documented
-  taxonomy and from every shipped reference (FR-016..FR-020); (c) keep it
-  documented but restate it as a maintainer-applied convenience label the
-  pipeline never writes, recorded as an exemption in the FR-007 gate.]
+- **FR-002**: The direction taken for `stage:clarify` MUST be **(a) wire it
+  up** — the pipeline applies the label while clarification questions are open
+  and clears it when they are answered — applied consistently to code,
+  documentation and gates. Direction A's requirements (FR-010..FR-015, FR-023)
+  are in force. The two alternatives considered and rejected were retiring the
+  label from the taxonomy (Direction B, FR-016..FR-020) and restating it as a
+  maintainer-applied convenience label recorded as an FR-007 exemption;
+  neither is implemented.
 - **FR-003**: A reply on a lifecycle issue awaiting clarification MUST
-  continue to reach the clarify stage. Whatever label set the chosen
-  direction leaves on such an issue MUST satisfy
-  `wing-commander-2-clarify.yml`'s trigger condition, and the adopter-facing
-  copy of that condition in `docs/adoption.md` MUST be updated in the same
-  change so the two agree.
+  continue to reach the clarify stage. An issue carrying `stage:clarify`
+  alone MUST satisfy `wing-commander-2-clarify.yml`'s trigger condition, and
+  the adopter-facing copy of that condition in `docs/adoption.md` MUST agree
+  with the shipped condition after the change.
 - **FR-004**: No lifecycle issue in flight at merge time may be stranded. An
   issue carrying `stage:spec` — or a hand-applied `stage:clarify` — when the
   change lands MUST still trigger clarify on a reply and MUST still flip
@@ -271,8 +282,8 @@ label row to the docs with no writer and confirm the gate goes red.
   MUST be corrected in the same change, treated as code per CLAUDE.md's
   load-bearing-comments rule. At minimum this covers
   `auto-release.yml:1143-1147` ("stage:clarify is never applied as an issue
-  label by any stage workflow"), which becomes false under Direction A and
-  misleading under Direction B.
+  label by any stage workflow"), which this change makes false, and which
+  FR-021 replaces with a conditional assertion.
 - **FR-006**: Adopter-facing documentation MUST be consistent with the chosen
   direction at every site that mentions the label:
   `docs/setup.md`'s label table and label-creation script,
@@ -298,7 +309,7 @@ label row to the docs with no writer and confirm the gate goes red.
 
 ### Functional Requirements — Direction A (apply the label)
 
-Applies only if FR-002 resolves to (a).
+In force: FR-002 resolved to (a).
 
 - **FR-010**: Whenever the pipeline posts a clarification questionnaire to a
   lifecycle issue — the intake decision's clarification-needed arm and the
@@ -306,13 +317,14 @@ Applies only if FR-002 resolves to (a).
   `stage:clarify` by the end of that run.
 - **FR-011**: Whenever the pipeline announces that the spec PR is ready for
   review — no open questions remain — the issue MUST NOT carry
-  `stage:clarify`, and MUST be left in the single stage label the taxonomy
-  documents for a spec awaiting review.
+  `stage:clarify`, and MUST be left carrying `stage:spec` alone, the single
+  stage label the taxonomy documents for a spec awaiting review. Clearing the
+  label is therefore a flip back, not a bare removal.
 - **FR-012**: While questions are open, the issue's stage labels MUST be
-  [NEEDS CLARIFICATION: `stage:clarify` alone, replacing `stage:spec` the way
-  every other stage transition flips its predecessor (`plan.yml:1153-1155`);
-  or `stage:spec` and `stage:clarify` together, so a filter on `stage:spec`
-  keeps matching the whole spec phase.]
+  `stage:clarify` alone: applying it MUST remove `stage:spec`, the way every
+  other stage transition flips its predecessor (`plan.yml:1153-1155`). At most
+  one `stage:*` label is current at any time, so a maintainer reading the
+  issue's labels sees "waiting on an answer" and not "awaiting spec review".
 - **FR-013**: The label decision MUST be derived from the same single,
   schema-validated signal that decides which callout to post, not from an
   independently recomputed condition, and MUST NOT depend on agent judgment
@@ -325,45 +337,38 @@ Applies only if FR-002 resolves to (a).
   clarification questionnaire, discard pushed agent work, or fail a run whose
   spec commits are already on the branch; it MUST be visible in the run's
   step summary rather than silent.
-- **FR-023**: In intake, the label write MUST run before "Label spec PR to
-  match the issue" (`intake.yml:1278`), the step that mirrors the issue's
-  labels onto the spec PR, so the PR snapshots the stage it belongs to
-  (`plan.yml:1156-1158` states the same ordering rule for the plan PR).
+- **FR-023**: In intake, the flip MUST run after the agent's own `stage:spec`
+  application (`intake.yml:711`) and before "Label spec PR to match the issue"
+  (`intake.yml:1278`), the step that mirrors the issue's labels onto the spec
+  PR, so the PR snapshots the stage it belongs to rather than the one the
+  issue just left (`plan.yml:1156-1158` states the same ordering rule for the
+  plan PR).
 
-### Functional Requirements — Direction B (retire the label)
+### Functional Requirements — Direction B (retire the label) — NOT TAKEN
 
-Applies only if FR-002 resolves to (b).
-
-- **FR-016**: The label MUST be removed from `docs/setup.md`'s table and
-  label-creation script, and from every adopter-facing description of the
-  clarify trigger.
-- **FR-017**: The now-dead shipped references MUST be removed with it:
-  `plan.yml`'s two best-effort removal lines and `clarify.yml:1292`'s
-  `stage-label` input value (emptied, not left naming a retired label — the
-  input documents empty as valid).
-- **FR-018**: The `stage:clarify` disjunct in
-  `wing-commander-2-clarify.yml`'s trigger MUST only be removed if the change
-  also records that no open lifecycle issue in this repository or the
-  end-to-end scratch repository carries the label; otherwise it MUST be kept
-  with a comment stating it exists for hand-applied labels on adopter
-  repositories. Either way FR-003 and FR-004 hold.
-- **FR-019**: The change MUST state, in adopter-facing documentation, that
-  maintainers who already created the label may delete it and that nothing in
-  the pipeline reads it.
-- **FR-020**: After retirement, the `stage:clarify` string MUST NOT appear in
-  any shipped workflow, composite action, or adopter-facing document, and the
-  FR-007 gate MUST be what keeps it from returning.
+FR-002 resolved to (a), so Direction B does not apply. FR-016..FR-020 were
+the retirement branch — removing the label from `docs/setup.md`'s table and
+creation script, deleting `plan.yml`'s two removal lines and emptying
+`clarify.yml:1292`'s `stage-label`, conditionally dropping the clarify
+wrapper's `stage:clarify` disjunct, telling adopters they may delete the
+label, and letting the FR-007 gate keep the string from returning. They are
+retired with the branch and carry no planning or implementation work; the
+numbers are left unreused so the citations in this document and in issue #483
+still resolve.
 
 ### Functional Requirements — end-to-end assertion
 
-- **FR-021**: The end-to-end run's clarification gate MUST
-  [NEEDS CLARIFICATION: (a) start asserting the label — Direction A only, and
-  only conditionally on that run's intake having actually posted a
-  questionnaire, since a zero-question spec never enters the state and an
-  unconditional assertion reproduces the impossible-pass bug
-  `auto-release.yml:1143-1147` records; or (b) stay out of scope here, with
-  the existing comment corrected per FR-005 and the missing assertion left to
-  the successor of `specs/055-unattended-e2e-gates/`.]
+- **FR-021**: The end-to-end run's clarification gate MUST start asserting the
+  label in this same change, closing the gap
+  `specs/055-unattended-e2e-gates/research.md:450-453` records ("the
+  clarification gate, which today has no assertion at all"). The assertion
+  MUST be conditional on that run's intake having actually posted a
+  questionnaire, read from the same clarification-needed signal FR-013 names:
+  a zero-question spec never enters the state, and an unconditional assertion
+  reproduces the impossible-pass bug `auto-release.yml:1143-1147` records. When
+  the condition does not hold, the run MUST pass and MUST say in its step
+  summary that the assertion was skipped because no questionnaire was posted —
+  a silent skip is indistinguishable from the missing assertion this replaces.
 
 ### Key Entities
 
@@ -379,7 +384,8 @@ Applies only if FR-002 resolves to (b).
   documented taxonomy.
 - **Clarification-needed signal** — the single derived output of the intake
   and clarify decision steps that says whether open questions remain; the
-  only legitimate input to a `stage:clarify` write under Direction A.
+  only legitimate input to a `stage:clarify` write (FR-013) and to the
+  end-to-end assertion's condition (FR-021).
 - **Label exemption registry** — the checked-in record of documented labels
   that deliberately have no workflow writer, each with its reason.
 
@@ -397,9 +403,12 @@ Applies only if FR-002 resolves to (b).
   questionnaire posted, a reply, the answers folded, the spec advanced — with
   no manual label intervention.
 - **SC-004**: A maintainer looking only at a lifecycle issue's labels can
-  correctly answer "is this spec waiting on me for an answer?" — under
-  Direction A because a label says so, under Direction B or C because the
-  documentation no longer claims a label does.
+  correctly answer "is this spec waiting on me for an answer?" — `stage:clarify`
+  present means yes, `stage:spec` means the spec is awaiting review instead,
+  and the two never appear together.
+- **SC-007**: The end-to-end run's clarification gate reports a definite
+  outcome — asserted or explicitly skipped for want of a questionnaire — in
+  every run, replacing the zero assertions it makes today.
 - **SC-005**: No stage label regresses: for the first full pipeline run after
   the change, every documented stage label the run passes through appears in
   the issue's label timeline, and the end-to-end run's stage-label assertion
@@ -410,9 +419,10 @@ Applies only if FR-002 resolves to (b).
 
 ## Assumptions
 
-- The three questions above are the only decisions this feature needs from
-  the owner. Everything else is either invariant across directions or has a
-  precedent in the repository that makes it a mechanical choice.
+- The three questions above were the only decisions this feature needed from
+  the owner, and all three are answered (Clarifications). Everything else
+  either was invariant across directions or has a precedent in the repository
+  that makes it a mechanical choice.
 - The FR-007 gate covers the whole documented lifecycle taxonomy, not just
   `stage:clarify`. Every other documented label already has a writer (see the
   Overview table), so a taxonomy-wide check passes today except for the one
@@ -421,9 +431,8 @@ Applies only if FR-002 resolves to (b).
 - `stage:stalled` and `spec:NNN-slug` are already documented as created on
   the fly by the pipeline (`docs/setup.md:158-160`) and are applied; they are
   not affected.
-- Direction A's label writes are ordinary best-effort GitHub API calls in the
-  same class as the existing stage flips; no new permission or token scope is
-  needed.
+- The label writes are ordinary best-effort GitHub API calls in the same class
+  as the existing stage flips; no new permission or token scope is needed.
 - The end-to-end scratch-repository run remains the only mechanism that
   proves clarify-stage behaviour in Actions; this feature adds no new
   end-to-end harness.
@@ -450,6 +459,8 @@ Applies only if FR-002 resolves to (b).
 
 ## Out of Scope
 
+- Retiring `stage:clarify` from the taxonomy, or restating it as a
+  maintainer-applied convenience label — the two directions FR-002 rejected.
 - The `spec-request`, `model:*`, `disposition:*`, `board:*` and
   `pipeline-defect` labels. Only the lifecycle `stage:*` taxonomy is under
   specification, though the FR-007 gate may cover any documented label whose
@@ -461,4 +472,4 @@ Applies only if FR-002 resolves to (b).
 - Rewriting merged specification documents under `specs/` that describe the
   pre-change behaviour.
 - Any new end-to-end harness, scratch repository, or additional driven gate
-  beyond the assertion FR-021 asks about.
+  beyond the conditional clarification assertion FR-021 now requires.
