@@ -4,8 +4,13 @@
 
 ```python
 def check_rate_limit(run_transcript_path: str) -> dict | None:
-    """Delegates to wing-commander-agent-verdict's existing classifier
-    (spec 047) — returns its rate-limited evidence dict, or None."""
+    """Returns the rate-limited evidence dict only when the cited run's
+    transcript carries rate-limit evidence (a `rate_limit_event`, or a
+    terminal `api_error` with `api_error_status: 429`) AND its terminal
+    result records one turn (`num_turns` <= 1) AND zero cost
+    (`total_cost_usd` == 0); else None. Missing or non-numeric turns/cost
+    → None. A `rate_limit_event` alone is not enough: ordinary long runs
+    emit informational ones (#402)."""
 
 def check_action_bump(run_commit_sha: str, workflow_files: list[str],
                       cited_workflow_path: str | None) -> dict | None:
@@ -85,3 +90,7 @@ Fixtures (FR-064 bullet 1), each a checked-in transcript/workflow-pin pair:
    each proven by mutating the real workflow.
 9. `find_cited_run()`: a quoted or fenced link is ignored, a watchdog
    "First seen" run is preferred, a plain body link still works.
+10. Rate-limit evidence without one turn and zero cost → NOT closed
+    (#402): a many-turn, nonzero-cost run carrying a `rate_limit_event`,
+    a one-turn nonzero-cost 429, and a 429 with no cost recorded all
+    `proceed`. Restoring the evidence-only rule must fail these.

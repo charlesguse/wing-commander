@@ -13,6 +13,12 @@ missed a genuine 429, would be invisible on every fixture except the exact
 one it broke -- this gate pins all six documented branches, including the
 one FR-012 exists to forbid (an "already fixed" proposal must NOT close).
 
+#402: the rate-limit ground closed a 451-turn, $43 run because it carried
+an informational `rate_limit_event`. That ground needs rate-limit evidence
+AND one turn AND zero cost; fixtures pin a many-turn paid run, a one-turn
+paid run, and a run with no cost recorded as NOT closed, and a mutation
+that restores the evidence-only rule must fail them.
+
 #505: both close grounds are only as trustworthy as the run they read. The
 triage job's "Locate a cited run" step used to scan the issue body AND
 every comment unfiltered, and check_action_bump() compared every
@@ -81,6 +87,15 @@ TRIAGE_CASES = {
     "evidence-unavailable": {"outcome": "proceed", "ground": "evidence_unavailable"},
     "already-fixed-proposal": {"outcome": "handover", "ground": "already_fixed_proposal"},
 }
+# The rate-limit ground needs evidence AND one turn AND zero cost (#402):
+# rate-limit evidence on a many-turn/paid run, a paid one-turn run, or a
+# run with no cost recorded must NOT close.
+RATE_LIMIT_GUARD_CASES = {
+    "rate-limit-event-many-turns": {"outcome": "proceed", "ground": None},
+    "429-one-turn-nonzero-cost": {"outcome": "proceed", "ground": None},
+    "429-cost-missing": {"outcome": "proceed", "ground": None},
+}
+TRIAGE_CASES.update(RATE_LIMIT_GUARD_CASES)
 PIN_CASES = {
     "action-bump-ahead": "divergent",
     "pins-equal": "none",
@@ -98,6 +113,79 @@ GENUINE_FAILURE_TRANSCRIPT = os.path.join(
 def _load(path):
     with open(path, encoding="utf-8") as fh:
         return json.load(fh)
+
+
+def run_triage_cases(cases, verbose=True):
+    """One problem string per triage fixture whose verdict is wrong."""
+    problems = []
+    for case, expected in sorted(cases.items()):
+        case_dir = os.path.join(FIXTURES_DIR, case)
+        issue_path = os.path.join(case_dir, "issue.json")
+        if not os.path.isfile(issue_path):
+            problems.append("{0} is missing issue.json.".format(case_dir))
+            if verbose:
+                print("::error::verify-board-triage: " + problems[-1])
+            continue
+        issue = _load(issue_path)
+        # Fixture-declared transcript paths are repo-root-relative;
+        # normalise against this process's own cwd so the gate is safe to
+        # invoke from any directory.
+        transcript_path = issue.get("cited_run_transcript_path")
+        if transcript_path and not os.path.isabs(transcript_path):
+            issue = dict(issue)
+            issue["cited_run_transcript_path"] = os.path.join(CWD, transcript_path)
+        got = triage(issue, cited_run="https://github.com/example/example/actions/runs/1")
+        ok = got.get("outcome") == expected["outcome"] and got.get("ground") == expected["ground"]
+        if case == "already-fixed-proposal" and got.get("outcome") == "closed":
+            ok = False  # FR-012: never a close ground, regardless of anything else
+        if not ok:
+            problems.append("{0}: expected outcome={1!r} ground={2!r}, got "
+                            "{3!r}.".format(case, expected["outcome"],
+                                            expected["ground"], got))
+            if verbose:
+                print("::error::verify-board-triage: " + problems[-1])
+        elif verbose:
+            print("[ok] {0}: triage() == outcome={1!r} ground={2!r}".format(
+                case, got.get("outcome"), got.get("ground")))
+    return problems
+
+
+def _guardless_check_rate_limit(run_transcript_path):
+    """The pre-#402 rule: any rate-limit evidence closes, whatever the run's
+    turns or cost. Used only as a mutation."""
+    try:
+        with open(run_transcript_path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    records = data if isinstance(data, list) else [data]
+    result = board_triage._last_of_type(records, "result")
+    if not result:
+        return None
+    if board_triage._last_of_type(records, "rate_limit_event") or (
+            result.get("terminal_reason") == "api_error"
+            and str(result.get("api_error_status") or "") == "429"):
+        return {"rate_limit_event": True, "api_error_status": "429",
+                "num_turns": result.get("num_turns"),
+                "cost_usd": result.get("total_cost_usd")}
+    return None
+
+
+def _mutation_check_rate_limit_guard():
+    """Dropping the one-turn/zero-cost guard (the #402 regression) must fail
+    the rate-limit fixtures."""
+    original = board_triage.check_rate_limit
+    board_triage.check_rate_limit = _guardless_check_rate_limit
+    try:
+        caught = bool(run_triage_cases(RATE_LIMIT_GUARD_CASES, verbose=False))
+    finally:
+        board_triage.check_rate_limit = original
+    if caught:
+        print("note: mutation caught (rate-limit one-turn/zero-cost guard "
+              "removed).")
+        return []
+    return ["mutation 'rate-limit one-turn/zero-cost guard removed' was NOT "
+            "caught"]
 
 
 def run_fixtures():
@@ -119,34 +207,7 @@ def run_fixtures():
               "{0}".format(", ".join(missing_cases)))
         return 1
 
-    for case, expected in sorted(TRIAGE_CASES.items()):
-        case_dir = os.path.join(FIXTURES_DIR, case)
-        issue_path = os.path.join(case_dir, "issue.json")
-        if not os.path.isfile(issue_path):
-            failures += 1
-            print("::error::verify-board-triage: {0} is missing "
-                  "issue.json.".format(case_dir))
-            continue
-        issue = _load(issue_path)
-        # Fixture-declared transcript paths are repo-root-relative;
-        # normalise against this process's own cwd so the gate is safe to
-        # invoke from any directory.
-        transcript_path = issue.get("cited_run_transcript_path")
-        if transcript_path and not os.path.isabs(transcript_path):
-            issue = dict(issue)
-            issue["cited_run_transcript_path"] = os.path.join(CWD, transcript_path)
-        got = triage(issue, cited_run="https://github.com/example/example/actions/runs/1")
-        ok = got.get("outcome") == expected["outcome"] and got.get("ground") == expected["ground"]
-        if case == "already-fixed-proposal" and got.get("outcome") == "closed":
-            ok = False  # FR-012: never a close ground, regardless of anything else
-        if not ok:
-            failures += 1
-            print("::error::verify-board-triage: {0}: expected outcome={1!r} "
-                  "ground={2!r}, got {3!r}.".format(
-                      case, expected["outcome"], expected["ground"], got))
-        else:
-            print("[ok] {0}: triage() == outcome={1!r} ground={2!r}".format(
-                case, got.get("outcome"), got.get("ground")))
+    failures += len(run_triage_cases(TRIAGE_CASES))
 
     for case, expected in sorted(PIN_CASES.items()):
         case_dir = os.path.join(FIXTURES_DIR, case)
@@ -666,7 +727,8 @@ def _mutation_check_find_cited_run():
 def run():
     failures = run_fixtures()
 
-    problems = run_find_cited_run_cases()
+    problems = _mutation_check_rate_limit_guard()
+    problems.extend(run_find_cited_run_cases())
     problems.extend(_mutation_check_find_cited_run())
 
     problems.extend(run_scoping_cases())
