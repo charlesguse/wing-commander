@@ -116,9 +116,12 @@ and confirm the second queues rather than running concurrently. Set
 `WING_COMMANDER_BOARD_LOOP_PAUSED=true` and confirm the next scheduled run
 performs no durable action and reports the pause as a pause. Start an
 `implement.yml` run and confirm the loop stands down and records why.
-Post a maintainer stop comment (first line `stop` or `/stop`, optionally
-with a short reason; research.md D17) on the issue mid-item and confirm the
-loop halts before its next durable action and records where it stopped.
+Post a maintainer stop comment on the issue mid-item and confirm the loop
+halts before its next durable action and records where it stopped. The
+comment's first line (after any quote, fenced block or HTML comment) must
+be a stop command -- `stop`, `/stop`, or either followed by punctuation or
+` - reason` / `: reason`; `stop this please` is prose and does not count
+(research.md D17 has the exact rule).
 
 ## 10. Untrusted content framing
 

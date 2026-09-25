@@ -327,18 +327,32 @@ changes (issue, not PR), not the cancellation mechanism itself.
 **What counts as a stop request** (issue #539): a *command*, not the word.
 pr-conversation classifies a comment into its `stop` category with an LLM
 — the comment has to *be* a stop request. The board loop's check
-(`board_stop_check.is_stop_command()`) is deterministic, so it matches a
-first-line command instead: an authorized comment is a stop request only
-when its first non-empty line, stripped of surrounding whitespace, starts
-with `stop` or `/stop` (case-insensitive) followed by end of line,
-whitespace, punctuation (`. ! ? : , ;`), a dash (`—`, `–`, or a `-` not
-followed by a word character), and then an optional short reason on that
-line — e.g. `stop`, `Stop.`, `/stop — wrong approach`,
-`stop, this is wrong`. The word in prose (`it should stop retrying and
-finish`, `Stopping here`, `non-stop`), a `stop` only on a later line, and a
-first line that is a `>` quote or a code fence never count. The original
-`\bstop\b` word match read #402's owner analysis as a stop and wedged the
-board on it.
+(`board_stop_check.is_stop_command()`, whose module docstring is the
+canonical statement) is deterministic, so it matches a first-line command
+instead, and errs toward "not a stop": a false stop wedges the board.
+
+1. Skip `>` quote lines, fenced code (a line starting with ```` ``` ```` or
+   `~~~` toggles the fence; fence lines and their contents are skipped)
+   and whole-line `<!-- … -->` comments. Take the first remaining
+   non-empty line; if none remains, it is not a stop.
+2. Normalise it: delete U+FEFF and zero-width characters (U+200B/200C/
+   200D/2060), strip whitespace, drop leading `@handle` tokens
+   (`^(?:@[\w-]+(?:\[bot\])?[\s,:]+)+`), then leading `*`/`_` emphasis.
+3. It must start (case-insensitive) with an optional `please` plus
+   separator, then `stop` or `/stop`, optional closing `*`/`_`, then one
+   of: end of line; punctuation `. ! : , ; … ) 。 ！ ）`; a dash (`—`, `–`,
+   or `-` not followed by a word character); or whitespace followed by a
+   dash or colon. The rest of the line is the reason.
+
+So `stop`, `Stop.`, `/stop`, `**stop**`, `Please stop.`,
+`@wing-commander stop`, `stop: bad plan`, `/stop — reason`, and `stop`
+under a quote-reply or a fenced log all count. Prose never does, including
+prose that begins with "Stop" (`stop this please`,
+`Stop the presses: this is great`), a question (`stop?`), `stopped`,
+`non-stop`, `stop's`, a `stop` only on a later line, and a first line that
+does not start with stop (`Hold on, stop`, `Wait — stop`). The original
+`\bstop\b` word match read #402's owner analysis ("it should stop
+retrying and finish") as a stop and wedged the board on it.
 
 ## D18: Round budget, turn ceiling, and model tier are reused constants
 
