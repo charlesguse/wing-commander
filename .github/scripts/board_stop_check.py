@@ -14,6 +14,29 @@ for the most recent maintainer stop request, gated by the same
 OWNER/MEMBER/COLLABORATOR association check pr-conversation.yml already
 uses, and hand the caller the run URL to cancel (never a second
 authorization rule).
+
+WHAT COUNTS AS A STOP REQUEST (issue #539)
+------------------------------------------
+A stop request is a *command*, never the word "stop" in prose. A
+maintainer comment is a stop request only when its FIRST NON-EMPTY LINE,
+stripped of leading/trailing whitespace, is:
+
+    /?stop  followed by nothing, or by one of  whitespace . ! ? : , ; — –
+            or a "-" that is not followed by a word character,
+            and then anything (a short reason) to the end of that line
+
+matched case-insensitively (is_stop_command() below, STOP_COMMAND_RE -- the
+single home for this rule). So `stop`, `Stop.`, `STOP!`, `/stop`,
+`stop - wrong approach`, `/stop: bad plan` and `stop, this is wrong` stop
+the item; `We should stop retrying`, `Stopping here for today`, `stopped`,
+`non-stop`, `stop-gap` and a "stop" only on a later line do not. A first
+non-empty line that is a `>` quote or a code-fence opener is not a command
+either (it never starts with `stop`), so a quoted or fenced "stop" never
+counts. pr-conversation.yml classifies a comment as `stop` with an LLM;
+this loop is deterministic and uses this first-line command rule instead
+(research.md D17). The pre-#539 rule, a bare `\bstop\b` search of the
+whole body, wedged the board on #402, whose only comment is an owner
+analysis saying "it should stop retrying and finish".
 """
 import re
 import sys
@@ -21,8 +44,19 @@ import sys
 import json
 
 MAINTAINER_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
-STOP_RE = re.compile(r"\bstop\b", re.IGNORECASE)
+STOP_COMMAND_RE = re.compile(
+    r"/?stop(?:$|[\s.!?:,;\u2014\u2013]|-(?!\w))", re.IGNORECASE)
 MARKER_RUN_RE = re.compile(r"\*\*Run:\*\*\s*(https://\S+/actions/runs/(\d+))")
+
+
+def is_stop_command(body):
+    """True when `body`'s first non-empty line is a stop command (see the
+    module docstring). The one predicate every board-loop stop check uses."""
+    for line in (body or "").splitlines():
+        line = line.strip()
+        if line:
+            return bool(STOP_COMMAND_RE.match(line))
+    return False
 
 
 def find_stop_request(comments, current_run_id):
@@ -81,7 +115,7 @@ def find_stop_request(comments, current_run_id):
         if (comment.get("created_at") or "") < baseline:
             continue
         if (comment.get("author_association") in MAINTAINER_ASSOCIATIONS
-                and STOP_RE.search(comment.get("body") or "")):
+                and is_stop_command(comment.get("body"))):
             stop_seen = True
 
     if not stop_seen:

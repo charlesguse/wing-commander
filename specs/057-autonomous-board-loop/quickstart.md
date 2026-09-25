@@ -116,9 +116,9 @@ and confirm the second queues rather than running concurrently. Set
 `WING_COMMANDER_BOARD_LOOP_PAUSED=true` and confirm the next scheduled run
 performs no durable action and reports the pause as a pause. Start an
 `implement.yml` run and confirm the loop stands down and records why.
-Post a maintainer stop comment on the issue mid-item and confirm the loop
-halts before its next durable action and records where it stopped
-(research.md D17).
+Post a maintainer stop comment (first line `stop` or `/stop`, optionally
+with a short reason; research.md D17) on the issue mid-item and confirm the
+loop halts before its next durable action and records where it stopped.
 
 ## 10. Untrusted content framing
 

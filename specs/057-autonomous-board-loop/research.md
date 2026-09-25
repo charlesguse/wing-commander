@@ -324,6 +324,22 @@ an issue thread, with the same authorized-actor check (FR-052).
 pr-conversation stage already uses"; only the thread the loop posts to
 changes (issue, not PR), not the cancellation mechanism itself.
 
+**What counts as a stop request** (issue #539): a *command*, not the word.
+pr-conversation classifies a comment into its `stop` category with an LLM
+— the comment has to *be* a stop request. The board loop's check
+(`board_stop_check.is_stop_command()`) is deterministic, so it matches a
+first-line command instead: an authorized comment is a stop request only
+when its first non-empty line, stripped of surrounding whitespace, starts
+with `stop` or `/stop` (case-insensitive) followed by end of line,
+whitespace, punctuation (`. ! ? : , ;`), a dash (`—`, `–`, or a `-` not
+followed by a word character), and then an optional short reason on that
+line — e.g. `stop`, `Stop.`, `/stop — wrong approach`,
+`stop, this is wrong`. The word in prose (`it should stop retrying and
+finish`, `Stopping here`, `non-stop`), a `stop` only on a later line, and a
+first line that is a `>` quote or a code fence never count. The original
+`\bstop\b` word match read #402's owner analysis as a stop and wedged the
+board on it.
+
 ## D18: Round budget, turn ceiling, and model tier are reused constants
 
 **Decision**: Round budget = 5 (the spec's own Assumptions section: "the
