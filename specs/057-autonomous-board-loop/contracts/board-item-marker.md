@@ -32,6 +32,29 @@ names a branch that was deleted), the loop falls back to what live state
 shows and proceeds from there — never to a second branch/PR for an issue
 that already has one (FR-054), and never to undefined behavior.
 
+## Author rule (issue #555)
+
+A marker is read only from a comment the loop's own GitHub App posted:
+`user.type == "Bot"` and `user.login == <app-slug>[bot]`, the slug coming
+from `wing-commander-context`'s `bot-slug` output.
+`board_item_marker.is_loop_marker_author()` is the one predicate; the
+stop check's `**Run:**` scan uses the same one (#547).
+`read_marker()` / `read_marker_with_timestamp()` take the bot login as a
+required argument and skip every other comment, so a marker typed by
+anyone else, a maintainer or another App included, is ignored. Every
+reader (the select job's in-flight detection and PR lookup, the resume
+step, prove-gate) fetches comments with `user{login,type}` and passes the
+login. `board_eligibility.py` exits non-zero when its stdin payload has
+no `bot_login`.
+
+The resume step also checks the fields it adopts. It adopts a marker
+`branch` only when it is named `fix/<issue>-<slug>`, as the fix job names
+branches (`board_item_marker.is_loop_branch()`). It adopts a marker `pr`
+only when that PR carries `board:owned` and its head repository is this
+repository. Anything else is a stale marker: triage, with PR, branch,
+round and base-sha cleared (FR-022). An `awaiting-merge` marker whose PR
+may still be open stays the no-op hold, and the PR is not passed on.
+
 ## Non-maintainer content
 
 The marker itself is written only by the loop's own deterministic code —

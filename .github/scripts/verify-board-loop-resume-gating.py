@@ -64,6 +64,18 @@ readiness/prove regression rows. The select step's `pr_numbers_to_check`
 heredoc is run against a fixture and must list an awaiting-merge marker's
 PR (i.e. AWAITING_MERGE_STEP stays in FIX_OR_LATER_STEPS).
 
+WHAT IT CHECKS (#555)
+---------------------
+Board item markers are read only from the loop's own App comments. Each
+marker-reading step (select, resume, prove-gate) must take BOT_LOGIN from
+wing-commander-context, project user{login,type} in its comments fetch,
+and pass BOT_LOGIN to its reader; the select lookup must skip a marker
+another author posted. RESUME_CASES also pin the resume guards: a marker
+branch not named fix/<issue>-<slug>, or a marker PR that is not
+board:owned with its head in this repository, is not adopted (triage,
+FR-022 cleared; an awaiting-merge marker still holds as a no-op). The
+resume step's PR-ownership jq is run on OWNED_CASES.
+
 --self-test mutates the shipped workflow text (drops `!cancelled()`, a
 result guard, the breach exclusion, the breach output, restores main's
 pre-#525 conditions, ...) and asserts every mutation fails.
@@ -82,6 +94,7 @@ import yaml
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 WORKFLOW = os.path.join(ROOT, ".github", "workflows", "board-loop.yml")
+BOT_LOGIN = "wing-commander-bot[bot]"
 
 RESUME_JOBS = ("fix", "review", "readiness")
 SIM_JOBS = ("select", "resolve-model", "triage", "route", "fix", "review", "readiness")
@@ -671,7 +684,8 @@ def _exec_heredoc(code, env, scripts_root):
 
 
 def _resume_env(step, marker_pr, pr_from_marker, pr_state, pr_number,
-                from_fallback=False, branch="board/396", round_="2", base_sha="abc1234"):
+                from_fallback=False, branch="fix/396-board-item", round_="2", base_sha="abc1234",
+                pr_owned=True):
     return {
         "MARKER_STEP": step, "MARKER_JSON": '{"step": "%s"}' % step if step else "null",
         "BRANCH": branch, "MARKER_PR": marker_pr,
@@ -679,6 +693,7 @@ def _resume_env(step, marker_pr, pr_from_marker, pr_state, pr_number,
         "PR_FROM_FALLBACK": "true" if from_fallback else "false",
         "PR_STATE": pr_state, "PR_NUMBER": pr_number,
         "MARKER_ROUND": round_, "MARKER_BASE_SHA": base_sha,
+        "PR_OWNED": "true" if pr_owned else "false", "ISSUE_NUMBER": "396",
     }
 
 
@@ -709,6 +724,43 @@ RESUME_CASES = [
     ("regression: prove, no pr -> prove",
      _resume_env("prove", "", False, "", "", branch=""),
      {"step": "prove"}),
+    # #555: a marker's branch and PR are adopted only when they are this
+    # loop's own; otherwise the marker is stale (triage, FR-022 cleared).
+    ("regression: fix, own branch, no PR -> fix on that branch",
+     _resume_env("fix", "", False, "", ""),
+     {"step": "fix", "branch": "fix/396-board-item"}),
+    ("regression: review, own branch, board:owned PR OPEN -> review",
+     _resume_env("review", "42", True, "OPEN", "42"),
+     {"step": "review", "pr_number": "42", "branch": "fix/396-board-item"}),
+    ("fix, branch not named fix/<issue>-<slug> -> triage, FR-022 cleared (#555)",
+     _resume_env("fix", "", False, "", "", branch="main"),
+     dict(_CLEARED, step="triage")),
+    ("fix, another issue's fix branch -> triage, FR-022 cleared (#555)",
+     _resume_env("fix", "", False, "", "", branch="fix/3960-board-item"),
+     dict(_CLEARED, step="triage")),
+    ("review, PR OPEN without board:owned or from another repo -> triage, FR-022 cleared (#555)",
+     _resume_env("review", "42", True, "OPEN", "42", pr_owned=False),
+     dict(_CLEARED, step="triage", recovered_via_fallback=False)),
+    ("readiness, PR OPEN not board:owned -> triage, FR-022 cleared (#555)",
+     _resume_env("readiness", "42", True, "OPEN", "42", pr_owned=False),
+     dict(_CLEARED, step="triage")),
+    ("awaiting-merge, PR OPEN not board:owned -> no-op, PR not passed on (#555)",
+     _resume_env("awaiting-merge", "42", True, "OPEN", "42", pr_owned=False),
+     {"step": "awaiting-merge", "recovered_via_fallback": False, "pr_number": ""}),
+]
+
+# #555: the resume step's PR-ownership jq, run on these PR payloads
+# (pulls/N REST shape) -- (title, payload, expected "true"/"false").
+_REPO = "example/wing-commander"
+OWNED_CASES = [
+    ("board:owned, head in this repository",
+     {"labels": [{"name": "board:owned"}], "head": {"repo": {"full_name": _REPO}}}, "true"),
+    ("no board:owned label",
+     {"labels": [{"name": "bug"}], "head": {"repo": {"full_name": _REPO}}}, "false"),
+    ("board:owned, head in another repository",
+     {"labels": [{"name": "board:owned"}], "head": {"repo": {"full_name": "someone/fork"}}}, "false"),
+    ("board:owned, head repository deleted",
+     {"labels": [{"name": "board:owned"}], "head": {"repo": None}}, "false"),
 ]
 
 
@@ -730,8 +782,68 @@ def resume_findings(doc, scripts_root=ROOT):
             continue
         diff = {k: got.get(k) for k, v in expected.items() if got.get(k) != v}
         if diff:
-            findings.append("resume `{0}`: expected {1}, got {2} (#532)".format(
+            findings.append("resume `{0}`: expected {1}, got {2}".format(
                 title, {k: expected[k] for k in diff}, diff))
+    return findings
+
+
+def owned_jq_findings(doc):
+    """The resume step's jq that sets pr_owned (#555), run on OWNED_CASES."""
+    run = _step_run(doc, "select", "resume")
+    m = re.search(r"pr_owned=\"\$\(jq -r --arg repo \"\$GITHUB_REPOSITORY\" \\\n\s*'([^']*)'", run)
+    if not m:
+        return ["resume: no `pr_owned=$(jq -r --arg repo ...)` PR-ownership check found (#555)"]
+    findings = []
+    for title, payload, want in OWNED_CASES:
+        proc = subprocess.run(["jq", "-r", "--arg", "repo", _REPO, m.group(1)],
+                              input=json.dumps(payload), text=True, capture_output=True)
+        got = proc.stdout.strip()
+        if proc.returncode != 0 or got != want:
+            findings.append("resume PR-ownership jq `{0}`: expected {1}, got {2!r} {3}".format(
+                title, want, got, proc.stderr.strip()))
+    return findings
+
+
+# #555: every step that reads a board item marker, by (job, step id).
+MARKER_READERS = (("select", "select"), ("select", "resume"), ("prove-gate", "gate"))
+_BOT_LOGIN_ENV = "${{ steps.ctx.outputs.bot-slug }}[bot]"
+_USER_PROJECTION = "user: {login: .user.login, type: .user.type}"
+
+
+def marker_reader_findings(doc):
+    """Each marker-reading step gets BOT_LOGIN from wing-commander-context
+    (id ctx, earlier in the same job), projects user{login,type} in its
+    comments fetch, and passes BOT_LOGIN to its reader (#555)."""
+    findings = []
+    for job, step_id in MARKER_READERS:
+        steps = ((doc.get("jobs") or {}).get(job) or {}).get("steps") or []
+        ids = [s.get("id") for s in steps if isinstance(s, dict)]
+        step = next((s for s in steps if isinstance(s, dict) and s.get("id") == step_id), None)
+        where = "{0}/{1}".format(job, step_id)
+        if step is None:
+            findings.append("{0}: step not found".format(where))
+            continue
+        if "ctx" not in ids or ids.index("ctx") > ids.index(step_id):
+            findings.append("{0}: no wing-commander-context step (id ctx) before it".format(where))
+        if (step.get("env") or {}).get("BOT_LOGIN") != _BOT_LOGIN_ENV:
+            findings.append("{0}: env BOT_LOGIN is not `{1}`".format(where, _BOT_LOGIN_ENV))
+        run = str(step.get("run", ""))
+        fetches = re.findall(r"issues/\$\w+/comments\" --paginate \\\n\s*--jq '([^']*)'", run)
+        if not fetches:
+            findings.append("{0}: no issue comments fetch found".format(where))
+        for jq_prog in fetches:
+            if _USER_PROJECTION not in jq_prog:
+                findings.append("{0}: comments fetch does not project `{1}`".format(
+                    where, _USER_PROJECTION))
+        reads = re.findall(r"read_marker(?:_with_timestamp)?\(([^)]*)\)", run)
+        if not reads:
+            findings.append("{0}: no marker reader call found".format(where))
+        for args in reads:
+            if 'os.environ["BOT_LOGIN"]' not in args:
+                findings.append("{0}: read_marker call `{1}` does not pass BOT_LOGIN".format(
+                    where, args))
+    if "bot_login: $bot_login" not in _step_run(doc, "select", "select"):
+        findings.append("select/select: board_eligibility.py's stdin payload carries no bot_login")
     return findings
 
 
@@ -743,19 +855,22 @@ def select_lookup_findings(doc, scripts_root=ROOT):
     if code is None:
         return ["select: no `pr_numbers_to_check` heredoc found in select's select step"]
 
-    def marker(step, pr):
+    def marker(step, pr, user=None):
         return {"created_at": "2026-01-05T00:00:00Z",
+                "user": user or {"login": BOT_LOGIN, "type": "Bot"},
                 "body": "<!-- wing-commander-board-item: " + json.dumps(
                     {"step": step, "round": 0, "pr": pr, "branch": None,
                      "base_sha": None}) + " -->"}
 
     comments = {"1": [marker("awaiting-merge", 42)], "2": [marker("review", 43)],
-                "3": [marker("route", None)]}
+                "3": [marker("route", None)],
+                "4": [marker("review", 44, {"login": "outsider", "type": "User"})]}
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "comments.json")
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(comments, fh)
-        rc, out, err = _exec_heredoc(code, {"COMMENTS_BY_ISSUE_PATH": path}, scripts_root)
+        rc, out, err = _exec_heredoc(code, {"COMMENTS_BY_ISSUE_PATH": path,
+                                            "BOT_LOGIN": BOT_LOGIN}, scripts_root)
     if rc != 0:
         return ["select: pr_numbers_to_check pass crashed: {0}".format(err.strip())]
     listed = set(out.split())
@@ -767,6 +882,9 @@ def select_lookup_findings(doc, scripts_root=ROOT):
             "board forever (AWAITING_MERGE_STEP must stay in FIX_OR_LATER_STEPS, #532)")
     if "43" not in listed:
         findings.append("select: pr_numbers_to_check does not list a review marker's PR")
+    if "44" in listed:
+        findings.append("select: pr_numbers_to_check lists a PR named by a marker another "
+                        "author posted (#555)")
     return findings
 
 
@@ -776,7 +894,8 @@ def all_findings(text, table=None, scripts_root=ROOT):
     except yaml.YAMLError as exc:
         return ["board-loop.yml does not parse: {0}".format(exc)]
     return (static_findings(doc) + simulation_findings(doc, table)
-            + resume_findings(doc, scripts_root) + select_lookup_findings(doc, scripts_root))
+            + resume_findings(doc, scripts_root) + select_lookup_findings(doc, scripts_root)
+            + owned_jq_findings(doc) + marker_reader_findings(doc))
 
 
 def print_table(table):
@@ -882,6 +1001,27 @@ def _mutations(text):
     sub("resume clause 0 (awaiting-merge hold) disabled",
         "elif marker_step == AWAITING_MERGE_STEP and (not pr_from_marker or pr_state == \"OPEN\"):",
         "elif False:")
+    # #555: the resume step's branch and PR guards, and the marker readers'
+    # author plumbing.
+    sub("resume branch-name guard dropped",
+        "if branch and not is_loop_branch(branch, issue_number):", "if False:")
+    sub("resume PR-ownership guard dropped",
+        "if pr_from_marker and not pr_owned:", "if False:")
+    sub("resume PR-ownership jq ignores the head repository",
+        " and ((.head.repo.full_name // \"\") == $repo)", "")
+    sub("resume PR-ownership jq ignores board:owned",
+        "any(.labels[]?; .name == \"board:owned\") and ", "")
+    sub("resume comments fetch without the user projection",
+        "{created_at, body, user: {login: .user.login, type: .user.type}}' | jq -s '.' > "
+        "\"$RUNNER_TEMP/board-issue-comments.json\"",
+        "{created_at, body}' | jq -s '.' > \"$RUNNER_TEMP/board-issue-comments.json\"")
+    sub("prove-gate reader without BOT_LOGIN",
+        "read_marker(comments, os.environ[\"BOT_LOGIN\"]) else", "read_marker(comments, None) else")
+    sub("prove-gate BOT_LOGIN env dropped",
+        "          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]\n", "",
+        after="\n  prove-gate:\n")
+    sub("select eligibility payload without bot_login",
+        ",\n              bot_login: $bot_login}", "}")
     # main's pre-#525 conditions, verbatim.
     muts.append(("fix restored to pre-#525", _replace_job_if(text, "fix", PRE_525["fix"])))
     muts.append(("review restored to pre-#525", _replace_job_if(text, "review",
@@ -937,6 +1077,27 @@ def run_selftest(text):
         else:
             with open(module, "w", encoding="utf-8") as fh:
                 fh.write(src.replace(old, '"readiness", "prove"', 1))
+            found = select_lookup_findings(yaml.safe_load(text), tmp)
+            if not found:
+                failures.append("mutation `{0}` was NOT detected".format(label))
+            else:
+                print("  detected: {0} -> {1}".format(label, found[0]))
+    # board_item_marker.py mutation (#555): the reader without its author
+    # check must fail the select lookup check (a forged marker's PR listed).
+    label = "board_item_marker reader author check dropped"
+    with tempfile.TemporaryDirectory() as tmp:
+        scripts = os.path.join(tmp, ".github", "scripts")
+        shutil.copytree(os.path.join(ROOT, ".github", "scripts"), scripts,
+                        ignore=shutil.ignore_patterns("tests", "fixtures", "__pycache__"))
+        module = os.path.join(scripts, "board_item_marker.py")
+        with open(module, encoding="utf-8") as fh:
+            src = fh.read()
+        old = "        if not is_loop_marker_author(comment, bot_login):\n            continue\n"
+        if old not in src:
+            failures.append("mutation `{0}`: fixture text not found in board_item_marker.py".format(label))
+        else:
+            with open(module, "w", encoding="utf-8") as fh:
+                fh.write(src.replace(old, "", 1))
             found = select_lookup_findings(yaml.safe_load(text), tmp)
             if not found:
                 failures.append("mutation `{0}` was NOT detected".format(label))

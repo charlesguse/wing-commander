@@ -1,5 +1,12 @@
 {
   "5005": [
-    {"created_at": "2026-01-05T00:00:00Z", "body": "**Run:** https://github.com/example/repo/actions/runs/1\n\n<!-- wing-commander-board-item: {\"step\": \"readiness\", \"round\": 3, \"pr\": 9003, \"branch\": \"fix/5005-x\", \"base_sha\": \"deadbeef\"} -->"}
+    {
+      "created_at": "2026-01-05T00:00:00Z",
+      "body": "**Run:** https://github.com/example/repo/actions/runs/1\n\n<!-- wing-commander-board-item: {\"step\": \"readiness\", \"round\": 3, \"pr\": 9003, \"branch\": \"fix/5005-x\", \"base_sha\": \"deadbeef\"} -->",
+      "user": {
+        "login": "wing-commander-bot[bot]",
+        "type": "Bot"
+      }
+    }
   ]
 }

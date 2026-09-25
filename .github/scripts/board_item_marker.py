@@ -7,6 +7,10 @@ The marker is a fast path only: every field it supplies MUST be re-derived
 from live GitHub state before any durable action is taken (FR-054). This
 module only reads/writes the marker's own HTML-comment shape -- it never
 decides whether a re-derivation contradicts it.
+
+Only a marker on a comment the loop's own GitHub App posted is read
+(is_loop_marker_author(), issue #555). Anyone can comment on a public
+repository's issue, so a marker in any other comment is ignored.
 """
 import json
 import os
@@ -16,16 +20,43 @@ MARKER_RE = re.compile(
     r"<!--\s*wing-commander-board-item:\s*(\{.*?\})\s*-->", re.DOTALL)
 
 
-def read_marker_with_timestamp(issue_comments):
-    """issue_comments: a list of {"created_at": "...", "body": "..."}
-    dicts (an issue's own comments, any order). Returns
-    (created_at, marker) for the most recent well-formed board-item marker
-    found in any comment body, or None when no comment carries one, or the
-    newest one is not valid JSON (missing/unparsable marker -- degrade to
-    None, never raise; the caller falls back to live GitHub state per
-    FR-054)."""
+def is_loop_marker_author(comment, bot_login):
+    """True when `comment` was posted by the board loop's own GitHub App:
+    `user.type == "Bot"` AND `user.login == bot_login` (the caller's
+    `<app-slug>[bot]`, from wing-commander-context's `bot-slug` output).
+    An empty/missing bot_login matches nothing. The one author predicate
+    for what the loop reads back from its own comments: the board item
+    marker (read_marker*, issue #555) and the stop check's `**Run:**`
+    announcement (board_stop_check.find_stop_request(), issue #547)."""
+    user = comment.get("user") or {}
+    return bool(bot_login) and user.get("type") == "Bot" and user.get("login") == bot_login
+
+
+def is_loop_branch(branch, issue_number):
+    """True when `branch` is a name the fix job cuts for `issue_number`:
+    `fix/<issue>-<slug>`, the slug being the title lowercased, reduced to
+    [a-z0-9-] and cut to 40 characters (or `issue`). The resume step adopts
+    a marker's branch only when this holds (issue #555)."""
+    if not branch or not str(issue_number).isdigit():
+        return False
+    pattern = r"fix/{0}-[a-z0-9-]{{1,40}}".format(int(issue_number))
+    return re.fullmatch(pattern, branch) is not None
+
+
+def read_marker_with_timestamp(issue_comments, bot_login):
+    """issue_comments: a list of {"created_at": "...", "body": "...",
+    "user": {"login": "...", "type": "..."}} dicts (an issue's own
+    comments, any order). bot_login: the loop's own App login
+    (`<slug>[bot]`); required. Returns (created_at, marker) for the most
+    recent well-formed board-item marker in a comment that
+    is_loop_marker_author() accepts, or None when no such comment carries
+    one, or the newest one is not valid JSON (missing/unparsable marker --
+    degrade to None, never raise; the caller falls back to live GitHub
+    state per FR-054)."""
     dated_matches = []
     for comment in issue_comments or []:
+        if not is_loop_marker_author(comment, bot_login):
+            continue
         body = comment.get("body") or ""
         match = MARKER_RE.search(body)
         if not match:
@@ -44,14 +75,10 @@ def read_marker_with_timestamp(issue_comments):
     return created_at, marker
 
 
-def read_marker(issue_comments):
-    """issue_comments: a list of {"created_at": "...", "body": "..."}
-    dicts (an issue's own comments, any order). Returns the most recent
-    well-formed board-item marker dict found in any comment body, or None
-    when no comment carries one, or the newest one is not valid JSON
-    (missing/unparsable marker -- degrade to None, never raise; the caller
-    falls back to live GitHub state per FR-054)."""
-    pair = read_marker_with_timestamp(issue_comments)
+def read_marker(issue_comments, bot_login):
+    """As read_marker_with_timestamp(), returning only the marker dict (or
+    None)."""
+    pair = read_marker_with_timestamp(issue_comments, bot_login)
     return pair[1] if pair else None
 
 

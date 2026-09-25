@@ -42,16 +42,33 @@ state is unknown), and eligible again once that PR is CLOSED or MERGED.
 Each awaiting-merge-* case puts the awaiting-merge issue OLDEST, so
 reverting the fallback skip makes select() return it and fails the case.
 
+Marker authorship (#555): markers are read only from the loop's own App
+comments (board_item_marker.is_loop_marker_author(); every fixture marker
+comment carries `user`, BOT_LOGIN below is the loop's login). The
+forged-marker-* cases put markers from an outside (NONE) user, an OWNER
+human and a different App's bot on the issues; each must be ignored both
+for in-flight detection and for the fallback's prove/awaiting-merge skip.
+own-marker-newer-forged-ignored keeps the loop's own marker authoritative
+when newer foreign ones follow it. AUTHOR_MUTATIONS swap weaker
+predicates into board_item_marker and must each fail a case, and
+board_eligibility.py's main() must refuse a payload with no bot_login.
+
 Fails loudly, not vacuously, if any fixture file is missing.
 """
+import contextlib
 import glob
+import io
 import json
 import os
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import board_item_marker  # noqa: E402
 from board_eligibility import (  # noqa: E402
     AWAITING_MERGE_STEP, FIX_OR_LATER_STEPS, classify_issue, in_flight_candidate, select)
+
+BOT_LOGIN = "wing-commander-bot[bot]"
 
 FIXTURES_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "tests", "board-eligibility")
@@ -81,12 +98,134 @@ IN_FLIGHT_CASES = {
     "awaiting-merge-pr-closed",
     "awaiting-merge-pr-merged",
     "awaiting-merge-pr-unknown",
+    "forged-marker-outsider",
+    "forged-marker-owner-human",
+    "forged-marker-other-app",
+    "own-marker-newer-forged-ignored",
 }
+
+# (name, replacement for board_item_marker.is_loop_marker_author)
+AUTHOR_MUTATIONS = (
+    ("reader author check dropped", lambda comment, bot_login: True),
+    ("author check on login only (type ignored)",
+     lambda comment, bot_login: (comment.get("user") or {}).get("login") == bot_login),
+    ("author check on type only (login ignored)",
+     lambda comment, bot_login: (comment.get("user") or {}).get("type") == "Bot"),
+)
 
 
 def _load(path):
     with open(path, encoding="utf-8") as fh:
         return json.load(fh)
+
+
+def run_in_flight_cases():
+    """Runs every IN_FLIGHT_CASES fixture; returns the failure count."""
+    failures = 0
+    for case in sorted(IN_FLIGHT_CASES):
+        case_dir = os.path.join(IN_FLIGHT_FIXTURES_DIR, case)
+        open_issues_path = os.path.join(case_dir, "open_issues.json")
+        comments_path = os.path.join(case_dir, "comments_by_issue.json")
+        pr_state_path = os.path.join(case_dir, "pr_state_by_number.json")
+        expected_path = os.path.join(case_dir, "expected.json")
+        if not all(os.path.isfile(p) for p in
+                   (open_issues_path, comments_path, pr_state_path, expected_path)):
+            failures += 1
+            print("::error::verify-board-eligibility: {0} is missing one of "
+                  "open_issues.json, comments_by_issue.json, "
+                  "pr_state_by_number.json, expected.json.".format(case_dir))
+            continue
+
+        open_issues = _load(open_issues_path)
+        comments_by_issue = {
+            int(number): comments
+            for number, comments in _load(comments_path).items()
+        }
+        pr_state_by_number = {
+            int(number): state
+            for number, state in _load(pr_state_path).items()
+        }
+        expected = _load(expected_path)
+
+        issue_number, multiple_found = in_flight_candidate(
+            open_issues, comments_by_issue, pr_state_by_number, BOT_LOGIN)
+        got = {"issue_number": issue_number, "multiple_found": multiple_found}
+        expected_in_flight = {
+            "issue_number": expected.get("issue_number"),
+            "multiple_found": expected.get("multiple_found"),
+        }
+        if got != expected_in_flight:
+            failures += 1
+            print("::error::verify-board-eligibility: in-flight/{0}: expected "
+                  "{1!r}, got {2!r}.".format(case, expected_in_flight, got))
+        else:
+            print("[ok] in-flight/{0}: in_flight_candidate() == {1!r}".format(case, got))
+
+        if "select_issue_number" in expected:
+            labeled_events_path = os.path.join(case_dir, "labeled_events_by_issue.json")
+            if not os.path.isfile(labeled_events_path):
+                failures += 1
+                print("::error::verify-board-eligibility: {0} declares "
+                      "select_issue_number in expected.json but is missing "
+                      "labeled_events_by_issue.json.".format(case_dir))
+                continue
+            labeled_events_by_issue = {
+                int(number): events
+                for number, events in _load(labeled_events_path).items()
+            }
+            selected = select(open_issues, labeled_events_by_issue,
+                               comments_by_issue, pr_state_by_number, BOT_LOGIN)
+            expected_selected = expected["select_issue_number"]
+            if selected != expected_selected:
+                failures += 1
+                print("::error::verify-board-eligibility: in-flight/{0}: "
+                      "select() expected {1!r}, got {2!r}.".format(
+                          case, expected_selected, selected))
+            else:
+                print("[ok] in-flight/{0}: select() == {1!r} (oldest-first "
+                      "fallback)".format(case, selected))
+    return failures
+
+
+def author_mutation_check():
+    """#555: each AUTHOR_MUTATIONS predicate, swapped into
+    board_item_marker, must fail at least one in-flight case."""
+    failures = 0
+    original = board_item_marker.is_loop_marker_author
+    for name, replacement in AUTHOR_MUTATIONS:
+        board_item_marker.is_loop_marker_author = replacement
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                caught = run_in_flight_cases()
+        finally:
+            board_item_marker.is_loop_marker_author = original
+        if not caught:
+            failures += 1
+            print("::error::verify-board-eligibility: mutation '{0}' was NOT caught "
+                  "by any in-flight case (#555).".format(name))
+        else:
+            print("[ok] mutation caught ({0}: fails {1} case(s))".format(name, caught))
+    return failures
+
+
+def main_requires_bot_login():
+    """#555: board_eligibility.py's main() exits non-zero, selecting
+    nothing, when its stdin payload has no bot_login."""
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "board_eligibility.py")
+    payload = {"open_issues": [{"number": 1, "author": {"login": "a"},
+                                "authorAssociation": "OWNER", "labels": [],
+                                "state": "OPEN", "createdAt": "2026-01-01T00:00:00Z"}],
+               "labeled_events_by_issue": {}, "comments_by_issue": {},
+               "pr_state_by_number": {}}
+    proc = subprocess.run([sys.executable, script], input=json.dumps(payload),
+                          text=True, capture_output=True)
+    if proc.returncode == 0 or proc.stdout.strip():
+        print("::error::verify-board-eligibility: board_eligibility.py accepted a payload "
+              "with no bot_login (exit {0}, stdout {1!r}) (#555).".format(
+                  proc.returncode, proc.stdout.strip()))
+        return 1
+    print("[ok] board_eligibility.py refuses a payload with no bot_login")
+    return 0
 
 
 def run():
@@ -143,68 +282,7 @@ def run():
               "case(s): {0}".format(", ".join(missing_in_flight_cases)))
         return 1
 
-    for case in sorted(IN_FLIGHT_CASES):
-        case_dir = os.path.join(IN_FLIGHT_FIXTURES_DIR, case)
-        open_issues_path = os.path.join(case_dir, "open_issues.json")
-        comments_path = os.path.join(case_dir, "comments_by_issue.json")
-        pr_state_path = os.path.join(case_dir, "pr_state_by_number.json")
-        expected_path = os.path.join(case_dir, "expected.json")
-        if not all(os.path.isfile(p) for p in
-                   (open_issues_path, comments_path, pr_state_path, expected_path)):
-            failures += 1
-            print("::error::verify-board-eligibility: {0} is missing one of "
-                  "open_issues.json, comments_by_issue.json, "
-                  "pr_state_by_number.json, expected.json.".format(case_dir))
-            continue
-
-        open_issues = _load(open_issues_path)
-        comments_by_issue = {
-            int(number): comments
-            for number, comments in _load(comments_path).items()
-        }
-        pr_state_by_number = {
-            int(number): state
-            for number, state in _load(pr_state_path).items()
-        }
-        expected = _load(expected_path)
-
-        issue_number, multiple_found = in_flight_candidate(
-            open_issues, comments_by_issue, pr_state_by_number)
-        got = {"issue_number": issue_number, "multiple_found": multiple_found}
-        expected_in_flight = {
-            "issue_number": expected.get("issue_number"),
-            "multiple_found": expected.get("multiple_found"),
-        }
-        if got != expected_in_flight:
-            failures += 1
-            print("::error::verify-board-eligibility: in-flight/{0}: expected "
-                  "{1!r}, got {2!r}.".format(case, expected_in_flight, got))
-        else:
-            print("[ok] in-flight/{0}: in_flight_candidate() == {1!r}".format(case, got))
-
-        if "select_issue_number" in expected:
-            labeled_events_path = os.path.join(case_dir, "labeled_events_by_issue.json")
-            if not os.path.isfile(labeled_events_path):
-                failures += 1
-                print("::error::verify-board-eligibility: {0} declares "
-                      "select_issue_number in expected.json but is missing "
-                      "labeled_events_by_issue.json.".format(case_dir))
-                continue
-            labeled_events_by_issue = {
-                int(number): events
-                for number, events in _load(labeled_events_path).items()
-            }
-            selected = select(open_issues, labeled_events_by_issue,
-                               comments_by_issue, pr_state_by_number)
-            expected_selected = expected["select_issue_number"]
-            if selected != expected_selected:
-                failures += 1
-                print("::error::verify-board-eligibility: in-flight/{0}: "
-                      "select() expected {1!r}, got {2!r}.".format(
-                          case, expected_selected, selected))
-            else:
-                print("[ok] in-flight/{0}: select() == {1!r} (oldest-first "
-                      "fallback)".format(case, selected))
+    failures += run_in_flight_cases()
 
     # #532: the select job's PR-state lookup pass resolves only PRs named
     # by FIX_OR_LATER_STEPS markers. Without awaiting-merge in that set,
@@ -219,6 +297,9 @@ def run():
               "eligible again (#532).")
     else:
         print("[ok] AWAITING_MERGE_STEP is in FIX_OR_LATER_STEPS (select looks up its PR)")
+
+    failures += author_mutation_check()
+    failures += main_requires_bot_login()
 
     print("verify-board-eligibility: {0} failure(s).".format(failures))
     return 1 if failures else 0

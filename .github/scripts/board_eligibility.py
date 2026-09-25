@@ -148,8 +148,10 @@ def is_excluded(issue):
 # select() that consults it first. Never re-derive this inline in a
 # workflow's run: step or in a second module; point back at this comment
 # instead (contracts/in-flight-detection.md).
-def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number):
+def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number, bot_login):
     """FR-001/FR-002/FR-003/FR-005. Returns (issue_number, multiple_found).
+    bot_login: the loop's own App login; only its comments' markers are
+    read (board_item_marker.is_loop_marker_author(), issue #555).
 
     issue_number is the newest-marker in-flight issue among open,
     non-excluded issues, or None. multiple_found is True when more than
@@ -183,7 +185,7 @@ def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number):
         if excluded:
             continue
         number = issue.get("number")
-        pair = read_marker_with_timestamp(comments_by_issue.get(number) or [])
+        pair = read_marker_with_timestamp(comments_by_issue.get(number) or [], bot_login)
         if pair is None:
             continue
         created_at, marker = pair
@@ -230,7 +232,7 @@ def _awaiting_merge_holds(marker, pr_state_by_number):
     return pr_state_by_number.get(pr) not in ("CLOSED", "MERGED")
 
 
-def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_number):
+def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_number, bot_login):
     """FR-004/FR-011: consults in_flight_candidate() first; falls through to
     the existing oldest-first/classify_issue/is_excluded scan when it
     returns (None, ...). That fallback carries the same `prove`-marker skip
@@ -242,7 +244,7 @@ def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_
     or merged with the issue still open, the item is eligible here again
     and the resume step sends it to a fresh triage."""
     in_flight, _multiple_found = in_flight_candidate(
-        open_issues, comments_by_issue, pr_state_by_number)
+        open_issues, comments_by_issue, pr_state_by_number, bot_login)
     if in_flight is not None:
         return in_flight
 
@@ -252,7 +254,7 @@ def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_
         if excluded:
             continue
         number = issue.get("number")
-        pair = read_marker_with_timestamp(comments_by_issue.get(number) or [])
+        pair = read_marker_with_timestamp(comments_by_issue.get(number) or [], bot_login)
         if pair is not None and (pair[1] or {}).get("step") == "prove":
             continue
         if pair is not None and _awaiting_merge_holds(pair[1], pr_state_by_number):
@@ -266,12 +268,20 @@ def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_
 def main():
     """Runtime entry point: reads `{"open_issues": [...],
     "labeled_events_by_issue": {...}, "comments_by_issue": {...},
-    "pr_state_by_number": {...}}` from stdin, prints the selected issue
+    "pr_state_by_number": {...}, "bot_login": "<slug>[bot]"}` from stdin
+    (bot_login is required: it exits non-zero without one, issue #555),
+    prints the selected issue
     number (or nothing) to stdout -- unchanged from before. Also prints
     FR-005's provenance -- `{"decided_by_marker": bool, "multiple_found":
     bool}` -- to stderr, so the caller can say the marker is why (spec.md
     US1 AS3) without re-deriving the decision."""
     payload = json.load(sys.stdin)
+    bot_login = payload.get("bot_login")
+    if not bot_login:
+        print("board_eligibility.py: stdin payload has no bot_login -- markers "
+              "are read only from the loop's own App comments (issue #555).",
+              file=sys.stderr)
+        sys.exit(2)
     open_issues = payload.get("open_issues", [])
     labeled_events_by_issue = {
         int(number): events
@@ -286,8 +296,9 @@ def main():
         for number, state in (payload.get("pr_state_by_number") or {}).items()
     }
     in_flight_issue, multiple_found = in_flight_candidate(
-        open_issues, comments_by_issue, pr_state_by_number)
-    selected = select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_number)
+        open_issues, comments_by_issue, pr_state_by_number, bot_login)
+    selected = select(open_issues, labeled_events_by_issue, comments_by_issue,
+                      pr_state_by_number, bot_login)
     print(json.dumps({
         "decided_by_marker": in_flight_issue is not None and in_flight_issue == selected,
         "multiple_found": multiple_found,

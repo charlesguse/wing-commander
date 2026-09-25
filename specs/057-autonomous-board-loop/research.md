@@ -330,7 +330,7 @@ changes (issue, not PR), not the cancellation mechanism itself.
 MARKER_RUN_RE` is anchored with `re.MULTILINE`) AND its comment was posted
 by the loop's GitHub App: `user.type == "Bot"` and `user.login ==
 <app-slug>[bot]`, the slug coming from `wing-commander-context`'s
-`bot-slug` output (`board_stop_check.is_loop_marker_author()` is the one
+`bot-slug` output (`board_item_marker.is_loop_marker_author()` is the one
 predicate). pr-conversation.yml's stop procedure filters its `**Run:**`
 scan by the same bot login. Any other commenter's `**Run:**` line, a
 maintainer's included, moves neither the stop baseline nor the run handed
