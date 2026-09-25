@@ -96,6 +96,19 @@ MARKER_RUN_RE = re.compile(
     r"^\*\*Run:\*\*[ \t]*(https://\S+/actions/runs/(\d+))", re.MULTILINE)
 
 
+def last_run_match(body):
+    """The LAST MARKER_RUN_RE match in `body`, or None (issue #580). The
+    loop's comments embed agent text, and write_marker() always writes its
+    `**Run:**` line after it (just before the marker, at the end of the
+    comment), so an earlier `**Run:**` line in the same comment is never
+    the loop's own -- the same rule as board_item_marker.last_marker_match().
+    """
+    last = None
+    for match in MARKER_RUN_RE.finditer(body or ""):
+        last = match
+    return last
+
+
 def _command_line(body):
     """The first line of `body` that step 1 of the module docstring's rule
     does not skip, normalised per step 2; None when nothing remains."""
@@ -166,8 +179,9 @@ def find_stop_request(comments, current_run_id, bot_login):
 
     Only a `**Run:**` line at the start of a line (board_item_marker.
     write_marker()'s own convention, MARKER_RUN_RE) in a comment the loop's
-    own App posted (is_loop_marker_author(), issue #547) counts as a run
-    announcement -- an unrelated `.../actions/runs/N` link (e.g. a
+    own App posted (is_loop_marker_author(), issue #547), and only the last
+    such line in that comment (last_run_match(), issue #580), counts as a
+    run announcement -- an unrelated `.../actions/runs/N` link (e.g. a
     human-pasted post-merge proof URL, this repo's own convention for
     closing out a fix issue) must never be mistaken for one, and neither
     may a `**Run:**` line any other commenter types, maintainer or not.
@@ -182,7 +196,7 @@ def find_stop_request(comments, current_run_id, bot_login):
     for comment in ordered:
         if not is_loop_marker_author(comment, bot_login):
             continue
-        match = MARKER_RUN_RE.search(comment.get("body") or "")
+        match = last_run_match(comment.get("body"))
         if not match:
             continue
         baseline = comment.get("created_at") or baseline

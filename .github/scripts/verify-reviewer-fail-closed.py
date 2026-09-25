@@ -68,7 +68,8 @@ ROUND_STEP = "Decide the round outcome"
 COMPOSE_STEP = "Compose the review body"
 BASH = None
 
-SHARED_SCRIPTS = ("wc_fence_extract.py", "verify-board-review-finding-schema.py")
+SHARED_SCRIPTS = ("wc_fence_extract.py", "verify-board-review-finding-schema.py",
+                  "board_spec_request_body.py")
 SHARED_SCHEMAS = ("board-review-finding.schema.json",)
 
 

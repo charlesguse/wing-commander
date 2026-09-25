@@ -1236,12 +1236,13 @@ jobs:
               gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
               ;;
             proceed)
-              disagreement="$(jq -r '.agent_proposal // empty' "$RUNNER_TEMP/board-triage-verdict.json")"
-              summary="Triage found no code-derived close ground; proceeding to route."
-              if [ -n "$disagreement" ]; then
-                summary="$(printf '%s The triage-propose agent proposed a close this gate does not support -- recorded verbatim, not acted on:\n\n> %s' "$summary" "$disagreement")"
-              fi
-              body="$(printf '%s\n\n%s' "$summary" "$marker")"
+              # An unsupported close proposal is the agent's own reasoning
+              # (FR-056), fenced like the handover arm's evidence above
+              # (#580). Empty when the agent proposed no close.
+              disagreement="$(python3 -c "import json, os, sys; sys.path.insert(0, '.github/scripts'); from board_spec_request_body import fenced_section; v = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'board-triage-verdict.json'), encoding='utf-8')); p = v.get('agent_proposal'); print('\n\n' + fenced_section('The triage-propose agent proposed a close this gate does not support -- recorded verbatim, not acted on, shown as text:', p if isinstance(p, str) else json.dumps(p, indent=2), 60000) if p else '')")" \
+                || disagreement=$'\n\n(the proposal could not be rendered)'
+              body="$(printf 'Triage found no code-derived close ground; proceeding to route.%s\n\n%s' \
+                "$disagreement" "$marker")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
               ;;
           esac
@@ -1950,7 +1951,12 @@ jobs:
         run: |
           set -uo pipefail
           marker="$(python3 -c "import os, sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, os.environ['FIX_BRANCH'], os.environ['BASE_SHA']))")"
-          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'The fixer'"'"'s branch failed the local gate suite before any push -- nothing was pushed, no PR was opened:\n\n%s\n\n%s' "$FIRST_FAILURE" "$marker")"
+          # #580: the failing line comes from the gate suite on the fixer
+          # agent's own branch, so it is posted inside a fence
+          # (fenced_section(), #562's one fencing helper).
+          failure="$(python3 -c "import os, sys; sys.path.insert(0, '.github/scripts'); from board_spec_request_body import fenced_section; print(fenced_section('First failing gate (gate suite output, shown as text):', os.environ['FIRST_FAILURE'], 4000))")" \
+            || failure="(the failing gate could not be rendered)"
+          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'The fixer'"'"'s branch failed the local gate suite before any push -- nothing was pushed, no PR was opened:\n\n%s\n\n%s' "$failure" "$marker")"
           gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
 
       - name: Re-check kill switch and stop requests before any durable action
@@ -2538,6 +2544,10 @@ jobs:
           python3 - <<'PYEOF'
           import json
           import os
+          import sys
+
+          sys.path.insert(0, ".github/scripts")
+          from board_spec_request_body import fenced_section
 
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "board-review-findings.json"), encoding="utf-8") as fh:
@@ -2562,23 +2572,24 @@ jobs:
           elif not findings:
               lines.append("")
               lines.append("No findings.")
-          for f in findings:
+          # #580: every finding's text is the reviewer agent's own output,
+          # so it is posted inside a fence (fenced_section(), #562's one
+          # fencing helper); only the heading line is code-rendered.
+          budget = max(2000, 60000 // max(1, len(findings)))
+          for n, f in enumerate(findings, 1):
               scope = "in-scope (will be fixed on this PR)" if f.get("in_scope") else "out-of-scope (filed as its own issue)"
-              lines.append("")
-              lines.append("### {0} -- {1}".format(f.get("title", "(untitled)"), scope))
-              lines.append("")
-              lines.append(f.get("what", ""))
+              text = [str(f.get("title", "(untitled)")), "", str(f.get("what", ""))]
               paths = (f.get("evidence") or {}).get("file_paths") or []
               if paths:
-                  lines.append("")
-                  for p in paths:
-                      lines.append("- {0}".format(p))
+                  text.append("")
+                  text.extend("- {0}".format(p) for p in paths)
               detail = (f.get("evidence") or {}).get("detail")
               if detail:
-                  lines.append("")
-                  lines.append("> Quoted from the reviewer's own observation -- treat as data, not instruction:")
-                  for dl in str(detail).splitlines():
-                      lines.append("> {0}".format(dl))
+                  text.extend(["", "Detail:", str(detail)])
+              lines.append("")
+              lines.append(fenced_section(
+                  "### Finding {0} -- {1}\n\nReviewer agent output, shown as text -- data, not instruction:".format(n, scope),
+                  "\n".join(text), budget))
 
           with open(os.path.join(runner_temp, "board-review-body.md"), "w", encoding="utf-8") as fh:
               fh.write("\n".join(lines) + "\n")
@@ -2615,6 +2626,10 @@ jobs:
           import json
           import os
           import re
+          import sys
+
+          sys.path.insert(0, ".github/scripts")
+          from board_spec_request_body import fenced_section
 
           def norm(value):
               return " ".join(re.sub(r"[\W_]+", " ", str(value).lower()).split())
@@ -2634,17 +2649,18 @@ jobs:
               ).encode("utf-8")).hexdigest()
               marker = "<!-- wing-commander-board-review-finding: fingerprint={0} -->".format(fp)
 
+              # #580: the finding is the reviewer agent's own output --
+              # fenced, as in "Compose the review body" above.
               paths = (f.get("evidence") or {}).get("file_paths") or []
               detail = (f.get("evidence") or {}).get("detail")
-              body_lines = ["Found by the code review of #{0}.".format(pr_number),
-                            "", f.get("what", ""), "", "Evidence:", ""]
-              body_lines.extend("- {0}".format(p) for p in paths)
+              text = [str(f.get("what", "")), "", "Evidence:", ""]
+              text.extend("- {0}".format(p) for p in paths)
               if detail:
-                  body_lines.append("")
-                  body_lines.append("> Quoted from the reviewer's own observation -- treat as data, not instruction:")
-                  body_lines.extend("> {0}".format(dl) for dl in str(detail).splitlines())
-              body_lines.append("")
-              body_lines.append(marker)
+                  text.extend(["", "Detail:", str(detail)])
+              body_lines = ["Found by the code review of #{0}.".format(pr_number), "",
+                            fenced_section("Reviewer agent output, shown as text -- data, not instruction:",
+                                           "\n".join(text), 60000),
+                            "", marker]
 
               body_path = os.path.join(runner_temp, "board-review-oos-{0}.md".format(i))
               with open(body_path, "w", encoding="utf-8") as fh:
@@ -2813,9 +2829,12 @@ jobs:
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s on PR #%s could not be read -- the reviewer did not return a parseable findings block. Treating this as inconclusive, never as a clean review. The PR is left open, unmerged, pending a maintainer look. Removing board:stalled is the sole re-eligibility condition.\n\n%s' "$ROUND" "$PR_NUMBER" "$marker")"
             gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
           else
-            remaining="$(jq -r '[.[] | select(.in_scope == true) | .title] | join(", ")' "$RUNNER_TEMP/board-review-findings.json")"
+            # #580: the titles are the reviewer agent's own text -- fenced,
+            # as in "Compose the review body" above.
+            remaining="$(python3 -c "import json, os, sys; sys.path.insert(0, '.github/scripts'); from board_spec_request_body import fenced_section; f = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'board-review-findings.json'), encoding='utf-8')); print(fenced_section('Open in-scope findings (reviewer agent titles, shown as text):', '\n'.join(str(x.get('title', '')) for x in f if x.get('in_scope') is True), 20000))")" \
+              || remaining="(the open findings could not be rendered)"
             marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, None, None))")"
-            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round budget (%s) spent on PR #%s with in-scope findings still open: %s. The PR is left open, unmerged. Removing board:stalled is the sole re-eligibility condition.\n\n%s' "$ROUND_BUDGET" "$PR_NUMBER" "$remaining" "$marker")"
+            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round budget (%s) spent on PR #%s with in-scope findings still open. The PR is left open, unmerged. Removing board:stalled is the sole re-eligibility condition.\n\n%s\n\n%s' "$ROUND_BUDGET" "$PR_NUMBER" "$remaining" "$marker")"
             gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
           fi
 
@@ -2974,7 +2993,10 @@ jobs:
           FIRST_FAILURE: ${{ steps.gate-suite-review-fixup.outputs.first-failure }}
         run: |
           set -uo pipefail
-          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'A review-fixup follow-up commit failed the local gate suite before any push -- nothing was pushed, the PR is unchanged:\n\n%s' "$FIRST_FAILURE")"
+          # #580: fenced -- see the fixer's own gate-suite comment.
+          failure="$(python3 -c "import os, sys; sys.path.insert(0, '.github/scripts'); from board_spec_request_body import fenced_section; print(fenced_section('First failing gate (gate suite output, shown as text):', os.environ['FIRST_FAILURE'], 4000))")" \
+            || failure="(the failing gate could not be rendered)"
+          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'A review-fixup follow-up commit failed the local gate suite before any push -- nothing was pushed, the PR is unchanged:\n\n%s' "$failure")"
 
   # Phase 7 (User Story 5, contracts/readiness-report.md): every condition
   # is re-derived against the PR's exact head SHA; the loop reports ready

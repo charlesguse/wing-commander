@@ -11,6 +11,11 @@ decides whether a re-derivation contradicts it.
 Only a marker on a comment the loop's own GitHub App posted is read
 (is_loop_marker_author(), issue #555). Anyone can comment on a public
 repository's issue, so a marker in any other comment is ignored.
+
+Within one such comment only the LAST marker counts (last_marker_match(),
+issue #580). The loop's comments embed agent text (a triage proposal, a
+review finding title) and always end with write_marker()'s own output, so
+a marker-shaped string in the agent text always comes before the real one.
 """
 import json
 import os
@@ -18,6 +23,25 @@ import re
 
 MARKER_RE = re.compile(
     r"<!--\s*wing-commander-board-item:\s*(\{.*?\})\s*-->", re.DOTALL)
+MARKER_OPEN_RE = re.compile(r"<!--\s*wing-commander-board-item:")
+
+
+def last_marker_match(body):
+    """The MARKER_RE match that starts at the LAST marker opener in `body`,
+    or None (issue #580). The one rule every marker reader uses.
+
+    Not the first match: agent text earlier in the same bot comment could
+    carry a marker of its own. Not simply the last of MARKER_RE.finditer()
+    either: an unclosed opener in the agent text would make the lazy match
+    run on into the real marker and swallow it. write_marker()'s output is
+    always the end of the loop's comment, so its opener is the last one."""
+    body = body or ""
+    start = None
+    for opener in MARKER_OPEN_RE.finditer(body):
+        start = opener.start()
+    if start is None:
+        return None
+    return MARKER_RE.match(body, start)
 
 
 def is_loop_marker_author(comment, bot_login):
@@ -49,7 +73,8 @@ def read_marker_with_timestamp(issue_comments, bot_login):
     comments, any order). bot_login: the loop's own App login
     (`<slug>[bot]`); required. Returns (created_at, marker) for the most
     recent well-formed board-item marker in a comment that
-    is_loop_marker_author() accepts, or None when no such comment carries
+    is_loop_marker_author() accepts -- each comment's last_marker_match(),
+    never an earlier marker in the same comment -- or None when no such comment carries
     one, or the newest one is not valid JSON (missing/unparsable marker --
     degrade to None, never raise; the caller falls back to live GitHub
     state per FR-054)."""
@@ -58,7 +83,7 @@ def read_marker_with_timestamp(issue_comments, bot_login):
         if not is_loop_marker_author(comment, bot_login):
             continue
         body = comment.get("body") or ""
-        match = MARKER_RE.search(body)
+        match = last_marker_match(body)
         if not match:
             continue
         dated_matches.append((comment.get("created_at") or "", match.group(1)))

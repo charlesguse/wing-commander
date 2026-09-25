@@ -56,6 +56,15 @@ step's no-op hold for it is not re-selected every run. AUTHOR_MUTATIONS swap wea
 predicates into board_item_marker and must each fail a case, and
 board_eligibility.py's main() must refuse a payload with no bot_login.
 
+Last marker per comment (#580): the loop's comments embed agent text ahead
+of the loop's own marker. forged-marker-in-own-comment puts a well-formed
+`stalled` marker (and `**Run:**` line) in the agent text of the loop's own
+comment, before its real `route` marker; forged-marker-unclosed-in-own-
+comment puts an unclosed marker opener there. The real marker must be
+read in both. MARKER_RULE_MUTATIONS restore the first MARKER_RE match, and
+the plain last MARKER_RE.finditer() match (which the unclosed opener
+swallows), and each must fail a case.
+
 Fails loudly, not vacuously, if any fixture file is missing.
 """
 import contextlib
@@ -106,6 +115,8 @@ IN_FLIGHT_CASES = {
     "forged-marker-other-app",
     "own-marker-newer-forged-ignored",
     "unowned-open-pr",
+    "forged-marker-in-own-comment",
+    "forged-marker-unclosed-in-own-comment",
 }
 
 # (name, replacement for board_item_marker.is_loop_marker_author)
@@ -115,6 +126,22 @@ AUTHOR_MUTATIONS = (
      lambda comment, bot_login: (comment.get("user") or {}).get("login") == bot_login),
     ("author check on type only (login ignored)",
      lambda comment, bot_login: (comment.get("user") or {}).get("type") == "Bot"),
+)
+
+
+def _last_finditer_match(body):
+    last = None
+    for match in board_item_marker.MARKER_RE.finditer(body or ""):
+        last = match
+    return last
+
+
+# (name, replacement for board_item_marker.last_marker_match) -- #580
+MARKER_RULE_MUTATIONS = (
+    ("first marker in a comment read (pre-#580)",
+     lambda body: board_item_marker.MARKER_RE.search(body or "")),
+    ("last MARKER_RE.finditer() match read (an unclosed opener swallows the real marker)",
+     _last_finditer_match),
 )
 
 
@@ -207,6 +234,27 @@ def author_mutation_check():
             failures += 1
             print("::error::verify-board-eligibility: mutation '{0}' was NOT caught "
                   "by any in-flight case (#555).".format(name))
+        else:
+            print("[ok] mutation caught ({0}: fails {1} case(s))".format(name, caught))
+    return failures
+
+
+def marker_rule_mutation_check():
+    """#580: each MARKER_RULE_MUTATIONS reader, swapped into
+    board_item_marker, must fail at least one in-flight case."""
+    failures = 0
+    original = board_item_marker.last_marker_match
+    for name, replacement in MARKER_RULE_MUTATIONS:
+        board_item_marker.last_marker_match = replacement
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                caught = run_in_flight_cases()
+        finally:
+            board_item_marker.last_marker_match = original
+        if not caught:
+            failures += 1
+            print("::error::verify-board-eligibility: mutation '{0}' was NOT caught "
+                  "by any in-flight case (#580).".format(name))
         else:
             print("[ok] mutation caught ({0}: fails {1} case(s))".format(name, caught))
     return failures
@@ -309,6 +357,7 @@ def run():
         print("[ok] AWAITING_MERGE_STEP is in FIX_OR_LATER_STEPS (select looks up its PR)")
 
     failures += author_mutation_check()
+    failures += marker_rule_mutation_check()
     failures += main_requires_bot_login()
 
     print("verify-board-eligibility: {0} failure(s).".format(failures))
