@@ -284,8 +284,10 @@ failure and continue rather than fail loud on the former. Gate 22
 the full ceiling/verdict/fail-loud wiring and catches both a newly-added
 unprotected site and a ceiling regressed back to its intended budget. Gate 22
 also carries the `rate-limited` cases (a terminal API 429, a mid-run 429 the
-runtime recovered from, and a non-429 API error that must not be widened
-into `rate-limited`), and Gate 51 (`verify-rate-limited-exemption.py`,
+runtime recovered from, a non-429 API error that must not be widened
+into `rate-limited`, and an unrelated failure that logged only an
+informational `allowed`/`allowed_warning` rate-limit event, which must
+stay `failed` — only a `rejected` or statusless event counts), and Gate 51 (`verify-rate-limited-exemption.py`,
 `specs/047-rate-limited-verdict/`) enumerates every verdict-gated issue/
 comment-writing step across the fleet and fails unless it excludes
 `rate-limited` or is one of the two sanctioned watchdog handlers, so a

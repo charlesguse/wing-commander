@@ -35,10 +35,15 @@ records. The condition, checked *before* the existing
 3. Given a failing terminal record, `rate-limited` fires when *either*:
    (a) the terminal record itself carries `.terminal_reason=="api_error"`
    and `.api_error_status=="429"`, or (b) those fields are absent but the
-   transcript carries at least one `rate_limit_event` record (tolerantly:
-   `.status=="rejected"` when present, but a bare `rate_limit_event`
-   record with no `status` field still counts — FR-002's "tolerates
-   their absence" applies to every field, not just `resetsAt`).
+   transcript carries at least one `rate_limit_event` record whose
+   status is `"rejected"` (read from `.rate_limit_info.status`, falling
+   back to a top-level `.status`); a bare `rate_limit_event` record with
+   no status in either place still counts — FR-002's "tolerates their
+   absence" applies to every field, not just `resetsAt`. An event with
+   any other status (the runtime's informational `"allowed"` /
+   `"allowed_warning"`, emitted during ordinary runs) is not evidence:
+   the first implementation counted every event whatever its status, and
+   so classified unrelated failures as `rate-limited` (#544).
    Otherwise the existing `is_error`/`subtype` → `failed` logic applies
    unchanged.
 

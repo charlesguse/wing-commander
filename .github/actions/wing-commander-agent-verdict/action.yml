@@ -105,11 +105,32 @@ runs:
 
             # Rate-limit evidence is read from the same already-open
             # transcript (FR-002: no second file read, no network call).
-            # The last rate_limit_event record is authoritative, mirroring
-            # how result_json above already keys on the last result record
-            # (specs/047-rate-limited-verdict/research.md R1).
+            # The last QUALIFYING rate_limit_event record is authoritative,
+            # mirroring how result_json above already keys on the last
+            # result record (specs/047-rate-limited-verdict/research.md R1).
+            #
+            # A rate_limit_event qualifies only when its status is
+            # "rejected" (#544). The runtime also emits informational events
+            # ("allowed", "allowed_warning") during ordinary runs; counting
+            # those let a run that failed for an unrelated reason read as
+            # rate-limited. The status is read from .rate_limit_info.status
+            # (the runtime's nested shape), falling back to a top-level
+            # .status (the shape spec 047's fixtures use).
+            #
+            # An event carrying NO status in either place still qualifies.
+            # Every informational event the runtime writes names its status,
+            # so a statusless one is never a known-benign record, while a
+            # genuine refused-run transcript carries a bare
+            # {"type":"rate_limit_event"} (issue #231's pinned run, replayed
+            # in verify-truncated-cycle-carry-forward.py) -- dropping it
+            # would demote a real rejection to "failed". It also keeps
+            # data-model.md's "status tolerated absent" rule.
             rate_limit_event_json="$(jq -c 'if type=="array" then . else [.] end
-              | map(select(.type=="rate_limit_event")) | last // empty' "$TRANSCRIPT" 2>/dev/null || true)"
+              | map(select(.type=="rate_limit_event"))
+              | map(select(((if (.rate_limit_info|type)=="object"
+                               then .rate_limit_info.status else null end)
+                            // .status // "rejected") == "rejected"))
+              | last // empty' "$TRANSCRIPT" 2>/dev/null || true)"
 
             rate_limit_evidence="false"
             if [ "$terminal_reason" = "api_error" ] && [ "$api_error_status" = "429" ]; then
@@ -122,9 +143,9 @@ runs:
             rate_limit_window=""
             if [ -n "$rate_limit_event_json" ] && [ "$rate_limit_event_json" != "null" ]; then
               rlget() { printf '%s' "$rate_limit_event_json" | jq -r "$1 // empty" 2>/dev/null || true; }
-              rl_resets_at="$(rlget '.resetsAt')"
+              rl_resets_at="$(rlget '.resetsAt // (.rate_limit_info | objects | .resetsAt)')"
               [ -n "$rl_resets_at" ] && rate_limit_reset="$rl_resets_at"
-              rate_limit_window="$(rlget '.rateLimitType')"
+              rate_limit_window="$(rlget '.rateLimitType // (.rate_limit_info | objects | .rateLimitType)')"
             fi
 
             # Order matters: error_max_turns is checked BEFORE is_error, since
@@ -134,8 +155,8 @@ runs:
             # exactly the outcome FR-009 asks to keep distinguishable.
             # rate-limited is checked next, before the generic is_error/
             # subtype fallthrough, per contracts/agent-verdict-extension.md's
-            # ordering (specs/047-rate-limited-verdict) — a rate_limit_event
-            # earlier in the transcript followed by a successful terminal
+            # ordering (specs/047-rate-limited-verdict) — a rejected
+            # rate_limit_event earlier in the transcript followed by a successful terminal
             # result never reaches this branch at all (subtype=="success"
             # fails the failure test below), so a recovered 429 stays healthy.
             if [ "$subtype" = "error_max_turns" ]; then

@@ -349,6 +349,113 @@ def case_non_429_api_error_stays_failed():
          "failed, unchanged reason text")
 
 
+def nested_rate_limit_event(status, **info):
+    """The runtime's own shape: status/resetsAt/rateLimitType nested under
+    .rate_limit_info rather than at the record's top level."""
+    return [{"type": "rate_limit_event",
+             "rate_limit_info": dict({"status": status}, **info)}]
+
+
+def _expect_failed_despite_event(case, event):
+    """#544: a non-429 failure that merely logged an informational
+    rate_limit_event along the way is a real failure, never rate-limited."""
+    recs = assistant("msg_main_0") + event + assistant("msg_main_1") \
+        + result(is_error=True, subtype="error_during_execution", num_turns=2)
+    outputs = expect(case, recs, "failed", reason_contains="is_error=true")
+    if outputs.get("rate-limit-reset") not in ("", None):
+        fail(case, f"expected empty rate-limit-reset for a failed verdict, "
+                   f"got {outputs.get('rate-limit-reset')!r}")
+
+
+def case_allowed_warning_event_on_failure_stays_failed():
+    _expect_failed_despite_event(
+        "allowed_warning event (top-level status) on a non-429 failure -> failed",
+        rate_limit_event(status="allowed_warning",
+                         resetsAt="2026-09-12T10:10:00Z",
+                         rateLimitType="five_hour"))
+    note("an informational allowed_warning event does not turn a non-429 "
+         "failure into rate-limited")
+
+
+def case_allowed_nested_event_on_failure_stays_failed():
+    _expect_failed_despite_event(
+        "allowed event (rate_limit_info.status) on a non-429 failure -> failed",
+        nested_rate_limit_event("allowed", resetsAt="2026-09-12T10:10:00Z",
+                                rateLimitType="five_hour"))
+    note("an informational allowed event in the nested rate_limit_info "
+         "shape does not turn a non-429 failure into rate-limited")
+
+
+def case_informational_after_rejected_still_rate_limited():
+    """A rejected event followed by a later informational one: the
+    rejection is still evidence, and its reset time is the one reported."""
+    case = "rejected event then an informational one -> rate-limited"
+    recs = rate_limit_event(resetsAt="2026-09-12T10:10:00Z") \
+        + rate_limit_event(status="allowed_warning",
+                           resetsAt="2026-09-12T99:99:99Z") \
+        + result(is_error=True, subtype="error_during_execution", num_turns=1)
+    outputs = expect(case, recs, "rate-limited")
+    if outputs.get("rate-limit-reset") != "2026-09-12T10:10:00Z":
+        fail(case, f"expected the rejected event's resetsAt, got "
+                   f"{outputs.get('rate-limit-reset')!r}")
+
+
+def _expect_rate_limited_from_event(case, event):
+    """A rejected event on a failing run with NO terminal api_error 429 --
+    the event alone must carry the verdict, so this proves the event path
+    rather than the terminal-429 path."""
+    recs = event + result(is_error=True, subtype="error_during_execution",
+                          num_turns=1)
+    outputs = expect(case, recs, "rate-limited",
+                     reason_contains="five_hour")
+    if outputs.get("rate-limit-reset") != "2026-09-12T10:10:00Z":
+        fail(case, f"expected rate-limit-reset=2026-09-12T10:10:00Z, got "
+                   f"{outputs.get('rate-limit-reset')!r}")
+
+
+def case_rejected_event_top_level_rate_limited():
+    _expect_rate_limited_from_event(
+        "rejected event (top-level status), no terminal 429 -> rate-limited",
+        rate_limit_event(resetsAt="2026-09-12T10:10:00Z",
+                         rateLimitType="five_hour"))
+
+
+def case_rejected_event_nested_rate_limited():
+    _expect_rate_limited_from_event(
+        "rejected event (rate_limit_info.status), no terminal 429 -> rate-limited",
+        nested_rate_limit_event("rejected", resetsAt="2026-09-12T10:10:00Z",
+                                rateLimitType="five_hour"))
+    note("a rejected event classifies rate-limited in both the top-level "
+         "and the nested rate_limit_info shape, with window and reset read "
+         "from either")
+
+
+def case_statusless_event_rate_limited():
+    """A bare rate_limit_event with no status anywhere still counts: the
+    real refused-run transcript pinned from #231 carries exactly this."""
+    recs = [{"type": "rate_limit_event"}] \
+        + result(is_error=True, subtype="success", num_turns=1)
+    outputs = expect("statusless event on a failure -> rate-limited", recs,
+                     "rate-limited")
+    if outputs.get("rate-limit-reset") != "unknown":
+        fail("statusless event on a failure -> rate-limited",
+             f"expected rate-limit-reset=unknown, got "
+             f"{outputs.get('rate-limit-reset')!r}")
+
+
+def case_terminal_429_without_event_rate_limited():
+    recs = result(is_error=True, subtype="success", terminal_reason="api_error",
+                  api_error_status=429, num_turns=0)
+    outputs = expect("terminal api_error 429 with no event -> rate-limited",
+                     recs, "rate-limited")
+    if outputs.get("rate-limit-reset") != "unknown":
+        fail("terminal api_error 429 with no event -> rate-limited",
+             f"expected rate-limit-reset=unknown, got "
+             f"{outputs.get('rate-limit-reset')!r}")
+    note("a terminal api_error 429 alone classifies rate-limited, reset "
+         "unknown")
+
+
 def case_shared_counter_absent():
     """_shared/count-turns.sh is not in the checkout at all.
 
@@ -403,6 +510,13 @@ CASES = [
     case_rate_limited_terminal_429,
     case_rate_limited_recovered_mid_run_stays_healthy,
     case_non_429_api_error_stays_failed,
+    case_allowed_warning_event_on_failure_stays_failed,
+    case_allowed_nested_event_on_failure_stays_failed,
+    case_informational_after_rejected_still_rate_limited,
+    case_rejected_event_top_level_rate_limited,
+    case_rejected_event_nested_rate_limited,
+    case_statusless_event_rate_limited,
+    case_terminal_429_without_event_rate_limited,
     case_shared_counter_absent,
     case_never_fails,
 ]
@@ -431,6 +545,23 @@ MUTATIONS = [
      lambda s: s.replace(
          '[ "$rate_limit_evidence" = "true" ]; then\n      verdict="rate-limited"',
          '[ "$rate_limit_evidence" = "bogus" ]; then\n      verdict="rate-limited"')),
+    # #544: the three arms of the rate_limit_event status filter.
+    ("counts any rate_limit_event as evidence, whatever its status "
+     "(the #544 defect)", "action",
+     lambda s: s.replace('// .status // "rejected") == "rejected"))',
+                         '// .status // "rejected") != "__any__"))', 1)),
+    ("reads status only at the top level, ignoring rate_limit_info.status",
+     "action",
+     lambda s: s.replace('then .rate_limit_info.status else null end',
+                         'then null else null end', 1)),
+    ("stops counting a statusless rate_limit_event as evidence", "action",
+     lambda s: s.replace('// .status // "rejected") == "rejected"))',
+                         '// .status // "none") == "rejected"))', 1)),
+    ("reads the reset time only at the top level, ignoring "
+     "rate_limit_info.resetsAt", "action",
+     lambda s: s.replace(
+         "rlget '.resetsAt // (.rate_limit_info | objects | .resetsAt)'",
+         "rlget '.resetsAt'", 1)),
 ]
 
 

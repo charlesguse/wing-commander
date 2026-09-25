@@ -37,11 +37,19 @@ record" entities define the field shapes referenced below;
 
   `rate_limit_evidence_present` = `(result_json.terminal_reason ==
   "api_error" AND result_json.api_error_status == 429)` OR (transcript
-  contains any `.type=="rate_limit_event"` record). Evaluated with `jq`
+  contains a `.type=="rate_limit_event"` record whose status is
+  `"rejected"` or absent). The status is read from
+  `.rate_limit_info.status`, falling back to a top-level `.status`. An
+  event whose status is anything else (the runtime's informational
+  `"allowed"` / `"allowed_warning"`) is not evidence (#544): counting it
+  classified unrelated failures as `rate-limited`. A statusless event
+  still counts: every informational event names its status, and a
+  genuine refused-run transcript (#231) carries a bare one. Evaluated with `jq`
   against the same transcript file already open for `result_json` — no
   second file read, no network call (FR-002).
-- `rate-limit-reset` is computed once, from the *last*
-  `.type=="rate_limit_event"` record's `.resetsAt` (mirrors the
+- `rate-limit-reset` is computed once, from the *last* qualifying
+  (rejected or statusless) `.type=="rate_limit_event"` record's
+  `.resetsAt`, or its `.rate_limit_info.resetsAt` (mirrors the
   "last record is authoritative" rule the classifier already applies to
   `result` records) — `"unknown"` when no such record exists, is empty,
   or is unparseable as non-empty text. Never epoch-zero, never a

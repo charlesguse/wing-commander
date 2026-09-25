@@ -17,7 +17,7 @@ anything in this repository.
 | Field | Type | Notes |
 |---|---|---|
 | `type` | string, literal `"rate_limit_event"` | The only field this feature's detection treats as required (research.md R1). |
-| `status` | string, e.g. `"rejected"` | Tolerated absent — a bare `rate_limit_event` with no `status` still counts as evidence (research.md R1). |
+| `status` | string, e.g. `"rejected"` | Read at `.rate_limit_info.status`, else top-level `.status`. Only `"rejected"` counts as evidence; informational values (`"allowed"`, `"allowed_warning"`) do not (#544). Tolerated absent — a bare `rate_limit_event` with no status still counts as evidence (research.md R1). |
 | `rateLimitType` | string, e.g. `"five_hour"` | Reported in `reason` prose only; never gates classification (spec.md Assumptions). |
 | `resetsAt` | string (ISO-8601) or absent | Surfaced verbatim as the `rate-limit-reset` output (research.md R2) when present; `"unknown"` when absent or unparseable. |
 
