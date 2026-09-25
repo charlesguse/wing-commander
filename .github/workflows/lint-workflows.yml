@@ -4100,10 +4100,10 @@ jobs:
       # feeding a board item marker reader fails its step on error (never
       # `[]`), checked on the text and by running the steps against a stub
       # gh, and prove-gate applies BOARD_PR_OWNED_JQ.
-      - name: "Gate 97 —board-loop's resume jobs run on a resume, and read an upstream's outputs only after it succeeded"
+      - name: "Gate 97 — board-loop's resume jobs run on a resume, and read an upstream's outputs only after it succeeded"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-resume-gating.py
-      - name: "Gate 97 self-test — dropping !cancelled() or swapping in always(), a result guard, the breach exclusion, output or its writer, or restoring the pre-#525 conditions each fail"
+      - name: "Gate 97 self-test — dropping !cancelled() or swapping in always(), a result guard, the breach exclusion, output or its writer, restoring the pre-#525 conditions, a swallowed or bare marker comments fetch, or prove-gate without BOARD_PR_OWNED_JQ each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-resume-gating.py --self-test
 

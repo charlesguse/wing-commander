@@ -111,7 +111,9 @@ network).
    non-zero without it. (#557) A failed comments fetch fails the select
    step with an `::error::` annotation. It is never recorded as `[]`,
    which would hide that issue's in-flight marker and let an older item
-   start alongside it (FR-048 / User Story 7).
+   start alongside it (FR-048 / User Story 7). The one exception is HTTP
+   404/410, which means the issue is gone. That issue is dropped from the
+   run's candidates with a `::warning::`.
 2. `pr_state_by_number`: after calling `board_item_marker.
    read_marker_with_timestamp(comments, bot_login)` (via `in_flight_candidate`'s own internal
    scan, or a pre-pass over `comments_by_issue` before calling `select()` —

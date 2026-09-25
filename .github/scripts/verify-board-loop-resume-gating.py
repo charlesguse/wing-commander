@@ -88,7 +88,9 @@ an `if ! gh api ...; then` whose branch emits `::error::` and exits 1 --
 no `||` swallow, no `[]` written in the comments' place. The three steps
 are also RUN, under `bash -e` against a stub gh: a failed fetch must fail
 each step loudly without writing its decision output, and a successful
-one must not. prove-gate must apply BOARD_PR_OWNED_JQ to the event's
+one must not. The one exception is select's HTTP 404/410 on one issue's
+comments ("issue gone"). That issue is dropped from the candidates with a
+::warning:: and select succeeds. A 500 still fails the step. prove-gate must apply BOARD_PR_OWNED_JQ to the event's
 pull_request: a merged PR without board:owned, or from another
 repository, is not a board item (and its issue's comments are never
 fetched). A simulator scenario pins that a select job failed in resume
@@ -964,7 +966,12 @@ def fetch_handling_findings(doc):
                     "failed fetch is not handled explicitly (#557)".format(where))
                 continue
             then_at = run.find("; then\n", m.end())
-            fi = re.compile(r"\n[ \t]*fi\b").search(run, then_at) if then_at >= 0 else None
+            # The `fi` closing THIS if: same indentation as its `if !` line
+            # (a nested if -- select's 404/410 branch -- closes earlier).
+            indent = run[line_start:m.start()][:len(run[line_start:m.start()]) - len(
+                run[line_start:m.start()].lstrip())]
+            fi = (re.compile(r"\n" + re.escape(indent) + r"fi\b").search(run, then_at)
+                  if then_at >= 0 else None)
             if fi is None:
                 findings.append("{0}: comments fetch has no `; then ... fi` failure branch (#557)".format(where))
                 continue
@@ -983,15 +990,20 @@ _STUB_GH = r"""#!/usr/bin/env bash
 echo "gh $*" >> "$STUB_LOG"
 case "$*" in
   "api repos/$GITHUB_REPOSITORY/issues/"*"/comments"*)
-    if [ "${STUB_COMMENTS_FAIL:-}" = "1" ]; then
-      echo "gh: Server Error (HTTP 502)" >&2
+    if [ -n "${STUB_COMMENTS_FAIL:-}" ] && { [ -z "${STUB_FAIL_ISSUE:-}" ] || [[ "$*" == *"/issues/$STUB_FAIL_ISSUE/comments"* ]]; }; then
+      case "$STUB_COMMENTS_FAIL" in
+        404) echo "gh: Not Found (HTTP 404)" >&2 ;;
+        410) echo "gh: This issue was deleted (HTTP 410)" >&2 ;;
+        *) echo "gh: Server Error (HTTP $STUB_COMMENTS_FAIL)" >&2 ;;
+      esac
       exit 1
     fi
     cat "$STUB_COMMENTS" ;;
   "api repos/$GITHUB_REPOSITORY/issues/"*"/timeline"*) ;;
   "api repos/$GITHUB_REPOSITORY/issues -X GET"*"labels=board:owned"*) ;;
   "api repos/$GITHUB_REPOSITORY/issues -X GET"*)
-    echo '{"number":7,"author":{"login":"alice"},"authorAssociation":"OWNER","labels":[],"state":"OPEN","createdAt":"2026-01-01T00:00:00Z"}' ;;
+    echo '{"number":7,"author":{"login":"alice"},"authorAssociation":"OWNER","labels":[],"state":"OPEN","createdAt":"2026-01-01T00:00:00Z"}'
+    echo '{"number":8,"author":{"login":"alice"},"authorAssociation":"OWNER","labels":[],"state":"OPEN","createdAt":"2026-01-02T00:00:00Z"}' ;;
   "api repos/$GITHUB_REPOSITORY/pulls/"*) exit 1 ;;
   "issue comment"*) ;;
   *) echo "stub gh: unexpected call: $*" >&2; exit 3 ;;
@@ -1009,11 +1021,13 @@ def _pr_event(labels, head_repo):
 
 def _fetch_cases():
     """(title, job, step id, env overrides, pull_request event or None,
-    comments fetch fails, check(rc, out, outputs, gh_log) -> problem|None)."""
+    comments fetch failure ("" = none, else the HTTP status the stub
+    returns), check(rc, out, outputs, gh_log, runner_temp) -> problem|None).
+    STUB_FAIL_ISSUE in the env overrides limits the failure to one issue."""
     owned = _pr_event(["board:owned"], _STUB_REPO)
 
     def failed_loudly(key, bad):
-        def check(rc, out, outputs, log):
+        def check(rc, out, outputs, log, rt):
             if rc == 0:
                 return "step succeeded on a failed comments fetch (#557)"
             if "::error::" not in out:
@@ -1024,7 +1038,7 @@ def _fetch_cases():
         return check
 
     def ok_with(key, want):
-        def check(rc, out, outputs, log):
+        def check(rc, out, outputs, log, rt):
             if rc != 0:
                 return "step failed (rc {0}): {1}".format(rc, out.strip().splitlines()[-3:])
             if want is not None and outputs.get(key) != want:
@@ -1032,7 +1046,7 @@ def _fetch_cases():
             return None
         return check
 
-    def not_owned(rc, out, outputs, log):
+    def not_owned(rc, out, outputs, log, rt):
         if rc != 0:
             return "step failed (rc {0})".format(rc)
         if outputs.get("eligible") != "false":
@@ -1042,23 +1056,46 @@ def _fetch_cases():
             return "fetched the issue's comments for a PR that is not a board item"
         return None
 
+    def gone_dropped(rc, out, outputs, log, rt):
+        if rc != 0:
+            return ("a 404/410 on one issue's comments failed select (rc {0}); it should drop "
+                    "that issue and continue".format(rc))
+        if "::warning::" not in out:
+            return "the dropped issue was not reported with a ::warning::"
+        try:
+            with open(os.path.join(rt, "board-eligibility-input.json"), encoding="utf-8") as fh:
+                numbers = [i.get("number") for i in json.load(fh)["open_issues"]]
+        except (OSError, ValueError, KeyError) as exc:
+            return "no board-eligibility-input.json to inspect: {0}".format(exc)
+        if numbers != [8]:
+            return "expected candidates [8] after dropping gone issue #7, got {0}".format(numbers)
+        return None
+
     return [
-        ("select: per-issue comments fetch fails", "select", "select", {}, None, True,
+        ("select: per-issue comments fetch fails (HTTP 502)", "select", "select", {}, None, "502",
          failed_loudly("issue-number", "7")),
-        ("select: comments fetch succeeds (stub sanity)", "select", "select", {}, None, False,
+        ("select: one issue's comments fetch fails (HTTP 500)", "select", "select",
+         {"STUB_FAIL_ISSUE": "8"}, None, "500", failed_loudly("issue-number", "7")),
+        ("select: issue gone (HTTP 404) -> dropped, select continues", "select", "select",
+         {"STUB_FAIL_ISSUE": "7"}, None, "404", gone_dropped),
+        ("select: issue gone (HTTP 410) -> dropped, select continues", "select", "select",
+         {"STUB_FAIL_ISSUE": "7"}, None, "410", gone_dropped),
+        ("select: comments fetch succeeds (stub sanity)", "select", "select", {}, None, "",
          ok_with("issue-number", None)),
-        ("resume: comments fetch fails", "select", "resume", {"ISSUE_NUMBER": "7"}, None, True,
+        ("resume: comments fetch fails", "select", "resume", {"ISSUE_NUMBER": "7"}, None, "502",
          failed_loudly("step", "triage")),
         ("resume: comments fetch succeeds (stub sanity)", "select", "resume", {"ISSUE_NUMBER": "7"},
-         None, False, ok_with("step", None)),
-        ("prove-gate: owned PR, marker present -> prove", "prove-gate", "gate", {}, owned, False,
+         None, "", ok_with("step", None)),
+        ("prove-gate: owned PR, marker present -> prove", "prove-gate", "gate", {}, owned, "",
          ok_with("eligible", "true")),
-        ("prove-gate: owned PR, comments fetch fails", "prove-gate", "gate", {}, owned, True,
+        ("prove-gate: owned PR, comments fetch fails", "prove-gate", "gate", {}, owned, "502",
          failed_loudly("eligible", "true")),
         ("prove-gate: merged PR without board:owned -> not a board item", "prove-gate", "gate", {},
-         _pr_event(["bug"], _STUB_REPO), False, not_owned),
+         _pr_event(["bug"], _STUB_REPO), "", not_owned),
         ("prove-gate: board:owned PR from another repository -> not a board item", "prove-gate",
-         "gate", {}, _pr_event(["board:owned"], "someone/fork"), False, not_owned),
+         "gate", {}, _pr_event(["board:owned"], "someone/fork"), "", not_owned),
+        ("prove-gate: board:owned PR whose head repository was deleted -> not a board item",
+         "prove-gate", "gate", {}, _pr_event(["board:owned"], None), "", not_owned),
     ]
 
 
@@ -1117,7 +1154,7 @@ def fetch_behaviour_findings(doc):
                    "BOARD_PR_OWNED_JQ": str(env_block.get("BOARD_PR_OWNED_JQ", "")),
                    "BOARD_PR_STATE_JQ": str(env_block.get("BOARD_PR_STATE_JQ", "")),
                    "STUB_LOG": log, "STUB_COMMENTS": comments,
-                   "STUB_COMMENTS_FAIL": "1" if fail else "0",
+                   "STUB_COMMENTS_FAIL": fail, "STUB_FAIL_ISSUE": "",
                    "PR_BODY": "Fixes #7", "PR_NUMBER": "42", "MERGED": "true"}
             env.update(env_over)
             rc, out, outputs, _summary = run_step(bash, run, workdir, env, runner_temp)
@@ -1127,7 +1164,7 @@ def fetch_behaviour_findings(doc):
             if unexpected:
                 findings.append("fetch `{0}`: {1}".format(title, unexpected[0]))
                 continue
-            problem = check(rc, out, outputs, gh_log)
+            problem = check(rc, out, outputs, gh_log, runner_temp)
             if problem:
                 findings.append("fetch `{0}`: {1}".format(title, problem))
     _RUN_CACHE[key] = tuple(findings)
@@ -1284,6 +1321,13 @@ def _mutations(text):
     sub("select comments fetch failure branch without exit 1",
         "selected this run (#557).\"\n              exit 1\n",
         "selected this run (#557).\"\n")
+    sub("select 'issue gone' branch widened to every HTTP error",
+        "grep -qE 'HTTP (404|410)'", "grep -qE 'HTTP [0-9]+'")
+    sub("select 'issue gone' branch fails instead of dropping the issue",
+        "dropped from this run's candidates (#557).\"\n", "dropped from this run's candidates (#557).\"\n"
+        "                exit 1\n")
+    sub("select 'issue gone' branch does not drop the issue from the candidates",
+        "'map(select(.number != ($n|tonumber)))'", "'.'")
     sub("resume comments fetch swallowed with || true",
         "> \"$RUNNER_TEMP/board-issue-comments.json\"; then",
         "> \"$RUNNER_TEMP/board-issue-comments.json\" || true; then")

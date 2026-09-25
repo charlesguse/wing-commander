@@ -228,9 +228,22 @@ jobs:
             # scheduled run re-reads everything. A failed select job skips
             # every later job (each gates on needs.select.result ==
             # 'success', Gate 97). Gate 97 checks each such fetch.
+            # One exception, here only: HTTP 404/410 means the issue was
+            # deleted or transferred after the list above was read -- it
+            # has no marker to hide, so it leaves the candidate set with a
+            # warning rather than wedge every run on a vanished issue.
             if ! gh api "repos/$GITHUB_REPOSITORY/issues/$number/comments" --paginate \
-                --jq '.[] | {login: .user.login, association: .author_association, created_at, body, user: {login: .user.login, type: .user.type}}' | jq -s '.' \
+                --jq '.[] | {login: .user.login, association: .author_association, created_at, body, user: {login: .user.login, type: .user.type}}' \
+                2> "$RUNNER_TEMP/board-comments-$number.err" | jq -s '.' \
                 > "$RUNNER_TEMP/board-comments-$number.json"; then
+              if grep -qE 'HTTP (404|410)' "$RUNNER_TEMP/board-comments-$number.err"; then
+                echo "::warning::board-loop: issue #$number is gone (comments fetch returned 404/410) -- dropped from this run's candidates (#557)."
+                jq --arg n "$number" 'map(select(.number != ($n|tonumber)))' "$RUNNER_TEMP/board-open-issues.json" \
+                  > "$RUNNER_TEMP/board-open-issues.tmp"
+                mv "$RUNNER_TEMP/board-open-issues.tmp" "$RUNNER_TEMP/board-open-issues.json"
+                continue
+              fi
+              cat "$RUNNER_TEMP/board-comments-$number.err" >&2
               echo "::error::board-loop: could not fetch the comments of issue #$number -- its board item marker cannot be read, so no item is selected this run (#557)."
               exit 1
             fi
@@ -3319,7 +3332,7 @@ jobs:
           transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
           model: ''
           stage: board-loop
-          run-label: ${{ steps.gate.outputs.eligible == 'true' && 'eligible for prove' || 'prove not entered' }}
+          run-label: ${{ steps.gate.outcome == 'failure' && 'prove-gate failed' || steps.gate.outputs.eligible == 'true' && 'eligible for prove' || 'prove not entered' }}
           record-path: ${{ runner.temp }}/wing-commander-metrics-record-prove-gate.json
 
       - name: Upload metrics record (prove-gate)
