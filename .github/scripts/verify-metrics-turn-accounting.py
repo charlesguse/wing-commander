@@ -56,7 +56,9 @@ one that cannot.
 """
 import json
 import os
+import re
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -143,8 +145,12 @@ BASH = None          # resolved once in main()
 
 
 def run_case(name, records, max_turns="100", warn_fraction=None, raw=None,
-             ceiling=""):
+             ceiling="", counter=None, with_outputs=False):
     """Execute the shipped script over one transcript; return (rc, summary).
+
+    with_outputs=True also returns the parsed $GITHUB_OUTPUT (the metrics
+    record rides in record-json). counter= stages a stand-in count-turns.sh
+    instead of the shipped one.
 
     run_step() is the shared harness gates 8 and 9 use: it hands the block
     over as a file under `bash -e` exactly as the runner does, owns
@@ -176,9 +182,9 @@ def run_case(name, records, max_turns="100", warn_fraction=None, raw=None,
         os.makedirs(shared_dir, exist_ok=True)
         with open(os.path.join(shared_dir, "count-turns.sh"), "w",
                   encoding="utf-8", newline="\n") as f:
-            f.write(SHARED_SCRIPT)
+            f.write(SHARED_SCRIPT if counter is None else counter)
 
-        rc, output, _outputs, summary = run_step(
+        rc, output, outputs, summary = run_step(
             BASH, SCRIPT, tmp,
             {"TRANSCRIPT_PATH": TRANSCRIPT_NAME,
              "MODEL": "claude-sonnet-5",
@@ -188,6 +194,8 @@ def run_case(name, records, max_turns="100", warn_fraction=None, raw=None,
              "WARN_FRACTION": warn_fraction or "0.8",
              "GITHUB_ACTION_PATH": action_dir},
             tmp)
+        if with_outputs:
+            return rc, output, summary, outputs
         return rc, output, summary
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -385,6 +393,205 @@ def case_never_fails():
          "0 with a heading (the never-fail-the-step contract)")
 
 
+# --- #572: count-turns.sh input shapes and value validation ----------------
+COUNTER_LINE = re.compile(r"^(main_turns|sub_turns|reported)=[0-9]*$")
+
+
+def _ndjson(records):
+    return "".join(json.dumps(r) + "\n" for r in records)
+
+
+def _marker():
+    """A path an injected `touch` would create, outside every case's tree."""
+    return os.path.join(tempfile.mkdtemp(prefix="wc-metrics-inj-"),
+                        "ran").replace("\\", "/")
+
+
+def _injections(marker):
+    """String num_turns values a caller's unfiltered eval would act on."""
+    return (f"1; touch {marker}",
+            f"$(touch {marker})",
+            f"1\nmain_turns=999\ntouch {marker}")
+
+
+def run_counter(case, raw):
+    """Run this pass's (possibly mutated) count-turns.sh over a raw
+    transcript the way its callers do, output straight into an `eval`, but
+    WITHOUT their digits-only filter, so the script's own header promise is
+    what is under test. Returns the three bound values, or None.
+
+    Every line must already be `name=<digits or empty>`."""
+    tmp = tempfile.mkdtemp(prefix="wc-count-turns-")
+    try:
+        with open(os.path.join(tmp, TRANSCRIPT_NAME), "w",
+                  encoding="utf-8", newline="\n") as f:
+            f.write(raw)
+        with open(os.path.join(tmp, "count-turns.sh"), "w",
+                  encoding="utf-8", newline="\n") as f:
+            f.write(SHARED_SCRIPT)
+        with open(os.path.join(tmp, "caller.sh"), "w",
+                  encoding="utf-8", newline="\n") as f:
+            f.write('main_turns=""; sub_turns=""; reported=""\n'
+                    'out="$(bash ./count-turns.sh "$1")"\n'
+                    'printf "%s\\n" "$out" > raw.txt\n'
+                    'eval "$out"\n'
+                    'printf "%s|%s|%s" "$main_turns" "$sub_turns" '
+                    '"$reported" > bound.txt\n')
+        proc = subprocess.run([BASH, "caller.sh", TRANSCRIPT_NAME], cwd=tmp,
+                              capture_output=True, text=True,
+                              encoding="utf-8", errors="replace")
+        try:
+            with open(os.path.join(tmp, "raw.txt"), encoding="utf-8") as f:
+                lines = f.read().splitlines()
+            with open(os.path.join(tmp, "bound.txt"), encoding="utf-8") as f:
+                bound = f.read().split("|")
+        except OSError:
+            fail(case, f"the caller's eval died (rc {proc.returncode}): "
+                       f"{(proc.stdout + proc.stderr).strip()[:300]}")
+            return None
+        if [ln.split("=", 1)[0] for ln in lines] != \
+                ["main_turns", "sub_turns", "reported"] \
+                or not all(COUNTER_LINE.match(ln) for ln in lines):
+            fail(case, f"expected exactly three name=<digits or empty> "
+                       f"lines, got {lines!r}")
+        if proc.returncode != 0:
+            fail(case, f"the caller's eval exited {proc.returncode}: "
+                       f"{(proc.stdout + proc.stderr).strip()[:300]}")
+        return dict(zip(("main_turns", "sub_turns", "reported"), bound))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def expect_counts(case, raw, main, sub, reported):
+    values = run_counter(case, raw)
+    want = {"main_turns": main, "sub_turns": sub, "reported": reported}
+    if values is not None and values != want:
+        fail(case, f"expected {want!r}, got {values!r}")
+
+
+def case_counter_accepts_every_transcript_shape():
+    """One array, NDJSON, several concatenated documents and non-object
+    elements all count the same. Read per document, NDJSON printed one line
+    per document and the callers' eval ran a bare "0" (exit 127); a bare
+    number made `.type` a jq error that emptied all three counts."""
+    recs = transcript(main=3, sub=2, chunks=2, num_turns=7)
+    expect_counts("counter: one JSON array", json.dumps(recs), "3", "2", "7")
+    expect_counts("counter: NDJSON", _ndjson(recs), "3", "2", "7")
+    expect_counts("counter: multi-document (arrays and objects)",
+                  json.dumps(recs[:3], indent=2) + "\n"
+                  + "\n".join(json.dumps(r, indent=2) for r in recs[3:]),
+                  "3", "2", "7")
+    expect_counts("counter: non-object elements [1, {...}]",
+                  json.dumps([1, "x", None] + recs), "3", "2", "7")
+    expect_counts("counter: NDJSON ending in false",
+                  _ndjson(recs) + "false\n", "3", "2", "7")
+    expect_counts("counter: unparseable", "{not json", "", "", "")
+    note("count-turns.sh counts one array, NDJSON, multi-document input, "
+         "non-object elements and NDJSON ending in false identically")
+
+
+def case_counter_reported_is_an_integer_or_empty():
+    """`reported` is the transcript's own .num_turns. Only an integer >= 0
+    is printed; a string an eval would run, a newline that would add an
+    assignment, a float, a negative or an object all print empty."""
+    marker = _marker()
+    values = [(repr(v), v) for v in _injections(marker)] + [
+        ("a numeric string", "7"), ("a float", 1.5), ("a negative", -3),
+        ("an object", {"n": 1})]
+    for label, value in values:
+        expect_counts(f"counter: num_turns as {label}",
+                      _ndjson(transcript(main=2, num_turns=value)),
+                      "2", "0", "")
+    if os.path.exists(marker):
+        fail("counter: string num_turns", "an injected command ran through "
+                                          "the caller's eval")
+    expect_counts("counter: num_turns 0 is kept",
+                  json.dumps(transcript(main=2, num_turns=0)), "2", "0", "0")
+    note("a string, float, negative or object num_turns prints an empty "
+         "reported, and nothing in it runs through an unfiltered eval")
+
+
+def _record(outputs):
+    try:
+        return json.loads(outputs.get("record-json") or "{}")
+    except ValueError:
+        return {}
+
+
+def case_metrics_summary_ndjson_record():
+    """The shipped block over NDJSON: exit 0 (it was 127), the counted
+    turns rendered, and a record carrying them."""
+    case = "metrics summary over an NDJSON transcript"
+    recs = transcript(main=40, sub=5, chunks=2, num_turns=60)
+    rc, output, summary, outputs = run_case(case, None, raw=_ndjson(recs),
+                                            with_outputs=True)
+    if rc != 0:
+        fail(case, f"exited {rc}: {output.strip()[:300]}")
+        return
+    for needle in ("| 40 / 100 |", "Subagent turns**: 5"):
+        if needle not in summary:
+            fail(case, f"expected {needle!r} in the summary, got:\n"
+                       f"{summary.strip()[:400]}")
+    record = _record(outputs)
+    turns = record.get("turns") or {}
+    got = (turns.get("counted"), turns.get("reported"),
+           turns.get("available"), record.get("record_available"))
+    if got != (40, 60, True, True):
+        fail(case, f"expected turns counted=40 reported=60 available=true "
+                   f"and record_available=true, got {record!r}")
+    note("NDJSON exits 0, renders 40/100 and writes a record with "
+         "counted=40, reported=60")
+
+
+def case_metrics_summary_string_num_turns():
+    """A string num_turns runs nothing through the eval, and the record
+    survives with reported=null instead of degrading to {}."""
+    marker = _marker()
+    for value in _injections(marker):
+        case = f"metrics summary with num_turns {value!r}"
+        rc, output, summary, outputs = run_case(
+            case, transcript(main=12, num_turns=value), with_outputs=True)
+        if rc != 0:
+            fail(case, f"exited {rc}: {output.strip()[:300]}")
+            continue
+        turns = _record(outputs).get("turns") or {}
+        if (turns.get("counted"), turns.get("reported")) != (12, None):
+            fail(case, f"expected turns counted=12 reported=null, got "
+                       f"{outputs.get('record-json')!r}")
+        if "| 12 / 100 |" not in summary:
+            fail(case, f"expected '| 12 / 100 |', got:\n"
+                       f"{summary.strip()[:400]}")
+    if os.path.exists(marker):
+        fail("metrics summary with a string num_turns",
+             "an injected command ran through the eval")
+    note("a string num_turns executes nothing and the record keeps "
+         "counted=12 with reported=null")
+
+
+def case_metrics_summary_filters_hostile_counter():
+    """count-turns.sh validates its own output, so the digits-only filter
+    before metrics-summary's eval is defence in depth. A stand-in counter
+    printing what the old one could (a per-document line, a string
+    num_turns, a foreign assignment) proves that filter on its own."""
+    case = "metrics summary filters a hostile counter's output"
+    marker = _marker()
+    counter = ("printf '%s\\n' 'main_turns=7' '0' "
+               f"'sub_turns=$(touch {marker})' "
+               "'availability=unavailable' "
+               f"'reported=1; touch {marker}'\n")
+    rc, output, summary = run_case(case, transcript(main=1, num_turns=1),
+                                   counter=counter)
+    if rc != 0:
+        fail(case, f"exited {rc}: {output.strip()[:300]}")
+    if os.path.exists(marker):
+        fail(case, "the eval ran a command from the counter's output")
+    if "| 7 / 100 |" not in summary:
+        fail(case, f"expected the one valid line (main_turns=7) to bind, "
+                   f"got:\n{summary.strip()[:400]}")
+    note("only name=<digits> lines of the counter's output reach "
+         "metrics-summary's eval")
+
+
 CASES = [
     case_streamed_chunks_are_one_turn,
     case_subagent_turns_excluded,
@@ -395,13 +602,18 @@ CASES = [
     case_no_budget_no_ratio,
     case_uncountable_falls_back_labelled,
     case_never_fails,
+    case_counter_accepts_every_transcript_shape,
+    case_counter_reported_is_an_integer_or_empty,
+    case_metrics_summary_ndjson_record,
+    case_metrics_summary_string_num_turns,
+    case_metrics_summary_filters_hostile_counter,
 ]
 
 
 # --- mutation checks -------------------------------------------------------
 # Each mutation reintroduces a real defect and asserts this suite catches it.
 # Without these, a rewrite that quietly stops counting anything would leave
-# every case above passing on a constant. Two of the three now key on
+# every case above passing on a constant. Most key on
 # .github/actions/_shared/count-turns.sh (research.md R5's extraction) rather
 # than the action's own run: block — the "target" tells run_case() which one
 # to mutate for that pass.
@@ -413,6 +625,28 @@ MUTATIONS = [
      lambda s: s.replace("| unique | length", "| length")),
     ("counts subagent turns against the parent's budget", "shared",
      lambda s: s.replace('and (.parent_tool_use_id // null) == null)', ')')),
+    # #572: count-turns.sh's input shapes, its value validation, and the
+    # filter before metrics-summary's eval.
+    ("reads the transcript per document instead of normalising it to one "
+     "flat array", "shared",
+     lambda s: s.replace(
+         """jq -cs 'map(if type=="array" then .[] else . end)""",
+         """jq -c 'if type=="array" then . else [.] end""", 1)),
+    ("reads .type without first dropping non-object elements", "shared",
+     lambda s: s.replace("\n    | map(objects)'", "'", 1)),
+    ("prints .num_turns without validating it as an integer >= 0", "shared",
+     lambda s: s.replace(
+         '\n      | select(type=="number" and . >= 0 and . == floor)'
+         '\n      | tostring | select(test("^[0-9]+$"))', "", 1)),
+    ("evals count-turns.sh's output without filtering it to name=digits "
+     "lines", "action",
+     lambda s: s.replace(
+         "| grep -E '^(main_turns|sub_turns|reported)=[0-9]*$' || true)\"",
+         "| cat)\"", 1)),
+    ("reads the record's reported turns from the raw .num_turns again "
+     "instead of count-turns.sh's validated value", "action",
+     lambda s: s.replace('reported_turns="$reported"',
+                         'reported_turns="$(jqget \'.num_turns\')"', 1)),
 ]
 
 

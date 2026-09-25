@@ -39,7 +39,7 @@ independent of the transcript).
 | `spec.identity_available` | boolean | `false` for a run with no attached specification (e.g. `auto-update-spec-kit.yml`'s sites) — spec.md's Edge Case "a stage that is not attached to a specification." |
 | `model` | string or null | The literal model name the call site's `claude-code-action` step used. `model_available: boolean` (false only if the caller itself omitted the required `model` input, which the action's existing `required: true` on that input makes rare in practice). |
 | `turns.counted` | integer or null | `main_turns` from `_shared/count-turns.sh` — the counted, budget-comparable total (FR-008). |
-| `turns.reported` | integer or null | The transcript's own `.num_turns` — kept for diagnosis, per spec.md's Edge Case "the turn count the record carries is the counted one, not the reported one," never used for comparison against budget. |
+| `turns.reported` | integer or null | The transcript's own `.num_turns`, as `_shared/count-turns.sh`'s validated `reported` (null unless an integer >= 0, #572) — kept for diagnosis, per spec.md's Edge Case "the turn count the record carries is the counted one, not the reported one," never used for comparison against budget. |
 | `turns.intended_budget` | integer or null | The caller's `max-turns` input value (the tunable budget). |
 | `turns.enforced_ceiling` | integer or null | The caller's `ceiling` input value (`wing-commander-turn-ceiling`'s output — the literal `--max-turns` the runtime enforced). |
 | `turns.available` | boolean | `false` when counting itself failed (unreadable transcript shape). |

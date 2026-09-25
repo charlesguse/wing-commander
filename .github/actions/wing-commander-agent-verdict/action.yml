@@ -105,6 +105,9 @@ runs:
         # bare "0" as a command -- exit 127 under the runner's `bash -e`.
         # When the file does not parse, counting still gets the raw path,
         # where count-turns.sh's own parse check empties all three values.
+        # count-turns.sh also applies the same normalisation itself (#572), so
+        # the flat copy passes through it unchanged, and on the raw path
+        # (no copy could be written) it still counts.
         # The parse check is `jq empty`, not `jq -e .`. Under -e, jq takes
         # its exit status from the LAST document only, so NDJSON ending in
         # `null` or `false` would read as unparseable.
