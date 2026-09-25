@@ -374,14 +374,17 @@ deliberately broken in-flight rule and confirm a gate fails.
 - **In-flight candidate**: an open, non-excluded issue whose marker says the
   loop has unfinished work on it — at a pre-fix step on the marker's step
   alone, at the fix step or later only while the marker's recorded pull
-  request is still open.
+  request is still open. Never at `prove`, and never at `awaiting-merge`
+  (#532), the step readiness records when it hands a ready pull request to
+  a human: that item releases the board whatever its pull request's state.
 - **Loop ownership label**: a label the loop applies to every pull request
   it opens, at creation time, marking that pull request as its own. It is
   the loop's only ownership signal that survives a run dying before the
   marker is recorded, and it makes "which open pull requests did the loop
   open?" answerable without reading pull request bodies.
 - **Step**: the loop's position in triage → route → fix → review →
-  readiness → prove, plus the terminal outcomes.
+  readiness → awaiting-merge → prove, plus the terminal outcomes.
+  `awaiting-merge` (#532) is never in flight.
 
 ## Success Criteria *(mandatory)*
 

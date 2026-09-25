@@ -38,6 +38,13 @@ review's branch that reads `needs.fix.outputs.pr-number` must also carry
 `needs.fix.outputs.breach != 'true'`, and the fix job must export
 `breach` from the final-diff-backstop step.
 
+#532: readiness's ready-report step (the one gated on
+`steps.decide.outputs.ready == 'true'`) must write its marker with
+board_eligibility.AWAITING_MERGE_STEP, never 'readiness' -- a ready item
+left at step=readiness stays in-flight while its PR is open, so every run
+re-selected it, re-ran readiness, and re-posted the same report until a
+human merged, the same one-item wedge as #525 by a different road.
+
 WHAT IT CHECKS (simulated)
 --------------------------
 A small evaluator runs the real `if:`s of select..readiness over the
@@ -46,15 +53,30 @@ fresh path and every resume scenario, modelling job-level `success()` as
 compares which jobs run against the expected set. `--simulate` prints the
 table.
 
+WHAT IT CHECKS (executed, #532)
+-------------------------------
+The resume step's `step_resolution_json` heredoc is extracted and run
+against RESUME_CASES: an awaiting-merge marker whose PR is OPEN or
+unresolved (with or without a board:owned fallback PR) resolves to the
+no-op step awaiting-merge with no fallback adoption; one whose PR is
+CLOSED/MERGED goes to triage with pr/branch/round/base_sha cleared; plus
+readiness/prove regression rows. The select step's `pr_numbers_to_check`
+heredoc is run against a fixture and must list an awaiting-merge marker's
+PR (i.e. AWAITING_MERGE_STEP stays in FIX_OR_LATER_STEPS).
+
 --self-test mutates the shipped workflow text (drops `!cancelled()`, a
 result guard, the breach exclusion, the breach output, restores main's
 pre-#525 conditions, ...) and asserts every mutation fails.
 """
 
 import argparse
+import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 
 import yaml
 
@@ -367,6 +389,23 @@ def static_findings(doc):
                 findings.append(
                     "review: same-run branch lacks `needs.fix.outputs.breach != 'true'` -- a "
                     "post-push breach would still be reviewed and sent to readiness (#526)")
+
+    readiness = jobs.get("readiness") or {}
+    ready_steps = [s for s in (readiness.get("steps") or [])
+                   if isinstance(s, dict)
+                   and str(s.get("if", "")).replace(" ", "") == "steps.decide.outputs.ready=='true'"
+                   and "write_marker(" in str(s.get("run", ""))]
+    if not ready_steps:
+        findings.append("readiness: no step gated on `steps.decide.outputs.ready == 'true'` writes "
+                        "a board item marker (#532)")
+    for s in ready_steps:
+        run = str(s.get("run", ""))
+        if ("from board_eligibility import AWAITING_MERGE_STEP" not in run
+                or "write_marker(AWAITING_MERGE_STEP," not in run):
+            findings.append(
+                "readiness: ready-report step `{0}` does not write its marker with "
+                "board_eligibility.AWAITING_MERGE_STEP -- a ready item left at any other step "
+                "holds the board until a human merges (#532)".format(s.get("name")))
     return findings
 
 
@@ -563,6 +602,13 @@ SCENARIOS = [
      {"vars": {"WING_COMMANDER_BOARD_LOOP_PAUSED": "true"},
       "outputs": {"select": _item("readiness", pr="42", branch="board/396")}},
      ("select", "resolve-model")),
+    # #532: select() never picks an awaiting-merge item while its PR is
+    # open, but if a race hands one to resume anyway, resume resolves it to
+    # step=awaiting-merge (with the PR still set) and nothing past
+    # resolve-model may run -- above all not readiness again.
+    ("resume step=awaiting-merge, PR still open (#532)",
+     {"outputs": {"select": _item("awaiting-merge", pr="42")}},
+     ("select", "resolve-model")),
     ("resume step=review, resolve-model fails",
      {"fail": ("resolve-model",),
       "outputs": {"select": _item("review", pr="42", branch="board/396")}},
@@ -587,12 +633,150 @@ def simulation_findings(doc, table=None):
     return findings
 
 
-def all_findings(text, table=None):
+# ---------------------------------------------------------------------------
+# Executed heredocs (#532): the select job's PR-lookup pass and the resume
+# step's step resolution are inline Python in board-loop.yml. Both are
+# pulled out of the workflow and run for real against board_eligibility.py,
+# so a dropped awaiting-merge clause or an awaiting-merge step missing from
+# FIX_OR_LATER_STEPS fails here, not in production.
+# ---------------------------------------------------------------------------
+
+_RUN_CACHE = {}
+
+
+def _heredoc(run, var):
+    m = re.search(re.escape(var) + r"=.*?<<'PYEOF'\n(.*?)\nPYEOF", run, re.S)
+    return m.group(1) if m else None
+
+
+def _step_run(doc, job, step_id):
+    for s in ((doc.get("jobs") or {}).get(job) or {}).get("steps") or []:
+        if isinstance(s, dict) and s.get("id") == step_id:
+            return str(s.get("run", ""))
+    return ""
+
+
+def _exec_heredoc(code, env, scripts_root):
+    """Runs one extracted heredoc with cwd=scripts_root (it imports from
+    the relative .github/scripts, exactly as it does on the runner).
+    Memoized: most self-test mutations leave the heredocs untouched."""
+    key = (code, scripts_root, tuple(sorted(env.items())))
+    if key not in _RUN_CACHE:
+        full_env = dict(os.environ)
+        full_env.update(env)
+        proc = subprocess.run([sys.executable, "-"], input=code, text=True,
+                              capture_output=True, env=full_env, cwd=scripts_root)
+        _RUN_CACHE[key] = (proc.returncode, proc.stdout, proc.stderr)
+    return _RUN_CACHE[key]
+
+
+def _resume_env(step, marker_pr, pr_from_marker, pr_state, pr_number,
+                from_fallback=False, branch="board/396", round_="2", base_sha="abc1234"):
+    return {
+        "MARKER_STEP": step, "MARKER_JSON": '{"step": "%s"}' % step if step else "null",
+        "BRANCH": branch, "MARKER_PR": marker_pr,
+        "PR_FROM_MARKER": "true" if pr_from_marker else "false",
+        "PR_FROM_FALLBACK": "true" if from_fallback else "false",
+        "PR_STATE": pr_state, "PR_NUMBER": pr_number,
+        "MARKER_ROUND": round_, "MARKER_BASE_SHA": base_sha,
+    }
+
+
+_CLEARED = {"pr_number": "", "pr_state": "", "branch": "", "round": "0", "base_sha": ""}
+
+# (title, env, expected subset of the step_resolution_json output)
+RESUME_CASES = [
+    ("awaiting-merge, PR OPEN -> no-op",
+     _resume_env("awaiting-merge", "42", True, "OPEN", "42"),
+     {"step": "awaiting-merge", "recovered_via_fallback": False, "pr_number": "42"}),
+    ("awaiting-merge, PR unresolved, no fallback PR -> no-op",
+     _resume_env("awaiting-merge", "42", False, "", ""),
+     {"step": "awaiting-merge", "recovered_via_fallback": False, "pr_number": ""}),
+    # The transient-5xx case: without clause 0 this became step=review on
+    # a PR a human now owns (spec 057 FR-054).
+    ("awaiting-merge, PR unresolved, board:owned fallback PR found -> no-op",
+     _resume_env("awaiting-merge", "42", False, "OPEN", "99", from_fallback=True),
+     {"step": "awaiting-merge", "recovered_via_fallback": False, "pr_number": ""}),
+    ("awaiting-merge, PR CLOSED -> triage, FR-022 cleared",
+     _resume_env("awaiting-merge", "42", True, "CLOSED", "42"),
+     dict(_CLEARED, step="triage")),
+    ("awaiting-merge, PR MERGED (issue still open) -> triage, FR-022 cleared",
+     _resume_env("awaiting-merge", "42", True, "MERGED", "42"),
+     dict(_CLEARED, step="triage")),
+    ("regression: readiness, PR OPEN -> readiness",
+     _resume_env("readiness", "42", True, "OPEN", "42"),
+     {"step": "readiness", "pr_number": "42"}),
+    ("regression: prove, no pr -> prove",
+     _resume_env("prove", "", False, "", "", branch=""),
+     {"step": "prove"}),
+]
+
+
+def resume_findings(doc, scripts_root=ROOT):
+    code = _heredoc(_step_run(doc, "select", "resume"), "step_resolution_json")
+    if code is None:
+        return ["resume: no `step_resolution_json` heredoc found in select's resume step"]
+    findings = []
+    for title, env, expected in RESUME_CASES:
+        rc, out, err = _exec_heredoc(code, env, scripts_root)
+        if rc != 0:
+            findings.append("resume `{0}`: step resolution crashed: {1}".format(
+                title, err.strip().splitlines()[-1:] or err))
+            continue
+        try:
+            got = json.loads(out)
+        except ValueError:
+            findings.append("resume `{0}`: output is not JSON: {1!r}".format(title, out))
+            continue
+        diff = {k: got.get(k) for k, v in expected.items() if got.get(k) != v}
+        if diff:
+            findings.append("resume `{0}`: expected {1}, got {2} (#532)".format(
+                title, {k: expected[k] for k in diff}, diff))
+    return findings
+
+
+def select_lookup_findings(doc, scripts_root=ROOT):
+    """The select job's pr_numbers_to_check pass must list an
+    awaiting-merge marker's PR; otherwise _awaiting_merge_holds() only
+    ever sees an unknown state and the item drops off the board forever."""
+    code = _heredoc(_step_run(doc, "select", "select"), "pr_numbers_to_check")
+    if code is None:
+        return ["select: no `pr_numbers_to_check` heredoc found in select's select step"]
+
+    def marker(step, pr):
+        return {"created_at": "2026-01-05T00:00:00Z",
+                "body": "<!-- wing-commander-board-item: " + json.dumps(
+                    {"step": step, "round": 0, "pr": pr, "branch": None,
+                     "base_sha": None}) + " -->"}
+
+    comments = {"1": [marker("awaiting-merge", 42)], "2": [marker("review", 43)],
+                "3": [marker("route", None)]}
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "comments.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(comments, fh)
+        rc, out, err = _exec_heredoc(code, {"COMMENTS_BY_ISSUE_PATH": path}, scripts_root)
+    if rc != 0:
+        return ["select: pr_numbers_to_check pass crashed: {0}".format(err.strip())]
+    listed = set(out.split())
+    findings = []
+    if "42" not in listed:
+        findings.append(
+            "select: pr_numbers_to_check does not list an awaiting-merge marker's PR -- "
+            "select() then never learns it is CLOSED/MERGED and the item drops off the "
+            "board forever (AWAITING_MERGE_STEP must stay in FIX_OR_LATER_STEPS, #532)")
+    if "43" not in listed:
+        findings.append("select: pr_numbers_to_check does not list a review marker's PR")
+    return findings
+
+
+def all_findings(text, table=None, scripts_root=ROOT):
     try:
         doc = yaml.safe_load(text)
     except yaml.YAMLError as exc:
         return ["board-loop.yml does not parse: {0}".format(exc)]
-    return static_findings(doc) + simulation_findings(doc, table)
+    return (static_findings(doc) + simulation_findings(doc, table)
+            + resume_findings(doc, scripts_root) + select_lookup_findings(doc, scripts_root))
 
 
 def print_table(table):
@@ -684,6 +868,20 @@ def _mutations(text):
         "        id: final-diff-backstop\n", "        id: final-diff-backstop-renamed\n")
     sub("final-diff-backstop writes breached= instead of breach=",
         'fh.write("breach={0}\\n"', 'fh.write("breached={0}\\n"', after="\n  fix:\n")
+    # #532: the ready report re-recording step=readiness (the pre-#532
+    # write), and readiness resuming on an awaiting-merge marker.
+    sub("ready report writes step=readiness (pre-#532)",
+        "from board_eligibility import AWAITING_MERGE_STEP; from board_item_marker import "
+        "write_marker; print(write_marker(AWAITING_MERGE_STEP,",
+        "from board_item_marker import write_marker; print(write_marker('readiness',")
+    sub("readiness resumes on an awaiting-merge marker",
+        "|| (needs.select.outputs.step == 'readiness' && needs.select.outputs.pr != '')",
+        "|| ((needs.select.outputs.step == 'readiness' || needs.select.outputs.step == "
+        "'awaiting-merge') && needs.select.outputs.pr != '')",
+        after="\n  readiness:\n")
+    sub("resume clause 0 (awaiting-merge hold) disabled",
+        "elif marker_step == AWAITING_MERGE_STEP and (not pr_from_marker or pr_state == \"OPEN\"):",
+        "elif False:")
     # main's pre-#525 conditions, verbatim.
     muts.append(("fix restored to pre-#525", _replace_job_if(text, "fix", PRE_525["fix"])))
     muts.append(("review restored to pre-#525", _replace_job_if(text, "review",
@@ -716,12 +914,34 @@ def run_selftest(text):
         # The simulator must see the live behaviour on its own, not only
         # through the static rules: main's pre-#525 conditions and a
         # missing breach exclusion each change which jobs run.
-        if "pre-#525" in label or "breach exclusion" in label:
+        if "pre-#525" in label or "breach exclusion" in label or "awaiting-merge marker" in label:
             sim = simulation_findings(yaml.safe_load(mutated))
             if not sim:
                 failures.append("mutation `{0}`: the simulation alone did NOT detect it".format(label))
             else:
                 print("    simulated: {0}".format(sim[0]))
+    # board_eligibility.py mutation (#532): the unmutated workflow run
+    # against a copy of .github/scripts whose FIX_OR_LATER_STEPS has lost
+    # AWAITING_MERGE_STEP must fail the select lookup check.
+    label = "AWAITING_MERGE_STEP dropped from FIX_OR_LATER_STEPS"
+    with tempfile.TemporaryDirectory() as tmp:
+        scripts = os.path.join(tmp, ".github", "scripts")
+        shutil.copytree(os.path.join(ROOT, ".github", "scripts"), scripts,
+                        ignore=shutil.ignore_patterns("tests", "fixtures", "__pycache__"))
+        module = os.path.join(scripts, "board_eligibility.py")
+        with open(module, encoding="utf-8") as fh:
+            src = fh.read()
+        old = '"readiness", AWAITING_MERGE_STEP, "prove"'
+        if old not in src:
+            failures.append("mutation `{0}`: fixture text not found in board_eligibility.py".format(label))
+        else:
+            with open(module, "w", encoding="utf-8") as fh:
+                fh.write(src.replace(old, '"readiness", "prove"', 1))
+            found = select_lookup_findings(yaml.safe_load(text), tmp)
+            if not found:
+                failures.append("mutation `{0}` was NOT detected".format(label))
+            else:
+                print("  detected: {0} -> {1}".format(label, found[0]))
     for f in failures:
         print("FAIL: " + f)
     print("verify-board-loop-resume-gating --self-test: {0} failure(s).".format(len(failures)))

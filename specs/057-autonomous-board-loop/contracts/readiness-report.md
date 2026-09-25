@@ -40,6 +40,23 @@ Post a readiness report on the PR naming `head_sha` and each condition's
 result; record the same on the issue; state that a human merge is awaited
 (FR-066, FR-068). Never merge, approve, or enable auto-merge (FR-068).
 
+The issue record carries a board item marker with step `awaiting-merge`
+(not `readiness`), keeping `pr` (#532). That step is the handover: the
+loop stops at "ready to merge", so the item releases the board rather than
+holding it until a human merges. `select` never treats an `awaiting-merge`
+item as in flight, and its oldest-first fallback passes the item over
+until the PR is positively known to be CLOSED or MERGED
+(specs/061-marker-owned-in-flight/contracts/in-flight-detection.md). After
+that, resume sends the still-open issue to a fresh `triage`
+(specs/061-marker-owned-in-flight/contracts/resume-recovery.md). A human
+merge still reaches `prove` through `pull_request: closed`, which reads
+the PR body's `Fixes #N` and the marker's presence, never its step.
+Known limit: a push to the PR head after the ready report does not bring
+the item back to readiness.
+
+A not-ready outcome leaves the marker as it was, so the next run picks the
+item up at `readiness` again.
+
 ## Gate: `verify-board-readiness.py`
 
 Fixtures (FR-064 bullet 4), each a checked-in `gh pr view` JSON snapshot:

@@ -29,13 +29,18 @@ pair under .github/scripts/tests/board-eligibility/<case>/:
 In-flight fixtures (FR-012), each a checked-in open_issues.json +
 comments_by_issue.json + pr_state_by_number.json + expected.json set under
 .github/scripts/tests/board-eligibility/in-flight/<case>/ -- see
-contracts/in-flight-detection.md for the full eleven-case list. A case
+contracts/in-flight-detection.md for the full case list. A case
 whose expected.json also carries "select_issue_number" additionally
 requires a labeled_events_by_issue.json and gets its result asserted
 against select() itself, not just in_flight_candidate() -- used by
 prove-no-pr to also pin that select()'s oldest-first fallback, not only
 the priority path, skips a stuck `prove` marker (Maintainer Feedback,
-board_eligibility.py's select()).
+board_eligibility.py's select()), and by the four awaiting-merge-* cases
+(#532) to pin that a ready-and-handed-over item never holds the board:
+never in-flight, passed over by the fallback while its PR is OPEN (or its
+state is unknown), and eligible again once that PR is CLOSED or MERGED.
+Each awaiting-merge-* case puts the awaiting-merge issue OLDEST, so
+reverting the fallback skip makes select() return it and fails the case.
 
 Fails loudly, not vacuously, if any fixture file is missing.
 """
@@ -45,7 +50,8 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from board_eligibility import classify_issue, in_flight_candidate, select  # noqa: E402
+from board_eligibility import (  # noqa: E402
+    AWAITING_MERGE_STEP, FIX_OR_LATER_STEPS, classify_issue, in_flight_candidate, select)
 
 FIXTURES_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "tests", "board-eligibility")
@@ -71,6 +77,10 @@ IN_FLIGHT_CASES = {
     "two-non-terminal",
     "unrelated-pr-no-marker",
     "prove-no-pr",
+    "awaiting-merge-pr-open",
+    "awaiting-merge-pr-closed",
+    "awaiting-merge-pr-merged",
+    "awaiting-merge-pr-unknown",
 }
 
 
@@ -194,7 +204,21 @@ def run():
                           case, expected_selected, selected))
             else:
                 print("[ok] in-flight/{0}: select() == {1!r} (oldest-first "
-                      "fallback also skips the prove marker)".format(case, selected))
+                      "fallback)".format(case, selected))
+
+    # #532: the select job's PR-state lookup pass resolves only PRs named
+    # by FIX_OR_LATER_STEPS markers. Without awaiting-merge in that set,
+    # _awaiting_merge_holds() only ever sees an unknown state and a
+    # handed-over item drops off the board forever, even after its PR
+    # closes. (Gate 97 also runs the workflow's lookup heredoc itself.)
+    if AWAITING_MERGE_STEP not in FIX_OR_LATER_STEPS:
+        failures += 1
+        print("::error::verify-board-eligibility: AWAITING_MERGE_STEP is not in "
+              "FIX_OR_LATER_STEPS -- the select job would never look up an "
+              "awaiting-merge marker's PR, so the item could never become "
+              "eligible again (#532).")
+    else:
+        print("[ok] AWAITING_MERGE_STEP is in FIX_OR_LATER_STEPS (select looks up its PR)")
 
     print("verify-board-eligibility: {0} failure(s).".format(failures))
     return 1 if failures else 0

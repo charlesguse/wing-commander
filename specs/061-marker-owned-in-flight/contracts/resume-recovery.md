@@ -47,6 +47,20 @@ Priority by strongest live signal (research.md D5) — each clause below
 fires only when the ones above it don't apply:
 
 ```text
+0. (#532) The marker's step is awaiting-merge (readiness reported the PR
+   ready and handed it to a human), and its pr either resolves OPEN or
+   does not resolve at all
+     -> step = "awaiting-merge", a step no job consumes: a no-op run.
+   select() never picks such an item while its PR may be open, so this
+   is reached only by a race or a failed lookup here. It must never run
+   fix/review/readiness (re-posting the report, or re-reviewing a PR a
+   human now owns). It must never take clause 2's board:owned fallback,
+   which would adopt that same PR as step "review". It must never take
+   triage, which would cut a second branch/PR beside the open one. An
+   awaiting-merge marker whose pr resolves CLOSED or MERGED skips this
+   clause and falls to clause 1's disqualification and clause 4's triage,
+   with the same FR-022 clearing as any other stale fix-or-later marker.
+
 1. The marker names a pr number, and it resolves (pre-fix: no pr required;
    fix-or-later: the resolved pr's state == OPEN)
      -> step = the marker's own step.
@@ -87,7 +101,8 @@ fires only when the ones above it don't apply:
 
 `step` is never left empty (FR-008) — every branch above ends in one of the
 loop's named steps. The marker's own step name is consulted only in clause
-1, and only once a live pr lookup has confirmed the marker is current —
+0 (to hold an awaiting-merge handover, never to act on it) and clause
+1, and in clause 1 only once a live pr lookup has confirmed the marker is current —
 live state, not the marker's say-so, decides which clause applies.
 
 ## Acceptance mapping
@@ -100,3 +115,5 @@ live state, not the marker's say-so, decides which clause applies.
 | US2 AS4 (marker's branch and PR both gone) | branch empty, PR recovery finds nothing (marker PR 404s, no board:owned match) → step-resolution clause 4 → triage |
 | US2 AS5 (marker fix-or-later, PR closed/merged) | clause 1 does not match (PR not OPEN) → clause 4, reason recorded → triage |
 | US2 AS6 (step never empty) | every clause above ends in a named step |
+| #532 (awaiting-merge, PR open or unresolved) | clause 0 → awaiting-merge, no job runs |
+| #532 (awaiting-merge, PR closed/merged, issue open) | clause 1 does not match → clause 4, reason recorded → triage |
