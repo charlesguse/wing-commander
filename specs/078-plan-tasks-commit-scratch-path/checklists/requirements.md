@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,21 +31,25 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain by design (FR-010 scope, FR-011
-  single home, FR-012 gate backing). Per the CI deviation for this pipeline,
-  they are left in the spec and posted to the lifecycle issue as questions
-  rather than resolved interactively. FR-001 through FR-009 and FR-013 are
-  independent of all three and can be planned against as written; SC-006 and
-  SC-007 are explicitly marked as dependent on FR-012 and FR-011 respectively.
+- The three clarification markers that were posted to the lifecycle issue
+  (FR-010 scope, FR-011 single home, FR-012 gate backing) were answered on
+  [#585](https://github.com/charlesguse/wing-commander/issues/585) and are now
+  resolved in the spec: scope is every agent prompt that instructs a commit
+  (nine sites across five workflows); the guidance text lives in one canonical
+  source rendered into each prompt, shaped so `implement.yml`'s two sites can
+  draw from it later (#605); and a new `verify-*.py` gate covers the in-scope
+  sites with a visible exemption list for deterministic one-line committers.
+  SC-006 and SC-007 no longer carry a dependency caveat, and SC-008 was added
+  for the exemption list's completeness.
 - "No implementation details" is read here as this repository reads it: the
   subject of the feature *is* workflow prompt text, so naming the affected
   workflows and prompt sites is the feature's domain vocabulary, not a leaked
   implementation choice. The requirements state what an agent must be told and
   what must hold afterwards; they do not dictate the sentence's wording, the
   filenames, or the mechanism by which the text is kept consistent.
-- The three open questions are ordered by impact: scope (FR-010) changes which
-  files the change touches; single home (FR-011) changes the shape of the
-  change at every site; gate backing (FR-012) adds or omits a deliverable.
-  A planner blocked on all three should still be able to build US1 for the four
-  plan/tasks sites, which is the issue's own minimum.
-- Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`
+- With all three resolved, the change now has three deliverables rather than
+  one: the canonical guidance source, its rendering into seven prompt sites
+  across four workflows (`plan.yml`, `tasks.yml`, `board-loop.yml`,
+  `pr-conversation.yml`), and the new gate with its exemption list.
+  `implement.yml`'s two sites stay as they are (FR-013).
+- No items remain incomplete; the spec is ready for `/speckit-plan`.
