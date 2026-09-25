@@ -82,7 +82,8 @@ a pass that records the image reference it observed.
 3. **Given** a container-mode turn and a correctly configured test
    repository, **When** the verification runs and the chain completes,
    **Then** the verdict is a pass that records container mode as
-   configured together with the image reference the evidence named.
+   configured together with the image reference the evidence named and
+   the observation that the stage jobs executed inside a container.
 4. **Given** a container-mode turn whose configured image cannot be
    pulled or authorized, **When** the verification runs, **Then** the
    existing attempted-and-failed classification is what it reports — this
@@ -90,6 +91,17 @@ a pass that records the image reference it observed.
 5. **Given** a default-runner turn, **When** the verification runs,
    **Then** no container-image evidence is required, and the run behaves
    exactly as it does today.
+6. **Given** a container-mode turn whose test repository declares an
+   image that differs from this repository's own pinned reference image,
+   **When** the verification runs, **Then** it produces an
+   infrastructure-class verdict naming the drift — the pin it expected
+   and the value it observed — and dispatches no release.
+7. **Given** a container-mode turn whose test repository declares the
+   accepted image but whose scaffolded wrappers never consume it, so the
+   stage jobs run on hosted runners, **When** the verification reads the
+   run's job data at verdict time, **Then** it produces an
+   infrastructure-class verdict naming the stage jobs that did not
+   execute inside a container, and dispatches no release.
 
 ---
 
@@ -122,9 +134,9 @@ a pass.
    verification runs, **Then** it produces an infrastructure-class
    verdict attributing the failure to that condition, distinct from the
    "not configured" verdict.
-3. **Given** any container-mode verdict this feature can emit, **When**
-   the reporting step renders it, **Then** the report names the failing
-   check and the evidence location, and the verdict carries the
+3. **Given** any failing container-mode verdict this feature can emit,
+   **When** the reporting step renders it, **Then** the report names the
+   failing check and the evidence location, and the verdict carries the
    container-mode configured flag as false.
 
 ---
@@ -199,8 +211,9 @@ with each site instead stating the detection and its prerequisite.
   what a container-mode turn must not accept.
 - The variable is **set but not consumed** — the scaffolded fixture's
   passthrough is missing or broken, so the chain still runs on hosted
-  runners. Whether this is detected depends on how deep the evidence goes
-  (see the open question on proof depth).
+  runners. The execution half of the evidence catches this: the run's
+  job data shows stage jobs that did not execute inside a container, and
+  the turn fails rather than passing.
 - The configuration **changes mid-run**: set at check time and removed
   before the chain runs, or vice versa. The verdict reports what was
   observed, and the observation's timing is part of the evidence.
@@ -216,55 +229,74 @@ with each site instead stating the detection and its prerequisite.
   the same evidence requirement as a scheduled one.
 - The image is configured, pullable, and **missing a required tool**: the
   existing prerequisite-failure classification stands unchanged.
-- The test repository variable is readable but holds a **moving tag**
-  rather than a digest: what this means for the verdict depends on the
-  open question on accepted values.
+- The test repository variable is readable but holds a **different
+  reference** — a moving tag, an older digest, an unrelated image: only
+  an exact match with this repository's own pinned reference image is
+  accepted, so any of these is the named drift outcome. A moving tag is
+  acceptable on the test repository only when this repository's own pin
+  is that same moving tag.
+- **This repository's own pinned reference image cannot be read** at
+  comparison time: there is nothing to compare against, so the turn
+  fails closed as unreadable evidence rather than treating the missing
+  pin as a match or as an empty expectation.
 
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
 
 - **FR-001**: The verification MUST NOT report a passing verdict for a
-  container-mode run unless it has observed positive evidence that the
-  test repository was configured to run the stage chain inside a
-  container image. Absence of evidence MUST NOT be read as configured.
+  container-mode run unless it has observed positive evidence of both
+  (i) that the test repository was configured to run the stage chain
+  inside a container image and (ii) that the stage jobs of that run
+  actually executed inside a container. Absence of either observation
+  MUST NOT be read as configured.
 - **FR-002**: A container-mode run whose test repository has no container
   image configured — the variable absent, or present with an empty value
   — MUST produce an infrastructure-class verdict that names the missing
   configuration and the test repository, MUST record container mode as
   not configured, and MUST NOT dispatch a release.
-- **FR-003**: The verification MUST obtain that evidence via
-  [NEEDS CLARIFICATION: which access route closes the gap — (a) read the
-  test repository's container image variable with the existing fixture
-  maintainer credential, (b) grant the App installation on the test
-  repository read access to that repository's Actions run data or
-  variables, (c) have the verification write the variable itself on
-  container-mode turns, or (d) some combination]. Whichever route is
-  chosen, the access MUST be scoped to the test repository alone and MUST
-  be verified at the start of the run rather than discovered mid-flight.
+- **FR-003**: The verification MUST obtain that evidence with the fixture
+  maintainer credential introduced by `specs/055-unattended-e2e-gates`
+  (`WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN`, a Write
+  collaborator on the test repository), which already reaches both the
+  test repository's container image variable and that repository's
+  Actions run and job data. No new App installation permission is
+  required, on the test repository or anywhere else, and the
+  verification MUST NOT write the container image configuration itself.
+  The credential's validity MUST be verified at the start of the run
+  rather than discovered mid-flight, and its reach MUST be confined to
+  the test repository per FR-014.
 - **FR-004**: The evidence check MUST fail closed: when the evidence
   cannot be obtained — credential unset, access insufficient or revoked,
   the read refused, rate-limited or erroring — the run MUST produce an
   infrastructure-class verdict naming the evidence it could not obtain,
   never a pass and never a silently downgraded default-runner pass.
 - **FR-005**: The verdict MUST distinguish, as separate named outcomes,
-  (i) container mode never configured, (ii) container mode configured but
-  the image could not be obtained or inspected, (iii) the evidence itself
-  unreadable, and (iv) container mode configured and exercised. Case (ii)
-  MUST keep the classification it has today.
-- **FR-006**: The evidence MUST establish [NEEDS CLARIFICATION: how deep
-  the proof must go — (a) configuration evidence only: the test
-  repository declares a container image, or (b) execution evidence: the
-  stage jobs of this run actually executed inside a container. Option (a)
-  closes the reported defect and needs the least access; option (b) also
-  catches a configured-but-unconsumed image and a fixture whose
-  passthrough regressed].
-- **FR-007**: A configured value MUST be accepted or rejected according
-  to [NEEDS CLARIFICATION: what counts as configured — (a) any non-empty
-  value, (b) any non-empty value that is pinned by digest, or (c) a value
-  matching this repository's own pinned reference image. Stricter answers
-  catch a stale or moving pin, and make the verification depend on the
-  reference image's publication cadence].
+  (i) container mode never configured, (ii) container mode configured
+  with a value that does not match this repository's pinned reference
+  image, (iii) container mode configured but the image could not be
+  obtained or inspected, (iv) container mode configured but the stage
+  jobs did not execute inside a container, (v) the evidence itself
+  unreadable, and (vi) container mode configured and exercised. Case
+  (iii) MUST keep the classification it has today.
+- **FR-006**: The evidence MUST establish both configuration and
+  execution. Before the kickoff issue is created, the verification MUST
+  read the test repository's container image configuration and confirm
+  it declares an accepted image, which is what keeps the cheap early
+  failure of FR-011. Before a passing verdict is written, the
+  verification MUST additionally confirm, from the test repository's
+  Actions job data for the run it drove, that the stage jobs actually
+  executed inside a container; a configured image that the scaffolded
+  fixture never consumed MUST NOT reach a pass. Both reads use the
+  credential of FR-003.
+- **FR-007**: A value counts as configured only when it matches this
+  repository's own pinned reference container image — the same value the
+  provisioning script already copies onto the test repository — so that
+  drift between the two is the named outcome (ii) of FR-005 rather than
+  a pass. A non-empty value that differs from that pin MUST NOT reach a
+  pass. If this repository's own pinned value cannot be read, the
+  comparison MUST fail closed under FR-004 rather than compare against
+  an empty value.
 - **FR-008**: The container-mode evidence requirement MUST apply on every
   container-mode run, scheduled or manually dispatched, and MUST NOT
   apply on a default-runner run, which MUST behave exactly as it does
@@ -283,15 +315,17 @@ with each site instead stating the detection and its prerequisite.
 - **FR-012**: A run that ends at the unconfigured verdict MUST leave the
   test repository in a state a later, correctly configured run can use
   without manual cleanup.
-- **FR-013**: Whatever credential or permission the chosen route requires
-  MUST be documented as a setup prerequisite, with its least-privilege
-  scope stated, and its absence or insufficiency MUST surface as the
-  named infrastructure-class verdict of FR-004 rather than as an
-  unexplained failure.
-- **FR-014**: If the chosen route uses a credential that can reach
-  repositories beyond the test repository, the run MUST verify that
-  containment at runtime before using it, the way the existing fixture
-  maintainer credential's reach is already checked.
+- **FR-013**: The fixture maintainer credential this route uses MUST be
+  documented as a setup prerequisite of the container leg as well as of
+  the unattended human gates, with its least-privilege scope — a Write
+  collaborator on the test repository and nothing more — stated, and its
+  absence or insufficiency MUST surface as the named
+  infrastructure-class verdict of FR-004 rather than as an unexplained
+  failure.
+- **FR-014**: Because that credential can reach repositories beyond the
+  test repository, the run MUST verify that containment at runtime
+  before using it for evidence, the way the credential's reach is
+  already checked today.
 - **FR-015**: The prohibition in FR-001 MUST be enforced by a
   deterministic gate — reachable through the existing gate registry,
   triggered by changes to the verification it checks, running the same
@@ -311,10 +345,14 @@ with each site instead stating the detection and its prerequisite.
 
 ### Key Entities
 
-- **Container-mode evidence**: the observation that justifies a
-  container-mode pass — what was read, from where, and when, carried into
-  the verdict and the report. Its absence, not merely its negative value,
-  is a failure.
+- **Container-mode evidence**: the two observations that together
+  justify a container-mode pass — the test repository's declared image
+  matching this repository's pin, read before kickoff, and the run's own
+  stage jobs having executed inside a container, read from the test
+  repository's job data before the pass is written. Each records what
+  was read, from where, and when, and is carried into the verdict and
+  the report. The absence of either, not merely its negative value, is a
+  failure.
 - **End-to-end verdict**: the existing per-run record the release
   decision and the report both read — outcome, verified head, failing
   check, expected, observed, evidence location, execution mode, and the
@@ -322,11 +360,13 @@ with each site instead stating the detection and its prerequisite.
   may be true and adds the outcomes of FR-005.
 - **Test repository container image configuration**: the maintainer-set
   image reference on the test repository that makes a container-mode turn
-  real. Absent or empty means "no container", which is legitimate for an
-  adopter and disqualifying for a container-mode turn.
-- **Evidence access grant**: the credential or permission the run uses to
-  obtain the evidence, scoped to the test repository, checked for
-  validity and containment before use.
+  real, expected to equal this repository's own pinned reference image.
+  Absent or empty means "no container", which is legitimate for an
+  adopter and disqualifying for a container-mode turn; a different
+  non-empty value is drift.
+- **Evidence access grant**: the fixture maintainer credential the run
+  uses to obtain both evidence reads, checked for validity and for
+  containment to the test repository before use.
 
 ## Success Criteria *(mandatory)*
 
@@ -335,20 +375,24 @@ with each site instead stating the detection and its prerequisite.
 - **SC-001**: A container-mode verification run against a test repository
   with no container image configured fails with an infrastructure-class
   outcome in 100% of runs, and releases nothing.
-- **SC-002**: Zero container-mode runs report a passing outcome without a
-  recorded container-mode evidence observation.
+- **SC-002**: Zero container-mode runs report a passing outcome without
+  both recorded container-mode evidence observations — the matching
+  configuration and the container execution of the run's stage jobs.
 - **SC-003**: A container-mode run that will fail for missing
   configuration reaches its verdict without creating a kickoff issue and
   without spending any stage agent turn, in 100% of such runs.
 - **SC-004**: 100% of container-mode verdicts state which evidence was
   observed or which evidence could not be obtained.
 - **SC-005**: A maintainer reading a failed run's report can tell "never
-  configured", "configured but the image was unobtainable" and "evidence
-  unreadable" apart without opening the test repository.
+  configured", "configured with a value that does not match the pin",
+  "configured but the image was unobtainable", "configured but the stage
+  jobs did not run in a container" and "evidence unreadable" apart
+  without opening the test repository.
 - **SC-006**: Every failure branch introduced here — not configured,
-  empty value, evidence unreadable, evidence source rate-limited — is
-  exercised by a checked-in fixture, and removing the evidence check from
-  the pass path fails the gate suite.
+  empty value, value not matching this repository's pin, stage jobs not
+  executed in a container, evidence unreadable, evidence source
+  rate-limited — is exercised by a checked-in fixture, and removing
+  either evidence check from the pass path fails the gate suite.
 - **SC-007**: After this feature ships, zero documentation or
   specification passages describe the unset container image variable as
   an undetectable or accepted gap.
@@ -361,13 +405,22 @@ with each site instead stating the detection and its prerequisite.
   and its reporting shape are unchanged; this feature constrains only
   what a container-mode run may conclude and when it may conclude it.
 - The image reference remains a maintainer-set repository variable on the
-  test repository, as the prior feature decided, unless the open question
-  on the access route is answered with the option that has the
-  verification write it.
+  test repository, as the prior feature decided, kept in step with this
+  repository's own pin by the existing provisioning script. The
+  verification reads it and never writes it, so a turn that fails for
+  drift is fixed by re-provisioning rather than by the run repairing
+  itself.
 - The fixture maintainer credential introduced for the unattended human
   gates continues to exist, is already validated and containment-checked
-  early in the run, and is available to this feature if the access-route
-  question chooses it.
+  early in the run, and reaches both the test repository's variables and
+  its Actions run and job data with the access it already holds.
+- The execution half of the evidence can only be read after the chain has
+  run, so the cheap early failure of User Story 3 covers the
+  configuration half alone; a passthrough regression still costs a full
+  chain to detect, which is acceptable because it is the rarer fault.
+- Which job-data signal reliably marks a job as having run inside a
+  container is a planning question, to be confirmed against real run
+  data before the detection is built on it rather than assumed.
 - "Not configured" is the failure of a *turn*, not a defect in the
   product under verification: it is infrastructure-class, so it blocks
   the release without being reported as a pipeline regression.

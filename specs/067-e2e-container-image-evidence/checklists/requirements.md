@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -32,24 +32,31 @@
 ## Notes
 
 - Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`
-- Three `[NEEDS CLARIFICATION]` markers remain, deliberately, and are the
-  reason the originating issue was routed to the spec pipeline rather than
-  fixed locally — each is a trade-off only the repository owner can
-  settle:
-  - **FR-003** — which access route supplies the evidence (the existing
-    fixture maintainer credential, a new App permission on the test
-    repository, or having the verification write the configuration
-    itself). Scope- and permission-bearing, so it is asked first.
-  - **FR-006** — how deep the proof must go: configuration evidence
-    (the test repository declares an image) versus execution evidence
-    (the stage jobs of this run actually ran inside one). The second also
-    catches a configured-but-unconsumed image, at a higher access cost.
-  - **FR-007** — what counts as a configured value: any non-empty value,
-    a digest-pinned value, or a value matching this repository's own
-    pinned reference image.
-- The questions are posted to lifecycle issue
+- The three `[NEEDS CLARIFICATION]` markers this spec was drafted with
+  were the reason the originating issue was routed to the spec pipeline
+  rather than fixed locally — each was a trade-off only the repository
+  owner could settle. All three are now answered on lifecycle issue
+  [#509](https://github.com/charlesguse/wing-commander/issues/509) and
+  encoded into the requirements:
+  - **FR-003** — which access route supplies the evidence. Answered: the
+    existing fixture maintainer credential
+    (`WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN`), which already
+    reaches both the test repository's variables and its Actions run and
+    job data; no new App permission, and the verification never writes
+    the configuration itself.
+  - **FR-006** — how deep the proof must go. Answered: both.
+    Configuration evidence before kickoff keeps the cheap early failure
+    (FR-011); execution evidence from the run's own job data before the
+    pass is written catches a configured-but-unconsumed image. Which
+    job-data signal marks a container job is left to the plan to confirm
+    against real run data.
+  - **FR-007** — what counts as a configured value. Answered: a value
+    matching this repository's own pinned reference image, the same
+    value the provisioning script already copies across, so drift is a
+    named failure outcome.
+- The questions were posted to lifecycle issue
   [#509](https://github.com/charlesguse/wing-commander/issues/509) by the
-  pipeline rather than asked interactively; the clarify stage encodes the
+  pipeline rather than asked interactively; the clarify stage encoded the
   answers back into the spec.
 - Remaining choices that a reasonable default already covers were
   resolved in the spec's Assumptions section rather than raised as
