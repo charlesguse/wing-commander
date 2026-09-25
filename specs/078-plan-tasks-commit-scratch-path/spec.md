@@ -54,6 +54,14 @@ reply puts them in scope too (see [What was settled](#what-was-settled)):
 | `implement.yml` | cycle | `implement.yml:938-945` | yes (#440) |
 | `implement.yml` | retry | `implement.yml:1530-1539` | yes (#440) |
 
+`implement.yml`'s two sites already name a path, but each carries its own
+hand-written copy of the sentence. A follow-up reply on
+[#585](https://github.com/charlesguse/wing-commander/issues/585) absorbed #605
+(now closed) into this spec, so converting those two copies to draw from the
+canonical source, and bringing them under the new gate, are part of this change
+rather than a follow-up (see [What was settled](#what-was-settled), item 4).
+All nine sites are therefore in scope.
+
 The commit message these prompts dictate is a one-liner
 (`"plan: <slug> (#<issue>)"`), so the gap is latent rather than actively
 failing today. It surfaces the first time an agent judges the change worth a
@@ -74,7 +82,8 @@ deterministic one-liners in `run:` steps, not agent-composed messages.
 
 Three things the issue's drafted change decided by implication rather than by
 argument were carried as clarification markers and answered on
-[#585](https://github.com/charlesguse/wing-commander/issues/585):
+[#585](https://github.com/charlesguse/wing-commander/issues/585); a follow-up
+reply on the same issue then widened all three (item 4):
 
 1. **Scope — every agent prompt that instructs a commit.** Not just
    `plan.yml` and `tasks.yml`'s four sites: `board-loop.yml:1852` and
@@ -90,15 +99,25 @@ argument were carried as clarification markers and answered on
    only a human editor can follow; the agent must receive the full sentence in
    its own prompt, so rendering — not pointing — is what satisfies both
    `CLAUDE.md`'s "Shared logic has exactly one home" and the agent's needs.
-   The source must be designed so `implement.yml`'s two existing sites (#605)
-   can draw from it too. Carried by FR-011.
+   `implement.yml`'s two existing sites draw from that source as well (item 4).
+   Carried by FR-011.
 3. **Gate backing — a new `verify-*.py` gate.** Nothing today can fail when an
    agent prompt instructs a commit without naming a scratch path; #440's fix is
    unprotected and this one would be too. A new gate covers the in-scope sites
    and carries a visible exemption list for agents whose commits are always
    deterministic one-liners, so an exemption is a recorded decision rather than
    a blind spot. `CLAUDE.md`: "a rule with no gate behind it lasts until the
-   next session". Carried by FR-012.
+   next session". The gate covers `implement.yml`'s two sites on the same terms
+   as the rest (item 4), so #440's fix stops being unprotected. Carried by
+   FR-012.
+4. **`implement.yml` is in scope, not a follow-up.** A later reply on #585
+   recorded that this spec absorbs #605 (now closed): its scope was
+   `implement.yml`'s two commit-policy sites, so items 1–3 cover those sites
+   too. The one canonical source is rendered into them rather than sitting
+   alongside their two hand-written copies, and the FR-012 gate checks them
+   like any other site. What must not change is their behaviour — the same
+   meaning, and the two distinct per-site filenames #440 gave them. Carried by
+   FR-011, FR-012 and FR-013.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -145,7 +164,9 @@ read the rendered prompt and confirm it names a path and `git commit -F`.
 6. **Given** the rendered guidance at two different in-scope sites, **When**
    they are compared, **Then** they differ only in the file path — the rest of
    the sentence is identical because both were rendered from the one canonical
-   source.
+   source. This holds when one of the two is an `implement.yml` site: its
+   hand-written copy is replaced by a rendering of the same source, and the
+   message an agent reads there keeps its meaning and its per-site filename.
 
 ---
 
@@ -215,7 +236,10 @@ and names the site.
   future change makes two sites in one stage co-runnable. `board-loop.yml`'s
   two fix-agent sites must be checked the same way before they are given a
   shared filename: FR-006 applies to them exactly as it does to implement's
-  pair.
+  pair. Rendering `implement.yml`'s two sites from the canonical source must
+  keep their two filenames distinct: the per-site path is what each rendering
+  varies, so a source that could emit only one path per workflow would regress
+  FR-006 at exactly the pair that needs it most.
 - **A rendered copy that drifts from its source.** With one canonical source
   (FR-011), a hand-edit at a call site would put that site out of step with
   every other. The FR-012 gate is what makes such a drift fail rather than sit
@@ -274,28 +298,35 @@ and names the site.
 - **FR-010**: The set of agent prompts this applies to MUST be every agent
   prompt in the repository that instructs the agent to create a commit — not
   only `plan.yml` and `tasks.yml`'s four sites, but also `board-loop.yml`'s two
-  fix agents and `pr-conversation.yml`'s fold agent, plus `implement.yml`'s two
-  already-conforming sites (FR-013). A site that instructs a commit and is left
-  without the guidance MUST be an explicit exemption under FR-012, not an
-  omission.
+  fix agents, `pr-conversation.yml`'s fold agent, and `implement.yml`'s two
+  sites, which already name a path but MUST also be brought onto the canonical
+  source and under the gate (FR-011, FR-012, FR-013). A site that instructs a
+  commit and is left without the guidance MUST be an explicit exemption under
+  FR-012, not an omission.
 - **FR-011**: The guidance text MUST be maintained as one canonical source that
   is rendered into each in-scope prompt, so that every agent receives the full
   sentence in its own prompt while the wording exists in exactly one editable
   place — the way `wing-commander-metrics-summary` owns the per-run cost line.
   A per-site copy carrying a canonical-pointer comment MUST NOT be used, since
   a pointer is followable only by a human editor and not by the agent reading
-  the prompt. The canonical source MUST be shaped so that `implement.yml`'s two
-  existing sites can draw from it as well (#605), even if converting them is
-  not part of this change.
+  the prompt. `implement.yml`'s two existing sites MUST be rendered from that
+  same source as part of this change, replacing their two hand-written copies,
+  so that after the change no in-scope site carries guidance text of its own.
+  The source MUST be able to render a different path per site, since those two
+  sites require distinct paths (FR-006).
 - **FR-012**: A new deterministic `verify-*.py` gate MUST fail when an in-scope
   agent prompt instructs a commit without naming a scratch path, and MUST name
-  the workflow and the site in its failure output. The gate MUST carry a
-  visible exemption list for agent sites whose commit messages are always
-  deterministic one-liners, so that an exempt site is a recorded entry a reader
-  can audit rather than a site the check cannot see.
-- **FR-013**: `implement.yml`'s two existing sites MUST keep working exactly as
-  they do today; any consolidation or check introduced here MUST treat them as
-  already-conforming rather than requiring their wording to change meaning.
+  the workflow and the site in its failure output. The gate MUST cover
+  `implement.yml`'s two sites on the same terms as every other in-scope site, so
+  that #440's fix can no longer be removed without something failing. The gate
+  MUST carry a visible exemption list for agent sites whose commit messages are
+  always deterministic one-liners, so that an exempt site is a recorded entry a
+  reader can audit rather than a site the check cannot see.
+- **FR-013**: `implement.yml`'s two sites MUST keep behaving exactly as they do
+  today across the conversion: each agent MUST still be told the same thing it
+  is told now, and MUST still be given its own distinct filename. The
+  conversion MUST change where the wording is maintained, not what those two
+  agents read.
 
 ### Key Entities
 
@@ -338,7 +369,12 @@ and names the site.
   paragraphs by eye; changing the wording requires editing exactly one file.
 - **SC-008**: Every agent site that instructs a commit is either covered by the
   gate's conformance check or listed in its exemption list — the two sets
-  together account for all of them, with none unaccounted for.
+  together account for all of them, with none unaccounted for. `implement.yml`'s
+  two sites appear in the covered set, not as exemptions.
+- **SC-009**: After the change, no in-scope prompt — `implement.yml`'s two
+  included — holds a hand-written copy of the guidance: each site's text is
+  rendered from the canonical source, and an implement cycle run still commits
+  from its own filename with the same instructions the agent reads today.
 
 ## Out of Scope
 
@@ -352,10 +388,10 @@ and names the site.
 - Changing what the plan or tasks agent is asked to *put* in a commit message.
   This feature makes a multi-line message possible; it does not mandate one.
 - Widening or narrowing any site's tool allowlist beyond what FR-007 requires.
-- Rewriting `implement.yml`'s two existing sites to consume the canonical
-  source. FR-011 requires the source to be shaped so they *can* draw from it
-  and FR-013 requires them to keep working unchanged; performing that
-  conversion is #605's work, not this change's.
+- Changing *what* `implement.yml`'s two agents are told. Their conversion to the
+  canonical source is in scope (FR-011), but re-deriving or improving #440's
+  wording is not: FR-013 holds their rendered meaning and their two filenames
+  fixed.
 
 ## Assumptions
 
@@ -364,8 +400,14 @@ and names the site.
   expected; FR-007 exists to catch the case where a site brought into scope by
   FR-010 does not.
 - `implement.yml`'s post-#440 sentence is the reference wording: it is already
-  merged, already proven in runs, and any consolidation should preserve its
-  meaning rather than re-derive it.
+  merged, already proven in runs, and the consolidation should preserve its
+  meaning rather than re-derive it. Since those two sites now render from the
+  canonical source (FR-011), that sentence is in effect what the source is
+  seeded with.
+- #605 is closed and its scope is carried here, so there is no follow-up issue
+  left holding the implement.yml conversion. If the conversion turns out to be
+  larger than expected, the fallback is a recorded decision on #585, not a
+  silent return to leaving those two copies in place.
 - A run-scoped temporary location outside the checkout exists and is writable
   by the agent's file-writing tool at every in-scope site — this is what
   implement.yml already depends on.
