@@ -1,0 +1,11 @@
+{
+  "cited_run_transcript_path": null,
+  "cited_run_commit_sha": null,
+  "workflow_files": [],
+  "agent_proposal": {
+    "close": true,
+    "ground": "already_fixed_proposal",
+    "proposed_commit_sha": "abdef13b6de6c507c66bd2aab3cde1c3a9c187a8",
+    "reasoning": "Already resolved on main by abdef13; nothing left to fix."
+  }
+}

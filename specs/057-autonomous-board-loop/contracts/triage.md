@@ -48,6 +48,19 @@ Any other agent-proposed close reason (including "already fixed on
 named commit, applies `board:stalled`, and ends the run for that item
 (`outcome: handover`) — FR-012's explicit deferral.
 
+## Order (#578)
+
+The two close grounds are tried first, and only when a cited run with a
+readable transcript exists: rate limit, then action bump. Every path that
+does not close — no cited run, unavailable evidence, or no close ground
+found — then goes through one exit: an `already_fixed_proposal` is handed
+over (above); any other close the agent proposed is recorded verbatim and
+the verdict is `proceed`. So a cited run's own 429 or action-bump
+evidence still outranks an "already fixed" proposal, and an issue citing
+no run (most human-filed ones) is handed over rather than routed. The
+handover comment posts its evidence, which includes the agent's own
+reasoning (FR-056), inside a fence built by `fenced_section()` (#562).
+
 ## Unavailable evidence (FR-014)
 
 When the cited run's transcript cannot be fetched (expired artifact,
@@ -58,7 +71,8 @@ close.
 ## No cited run (edge case)
 
 A maintainer-filed issue citing no run: neither ground can apply;
-`outcome: proceed`, and the loop continues to the route step.
+`outcome: proceed`, and the loop continues to the route step — unless the
+agent proposed "already fixed on `main`", which is handed over (#578).
 
 ## Cited run source (#505)
 
@@ -102,3 +116,13 @@ Fixtures (FR-064 bullet 1), each a checked-in transcript/workflow-pin pair:
     successful one-turn $0 run all `proceed`. Closed cases pin the quoted
     evidence exactly. Removing any one guard, or hard-coding the evidence,
     must fail these.
+11. Order (#578): "already fixed" with no cited run → `handover`; with a
+    cited run whose transcript file is missing, or whose transcript path
+    is empty (an expired artifact) → `handover`; with a cited run
+    carrying 429 evidence → `closed, rate_limit`; an unsupported close
+    with no cited run → `proceed` with the proposal recorded. Restoring
+    the pre-#578 order, or moving the handover ahead of the close
+    grounds, or reverting only the empty-transcript-path exit, must fail
+    these; so must posting the handover evidence raw instead of through
+    `fenced_section()`, whether by replacing the fenced line, inlining a
+    `.evidence` read into the comment's printf, or reading it again.
