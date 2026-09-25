@@ -1064,8 +1064,11 @@ jobs:
             do not fetch anything else and do not browse the web.
 
             Your evidence tools are Read and Grep. Bash is restricted to
-            `gh api` and `git diff`, so a scripting interpreter — python3,
-            node, awk — is denied, and every denied call spends a turn out
+            `gh api` and read-only git through
+            `python3 -I .wing-commander-pipeline/.github/scripts/git_read.py`
+            with `log`, `diff` or `show` and git's usual arguments (plain
+            `git` is denied), so any other scripting — python3, node, awk
+            — is denied, and every denied call spends a turn out
             of your budget without returning anything. To pull the text
             surrounding a keyword out of that JSON, use Grep with `-o` and a
             context-window pattern rather than a script.
@@ -1092,11 +1095,15 @@ jobs:
           # runaway cap, absorbing the .num_turns-vs.-turns-actually-enforced
           # inflation that used to reject a healthy run well inside its budget
           # (specs/037-agent-turn-budget-guard/).
+          # #518: git goes through the pipeline checkout's
+          # .github/scripts/git_read.py, not a raw `Bash(git ...)` grant --
+          # see implement.yml's "Compose tool args
+          # (implement.post-progress-comment)".
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ steps.decide-ceiling.outputs.ceiling }}
-            --allowedTools "Read,Grep,Bash(gh api:*),Bash(git diff:*)"
-            --disallowedTools "WebSearch,WebFetch,Write,Edit,Bash(git commit:*),Bash(git push:*)"
+            --allowedTools "Read,Grep,Bash(gh api:*),Bash(python3 -I .wing-commander-pipeline/.github/scripts/git_read.py:*)"
+            --disallowedTools "WebSearch,WebFetch,Write,Edit,Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*),Bash(git commit:*),Bash(git push:*)"
             --json-schema '{"type":"object","properties":{"outcome":{"type":"string","enum":["clean-bump","needs-migration","ambiguous-options"]},"reasoning":{"type":"string"},"sources":{"type":"array","items":{"type":"object","properties":{"title":{"type":"string"},"url":{"type":"string"}},"required":["title","url"]}},"options":{"type":["array","null"],"items":{"type":"object","properties":{"label":{"type":"string"},"description":{"type":"string"}},"required":["label","description"]}}},"required":["outcome","reasoning","sources"]}'
 
       # spec 052 FR-005/SC-005 (second maintainer review of PR #407): steps
