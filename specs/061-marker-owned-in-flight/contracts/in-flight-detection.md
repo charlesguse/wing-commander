@@ -9,8 +9,9 @@ workflow's `run:` step.
 ## `.github/scripts/board_eligibility.py` (additions)
 
 ```python
+AWAITING_MERGE_STEP = "awaiting-merge"   # #532
 PRE_FIX_STEPS = frozenset({"triage", "route"})
-FIX_OR_LATER_STEPS = frozenset({"fix", "review", "readiness", "prove"})
+FIX_OR_LATER_STEPS = frozenset({"fix", "review", "readiness", AWAITING_MERGE_STEP, "prove"})
 TERMINAL_STEPS = frozenset({"closed", "stalled", "proven"})
 
 def in_flight_candidate(
@@ -34,6 +35,9 @@ def in_flight_candidate(
     that path consumes step == "prove" (only prove-gate/prove do, solely
     on pull_request: closed) -- prioritizing a stuck prove marker would
     starve every other candidate forever for no possible benefit.
+    `awaiting-merge` (#532) never qualifies either, whatever its PR's
+    state: readiness already handed the PR to a human, and no job
+    consumes that step.
     """
 
 def select(
@@ -49,14 +53,24 @@ def select(
     on its own priority path (never a second, parallel rule) -- otherwise a
     stuck prove marker that ages to the front of the oldest-first queue
     would be re-selected every run with no consumer able to advance it
-    (Maintainer Feedback finding on PR #475)."""
+    (Maintainer Feedback finding on PR #475).
+
+    #532: the fallback also skips an issue whose newest marker records
+    step "awaiting-merge" unless pr_state_by_number positively reports
+    its PR CLOSED or MERGED. OPEN means the handover is still pending.
+    An unknown state (a failed lookup or a malformed pr) is skipped too,
+    as a fail-safe. Re-admitting it would recreate the wedge whenever the
+    lookup kept failing, because resume resolves an unresolvable
+    awaiting-merge PR to a no-op. A CLOSED or MERGED PR makes the issue
+    eligible again, and resume sends it to a fresh triage
+    (resume-recovery.md)."""
 ```
 
 `classify_issue()` and `is_excluded()` keep their existing signatures and
 behavior verbatim (Out of Scope: "the exclusion rule... is reused
 unchanged"). The oldest-first ordering and its `classify_issue`/
-`is_excluded` eligibility test are themselves unmodified; the one addition
-layered in front of them is the `prove`-marker skip above, so "which issues
+`is_excluded` eligibility test are themselves unmodified; the only additions
+layered in front of them are the `prove`-marker and `awaiting-merge`-marker skips above, so "which issues
 can `select()` ever return" stays governed by the one function FR-011's
 single-home rule designates for that decision.
 
@@ -75,7 +89,8 @@ network).
 2. `pr_state_by_number`: after calling `board_item_marker.
    read_marker_with_timestamp()` (via `in_flight_candidate`'s own internal
    scan, or a pre-pass over `comments_by_issue` before calling `select()` —
-   implementation's choice) to find markers naming a fix-or-later step and a
+   implementation's choice) to find markers naming a fix-or-later step
+   (`FIX_OR_LATER_STEPS`, which includes `awaiting-merge`) and a
    `pr` number, resolve exactly those PR numbers' `state` via `gh api
    repos/:owner/:repo/pulls/:number --jq .state`. Never a `gh pr list` call,
    never a body/text search (FR-001).
@@ -85,7 +100,7 @@ network).
 
 ## Gate: `verify-board-eligibility.py` (Gate 81, extended — no new gate)
 
-FR-012's eleven fixture cases, each a checked-in directory under
+FR-012's fixture cases (eleven, plus #532's four), each a checked-in directory under
 `.github/scripts/tests/board-eligibility/in-flight/<case>/` containing
 `open_issues.json`, `comments_by_issue.json`, `pr_state_by_number.json`, and
 `expected.json` (`{"issue_number": <int|null>, "multiple_found":
@@ -124,6 +139,13 @@ expressed as a single `issue.json` the way Gate 81's existing
     asserts `select()` itself skips the `prove`-marker issue in its
     oldest-first fallback and returns the other issue, not just that
     `in_flight_candidate()` alone excludes it from the priority path.
+12. `awaiting-merge-pr-open`, `awaiting-merge-pr-closed`,
+    `awaiting-merge-pr-merged`, `awaiting-merge-pr-unknown` (#532). In each
+    case the oldest issue carries an `awaiting-merge` marker naming a PR,
+    and a newer eligible issue carries no marker. `in_flight_candidate()`
+    returns `(null, false)` in all four. `select()` returns the newer
+    issue when the PR is `OPEN` or absent from `pr_state_by_number`, and
+    the `awaiting-merge` issue itself when the PR is `CLOSED` or `MERGED`.
 
 Each fixture directory's four files are all required; the gate fails loudly
 (non-zero exit, `::error::` annotation) if any is missing, per Gate 81's

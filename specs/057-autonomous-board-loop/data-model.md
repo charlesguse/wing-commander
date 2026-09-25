@@ -14,7 +14,7 @@ The unit of work one run selects and acts on.
 | `issue_number` | int | selection (FR-009) | the originating issue |
 | `eligibility_basis` | enum: `maintainer-authored` \| `maintainer-labeled` \| `pipeline-labeled` | `board_eligibility.py` (FR-006/FR-008) | never present for an ineligible issue — selection never reaches one |
 | `cited_run` | run URL \| null | issue title/body and trust-filtered comments (wing-commander-issue-context's context-file, #505), read by triage | null for a maintainer-filed issue with no cited run (edge case, spec.md) |
-| `step` | enum: `triage` \| `route` \| `fix` \| `review` \| `readiness` \| `prove` \| `stalled` \| `closed` | Board Item Marker (contracts/board-item-marker.md) + live GitHub state | the resume point |
+| `step` | enum: `triage` \| `route` \| `fix` \| `review` \| `readiness` \| `awaiting-merge` \| `prove` \| `stalled` \| `closed` | Board Item Marker (contracts/board-item-marker.md) + live GitHub state | the resume point |
 | `round` | int, ≥0 | Board Item Marker | fix→review round count, bounded by D18's constant |
 | `branch` | string \| null | live `git` state | `fix/<issue_number>-<slug>`, set once cut (FR-023) |
 | `pr_number` | int \| null | live GitHub state | set once the fix PR opens (FR-026) |

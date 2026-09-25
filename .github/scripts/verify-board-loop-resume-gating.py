@@ -38,6 +38,13 @@ review's branch that reads `needs.fix.outputs.pr-number` must also carry
 `needs.fix.outputs.breach != 'true'`, and the fix job must export
 `breach` from the final-diff-backstop step.
 
+#532: readiness's ready-report step (the one gated on
+`steps.decide.outputs.ready == 'true'`) must write its marker with
+board_eligibility.AWAITING_MERGE_STEP, never 'readiness' -- a ready item
+left at step=readiness stays in-flight while its PR is open, so every run
+re-selected it, re-ran readiness, and re-posted the same report until a
+human merged, the same one-item wedge as #525 by a different road.
+
 WHAT IT CHECKS (simulated)
 --------------------------
 A small evaluator runs the real `if:`s of select..readiness over the
@@ -367,6 +374,23 @@ def static_findings(doc):
                 findings.append(
                     "review: same-run branch lacks `needs.fix.outputs.breach != 'true'` -- a "
                     "post-push breach would still be reviewed and sent to readiness (#526)")
+
+    readiness = jobs.get("readiness") or {}
+    ready_steps = [s for s in (readiness.get("steps") or [])
+                   if isinstance(s, dict)
+                   and str(s.get("if", "")).replace(" ", "") == "steps.decide.outputs.ready=='true'"
+                   and "write_marker(" in str(s.get("run", ""))]
+    if not ready_steps:
+        findings.append("readiness: no step gated on `steps.decide.outputs.ready == 'true'` writes "
+                        "a board item marker (#532)")
+    for s in ready_steps:
+        run = str(s.get("run", ""))
+        if ("from board_eligibility import AWAITING_MERGE_STEP" not in run
+                or "write_marker(AWAITING_MERGE_STEP," not in run):
+            findings.append(
+                "readiness: ready-report step `{0}` does not write its marker with "
+                "board_eligibility.AWAITING_MERGE_STEP -- a ready item left at any other step "
+                "holds the board until a human merges (#532)".format(s.get("name")))
     return findings
 
 
@@ -563,6 +587,13 @@ SCENARIOS = [
      {"vars": {"WING_COMMANDER_BOARD_LOOP_PAUSED": "true"},
       "outputs": {"select": _item("readiness", pr="42", branch="board/396")}},
      ("select", "resolve-model")),
+    # #532: select() never picks an awaiting-merge item while its PR is
+    # open, but if a race hands one to resume anyway, resume resolves it to
+    # step=awaiting-merge (with the PR still set) and nothing past
+    # resolve-model may run -- above all not readiness again.
+    ("resume step=awaiting-merge, PR still open (#532)",
+     {"outputs": {"select": _item("awaiting-merge", pr="42")}},
+     ("select", "resolve-model")),
     ("resume step=review, resolve-model fails",
      {"fail": ("resolve-model",),
       "outputs": {"select": _item("review", pr="42", branch="board/396")}},
@@ -684,6 +715,17 @@ def _mutations(text):
         "        id: final-diff-backstop\n", "        id: final-diff-backstop-renamed\n")
     sub("final-diff-backstop writes breached= instead of breach=",
         'fh.write("breach={0}\\n"', 'fh.write("breached={0}\\n"', after="\n  fix:\n")
+    # #532: the ready report re-recording step=readiness (the pre-#532
+    # write), and readiness resuming on an awaiting-merge marker.
+    sub("ready report writes step=readiness (pre-#532)",
+        "from board_eligibility import AWAITING_MERGE_STEP; from board_item_marker import "
+        "write_marker; print(write_marker(AWAITING_MERGE_STEP,",
+        "from board_item_marker import write_marker; print(write_marker('readiness',")
+    sub("readiness resumes on an awaiting-merge marker",
+        "|| (needs.select.outputs.step == 'readiness' && needs.select.outputs.pr != '')",
+        "|| ((needs.select.outputs.step == 'readiness' || needs.select.outputs.step == "
+        "'awaiting-merge') && needs.select.outputs.pr != '')",
+        after="\n  readiness:\n")
     # main's pre-#525 conditions, verbatim.
     muts.append(("fix restored to pre-#525", _replace_job_if(text, "fix", PRE_525["fix"])))
     muts.append(("review restored to pre-#525", _replace_job_if(text, "review",
@@ -716,7 +758,7 @@ def run_selftest(text):
         # The simulator must see the live behaviour on its own, not only
         # through the static rules: main's pre-#525 conditions and a
         # missing breach exclusion each change which jobs run.
-        if "pre-#525" in label or "breach exclusion" in label:
+        if "pre-#525" in label or "breach exclusion" in label or "awaiting-merge marker" in label:
             sim = simulation_findings(yaml.safe_load(mutated))
             if not sim:
                 failures.append("mutation `{0}`: the simulation alone did NOT detect it".format(label))

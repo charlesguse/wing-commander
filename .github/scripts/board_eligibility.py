@@ -57,8 +57,19 @@ LIFECYCLE_PREFIXES = ("stage:", "spec:")
 # steps, split by whether a PR can exist yet at that step. Pre-fix qualifies
 # an in-flight candidate on the marker's step alone; fix-or-later needs its
 # recorded PR to still resolve OPEN (FR-002).
+#
+# AWAITING_MERGE_STEP (#532) is the step readiness records when it reports
+# ready and hands the PR to a human (spec 057: the loop stops at "ready to
+# merge"). It is a fix-or-later step -- its marker carries the PR it waits
+# on -- so FIX_OR_LATER_STEPS stays the one list the select job's PR-state
+# lookup pass and the resume step's step resolution read to find which
+# markers name a PR worth resolving; there is no second, parallel
+# "PR-bearing steps" list. Unlike the other fix-or-later steps it never
+# makes its issue in-flight, and select()'s oldest-first fallback passes it
+# over while its PR may still be open -- see _awaiting_merge_holds().
+AWAITING_MERGE_STEP = "awaiting-merge"
 PRE_FIX_STEPS = frozenset({"triage", "route"})
-FIX_OR_LATER_STEPS = frozenset({"fix", "review", "readiness", "prove"})
+FIX_OR_LATER_STEPS = frozenset({"fix", "review", "readiness", AWAITING_MERGE_STEP, "prove"})
 TERMINAL_STEPS = frozenset({"closed", "stalled", "proven"})
 
 
@@ -159,6 +170,12 @@ def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number):
     second, parallel rule), so a stuck prove marker is never selected by
     either path -- it stays untouched until something off this run's own
     trigger path (prove-gate/prove, or a maintainer) resolves it.
+
+    `awaiting-merge` (#532) never qualifies here either, whatever its PR's
+    state: readiness already reported ready and handed the PR to a human,
+    and no job consumes that step. Treating it as in-flight while its PR
+    was open re-selected the same item every run, re-posted an identical
+    readiness report, and starved every other issue until a human merged.
     """
     candidates = []
     for issue in open_issues:
@@ -171,7 +188,7 @@ def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number):
             continue
         created_at, marker = pair
         step = marker.get("step")
-        if step in TERMINAL_STEPS or step == "prove":
+        if step in TERMINAL_STEPS or step in ("prove", AWAITING_MERGE_STEP):
             continue
         if step in PRE_FIX_STEPS:
             candidates.append((created_at, number))
@@ -188,6 +205,31 @@ def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number):
     return candidates[-1][1], len(candidates) > 1
 
 
+def _awaiting_merge_holds(marker, pr_state_by_number):
+    """True when `marker` records AWAITING_MERGE_STEP and its PR is not
+    positively known to be CLOSED or MERGED -- the item is still handed to
+    a human, so select()'s oldest-first fallback passes it over (#532).
+
+    Fail-safe for an unknown state (the PR number absent from
+    pr_state_by_number because the select job's lookup failed, or a
+    malformed `pr`): the item is SKIPPED, not re-admitted. Re-admitting it
+    would recreate #532's wedge whenever that lookup kept failing -- the
+    resume step repeats the same lookup and resolves an unresolvable
+    awaiting-merge PR to a no-op, so an oldest-eligible item would be
+    re-selected and do nothing on every run. Skipping costs at most a
+    delay for this one item (it is re-admitted on the first run whose
+    lookup returns CLOSED or MERGED), and a human merge still reaches
+    prove-gate/prove through pull_request: closed, which never consults
+    this."""
+    if (marker or {}).get("step") != AWAITING_MERGE_STEP:
+        return False
+    try:
+        pr = int(marker.get("pr"))
+    except (TypeError, ValueError):
+        return True
+    return pr_state_by_number.get(pr) not in ("CLOSED", "MERGED")
+
+
 def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_number):
     """FR-004/FR-011: consults in_flight_candidate() first; falls through to
     the existing oldest-first/classify_issue/is_excluded scan when it
@@ -195,7 +237,10 @@ def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_
     as in_flight_candidate() above (never a second, parallel rule) so a
     stuck `prove` issue that ages to the front of the oldest-first queue is
     passed over instead of being re-selected every run with no consumer
-    able to advance it."""
+    able to advance it. It likewise passes over an `awaiting-merge` issue
+    while _awaiting_merge_holds() (#532); once that PR is closed unmerged,
+    or merged with the issue still open, the item is eligible here again
+    and the resume step sends it to a fresh triage."""
     in_flight, _multiple_found = in_flight_candidate(
         open_issues, comments_by_issue, pr_state_by_number)
     if in_flight is not None:
@@ -209,6 +254,8 @@ def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_
         number = issue.get("number")
         pair = read_marker_with_timestamp(comments_by_issue.get(number) or [])
         if pair is not None and (pair[1] or {}).get("step") == "prove":
+            continue
+        if pair is not None and _awaiting_merge_holds(pair[1], pr_state_by_number):
             continue
         labeled_events = labeled_events_by_issue.get(number, [])
         if classify_issue(issue, labeled_events) != "ineligible":

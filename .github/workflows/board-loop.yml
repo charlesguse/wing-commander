@@ -262,7 +262,9 @@ jobs:
           # contracts/in-flight-detection.md "Runtime caller contract" step
           # 2: a narrow second pass, scoped to exactly the PR numbers a
           # fix-or-later-step marker names -- never a `gh pr list` call,
-          # never a body/text search.
+          # never a body/text search. FIX_OR_LATER_STEPS includes
+          # awaiting-merge (#532), whose PR state select()'s fallback needs
+          # to tell a still-open handover from a closed/merged one.
           pr_numbers_to_check="$(COMMENTS_BY_ISSUE_PATH="$RUNNER_TEMP/board-comments-by-issue.json" python3 - <<'PYEOF'
           import json
           import os
@@ -444,7 +446,7 @@ jobs:
           import sys
 
           sys.path.insert(0, ".github/scripts")
-          from board_eligibility import PRE_FIX_STEPS, FIX_OR_LATER_STEPS
+          from board_eligibility import PRE_FIX_STEPS, FIX_OR_LATER_STEPS, AWAITING_MERGE_STEP
 
           marker_step = os.environ.get("MARKER_STEP") or None
           branch = os.environ.get("BRANCH") or ""
@@ -458,6 +460,7 @@ jobs:
           base_sha = os.environ.get("MARKER_BASE_SHA") or ""
 
           reason = ""
+          note = ""
           if marker_step == "prove" and not marker_pr_field:
               # Matches in_flight_candidate()'s prove exception
               # (board_eligibility.py): a prove marker is always written
@@ -465,13 +468,34 @@ jobs:
               # prove runs), so it resolves on the step alone rather than
               # falling through to clause 4's triage.
               step = "prove"
+          elif marker_step == AWAITING_MERGE_STEP and (not pr_from_marker or pr_state == "OPEN"):
+              # #532: readiness already reported this PR ready and handed
+              # it to a human. select() never picks it while its PR may
+              # still be open (board_eligibility._awaiting_merge_holds),
+              # so this is reached only on a race (reopened between the
+              # two lookups) or a lookup that failed here. Either way it
+              # resolves to awaiting-merge itself, which no job consumes:
+              # a no-op run. Never fix/review/readiness (that would re-post
+              # the report or re-review a PR a human now owns), never the
+              # board:owned fallback below (it would adopt the same PR as
+              # step=review), and never triage (it would cut a second
+              # branch/PR beside the open one).
+              step = AWAITING_MERGE_STEP
+              pr_from_fallback = False
+              if not pr_from_marker:
+                  pr_number = ""
+                  pr_state = ""
+              note = "recorded pr {0} is awaiting a human merge ({1}) -- nothing to do this run".format(
+                  marker_pr_field, pr_state or "state unresolved")
           elif pr_from_marker and marker_step and (
               marker_step in PRE_FIX_STEPS
               or (marker_step in FIX_OR_LATER_STEPS and pr_state == "OPEN")
           ):
               step = marker_step
           elif pr_from_marker and marker_step in FIX_OR_LATER_STEPS:
-              # Resolved by number but not OPEN -- disqualified. Falls to
+              # Resolved by number but not OPEN -- disqualified (for an
+              # awaiting-merge marker: the handed-over PR was closed
+              # unmerged, or merged while the issue stayed open). Falls to
               # the triage clause below, never the fallback clause: the
               # marker named a real PR, so a different loop-owned PR must
               # not be adopted in its place (SC-007). None of this
@@ -508,6 +532,7 @@ jobs:
               "step": step,
               "recovered_via_fallback": pr_from_fallback,
               "disqualified_reason": reason,
+              "note": note,
               "pr_number": pr_number,
               "pr_state": pr_state,
               "branch": branch,
@@ -520,6 +545,7 @@ jobs:
           step="$(printf '%s' "$step_resolution_json" | jq -r '.step')"
           recovered_via_fallback="$(printf '%s' "$step_resolution_json" | jq -r '.recovered_via_fallback')"
           disqualified_reason="$(printf '%s' "$step_resolution_json" | jq -r '.disqualified_reason')"
+          resume_note="$(printf '%s' "$step_resolution_json" | jq -r '.note')"
           pr_number="$(printf '%s' "$step_resolution_json" | jq -r '.pr_number')"
           pr_state="$(printf '%s' "$step_resolution_json" | jq -r '.pr_state')"
           branch="$(printf '%s' "$step_resolution_json" | jq -r '.branch')"
@@ -531,6 +557,9 @@ jobs:
           fi
           if [ -n "$disqualified_reason" ]; then
             echo "board-loop: resume falling back to triage for issue #$ISSUE_NUMBER -- $disqualified_reason." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -n "$resume_note" ]; then
+            echo "board-loop: issue #$ISSUE_NUMBER -- $resume_note." >> "$GITHUB_STEP_SUMMARY"
           fi
 
           {
@@ -2883,7 +2912,10 @@ jobs:
 
       # FR-066/FR-068: names head_sha and every condition's result; states
       # a human merge is awaited; never merges, approves, or enables
-      # auto-merge anywhere in this job's own API calls.
+      # auto-merge anywhere in this job's own API calls. The marker it
+      # writes records step awaiting-merge, not readiness (#532): the
+      # handover releases the board, so select() moves on to other issues
+      # instead of re-running readiness on this PR every run.
       - name: Post the readiness report (ready)
         if: steps.decide.outputs.ready == 'true'
         env:
@@ -2896,7 +2928,7 @@ jobs:
           body="$(printf 'Readiness: all conditions hold on head_sha %s.\n\ndecision: %s\n\nAwaiting a human merge -- this loop never merges, approves, or enables auto-merge.' \
             "$(jq -r '.head_sha' "$RUNNER_TEMP/board-readiness-decision.json")" "$decision")"
           gh pr comment "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
-          marker="$(python3 -c "import os, sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('readiness', 0, int(os.environ['PR_NUMBER']), None, None))")"
+          marker="$(python3 -c "import os, sys; sys.path.insert(0, '.github/scripts'); from board_eligibility import AWAITING_MERGE_STEP; from board_item_marker import write_marker; print(write_marker(AWAITING_MERGE_STEP, 0, int(os.environ['PR_NUMBER']), None, None))")"
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf '%s\n\n%s' "$body" "$marker")"
 
       # A backstop breach below files a spec-request whose body carries

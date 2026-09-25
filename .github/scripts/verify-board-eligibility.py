@@ -29,13 +29,18 @@ pair under .github/scripts/tests/board-eligibility/<case>/:
 In-flight fixtures (FR-012), each a checked-in open_issues.json +
 comments_by_issue.json + pr_state_by_number.json + expected.json set under
 .github/scripts/tests/board-eligibility/in-flight/<case>/ -- see
-contracts/in-flight-detection.md for the full eleven-case list. A case
+contracts/in-flight-detection.md for the full case list. A case
 whose expected.json also carries "select_issue_number" additionally
 requires a labeled_events_by_issue.json and gets its result asserted
 against select() itself, not just in_flight_candidate() -- used by
 prove-no-pr to also pin that select()'s oldest-first fallback, not only
 the priority path, skips a stuck `prove` marker (Maintainer Feedback,
-board_eligibility.py's select()).
+board_eligibility.py's select()), and by the four awaiting-merge-* cases
+(#532) to pin that a ready-and-handed-over item never holds the board:
+never in-flight, passed over by the fallback while its PR is OPEN (or its
+state is unknown), and eligible again once that PR is CLOSED or MERGED.
+Each awaiting-merge-* case puts the awaiting-merge issue OLDEST, so
+reverting the fallback skip makes select() return it and fails the case.
 
 Fails loudly, not vacuously, if any fixture file is missing.
 """
@@ -71,6 +76,10 @@ IN_FLIGHT_CASES = {
     "two-non-terminal",
     "unrelated-pr-no-marker",
     "prove-no-pr",
+    "awaiting-merge-pr-open",
+    "awaiting-merge-pr-closed",
+    "awaiting-merge-pr-merged",
+    "awaiting-merge-pr-unknown",
 }
 
 
@@ -194,7 +203,7 @@ def run():
                           case, expected_selected, selected))
             else:
                 print("[ok] in-flight/{0}: select() == {1!r} (oldest-first "
-                      "fallback also skips the prove marker)".format(case, selected))
+                      "fallback)".format(case, selected))
 
     print("verify-board-eligibility: {0} failure(s).".format(failures))
     return 1 if failures else 0

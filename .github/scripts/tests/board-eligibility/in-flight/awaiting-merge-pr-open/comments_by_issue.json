@@ -1,0 +1,9 @@
+{
+  "5021": [
+    {
+      "created_at": "2026-01-05T00:00:00Z",
+      "body": "Readiness: all conditions hold on head_sha deadbeef.\n\n**Run:** https://github.com/example/repo/actions/runs/1\n\n<!-- wing-commander-board-item: {\"step\": \"awaiting-merge\", \"round\": 0, \"pr\": 9021, \"branch\": null, \"base_sha\": null} -->"
+    }
+  ],
+  "5022": []
+}
