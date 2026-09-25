@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,26 +31,26 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain, at the limit and by design;
-  each is a scope decision with no defensible default, and all three are
-  posted to lifecycle issue #511 for the owner rather than being guessed:
-  - **FR-013** — whether the watchdog's branch-drift collector is extended
-    to consume the new evidence in this feature, or whether this feature
-    populates the records only. This decides whether the feature delivers
-    detection or only the data behind it; spec 050's FR-020 mandates the
-    populating half and is silent on the consuming half.
-  - **FR-004** — whether a `pr`-review-mode run records its review branch,
-    or whether only `auto`-mode runs advancing the persistent spec branch
-    populate the group. This decides how much of each stage's run
-    population becomes measurable.
-  - **FR-005** — what the "before" point is for a run whose target branch
-    does not exist when it starts. Spec 050's FR-004 marks that case
-    unavailable, which leaves a `pr`-mode run permanently unmeasurable by
-    an exact-pair comparison, since such a run creates its branch.
-- The success criteria are written so that SC-001 and SC-005 through
-  SC-008 hold under every answer to the three questions; SC-002, SC-003,
-  SC-004 and SC-009 describe the detection outcome and are contingent on
-  FR-013 being answered in scope.
+- All three [NEEDS CLARIFICATION] markers are resolved by the owner's
+  answers on lifecycle issue #511; the decisions are folded into the
+  requirements they governed:
+  - **FR-013** — the watchdog's branch-drift collector *is* extended in
+    this feature: it both populates the records and widens the exact-pair
+    arm to plan and tasks, with fixtures for both stages on both arms
+    (FR-021). Records nothing reads would be a check that proves nothing.
+  - **FR-004** — a `pr`-review-mode run records its own review branch, so
+    every plan and tasks run populates the group in both review modes.
+  - **FR-005** — a run whose target branch does not exist records the
+    commit the branch was created from as its "before" point, and the
+    contract's definition of "before" widens to "the point the run
+    advanced the branch from" (FR-010). Branch-creating runs are therefore
+    measurable by the same SHA comparison, with no second verdict rule.
+- The success criteria all hold as written under those answers: SC-002,
+  SC-003, SC-004 and SC-009 describe the detection outcome, which FR-013
+  now delivers in this feature.
+- FR-009 bounds the one definitional change: widening "before" must leave
+  every already-persisted value correct, since for an existing branch the
+  point the run advanced from is the tip it observed at start.
 - Named files, job names, and step names appear in the Overview and Edge
   Cases as *evidence of the current behaviour* and as the boundary of the
   change, not as prescribed implementation. The functional requirements

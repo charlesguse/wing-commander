@@ -172,13 +172,13 @@ confirm the gate suite fails on it.
 
 ### User Story 4 - A run that cannot be measured degrades visibly (Priority: P2)
 
-Not every plan or tasks run can produce a usable pair: a run whose target
-branch did not exist when it started, a run from a pipeline version that
-predates this feature, a run whose artifact has aged out of retention, an
-adopting repository still pinned to an older release. The reader of the
-step summary must be able to tell "measured and healthy" from "not
-measurable", and an unmeasurable run must never be reported as lost
-progress or as a failed read.
+Not every plan or tasks run can produce a usable pair: a run from a
+pipeline version that predates this feature, a run whose artifact has aged
+out of retention, a run whose read of either point failed and degraded to
+unavailable, an adopting repository still pinned to an older release. The
+reader of the step summary must be able to tell "measured and healthy"
+from "not measurable", and an unmeasurable run must never be reported as
+lost progress or as a failed read.
 
 **Why this priority**: A silently varying baseline makes every future
 report ambiguous, and a false lost-progress finding on a healthy run is
@@ -212,14 +212,15 @@ is still recorded as trustworthy.
 - **The target branch does not exist when the run starts.** A plan run in
   `pr` review mode creates its review branch inside the run; the first
   plan run of a feature can also be the one that creates the persistent
-  spec branch. There is no tip to record as the "before" point, and the
-  record must express that rather than storing a placeholder a reader
-  could mistake for a commit.
+  spec branch. The branch has no tip yet, so the "before" point is the
+  commit the branch is created from — never a placeholder a reader could
+  mistake for something else — which keeps such a run measurable by the
+  same comparison as every other run.
 - **The review mode decides the branch.** Plan and tasks push to the
   persistent spec branch in `auto` review mode and to their own review
-  branch in `pr` mode. The record names the branch the run actually
-  pushed to; no reader may infer it from a prefix, a slug or a mode,
-  because the record does not carry the mode.
+  branch in `pr` mode. Both modes populate the group. The record names the
+  branch the run actually pushed to; no reader may infer it from a prefix,
+  a slug or a mode, because the record does not carry the mode.
 - **The run is refused as a duplicate attempt.** A plan or tasks run that
   stops because a prior attempt's branch already exists runs no agent
   step and pushes nothing. That is a correct refusal, not a lost cycle,
@@ -267,17 +268,19 @@ is still recorded as trustworthy.
 - **FR-004**: The branch each record names MUST be the branch that run
   actually pushes to for the review mode it ran in, recorded literally by
   the stage and never derived by a reader from a prefix, a slug, or a
-  review mode. [NEEDS CLARIFICATION: should a `pr`-review-mode run record
-  its review branch (`plan/<slug>`, `tasks/<slug>`), or should the group
-  be populated only for `auto`-mode runs that advance the persistent spec
-  branch?]
+  review mode. Both review modes populate the group: an `auto`-mode run
+  records the persistent spec branch, and a `pr`-mode run records its own
+  review branch (`plan/<slug>`, `tasks/<slug>`). No run of either stage is
+  excluded from the group because of the mode it ran in.
 - **FR-005**: When the branch a run advances did not exist at the moment
   the run's work began, the record MUST NOT store a placeholder value in
-  the "before" point. [NEEDS CLARIFICATION: is such a run's "before" point
-  simply unavailable — which leaves it unmeasurable by an exact-pair
-  comparison — or is the commit the branch was created from recorded as
-  the "before" point, so a run that creates its branch is still
-  measurable?]
+  the "before" point; it MUST record the commit the branch was created
+  from as the "before" point, so a run that creates its branch is
+  measurable by the same comparison as a run that advances an existing
+  one. The "before" point is therefore "the point the run advanced the
+  branch from" — for a branch that already existed that is its tip at the
+  moment the run's work began, and for a branch the run creates it is the
+  commit the creation started from. A single verdict rule covers both.
 - **FR-006**: The "after" point MUST be observed after every push the run
   could make, including any deterministic bookkeeping push that follows
   the agent's own, so it is the tip the run finished with.
@@ -290,14 +293,20 @@ is still recorded as trustworthy.
   unavailable, MUST NOT fail the run, and MUST NOT prevent any step that
   follows it from running.
 - **FR-009**: The record change MUST be additive within the current schema
-  version — no field removed, renamed, retyped, or given a new meaning,
-  and no new schema version minted — so every existing consumer of a
-  record continues to read it unchanged.
-- **FR-010**: The published record contract MUST be updated so its
-  statement about the group's populators describes what ships: implement,
-  plan and tasks populate it, under the stated review-mode and
-  branch-existence conditions. A reader of the contract alone MUST be able
-  to tell which stages populate the group and when it is unavailable.
+  version — no field removed, renamed, retyped, and no new schema version
+  minted — so every existing consumer of a record continues to read it
+  unchanged. The one definitional change permitted is the generalization of
+  the "before" point required by FR-005, which MUST be a widening only:
+  every value an already-persisted record carries in that field MUST remain
+  correct under the widened definition, and no consumer's reading of an
+  existing record may change.
+- **FR-010**: The published record contract MUST be updated so it describes
+  what ships: implement, plan and tasks all populate the group, in both
+  review modes, and the "before" point is defined as the point the run
+  advanced the branch from — including the case of a run that creates the
+  branch it advances. A reader of the contract alone MUST be able to tell
+  which stages populate the group, which branch each names, and when the
+  group is unavailable.
 - **FR-011**: The capture MUST have exactly one home shared by implement,
   plan and tasks, rather than a second and third copy of the implement
   stage's block. Implement's own recorded values MUST be unchanged by the
@@ -310,10 +319,10 @@ is still recorded as trustworthy.
   lost-progress for a plan or tasks run from that run's own recorded pair
   when the record carries one, comparing the two recorded points rather
   than counting commits in a time window or reading the branch's current
-  state. [NEEDS CLARIFICATION: is extending the collector to plan and
-  tasks in scope for this feature, or does this feature populate the
-  records only and leave the collector's behaviour for those two stages
-  unchanged until a later one consumes the evidence?]
+  state. Extending the collector to consume that evidence is in scope for
+  this feature: the feature both populates the records and widens the
+  collector's exact-pair arm to plan and tasks, so the evidence it adds is
+  read by the run that emitted it rather than by a later feature.
 - **FR-014**: The signal emitted for a plan or tasks run MUST name the
   stage, the branch, both compared points, and the count the stage
   recorded. The count MUST be read verbatim from the record and never
@@ -346,8 +355,11 @@ is still recorded as trustworthy.
   as the implement populator's: both points present and different, both
   present and equal, "before" unavailable, "after" unavailable, a count of
   zero alongside two differing points, the count unavailable while both
-  points are present, the whole group unavailable, and a wrong-typed value
-  for each field.
+  points are present, the whole group unavailable, a run that created the
+  branch it advanced — whose "before" point is the commit the branch was
+  created from — and a wrong-typed value for each field. The fixtures MUST
+  include a record naming a persistent spec branch and one naming a review
+  branch, so neither review mode is proven only by a live run.
 - **FR-021**: The gate that exercises the branch-drift collector MUST gain
   fixture-backed cases for a plan run and a tasks run on both arms — a
   recorded pair present, and no usable evidence — so neither arm is proven
@@ -389,8 +401,9 @@ is still recorded as trustworthy.
 - **SC-002**: A plan run and a tasks run that push nothing are each
   reported as lost-progress in 100% of seeded cases, including the case
   where the branch is force-pushed between the run finishing and the
-  inspection, and the case where a later stage has already pushed to the
-  same branch.
+  inspection, the case where a later stage has already pushed to the same
+  branch, and the case of a `pr`-mode run whose review branch the run
+  itself was to create.
 - **SC-003**: Across a corpus of plan and tasks runs that did push their
   work, zero lost-progress signals are emitted — the change adds no false
   detection to runs that were healthy before it.
@@ -421,6 +434,10 @@ is still recorded as trustworthy.
   group already exists, is already documented as stage-neutral, and is
   already accepted as input by the component that publishes records, so no
   new schema version is minted and no consumer changes in lockstep.
+- Generalizing the "before" point to "the point the run advanced the branch
+  from" (FR-005) does not invalidate any persisted record: for a branch that
+  already existed, the point the run advanced from is the tip it observed at
+  start, which is exactly what implement records today.
 - The two points a run records are captured by that run's own deterministic
   steps, so they describe what the run observed and are never re-derived
   later from a branch other mechanisms may have rewritten.
@@ -429,9 +446,9 @@ is still recorded as trustworthy.
 - The stage knows its own review mode and therefore its own target branch
   at capture time, so the branch can be recorded literally without a reader
   ever inferring it.
-- Whichever way the open questions are answered, the watchdog's treatment
-  of implement runs, of non-push-expected stages, and of skipped or
-  cancelled runs is untouched by this feature.
+- The watchdog's treatment of implement runs, of non-push-expected stages,
+  and of skipped or cancelled runs is untouched by this feature; only the
+  plan and tasks arms change.
 - The lifecycle-issue and finding-filing paths downstream of the collector
   are unchanged; this feature changes what can be measured and what is
   reported as evidence, not how a finding is filed or routed.
@@ -445,8 +462,9 @@ is still recorded as trustworthy.
 - Backfilling branch evidence into records already persisted.
 - Adding the branch-advance group to stages that do not push as their
   primary job — the push-expected set stays plan, tasks and implement.
-- Changing the record's schema version, or any field's shape, meaning, or
-  availability convention.
+- Changing the record's schema version, or any field's shape or
+  availability convention. The only definitional change in scope is the
+  widening of the "before" point required by FR-005 and FR-010.
 - Changing the timestamp-window baseline that survives for implement runs
   whose records predate spec 050.
 - Any new agent-facing surface, prompt, or judgment step in either stage.
