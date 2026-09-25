@@ -89,8 +89,28 @@ invariant it now carries has to be mutation-proven (Principle VIII).
 
 ### Session 2026-09-25
 
-Three questions are open; they are marked in place below and carried to the
-lifecycle issue.
+Three questions were carried to lifecycle issue #612 and answered there. All
+three are resolved; no clarification markers remain in this spec.
+
+- **Q (scope, FR-013)**: Is the return-contract redesign (FR-001/FR-003) in
+  scope together with the CLI reuse, or does the minimal "call `main()` and
+  keep the shell guard" fix ship first?
+  **A**: Combined — one change carries both, because Gate 60 needs rework
+  either way. There is no smaller landing that leaves the gate correct, so
+  splitting buys nothing and costs a second gate migration.
+- **Q (defence in depth, FR-004)**: Once the function's contract is
+  mutation-proven, does the composite still keep a cheap "the target is not
+  this run" check?
+  **A**: Yes — the one-line check stays, documented in place as deliberately
+  redundant defence in depth, matching the existing workflow-path/repository
+  target guards' belt-and-braces style. The action at stake is cancelling a
+  run, which is not recoverable by retry.
+- **Q (gate strategy, FR-009)**: Does Gate 60's `board-stop-check` check
+  become a structural per-step check following `check_token_mint()`, or the
+  stricter "any reference outside the declared home" rule?
+  **A**: Structural, following `check_token_mint()` — parse each job's step
+  list and reason about the resolved steps, so a future legitimate non-loop
+  consumer of the module is not flagged merely for naming it.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -125,9 +145,11 @@ checked-in case fails.
    stands down and that earlier run is the cancel target.
 3. **Given** no authorized, unactioned stop request, **When** the stop check
    runs, **Then** the job does not stand down and no cancel is attempted.
-4. **Given** the caller-side self-cancel comparison is removed from the
-   composite, **When** every checked-in stop case runs, **Then** they still
-   all pass — because the rule now lives in the decision function.
+4. **Given** the caller-side self-cancel comparison — which ships, but as
+   documented defence in depth — is removed from the composite, **When**
+   every checked-in stop case runs, **Then** they still all pass, because the
+   rule now lives in the decision function and the shell check only restates
+   it.
 
 ---
 
@@ -174,8 +196,9 @@ its subject displaces the scrutiny it appears to provide.
 
 **Independent Test**: Plant a copy of the idiom, written in the post-change
 style, in a throwaway workflow inside the gate's own self-test tree and
-confirm the gate reports a finding naming the declared home; run the gate's
-clean-tree self-test and confirm no finding.
+confirm the gate reports a finding naming the declared home; plant a
+module-referencing file that orchestrates no cancel and confirm no finding;
+run the gate's clean-tree self-test and confirm no finding.
 
 **Acceptance Scenarios**:
 
@@ -184,7 +207,11 @@ clean-tree self-test and confirm no finding.
    **Then** it reports a `board-stop-check` finding at that site.
 2. **Given** the declared home itself and any helper beside it, **When**
    Gate 60 runs, **Then** it reports nothing.
-3. **Given** the repository as it ships after this change, **When** the gate
+3. **Given** a subject file whose steps reference the stop-check module but
+   orchestrate no run cancellation — a legitimate non-loop consumer, **When**
+   Gate 60 runs, **Then** it reports nothing, because the check reasons about
+   each job's resolved steps rather than about any mention of the module.
+4. **Given** the repository as it ships after this change, **When** the gate
    suite runs locally and in CI, **Then** every gate passes.
 
 ---
@@ -221,12 +248,16 @@ clean-tree self-test and confirm no finding.
 - **FR-003**: The cancel target MUST be absent whenever the only run
   announcement found is the run performing the check. The function MUST NOT
   return the current run's own id as a cancel target.
-- **FR-004**: No call site MAY reconstruct the self-cancel distinction by
-  comparing a returned run id to the current run id. [NEEDS CLARIFICATION:
-  should the composite nonetheless retain a cheap defence-in-depth check that
-  the target is not this run — matching the existing workflow-path/repository
-  target guard's belt-and-braces style — or is the function's contract, once
-  mutation-proven, the single guard?]
+- **FR-004**: No call site MAY *depend* on reconstructing the self-cancel
+  distinction: the decision function's contract, mutation-proven under FR-011,
+  is the guarantee that the current run is never a cancel target. The
+  composite MUST nonetheless retain a single "the target is not this run"
+  check before `gh run cancel`, carrying a comment that states it is
+  deliberately redundant with that contract and names the contract as the
+  primary guard — the same belt-and-braces treatment the existing
+  workflow-path and repository target guards get, warranted because a cancel
+  is not recoverable by retry. Removing that redundant check MUST NOT change
+  the outcome of any checked-in case.
 - **FR-005**: The module's documented interface MUST state the two-fact
   contract, and every docstring that describes the return value MUST match
   what the function returns.
@@ -244,16 +275,18 @@ clean-tree self-test and confirm no finding.
 - **FR-009**: Gate 60's `board-stop-check` check MUST detect a second site of
   the idiom regardless of the style it is written in, including one written
   against the module's CLI, and MUST NOT depend on a literal fragment that
-  this change itself deletes. [NEEDS CLARIFICATION: should the check follow
-  `check_token_mint()`'s structural pattern (parse each job's step list and
-  reason about resolved steps), or is "any subject file outside the declared
-  home that references `board_stop_check` at all" the simpler and stricter
-  rule — noting the latter needs no co-occurrence reasoning but would flag a
-  future legitimate non-loop consumer?]
+  this change itself deletes. It MUST do so structurally, following
+  `check_token_mint()`'s pattern: parse each job's step list and reason about
+  the resolved steps rather than about literal text anywhere in the file. A
+  site is the idiom when its resolved steps both obtain a stop decision from
+  the stop-check module and perform a run cancellation; a file that merely
+  references the module without orchestrating a cancel — a future legitimate
+  non-loop consumer — MUST NOT be flagged.
 - **FR-010**: Gate 60's declared-home comment, clean-tree fixture and
   third-paste self-test MUST be updated in the same change, and the gate's
-  `--self-test` MUST pass both directions: silent on the clean tree, and a
-  finding on a planted paste.
+  `--self-test` MUST pass in every direction: silent on the clean tree, a
+  finding on a planted paste written in the post-change style, and silent on
+  a planted file that references the module without orchestrating a cancel.
 - **FR-011**: The no-self-cancel invariant MUST be proven by a mutation: with
   the rule removed, at least one checked-in case MUST fail, and that failure
   MUST NOT be attributable to the unreadable-run or workflow-path guards
@@ -262,13 +295,12 @@ clean-tree self-test and confirm no finding.
   the same outcome after the change as before — the maintainer-association
   rule, the stop-command rule, the bot-authored-marker rule, the
   last-`**Run:**`-line rule and the baseline rule are untouched.
-- **FR-013**: The change MUST ship as one unit, because the gate's fragment
-  set and the composite's invocation cannot be correct at the same time
-  across two commits. [NEEDS CLARIFICATION: is the deeper return-contract
-  redesign (FR-001/FR-003) in scope for this spec together with the CLI
-  reuse, or should the minimal "call `main()` and keep the shell guard" fix
-  ship first as a smaller change with the contract redesign tracked
-  separately?]
+- **FR-013**: The change MUST ship as one unit covering all three defects —
+  the two-fact return contract (FR-001/FR-003), the CLI reuse (FR-006) and
+  the Gate 60 rework (FR-009) — because the gate's current fragment set and
+  the composite's new invocation cannot both be correct across two commits,
+  and the gate needs reworking under either scope. No part of this spec is
+  deferred to a follow-up.
 
 ### Key Entities
 
@@ -294,8 +326,9 @@ clean-tree self-test and confirm no finding.
   whether it will cancel anything at all, by reading exactly one function —
   with no reference to any call site's shell.
 - **SC-002**: The shipped composite contains zero lines that import or
-  path-bootstrap the stop-check module, and zero comparisons of a stop-check
-  result against the current run id (subject to FR-004's open question).
+  path-bootstrap the stop-check module, and at most one comparison of a
+  stop-check result against the current run id — the FR-004 redundant guard,
+  carrying the comment that says so.
 - **SC-003**: All existing stop-check fixtures, command cases and composite
   shell cases produce identical stand-down and cancel outcomes before and
   after the change — no fixture is deleted or weakened to accommodate it.
@@ -303,7 +336,9 @@ clean-tree self-test and confirm no finding.
   causes at least one checked-in case to fail, and the gate reports which.
 - **SC-005**: A copy of the kill-switch-recheck idiom planted in a second
   subject file is flagged by the single-home gate whether it is written in
-  the pre-change style or the post-change style; the clean tree is silent.
+  the pre-change style or the post-change style; a file that references the
+  module without orchestrating a cancel is not flagged; the clean tree is
+  silent.
 - **SC-006**: The full local gate suite (`run-local-gates.py`) passes, and no
   gate's self-test is skipped or waived to achieve it.
 - **SC-007**: An adopter pinning the published composite sees no change to
