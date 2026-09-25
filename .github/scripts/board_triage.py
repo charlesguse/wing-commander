@@ -15,12 +15,17 @@ execution-output transcript (spec.md's rate-limit story and edge cases,
 contracts/triage.md fixture 1):
   - rate-limit evidence: a `rate_limit_event` record, or a terminal result
     with `terminal_reason == "api_error"` and `api_error_status == "429"`;
-  - one turn: the terminal result's `num_turns` is a number <= 1;
-  - zero cost: the terminal result's `total_cost_usd` is a number == 0.
+  - a failed run: the terminal result has `is_error: true` or a `subtype`
+    other than "success" (wing-commander-agent-verdict's same test);
+  - one turn: the terminal result's `num_turns` is a finite number in
+    [0, 1];
+  - zero cost: the terminal result's `total_cost_usd` is a finite number
+    == 0.
 Rate-limit evidence alone is NOT enough: Claude Code emits informational
 `rate_limit_event` records in ordinary long runs, and #402 was wrongly
-closed on a 451-turn, $43 run that carried one. Missing or non-numeric
-turns/cost never close.
+closed on a 451-turn, $43 run that carried one. Missing, non-numeric, or
+non-finite turns/cost never close. The evidence returned quotes the
+transcript's own fields (FR-013), never constants.
 
 Ground 2 (action bump) has no prior art in this repository (research.md D4):
 it diffs the cited run's own workflow file's `uses: owner/action@ref` pins
@@ -35,6 +40,7 @@ there is no older-pin case to distinguish once ancestry holds.
 implemented here -- see the module docstring for `triage()` below.
 """
 import json
+import math
 import re
 import subprocess
 import sys
@@ -48,28 +54,54 @@ def _last_of_type(records, type_name):
 
 
 def _number(value):
-    """value as a float when it is a real number (not a bool), else None."""
+    """value as a float when it is a finite real number (not a bool, NaN or
+    an infinity), else None."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    return float(value)
+    value = float(value)
+    return value if math.isfinite(value) else None
+
+
+def _failed(result):
+    """The terminal result is a failure -- the same test as
+    wing-commander-agent-verdict's rate-limited branch."""
+    return result.get("is_error") is True or result.get("subtype") != "success"
+
+
+def _one_turn(result):
+    num_turns = _number(result.get("num_turns"))
+    return num_turns is not None and 0 <= num_turns <= 1
+
+
+def _zero_cost(result):
+    cost_usd = _number(result.get("total_cost_usd"))
+    return cost_usd is not None and cost_usd == 0
 
 
 def check_rate_limit(run_transcript_path):
     """Reads the cited run's own execution-output transcript and returns
-    {"rate_limit_event": True, "api_error_status": "429",
-     "num_turns": <int>, "cost_usd": <float>} only when ALL of these hold:
+    its own fields, quoted rather than asserted:
+    {"rate_limit_event": <bool, a rate_limit_event record is present>,
+     "rate_limit_status": <that record's rate_limit_info.status, or None>,
+     "terminal_reason": <result's terminal_reason, or None>,
+     "api_error_status": <result's api_error_status as a string, or None>,
+     "num_turns": <result's num_turns>,
+     "cost_usd": <result's total_cost_usd>}
+    only when ALL of these hold:
       1. rate-limit evidence -- a `rate_limit_event` record, or a terminal
          result with `terminal_reason == "api_error"` and
          `api_error_status == "429"`;
-      2. one turn -- the terminal result's `num_turns` is present, numeric,
-         and <= 1;
-      3. zero cost -- the terminal result's `total_cost_usd` is present,
-         numeric, and == 0.
+      2. a failed run -- the terminal result has `is_error: true` or a
+         `subtype` other than "success"; a successful run never closes;
+      3. one turn -- the terminal result's `num_turns` is present, a finite
+         number, and 0 <= num_turns <= 1;
+      4. zero cost -- the terminal result's `total_cost_usd` is present, a
+         finite number, and == 0.
     Else None. Evidence alone is not a rate-limited run: ordinary long runs
-    carry informational `rate_limit_event` records (#402). Missing or
-    non-numeric turns/cost return None -- never close on absent evidence.
-    Never raises on a missing/unparsable transcript -- the caller
-    (triage()) treats that as evidence_unavailable, not as "no rate
+    carry informational `rate_limit_event` records (#402). Missing,
+    non-numeric, or non-finite turns/cost return None -- never close on
+    absent evidence. Never raises on a missing/unparsable transcript -- the
+    caller (triage()) treats that as evidence_unavailable, not as "no rate
     limit"."""
     try:
         with open(run_transcript_path, encoding="utf-8") as fh:
@@ -84,23 +116,22 @@ def check_rate_limit(run_transcript_path):
 
     rate_limit_event = _last_of_type(records, "rate_limit_event")
     terminal_reason = result.get("terminal_reason")
-    api_error_status = str(result.get("api_error_status") or "")
+    raw_status = result.get("api_error_status")
+    api_error_status = str(raw_status) if raw_status is not None else None
 
     rate_limited = bool(rate_limit_event) or (
         terminal_reason == "api_error" and api_error_status == "429")
     if not rate_limited:
         return None
-
-    num_turns = _number(result.get("num_turns"))
-    cost_usd = _number(result.get("total_cost_usd"))
-    if num_turns is None or num_turns > 1:
-        return None
-    if cost_usd is None or cost_usd != 0:
+    if not (_failed(result) and _one_turn(result) and _zero_cost(result)):
         return None
 
+    info = (rate_limit_event or {}).get("rate_limit_info")
     return {
-        "rate_limit_event": True,
-        "api_error_status": "429",
+        "rate_limit_event": bool(rate_limit_event),
+        "rate_limit_status": info.get("status") if isinstance(info, dict) else None,
+        "terminal_reason": terminal_reason,
+        "api_error_status": api_error_status,
         "num_turns": result.get("num_turns"),
         "cost_usd": result.get("total_cost_usd"),
     }

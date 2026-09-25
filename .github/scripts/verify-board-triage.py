@@ -15,9 +15,11 @@ one FR-012 exists to forbid (an "already fixed" proposal must NOT close).
 
 #402: the rate-limit ground closed a 451-turn, $43 run because it carried
 an informational `rate_limit_event`. That ground needs rate-limit evidence
-AND one turn AND zero cost; fixtures pin a many-turn paid run, a one-turn
-paid run, and a run with no cost recorded as NOT closed, and a mutation
-that restores the evidence-only rule must fail them.
+AND a failed run AND one turn (0..1) AND zero cost, and its evidence must
+quote the transcript's own fields. Each guard has a fixture of its own
+(many turns at $0, negative turns, one paid turn, no cost, a successful
+run), closed cases pin the quoted evidence exactly, and a mutation per
+guard -- plus one hard-coding the evidence -- must be caught.
 
 #505: both close grounds are only as trustworthy as the run they read. The
 triage job's "Locate a cited run" step used to scan the issue body AND
@@ -82,20 +84,41 @@ from board_triage import triage, _first_divergent_pin  # noqa: E402
 FIXTURES_DIR = os.path.join(SCRIPTS_DIR, "tests", "board-triage")
 
 TRIAGE_CASES = {
-    "429-present": {"outcome": "closed", "ground": "rate_limit"},
+    # A closed rate_limit verdict's evidence must quote the transcript's own
+    # fields (FR-013), so "evidence" pins them exactly.
+    "429-present": {"outcome": "closed", "ground": "rate_limit", "evidence": {
+        "rate_limit_event": True, "rate_limit_status": None,
+        "terminal_reason": "api_error", "api_error_status": "429",
+        "num_turns": 1, "cost_usd": 0}},
     "429-absent-genuine-failure": {"outcome": "proceed", "ground": None},
     "evidence-unavailable": {"outcome": "proceed", "ground": "evidence_unavailable"},
     "already-fixed-proposal": {"outcome": "handover", "ground": "already_fixed_proposal"},
 }
-# The rate-limit ground needs evidence AND one turn AND zero cost (#402):
-# rate-limit evidence on a many-turn/paid run, a paid one-turn run, or a
-# run with no cost recorded must NOT close.
+# The rate-limit ground needs evidence AND a failed run AND one turn AND
+# zero cost (#402). Each case below must NOT close; each guard has its own
+# case so dropping any one guard fails the gate.
 RATE_LIMIT_GUARD_CASES = {
+    # #402's shape: informational events on a 451-turn, $43.06 run.
     "rate-limit-event-many-turns": {"outcome": "proceed", "ground": None},
+    # turns guard alone (cost is 0).
+    "429-many-turns-zero-cost": {"outcome": "proceed", "ground": None},
+    # turns range: a negative count is not "one turn".
+    "429-negative-turns": {"outcome": "proceed", "ground": None},
+    # cost guard alone (one turn).
     "429-one-turn-nonzero-cost": {"outcome": "proceed", "ground": None},
     "429-cost-missing": {"outcome": "proceed", "ground": None},
+    # failed-run guard alone: one turn, $0, but the run succeeded.
+    "rate-limit-event-success": {"outcome": "proceed", "ground": None},
 }
 TRIAGE_CASES.update(RATE_LIMIT_GUARD_CASES)
+# Evidence from a rate_limit_event alone (no api_error_status): hard-coded
+# "429"/True evidence would misquote this run.
+TRIAGE_CASES["rate-limit-event-only"] = {
+    "outcome": "closed", "ground": "rate_limit", "evidence": {
+        "rate_limit_event": True, "rate_limit_status": "rejected",
+        "terminal_reason": "rate_limited", "api_error_status": None,
+        "num_turns": 1, "cost_usd": 0}}
+EVIDENCE_CASES = {k: v for k, v in TRIAGE_CASES.items() if "evidence" in v}
 PIN_CASES = {
     "action-bump-ahead": "divergent",
     "pins-equal": "none",
@@ -138,6 +161,11 @@ def run_triage_cases(cases, verbose=True):
         ok = got.get("outcome") == expected["outcome"] and got.get("ground") == expected["ground"]
         if case == "already-fixed-proposal" and got.get("outcome") == "closed":
             ok = False  # FR-012: never a close ground, regardless of anything else
+        if "evidence" in expected:
+            want = dict(expected["evidence"],
+                        run_url=(got.get("evidence") or {}).get("run_url"))
+            if got.get("evidence") != want:
+                ok = False
         if not ok:
             problems.append("{0}: expected outcome={1!r} ground={2!r}, got "
                             "{3!r}.".format(case, expected["outcome"],
@@ -171,21 +199,52 @@ def _guardless_check_rate_limit(run_transcript_path):
     return None
 
 
+def _hardcoded_evidence(original):
+    """check_rate_limit() asserting constants instead of quoting (F1)."""
+    def mutated(path):
+        got = original(path)
+        if got is not None:
+            got = dict(got, rate_limit_event=True, api_error_status="429")
+        return got
+    return mutated
+
+
+def _turns_upper_bound_only(result):
+    num_turns = board_triage._number(result.get("num_turns"))
+    return num_turns is not None and num_turns <= 1
+
+
+# (label, board_triage attribute, replacement factory taking the original).
+RATE_LIMIT_MUTATIONS = (
+    ("evidence-only rule restored (every guard removed)",
+     "check_rate_limit", lambda orig: _guardless_check_rate_limit),
+    ("turns guard removed", "_one_turn", lambda orig: lambda result: True),
+    ("turns lower bound removed", "_one_turn",
+     lambda orig: _turns_upper_bound_only),
+    ("cost guard removed", "_zero_cost", lambda orig: lambda result: True),
+    ("failed-run guard removed", "_failed", lambda orig: lambda result: True),
+    ("evidence hard-coded instead of quoted", "check_rate_limit",
+     _hardcoded_evidence),
+)
+
+
 def _mutation_check_rate_limit_guard():
-    """Dropping the one-turn/zero-cost guard (the #402 regression) must fail
-    the rate-limit fixtures."""
-    original = board_triage.check_rate_limit
-    board_triage.check_rate_limit = _guardless_check_rate_limit
-    try:
-        caught = bool(run_triage_cases(RATE_LIMIT_GUARD_CASES, verbose=False))
-    finally:
-        board_triage.check_rate_limit = original
-    if caught:
-        print("note: mutation caught (rate-limit one-turn/zero-cost guard "
-              "removed).")
-        return []
-    return ["mutation 'rate-limit one-turn/zero-cost guard removed' was NOT "
-            "caught"]
+    """Each rate-limit guard (#402), and quoting the transcript's own
+    fields, is pinned by its own fixture: every mutation must be caught."""
+    failures = []
+    for label, name, factory in RATE_LIMIT_MUTATIONS:
+        original = getattr(board_triage, name)
+        setattr(board_triage, name, factory(original))
+        try:
+            caught = bool(run_triage_cases(TRIAGE_CASES, verbose=False))
+        finally:
+            setattr(board_triage, name, original)
+        if caught:
+            print("note: mutation caught (rate limit: {0}).".format(label))
+        else:
+            failures.append("mutation 'rate limit: {0}' was NOT caught"
+                            .format(label))
+    return failures
 
 
 def run_fixtures():
