@@ -47,8 +47,9 @@ STOP_COMMAND_RE are its single home.
      question is not a command -- and not `'`/`’`, so `stop's` fails);
    - a dash: `—`, `–`, or `-` not followed by a word character;
    - whitespace, then either a dash, colon or `. ! …` (the reason
-     follows), or one of the words `now`, `please`, `pls`, `immediately`
-     that is NOT followed by whitespace and another word.
+     follows), or a run of one or more of the words `now`, `please`,
+     `pls`, `immediately` (`STOP NOW PLEASE`) that is NOT followed by
+     whitespace and another word.
    Anything after that on the line is the reason.
 
 Accepted: `stop`, `Stop.`, `STOP!`, `/stop`, `Stop…`, `stop)`,
@@ -76,7 +77,7 @@ MAINTAINER_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 STOP_COMMAND_RE = re.compile(
     r"(?:please[\s,:]+)?/?stop[*_]*"
     r"(?:$|[.!:,;\u2026)\u3002\uff01\uff09\u2014\u2013]|-(?!\w)"
-    r"|\s+(?:[-\u2014\u2013:.!\u2026]|(?:now|please|pls|immediately)\b(?!\s+\w)))",
+    r"|\s+(?:[-\u2014\u2013:.!\u2026]|(?:now|please|pls|immediately)(?:\s+(?:now|please|pls|immediately))*\b(?!\s+\w)))",
     re.IGNORECASE)
 _ZERO_WIDTH_RE = re.compile("[\ufeff\u200b\u200c\u200d\u2060]")
 _HANDLES_RE = re.compile(r"^(?:@[\w-]+(?:\[bot\])?(?:[\s,:]+|$))+")

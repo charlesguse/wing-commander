@@ -120,8 +120,9 @@ Post a maintainer stop comment on the issue mid-item and confirm the loop
 halts before its next durable action and records where it stopped. The
 comment's first line (after any quote, fenced block, HTML comment, `---`
 rule or @handle) must be a stop command -- `stop`, `/stop`, either followed
-by punctuation, ` - reason` / `: reason`, or a lone `now`/`please`/`pls`/
-`immediately` (`STOP NOW`); `stop this please` is prose and does not count
+by punctuation, ` - reason` / `: reason`, or only `now`/`please`/`pls`/
+`immediately` words (`STOP NOW PLEASE`); `stop this please` is prose and
+does not count
 (research.md D17 has the exact rule).
 
 ## 10. Untrusted content framing

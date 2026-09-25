@@ -345,9 +345,9 @@ instead, and errs toward "not a stop": a false stop wedges the board.
    separator, then `stop` or `/stop`, optional closing `*`/`_`, then one
    of: end of line; punctuation `. ! : , ; … ) 。 ！ ）`; a dash (`—`, `–`,
    or `-` not followed by a word character); or whitespace followed by
-   either a dash, colon, `.`, `!` or `…`, or one of `now`, `please`, `pls`,
-   `immediately` not followed by another word. The rest of the line is the
-   reason.
+   either a dash, colon, `.`, `!` or `…`, or a run of one or more of
+   `now`, `please`, `pls`, `immediately` (`STOP NOW PLEASE`) not followed
+   by another word. The rest of the line is the reason.
 
 So `stop`, `Stop.`, `/stop`, `**stop**`, `Please stop.`, `STOP NOW`,
 `stop please`, `stop immediately!`, `stop ...`, `@wing-commander stop`,

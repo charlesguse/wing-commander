@@ -45,7 +45,10 @@
     "stop .",
     "@alice\nstop",
     "<!--\nnote\n-->\nstop",
-    "---\nstop"
+    "---\nstop",
+    "STOP NOW PLEASE",
+    "stop immediately please",
+    "stop please now"
   ],
   "reject": [
     "We should stop retrying",
@@ -77,6 +80,7 @@
     "stop please the build",
     "<!--\nstop\n-->",
     "---\n<!-- a -->\n> stop",
-    "<!-- a --> stop"
+    "<!-- a --> stop",
+    "stop now please the build"
   ]
 }
