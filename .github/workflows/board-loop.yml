@@ -188,6 +188,7 @@ jobs:
         if: steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight'
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -uo pipefail
           gh pr list -R "$GITHUB_REPOSITORY" --state merged --label board:owned \
@@ -223,7 +224,7 @@ jobs:
           mapfile -t displacement_issues < <(jq -r '.[].issue' "$RUNNER_TEMP/board-recent-merges-by-issue.json")
           for number in "${displacement_issues[@]}"; do
             gh api "repos/$GITHUB_REPOSITORY/issues/$number/comments" --paginate \
-              --jq '.[] | {created_at, body}' 2>/dev/null | jq -s '.' \
+              --jq '.[] | {created_at, body, user}' 2>/dev/null | jq -s '.' \
               > "$RUNNER_TEMP/board-displacement-comments-$number.json" || echo '[]' > "$RUNNER_TEMP/board-displacement-comments-$number.json"
             jq --arg number "$number" --slurpfile comments "$RUNNER_TEMP/board-displacement-comments-$number.json" \
               '. + {($number): $comments[0]}' "$RUNNER_TEMP/board-displacement-comments-by-issue.json" \
@@ -233,6 +234,7 @@ jobs:
 
           MERGED_PRS_PATH="$RUNNER_TEMP/board-recent-merges-by-issue.json" \
             COMMENTS_BY_ISSUE_PATH="$RUNNER_TEMP/board-displacement-comments-by-issue.json" \
+            BOT_LOGIN="$BOT_LOGIN" \
             python3 - <<'PYEOF'
           import json
           import os
@@ -247,7 +249,7 @@ jobs:
               raw = json.load(fh)
           issues_by_number = {int(k): v for k, v in raw.items()}
 
-          undetected = find_undetected_merges(merged_prs, issues_by_number)
+          undetected = find_undetected_merges(merged_prs, issues_by_number, os.environ["BOT_LOGIN"])
 
           with open(os.path.join(os.environ["RUNNER_TEMP"], "board-undetected-merges.json"), "w", encoding="utf-8") as fh:
               json.dump(undetected, fh)
@@ -2409,6 +2411,35 @@ jobs:
       pr-number: ${{ steps.pr.outputs.pr-number }}
       outcome: ${{ steps.round.outputs.outcome }}
     steps:
+      # A directed dispatch needs the issue marker read -- and therefore the
+      # pristine snapshot below -- before it even knows which PR to check
+      # out, so this checkout/snapshot pair runs first here rather than
+      # after "Checkout the PR branch" as the ordinary trigger's flow used
+      # to. #583: see the fix job's "Snapshot helper scripts" step.
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Snapshot helper scripts (before any agent runs)
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/wc-pristine"
+          if ! git cat-file -e "$GITHUB_SHA^{commit}" 2>/dev/null; then
+            git fetch --no-tags --quiet origin "$GITHUB_SHA"
+          fi
+          mkdir "$dest"
+          git archive --format=tar "$GITHUB_SHA" .github/scripts .github/schemas | tar -x -C "$dest" --strip-components=1
+          chmod -R a-w "$dest"
+
+      - name: Wing Commander context
+        id: ctx
+        uses: ./.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+          private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
+
       # contracts/directed-proof-run.md: review/readiness genuinely need a
       # PR number to act on for a directed dispatch, which directed-pr does
       # not itself carry (documented prove-only) -- the marker already
@@ -2423,22 +2454,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ inputs.directed-issue }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -uo pipefail
           gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate \
-            --jq '.[] | {created_at, body}' | jq -s '.' > "$RUNNER_TEMP/board-directed-issue-comments.json"
+            --jq '.[] | {created_at, body, user}' | jq -s '.' > "$RUNNER_TEMP/board-directed-issue-comments.json"
 
-          pr="$(COMMENTS_PATH="$RUNNER_TEMP/board-directed-issue-comments.json" python3 - <<'PYEOF'
+          pr="$(COMMENTS_PATH="$RUNNER_TEMP/board-directed-issue-comments.json" python3 -I - <<'PYEOF'
           import json
           import os
           import sys
 
-          sys.path.insert(0, ".github/scripts")
+          sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
           from board_item_marker import read_marker
 
           with open(os.environ["COMMENTS_PATH"], encoding="utf-8") as fh:
               comments = json.load(fh)
-          marker = read_marker(comments)
+          marker = read_marker(comments, os.environ["BOT_LOGIN"])
           print((marker or {}).get("pr") or "")
           PYEOF
           )"
@@ -2463,31 +2495,17 @@ jobs:
             echo "round=$ROUND"
           } >> "$GITHUB_OUTPUT"
 
+      # Gate 98 holds this job to exactly one actions/checkout@ step (the
+      # first one, taken before the pristine snapshot above) -- switching
+      # onto the PR's own branch here is a plain git fetch/checkout instead
+      # of a second checkout action.
       - name: Checkout the PR branch
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ steps.pr.outputs.branch }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      # #583: see the fix job's "Snapshot helper scripts" step.
-      - name: Snapshot helper scripts (before any agent runs)
+        env:
+          BRANCH: ${{ steps.pr.outputs.branch }}
         run: |
-          set -euo pipefail
-          dest="$RUNNER_TEMP/wc-pristine"
-          if ! git cat-file -e "$GITHUB_SHA^{commit}" 2>/dev/null; then
-            git fetch --no-tags --quiet origin "$GITHUB_SHA"
-          fi
-          mkdir "$dest"
-          git archive --format=tar "$GITHUB_SHA" .github/scripts .github/schemas | tar -x -C "$dest" --strip-components=1
-          chmod -R a-w "$dest"
-
-      - name: Wing Commander context
-        id: ctx
-        uses: ./.github/actions/wing-commander-context
-        with:
-          app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
-          private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
+          set -uo pipefail
+          git fetch --no-tags --quiet origin "$BRANCH"
+          git checkout --quiet -B "$BRANCH" FETCH_HEAD
 
       # #488: see wing-commander-board-labels; continue-on-error so a
       # missed create cannot block the review round's own outcome step.
@@ -3391,6 +3409,35 @@ jobs:
       group: wing-commander-board-loop
       cancel-in-progress: false
     steps:
+      # A directed dispatch needs the issue marker read -- and therefore the
+      # pristine snapshot below -- before it even knows which PR to check
+      # out, so this checkout/snapshot pair runs first here rather than
+      # after the PR branch checkout as the ordinary trigger's flow used to.
+      # #583: see the fix job's "Snapshot helper scripts" step.
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Snapshot helper scripts (before any agent runs)
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/wc-pristine"
+          if ! git cat-file -e "$GITHUB_SHA^{commit}" 2>/dev/null; then
+            git fetch --no-tags --quiet origin "$GITHUB_SHA"
+          fi
+          mkdir "$dest"
+          git archive --format=tar "$GITHUB_SHA" .github/scripts .github/schemas | tar -x -C "$dest" --strip-components=1
+          chmod -R a-w "$dest"
+
+      - name: Wing Commander context
+        id: ctx
+        uses: ./.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+          private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
+
       # contracts/directed-proof-run.md: review/readiness genuinely need a
       # PR number to act on for a directed dispatch, which directed-pr does
       # not itself carry (documented prove-only) -- the marker already
@@ -3405,22 +3452,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ inputs.directed-issue }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -uo pipefail
           gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate \
-            --jq '.[] | {created_at, body}' | jq -s '.' > "$RUNNER_TEMP/board-directed-issue-comments.json"
+            --jq '.[] | {created_at, body, user}' | jq -s '.' > "$RUNNER_TEMP/board-directed-issue-comments.json"
 
-          pr="$(COMMENTS_PATH="$RUNNER_TEMP/board-directed-issue-comments.json" python3 - <<'PYEOF'
+          pr="$(COMMENTS_PATH="$RUNNER_TEMP/board-directed-issue-comments.json" python3 -I - <<'PYEOF'
           import json
           import os
           import sys
 
-          sys.path.insert(0, ".github/scripts")
+          sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
           from board_item_marker import read_marker
 
           with open(os.environ["COMMENTS_PATH"], encoding="utf-8") as fh:
               comments = json.load(fh)
-          marker = read_marker(comments)
+          marker = read_marker(comments, os.environ["BOT_LOGIN"])
           print((marker or {}).get("pr") or "")
           PYEOF
           )"
@@ -3439,31 +3487,17 @@ jobs:
             echo "branch=$branch"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ steps.pr.outputs.branch }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      # #583: see the fix job's "Snapshot helper scripts" step.
-      - name: Snapshot helper scripts (before any agent runs)
+      # Gate 98 holds this job to exactly one actions/checkout@ step (the
+      # first one, taken before the pristine snapshot above) -- switching
+      # onto the PR's own branch here is a plain git fetch/checkout instead
+      # of a second checkout action.
+      - name: Checkout the PR branch
+        env:
+          BRANCH: ${{ steps.pr.outputs.branch }}
         run: |
-          set -euo pipefail
-          dest="$RUNNER_TEMP/wc-pristine"
-          if ! git cat-file -e "$GITHUB_SHA^{commit}" 2>/dev/null; then
-            git fetch --no-tags --quiet origin "$GITHUB_SHA"
-          fi
-          mkdir "$dest"
-          git archive --format=tar "$GITHUB_SHA" .github/scripts .github/schemas | tar -x -C "$dest" --strip-components=1
-          chmod -R a-w "$dest"
-
-      - name: Wing Commander context
-        id: ctx
-        uses: ./.github/actions/wing-commander-context
-        with:
-          app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
-          private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
+          set -uo pipefail
+          git fetch --no-tags --quiet origin "$BRANCH"
+          git checkout --quiet -B "$BRANCH" FETCH_HEAD
 
       # #488: see wing-commander-board-labels; continue-on-error so a
       # missed create cannot block readiness's own report-unmet step.

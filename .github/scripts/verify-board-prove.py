@@ -130,6 +130,14 @@ SCRIPT_IMPORT_CASES = [
     ("sys.path.insert idiom",
      "run: |\n  sys.path.insert(0, \".github/scripts\")\n  from board_triage import triage\n",
      {".github/scripts/board_triage.py"}),
+    # positive: the Gate 98 pristine-snapshot idiom (#583) fix/review/
+    # readiness load helpers through resolves exactly like the working-tree
+    # idiom above -- otherwise a board_*.py helper only ever imported this
+    # way (e.g. board_readiness.py) resolves to no job at all (T048).
+    ("pristine-snapshot sys.path.insert idiom",
+     "run: |\n  sys.path.insert(0, os.path.join(os.environ[\"RUNNER_TEMP\"], "
+     "\"wc-pristine\", \"scripts\"))\n  from board_readiness import evaluate_from_snapshot\n",
+     {".github/scripts/board_readiness.py"}),
     # positive: a bare script path (no import idiom at all) resolves.
     ("bare script path",
      "run: python3 .github/scripts/board_stand_down.py\n",
