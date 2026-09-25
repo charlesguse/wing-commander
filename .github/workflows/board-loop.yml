@@ -930,7 +930,8 @@ jobs:
           commit_sha="$(printf '%s' "$run_json" | jq -r '.head_sha // empty' 2>/dev/null || true)"
           workflow_path="$(printf '%s' "$run_json" | jq -r '.path // empty' 2>/dev/null || true)"
           echo "commit-sha=$commit_sha" >> "$GITHUB_OUTPUT"
-          echo "workflow-path=$workflow_path" >> "$GITHUB_OUTPUT"
+          # #583: API text and artifact file names -- control characters removed.
+          python3 .github/scripts/wc_step_output.py workflow-path "$workflow_path" >> "$GITHUB_OUTPUT"
 
           artifact_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts" --jq '.artifacts[] | select(.name | startswith("claude-execution-output")) | .id' 2>/dev/null | head -1 || true)"
           if [ -z "$artifact_id" ]; then
@@ -941,7 +942,7 @@ jobs:
           if gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$RUNNER_TEMP/board-triage-artifact.zip" 2>/dev/null \
              && unzip -oq "$RUNNER_TEMP/board-triage-artifact.zip" -d "$RUNNER_TEMP/board-triage-artifact" 2>/dev/null; then
             transcript="$(find "$RUNNER_TEMP/board-triage-artifact" -name '*.json' | head -1)"
-            echo "transcript-path=$transcript" >> "$GITHUB_OUTPUT"
+            python3 .github/scripts/wc_step_output.py transcript-path "$transcript" >> "$GITHUB_OUTPUT"
           else
             echo "transcript-path=" >> "$GITHUB_OUTPUT"
           fi
@@ -1737,6 +1738,28 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
+      # #583: the fixer and review-fixup agents hold Write/Edit on this
+      # checkout, and review and readiness check out a branch those agents
+      # wrote. Later steps import .github/scripts helpers and then comment,
+      # push and label with the App token, so they import them from this
+      # read-only copy of $GITHUB_SHA's .github/scripts and .github/schemas
+      # (the commit whose board-loop.yml is running), taken before any
+      # agent step -- never from the working tree. The gate-suite steps
+      # alone run the working tree's run-local-gates.py, since checking the
+      # agent's change is their job. A failure here fails the job before
+      # any agent runs. Gate 98 (verify-board-loop-helper-provenance.py)
+      # holds every step in fix, review and readiness to this.
+      - name: Snapshot helper scripts (before any agent runs)
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/wc-pristine"
+          if ! git cat-file -e "$GITHUB_SHA^{commit}" 2>/dev/null; then
+            git fetch --no-tags --quiet origin "$GITHUB_SHA"
+          fi
+          mkdir "$dest"
+          git archive --format=tar "$GITHUB_SHA" .github/scripts .github/schemas | tar -x -C "$dest" --strip-components=1
+          chmod -R a-w "$dest"
+
       - name: Wing Commander context
         id: ctx
         uses: ./.github/actions/wing-commander-context
@@ -1937,7 +1960,8 @@ jobs:
           else
             first_failure="$(grep -m1 '^FAIL' "$RUNNER_TEMP/board-fix-gate-suite.log" || true)"
             echo "outcome=fail" >> "$GITHUB_OUTPUT"
-            echo "first-failure=${first_failure:-gate suite exited $rc}" >> "$GITHUB_OUTPUT"
+            # #583: gate-suite output of the agent's tree -- control characters removed.
+            python3 "$RUNNER_TEMP/wc-pristine/scripts/wc_step_output.py" first-failure "${first_failure:-gate suite exited $rc}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Comment the failing gate on the issue (fixer, gate suite red)
@@ -1950,11 +1974,11 @@ jobs:
           FIRST_FAILURE: ${{ steps.gate-suite.outputs.first-failure }}
         run: |
           set -uo pipefail
-          marker="$(python3 -c "import os, sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, os.environ['FIX_BRANCH'], os.environ['BASE_SHA']))")"
+          marker="$(python3 -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, os.environ['FIX_BRANCH'], os.environ['BASE_SHA']))")"
           # #580: the failing line comes from the gate suite on the fixer
           # agent's own branch, so it is posted inside a fence
           # (fenced_section(), #562's one fencing helper).
-          failure="$(python3 -c "import os, sys; sys.path.insert(0, '.github/scripts'); from board_spec_request_body import fenced_section; print(fenced_section('First failing gate (gate suite output, shown as text):', os.environ['FIRST_FAILURE'], 4000))")" \
+          failure="$(python3 -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_spec_request_body import fenced_section; print(fenced_section('First failing gate (gate suite output, shown as text):', os.environ['FIRST_FAILURE'], 4000))")" \
             || failure="(the failing gate could not be rendered)"
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'The fixer'"'"'s branch failed the local gate suite before any push -- nothing was pushed, no PR was opened:\n\n%s\n\n%s' "$failure" "$marker")"
           gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
@@ -1997,7 +2021,7 @@ jobs:
           echo "pr-number=$pr_number" >> "$GITHUB_OUTPUT"
           echo "pr-url=$pr_url" >> "$GITHUB_OUTPUT"
 
-          marker="$(PR_NUMBER="$pr_number" python3 -c "import os, sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('review', 0, int(os.environ['PR_NUMBER']), os.environ['BRANCH'], os.environ['BASE_SHA']))")"
+          marker="$(PR_NUMBER="$pr_number" python3 -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_item_marker import write_marker; print(write_marker('review', 0, int(os.environ['PR_NUMBER']), os.environ['BRANCH'], os.environ['BASE_SHA']))")"
           echo "$marker" > "$RUNNER_TEMP/board-fix-marker.txt"
 
       # T029/FR-021/FR-018: route_final_diff() re-applies the SAME backstop
@@ -2025,7 +2049,7 @@ jobs:
           import os
           import sys
 
-          sys.path.insert(0, ".github/scripts")
+          sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
           from board_route_backstop import route_final_diff
 
           runner_temp = os.environ["RUNNER_TEMP"]
@@ -2085,9 +2109,9 @@ jobs:
       # trust-filtered context -- see board_spec_request_body.py. It is
       # fetched again here rather than reusing the file staged before the
       # fixer ran: the fixer holds Write/Edit and could have rewritten that
-      # staged file. This guards the staged file only -- the composite and
-      # the builder themselves still resolve from the checkout the fixer
-      # just edited (tooling run from the workspace is tracked in #468).
+      # staged file. The builder runs from the pre-agent snapshot (#583);
+      # the composite itself still resolves from the checkout the fixer
+      # just edited (composites run from the workspace are tracked in #468).
       # continue-on-error so a failed fetch degrades to the one-line
       # fallback instead of skipping the breach notice and spec-request
       # below.
@@ -2118,7 +2142,7 @@ jobs:
           notice="$(printf 'The fix at %s grew past the board'"'"'s size-and-path backstop on its final diff (measured=%s). The branch/PR are left open, unmerged, under a notice -- this spec request covers finishing the work at the size a human plan should decide.' "$PR_URL" "$measured")"
           footer="$(printf 'Originating issue: %s/%s/issues/%s' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$ISSUE_NUMBER")"
           spec_body_file="$RUNNER_TEMP/board-spec-request-body.md"
-          python3 .github/scripts/board_spec_request_body.py --context-file "$ISSUE_CONTEXT_FILE" \
+          python3 "$RUNNER_TEMP/wc-pristine/scripts/board_spec_request_body.py" --context-file "$ISSUE_CONTEXT_FILE" \
             --notice "$notice" --footer "$footer" --out "$spec_body_file" \
             || printf '%s\n\nNo drafted body.\n\n---\n%s\n' "$notice" "$footer" > "$spec_body_file"
           spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" \
@@ -2130,7 +2154,7 @@ jobs:
           echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
           echo "measured=$measured" >> "$GITHUB_OUTPUT"
 
-          marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, None, None))")"
+          marker="$(python3 -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, None, None))")"
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Post-push backstop breach on %s (measured=%s) -- the branch/PR are left open, unmerged; a spec-request now covers finishing this at the right size.\n\n%s' "$PR_URL" "$measured" "$marker")"
           gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
 
@@ -2200,6 +2224,18 @@ jobs:
           ref: ${{ steps.pr.outputs.branch }}
           fetch-depth: 0
           persist-credentials: false
+
+      # #583: see the fix job's "Snapshot helper scripts" step.
+      - name: Snapshot helper scripts (before any agent runs)
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/wc-pristine"
+          if ! git cat-file -e "$GITHUB_SHA^{commit}" 2>/dev/null; then
+            git fetch --no-tags --quiet origin "$GITHUB_SHA"
+          fi
+          mkdir "$dest"
+          git archive --format=tar "$GITHUB_SHA" .github/scripts .github/schemas | tar -x -C "$dest" --strip-components=1
+          chmod -R a-w "$dest"
 
       - name: Wing Commander context
         id: ctx
@@ -2431,12 +2467,13 @@ jobs:
           import os
           import sys
 
-          sys.path.insert(0, ".github/scripts")
+          sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
           from wc_fence_extract import extract_fenced_json
 
           _spec = importlib.util.spec_from_file_location(
               "verify_board_review_finding_schema",
-              ".github/scripts/verify-board-review-finding-schema.py")
+              os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts",
+                           "verify-board-review-finding-schema.py"))
           _vbrfs = importlib.util.module_from_spec(_spec)
           _spec.loader.exec_module(_vbrfs)
           validate_finding = _vbrfs.validate_finding
@@ -2546,7 +2583,7 @@ jobs:
           import os
           import sys
 
-          sys.path.insert(0, ".github/scripts")
+          sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
           from board_spec_request_body import fenced_section
 
           runner_temp = os.environ["RUNNER_TEMP"]
@@ -2639,8 +2676,21 @@ jobs:
           import re
           import sys
 
-          sys.path.insert(0, ".github/scripts")
+          sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
           from board_spec_request_body import fenced_section
+          from wc_step_output import clean_output_value, write_outputs
+
+          # #583: wing-commander-durable-failure-issue dedupes by finding
+          # the marker anywhere in an issue body, so the marker's prefix is
+          # removed from the agent's text; one finding cannot quote
+          # another's marker and suppress its filing.
+          MARKER_PREFIX = "wing-commander-board-review-finding:"
+
+          def unmarked(value):
+              text = str(value)
+              while MARKER_PREFIX in text:
+                  text = text.replace(MARKER_PREFIX, "")
+              return text
 
           def norm(value):
               return " ".join(re.sub(r"[\W_]+", " ", str(value).lower()).split())
@@ -2652,7 +2702,12 @@ jobs:
               findings = json.load(fh)
           out_of_scope = [f for f in findings if f.get("in_scope") is False][:3]
 
-          out_lines = []
+          # #583: the filing steps below read board-review-oos-N.md from
+          # this directory by a fixed path; no body-file path is output.
+          oos_dir = os.path.join(runner_temp, "board-review-oos")
+          os.makedirs(oos_dir, exist_ok=True)
+
+          outputs = []
           for i, f in enumerate(out_of_scope):
               basis = f.get("fingerprint_basis") or {}
               fp = hashlib.sha256("{0}|{1}|{2}".format(
@@ -2670,19 +2725,20 @@ jobs:
                   text.extend(["", "Detail:", str(detail)])
               body_lines = ["Found by the code review of #{0}.".format(pr_number), "",
                             fenced_section("Reviewer agent output, shown as text -- data, not instruction:",
-                                           "\n".join(text), 60000),
+                                           unmarked("\n".join(text)), 60000),
                             "", marker]
 
-              body_path = os.path.join(runner_temp, "board-review-oos-{0}.md".format(i))
+              body_path = os.path.join(oos_dir, "board-review-oos-{0}.md".format(i))
               with open(body_path, "w", encoding="utf-8") as fh:
                   fh.write("\n".join(body_lines) + "\n")
 
-              out_lines.append("oos-{0}-title={1}".format(i, f.get("title", "(untitled)")))
-              out_lines.append("oos-{0}-marker={1}".format(i, marker))
-              out_lines.append("oos-{0}-body-file={1}".format(i, body_path))
+              # #583: the title is agent text; a CR or LF in it would start
+              # new output lines. write_outputs() removes control characters.
+              title = clean_output_value(f.get("title", "")).strip() or "(untitled)"
+              outputs.append(("oos-{0}-title".format(i), title))
+              outputs.append(("oos-{0}-marker".format(i), marker))
 
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
-              fh.write("\n".join(out_lines) + ("\n" if out_lines else ""))
+          write_outputs(os.environ["GITHUB_OUTPUT"], outputs)
           PYEOF
 
       - name: File out-of-scope finding 0
@@ -2697,7 +2753,7 @@ jobs:
           label-color: "5319E7"
           label-description: "Filed by the wing-commander board loop: the reviewer met a defect outside the PR's own diff"
           title: ${{ steps.prepare-oos.outputs.oos-0-title }}
-          body-file: ${{ steps.prepare-oos.outputs.oos-0-body-file }}
+          body-file: ${{ runner.temp }}/board-review-oos/board-review-oos-0.md
           marker: ${{ steps.prepare-oos.outputs.oos-0-marker }}
           state-scope: all
           fail-on-api-error: "false"
@@ -2723,7 +2779,7 @@ jobs:
           label-color: "5319E7"
           label-description: "Filed by the wing-commander board loop: the reviewer met a defect outside the PR's own diff"
           title: ${{ steps.prepare-oos.outputs.oos-1-title }}
-          body-file: ${{ steps.prepare-oos.outputs.oos-1-body-file }}
+          body-file: ${{ runner.temp }}/board-review-oos/board-review-oos-1.md
           marker: ${{ steps.prepare-oos.outputs.oos-1-marker }}
           state-scope: all
           fail-on-api-error: "false"
@@ -2749,7 +2805,7 @@ jobs:
           label-color: "5319E7"
           label-description: "Filed by the wing-commander board loop: the reviewer met a defect outside the PR's own diff"
           title: ${{ steps.prepare-oos.outputs.oos-2-title }}
-          body-file: ${{ steps.prepare-oos.outputs.oos-2-body-file }}
+          body-file: ${{ runner.temp }}/board-review-oos/board-review-oos-2.md
           marker: ${{ steps.prepare-oos.outputs.oos-2-marker }}
           state-scope: all
           fail-on-api-error: "false"
@@ -2829,22 +2885,22 @@ jobs:
         run: |
           set -uo pipefail
           if [ "$OUTCOME" = "converged" ]; then
-            marker="$(python3 -c "import os, sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('readiness', 0, int(os.environ['PR_NUMBER']), os.environ['BRANCH'], None))")"
+            marker="$(python3 -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_item_marker import write_marker; print(write_marker('readiness', 0, int(os.environ['PR_NUMBER']), os.environ['BRANCH'], None))")"
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s converged -- zero open in-scope findings on PR #%s. Proceeding to readiness.\n\n%s' "$ROUND" "$PR_NUMBER" "$marker")"
           elif [ "$STALL_REASON" = "parse-failed" ]; then
             # SF1/#499: distinct from the budget-spent message below -- this
             # round never produced a trustworthy findings list at all, so
             # it must not be described as "findings still open" (there may
             # be none, or the reviewer may not have run to completion).
-            marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, None, None))")"
+            marker="$(python3 -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, None, None))")"
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s on PR #%s could not be read -- the reviewer did not return a parseable findings block. Treating this as inconclusive, never as a clean review. The PR is left open, unmerged, pending a maintainer look. Removing board:stalled is the sole re-eligibility condition.\n\n%s' "$ROUND" "$PR_NUMBER" "$marker")"
             gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
           else
             # #580: the titles are the reviewer agent's own text -- fenced,
             # as in "Compose the review body" above.
-            remaining="$(python3 -c "import json, os, sys; sys.path.insert(0, '.github/scripts'); from board_spec_request_body import fenced_section; f = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'board-review-findings.json'), encoding='utf-8')); print(fenced_section('Open in-scope findings (reviewer agent titles, shown as text):', '\n'.join(str(x.get('title', '')) for x in f if x.get('in_scope') is True), 20000))")" \
+            remaining="$(python3 -c "import json, os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_spec_request_body import fenced_section; f = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'board-review-findings.json'), encoding='utf-8')); print(fenced_section('Open in-scope findings (reviewer agent titles, shown as text):', '\n'.join(str(x.get('title', '')) for x in f if x.get('in_scope') is True), 20000))")" \
               || remaining="(the open findings could not be rendered)"
-            marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, None, None))")"
+            marker="$(python3 -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, None, None))")"
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round budget (%s) spent on PR #%s with in-scope findings still open. The PR is left open, unmerged. Removing board:stalled is the sole re-eligibility condition.\n\n%s\n\n%s' "$ROUND_BUDGET" "$PR_NUMBER" "$remaining" "$marker")"
             gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
           fi
@@ -2978,7 +3034,8 @@ jobs:
           else
             first_failure="$(grep -m1 '^FAIL' "$RUNNER_TEMP/board-review-fixup-gate-suite.log" || true)"
             echo "outcome=fail" >> "$GITHUB_OUTPUT"
-            echo "first-failure=${first_failure:-gate suite exited $rc}" >> "$GITHUB_OUTPUT"
+            # #583: gate-suite output of the agent's tree -- control characters removed.
+            python3 "$RUNNER_TEMP/wc-pristine/scripts/wc_step_output.py" first-failure "${first_failure:-gate suite exited $rc}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Push the follow-up commit and advance the round
@@ -2993,7 +3050,7 @@ jobs:
           set -uo pipefail
           git push origin "HEAD:refs/heads/$BRANCH"
           next_round=$((CURRENT_ROUND + 1))
-          marker="$(PR_NUMBER="$PR_NUMBER" BRANCH="$BRANCH" NEXT_ROUND="$next_round" python3 -c "import os, sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('review', int(os.environ['NEXT_ROUND']), int(os.environ['PR_NUMBER']), os.environ['BRANCH'], None))")"
+          marker="$(PR_NUMBER="$PR_NUMBER" BRANCH="$BRANCH" NEXT_ROUND="$next_round" python3 -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_item_marker import write_marker; print(write_marker('review', int(os.environ['NEXT_ROUND']), int(os.environ['PR_NUMBER']), os.environ['BRANCH'], None))")"
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s: pushed a follow-up commit addressing the in-scope findings on PR #%s. Re-reviewing on a later run.\n\n%s' "$next_round" "$PR_NUMBER" "$marker")"
 
       - name: Comment the failing gate on the issue (review-fixup, gate suite red)
@@ -3005,7 +3062,7 @@ jobs:
         run: |
           set -uo pipefail
           # #580: fenced -- see the fixer's own gate-suite comment.
-          failure="$(python3 -c "import os, sys; sys.path.insert(0, '.github/scripts'); from board_spec_request_body import fenced_section; print(fenced_section('First failing gate (gate suite output, shown as text):', os.environ['FIRST_FAILURE'], 4000))")" \
+          failure="$(python3 -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_spec_request_body import fenced_section; print(fenced_section('First failing gate (gate suite output, shown as text):', os.environ['FIRST_FAILURE'], 4000))")" \
             || failure="(the failing gate could not be rendered)"
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'A review-fixup follow-up commit failed the local gate suite before any push -- nothing was pushed, the PR is unchanged:\n\n%s' "$failure")"
 
@@ -3050,6 +3107,18 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # #583: see the fix job's "Snapshot helper scripts" step.
+      - name: Snapshot helper scripts (before any agent runs)
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/wc-pristine"
+          if ! git cat-file -e "$GITHUB_SHA^{commit}" 2>/dev/null; then
+            git fetch --no-tags --quiet origin "$GITHUB_SHA"
+          fi
+          mkdir "$dest"
+          git archive --format=tar "$GITHUB_SHA" .github/scripts .github/schemas | tar -x -C "$dest" --strip-components=1
+          chmod -R a-w "$dest"
+
       - name: Wing Commander context
         id: ctx
         uses: ./.github/actions/wing-commander-context
@@ -3087,7 +3156,7 @@ jobs:
           import os
           import sys
 
-          sys.path.insert(0, ".github/scripts")
+          sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
           from board_route_backstop import contract_widened
 
           runner_temp = os.environ["RUNNER_TEMP"]
@@ -3147,7 +3216,7 @@ jobs:
           import os
           import sys
 
-          sys.path.insert(0, ".github/scripts")
+          sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
           from board_readiness import evaluate_from_snapshot
 
           runner_temp = os.environ["RUNNER_TEMP"]
@@ -3183,7 +3252,7 @@ jobs:
           body="$(printf 'Readiness: all conditions hold on head_sha %s.\n\ndecision: %s\n\nAwaiting a human merge -- this loop never merges, approves, or enables auto-merge.' \
             "$(jq -r '.head_sha' "$RUNNER_TEMP/board-readiness-decision.json")" "$decision")"
           gh pr comment "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
-          marker="$(python3 -c "import os, sys; sys.path.insert(0, '.github/scripts'); from board_eligibility import AWAITING_MERGE_STEP; from board_item_marker import write_marker; print(write_marker(AWAITING_MERGE_STEP, 0, int(os.environ['PR_NUMBER']), None, None))")"
+          marker="$(python3 -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_eligibility import AWAITING_MERGE_STEP; from board_item_marker import write_marker; print(write_marker(AWAITING_MERGE_STEP, 0, int(os.environ['PR_NUMBER']), None, None))")"
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf '%s\n\n%s' "$body" "$marker")"
 
       # A backstop breach below files a spec-request whose body carries
@@ -3226,7 +3295,7 @@ jobs:
             notice="$(printf 'PR #%s grew past the board'"'"'s size-and-path backstop by readiness time (measured: %s). The branch/PR are left open, unmerged, under a notice -- this spec request covers finishing the work at the size a human plan should decide.' "$PR_NUMBER" "$MEASURED")"
             footer="$(printf 'Originating issue: %s/%s/issues/%s' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$ISSUE_NUMBER")"
             spec_body_file="$RUNNER_TEMP/board-spec-request-body.md"
-            python3 .github/scripts/board_spec_request_body.py --context-file "$ISSUE_CONTEXT_FILE" \
+            python3 "$RUNNER_TEMP/wc-pristine/scripts/board_spec_request_body.py" --context-file "$ISSUE_CONTEXT_FILE" \
               --notice "$notice" --footer "$footer" --out "$spec_body_file" \
               || printf '%s\n\nNo drafted body.\n\n---\n%s\n' "$notice" "$footer" > "$spec_body_file"
             spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$issue_title" \
@@ -3236,7 +3305,7 @@ jobs:
             [[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] || { echo "::error::board-loop readiness (backstop breach): creating the spec-request returned no issue URL (got '$spec_url') -- no spec-request was filed; the issue is left without board:stalled so a later run retries it."; exit 1; }
             echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
             echo "measured=$MEASURED" >> "$GITHUB_OUTPUT"
-            marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, None, None))")"
+            marker="$(python3 -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, None, None))")"
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Readiness backstop breach on PR #%s (measured: %s) -- the branch/PR are left open, unmerged; a spec-request now covers finishing this at the right size.\n\n%s' "$PR_NUMBER" "$MEASURED" "$marker")"
             gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
           else
@@ -3476,6 +3545,7 @@ jobs:
 
           sys.path.insert(0, ".github/scripts")
           from board_prove import actions_only, redrive_target, scan_dispatchable_and_uses_graph
+          from wc_step_output import write_outputs
 
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "board-prove-paths.json"), encoding="utf-8") as fh:
@@ -3492,11 +3562,12 @@ jobs:
           only, reason = actions_only(changed_paths)
           target, target_reason = redrive_target(changed_paths, dispatchable, uses_graph)
 
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
-              fh.write("actions-only={0}\n".format("true" if only else "false"))
-              fh.write("reason={0}\n".format(reason))
-              fh.write("redrive-workflow={0}\n".format(target or ""))
-              fh.write("redrive-reason={0}\n".format(target_reason))
+          # #583: the reasons can name a changed path -- control characters removed.
+          write_outputs(os.environ["GITHUB_OUTPUT"], [
+              ("actions-only", "true" if only else "false"),
+              ("reason", reason),
+              ("redrive-workflow", target or ""),
+              ("redrive-reason", target_reason)])
           PYEOF
 
       - name: Re-check kill switch and stop requests before any durable action

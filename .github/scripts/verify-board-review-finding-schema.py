@@ -23,7 +23,8 @@ WHAT IT COVERS
 --------------
 Just enough of JSON Schema draft 2020-12 to express this one document:
 object (required/additionalProperties/properties), array
-(minItems/items), and string (maxLength). Not a general-purpose validator.
+(minItems/items), and string (maxLength, pattern). Not a general-purpose
+validator.
 """
 import argparse
 import glob
@@ -41,6 +42,16 @@ with open(SCHEMA_PATH, encoding="utf-8") as _fh:
 ITEM_SCHEMA = SCHEMA["items"]
 
 
+def _python_pattern(pattern):
+    """`pattern` (ECMA-262, as JSON Schema uses) for Python's re. A final
+    `$` in ECMA matches only at the end of input; in Python it also matches
+    before a trailing newline, which would let "title\\n" pass the schema's
+    single-line title pattern (#583). It becomes `\\Z`."""
+    if pattern.endswith("$") and not pattern.endswith("\\$"):
+        return pattern[:-1] + r"\Z"
+    return pattern
+
+
 def _validate_string(value, spec, where):
     if not isinstance(value, str):
         return "{0} must be a string, got {1}".format(where, type(value).__name__)
@@ -48,7 +59,7 @@ def _validate_string(value, spec, where):
     if max_length is not None and len(value) > max_length:
         return "{0} must be at most {1} character(s) long".format(where, max_length)
     pattern = spec.get("pattern")
-    if pattern is not None and re.search(pattern, value) is None:
+    if pattern is not None and re.search(_python_pattern(pattern), value) is None:
         return "{0} does not match the required pattern {1!r}".format(where, pattern)
     return None
 
@@ -122,7 +133,8 @@ def validate_finding(obj):
 # Self-test: one well-formed finding (validates) and one per omitted
 # required field (title, what, evidence.file_paths, in_scope,
 # fingerprint_basis) -- each rejected with the missing field named
-# (FR-064's own bullet-5 enumeration for this gate).
+# (FR-064's own bullet-5 enumeration for this gate), plus two titles that
+# are not a single line (#583): an embedded LF, and a trailing LF alone.
 # ----------------------------------------------------------------------------
 FIXTURES_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "tests", "board-review-finding-schema")
@@ -132,8 +144,8 @@ def _fixture_files():
     if not os.path.isdir(FIXTURES_DIR):
         return []
     found = sorted(glob.glob(os.path.join(FIXTURES_DIR, "*.json")))
-    if len(found) != 6:
-        sys.exit("::error::board-review-finding-schema: expected exactly 6 "
+    if len(found) != 8:
+        sys.exit("::error::board-review-finding-schema: expected exactly 8 "
                  "fixtures under {0}, found {1} -- a fixture was added or "
                  "removed without updating this pin.".format(FIXTURES_DIR, len(found)))
     return found
