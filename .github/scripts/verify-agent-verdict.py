@@ -74,6 +74,12 @@ SCRIPT = shipped_script()
 with open(SHARED_SCRIPT_PATH, encoding="utf-8") as _f:
     SHARED_SCRIPT = _f.read()
 
+# count-turns.sh and both composites call the transcript normaliser beside
+# it (#572); it is staged, and mutated, the same way.
+NORMALISE_SCRIPT_PATH = ".github/actions/_shared/normalise-transcript.sh"
+with open(NORMALISE_SCRIPT_PATH, encoding="utf-8") as _f:
+    NORMALISE_SCRIPT = _f.read()
+
 
 # --- transcript builders (mirrors Gate 11's) --------------------------------
 def assistant(mid, parent=None, chunks=1):
@@ -137,6 +143,9 @@ def run_case(name, records, intended_turns="40", raw=None, with_shared=True,
         with open(os.path.join(shared_dir, "count-turns.sh"), "w",
                   encoding="utf-8", newline="\n") as f:
             f.write(SHARED_SCRIPT if counter is None else counter)
+        with open(os.path.join(shared_dir, "normalise-transcript.sh"), "w",
+                  encoding="utf-8", newline="\n") as f:
+            f.write(NORMALISE_SCRIPT)
 
     rc, output, outputs, _summary = run_step(
         BASH, SCRIPT, tmp,
@@ -653,6 +662,37 @@ def case_non_object_elements_are_skipped():
          "hiding the result record or a rejected event")
 
 
+def case_non_object_elements_skipped_on_fallback_path():
+    """The shared normaliser drops non-object elements (#572), so the
+    `objects` filters in this composite's own reads only matter on the
+    fallback path, where no normalised copy could be written and the reads
+    see the raw file. Force that path (RUNNER_TEMP unwritable) and check
+    both reads still skip a bare number or string."""
+    missing = os.path.join(tempfile.mkdtemp(prefix="wc-verdict-rt-"),
+                           "does-not-exist")
+    for case, records, verdict, needle in (
+            ("fallback path: non-object elements before the result record",
+             [1, "x"] + transcript(main=2, num_turns=2), "healthy",
+             "subtype=success"),
+            ("fallback path: non-object elements before a rejected "
+             "rate_limit_event",
+             [1, "x"] + rate_limit_event(rateLimitType="five_hour") + [2]
+             + result(is_error=True, subtype="error_during_execution",
+                      num_turns=1),
+             "rate-limited", "five_hour")):
+        rc, output, outputs = run_case(case, records, runner_temp=missing)
+        if rc != 0:
+            fail(case, f"exited {rc}: {output.strip()[:300]}")
+            continue
+        if outputs.get("verdict") != verdict:
+            fail(case, f"expected verdict={verdict!r}, got "
+                       f"{outputs.get('verdict')!r} "
+                       f"(reason={outputs.get('reason')!r})")
+        if needle not in (outputs.get("reason") or ""):
+            fail(case, f"expected reason to contain {needle!r}, got "
+                       f"{outputs.get('reason')!r}")
+
+
 def case_subtype_newline_cannot_inject_output():
     """The reason interpolates the transcript's subtype: a newline in it
     must not add a second `verdict=` line to $GITHUB_OUTPUT."""
@@ -878,6 +918,7 @@ CASES = [
     case_ndjson_transcript,
     case_multi_document_transcript,
     case_non_object_elements_are_skipped,
+    case_non_object_elements_skipped_on_fallback_path,
     case_subtype_newline_cannot_inject_output,
     case_num_turns_newline_cannot_inject_output,
     case_run_label_newline_cannot_inject_output,
@@ -975,8 +1016,12 @@ MUTATIONS = [
     ("reads the raw transcript instead of the normalised array, so an "
      "NDJSON transcript's result records are read per document", "action",
      lambda s: s.replace(
-         "jq -cs 'map(if type==\"array\" then .[] else . end)'",
+         'bash "$GITHUB_ACTION_PATH/../_shared/normalise-transcript.sh"',
          "jq -c '.'", 1)),
+    ("normalises per document instead of into one flat array", "normalise",
+     lambda s: s.replace(
+         """jq -cs 'map(if type=="array" then .[] else . end)""",
+         """jq -c 'if type=="array" then . else [.] end""", 1)),
     ("selects the result record without skipping non-object elements",
      "action",
      lambda s: s.replace('map(objects | select(.type=="result"))',
@@ -1032,14 +1077,18 @@ def main():
         print(f"Gate 22: {len(real)} failure(s) against the shipped action.")
         return 1
 
-    global SCRIPT, SHARED_SCRIPT, MUTATING
+    global SCRIPT, SHARED_SCRIPT, NORMALISE_SCRIPT, MUTATING
     original_script = SCRIPT
     original_shared = SHARED_SCRIPT
+    original_normalise = NORMALISE_SCRIPT
     mutation_failures = 0
     MUTATING = True
     for label, target, mutate in MUTATIONS:
-        original = original_script if target == "action" else original_shared
-        source_file = ACTION if target == "action" else SHARED_SCRIPT_PATH
+        original, source_file = {
+            "action": (original_script, ACTION),
+            "shared": (original_shared, SHARED_SCRIPT_PATH),
+            "normalise": (original_normalise, NORMALISE_SCRIPT_PATH),
+        }[target]
         mutated = mutate(original)
         if mutated == original:
             print(f"::error file={source_file}::gate 22's mutation {label!r} "
@@ -1050,11 +1099,14 @@ def main():
             continue
         if target == "action":
             SCRIPT = mutated
-        else:
+        elif target == "shared":
             SHARED_SCRIPT = mutated
+        else:
+            NORMALISE_SCRIPT = mutated
         caught = run_suite()
         SCRIPT = original_script
         SHARED_SCRIPT = original_shared
+        NORMALISE_SCRIPT = original_normalise
         if not caught:
             print(f"::error file={source_file}::gate 22 mutation {label!r} "
                   f"was NOT caught — the suite passed against a knowingly "

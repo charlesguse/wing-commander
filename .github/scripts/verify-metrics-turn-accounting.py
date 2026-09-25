@@ -111,6 +111,12 @@ SHARED_SCRIPT_PATH = ".github/actions/_shared/count-turns.sh"
 with open(SHARED_SCRIPT_PATH, encoding="utf-8") as _f:
     SHARED_SCRIPT = _f.read()
 
+# count-turns.sh and both composites call the transcript normaliser beside
+# it (#572); it is staged, and mutated, the same way.
+NORMALISE_SCRIPT_PATH = ".github/actions/_shared/normalise-transcript.sh"
+with open(NORMALISE_SCRIPT_PATH, encoding="utf-8") as _f:
+    NORMALISE_SCRIPT = _f.read()
+
 
 # --- transcript builders ---------------------------------------------------
 def assistant(mid, parent=None, chunks=1):
@@ -183,6 +189,9 @@ def run_case(name, records, max_turns="100", warn_fraction=None, raw=None,
         with open(os.path.join(shared_dir, "count-turns.sh"), "w",
                   encoding="utf-8", newline="\n") as f:
             f.write(SHARED_SCRIPT if counter is None else counter)
+        with open(os.path.join(shared_dir, "normalise-transcript.sh"), "w",
+                  encoding="utf-8", newline="\n") as f:
+            f.write(NORMALISE_SCRIPT)
 
         rc, output, outputs, summary = run_step(
             BASH, SCRIPT, tmp,
@@ -429,6 +438,9 @@ def run_counter(case, raw):
         with open(os.path.join(tmp, "count-turns.sh"), "w",
                   encoding="utf-8", newline="\n") as f:
             f.write(SHARED_SCRIPT)
+        with open(os.path.join(tmp, "normalise-transcript.sh"), "w",
+                  encoding="utf-8", newline="\n") as f:
+            f.write(NORMALISE_SCRIPT)
         with open(os.path.join(tmp, "caller.sh"), "w",
                   encoding="utf-8", newline="\n") as f:
             f.write('main_turns=""; sub_turns=""; reported=""\n'
@@ -543,6 +555,36 @@ def case_metrics_summary_ndjson_record():
          "counted=40, reported=60")
 
 
+def case_metrics_summary_odd_shapes_record():
+    """Shapes metrics-summary read as "unavailable" before its result read
+    went through the shared normaliser (#572): NDJSON ending in `false`
+    (its `jq -e .` check took the last document's truthiness) and non-object
+    elements before the records (`.type` on a number was a jq error)."""
+    recs = transcript(main=9, sub=3, num_turns=14)
+    for label, raw in (("NDJSON ending in false", _ndjson(recs) + "false\n"),
+                       ("[1, {...}]", json.dumps([1, "x"] + recs))):
+        case = f"metrics summary over {label}"
+        rc, output, summary, outputs = run_case(case, None, raw=raw,
+                                                with_outputs=True)
+        if rc != 0:
+            fail(case, f"exited {rc}: {output.strip()[:300]}")
+            continue
+        record = _record(outputs)
+        turns = record.get("turns") or {}
+        got = (record.get("record_available"), turns.get("available"),
+               turns.get("counted"), turns.get("reported"),
+               record.get("cost_usd"))
+        if got != (True, True, 9, 14, 1.5):
+            fail(case, f"expected record_available, counted=9, reported=14, "
+                       f"cost 1.5, got {record!r}")
+        for needle in ("| 9 / 100 |", "Subagent turns**: 3"):
+            if needle not in summary:
+                fail(case, f"expected {needle!r} in the summary, got:\n"
+                           f"{summary.strip()[:400]}")
+    note("NDJSON ending in false and [1, {...}] both give an available "
+         "record with counted=9, reported=14")
+
+
 def case_metrics_summary_string_num_turns():
     """A string num_turns runs nothing through the eval, and the record
     survives with reported=null instead of degrading to {}."""
@@ -605,6 +647,7 @@ CASES = [
     case_counter_accepts_every_transcript_shape,
     case_counter_reported_is_an_integer_or_empty,
     case_metrics_summary_ndjson_record,
+    case_metrics_summary_odd_shapes_record,
     case_metrics_summary_string_num_turns,
     case_metrics_summary_filters_hostile_counter,
 ]
@@ -627,13 +670,22 @@ MUTATIONS = [
      lambda s: s.replace('and (.parent_tool_use_id // null) == null)', ')')),
     # #572: count-turns.sh's input shapes, its value validation, and the
     # filter before metrics-summary's eval.
-    ("reads the transcript per document instead of normalising it to one "
-     "flat array", "shared",
+    ("normalises per document instead of into one flat array", "normalise",
      lambda s: s.replace(
          """jq -cs 'map(if type=="array" then .[] else . end)""",
          """jq -c 'if type=="array" then . else [.] end""", 1)),
-    ("reads .type without first dropping non-object elements", "shared",
-     lambda s: s.replace("\n    | map(objects)'", "'", 1)),
+    ("normalises without dropping non-object elements", "normalise",
+     lambda s: s.replace(" | map(objects)'", "'", 1)),
+    ("count-turns.sh reads the raw transcript instead of the normaliser's "
+     "output", "shared",
+     lambda s: s.replace(
+         'bash "$(dirname "${BASH_SOURCE[0]}")/normalise-transcript.sh"',
+         'jq -c .', 1)),
+    ("metrics-summary reads the result record per document from the raw "
+     "transcript instead of the normaliser's output", "action",
+     lambda s: s.replace(
+         'bash "$GITHUB_ACTION_PATH/../_shared/normalise-transcript.sh"',
+         'jq -c .', 1)),
     ("prints .num_turns without validating it as an integer >= 0", "shared",
      lambda s: s.replace(
          '\n      | select(type=="number" and . >= 0 and . == floor)'
@@ -669,14 +721,18 @@ def main():
         print(f"Gate 11: {len(real)} failure(s) against the shipped action.")
         return 1
 
-    global SCRIPT, SHARED_SCRIPT, MUTATING
+    global SCRIPT, SHARED_SCRIPT, NORMALISE_SCRIPT, MUTATING
     original_script = SCRIPT
     original_shared = SHARED_SCRIPT
+    original_normalise = NORMALISE_SCRIPT
     mutation_failures = 0
     MUTATING = True
     for label, target, mutate in MUTATIONS:
-        original = original_script if target == "action" else original_shared
-        source_file = ACTION if target == "action" else SHARED_SCRIPT_PATH
+        original, source_file = {
+            "action": (original_script, ACTION),
+            "shared": (original_shared, SHARED_SCRIPT_PATH),
+            "normalise": (original_normalise, NORMALISE_SCRIPT_PATH),
+        }[target]
         mutated = mutate(original)
         if mutated == original:
             print(f"::error file={source_file}::gate 11's mutation {label!r} "
@@ -687,11 +743,14 @@ def main():
             continue
         if target == "action":
             SCRIPT = mutated
-        else:
+        elif target == "shared":
             SHARED_SCRIPT = mutated
+        else:
+            NORMALISE_SCRIPT = mutated
         caught = run_suite()
         SCRIPT = original_script
         SHARED_SCRIPT = original_shared
+        NORMALISE_SCRIPT = original_normalise
         if not caught:
             print(f"::error file={source_file}::gate 11 mutation {label!r} "
                   f"was NOT caught — the suite passed against a knowingly "

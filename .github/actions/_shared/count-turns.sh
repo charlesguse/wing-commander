@@ -28,15 +28,11 @@
 # >= 0. Callers still filter the output to `name=<digits>` lines before their
 # `eval`, as defence in depth.
 #
-# Accepted shapes: one JSON array, one object, NDJSON, or several
-# concatenated documents. All normalise to one flat array (`jq -s` collects
-# the documents; a document that is itself an array is spliced in), the same
-# rule wing-commander-agent-verdict applies to its own reads. Fed per
-# document, NDJSON made each count print one line per document, and the
-# callers' `eval` ran a bare "0" as a command (exit 127). Non-object elements
-# (a bare number, string, `null` or `false`) are then dropped with `objects`
-# before any `.type` read: `.type` on a number is a jq error that would empty
-# every count.
+# Accepted shapes: whatever normalise-transcript.sh (beside this file)
+# accepts -- one JSON array, one object, NDJSON, or several concatenated
+# documents, with non-object elements dropped before any `.type` read. That
+# script is the single home of the normalisation (#572); if it is absent,
+# every value here is empty.
 set -uo pipefail
 
 TRANSCRIPT="${1:-}"
@@ -47,11 +43,10 @@ reported=""
 records=""
 
 if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ] && [ -s "$TRANSCRIPT" ]; then
-  # One read of the file. A parse failure leaves $records empty, and every
-  # value with it. (No `jq -e .` check: -e takes its status from the LAST
-  # document only, so NDJSON ending in `null` or `false` read as unparseable.)
-  records="$(jq -cs 'map(if type=="array" then .[] else . end)
-    | map(objects)' "$TRANSCRIPT" 2>/dev/null)" || records=""
+  # One read of the file, as one flat array of objects. A parse failure
+  # leaves $records empty, and every value with it.
+  records="$(bash "$(dirname "${BASH_SOURCE[0]}")/normalise-transcript.sh" \
+               "$TRANSCRIPT" 2>/dev/null)" || records=""
   if [ -n "$records" ]; then
     # Distinct .message.id, because one response streams as several assistant
     # records (a text chunk, then a tool_use chunk) that share an id —

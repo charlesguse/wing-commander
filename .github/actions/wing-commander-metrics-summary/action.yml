@@ -416,10 +416,19 @@ runs:
         main_turns=""
         sub_turns=""
         reported=""
+        records=""
         if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ] && [ -s "$TRANSCRIPT" ]; then
-          if jq -e . "$TRANSCRIPT" >/dev/null 2>&1; then
-            result_json="$(jq -c 'if type=="array" then . else [.] end
-              | map(select(.type=="result")) | last // empty' "$TRANSCRIPT" 2>/dev/null || true)"
+          # One flat array of objects, whatever the transcript's shape (one
+          # array, one object, NDJSON, concatenated documents, stray
+          # non-object elements) -- see _shared/normalise-transcript.sh, the
+          # single home of that rule (#572). Empty when the file does not
+          # parse (or the shared script is absent): metrics then read as
+          # unavailable, as an unparseable transcript always has.
+          records="$(bash "$GITHUB_ACTION_PATH/../_shared/normalise-transcript.sh" \
+                       "$TRANSCRIPT" 2>/dev/null)" || records=""
+          if [ -n "$records" ]; then
+            result_json="$(printf '%s' "$records" \
+              | jq -c 'map(select(.type=="result")) | last // empty' 2>/dev/null || true)"
             if [ -n "$result_json" ] && [ "$result_json" != "null" ]; then
               availability=ok
             fi

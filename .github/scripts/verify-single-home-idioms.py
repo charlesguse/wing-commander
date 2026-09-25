@@ -102,6 +102,16 @@ SIX CHECKS, per contracts/single-home-gate.md (plus a spec 052 addition)
    `container_image_configured` anywhere else, so a THIRD reappearance of
    the pasted shape is caught the same way a third verdict-shape paste is.
 
+6. transcript-normalise (#572): the jq program that turns an agent
+   execution transcript (one array, one object, NDJSON, concatenated
+   documents) into one flat array -- `if type=="array" then .[] else .
+   end` spliced over `jq -s` input. It was pasted into
+   wing-commander-agent-verdict (#551) and then needed by count-turns.sh
+   and wing-commander-metrics-summary too; it now lives solely in
+   `_shared/normalise-transcript.sh`. Matched by regex, whitespace- and
+   quote-tolerant. The per-document `then . else [.] end` wrap is a
+   different, legitimate idiom and is not matched.
+
 Plus a promotion-prevention pass (FR-025): every `workflow_call`-only
 stage workflow and every non-underscore-prefixed composite action scanned
 for any reference resolving into a `_shared/` path.
@@ -197,6 +207,10 @@ DECLARED_HOMES = {
     # this check is the structural scan that catches a THIRD paste the way
     # every other idiom in this gate already does.
     "board-stop-check": ".github/actions/wing-commander-board-stop-check/action.yml",
+    # #572: the transcript normaliser. count-turns.sh,
+    # wing-commander-agent-verdict and wing-commander-metrics-summary all
+    # call it; a fourth inline copy is what this check catches.
+    "transcript-normalise": ".github/actions/_shared/normalise-transcript.sh",
 }
 CHECK_NAMES = tuple(DECLARED_HOMES) + ("promotion",)
 
@@ -250,6 +264,11 @@ BOARD_STOP_CHECK_FRAGMENTS = (
     "gh run cancel",
     "board-stop-check-comments.json",
 )
+# #572: the splice step of the transcript normaliser. `.[]` in the
+# then-branch is what distinguishes it from the per-document
+# `if type=="array" then . else [.] end` wrap used by fallback reads.
+TRANSCRIPT_NORMALISE_RE = re.compile(
+    r'if\s+type\s*==\s*["\']array["\']\s+then\s+\.\[\]\s+else\s+\.\s+end')
 MODE_TAG_FRAGMENT_RE = re.compile(r"\{\s*mode\s*:\s*\$[A-Za-z_][A-Za-z0-9_]*\s*\}")
 SHARED_REF_RE = re.compile(r"\.github/actions/_shared/[A-Za-z0-9_.\-/]+")
 
@@ -436,6 +455,22 @@ def check_stage_findings(root="."):
             findings.append(Finding(
                 path, "stage-findings", line_of(text, offset),
                 "sha256(...) + fingerprint_basis + validate_finding co-occurrence"))
+    return findings
+
+
+# --------------------------------------------------------------------------
+# Check: transcript-normalise (file-wide regex, #572)
+# --------------------------------------------------------------------------
+def check_transcript_normalise(root="."):
+    home = DECLARED_HOMES["transcript-normalise"]
+    findings = []
+    for path in all_subject_files(root):
+        if path == home:
+            continue
+        text = read(root, path)
+        for m in TRANSCRIPT_NORMALISE_RE.finditer(text):
+            findings.append(Finding(path, "transcript-normalise",
+                                    line_of(text, m.start()), m.group(0)))
     return findings
 
 
@@ -633,6 +668,7 @@ ALL_CHECKS = {
     "size-path-backstop": check_size_path_backstop,
     "dispatch-and-wait": check_dispatch_and_wait,
     "board-stop-check": check_board_stop_check,
+    "transcript-normalise": check_transcript_normalise,
     "verdict-shape": check_verdict_shape,
     "token-mint": check_token_mint,
     "mode-tag-shape": check_mode_tag_shape,
@@ -977,6 +1013,10 @@ def _clean_tree(root):
           "        # from board_stop_check import find_stop_request\n"
           "        GH_TOKEN=\"$CANCEL_TOKEN\" gh run cancel "
           "\"$stop_run_id\" -R \"$GITHUB_REPOSITORY\" 2>/dev/null || true\n")
+    _write(root, DECLARED_HOMES["transcript-normalise"],
+          "#!/usr/bin/env bash\n"
+          "jq -cs 'map(if type==\"array\" then .[] else . end) "
+          "| map(objects)' \"$1\"\n")
     _write(root, ".github/workflows/harmless.yml",
           "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
           "      - run: echo hi\n")
@@ -1186,6 +1226,20 @@ def run_selftest():
         "          # from board_stop_check import find_stop_request\n"
         "          GH_TOKEN=\"$CANCEL_TOKEN\" gh run cancel "
         "\"$stop_run_id\" -R \"$GITHUB_REPOSITORY\" 2>/dev/null || true\n")
+    selftest_third_paste_fails(
+        "transcript-normalise",
+        ".github/actions/wing-commander-third/action.yml",
+        "runs:\n  using: composite\n  steps:\n"
+        "    - shell: bash\n      run: |\n"
+        "        jq -cs 'map(if type==\"array\" then .[] else . end)' "
+        "\"$T\" > \"$OUT\"\n")
+    # Re-spaced, with the jq program in a workflow instead of a composite.
+    selftest_third_paste_fails(
+        "transcript-normalise", ".github/workflows/third-normalise.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          jq -s '[.[] | if type == \"array\"  then .[] else . end]' "
+        "\"$T\"\n")
     selftest_third_paste_fails(
         "verdict-shape", ".github/workflows/third-verdict.yml",
         "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
