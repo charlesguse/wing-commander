@@ -14,6 +14,59 @@ for the most recent maintainer stop request, gated by the same
 OWNER/MEMBER/COLLABORATOR association check pr-conversation.yml already
 uses, and hand the caller the run URL to cancel (never a second
 authorization rule).
+
+WHAT COUNTS AS A STOP REQUEST (issue #539)
+------------------------------------------
+A stop request is a *command*, never the word "stop" in prose -- a false
+stop wedges the board (the pre-#539 bare `\bstop\b` search of the whole
+body read #402's owner analysis, "it should stop retrying and finish", as
+a stop on every run). pr-conversation.yml classifies a comment as `stop`
+with an LLM; this loop is deterministic and uses the first-line command
+rule below instead (research.md D17). is_stop_command() and
+STOP_COMMAND_RE are its single home.
+
+1. Skip, line by line: `>` quote lines; fenced code (a line whose stripped
+   text starts with ``` or ~~~ toggles the fence; the fence lines and
+   everything inside are skipped; an unclosed fence runs to the end); HTML
+   comments (a whole-line `<!-- ... -->`, or a `<!--` line with no `-->`
+   through the next line containing `-->`; a line with text after its
+   one-line comment is NOT skipped); and `---` horizontal rules
+   (a line of three or more `-`). Take the FIRST remaining line that is
+   non-empty after normalisation (step 2). Nothing remaining (e.g. a body
+   of only `> stop`) is not a stop request.
+2. Normalise that line: delete U+FEFF and zero-width characters (U+200B,
+   U+200C, U+200D, U+2060), strip whitespace, drop leading @handle tokens
+   (`^(?:@[\w-]+(?:\[bot\])?(?:[\s,:]+|$))+` -- a handle-only line
+   becomes empty and is passed over), then drop leading markdown emphasis
+   (`*`/`_`).
+3. Match STOP_COMMAND_RE at the start, case-insensitively: an optional
+   `please` plus separator, then `stop` or `/stop`, optional closing
+   emphasis (`*`/`_`), then one of:
+   - end of line;
+   - punctuation `. ! : , ; … ) 。 ！ ）` (NOT `?` -- a
+     question is not a command -- and not `'`/`’`, so `stop's` fails);
+   - a dash: `—`, `–`, or `-` not followed by a word character;
+   - whitespace, then either a dash, colon or `. ! …` (the reason
+     follows), or a run of one or more of the words `now`, `please`,
+     `pls`, `immediately` (`STOP NOW PLEASE`) that is NOT followed by
+     whitespace and another word.
+   Anything after that on the line is the reason.
+
+Accepted: `stop`, `Stop.`, `STOP!`, `/stop`, `Stop…`, `stop)`,
+`**stop**`, `Please stop.`, `@wing-commander stop`, `@bot /stop`,
+`STOP NOW`, `stop please`, `stop immediately!`, `stop ...`, `stop !`,
+`stop - wrong approach`, `stop: bad plan`, `/stop — reason`,
+`stop, this is wrong`, and `stop` after a quote-reply, fenced log, HTML
+comment, `---` rule or handle-only line. Rejected: prose
+(`We should stop retrying`), prose that merely BEGINS with "Stop"
+(`stop this please`, `Stop worrying about the flake`,
+`Stop now and then it flakes`, `stop please the build`,
+`Stop the presses: this is great`), questions (`stop?`,
+`Stop? not sure we should`), `stopped`, `Stopping`, `non-stop`,
+`stop-gap`, `stop's`, a "stop" only on a later line, and a first line
+that does not start with stop (`Hold on, stop`, `Wait — stop`).
+An `@someone stop - ...` addressed to another human also counts; that is
+accepted (the handle is dropped before matching).
 """
 import re
 import sys
@@ -21,8 +74,49 @@ import sys
 import json
 
 MAINTAINER_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
-STOP_RE = re.compile(r"\bstop\b", re.IGNORECASE)
+STOP_COMMAND_RE = re.compile(
+    r"(?:please[\s,:]+)?/?stop[*_]*"
+    r"(?:$|[.!:,;\u2026)\u3002\uff01\uff09\u2014\u2013]|-(?!\w)"
+    r"|\s+(?:[-\u2014\u2013:.!\u2026]|(?:now|please|pls|immediately)(?:\s+(?:now|please|pls|immediately))*\b(?!\s+\w)))",
+    re.IGNORECASE)
+_ZERO_WIDTH_RE = re.compile("[\ufeff\u200b\u200c\u200d\u2060]")
+_HANDLES_RE = re.compile(r"^(?:@[\w-]+(?:\[bot\])?(?:[\s,:]+|$))+")
+_HORIZONTAL_RULE_RE = re.compile(r"^-{3,}$")
 MARKER_RUN_RE = re.compile(r"\*\*Run:\*\*\s*(https://\S+/actions/runs/(\d+))")
+
+
+def _command_line(body):
+    """The first line of `body` that step 1 of the module docstring's rule
+    does not skip, normalised per step 2; None when nothing remains."""
+    fence = False
+    html_comment = False
+    for raw in (body or "").splitlines():
+        line = _ZERO_WIDTH_RE.sub("", raw).strip()
+        if html_comment:
+            html_comment = "-->" not in line
+            continue
+        if line.startswith("```") or line.startswith("~~~"):
+            fence = not fence
+            continue
+        if fence or line.startswith(">") or _HORIZONTAL_RULE_RE.match(line):
+            continue
+        if line.startswith("<!--"):
+            if "-->" not in line[4:]:
+                html_comment = True
+                continue
+            if line.endswith("-->"):
+                continue
+        line = _HANDLES_RE.sub("", line).lstrip("*_").strip()
+        if line:
+            return line
+    return None
+
+
+def is_stop_command(body):
+    """True when `body` is a stop command (see the module docstring). The
+    one predicate every board-loop stop check uses."""
+    line = _command_line(body)
+    return bool(line and STOP_COMMAND_RE.match(line))
 
 
 def find_stop_request(comments, current_run_id):
@@ -81,7 +175,7 @@ def find_stop_request(comments, current_run_id):
         if (comment.get("created_at") or "") < baseline:
             continue
         if (comment.get("author_association") in MAINTAINER_ASSOCIATIONS
-                and STOP_RE.search(comment.get("body") or "")):
+                and is_stop_command(comment.get("body"))):
             stop_seen = True
 
     if not stop_seen:
