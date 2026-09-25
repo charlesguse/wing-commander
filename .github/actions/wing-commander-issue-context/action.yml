@@ -44,10 +44,16 @@
 # triage passes its own App's `<slug>[bot]`, the same App watchdog posts
 # as), `bot-occurrences-file` holds only comments whose author is exactly
 # that login AND `user.type == "Bot"` -- matched on author, never on body
-# text; no other bot's or human's comment reaches it -- and
-# `last-reopened-at` is the newest `reopened` event on the issue. Neither
-# widens `comments-file` or `context-file`. With the input unset (every
-# other caller), no extra fetch is made and both outputs are empty.
+# text; no other bot's or human's comment reaches it -- and only on a
+# watchdog issue: one that same App filed (issue author login AND type)
+# whose body carries watchdog's `<!-- wing-commander-watchdog:
+# fingerprint=... -->` marker, the marker watchdog's own dedup matches
+# before it ever comments. Other agents hold that App's token and
+# `gh issue comment`, so an App comment on any other issue is never
+# treated as an occurrence (#520 review). `last-reopened-at` is the newest
+# `reopened` event on the issue, whatever filed it. Neither widens
+# `comments-file` or `context-file`. With the input unset (every other
+# caller), no extra fetch is made and both outputs are empty.
 #
 # Written under /tmp/wing-commander, matching intake.yml's own established
 # convention exactly (contracts/comment-staging-format.md: "runner-local,
@@ -114,8 +120,9 @@ outputs:
     description: >
       Path to a JSON array of {created_at, body}, oldest to newest, of the
       comments authored by occurrence-bot-login with user.type "Bot" and
-      no one else (#520). Empty string when the input is unset or that
-      bot has not commented -- no file is written in that case.
+      no one else, and only when that login filed the issue with
+      watchdog's fingerprint marker in its body (#520). Empty string
+      otherwise -- no file is written in that case.
     value: ${{ steps.fetch.outputs.bot-occurrences-file }}
   last-reopened-at:
     description: >
@@ -177,20 +184,24 @@ runs:
         fi
         echo "context-file=$DIR/context.md" >> "$GITHUB_OUTPUT"
 
-        # #520: see the header. Author login AND type, never body text.
+        # #520: see the header. Author login AND type, never body text,
+        # and only on an issue that App filed as a watchdog issue.
         rm -f "$DIR/bot-occurrences.json"
         BOT_OCCURRENCES_FILE=""
         LAST_REOPENED_AT=""
         if [ -n "${OCCURRENCE_BOT_LOGIN:-}" ]; then
-          jq -c --arg login "$OCCURRENCE_BOT_LOGIN" \
-            '[.[] | select(.user.type == "Bot" and .user.login == $login)] | sort_by(.created_at) | map({created_at, body})' \
+          WATCHDOG_ISSUE=$(jq --arg login "$OCCURRENCE_BOT_LOGIN" \
+            '.user.type == "Bot" and .user.login == $login and ((.body // "") | test("<!-- wing-commander-watchdog: fingerprint=[0-9a-f]+ -->"))' \
+            "$DIR/issue-raw.json")
+          jq -c --arg login "$OCCURRENCE_BOT_LOGIN" --argjson watchdog "$WATCHDOG_ISSUE" \
+            'if $watchdog then [.[] | select(.user.type == "Bot" and .user.login == $login)] | sort_by(.created_at) | map({created_at, body}) else [] end' \
             "$DIR/comments-raw.json" > "$DIR/bot-occurrences.json"
           if [ "$(jq 'length' "$DIR/bot-occurrences.json")" -gt 0 ]; then
             BOT_OCCURRENCES_FILE="$DIR/bot-occurrences.json"
           else
             rm -f "$DIR/bot-occurrences.json"
           fi
-          gh api "repos/${REPOSITORY}/issues/${ISSUE}/events" --paginate --jq '.[]' \
+          gh api "repos/${REPOSITORY}/issues/${ISSUE}/events?per_page=100" --paginate --jq '.[]' \
             | jq -s '.' > "$DIR/events-raw.json"
           LAST_REOPENED_AT=$(jq -r '[.[] | select(.event == "reopened") | .created_at] | max // ""' "$DIR/events-raw.json")
           rm -f "$DIR/events-raw.json"

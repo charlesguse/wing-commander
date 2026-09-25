@@ -96,7 +96,15 @@ closed. Two checks keep that shut:
      occurrence ran on main's pins, or whose occurrence was posted by
      another bot or a human NONE (never staged), is NOT closed as an
      action_bump; nor is one closed as a rate_limit on its First-seen
-     run's 429. An issue that never recurred still closes on both.
+     run's 429. An issue that never recurred still closes on both. An
+     occurrence older than a human reopen, whose run has a bump, does not
+     close; the same occurrence newer than the reopen does.
+   - forged occurrences (#520 review): stage agents share the App token,
+     so the REAL composite step (run through Gate 96's harness) must not
+     stage an App occurrence on an issue the App did not file as a
+     watchdog issue -- the cite stays the issue's own. On a real watchdog
+     issue the same comment is cited (control). Staging occurrences on
+     any issue must be caught.
    - the cite step passes one composite call's bot-occurrences-file,
      last-reopened-at and context-file, and that call passes
      occurrence-bot-login `${{ steps.ctx.outputs.bot-slug }}[bot]`;
@@ -115,6 +123,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1272,6 +1281,14 @@ REOPENED_CASES = (
      [], "", GENUINE_FAILURE_TRANSCRIPT, "closed"),
     ("never reopened: the First seen run's 429 still closes",
      [], "", RATE_LIMIT_TRANSCRIPT, "closed"),
+    # Run 250 is an App occurrence that ran at the OLD commit (its pin since
+    # bumped). A human reopen newer than it cites no run, so no bump close.
+    ("occurrence older than a human reopen, its run has a bump: no close",
+     [_occ(250, _T1)], _T2, GENUINE_FAILURE_TRANSCRIPT, "proceed"),
+    # Control: that same occurrence, reopened before it, is the most recent
+    # run -- its own bump is legitimate close evidence.
+    ("occurrence newer than the reopen, its run has a bump: closes",
+     [_occ(250, _T2)], _T1, GENUINE_FAILURE_TRANSCRIPT, "closed"),
 )
 
 
@@ -1290,7 +1307,8 @@ def run_reopened_cases(verbose=True):
         try:
             for label, occurrences, reopened, first_transcript, want in REOPENED_CASES:
                 runs = {_RUN + "100": (old_sha, first_transcript),
-                        _RUN + "200": (main_sha, GENUINE_FAILURE_TRANSCRIPT)}
+                        _RUN + "200": (main_sha, GENUINE_FAILURE_TRANSCRIPT),
+                        _RUN + "250": (old_sha, GENUINE_FAILURE_TRANSCRIPT)}
                 run_url, _reason = board_triage.cite_run(
                     _FIRST_SEEN, occurrences, reopened, _REPO)
                 sha, transcript = runs.get(run_url, (None, None))
@@ -1310,6 +1328,88 @@ def run_reopened_cases(verbose=True):
         finally:
             os.chdir(prev)
     return failures
+
+
+def _load_gate96():
+    """Gate 96's harness for the REAL composite step -- one home for its
+    gh stub, not a second copy here."""
+    path = os.path.join(SCRIPTS_DIR, "verify-issue-context-trust-filter.py")
+    spec = importlib.util.spec_from_file_location("_gate96", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.ensure_jq()
+    module.BASH = module.resolve_bash()
+    step = module.find_step(module.ACTION, module.STEP)
+    return module, str(step["run"])
+
+
+# #520 review: stage agents share the App's token and may comment on any
+# issue, so an App "occurrence" counts only on a watchdog issue (filed by
+# the App, carrying watchdog's fingerprint marker). Each case runs the
+# composite's real step on the issue, then cite_run() on what it staged.
+_G96_REPO = "acme/widgets"
+_G96_RUN = "https://github.com/acme/widgets/actions/runs/"
+
+
+def _forged_cases(g96):
+    first_seen = "_First seen: [this run]({0}100)_\n".format(_G96_RUN)
+    forged = g96._comment(g96.BOT_LOGIN, 7000, "Bot", "NONE",
+                          "2024-02-01T00:00:00Z",
+                          board_triage.OCCURRENCE_LINE + _G96_RUN + "300):")
+    # (label, issue JSON, expected cite)
+    return (
+        ("forged App occurrence on an App-filed issue with no watchdog "
+         "marker: First seen, not the occurrence",
+         g96._issue(g96.BOT_LOGIN, "Bot", first_seen), _G96_RUN + "100"),
+        ("forged App occurrence on a maintainer-filed issue: its own cite",
+         g96._issue("maintainer", "User", first_seen + g96.MARKER),
+         _G96_RUN + "100"),
+        # Control: on a real watchdog issue the same comment is the cite.
+        ("App occurrence on a watchdog issue: the occurrence",
+         g96._issue(g96.BOT_LOGIN, "Bot", first_seen + g96.MARKER),
+         _G96_RUN + "300"),
+    ), forged
+
+
+def run_forged_occurrence_cases(script=None, verbose=True):
+    g96, real_script = _load_gate96()
+    script = real_script if script is None else script
+    cases, forged = _forged_cases(g96)
+    failures = []
+    for label, issue_json, expected in cases:
+        tmproot = tempfile.mkdtemp()
+        try:
+            rc, out, outputs, _c, context_md = g96.run_fixture(
+                script, [forged], tmproot, bot_login=g96.BOT_LOGIN,
+                events=[], issue_json=issue_json)
+            occurrences = g96.run_fixture.occurrences or []
+        finally:
+            shutil.rmtree(tmproot, ignore_errors=True)
+        if rc != 0:
+            failures.append("forged: {0}: composite exited {1}: {2}".format(label, rc, out))
+            continue
+        got, _reason = board_triage.cite_run(
+            context_md or "", occurrences, outputs.get("last-reopened-at", ""),
+            _G96_REPO)
+        if got != expected:
+            failures.append("forged: {0}: expected {1!r}, got {2!r}".format(
+                label, expected, got))
+        elif verbose:
+            print("[ok] forged: {0} ({1!r})".format(label, got))
+    return failures
+
+
+def _mutation_check_forged():
+    _g96, script = _load_gate96()
+    old = '--argjson watchdog "$WATCHDOG_ISSUE"'
+    if script.count(old) != 1:
+        return ["mutation 'forged: occurrences staged on any issue' no longer "
+                "applies ({0!r} not in the composite step)".format(old)]
+    if run_forged_occurrence_cases(
+            script.replace(old, "--argjson watchdog true"), verbose=False):
+        print("note: mutation caught (forged: occurrences staged on any issue).")
+        return []
+    return ["mutation 'forged: occurrences staged on any issue' was NOT caught"]
 
 
 def _run_520_cases():
@@ -1476,6 +1576,8 @@ def run():
     problems.extend(run_cite_run_cases())
     problems.extend(run_reopened_cases())
     problems.extend(_mutation_check_reopened())
+    problems.extend(run_forged_occurrence_cases())
+    problems.extend(_mutation_check_forged())
     with open(WATCHDOG_WRAPPER, encoding="utf-8") as fh:
         wrapper_text = fh.read()
     with open(WATCHDOG, encoding="utf-8") as fh:

@@ -421,7 +421,9 @@ def latest_occurrence(occurrences, repository):
     `occurrences` -- wing-commander-issue-context's bot-occurrences-file, a
     list of {created_at, body} that composite already restricted to
     comments authored by this repository's own App bot (login AND
-    user.type, never body text; that filter lives only there). A comment
+    user.type, never body text), and to a watchdog issue that App filed
+    (that filter lives only there; the App token is shared, see
+    contracts/triage.md "Remaining risk"). A comment
     counts only when its FIRST line is watchdog's OCCURRENCE_LINE citing a
     run of `repository`. None when no comment qualifies."""
     run_url = r"https://github\.com/{0}/actions/runs/[0-9]+".format(

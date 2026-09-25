@@ -110,7 +110,12 @@ def cite_run(context_text: str, occurrences: list[dict],
   `occurrence-bot-login` (triage passes its own App's `<slug>[bot]`)
   stages `bot-occurrences-file`: only comments whose author has exactly
   that login and `user.type == "Bot"` -- matched on author, never on body
-  text, and never widening `comments-file`/`context-file`. A comment in it
+  text, and never widening `comments-file`/`context-file` -- and only on a
+  watchdog issue: one filed by that same App (issue author login and
+  type) whose body carries watchdog's
+  `<!-- wing-commander-watchdog: fingerprint=... -->` marker, the marker
+  watchdog's own dedup matches before it comments. On any other issue
+  nothing is staged, and the cite is the issue's own. A comment in it
   counts when its first line is watchdog's
   `🐕 New occurrence of this fingerprint — [this run](URL):` naming a run
   of this repository; the newest such run is cited. The board loop and
@@ -124,6 +129,14 @@ def cite_run(context_text: str, occurrences: list[dict],
   nor `rate_limit` can close on a run older than the recurrence.
 - An issue never reopened and with no occurrence is cited exactly as
   before.
+
+**Remaining risk.** The App's token is shared: several stage agents
+(intake, plan, tasks, implement) hold it with `gh issue comment` on any
+issue number. The watchdog-issue rule stops a prompt-injected agent from
+steering the cite of any other issue, but on a real watchdog issue such
+an agent could still post the exact occurrence line and steer the cite to
+a retained older run. That stays possible until watchdog posts under its
+own App identity and `occurrence-bot-login` names that App alone.
 
 ## Gate: `verify-board-triage.py`
 
@@ -167,7 +180,11 @@ Fixtures (FR-064 bullet 1), each a checked-in transcript/workflow-pin pair:
     occurrence posted by a different bot or a human NONE (never staged)
     → no run cited, `proceed`; a reopened defect whose First-seen run
     was a 429 → NOT closed as `rate_limit`; a defect never reopened still
-    closes on its First-seen run's bump or 429. Ignoring occurrences,
+    closes on its First-seen run's bump or 429; an occurrence older than
+    a human reopen whose run has a bump → `proceed`; an App occurrence
+    forged on an issue the App did not file as a watchdog issue (run
+    through the real composite step) → not staged, the issue's own cite
+    stands. Staging occurrences on any issue, ignoring occurrences,
     citing the oldest, accepting the occurrence line past a comment's
     first line, or dropping either half of the reopen rule must fail
     these; so must the cite step losing either new operand, reading them
