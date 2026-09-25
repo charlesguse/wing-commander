@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,18 +31,27 @@
 
 ## Notes
 
-Three `[NEEDS CLARIFICATION]` markers remain, deliberately — they are the
-three decisions the lifecycle issue says must be made by the owner rather
-than mechanically, and they are what stopped this from being folded into
-PR #436:
+The three `[NEEDS CLARIFICATION]` markers this spec was drafted with are
+resolved. They were the three decisions the lifecycle issue said must be
+made by the owner rather than mechanically, and they are what stopped this
+from being folded into PR #436:
 
-- **FR-003** — what makes a granted token a path worth resolving.
-- **FR-004** — which grant-composition surfaces are in scope.
-- **FR-006** — how an absent-by-design granted path is recorded.
+- **FR-003** — what makes a granted token a path worth resolving. Resolved:
+  a `/` after the interpreter prefix and a leading `./` are accounted for.
+- **FR-004** — which grant-composition surfaces are in scope. Resolved: all
+  three surfaces the repository uses, and no wider.
+- **FR-006** — how an absent-by-design granted path is recorded. Resolved:
+  a waiver JSON file alongside the existing `*-waivers.json` files, exact
+  paths only.
 
-They are posted as questions on lifecycle issue #599 by the intake stage
-and resolved by the clarify stage; nothing downstream should treat them as
-oversights.
+The answers are recorded in the spec's Clarifications section, sourced from
+the reply on lifecycle issue #599.
+
+One open item is deliberately deferred to the plan stage rather than left as
+a marker: the Overview's file/line inventory has drifted since filing (PR
+#613's rename of `board_git_read.py`), so "Inventory freshness" instructs
+plan to re-derive it against `main`. That is a refresh of examples, not an
+unanswered requirement.
 
 This specification names files, workflows and line numbers in its Overview
 and Key Entities. That is deliberate and not a content-quality violation:

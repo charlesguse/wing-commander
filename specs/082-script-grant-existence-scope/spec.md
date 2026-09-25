@@ -43,7 +43,10 @@ either blind spot with nothing reporting it.
   would strand exactly the way Spec Kit's rename stranded
   `update-agent-context.sh` — and the three prompts name the command in
   their text, so a rename would leave three prompts describing a denied
-  command.
+  command. That rename has since happened: PR #613 renamed the script to
+  `.github/scripts/git_read.py` and respelled the grants as
+  `Bash(python3 -I …/git_read.py:*)`, which is the blind spot demonstrating
+  itself rather than a change of subject.
 - `.github/workflows/implement.yml` lines 833, 1401 —
   `Bash(python .github/scripts/run-local-gates.py:*)`, at
   `implement.cycle` / `implement.retry`.
@@ -60,6 +63,20 @@ either blind spot with nothing reporting it.
   on a `claude-code-action` step that never touches the composite. Note
   that this one would *also* fail condition 2: the `e2e-scratch/` prefix
   means the path does not start with `.specify/scripts/bash/`.
+
+### Inventory freshness
+
+The file/line inventory above was taken at this branch's point off `main`
+and has already drifted: PR #613 renamed `board_git_read.py` to
+`git_read.py`, respelled its grants with a flagged interpreter prefix
+(`python3 -I`), and added grant sites that reach the script through the
+run-time-checked-out `.wing-commander-pipeline/` path and through a
+`${{ runner.temp }}` expression. The inventory is illustrative of the two
+blind spots, not a work list: the plan stage MUST re-derive it against
+`main` as of planning day, and the counts in SC-002 follow that refreshed
+inventory rather than the numbers written here. The blind spots themselves,
+the three in-scope surfaces (FR-004) and the waiver mechanism (FR-006) are
+unchanged by the drift.
 
 ### Why this is a spec, not a mechanical widening
 
@@ -84,6 +101,27 @@ The current docstring already states the narrow scope honestly ("Scoped to
 through a different mechanism (e.g. a bare `claude_args` string), is not
 this check's job yet"). This feature decides what the job actually is and
 makes the docstring's scope statement true of a wider scope.
+
+## Clarifications
+
+### Session 2026-09-25 (lifecycle issue #599)
+
+- Q: Which grant-composition surfaces are in scope? → A: All three the
+  repository uses — the composite's `default-allowed-tools`, a
+  reusable-workflow caller's `extra-allowed-tools` /
+  `allowed-tools-override`, and a bare `claude_args --allowedTools` string.
+  Not "every `Bash(<path>)` anywhere under `.github/workflows/`". (FR-004)
+- Q: How is an absent-by-design granted path recorded? → A: A waiver JSON
+  file alongside the existing `*-waivers.json` files, holding exact paths
+  and reasons, with FR-007's stale-entry check over it. Not an in-script
+  constant and not a call-site comment marker. (FR-006, FR-007)
+- Q: What makes a granted token a path worth resolving? → A: It contains a
+  `/` once the interpreter prefix and a leading `./` are accounted for;
+  values containing `${{ … }}` are skipped. Not a file extension and not a
+  directory allow-list. (FR-003, FR-008)
+- Note carried with the answer: the Overview's inventory has drifted since
+  filing (PR #613's rename), so the plan stage re-derives it — see
+  "Inventory freshness".
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -177,9 +215,9 @@ diff rather than implied by a regex that happens not to match.
 exemption is auditable. It is smaller than either of the other two and
 depends on the decision recorded in FR-006.
 
-**Independent Test**: Remove the e2e grant's absent-by-design record and run
-Gate 27 — it must fail. Restore the record and it must pass. Add a record
-for a path that *does* resolve, and the gate must report the record as
+**Independent Test**: Remove the e2e grant's entry from the waiver file and
+run Gate 27 — it must fail. Restore the entry and it must pass. Add an entry
+for a path that *does* resolve, and the gate must report that entry as
 stale.
 
 **Acceptance Scenarios**:
@@ -227,36 +265,42 @@ stale.
   accepts today (bare, `bash `-prefixed, `sh `-prefixed, `./`-prefixed, with
   or without a trailing argument before the wildcard) and MUST additionally
   accept the `python `/`python3 `-prefixed spelling the repository ships at
-  six grant sites.
+  six grant sites, including an interpreter prefix that carries a flag
+  (`python3 -I <path>`, the spelling main now ships — see "Inventory
+  freshness" in the Overview).
 - **FR-003**: The check MUST distinguish a grant that names a
   repository-relative path from one that names a bare command, and MUST
-  raise no failure for the latter. [NEEDS CLARIFICATION: what makes a
-  granted token a path worth resolving — a known interpreter prefix
-  (`bash`/`sh`/`python`/`python3`/`./`), the presence of a `/`, a known
-  script extension (`.sh`/`.py`), or some combination?]
-- **FR-004**: The check MUST inspect grants composed at every surface this
-  repository uses to reach an agent step, not the composite call site
-  alone. [NEEDS CLARIFICATION: which surfaces are in scope — composite
-  `default-allowed-tools` only (status quo, widened by path); plus
-  reusable-workflow caller inputs (`extra-allowed-tools`,
-  `allowed-tools-override`); plus bare `claude_args --allowedTools` strings
-  on `claude-code-action` steps; or every `Bash(<path>)` grant found
-  anywhere under `.github/workflows/`?]
+  raise no failure for the latter. A granted token counts as a path when,
+  after its interpreter prefix (if any) is stripped, it carries a leading
+  `./` or contains a `/`; the leading `./` is then stripped again to form
+  the repository-relative path that gets resolved. A token with no `/` and
+  no `./` — `jq`, `git status`, `yamllint` — is a bare command and raises
+  nothing. Neither a file extension (`.sh`/`.py`) nor a directory
+  allow-list is part of the test, so a granted path in a directory nobody
+  anticipated is still resolved.
+- **FR-004**: The check MUST inspect grants composed at all three surfaces
+  this repository uses to reach an agent step, not the composite call site
+  alone: a `wing-commander-tool-args` step's `default-allowed-tools`; a
+  reusable-workflow caller's `extra-allowed-tools` / `allowed-tools-override`
+  inputs; and a bare `claude_args --allowedTools` string on a
+  `claude-code-action` step. A `Bash(<path>)` grant written anywhere else
+  under `.github/workflows/` is out of scope — a fourth surface appearing
+  later is a new finding, not a gap this check silently covers.
 - **FR-005**: For a grant found outside a composite call site, the failure
   message MUST identify the grant by workflow file, job and step, since no
   `step-label` exists to name it by.
 - **FR-006**: A granted path that is absent from the checkout by design (a
-  run-time-provisioned directory such as `e2e-scratch/`) MUST be recorded
-  explicitly rather than excluded by a pattern that would also hide an
-  unrelated stale grant. [NEEDS CLARIFICATION: how is such a grant
-  recorded — a waiver file alongside the repository's existing
+  run-time-provisioned directory such as `e2e-scratch/`) MUST be recorded in
+  a waiver JSON file kept alongside the repository's existing
   `single-home-waivers.json` / `stage-invariant-waivers.json` /
-  `spec-branch-push-waivers.json`; an in-script constant listing the
-  absent-by-design path prefixes with their reason; or a comment marker at
-  the grant's own call site that the check reads?]
-- **FR-007**: A recorded absent-by-design entry whose path *does* resolve in
-  the working tree MUST be reported, so the record cannot outlive the reason
-  it was written — the same fail-closed posture the check itself has.
+  `spec-branch-push-waivers.json`. Each entry names the **exact** granted
+  path and the reason that path cannot exist in the checkout; a prefix
+  pattern, glob or in-script constant MUST NOT stand in for an entry, and
+  the waiver file MUST be the only place an exemption can be written, so
+  every exemption is visible in a diff.
+- **FR-007**: A waiver entry whose path *does* resolve in the working tree
+  MUST be reported as stale, so the record cannot outlive the reason it was
+  written — the same fail-closed posture the check itself has.
 - **FR-008**: The check MUST skip any grant value that contains an
   unexpanded `${{ … }}` expression, since the literal text is not a path,
   and MUST NOT treat the skip as a pass it can report on.
@@ -299,8 +343,9 @@ stale.
   `step-label`; the other two do not.
 - **Resolvable path**: the repository-relative path a grant implies, if any,
   checked case-sensitively against the working tree.
-- **Absent-by-design record**: the reviewable statement that a named granted
-  path is expected not to exist in the checkout, with the reason it does not.
+- **Absent-by-design record**: one entry in the waiver JSON file that sits
+  alongside the repository's other `*-waivers.json` files — an exact granted
+  path plus the reason it is expected not to exist in the checkout.
 
 ## Success Criteria *(mandatory)*
 
@@ -311,10 +356,11 @@ stale.
   the grant and the site — where today it fails for none of the grants
   outside `.specify/scripts/bash/`.
 - **SC-002**: Every script grant in the repository is covered by the check
-  or carries an absent-by-design record; zero are covered by neither. That
-  includes the nine grants this spec's Overview identifies as invisible
-  today (three `board_git_read.py`, three `run-local-gates.py`, one
-  `run-tests.sh`, two spellings of `create-new-feature.sh`), spread across
+  or carries a waiver entry; zero are covered by neither. That includes
+  every grant the refreshed inventory (see "Inventory freshness") finds in
+  the two blind spots — as filed, nine of them: three `git_read.py`
+  (formerly `board_git_read.py`), three `run-local-gates.py`, one
+  `run-tests.sh`, two spellings of `create-new-feature.sh` — spread across
   all three grant surfaces.
 - **SC-003**: The check raises zero failures against the repository as it
   stands, so the widening lands green and every subsequent failure is a real
@@ -332,8 +378,11 @@ stale.
 
 - The three grant surfaces named in Key Entities are the complete set in use
   today; a fourth would be a new finding rather than a gap in this spec.
-- `e2e-scratch/` is the only absent-by-design granted path today. The record
-  mechanism must accept more than one, but the repository starts with one.
+- `e2e-scratch/` was the only absent-by-design granted path when this spec
+  was filed. The waiver file must accept more than one entry, and the
+  refreshed inventory is expected to add at least the grants rooted at the
+  run-time-checked-out `.wing-commander-pipeline/` path — each needing its
+  own exact-path entry, since FR-006 rules out covering them with a prefix.
 - The check stays inside Gate 27 rather than becoming a new numbered gate:
   it reads the same call sites, and splitting it would duplicate the
   collection the gate already does — which the repository's "shared logic
