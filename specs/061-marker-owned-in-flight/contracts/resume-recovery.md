@@ -55,6 +55,11 @@ empty. Unchanged from spec 057.
 
 `state` is GitHub's own value: `OPEN`, `CLOSED`, or `MERGED`.
 
+#564: only "not found" keeps the meanings above (a step-1 HTTP 404, or
+`git ls-remote` exit 2 for the branch); any other step-1 error, any
+step-2 search error, or any other ls-remote exit fails the resume step
+with an `::error::` annotation, as a failed comments fetch does.
+
 #555: the step-1 lookup fetches the PR once and also computes whether it
 carries `board:owned` and its head repository is this repository. A
 marker-named PR that fails this is not adopted, and the step-2 fallback

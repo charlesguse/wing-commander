@@ -123,6 +123,8 @@ network).
    repos/:owner/:repo/pulls/:number` (`BOARD_PR_STATE_JQ`; an OPEN PR that
    fails `BOARD_PR_OWNED_JQ` is recorded as `UNOWNED_OPEN_PR_STATE`, #555).
    Never a `gh pr list` call, never a body/text search (FR-001).
+   (#564) A 404 leaves that PR's state absent; any other lookup error
+   fails the select step with an `::error::` annotation, as step 1 does.
 3. The old unrestricted `gh pr list --state open --json number,body |
    ...capture("Fixes #...")` shortcut is deleted; `select()`'s return value
    is the run's only source of the selected issue number.

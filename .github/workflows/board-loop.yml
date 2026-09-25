@@ -208,6 +208,7 @@ jobs:
             # array-collecting filter (each page would emit its own array
             # instead of one JSON value per line) -- per-item filter, then
             # `jq -s '.'` slurps every page's items into one array.
+            # #564: `[]` on failure is deliberate here only -- a lost timeline under-admits (looks unlabelled); never copy it into a marker path.
             if ! gh api "repos/$GITHUB_REPOSITORY/issues/$number/timeline" --paginate \
                 --jq '.[] | select(.event=="labeled")' 2>/dev/null | jq -s '.' \
                 > "$RUNNER_TEMP/board-events-$number.json"; then
@@ -332,8 +333,18 @@ jobs:
           if [ -n "$pr_numbers_to_check" ]; then
             while IFS= read -r pr_number; do
               [ -z "$pr_number" ] && continue
-              gh api "repos/$GITHUB_REPOSITORY/pulls/$pr_number" \
-                > "$RUNNER_TEMP/board-lookup-pr.json" 2>/dev/null || continue
+              # Issue #564: a 404 leaves the state absent (no such PR); any
+              # other error fails the step -- see the select step's
+              # per-issue comments fetch above in this file (#557).
+              if ! gh api "repos/$GITHUB_REPOSITORY/pulls/$pr_number" \
+                  > "$RUNNER_TEMP/board-lookup-pr.json" 2> "$RUNNER_TEMP/board-lookup-pr.err"; then
+                if grep -qE 'HTTP 404' "$RUNNER_TEMP/board-lookup-pr.err"; then
+                  continue
+                fi
+                cat "$RUNNER_TEMP/board-lookup-pr.err" >&2
+                echo "::error::board-loop: could not look up PR #$pr_number, named by a board item marker -- its state cannot be read, so no item is selected this run (#564)."
+                exit 1
+              fi
               # BOARD_PR_STATE_JQ / BOARD_PR_OWNED_JQ -- see this workflow's
               # top-level env: block.
               pr_state="$(jq -r "$BOARD_PR_STATE_JQ" "$RUNNER_TEMP/board-lookup-pr.json")"
@@ -439,9 +450,22 @@ jobs:
           marker_base_sha="$(printf '%s' "$marker_json" | jq -r '.base_sha // empty')"
           marker_pr="$(printf '%s' "$marker_json" | jq -r '.pr // empty')"
 
+          # Issue #564: each live lookup below fails the step on error --
+          # see the select step's per-issue comments fetch above in this
+          # file (#557). Only "not found" keeps its meaning: ls-remote exit
+          # 2 (no such ref) and HTTP 404 (no such PR).
           branch=""
-          if [ -n "$marker_branch" ] && git ls-remote --exit-code --heads origin "$marker_branch" >/dev/null 2>&1; then
-            branch="$marker_branch"
+          if [ -n "$marker_branch" ]; then
+            ls_remote_rc=0
+            git ls-remote --exit-code --heads origin "$marker_branch" >/dev/null \
+              2> "$RUNNER_TEMP/board-ls-remote.err" || ls_remote_rc=$?
+            if [ "$ls_remote_rc" -eq 0 ]; then
+              branch="$marker_branch"
+            elif [ "$ls_remote_rc" -ne 2 ]; then
+              cat "$RUNNER_TEMP/board-ls-remote.err" >&2
+              echo "::error::board-loop: could not check whether branch $marker_branch exists (git ls-remote exit $ls_remote_rc) -- resume stops here rather than re-derive issue #$ISSUE_NUMBER's step without it (#564)."
+              exit 1
+            fi
           fi
 
           # contracts/resume-recovery.md "PR recovery" (FR-006/FR-007):
@@ -451,20 +475,26 @@ jobs:
           pr_state=""
           pr_from_marker="false"
           pr_owned="false"
-          if [[ "$marker_pr" =~ ^[0-9]+$ ]] && gh api "repos/$GITHUB_REPOSITORY/pulls/$marker_pr" \
-              > "$RUNNER_TEMP/board-marker-pr.json" 2>/dev/null; then
-            # BOARD_PR_STATE_JQ / BOARD_PR_OWNED_JQ -- see this workflow's
-            # top-level env: block.
-            pr_state_raw="$(jq -r "$BOARD_PR_STATE_JQ" "$RUNNER_TEMP/board-marker-pr.json")"
-            if [ -n "$pr_state_raw" ]; then
-              pr_number="$marker_pr"
-              pr_state="$pr_state_raw"
-              pr_from_marker="true"
-              # Issue #555: the step resolution below adopts this PR only
-              # when it carries board:owned and its head is in this
-              # repository.
-              pr_owned="$(jq -r --arg repo "$GITHUB_REPOSITORY" "$BOARD_PR_OWNED_JQ" \
-                "$RUNNER_TEMP/board-marker-pr.json")"
+          if [[ "$marker_pr" =~ ^[0-9]+$ ]]; then
+            if gh api "repos/$GITHUB_REPOSITORY/pulls/$marker_pr" \
+                > "$RUNNER_TEMP/board-marker-pr.json" 2> "$RUNNER_TEMP/board-marker-pr.err"; then
+              # BOARD_PR_STATE_JQ / BOARD_PR_OWNED_JQ -- see this workflow's
+              # top-level env: block.
+              pr_state_raw="$(jq -r "$BOARD_PR_STATE_JQ" "$RUNNER_TEMP/board-marker-pr.json")"
+              if [ -n "$pr_state_raw" ]; then
+                pr_number="$marker_pr"
+                pr_state="$pr_state_raw"
+                pr_from_marker="true"
+                # Issue #555: the step resolution below adopts this PR only
+                # when it carries board:owned and its head is in this
+                # repository.
+                pr_owned="$(jq -r --arg repo "$GITHUB_REPOSITORY" "$BOARD_PR_OWNED_JQ" \
+                  "$RUNNER_TEMP/board-marker-pr.json")"
+              fi
+            elif ! grep -qE 'HTTP 404' "$RUNNER_TEMP/board-marker-pr.err"; then
+              cat "$RUNNER_TEMP/board-marker-pr.err" >&2
+              echo "::error::board-loop: could not look up PR #$marker_pr, named by issue #$ISSUE_NUMBER's board item marker -- resume stops here rather than re-derive the item's step without it (#564)."
+              exit 1
             fi
           fi
 
@@ -475,11 +505,16 @@ jobs:
           # disqualified -- contracts/resume-recovery.md "PR recovery").
           pr_from_fallback="false"
           if [ -z "$pr_number" ]; then
-            fallback_number="$(gh api "repos/$GITHUB_REPOSITORY/issues" -X GET --paginate \
+            if ! gh api "repos/$GITHUB_REPOSITORY/issues" -X GET --paginate \
                 -f state=open -f labels=board:owned \
-                --jq '.[] | {number, body}' 2>/dev/null | jq -s '.' \
-              | jq -r --arg n "$ISSUE_NUMBER" \
-                '[.[] | select((.body // "") | test("(?:Fixes|fixes) #" + $n + "\\b"))] | (.[0].number // empty)')"
+                --jq '.[] | {number, body}' | jq -s '.' \
+                > "$RUNNER_TEMP/board-owned-prs.json"; then
+              echo "::error::board-loop: could not search the open board:owned pull requests for issue #$ISSUE_NUMBER -- resume stops here rather than re-derive the item's step without them (#564)."
+              exit 1
+            fi
+            fallback_number="$(jq -r --arg n "$ISSUE_NUMBER" \
+                '[.[] | select((.body // "") | test("(?:Fixes|fixes) #" + $n + "\\b"))] | (.[0].number // empty)' \
+                "$RUNNER_TEMP/board-owned-prs.json")"
             if [ -n "$fallback_number" ]; then
               pr_number="$fallback_number"
               pr_state="OPEN"
@@ -547,7 +582,7 @@ jobs:
               # it to a human. select() never picks it while its PR may
               # still be open (board_eligibility._awaiting_merge_holds),
               # so this is reached only on a race (reopened between the
-              # two lookups) or a lookup that failed here. Either way it
+              # two lookups) or a lookup that 404ed here (#564). Either way it
               # resolves to awaiting-merge itself, which no job consumes:
               # a no-op run. Never fix/review/readiness (that would re-post
               # the report or re-review a PR a human now owns), never the

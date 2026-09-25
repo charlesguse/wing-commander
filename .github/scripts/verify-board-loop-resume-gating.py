@@ -96,6 +96,18 @@ repository, is not a board item (and its issue's comments are never
 fetched). A simulator scenario pins that a select job failed in resume
 runs nothing after it.
 
+WHAT IT CHECKS (#564)
+---------------------
+The same rule for the other live lookups: select's PR-state lookup, and
+resume's marker-PR lookup, board:owned fallback search and branch
+`git ls-remote`. Statically, none may drop stderr or `||`-swallow, each
+must be followed by an `::error::` + `exit 1` branch, and the "not found"
+test must be there (HTTP 404 for a PR, ls-remote exit 2 for a branch).
+Under the stub gh (plus a stub git): a 404 leaves select's state absent
+and resume's meaning unchanged (falls to the fallback, then branch, then
+triage) and the step succeeds; a 500, a failed fallback search, or
+ls-remote exit 128 fails the step with `::error::` and no decision output.
+
 --self-test mutates the shipped workflow text (drops `!cancelled()`, a
 result guard, the breach exclusion, the breach output, restores main's
 pre-#525 conditions, ...) and asserts every mutation fails.
@@ -985,6 +997,56 @@ def fetch_handling_findings(doc):
     return findings
 
 
+# #564: the other live lookups that feed select's in-flight decision or
+# resume's step resolution. (job, step id, needle, what, text that must
+# follow the lookup in the same step: its "not found" test).
+_LIVE_LOOKUPS = (
+    ("select", "select", 'gh api "repos/$GITHUB_REPOSITORY/pulls/$pr_number"',
+     "PR-state lookup", "grep -qE 'HTTP 404'"),
+    ("select", "resume", 'gh api "repos/$GITHUB_REPOSITORY/pulls/$marker_pr"',
+     "marker-PR lookup", "grep -qE 'HTTP 404'"),
+    ("select", "resume", "-f state=open -f labels=board:owned",
+     "board:owned fallback search", None),
+    ("select", "resume", "git ls-remote --exit-code --heads origin",
+     "branch lookup", '-ne 2 ]'),
+)
+_SWALLOWS = ("2>/dev/null", "2>&1", "|| continue", "|| true", "|| echo")
+
+
+def lookup_handling_findings(doc):
+    """#564: each live lookup keeps its stderr (no /dev/null), has no `||`
+    swallow, tells "not found" apart where one exists, and is followed in
+    its step by an ::error:: + `exit 1` branch. The stub-gh run in
+    fetch_behaviour_findings() proves the behaviour; this names the line."""
+    findings = []
+    for job, step_id, needle, what, not_found in _LIVE_LOOKUPS:
+        where = "{0}/{1}: {2}".format(job, step_id, what)
+        run = _step_run(doc, job, step_id)
+        at = run.find(needle)
+        if at < 0:
+            findings.append("{0} not found (#564)".format(where))
+            continue
+        lines = run.split("\n")
+        idx = run.count("\n", 0, at)
+        first = idx
+        while first > 0 and lines[first - 1].rstrip().endswith("\\"):
+            first -= 1
+        last = idx
+        while last < len(lines) - 1 and lines[last].rstrip().endswith("\\"):
+            last += 1
+        stmt = "\n".join(lines[first:last + 1])
+        for bad in _SWALLOWS:
+            if bad in stmt:
+                findings.append("{0} swallows its failure with `{1}` (#564)".format(where, bad))
+        rest = "\n".join(lines[last + 1:last + 25])
+        if not_found and not_found not in rest:
+            findings.append("{0} does not tell \"not found\" (`{1}`) apart from other errors "
+                            "(#564)".format(where, not_found))
+        if "::error::" not in rest or "exit 1" not in rest:
+            findings.append("{0} has no ::error:: + `exit 1` failure branch (#564)".format(where))
+    return findings
+
+
 _STUB_GH = r"""#!/usr/bin/env bash
 # Gate 97 stub gh (#557). Emits the already --jq-projected lines.
 echo "gh $*" >> "$STUB_LOG"
@@ -1000,13 +1062,33 @@ case "$*" in
     fi
     cat "$STUB_COMMENTS" ;;
   "api repos/$GITHUB_REPOSITORY/issues/"*"/timeline"*) ;;
-  "api repos/$GITHUB_REPOSITORY/issues -X GET"*"labels=board:owned"*) ;;
+  "api repos/$GITHUB_REPOSITORY/issues -X GET"*"labels=board:owned"*)
+    if [ -n "${STUB_OWNED_FAIL:-}" ]; then echo "gh: Server Error (HTTP $STUB_OWNED_FAIL)" >&2; exit 1; fi
+    if [ -n "${STUB_OWNED:-}" ]; then cat "$STUB_OWNED"; fi ;;
   "api repos/$GITHUB_REPOSITORY/issues -X GET"*)
     echo '{"number":7,"author":{"login":"alice"},"authorAssociation":"OWNER","labels":[],"state":"OPEN","createdAt":"2026-01-01T00:00:00Z"}'
     echo '{"number":8,"author":{"login":"alice"},"authorAssociation":"OWNER","labels":[],"state":"OPEN","createdAt":"2026-01-02T00:00:00Z"}' ;;
-  "api repos/$GITHUB_REPOSITORY/pulls/"*) exit 1 ;;
+  "api repos/$GITHUB_REPOSITORY/pulls/"*)
+    case "${STUB_PULLS:-404}" in
+      ok) cat "$STUB_PR" ;;
+      404) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+      *) echo "gh: Server Error (HTTP $STUB_PULLS)" >&2; exit 1 ;;
+    esac ;;
   "issue comment"*) ;;
   *) echo "stub gh: unexpected call: $*" >&2; exit 3 ;;
+esac
+"""
+
+# #564: resume's branch lookup. Exit 2 is --exit-code's "no such ref";
+# 128 is what git gives for an unreachable remote or bad credentials.
+_STUB_GIT = r"""#!/usr/bin/env bash
+echo "git $*" >> "$STUB_LOG"
+case "$1" in
+  ls-remote)
+    rc="${STUB_LS_REMOTE_RC:-2}"
+    if [ "$rc" = 128 ]; then echo "fatal: unable to access 'origin': Could not resolve host" >&2; fi
+    exit "$rc" ;;
+  *) echo "stub gh: unexpected call: git $*" >&2; exit 3 ;;
 esac
 """
 
@@ -1043,6 +1125,35 @@ def _fetch_cases():
                 return "step failed (rc {0}): {1}".format(rc, out.strip().splitlines()[-3:])
             if want is not None and outputs.get(key) != want:
                 return "expected {0}={1}, got {2!r}".format(key, want, outputs.get(key))
+            return None
+        return check
+
+    pr_marker = {"STUB_COMMENTS": "{tmp}/comments-pr.jsonl", "STUB_PR": "{tmp}/pr-open-owned.json"}
+
+    def lookup_failed(key):
+        # #564: a failed lookup other than "not found" fails the step with
+        # ::error:: and writes no decision output at all.
+        def check(rc, out, outputs, log, rt):
+            if rc == 0:
+                return "step succeeded on a failed lookup (#564)"
+            if "::error::" not in out:
+                return "step failed without an ::error:: annotation (#564)"
+            if key in outputs:
+                return "step still wrote {0}={1!r} (#564)".format(key, outputs[key])
+            return None
+        return check
+
+    def pr_states(want):
+        def check(rc, out, outputs, log, rt):
+            if rc != 0:
+                return "step failed (rc {0}): {1}".format(rc, out.strip().splitlines()[-3:])
+            try:
+                with open(os.path.join(rt, "board-eligibility-input.json"), encoding="utf-8") as fh:
+                    got = json.load(fh)["pr_state_by_number"]
+            except (OSError, ValueError, KeyError) as exc:
+                return "no board-eligibility-input.json to inspect: {0}".format(exc)
+            if got != want:
+                return "expected pr_state_by_number {0}, got {1}".format(want, got)
             return None
         return check
 
@@ -1086,6 +1197,33 @@ def _fetch_cases():
          failed_loudly("step", "triage")),
         ("resume: comments fetch succeeds (stub sanity)", "select", "resume", {"ISSUE_NUMBER": "7"},
          None, "", ok_with("step", None)),
+        # #564: select's PR-state lookup and resume's live lookups. The
+        # marker (review, pr 42, branch fix/7-thing) is on every issue.
+        ("select: marker PR 404 -> state absent, select succeeds", "select", "select",
+         dict(pr_marker, STUB_PULLS="404"), None, "", pr_states({})),
+        ("select: marker PR found -> state recorded (stub sanity)", "select", "select",
+         dict(pr_marker, STUB_PULLS="ok"), None, "", pr_states({"42": "OPEN"})),
+        ("select: marker PR lookup fails (HTTP 500)", "select", "select",
+         dict(pr_marker, STUB_PULLS="500"), None, "", lookup_failed("issue-number")),
+        ("resume: marker PR 404, branch absent (ls-remote 2), no fallback -> triage", "select",
+         "resume", dict(pr_marker, ISSUE_NUMBER="7", STUB_PULLS="404", STUB_LS_REMOTE_RC="2"),
+         None, "", ok_with("step", "triage")),
+        ("resume: marker PR 404 -> board:owned fallback adopted", "select", "resume",
+         dict(pr_marker, ISSUE_NUMBER="7", STUB_PULLS="404", STUB_OWNED="{tmp}/owned-prs.jsonl"),
+         None, "", ok_with("pr", "50")),
+        ("resume: marker PR 404, branch present (ls-remote 0) -> fix", "select", "resume",
+         dict(pr_marker, ISSUE_NUMBER="7", STUB_PULLS="404", STUB_LS_REMOTE_RC="0"),
+         None, "", ok_with("step", "fix")),
+        ("resume: marker PR found (stub sanity) -> review", "select", "resume",
+         dict(pr_marker, ISSUE_NUMBER="7", STUB_PULLS="ok"), None, "", ok_with("step", "review")),
+        ("resume: marker PR lookup fails (HTTP 500)", "select", "resume",
+         dict(pr_marker, ISSUE_NUMBER="7", STUB_PULLS="500"), None, "", lookup_failed("step")),
+        ("resume: board:owned fallback search fails (HTTP 500)", "select", "resume",
+         dict(pr_marker, ISSUE_NUMBER="7", STUB_PULLS="404", STUB_OWNED_FAIL="500"), None, "",
+         lookup_failed("step")),
+        ("resume: branch lookup fails (ls-remote 128)", "select", "resume",
+         dict(pr_marker, ISSUE_NUMBER="7", STUB_PULLS="404", STUB_LS_REMOTE_RC="128"), None, "",
+         lookup_failed("step")),
         ("prove-gate: owned PR, marker present -> prove", "prove-gate", "gate", {}, owned, "",
          ok_with("eligible", "true")),
         ("prove-gate: owned PR, comments fetch fails", "prove-gate", "gate", {}, owned, "502",
@@ -1099,11 +1237,11 @@ def _fetch_cases():
     ]
 
 
-def _marker_comment_line():
+def _marker_comment_line(pr=None, branch=None):
     return json.dumps({
         "created_at": "2026-01-05T00:00:00Z", "user": {"login": BOT_LOGIN, "type": "Bot"},
         "body": "<!-- wing-commander-board-item: " + json.dumps(
-            {"step": "review", "round": 1, "pr": None, "branch": None,
+            {"step": "review", "round": 1, "pr": pr, "branch": branch,
              "base_sha": None}) + " -->"})
 
 
@@ -1133,6 +1271,18 @@ def fetch_behaviour_findings(doc):
         with open(gh, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(_STUB_GH)
         os.chmod(gh, 0o755)
+        git = os.path.join(bindir, "git")
+        with open(git, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(_STUB_GIT)
+        os.chmod(git, 0o755)
+        with open(os.path.join(tmp, "comments-pr.jsonl"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(_marker_comment_line(pr=42, branch="fix/7-thing") + "\n")
+        with open(os.path.join(tmp, "pr-open-owned.json"), "w", encoding="utf-8") as fh:
+            json.dump({"number": 42, "state": "open", "merged": False,
+                       "labels": [{"name": "board:owned"}],
+                       "head": {"repo": {"full_name": _STUB_REPO}}}, fh)
+        with open(os.path.join(tmp, "owned-prs.jsonl"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(json.dumps({"number": 50, "body": "Fixes #7"}) + "\n")
         comments = os.path.join(tmp, "comments.jsonl")
         with open(comments, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(_marker_comment_line() + "\n")
@@ -1154,9 +1304,10 @@ def fetch_behaviour_findings(doc):
                    "BOARD_PR_OWNED_JQ": str(env_block.get("BOARD_PR_OWNED_JQ", "")),
                    "BOARD_PR_STATE_JQ": str(env_block.get("BOARD_PR_STATE_JQ", "")),
                    "STUB_LOG": log, "STUB_COMMENTS": comments,
-                   "STUB_COMMENTS_FAIL": fail, "STUB_FAIL_ISSUE": "",
+                   "STUB_COMMENTS_FAIL": fail, "STUB_FAIL_ISSUE": "", "STUB_PULLS": "404",
+                   "STUB_OWNED": "", "STUB_OWNED_FAIL": "", "STUB_LS_REMOTE_RC": "2",
                    "PR_BODY": "Fixes #7", "PR_NUMBER": "42", "MERGED": "true"}
-            env.update(env_over)
+            env.update({k: v.replace("{tmp}", tmp) for k, v in env_over.items()})
             rc, out, outputs, _summary = run_step(bash, run, workdir, env, runner_temp)
             with open(log, encoding="utf-8") as fh:
                 gh_log = fh.read()
@@ -1179,7 +1330,8 @@ def all_findings(text, table=None, scripts_root=ROOT):
     return (static_findings(doc) + simulation_findings(doc, table)
             + resume_findings(doc, scripts_root) + select_lookup_findings(doc, scripts_root)
             + owned_jq_findings(doc, scripts_root) + marker_reader_findings(doc)
-            + fetch_handling_findings(doc) + fetch_behaviour_findings(doc))
+            + fetch_handling_findings(doc) + lookup_handling_findings(doc)
+            + fetch_behaviour_findings(doc))
 
 
 def print_table(table):
@@ -1198,6 +1350,44 @@ def print_table(table):
 # ---------------------------------------------------------------------------
 # Self-test
 # ---------------------------------------------------------------------------
+
+# #564: the four live lookups as shipped, and as they were before #564.
+_SELECT_PR_LOOKUP = (
+    "              if ! gh api \"repos/$GITHUB_REPOSITORY/pulls/$pr_number\" \\\n"
+    "                  > \"$RUNNER_TEMP/board-lookup-pr.json\" 2> \"$RUNNER_TEMP/board-lookup-pr.err\"; then\n"
+    "                if grep -qE 'HTTP 404' \"$RUNNER_TEMP/board-lookup-pr.err\"; then\n"
+    "                  continue\n"
+    "                fi\n"
+    "                cat \"$RUNNER_TEMP/board-lookup-pr.err\" >&2\n")
+_SELECT_PR_LOOKUP_PRE_564 = (
+    "              gh api \"repos/$GITHUB_REPOSITORY/pulls/$pr_number\" \\\n"
+    "                > \"$RUNNER_TEMP/board-lookup-pr.json\" 2>/dev/null || continue\n"
+    "              if false; then\n")
+_RESUME_PR_LOOKUP = (
+    "            if gh api \"repos/$GITHUB_REPOSITORY/pulls/$marker_pr\" \\\n"
+    "                > \"$RUNNER_TEMP/board-marker-pr.json\" 2> \"$RUNNER_TEMP/board-marker-pr.err\"; then\n")
+_RESUME_PR_LOOKUP_PRE_564 = (
+    "            if gh api \"repos/$GITHUB_REPOSITORY/pulls/$marker_pr\" \\\n"
+    "                > \"$RUNNER_TEMP/board-marker-pr.json\" 2>/dev/null; then\n")
+_RESUME_FALLBACK = (
+    "            if ! gh api \"repos/$GITHUB_REPOSITORY/issues\" -X GET --paginate \\\n"  # wc-pagination-exempt: Gate 97 self-test mutation text, not a real invocation
+    "                -f state=open -f labels=board:owned \\\n"
+    "                --jq '.[] | {number, body}' | jq -s '.' \\\n"
+    "                > \"$RUNNER_TEMP/board-owned-prs.json\"; then\n")
+# Pre-#564 this sat bare in a $(...) assignment: under the runner's
+# `bash -e` plus pipefail a failure still stopped the step, but silently.
+_RESUME_FALLBACK_PRE_564 = (
+    "            gh api \"repos/$GITHUB_REPOSITORY/issues\" -X GET --paginate \\\n"  # wc-pagination-exempt: Gate 97 self-test mutation text, not a real invocation
+    "                -f state=open -f labels=board:owned \\\n"
+    "                --jq '.[] | {number, body}' 2>/dev/null | jq -s '.' \\\n"
+    "                > \"$RUNNER_TEMP/board-owned-prs.json\"\n"
+    "            if false; then\n")
+_RESUME_LS_REMOTE = (
+    "            git ls-remote --exit-code --heads origin \"$marker_branch\" >/dev/null \\\n"
+    "              2> \"$RUNNER_TEMP/board-ls-remote.err\" || ls_remote_rc=$?\n")
+_RESUME_LS_REMOTE_PRE_564 = (
+    "            git ls-remote --exit-code --heads origin \"$marker_branch\" >/dev/null \\\n"
+    "              2>&1 || ls_remote_rc=2\n")
 
 PRE_525 = {
     "fix": ("    if: (needs.route.outputs.decision == 'fix' || (needs.select.outputs.step == 'fix' "
@@ -1346,6 +1536,31 @@ def _mutations(text):
         'if false; then')
     sub("prove-gate ownership read off the wrong object",
         "jq '.pull_request' \"$GITHUB_EVENT_PATH\"", "jq '.' \"$GITHUB_EVENT_PATH\"")
+    # #564: each live lookup restored to its pre-#564 swallow, and each
+    # "not found" test widened or broken.
+    sub("select PR-state lookup swallowed with || continue (pre-#564)",
+        _SELECT_PR_LOOKUP, _SELECT_PR_LOOKUP_PRE_564)
+    sub("select PR-state lookup treats every error as 404",
+        "grep -qE 'HTTP 404' \"$RUNNER_TEMP/board-lookup-pr.err\"", "true")
+    sub("select PR-state lookup fails on a 404",
+        "\"$RUNNER_TEMP/board-lookup-pr.err\"; then\n                  continue\n",
+        "\"$RUNNER_TEMP/board-lookup-pr.err\"; then\n                  exit 1\n")
+    # Pre-#564 had no failure branch either: stderr gone, every error "absent".
+    muts.append(("resume marker-PR lookup swallowed to /dev/null (pre-#564)",
+                 text.replace(_RESUME_PR_LOOKUP, _RESUME_PR_LOOKUP_PRE_564, 1).replace(
+                     "elif ! grep -qE 'HTTP 404' \"$RUNNER_TEMP/board-marker-pr.err\"; then",
+                     "elif false; then", 1)))
+    sub("resume marker-PR lookup treats every error as 404",
+        "elif ! grep -qE 'HTTP 404' \"$RUNNER_TEMP/board-marker-pr.err\"; then", "elif false; then")
+    sub("resume board:owned fallback search swallowed (pre-#564)",
+        _RESUME_FALLBACK, _RESUME_FALLBACK_PRE_564)
+    sub("resume board:owned fallback search failure branch without exit 1",
+        "without them (#564).\"\n              exit 1\n", "without them (#564).\"\n")
+    sub("resume branch lookup swallowed (pre-#564)", _RESUME_LS_REMOTE, _RESUME_LS_REMOTE_PRE_564)
+    sub("resume branch lookup treats every nonzero exit as 'no such ref'",
+        'elif [ "$ls_remote_rc" -ne 2 ]; then', "elif false; then")
+    sub("resume branch lookup fails on exit 2 (no such ref)",
+        'elif [ "$ls_remote_rc" -ne 2 ]; then', 'elif [ "$ls_remote_rc" -ne 0 ]; then')
     sub("select eligibility payload without bot_login",
         ",\n              bot_login: $bot_login}", "}")
     # main's pre-#525 conditions, verbatim.
