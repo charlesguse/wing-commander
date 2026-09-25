@@ -1,4 +1,4 @@
-# Feature Specification: A never-unblocking merge gate is named, and the unattended run can be proven without cutting a release
+# Feature Specification: A never-unblocking merge gate is named
 
 **Feature Branch**: `070-blocked-gate-dry-run`
 
@@ -6,7 +6,7 @@
 
 **Status**: Draft
 
-**Input**: User description: "unattended E2E gates: containment verdict can drop its own evidence, no login-leak fixture, and the pause switch blocks the validation run" (lifecycle issue #533, routed from the board loop; originating review of #389 against spec 055). The two findings still open after #401, #469 and #523: (1) a merge gate whose pull request is permanently blocked with an unresolved check rollup is waited on until the whole poll budget expires and then reported as a generic timeout instead of a gate stall naming the gate and the pull request; (2) the pause switch gates every auto-release job, so the feature's own validation dispatch requires clearing it, and a passing validation run then goes on to decide a version and dispatch a real release — spec 055's FR-028 ("the switch stays set until one unattended run has reached `stage:done`") cannot be satisfied as written until a release-free validation path is decided.
+**Input**: User description: "unattended E2E gates: containment verdict can drop its own evidence, no login-leak fixture, and the pause switch blocks the validation run" (lifecycle issue #533, routed from the board loop; originating review of #389 against spec 055). Two findings were still open after #401, #469 and #523: (1) a merge gate whose pull request is permanently blocked with an unresolved check rollup is waited on until the whole poll budget expires and then reported as a generic timeout instead of a gate stall naming the gate and the pull request; (2) the pause switch gates every auto-release job, so the feature's own validation dispatch requires clearing it, and a passing validation run then goes on to decide a version and dispatch a real release. The clarification round on #533 scoped this spec to (1) alone and deferred (2) — see Clarifications Q2 and Q3.
 
 ## Context
 
@@ -23,8 +23,20 @@ reporting `EXPECTED` read as a resolved failure — was fixed in #523. A
 related gap in the slug fallback's 404 handling is tracked separately as
 #482.
 
-What remains is one behaviour and one contradiction, and neither is
-fix-shaped: both turn on a trade-off the owner has to settle.
+What remains in scope here is the second half of that fifth finding: a merge
+gate blocked on required checks that never report a result is indistinguishable,
+in the report a maintainer reads afterwards, from the pipeline under test simply
+being slow.
+
+### Scope
+
+This spec covers the empty-rollup blocked gate stall and nothing else. The
+sixth finding — that the pause switch gates the feature's own validation
+dispatch, and that a passing validation run cuts a real release — was ruled
+out of scope in the clarification round on #533. The release-free dispatch
+mode, spec 055's FR-028/FR-029 resume condition, and its still-open
+validation tasks (T011, T020, T022) are therefore untouched by this feature
+and can return as their own `spec-request`.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -81,91 +93,6 @@ inside the allowance still merges. No live run is required.
 
 ---
 
-### User Story 2 - Proving the unattended run without cutting a release (Priority: P2)
-
-A maintainer wants to prove that the unattended end-to-end verification works
-— the three gates pass unattended, the clarification question is answered, the
-test repository's issue closes `stage:done`. Today that proof is unreachable
-without a side effect: the pause switch gates the detect job and every job
-after it, so a dispatch while it is set does nothing at all; and once the
-switch is cleared, an attempt that passes goes straight on to decide a version
-and dispatch a real release. The maintainer must therefore be ready to ship a
-release before they can find out whether the verification works.
-
-After this feature, the maintainer can dispatch the verification in a mode
-that stops after the verdict: the same gates, the same verdict, the same
-report — and no version decided and no release dispatched, whatever the
-verdict says.
-
-**Why this priority**: it unblocks the live proofs spec 055 still owes (its
-T011, T020 and T022), which are the only evidence that the unattended path
-works at all. It is P2 rather than P1 because the diagnostic in User Story 1
-is what makes those proofs readable when they fail.
-
-**Independent Test**: dispatch the verification in the release-free mode
-against the test repository and confirm the verdict is produced and reported
-while no release tag is created and no release dispatch occurs; then confirm
-an ordinary dispatch still releases on a pass.
-
-**Acceptance Scenarios**:
-
-1. **Given** a maintainer dispatches the verification in the release-free
-   mode, **When** the verdict is `pass`, **Then** no version is decided, no
-   release is dispatched, and the run still reports the verdict.
-2. **Given** the same dispatch, **When** the verdict is any failure outcome,
-   **Then** the run reports it exactly as an ordinary attempt would.
-3. **Given** a run in the release-free mode, **When** its report or summary is
-   read, **Then** it states plainly that this run cut no release, so the
-   absent release is not read as a failure.
-4. **Given** an ordinary scheduled or on-demand attempt (not the release-free
-   mode), **When** the verdict is `pass`, **Then** a version is decided and the
-   release is dispatched exactly as today.
-5. **Given** any configuration a scheduled run reads, **When** the schedule
-   fires, **Then** the release-free mode is off — it can only ever be turned on
-   by an explicit act at dispatch time, so it can never silently suppress a
-   real release.
-
----
-
-### User Story 3 - The resume condition can actually be followed (Priority: P3)
-
-A maintainer follows spec 055's runbook to retire the pause switch. Today the
-instructions fold back on themselves: FR-028 says the switch stays set until
-one unattended run has reached `stage:done`, but no run can reach `stage:done`
-while the switch is set, and the run that would prove it also cuts a release.
-The quickstart now says this plainly (#401), which makes the contradiction
-visible but does not remove it.
-
-After this feature, the resume condition names a sequence a maintainer can
-execute: which dispatch proves the feature, whether that proof counts towards
-clearing the switch, and in what order the evidence is recorded and the switch
-cleared.
-
-**Why this priority**: it is documentation and requirement reconciliation
-rather than behaviour, and it depends on the answers that User Story 2's mode
-settles. It still matters: spec 055's remaining open tasks are unrunnable
-until it is resolved, and a requirement that cannot be satisfied is a
-requirement nobody can check.
-
-**Independent Test**: read the runbook and the resume condition end to end and
-confirm every step is executable in the stated order with no step that
-requires the switch to be simultaneously set and cleared; confirm spec 055's
-open validation tasks name a dispatch path that exists.
-
-**Acceptance Scenarios**:
-
-1. **Given** the reconciled resume condition, **When** a maintainer reads it,
-   **Then** it states which run clears the pause switch and whether a
-   release-free validation run satisfies it.
-2. **Given** spec 055's still-open validation tasks (T011, T020, T022),
-   **When** they are read after this feature, **Then** each names a dispatch
-   path that exists and states whether following it cuts a release.
-3. **Given** the runbook's dispatch step, **When** a maintainer reaches it,
-   **Then** the release consequence of each mode is stated at that step, not
-   only in a prerequisite paragraph further up.
-
----
-
 ### Edge Cases
 
 - **A gate flips between "blocked with nothing reported" and "blocked with
@@ -177,10 +104,13 @@ open validation tasks name a dispatch path that exists.
 - **Two gates are blocked at once.** Only one verdict can be written; the
   first gate to exhaust its allowance is the one reported, and its evidence
   must not imply the other gates were healthy.
-- **The waiting allowance would outlast the poll budget.** The diagnosis must
-  still be reached: an allowance that cannot be exhausted before the budget
-  expires gives back exactly the generic timeout this feature exists to
-  remove.
+- **The waiting allowance is reached late in the poll budget.** The diagnosis
+  must still be reached and written: 20 minutes of allowance against a
+  135-minute poll budget leaves about 115 minutes, so a gate that is blocked
+  from the attempt's first observation is diagnosed with the budget barely
+  touched, and even a gate that only becomes blocked late has its allowance
+  bounded by the budget rather than silently giving back the generic timeout
+  this feature exists to remove.
 - **A read failure while a gate is blocked.** Read and write failures are
   already bounded separately (three consecutive failures ends the attempt at
   that gate). A failed read is not an observation of "still blocked" and must
@@ -188,14 +118,6 @@ open validation tasks name a dispatch path that exists.
 - **The run under test reaches a terminal state while a gate is still
   blocked** — for example the issue is closed or labelled stalled. The
   terminal state wins, as it does today.
-- **A release-free dispatch collides with a scheduled attempt.** The existing
-  single-run concurrency for this verification is unchanged: one queues behind
-  the other, so two resets of the test repository still cannot race.
-- **A release-free dispatch while the pause switch is set** — see
-  Clarification Q2.
-- **A maintainer dispatches the release-free mode and later wants the
-  release.** Nothing is consumed: the next ordinary attempt for the same
-  unreleased head behaves as it would have.
 
 ## Requirements *(mandatory)*
 
@@ -214,11 +136,12 @@ open validation tasks name a dispatch path that exists.
   with a gate-stall verdict that names that gate using the same gate names the
   existing gate-stall reasons use, names the pull request, and states that its
   required checks never reported a result.
-- **FR-004**: The waiting allowance MUST be short enough that the diagnosis is
-  always reached before the attempt's poll budget expires, and long enough that
-  a pull request whose checks are merely slow to be created is never declared
-  stalled. [NEEDS CLARIFICATION: how long the allowance should be — see
-  Clarification Q1]
+- **FR-004**: The waiting allowance MUST be 20 minutes of continuous
+  blocked-with-nothing-resolved observations, measured per gate. Twenty minutes
+  is well past any plausible check-creation delay, so a pull request whose
+  checks are merely slow to be created is never declared stalled; and it leaves
+  about 115 minutes of the attempt's 135-minute poll budget, so the gate-stall
+  diagnosis is always reached and written before the budget expires.
 - **FR-005**: The waiting allowance MUST be tracked per gate and MUST reset only
   when that gate makes observable progress — its pull request merges or leaves
   the blocked-with-unresolved-checks state — never merely because the shape or
@@ -238,44 +161,6 @@ open validation tasks name a dispatch path that exists.
   (merge); an allowance reset by observable progress; and the unchanged generic
   timeout.
 
-#### Proving the run without cutting a release
-
-- **FR-010**: A maintainer MUST be able to dispatch the end-to-end verification
-  so that it stops after the verdict: no version decided, no release
-  dispatched, whatever the verdict.
-- **FR-011**: A release-free dispatch MUST exercise the same verification path
-  an ordinary attempt exercises — the same gates, the same verdict outcomes,
-  the same durable report — so that its pass is evidence about the real path
-  and not about a parallel one.
-- **FR-012**: A release-free run MUST state in what it reports that it cut no
-  release, so that the absent release is never read as a failure or as a
-  release that silently failed to dispatch.
-- **FR-013**: The ordinary scheduled and on-demand path MUST be unchanged: a
-  passing verdict still decides a version and dispatches the release.
-- **FR-014**: The release-free mode MUST default to off and MUST only be
-  selectable by an explicit act at dispatch time, so that no persisted
-  configuration can cause a scheduled attempt to silently skip a release it
-  would otherwise have cut.
-- **FR-015**: The relationship between the pause switch and a release-free
-  dispatch MUST be stated and enforced. [NEEDS CLARIFICATION: whether a
-  release-free dispatch runs while the pause switch is set, or the switch must
-  still be cleared first — see Clarification Q2]
-
-#### Making the resume condition satisfiable
-
-- **FR-016**: Spec 055's resume condition (its FR-028 and FR-029, and the
-  corresponding runbook scenario) MUST be restated so that the sequence it
-  describes is executable, naming which run clears the pause switch and in what
-  order the evidence is recorded. [NEEDS CLARIFICATION: whether a release-free
-  validation run satisfies the resume condition, or only a real releasing run
-  does — see Clarification Q3]
-- **FR-017**: The runbook MUST state the release consequence of each dispatch
-  mode at the dispatch step itself, not only in a prerequisite further up the
-  page.
-- **FR-018**: Spec 055's still-open validation tasks (T011, T020 and T022) MUST
-  each name a dispatch path that exists after this feature and state whether
-  following it cuts a release.
-
 ### Key Entities
 
 - **Merge gate**: one of the three pull-request gates the unattended run must
@@ -288,8 +173,6 @@ open validation tasks name a dispatch path that exists.
 - **Attempt verdict**: the existing record of an attempt's outcome — outcome,
   failing check, expectation, evidence. This feature adds a new gate-stall
   reason, not a new outcome value.
-- **Dispatch mode**: whether this attempt is permitted to proceed past the
-  verdict to deciding a version and dispatching a release.
 
 ## Success Criteria *(mandatory)*
 
@@ -301,20 +184,10 @@ open validation tasks name a dispatch path that exists.
 - **SC-002**: 100% of the decision branches this feature introduces are covered
   by checked-in fixtures that fail when the behaviour regresses; none of the
   branches relies on a manual demonstration as its evidence.
-- **SC-003**: A maintainer can obtain a full end-to-end verdict for the
-  unattended run with zero releases cut — no release tag created and no release
-  dispatch attributable to the validating run.
-- **SC-004**: Following the resume condition from a cold start requires no step
-  that is impossible as written: every step is executable in the stated order,
-  and the pause switch is never required to be both set and cleared at the same
-  point.
-- **SC-005**: Attempts in which no merge gate is blocked report exactly the
+- **SC-003**: Attempts in which no merge gate is blocked report exactly the
   outcome they report today — the pass path, the existing four gate-stall
   reasons, the infrastructure and pipeline-defect outcomes, and the generic
   timeout are all unchanged.
-- **SC-006**: Spec 055's three still-open validation tasks are each runnable by
-  one maintainer following the runbook, with the release consequence known
-  before the dispatch.
 
 ## Assumptions
 
@@ -335,6 +208,8 @@ open validation tasks name a dispatch path that exists.
   reuses them rather than introducing new labels for the same gates.
 - One attempt writes one verdict. When more than one thing is wrong, the first
   condition to be detected is the one reported, as today.
+- The poll budget this feature's allowance must fit inside is spec 055's
+  existing 135-minute (8100-second) budget; this feature does not change it.
 - The findings from the originating review that are already fixed are out of
   scope: the containment verdict's masked-login evidence and the login-leak
   fixture (#401), the pass-path reads that degraded to `null` (#469), the
@@ -342,44 +217,47 @@ open validation tasks name a dispatch path that exists.
   context (#523). The slug fallback's missing 404 distinction is tracked as
   #482 and is not re-specified here. The stale "fine-grained" wording in spec
   055's T021 is checked-off history and is left alone.
+- The pause switch, the release-free dispatch mode and spec 055's resume
+  condition are out of scope by the owner's answers to Q2 and Q3; this feature
+  changes nothing about when a release is cut, and a maintainer proving it
+  still faces spec 055's runbook exactly as it stands today.
 - This feature governs this repository's own release verification — the
   consuming instrument, not the published stage contract — so no adopter-facing
   input or output changes shape as a result of it.
 
 ## Dependencies
 
-- Spec 055 (`specs/055-unattended-e2e-gates/`) — this feature amends its
-  FR-028/FR-029 resume condition, its runbook, and its open validation tasks,
-  and extends the gate-stall taxonomy it defined.
-- Spec 045 (`specs/045-auto-release-verified-head/`) — owns the auto-release
-  verdict, report and release-dispatch contracts this feature's release-free
-  mode must leave intact for the ordinary path.
+- Spec 055 (`specs/055-unattended-e2e-gates/`) — this feature extends the
+  gate-stall taxonomy it defined and must fit inside its poll budget. Its
+  FR-028/FR-029 resume condition, its runbook and its open validation tasks
+  are out of scope here and are left as they are.
 - Issue #482 — the adjacent read-classification gap; independent, but touching
   the same verification step.
 
 ## Clarifications
 
-Three questions are open. They are recorded here and posted to the lifecycle
-issue; the spec carries `[NEEDS CLARIFICATION]` markers at the requirements
-they govern.
+All three questions posted to lifecycle issue #533 were answered. None remain
+open, and no `[NEEDS CLARIFICATION]` markers remain in this spec.
 
 ### Q1 — How long may a gate sit blocked with nothing resolved before it is called a stall? (FR-004)
 
-The trade-off is a false stall (ending a healthy attempt early because a
+The trade-off was a false stall (ending a healthy attempt early because a
 checks app was slow to create a check) against a wasted attempt (burning the
-full budget and reporting the generic timeout). The allowance has to fit
-inside the attempt's poll budget with room for the verdict to be written.
+full budget and reporting the generic timeout).
+
+**Answer**: 20 minutes of continuous blocked-with-nothing-resolved
+observations, per gate. That is well past any check-creation delay, and it
+leaves about 115 minutes of the 8100-second budget, so the gate-stall
+diagnosis is always reached. Folded into FR-004.
 
 ### Q2 — Does a release-free dispatch run while the pause switch is set? (FR-015)
 
-The pause switch is a kill switch for the whole verification today. Letting
-the release-free mode run past it makes the proof reachable without touching
-the switch, but weakens the switch's meaning to "no releases" rather than "no
-runs".
+**Answer**: out of scope. This spec covers only the empty-rollup blocked gate
+stall. The release-free dispatch mode and the former User Story 2
+(FR-010..FR-015) are dropped; they can return as their own `spec-request`.
 
 ### Q3 — Does a release-free validation run satisfy spec 055's resume condition? (FR-016)
 
-FR-028 of spec 055 requires one unattended run to have reached `stage:done`
-before the switch is cleared. Whether a release-free run is that run decides
-whether the switch can be retired on the strength of a validation dispatch or
-only after a real releasing attempt.
+**Answer**: out of scope for the same reason. The former User Story 3
+(FR-016..FR-018), which restated spec 055's resume condition and its open
+validation tasks, is dropped and can return with Q2's work.

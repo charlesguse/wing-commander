@@ -1,4 +1,4 @@
-# Specification Quality Checklist: A never-unblocking merge gate is named, and the unattended run can be proven without cutting a release
+# Specification Quality Checklist: A never-unblocking merge gate is named
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-09-25
@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,13 +31,19 @@
 
 ## Notes
 
-- Three `[NEEDS CLARIFICATION]` markers remain by design (FR-004, FR-015,
-  FR-016). Each is a trade-off the owner decides, which is why the originating
-  issue was routed as a `spec-request` rather than a local fix; each is
-  recorded in the spec's Clarifications section and posted to lifecycle issue
-  #533 for an answer. They are the only incomplete item above.
+- The three `[NEEDS CLARIFICATION]` markers this spec was drafted with (at
+  FR-004, FR-015 and FR-016) are all resolved by the owner's answers on
+  lifecycle issue #533, recorded in the spec's Clarifications section. Q1
+  fixed the waiting allowance at 20 minutes per gate, now stated in FR-004.
+  Q2 and Q3 ruled the release-free dispatch mode and spec 055's resume
+  condition out of scope, so the former User Stories 2 and 3 and their
+  FR-010..FR-018 were dropped, along with the success criteria, edge cases,
+  key entity and dependency that existed only to serve them. The remaining
+  requirements were left at FR-001..FR-009; the success criteria were
+  renumbered to SC-001..SC-003, which is safe because no plan or tasks
+  artifact references them yet.
 - "The maintainer" in this spec is the repository owner reading a durable
-  failure report or running the release runbook — the non-technical-stakeholder
-  reading is the person deciding whether to act on a failed nightly run, not
-  the person editing the verification.
-- Items marked incomplete require spec updates before `/speckit-plan`.
+  failure report — the non-technical-stakeholder reading is the person
+  deciding whether to act on a failed nightly run, not the person editing the
+  verification.
+- No incomplete items remain; the spec is ready for `/speckit-plan`.
