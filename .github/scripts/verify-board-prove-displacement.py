@@ -10,6 +10,9 @@ from board_prove_displacement import find_undetected_merges  # noqa: E402
 
 MARKER = '<!-- wing-commander-board-item: {{"step": "{step}", "round": 0, "pr": null, "branch": null, "base_sha": null}} -->'
 
+BOT_LOGIN = "wing-commander-bot[bot]"
+BOT_USER = {"login": BOT_LOGIN, "type": "Bot"}
+
 CASES = [
     # A later prove marker exists -- the run genuinely reached prove-gate/
     # prove and recorded something (whether or not it succeeded); not
@@ -18,7 +21,8 @@ CASES = [
         "later prove marker recorded",
         [{"issue": 1, "pr": 101, "merged_at": "2026-01-01T00:00:00Z"}],
         {1: [{"created_at": "2026-01-01T01:00:00Z",
-              "body": "Not proven: -- " + MARKER.format(step="prove")}]},
+              "body": "Not proven: -- " + MARKER.format(step="prove"),
+              "user": BOT_USER}]},
         [],
     ),
     # A later proven marker (success) exists; not flagged.
@@ -26,7 +30,8 @@ CASES = [
         "later proven marker recorded",
         [{"issue": 2, "pr": 201, "merged_at": "2026-01-01T00:00:00Z"}],
         {2: [{"created_at": "2026-01-01T01:00:00Z",
-              "body": "Proven -- " + MARKER.format(step="proven")}]},
+              "body": "Proven -- " + MARKER.format(step="proven"),
+              "user": BOT_USER}]},
         [],
     ),
     # No marker at all after the merge -- the run never even reached
@@ -53,7 +58,7 @@ CASES = [
 def run():
     failures = 0
     for name, merged_prs, issues_by_number, expected in CASES:
-        got = find_undetected_merges(merged_prs, issues_by_number)
+        got = find_undetected_merges(merged_prs, issues_by_number, BOT_LOGIN)
         if got != expected:
             failures += 1
             print("::error::verify-board-prove-displacement: {0}: expected "

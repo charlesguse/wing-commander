@@ -29,8 +29,15 @@ COMPOSITE_REF_RE = re.compile(r"\.github/actions/[A-Za-z0-9._-]+")
 # research.md D5: the module-loading idiom most board helpers are actually
 # loaded by (e.g. board-loop.yml's own `sys.path.insert(0, ".github/scripts")`
 # + `from board_prove import ...`); single- and double-quoted forms both
-# appear in the tree.
-SYS_PATH_SCRIPTS_RE = re.compile(r"""sys\.path\.insert\(\s*0\s*,\s*['"]\.github/scripts['"]\s*\)""")
+# appear in the tree. The fix/review/readiness jobs load helpers from the
+# Gate 98 pristine snapshot instead (#583) --
+# `sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine",
+# "scripts"))` -- so that idiom counts too, or every board_*.py helper those
+# three jobs import (e.g. board_readiness.py) would resolve to no job at all.
+SYS_PATH_SCRIPTS_RE = re.compile(
+    r"""sys\.path\.insert\(\s*0\s*,\s*['"]\.github/scripts['"]\s*\)"""
+    r"""|sys\.path\.insert\(\s*0\s*,\s*os\.path\.join\(\s*os\.environ\[['"]RUNNER_TEMP['"]\]\s*,"""
+    r"""\s*['"]wc-pristine['"]\s*,\s*['"]scripts['"]\s*\)\s*\)""")
 SCRIPT_IMPORT_RE = re.compile(r"^\s*(?:from (\w+) import|import (\w+))\b", re.MULTILINE)
 # A bare script path (e.g. `python3 .github/scripts/board_stand_down.py`) --
 # unambiguous regardless of import style, so it needs no sys.path.insert
