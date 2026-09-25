@@ -22,6 +22,33 @@ The originating issue named three pasted idioms in `.github/workflows/board-loop
 
 The risk is the one `CLAUDE.md`'s own worked example names: a fix that has to land N times, with nothing failing on a drifted copy. `board_item_marker.write_marker()` already changed shape once (issue #555/#580 added the `**Run:**` line); the next change to how a marker is produced has 17 landing sites.
 
+## Clarifications
+
+### Session 2026-09-25
+
+- Q: How should the marker-write bootstrap be consolidated given Gate 98's
+  provenance allowlist — a command-line entrypoint on the existing helper
+  module, a composite action, or a snapshotted shell helper? → A: A
+  command-line entrypoint, invoked as `python3 -I` on the module under the
+  provenance context's own scripts directory — the spelling Gate 98's
+  allowlist already permits (the precedent is
+  `python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_spec_request_body.py"`).
+  Not a composite action: a local composite in the fix, review and
+  readiness jobs still resolves from the untrusted checkout those jobs'
+  agents can write, until #615 lands. (FR-005, FR-002)
+- Q: Should the PR-branch resolution composite be published (a
+  `wing-commander-*` action, whose inputs and outputs become an
+  adopter-pinned compatibility surface under Constitution VII) or internal
+  (under `.github/actions/_shared/`)? → A: Internal, under
+  `.github/actions/_shared/`. Widening the published surface is a
+  deliberate act rather than a convenience, and nothing outside this
+  repository's own board loop calls this idiom. (FR-009)
+- Q: Should the three new checks extend the existing cross-workflow
+  single-home gate's declared-homes list, or be added to each idiom's own
+  nearest existing gate? → A: Extend `verify-single-home-idioms.py`, which
+  is the nearest single-home gate and already carries a declared home per
+  idiom, so "the single-home check" stays one place. (FR-015, FR-010)
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - The marker-write bootstrap has one home (Priority: P1)
@@ -83,6 +110,8 @@ A maintainer (or an agent) pastes a consolidated idiom into a new site. A gate f
 - The `review` job's marker write that computes `next_round` in the caller's shell before rendering: the round is caller state, so the single home takes it as a value and does not derive it.
 - A site that passes `null` for `pr`/`branch`/`base_sha` (the `stalled` markers) versus one that passes integers and strings: the single home must distinguish an absent value from an empty string, since the marker's JSON shape is read back by `read_marker`.
 - A new board-loop job that writes a marker but takes no pristine snapshot: the single home must not silently give it a working-tree helper import that Gate 98 would have refused had it been spelled inline.
+- The marker-write entrypoint is one file reached by two paths (`.github/scripts/` in the working tree, `$RUNNER_TEMP/wc-pristine/scripts/` in the snapshot): it must be part of what the snapshot step copies, so a fix, review or readiness job never falls back to the working-tree copy.
+- Both PR-branch resolve steps are today the first step in their job, before any `actions/checkout` — a local composite under `.github/actions/_shared/` is only resolvable once a checkout has run, so the consolidation has to keep the ordering honest (the resolved branch is what the checkout that follows consumes) rather than resolving the PR from a tree that does not exist yet.
 - The gate's pattern matching a structurally similar but conceptually distinct piece of shell elsewhere in the fleet (the case the existing waiver file exists for) — a false positive must be resolvable in the open, with a reason, not by loosening the pattern.
 - The kill-switch composite is called by six jobs with the same five inputs; a seventh caller is legitimate, a seventh *re-paste* is not. The gate must tell those apart.
 
@@ -94,23 +123,24 @@ A maintainer (or an agent) pastes a consolidated idiom into a new site. A gate f
 - **FR-002**: That single home MUST serve both provenance contexts — the jobs that run helpers from the working tree and the jobs that run them from the pristine snapshot — without either context losing the guarantee it has today. A site inside the fix, review or readiness job MUST continue to resolve its helper from the snapshot taken before any agent step.
 - **FR-003**: The consolidated marker write MUST produce output byte-identical to the current inline spelling for every argument combination the 17 existing sites pass, including the two that resolve a step constant from `board_eligibility`.
 - **FR-004**: The consolidated marker write MUST preserve the distinction between an absent field (`null` in the marker JSON) and an empty string, so `read_marker` reads back what `write_marker` wrote.
-- **FR-005**: The consolidation MUST NOT change any marker's rendered text, the `**Run:**` announcement line, or the order of a comment's contents — this feature moves the idiom, it does not redesign it. [NEEDS CLARIFICATION: how should the marker-write bootstrap be consolidated given Gate 98's provenance allowlist — a command-line entrypoint on the existing helper module invoked from each provenance context's own scripts directory, a composite action, or a shell helper script snapshotted alongside the other helpers?]
+- **FR-005**: The consolidation MUST NOT change any marker's rendered text, the `**Run:**` announcement line, or the order of a comment's contents — this feature moves the idiom, it does not redesign it.
+- **FR-005a**: The marker-write bootstrap's single home MUST be a command-line entrypoint on the existing marker helper module, invoked as `python3 -I` on that module under the calling job's own scripts directory — the working tree for triage, route and prove, and the pristine snapshot for fix, review and readiness. It MUST NOT be a composite action: a local composite resolves from the checkout the fix, review and readiness jobs' agents can write, which is the guarantee Gate 98 exists to hold, and that limitation stands until #615 lands.
 - **FR-006**: PR-branch resolution MUST have exactly one home, and both the `review` job's "Resolve the PR under review" step and the `readiness` job's "Resolve the PR under readiness" step MUST reach it through that home.
 - **FR-007**: The PR-branch single home MUST expose the PR number and the resolved head branch name to its caller, and MUST NOT own the review round — the round remains caller state that the `review` job continues to emit unchanged.
 - **FR-008**: The PR-branch single home MUST fail loudly when the underlying read fails or yields an empty branch name, rather than returning an empty ref that a later checkout would interpret as the default branch.
-- **FR-009**: The PR-branch single home's placement MUST be a deliberate decision about the published contract, recorded in the feature's own artifacts. [NEEDS CLARIFICATION: should the PR-branch resolution composite be published (a `wing-commander-*` action, whose inputs and outputs become an adopter-pinned compatibility surface under Constitution VII) or internal (under `.github/actions/_shared/`, not part of the adopter-pinned surface)?]
+- **FR-009**: The PR-branch single home MUST be internal — it lives under `.github/actions/_shared/` and MUST NOT be published as a `wing-commander-*` action, so its inputs and outputs do not join the adopter-pinned compatibility surface Constitution VII governs. The board loop is its only caller.
 - **FR-010**: A structural check MUST exist for each of the three idioms — kill-switch/stop-request recheck, marker-write bootstrap, PR-branch resolution — that fails when the idiom is re-pasted at a site other than its declared home, anywhere under `.github/workflows/` or `.github/actions/`.
 - **FR-011**: The kill-switch/stop-request recheck MUST gain such a check in this feature even though its home already exists, closing the gap the earlier consolidation left.
 - **FR-012**: Each new check MUST be able to fail its own subject: every failure branch it ships MUST be exercised by a checked-in fixture or a mutation self-test, not by a manual demonstration (Constitution VIII).
 - **FR-013**: Each new check MUST be reachable through the gate registry, MUST run the same subject with the same arguments locally as in CI, and MUST be triggered by changes to the files it checks.
 - **FR-014**: Deviations from a declared home MUST be registrable in the existing single-home waiver file, carrying a file, a check name, a pattern, a count, a tracking issue and a reason — and the waiver MUST be stale-checked in both directions, so a pattern that matches nothing and a count that no longer matches each fail the gate.
-- **FR-015**: Where the new checks live MUST be a single decision applied to all three idioms, so a future maintainer looking for "the single-home check" finds one place. [NEEDS CLARIFICATION: should the three new checks extend the existing cross-workflow single-home gate's declared-homes list, or be added to each idiom's own nearest existing gate?]
+- **FR-015**: The new checks MUST all live in `verify-single-home-idioms.py`, extending its declared-homes list and its per-idiom checks, so a future maintainer looking for "the single-home check" finds one place. A new check MUST NOT be added to some other gate instead.
 - **FR-016**: The consolidation MUST NOT change any observable board-loop behaviour: the same markers are written at the same points, the same refs are checked out, the same jobs pause on the same stop signals.
 - **FR-017**: The full PR-time gate suite MUST pass on the change, including the workflow-comment gates that byte-compare and mutate comment prose.
 
 ### Key Entities
 
-- **Declared home**: the single file that owns an idiom's implementation — a composite action, a helper module entry point, or a shared script — named in the gate that enforces it.
+- **Declared home**: the single file that owns an idiom's implementation — a composite action, a helper module entry point, or a shared script — named in `verify-single-home-idioms.py`'s declared-homes list, which is the one gate that enforces it.
 - **Idiom**: a recognisable shell/Python fragment that has been pasted more than once; identified by a co-occurrence of fragments distinctive enough not to match unrelated code.
 - **Board item marker**: the HTML-comment payload (`step`, `round`, `pr`, `branch`, `base_sha`) the loop appends to its own status comments, plus the `**Run:**` announcement line that precedes it.
 - **Provenance context**: which scripts directory a board-loop step imports helpers from — the working tree, or the read-only pristine snapshot taken from the running commit before any agent step.
@@ -137,7 +167,7 @@ A maintainer (or an agent) pastes a consolidated idiom into a new site. A gate f
 - The `review` job's `round` output and the `readiness` job's lack of one are deliberate, not drift, and stay as they are.
 - The existing single-home waiver file's shape (`{file, check, pattern, count, issue, reason}`) and its both-directions stale check are reused rather than re-invented.
 - Consolidating an idiom that lives entirely inside one file is in the spirit of `CLAUDE.md`'s rule even though the rule's wording is about a *second workflow*; the cost the rule prevents — N landing sites with nothing failing on a drifted copy — is the same.
-- No change to the adopter-facing behaviour of the board loop is intended; whether the adopter-facing *surface* widens is the open question in FR-009.
+- No change to the adopter-facing behaviour of the board loop is intended, and none to the adopter-facing *surface* either: FR-009 keeps the PR-branch home internal, so no new `wing-commander-*` composite is published by this feature.
 - The three consolidations are independently shippable; a plan may sequence them, but none blocks the others.
 
 ## Out of Scope

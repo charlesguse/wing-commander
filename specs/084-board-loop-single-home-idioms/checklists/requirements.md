@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -33,25 +33,25 @@
 
 - Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.
 
-- **3 [NEEDS CLARIFICATION] markers remain**, at the limit and deliberately
-  left for the clarify stage. Each is a trade-off the owner decides, not a
-  gap a reasonable default closes:
-  - **FR-005** — the consolidation mechanism for the marker-write
-    bootstrap. Gate 98 (`verify-board-loop-helper-provenance.py`) allows
-    only three python spellings inside the fix, review and readiness
-    jobs, all resolving under the pristine snapshot; a composite action
-    resolves from a checkout those jobs' agents can write, so the obvious
-    answer for a shell idiom is not obviously the right one here.
-  - **FR-009** — published (`wing-commander-*`) versus internal
-    (`_shared/`) placement for the PR-branch composite. Constitution VII
-    makes a published composite's inputs and outputs an adopter-pinned
-    compatibility surface; widening it is "a deliberate act rather than a
-    convenience", which is precisely an owner's call.
-  - **FR-015** — one home for the new checks versus one check per idiom's
-    nearest existing gate. `CLAUDE.md` says "the nearest existing gate";
-    the existing cross-workflow single-home gate says its remit is
-    cross-workflow duplication. Both readings are defensible and they
-    produce different file layouts.
+- **All 3 [NEEDS CLARIFICATION] markers are resolved** (clarify session
+  2026-09-25, recorded in the spec's Clarifications section). Each was a
+  trade-off the owner decided:
+  - **FR-005 / FR-005a** — the consolidation mechanism for the marker-write
+    bootstrap is a command-line entrypoint on the existing marker helper
+    module, invoked as `python3 -I` on the module under the calling job's
+    own scripts directory. Gate 98
+    (`verify-board-loop-helper-provenance.py`) already permits that
+    spelling; a composite action was ruled out because it resolves from a
+    checkout the fix, review and readiness agents can write, until #615
+    lands.
+  - **FR-009** — internal (`.github/actions/_shared/`), not published.
+    Constitution VII makes a published composite's inputs and outputs an
+    adopter-pinned compatibility surface, and widening it is "a deliberate
+    act rather than a convenience"; the board loop is this idiom's only
+    caller.
+  - **FR-015** — one home for the new checks: they extend
+    `verify-single-home-idioms.py`'s declared-homes list, which already
+    carries one declared home per idiom.
 
 - **Content Quality, "no implementation details"**: this specification names
   concrete files, gates and job names throughout. That is deliberate and
