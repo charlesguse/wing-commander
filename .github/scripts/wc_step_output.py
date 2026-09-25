@@ -6,7 +6,8 @@ that value and starts a new `key=value` line, so a value can set other
 outputs of the same step. clean_output_value() removes every control
 character (Unicode category Cc, which covers CR, LF, NUL, ESC and the C1
 range including NEL) plus the Unicode line and paragraph separators, so a
-value always stays on its own line. write_outputs() is the one place
+value always stays on its own line, and lone surrogates, which would make
+the UTF-8 write fail. write_outputs() is the one place
 board-loop.yml writes such values from Python; the CLI form is for shell:
 
     python3 wc_step_output.py KEY VALUE >> "$GITHUB_OUTPUT"
@@ -19,12 +20,14 @@ _KEY_RE = re.compile(r"[A-Za-z0-9_-]+")
 _LINE_SEPARATORS = (" ", " ")
 
 
-def clean_output_value(value):
-    """`value` as a str with every control character and line/paragraph
-    separator removed."""
+def clean_output_value(value, replacement=""):
+    """`value` as a str with every control character, line/paragraph
+    separator and lone surrogate (category Cs, which cannot be written as
+    UTF-8) replaced by `replacement` (removed by default)."""
     text = "" if value is None else str(value)
-    return "".join(ch for ch in text
-                   if unicodedata.category(ch) != "Cc" and ch not in _LINE_SEPARATORS)
+    return "".join(replacement if (unicodedata.category(ch) in ("Cc", "Cs")
+                                   or ch in _LINE_SEPARATORS) else ch
+                   for ch in text)
 
 
 def output_line(key, value):

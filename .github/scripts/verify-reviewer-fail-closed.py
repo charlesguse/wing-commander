@@ -60,10 +60,13 @@ name how many were not shown.
 
 #583: an out-of-scope finding's title is agent text written to
 $GITHUB_OUTPUT. A title split by CR, LF, CRLF, U+2028 or NEL must not set
-any other output (asserted on the raw $GITHUB_OUTPUT file); a multi-line
-title is dropped by the real extract step as malformed, and alone fails
-the round closed; each filing step reads its body from the fixed path the
-prepare step writes, never from an output; and a finding that quotes
+any other output (asserted on the raw $GITHUB_OUTPUT file), nor may a
+lone surrogate crash the write; the real extract step flattens a title's
+line breaks and tabs to spaces instead of dropping the finding; a finding
+that is still dropped (a lone surrogate in `what`) stops the round
+converging (stall-reason=malformed-findings) and is named in the review
+body; each filing step reads its body from the fixed path the prepare
+step writes, never from an output; and a finding that quotes
 another finding's dedupe marker does not stop it being filed, run through
 wing-commander-durable-failure-issue's real step against a stub gh. One
 mutation per fix must be caught.
@@ -135,11 +138,10 @@ def prepare_workdir(tmproot):
     return workdir, runner_temp
 
 
-def stage_pristine(runner_temp, schema_path=None):
+def stage_pristine(runner_temp):
     """#583: the review job's steps import helpers from the snapshot its
     "Snapshot helper scripts" step takes into $RUNNER_TEMP/wc-pristine
-    (Gate 98), not from the working tree. `schema_path` swaps in another
-    board-review-finding schema (a mutation)."""
+    (Gate 98), not from the working tree."""
     base = os.path.join(runner_temp, PRISTINE_DIR)
     os.makedirs(os.path.join(base, "scripts"), exist_ok=True)
     os.makedirs(os.path.join(base, "schemas"), exist_ok=True)
@@ -147,7 +149,7 @@ def stage_pristine(runner_temp, schema_path=None):
         shutil.copyfile(os.path.join(".github", "scripts", name),
                         os.path.join(base, "scripts", name))
     for name in SHARED_SCHEMAS:
-        shutil.copyfile(schema_path or os.path.join(".github", "schemas", name),
+        shutil.copyfile(os.path.join(".github", "schemas", name),
                         os.path.join(base, "schemas", name))
 
 
@@ -172,6 +174,7 @@ def run_pipeline(extract_script, round_script, compose_script, tmproot,
             BASH, round_script, workdir,
             {"PARSE_FAILED": outputs1.get("parse-failed", ""),
              "IN_SCOPE_COUNT": outputs1.get("in-scope-count", "0"),
+             "DROPPED_COUNT": outputs1.get("dropped-count", ""),
              "ROUND": "1", "ROUND_BUDGET": "5"},
             runner_temp)
         if rc2 != 0:
@@ -179,7 +182,8 @@ def run_pipeline(extract_script, round_script, compose_script, tmproot,
 
         rc3, out3, _outputs3, _ = run_step(
             BASH, compose_script, workdir,
-            {"PARSE_FAILED": outputs1.get("parse-failed", "")},
+            {"PARSE_FAILED": outputs1.get("parse-failed", ""),
+             "DROPPED_COUNT": outputs1.get("dropped-count", "")},
             runner_temp)
         body = None
         body_path = os.path.join(runner_temp, "board-review-body.md")
@@ -254,14 +258,24 @@ def check_scenarios(extract_script, round_script, compose_script, tmproot, label
 # was specifically written to close.
 ROUND_ALONE_SCENARIOS = [
     ("empty PARSE_FAILED (extract's output step never ran)",
-     dict(PARSE_FAILED="", IN_SCOPE_COUNT="0", ROUND="1", ROUND_BUDGET="5"),
+     dict(PARSE_FAILED="", IN_SCOPE_COUNT="0", DROPPED_COUNT="0", ROUND="1", ROUND_BUDGET="5"),
      "stalled"),
     ("PARSE_FAILED=true overrides a nonzero in-scope-count too",
-     dict(PARSE_FAILED="true", IN_SCOPE_COUNT="5", ROUND="1", ROUND_BUDGET="5"),
+     dict(PARSE_FAILED="true", IN_SCOPE_COUNT="5", DROPPED_COUNT="0", ROUND="1", ROUND_BUDGET="5"),
      "stalled"),
     ("control: PARSE_FAILED=false, zero in-scope -> converged",
-     dict(PARSE_FAILED="false", IN_SCOPE_COUNT="0", ROUND="1", ROUND_BUDGET="5"),
+     dict(PARSE_FAILED="false", IN_SCOPE_COUNT="0", DROPPED_COUNT="0", ROUND="1", ROUND_BUDGET="5"),
      "converged"),
+    # #583: a dropped finding may have been in scope.
+    ("a dropped finding with zero in-scope does not converge",
+     dict(PARSE_FAILED="false", IN_SCOPE_COUNT="0", DROPPED_COUNT="1", ROUND="1", ROUND_BUDGET="5"),
+     "stalled"),
+    ("an empty DROPPED_COUNT with zero in-scope does not converge",
+     dict(PARSE_FAILED="false", IN_SCOPE_COUNT="0", DROPPED_COUNT="", ROUND="1", ROUND_BUDGET="5"),
+     "stalled"),
+    ("control: a dropped finding beside valid in-scope ones continues",
+     dict(PARSE_FAILED="false", IN_SCOPE_COUNT="2", DROPPED_COUNT="1", ROUND="1", ROUND_BUDGET="5"),
+     "continue"),
 ]
 
 
@@ -368,8 +382,8 @@ def check_mutations(extract_script, round_script, compose_script, tmproot):
             try:
                 rc, out, outputs, _ = run_step(
                     BASH, scripts["round"], workdir,
-                    dict(PARSE_FAILED="", IN_SCOPE_COUNT="0", ROUND="1",
-                        ROUND_BUDGET="5"),
+                    dict(PARSE_FAILED="", IN_SCOPE_COUNT="0", DROPPED_COUNT="0",
+                         ROUND="1", ROUND_BUDGET="5"),
                     runner_temp)
             finally:
                 shutil.rmtree(workdir, ignore_errors=True)
@@ -795,7 +809,7 @@ def check_oos_output_sanitised(oos_script, tmproot):
     validator had let them through): the raw output holds only the
     step's own two lines."""
     failures = []
-    for sep in LINE_BREAKS:
+    for sep in LINE_BREAKS + ("\ud800",):
         raw, _bodies, err = _run_oos(oos_script, tmproot, [_oos_finding(_hostile_title(sep))])
         label = "prepare-oos with a title split by {0!r}".format(sep)
         if err:
@@ -805,15 +819,13 @@ def check_oos_output_sanitised(oos_script, tmproot):
     return failures
 
 
-def _extract_then_prepare(extract_script, oos_script, tmproot, raw_findings, schema_path=None):
+def _extract_then_prepare(extract_script, oos_script, tmproot, raw_findings):
     """Runs the real extract step over a transcript carrying
     `raw_findings`, then the prepare step over what extract kept. Returns
     (extract outputs, raw prepare output, error)."""
     import json
     workdir, runner_temp = prepare_workdir(tmproot)
     try:
-        if schema_path:
-            stage_pristine(runner_temp, schema_path)
         with open(os.path.join(runner_temp, "claude-execution-output.json"),
                   "w", encoding="utf-8") as fh:
             fh.write(_fenced_transcript(json.dumps(raw_findings)))
@@ -831,32 +843,57 @@ def _extract_then_prepare(extract_script, oos_script, tmproot, raw_findings, sch
         shutil.rmtree(runner_temp, ignore_errors=True)
 
 
-def check_oos_title_validated(extract_script, oos_script, tmproot, schema_path=None):
-    """End to end: a finding whose title is not a single line is dropped as
-    malformed; alone, it fails the round closed."""
+def check_oos_title_validated(extract_script, oos_script, round_script,
+                              compose_script, tmproot):
+    """End to end through the real extract step:
+    - a title with line breaks and a tab is flattened to one line and the
+      finding is kept (never dropped for it), and prepare-oos writes only
+      its own two lines;
+    - a finding the schema still rejects (a lone surrogate in `what`)
+      beside a valid out-of-scope one is dropped and counted, the round
+      stalls instead of converging, and the review body says so."""
     import json
     failures = []
     in_scope = json.loads(VALID_FINDING)[0]
-    hostile = _oos_finding(_hostile_title("\n"))
+    hostile = _oos_finding(_hostile_title("\n") + "\tend\n")
     outputs, raw, err = _extract_then_prepare(
-        extract_script, oos_script, tmproot, [in_scope, hostile], schema_path)
+        extract_script, oos_script, tmproot, [in_scope, hostile])
+    label = "multi-line title beside a valid finding"
     if err:
-        return ["multi-line title beside a valid finding: {0}".format(err)]
-    if outputs.get("dropped-count") != "1" or outputs.get("out-of-scope-count") != "0":
-        failures.append("multi-line title beside a valid finding: dropped-count={0!r}, "
-                        "out-of-scope-count={1!r}, expected '1' and '0'".format(
-                            outputs.get("dropped-count"), outputs.get("out-of-scope-count")))
-    if raw:
-        failures.append("multi-line title beside a valid finding: prepare-oos wrote "
-                        "{0!r}".format(raw[:120]))
-    outputs, _raw, err = _extract_then_prepare(
-        extract_script, oos_script, tmproot, [hostile], schema_path)
+        return ["{0}: {1}".format(label, err)]
+    if outputs.get("dropped-count") != "0" or outputs.get("out-of-scope-count") != "1":
+        failures.append("{0}: dropped-count={1!r}, out-of-scope-count={2!r}, expected '0' and "
+                        "'1' (the title is flattened, not rejected)".format(
+                            label, outputs.get("dropped-count"), outputs.get("out-of-scope-count")))
+    failures += ["{0}: {1}".format(label, p) for p in raw_output_problems(raw, 1)]
+    want_title = "oos-0-title=T " + " ".join(INJECTED_LINES) + " end\n"
+    if want_title not in raw:
+        failures.append("{0}: title not flattened to one line: {1!r}".format(label, raw[:160]))
+
+    label = "an unencodable finding beside a valid out-of-scope one"
+    dropped = dict(_oos_finding("bad", path="z.py"), what="lone \ud800 surrogate")
+    outputs1, outputs2, body, err = _pipeline_with(
+        extract_script, round_script, compose_script, tmproot,
+        [_oos_finding("fine", path="f.py"), dropped])
     if err:
-        failures.append("multi-line title alone: {0}".format(err))
-    elif outputs.get("parse-failed") != "true":
-        failures.append("multi-line title alone: parse-failed={0!r}, expected 'true' (every "
-                        "finding malformed fails the round closed)".format(outputs.get("parse-failed")))
+        return failures + ["{0}: {1}".format(label, err)]
+    if outputs1.get("dropped-count") != "1" or outputs1.get("parse-failed") != "false":
+        failures.append("{0}: dropped-count={1!r}, parse-failed={2!r}, expected '1' and "
+                        "'false'".format(label, outputs1.get("dropped-count"),
+                                         outputs1.get("parse-failed")))
+    if outputs2.get("outcome") != "stalled" or outputs2.get("stall-reason") != "malformed-findings":
+        failures.append("{0}: outcome={1!r}, stall-reason={2!r}, expected stalled / "
+                        "malformed-findings".format(label, outputs2.get("outcome"),
+                                                    outputs2.get("stall-reason")))
+    if not body or "1 further finding(s) failed validation" not in body:
+        failures.append("{0}: the review body does not name the dropped finding".format(label))
     return failures
+
+
+def _pipeline_with(extract_script, round_script, compose_script, tmproot, findings):
+    import json
+    return run_pipeline(extract_script, round_script, compose_script, tmproot,
+                        transcript=_fenced_transcript(json.dumps(findings)))
 
 
 def filing_step_problems(workflow_text):
@@ -1008,35 +1045,58 @@ def _mut_prefix_kept(script):
     return script.replace(PREFIX_LINE, 'MARKER_PREFIX = "never-present:"\n', 1)
 
 
-def check_step_output_helper():
-    """wc_step_output itself: every line break is removed, the CLI prints
-    one line, and a key that is not a plain output name is refused."""
+HELPER_PATH = os.path.join(".github", "scripts", "wc_step_output.py")
+FLATTEN_LINE = ('item["title"] = clean_output_value(item["title"], " ").strip()\n')
+ROUND_DROPPED_TEST = 'elif [ "$IN_SCOPE_COUNT" -eq 0 ] && [ "${DROPPED_COUNT:-}" != "0" ]; then'
+COMPOSE_DROPPED_LINE = 'dropped = os.environ.get("DROPPED_COUNT") or "0"\n'
+
+
+def check_step_output_helper(path=HELPER_PATH):
+    """wc_step_output itself (loaded from `path`): every line break and a
+    lone surrogate are removed, the CLI prints one line, and a key that is
+    not a plain output name is refused."""
+    import importlib.util
     import subprocess
-    from wc_step_output import clean_output_value, output_line
+    import wc_step_output
+    mod = wc_step_output
+    if path != HELPER_PATH:
+        spec = importlib.util.spec_from_file_location("wc_step_output_under_test", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
     failures = []
-    for sep in LINE_BREAKS + ("\x00", "\x1b", "\u2029"):
-        if clean_output_value("a" + sep + "b") != "ab":
+    for sep in LINE_BREAKS + ("\x00", "\x1b", "\u2029", "\ud800"):
+        if mod.clean_output_value("a" + sep + "b") != "ab":
             failures.append("clean_output_value leaves {0!r} in place".format(sep))
+    if mod.clean_output_value("a\tb\nc", " ") != "a b c":
+        failures.append("clean_output_value(..., ' ') does not turn controls into spaces")
     try:
-        output_line("a\nb", "v")
+        mod.output_line("a\nb", "v")
         failures.append("output_line accepted a key containing LF")
     except ValueError:
         pass
-    cli = subprocess.run([sys.executable, os.path.join(".github", "scripts", "wc_step_output.py"),
-                          "first-failure", "FAIL x\r\noos-0-title=y"],
+    cli = subprocess.run([sys.executable, path, "first-failure", "FAIL x\r\noos-0-title=y"],
                          capture_output=True)
     if cli.returncode != 0 or cli.stdout.replace(b"\r\n", b"\n") != b"first-failure=FAIL xoos-0-title=y\n":
         failures.append("the CLI printed {0!r} (rc {1})".format(cli.stdout, cli.returncode))
     return failures
 
 
-def check_583(extract_script, oos_script, file_script, tmproot):
-    import json
+def _mut_once(script, old, new, what):
+    if script.count(old) != 1:
+        sys.exit("::error::verify-reviewer-fail-closed: expected one {0} in its step; "
+                 "update this harness.".format(what))
+    return script.replace(old, new, 1)
+
+
+def check_583(extract_script, round_script, compose_script, oos_script, file_script,
+              tmproot):
     failures = []
     for label, found in (
-            ("wc_step_output removes line breaks", check_step_output_helper()),
+            ("wc_step_output removes line breaks and lone surrogates", check_step_output_helper()),
             ("hostile titles never set other outputs", check_oos_output_sanitised(oos_script, tmproot)),
-            ("title validation", check_oos_title_validated(extract_script, oos_script, tmproot)),
+            ("title flattening and dropped findings",
+             check_oos_title_validated(extract_script, oos_script, round_script,
+                                       compose_script, tmproot)),
             ("fixed body-file paths", filing_step_problems(open(WORKFLOW, encoding="utf-8").read())
              + check_oos_body_files(oos_script, tmproot)),
             ("fingerprint spoof", check_fingerprint_spoof(oos_script, file_script, tmproot))):
@@ -1045,19 +1105,32 @@ def check_583(extract_script, oos_script, file_script, tmproot):
             print("[ok] #583 {0}".format(label))
 
     # One mutation per fix, each of which must be caught.
-    schema_copy = os.path.join(tmproot, "no-title-pattern.schema.json")
-    with open(os.path.join(".github", "schemas", SHARED_SCHEMAS[0]), encoding="utf-8") as fh:
-        schema = json.load(fh)
-    schema["items"]["properties"]["title"].pop("pattern", None)
-    with open(schema_copy, "w", encoding="utf-8") as fh:
-        json.dump(schema, fh)
+    helper_copy = os.path.join(tmproot, "wc_step_output_keeps_surrogates.py")
+    with open(HELPER_PATH, encoding="utf-8") as fh:
+        helper_src = fh.read()
+    with open(helper_copy, "w", encoding="utf-8") as fh:
+        fh.write(_mut_once(helper_src, '("Cc", "Cs")', '("Cc",)', "category tuple"))
     text = open(WORKFLOW, encoding="utf-8").read()
     mutations = (
         ("prepare-oos writes titles raw",
          lambda: check_oos_output_sanitised(_mut_raw_outputs(oos_script), tmproot)),
-        ("the schema allows a multi-line title",
-         lambda: check_oos_title_validated(extract_script, oos_script,
-                                           tmproot, schema_copy)),
+        ("clean_output_value keeps lone surrogates",
+         lambda: check_step_output_helper(helper_copy)),
+        ("extract stops flattening titles (a tab or line break drops the finding)",
+         lambda: check_oos_title_validated(
+             _mut_once(extract_script, FLATTEN_LINE, "pass\n", "title flattening line"),
+             oos_script, round_script, compose_script, tmproot)),
+        ("the round converges although a finding was dropped",
+         lambda: check_oos_title_validated(
+             extract_script, oos_script,
+             _mut_once(round_script, ROUND_DROPPED_TEST,
+                       'elif false; then', "dropped-count test"),
+             compose_script, tmproot)),
+        ("the review body omits the dropped count",
+         lambda: check_oos_title_validated(
+             extract_script, oos_script, round_script,
+             _mut_once(compose_script, COMPOSE_DROPPED_LINE, 'dropped = "0"\n',
+                       "dropped-count read"), tmproot)),
         ("a filing step reads body-file from a step output",
          lambda: filing_step_problems(text.replace(
              OOS_BODY_INPUT.format(2), "${{ steps.prepare-oos.outputs.oos-2-body-file }}", 1))),
@@ -1120,7 +1193,8 @@ def main():
         failures += check_fences(fence_scripts, tmproot)
         failures += check_review_body_cap(compose_script, tmproot)
         failures += check_review_body_cap_mutation(compose_script, tmproot)
-        failures += check_583(extract_script, fence_scripts["oos"], file_script, tmproot)
+        failures += check_583(extract_script, round_script, compose_script,
+                              fence_scripts["oos"], file_script, tmproot)
     finally:
         shutil.rmtree(tmproot, ignore_errors=True)
 

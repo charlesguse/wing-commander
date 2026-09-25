@@ -4073,10 +4073,12 @@ jobs:
       # against four scenarios, plus three mutations proving each fix
       # would actually be caught if silently reverted. #583: an out-of-
       # scope title split by a line break sets no other step output (the
-      # raw $GITHUB_OUTPUT is checked), a multi-line title is dropped as
-      # malformed, the filing steps read each body from a fixed path, and
-      # a quoted dedupe marker does not suppress another finding's filing;
-      # one mutation per fix.
+      # raw $GITHUB_OUTPUT is checked), a multi-line title is
+      # flattened to one line (not dropped), a dropped finding stops the
+      # round converging and is named in the review body, lone surrogates
+      # are removed or rejected, the filing steps read each body from a
+      # fixed path, and a quoted dedupe marker does not suppress another
+      # finding's filing; one mutation per fix.
       - name: "Gate 95 — the reviewer's fail-closed wiring (extract, round outcome, review body) is real"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-reviewer-fail-closed.py
@@ -4118,14 +4120,17 @@ jobs:
       # posting, pushing and labelling with the App token. fix, review and
       # readiness each snapshot $GITHUB_SHA's .github/scripts and
       # .github/schemas read-only into $RUNNER_TEMP/wc-pristine right after
-      # checkout, before any agent step; no other run: block in those jobs
-      # may reference the working tree's .github/scripts (the gate-suite
-      # call excepted). The snapshot step is also run against a scratch
+      # checkout, before any agent step. Every other run: block in those
+      # jobs passes an allowlist: python3 only as `-I` (so a module the
+      # agent writes cannot shadow the stdlib) on stdin, -c or a snapshot
+      # script; sys.path changed only to insert the snapshot; no reference
+      # to the working tree's .github/scripts (the gate-suite call
+      # excepted). The snapshot step is also run against a scratch
       # repository whose working tree differs from its commit.
       - name: "Gate 98 — board-loop's fix, review and readiness run helpers from a pristine snapshot, never the working tree"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-helper-provenance.py
-      - name: "Gate 98 self-test — a working-tree import, a dropped or late snapshot, a snapshot of the working tree, or a writable snapshot each fail"
+      - name: "Gate 98 self-test — a working-tree import (incl. pathlib or cd), python3 without -I, a dropped or late snapshot, a snapshot of the working tree, or a writable snapshot each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-helper-provenance.py --self-test
 

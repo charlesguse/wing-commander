@@ -21,10 +21,19 @@ In each of fix, review and readiness:
      actions/checkout step, before any agent step and before any other
      step that references the snapshot;
   2. the three snapshot steps' run: blocks are identical;
-  3. no other run: block references the working tree's .github/scripts,
-     except the gate-suite steps' `python3 .github/scripts/run-local-gates.py`
-     (the gate suite checks the agent's change, so it runs the agent's tree
-     by design).
+  3. an allowlist over every other run: block. Each python3 call is
+     `python3 -I -`, `python3 -I -c`, or `python3 -I` on a script under
+     "$RUNNER_TEMP/wc-pristine/scripts/"; the one exception is the
+     gate-suite steps' `python3 .github/scripts/run-local-gates.py` (the
+     gate suite checks the agent's change, so it runs the agent's tree by
+     design). -I keeps the working directory off sys.path, so a json.py
+     the agent writes cannot shadow the stdlib. The only sys.path change
+     allowed is inserting the snapshot's scripts directory; a block that
+     imports a board_*, wc_* or verify module must make that insert; a
+     spec_from_file_location path must be under the snapshot; and
+     PYTHONPATH, runpy, __import__, importlib.import_module, exec( and
+     os.chdir are refused. The working tree's .github/scripts must not be
+     named at all.
 Then it runs the real snapshot step in a scratch git repository whose
 working tree differs from the commit: the copy must hold the commit's
 content, not the working tree's, and must be read-only.
@@ -56,6 +65,44 @@ GATE_SUITE_CALL = "python3 .github/scripts/run-local-gates.py"
 PRISTINE = "wc-pristine"
 WORKTREE_SCRIPTS_RE = re.compile(
     r"\.github/scripts|\.github['\"]\s*,\s*['\"]scripts")
+PYTHON_CALL_RE = re.compile(r"(?<![\w./-])python3?(?![\w.-])([^\n]*)")
+ALLOWED_PYTHON_ARGS_RE = re.compile(
+    r" -I (?:- |- *$|-c |\"\$RUNNER_TEMP/wc-pristine/scripts/[A-Za-z0-9_-]+\.py\")")
+ALLOWED_SYS_PATH = (
+    "sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts'))",
+    'sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))',
+)
+HELPER_IMPORT_RE = re.compile(r"\b(?:from|import)\s+(?:board_|wc_|verify)\w*")
+FORBIDDEN = ("PYTHONPATH", "runpy", "__import__", "import_module", "exec(", "os.chdir")
+
+
+def run_problems(run, is_gate_suite):
+    """Allowlist problems for one run: block (see WHAT IT CHECKS, 3)."""
+    problems = []
+    scan = run.replace(GATE_SUITE_CALL, "") if is_gate_suite else run
+    for m in PYTHON_CALL_RE.finditer(scan):
+        if not ALLOWED_PYTHON_ARGS_RE.match(m.group(1)):
+            problems.append("python call not in the allowlist (python3 -I -/-c, or "
+                            "python3 -I on a snapshot script): {0!r}".format(m.group(0)[:80]))
+    rest = scan
+    for allowed in ALLOWED_SYS_PATH:
+        rest = rest.replace(allowed, "")
+    if "sys.path" in rest:
+        problems.append("changes sys.path other than inserting the snapshot's scripts directory")
+    if HELPER_IMPORT_RE.search(scan) and not any(a in scan for a in ALLOWED_SYS_PATH):
+        problems.append("imports a repository helper without inserting the snapshot's "
+                        "scripts directory")
+    for m in re.finditer(r"spec_from_file_location\(", scan):
+        head = scan[m.end():m.end() + 300]
+        head = head[:head.find('.py"') + 4] if '.py"' in head else head
+        if '"wc-pristine"' not in head and "'wc-pristine'" not in head:
+            problems.append("spec_from_file_location loads a file outside the snapshot")
+    for token in FORBIDDEN:
+        if token in scan:
+            problems.append("uses {0}".format(token))
+    if WORKTREE_SCRIPTS_RE.search(scan):
+        problems.append("names the working tree's .github/scripts")
+    return problems
 
 
 def structural_problems(doc):
@@ -92,12 +139,8 @@ def structural_problems(doc):
             run = str(step["run"])
             if PRISTINE in run and i < snap:
                 problems.append("{0} reads the snapshot before it is taken".format(label))
-            scan = run
-            if step.get("id") in GATE_SUITE_IDS:
-                scan = scan.replace(GATE_SUITE_CALL, "")
-            if WORKTREE_SCRIPTS_RE.search(scan):
-                problems.append("{0} references the working tree's .github/scripts "
-                                "instead of $RUNNER_TEMP/{1}/scripts".format(label, PRISTINE))
+            for p in run_problems(run, step.get("id") in GATE_SUITE_IDS):
+                problems.append("{0}: {1}".format(label, p))
     if len(set(snapshot_runs.values())) > 1:
         problems.append("the snapshot steps' run: blocks differ between {0}".format(
             ", ".join(sorted(snapshot_runs))))
@@ -169,7 +212,7 @@ def check(doc, bash, tmproot):
 
 ONE_LINER = "sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts'))"
 HEREDOC = 'sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))'
-SPEC_CALL = 'python3 "$RUNNER_TEMP/wc-pristine/scripts/board_spec_request_body.py"'
+SPEC_CALL = 'python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_spec_request_body.py"'
 
 
 def _replace_once(text, old, new):
@@ -189,6 +232,19 @@ def mut_heredoc_worktree(text):
 
 def mut_spec_builder_worktree(text):
     return _replace_once(text, SPEC_CALL, "python3 .github/scripts/board_spec_request_body.py")
+
+
+def mut_pathlib_worktree(text):
+    return _replace_once(text, HEREDOC,
+                         'sys.path.insert(0, str(pathlib.Path(".github") / "scripts"))')
+
+
+def mut_cd_worktree(text):
+    return _replace_once(text, SPEC_CALL, "cd .github && python3 -I scripts/board_spec_request_body.py")
+
+
+def mut_no_isolation(text):
+    return _replace_once(text, "python3 -I - <<'PYEOF'", "python3 - <<'PYEOF'")
 
 
 def _job_steps(doc, job_id):
@@ -229,6 +285,9 @@ MUTATIONS = [
     ("a post-agent one-liner imports from the working tree", mut_one_liner_worktree, False),
     ("a post-agent heredoc imports from the working tree", mut_heredoc_worktree, False),
     ("the spec-request builder runs from the working tree", mut_spec_builder_worktree, False),
+    ("sys.path gets pathlib.Path(\".github\") / \"scripts\"", mut_pathlib_worktree, False),
+    ("cd .github && python3 -I scripts/board_spec_request_body.py", mut_cd_worktree, False),
+    ("a heredoc python3 runs without -I (the stdlib can be shadowed)", mut_no_isolation, False),
     ("readiness's snapshot step is removed", mut_snapshot_dropped, True),
     ("the review job's snapshot is taken after the reviewer agent", mut_snapshot_after_agent, True),
     ("the snapshot copies the working tree instead of $GITHUB_SHA", mut_snapshot_from_worktree, False),
