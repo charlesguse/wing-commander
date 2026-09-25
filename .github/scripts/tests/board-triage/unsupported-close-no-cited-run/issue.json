@@ -1,0 +1,11 @@
+{
+  "cited_run_transcript_path": null,
+  "cited_run_commit_sha": null,
+  "workflow_files": [],
+  "agent_proposal": {
+    "close": true,
+    "ground": "rate_limit",
+    "proposed_commit_sha": null,
+    "reasoning": "Looks like a rate limit; close it."
+  }
+}

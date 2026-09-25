@@ -1022,6 +1022,11 @@ jobs:
              "proposed_commit_sha": "<full sha>"|null,
              "reasoning": "one paragraph, your own words"}
             ```
+
+            `ground` is exactly one of the strings above, one per case in
+            the list: "rate_limit", "action_bump", "already_fixed_proposal"
+            (with that commit's full SHA in "proposed_commit_sha"), or
+            null for none of the above -- no other spelling is read.
           claude_args: |
             --model ${{ needs.resolve-model.outputs.model }}
             --max-turns ${{ steps.triage-ceiling.outputs.ceiling }}
@@ -1220,8 +1225,12 @@ jobs:
               gh issue close "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --comment "$body"
               ;;
             handover)
-              evidence="$(jq -c '.evidence' "$RUNNER_TEMP/board-triage-verdict.json")"
-              body="$(printf 'Triage read a proposal that this issue is already fixed on main, and is handing it to a maintainer rather than closing it itself (FR-012):\n\nevidence: %s\n\n%s' \
+              # The evidence carries the agent's own reasoning (FR-056), so
+              # it is posted inside a fence (fenced_section(), #562's one
+              # fencing helper): no @mention, #N, link or HTML in it renders.
+              evidence="$(python3 -c "import json, os, sys; sys.path.insert(0, '.github/scripts'); from board_spec_request_body import fenced_section; v = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'board-triage-verdict.json'), encoding='utf-8')); print(fenced_section('Evidence (triage-propose agent output, shown as text):', json.dumps(v.get('evidence') or {}, indent=2), 60000))")" \
+                || evidence="(the evidence could not be rendered)"
+              body="$(printf 'Triage read a proposal that this issue is already fixed on main, and is handing it to a maintainer rather than closing it itself (FR-012):\n\n%s\n\n%s' \
                 "$evidence" "$marker")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
               gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"

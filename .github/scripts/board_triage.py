@@ -283,19 +283,28 @@ def triage(issue, cited_run):
 
     "already fixed on `main`" (FR-012's explicit deferral) has no ground
     function -- when agent_proposal names it, this returns outcome:
-    handover, never a close, per FR-012."""
+    handover, never a close, per FR-012.
+
+    Order (#578): the two code-derived close grounds (rate_limit, then
+    action_bump) are tried first, and only when a cited run with a
+    readable transcript exists. Every path that does not close -- no cited
+    run, evidence unavailable, or no close ground found -- goes through
+    _not_closed(), which hands an already_fixed_proposal over and records
+    any other unsupported close proposal. Most human-filed issues cite no
+    run, so a handover reached only after the evidence checks never fired
+    for them (#433 -> #577)."""
     proposal = issue.get("agent_proposal") or {}
 
     if cited_run is None:
         outcome = {"outcome": "proceed", "ground": None, "evidence": {},
                    "agent_proposal": None}
-        return _record_disagreement(outcome, proposal)
+        return _not_closed(outcome, proposal)
 
     transcript_path = issue.get("cited_run_transcript_path")
     if not transcript_path:
         outcome = {"outcome": "proceed", "ground": "evidence_unavailable",
                    "evidence": {"reason": "missing"}, "agent_proposal": None}
-        return _record_disagreement(outcome, proposal)
+        return _not_closed(outcome, proposal)
 
     rate_limit_evidence = check_rate_limit(transcript_path)
     if rate_limit_evidence is not None:
@@ -308,7 +317,7 @@ def triage(issue, cited_run):
     if not os.path.isfile(transcript_path):
         outcome = {"outcome": "proceed", "ground": "evidence_unavailable",
                    "evidence": {"reason": "missing"}, "agent_proposal": None}
-        return _record_disagreement(outcome, proposal)
+        return _not_closed(outcome, proposal)
 
     commit_sha = issue.get("cited_run_commit_sha")
     workflow_files = issue.get("workflow_files") or []
@@ -319,6 +328,17 @@ def triage(issue, cited_run):
             return {"outcome": "closed", "ground": "action_bump",
                     "evidence": bump_evidence, "agent_proposal": None}
 
+    outcome = {"outcome": "proceed", "ground": None, "evidence": {},
+               "agent_proposal": None}
+    return _not_closed(outcome, proposal)
+
+
+def _not_closed(outcome, proposal):
+    """The single exit for every triage() path that does not close (#578).
+    An already_fixed_proposal is handed to a maintainer (FR-012: posted
+    with its evidence, board:stalled applied, never closed) whether or not
+    a run was cited or its evidence could be read; any other proposal
+    falls through to _record_disagreement() and the `outcome` given."""
     if proposal.get("ground") == "already_fixed_proposal":
         return {
             "outcome": "handover",
@@ -329,9 +349,6 @@ def triage(issue, cited_run):
             },
             "agent_proposal": proposal.get("reasoning"),
         }
-
-    outcome = {"outcome": "proceed", "ground": None, "evidence": {},
-               "agent_proposal": None}
     return _record_disagreement(outcome, proposal)
 
 

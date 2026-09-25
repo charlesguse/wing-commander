@@ -21,6 +21,19 @@ quote the transcript's own fields. Each guard has a fixture of its own
 run), closed cases pin the quoted evidence exactly, and a mutation per
 guard -- plus one hard-coding the evidence -- must be caught.
 
+#578: an "already fixed" proposal was handed over only after the cited-run
+and evidence checks, so on an issue citing no run (most human-filed ones)
+it fell into the disagreement path and route filed an empty spec-request.
+Fixtures pin the handover with no cited run and with a missing
+transcript, the rate_limit close still winning over the proposal when the
+cited run carries 429 evidence, and an unsupported close with no cited
+run proceeding with the disagreement recorded. Two mutations must be
+caught: the pre-#578 ordering restored, and the handover moved ahead of
+the close grounds. With no cited run the handover's evidence is the
+agent's own reasoning (FR-056), so board-loop.yml's `handover)` arm must
+post it through fenced_section() (#562), never raw `jq -c '.evidence'`
+text; putting the raw line back is a mutation that must be caught.
+
 #505: both close grounds are only as trustworthy as the run they read. The
 triage job's "Locate a cited run" step used to scan the issue body AND
 every comment unfiltered, and check_action_bump() compared every
@@ -118,7 +131,28 @@ TRIAGE_CASES["rate-limit-event-only"] = {
         "rate_limit_event": True, "rate_limit_status": "rejected",
         "terminal_reason": "rate_limited", "api_error_status": None,
         "num_turns": 1, "cost_usd": 0}}
+# #578: an already_fixed_proposal is handed over on every path that does
+# not close. "cited_run": None runs the case with no cited run; the
+# rate_limit close still wins when the cited run carries 429 evidence.
+AF_SHA = "abdef13b6de6c507c66bd2aab3cde1c3a9c187a8"
+AF_REASONING = "Already resolved on main by abdef13; nothing left to fix."
+AF_HANDOVER = {"outcome": "handover", "ground": "already_fixed_proposal",
+               "evidence": {"proposed_commit_sha": AF_SHA,
+                            "agent_reasoning": AF_REASONING},
+               "agent_proposal": AF_REASONING}
+HANDOVER_ORDER_CASES = {
+    "already-fixed-no-cited-run": dict(AF_HANDOVER, cited_run=None),
+    "already-fixed-transcript-missing": dict(AF_HANDOVER),
+    "already-fixed-rate-limit": {
+        "outcome": "closed", "ground": "rate_limit",
+        "evidence": dict(TRIAGE_CASES["429-present"]["evidence"])},
+    "unsupported-close-no-cited-run": {
+        "outcome": "proceed", "ground": None, "cited_run": None,
+        "agent_proposal": "Looks like a rate limit; close it."},
+}
+TRIAGE_CASES.update(HANDOVER_ORDER_CASES)
 EVIDENCE_CASES = {k: v for k, v in TRIAGE_CASES.items() if "evidence" in v}
+DEFAULT_CITED_RUN = "https://github.com/example/example/actions/runs/1"
 PIN_CASES = {
     "action-bump-ahead": "divergent",
     "pins-equal": "none",
@@ -157,15 +191,21 @@ def run_triage_cases(cases, verbose=True):
         if transcript_path and not os.path.isabs(transcript_path):
             issue = dict(issue)
             issue["cited_run_transcript_path"] = os.path.join(CWD, transcript_path)
-        got = triage(issue, cited_run="https://github.com/example/example/actions/runs/1")
+        # Looked up on the module, not the imported name, so the #578
+        # ordering mutations below reach it.
+        got = board_triage.triage(
+            issue, cited_run=expected.get("cited_run", DEFAULT_CITED_RUN))
         ok = got.get("outcome") == expected["outcome"] and got.get("ground") == expected["ground"]
         if case == "already-fixed-proposal" and got.get("outcome") == "closed":
             ok = False  # FR-012: never a close ground, regardless of anything else
         if "evidence" in expected:
-            want = dict(expected["evidence"],
-                        run_url=(got.get("evidence") or {}).get("run_url"))
+            want = dict(expected["evidence"])
+            if expected["ground"] == "rate_limit":
+                want["run_url"] = (got.get("evidence") or {}).get("run_url")
             if got.get("evidence") != want:
                 ok = False
+        if "agent_proposal" in expected and got.get("agent_proposal") != expected["agent_proposal"]:
+            ok = False
         if not ok:
             problems.append("{0}: expected outcome={1!r} ground={2!r}, got "
                             "{3!r}.".format(case, expected["outcome"],
@@ -245,6 +285,119 @@ def _mutation_check_rate_limit_guard():
             failures.append("mutation 'rate limit: {0}' was NOT caught"
                             .format(label))
     return failures
+
+
+def _pre_578_triage(issue, cited_run):
+    """The pre-#578 ordering: no cited run and a missing transcript both
+    return before the already_fixed_proposal handover is ever looked at.
+    Used only as a mutation."""
+    proposal = issue.get("agent_proposal") or {}
+    if cited_run is None:
+        return board_triage._record_disagreement(
+            {"outcome": "proceed", "ground": None, "evidence": {},
+             "agent_proposal": None}, proposal)
+    transcript_path = issue.get("cited_run_transcript_path")
+    if not transcript_path or not os.path.isfile(transcript_path):
+        return board_triage._record_disagreement(
+            {"outcome": "proceed", "ground": "evidence_unavailable",
+             "evidence": {"reason": "missing"}, "agent_proposal": None},
+            proposal)
+    rate_limit_evidence = board_triage.check_rate_limit(transcript_path)
+    if rate_limit_evidence is not None:
+        return {"outcome": "closed", "ground": "rate_limit",
+                "evidence": dict(rate_limit_evidence, run_url=cited_run),
+                "agent_proposal": None}
+    return board_triage._not_closed(
+        {"outcome": "proceed", "ground": None, "evidence": {},
+         "agent_proposal": None}, proposal)
+
+
+def _handover_first(original):
+    """The handover checked before the close grounds, so an already-fixed
+    proposal would outrank a cited run's own 429 evidence."""
+    def mutated(issue, cited_run):
+        proposal = issue.get("agent_proposal") or {}
+        if proposal.get("ground") == "already_fixed_proposal":
+            return board_triage._not_closed({}, proposal)
+        return original(issue, cited_run)
+    return mutated
+
+
+HANDOVER_ORDER_MUTATIONS = (
+    ("pre-#578 ordering restored (handover only after the evidence checks)",
+     lambda orig: _pre_578_triage),
+    ("handover moved ahead of the close grounds", _handover_first),
+)
+
+
+def _mutation_check_handover_order():
+    """#578: both ordering mutations of triage() must be caught."""
+    failures = []
+    original = board_triage.triage
+    for label, factory in HANDOVER_ORDER_MUTATIONS:
+        board_triage.triage = factory(original)
+        try:
+            caught = bool(run_triage_cases(HANDOVER_ORDER_CASES, verbose=False))
+        finally:
+            board_triage.triage = original
+        if caught:
+            print("note: mutation caught (handover order: {0}).".format(label))
+        else:
+            failures.append("mutation 'handover order: {0}' was NOT caught"
+                            .format(label))
+    return failures
+
+
+HANDOVER_ACT_STEP = "Act on the verdict and post the outcome"
+HANDOVER_ARM_RE = re.compile(r"^\s*handover\)\s*$(.*?)^\s*;;\s*$",
+                             re.MULTILINE | re.DOTALL)
+HANDOVER_RAW_EVIDENCE = "jq -c '.evidence'"
+
+
+def check_handover_fence(text):
+    """#578: with no cited run a handover's evidence is the agent's own
+    reasoning (FR-056), so the act step's `handover)` arm must post it
+    through fenced_section() (#562's one fencing helper) and never as raw
+    `jq -c '.evidence'` text. Returns a list of problem strings."""
+    try:
+        doc = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        return ["handover fence: board-loop.yml does not parse: {0}".format(exc)]
+    steps = (((doc or {}).get("jobs") or {}).get("triage") or {}).get("steps") or []
+    act = [s for s in steps if isinstance(s, dict) and s.get("name") == HANDOVER_ACT_STEP]
+    if len(act) != 1:
+        return ["handover fence: expected one triage step named {0!r}, found "
+                "{1}".format(HANDOVER_ACT_STEP, len(act))]
+    arm = HANDOVER_ARM_RE.search(str(act[0].get("run") or ""))
+    if not arm:
+        return ["handover fence: the act step has no `handover)` arm"]
+    code = _code_lines(arm.group(1))
+    problems = []
+    if "fenced_section(" not in code:
+        problems.append("handover fence: the `handover)` arm does not post "
+                        "its evidence through fenced_section()")
+    if HANDOVER_RAW_EVIDENCE in code:
+        problems.append("handover fence: the `handover)` arm posts the "
+                        "evidence raw via {0}".format(HANDOVER_RAW_EVIDENCE))
+    return problems
+
+
+def _mutation_check_handover_fence(text):
+    """The pre-#578 raw-evidence line put back must be caught."""
+    lines = text.split("\n")
+    idx = [i for i, line in enumerate(lines)
+           if "from board_spec_request_body import fenced_section" in line]
+    if len(idx) != 1:
+        return ["handover fence mutation: expected one fenced_section() line "
+                "in board-loop.yml, found {0}".format(len(idx))]
+    indent = lines[idx[0]][:len(lines[idx[0]]) - len(lines[idx[0]].lstrip())]
+    mutated = list(lines)
+    mutated[idx[0]] = (indent + "evidence=\"$(" + HANDOVER_RAW_EVIDENCE
+                       + " \"$RUNNER_TEMP/board-triage-verdict.json\")\" \\")
+    if check_handover_fence("\n".join(mutated)):
+        print("note: mutation caught (handover evidence posted raw).")
+        return []
+    return ["mutation 'handover evidence posted raw' was NOT caught"]
 
 
 def run_fixtures():
@@ -787,6 +940,15 @@ def run():
     failures = run_fixtures()
 
     problems = _mutation_check_rate_limit_guard()
+    problems.extend(_mutation_check_handover_order())
+    with open(BOARD_LOOP, encoding="utf-8") as fh:
+        board_loop_text = fh.read()
+    fence_problems = check_handover_fence(board_loop_text)
+    if not fence_problems:
+        print("[ok] handover fence: {0}'s handover comment posts its "
+              "evidence through fenced_section()".format(BOARD_LOOP))
+    problems.extend(fence_problems)
+    problems.extend(_mutation_check_handover_fence(board_loop_text))
     problems.extend(run_find_cited_run_cases())
     problems.extend(_mutation_check_find_cited_run())
 
