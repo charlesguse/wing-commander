@@ -80,7 +80,14 @@ runs:
 
         TRANSCRIPT="${TRANSCRIPT_PATH:-}"
         INTENDED_TURNS="${INTENDED_TURNS:-}"
-        RUN_LABEL="${RUN_LABEL:-}"
+        # Two layers keep every $GITHUB_OUTPUT value on one line (#551).
+        # Values are cleaned where they are read: run-label here, subtype
+        # below (a non-string one as compact JSON), the rate limit reset
+        # and window in their jq, and the turn counts by the digits-only
+        # filter on count-turns.sh's output. Then, just before the write,
+        # every written variable has CR/LF replaced by spaces again,
+        # covering any value no read-site rule anticipated.
+        RUN_LABEL="$(printf '%s' "${RUN_LABEL:-}" | tr '\r\n' '  ')"
         label_suffix=""
         [ -n "$RUN_LABEL" ] && label_suffix=" ($RUN_LABEL)"
 
@@ -88,17 +95,42 @@ runs:
         reason="transcript missing or unparseable${label_suffix}"
         result_json=""
 
+        # The transcript is read once into a single flat JSON array, and
+        # every jq and count-turns.sh call below reads that copy (#551).
+        # One array, one object, NDJSON and several concatenated documents
+        # all normalise to the same shape: `jq -s` collects the documents
+        # and any document that is itself an array is spliced in. Fed the
+        # raw file, NDJSON made each per-document jq print one line per
+        # document, and the `eval` of count-turns.sh's output then ran a
+        # bare "0" as a command -- exit 127 under the runner's `bash -e`.
+        # When the file does not parse, counting still gets the raw path,
+        # where count-turns.sh's own parse check empties all three values.
+        # The parse check is `jq empty`, not `jq -e .`. Under -e, jq takes
+        # its exit status from the LAST document only, so NDJSON ending in
+        # `null` or `false` would read as unparseable.
+        COUNT_SOURCE="$TRANSCRIPT"
+        normalised=""
         if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ] && [ -s "$TRANSCRIPT" ] \
-           && jq -e . "$TRANSCRIPT" >/dev/null 2>&1; then
+           && jq empty "$TRANSCRIPT" >/dev/null 2>&1; then
+          normalised="$(mktemp "${RUNNER_TEMP:-/tmp}/wc-agent-verdict.XXXXXX" 2>/dev/null || true)"
+          if [ -n "$normalised" ] \
+             && jq -cs 'map(if type=="array" then .[] else . end)' \
+                  "$TRANSCRIPT" > "$normalised" 2>/dev/null; then
+            TRANSCRIPT="$normalised"
+            COUNT_SOURCE="$normalised"
+          fi
+          # Non-object elements (a bare number or string) are skipped with
+          # `objects` before any `.type` read: `.type` on a number is a jq
+          # error that `|| true` would swallow, hiding a real result record.
           result_json="$(jq -c 'if type=="array" then . else [.] end
-            | map(select(.type=="result")) | last // empty' "$TRANSCRIPT" 2>/dev/null || true)"
+            | map(objects | select(.type=="result")) | last // empty' "$TRANSCRIPT" 2>/dev/null || true)"
 
           if [ -z "$result_json" ] || [ "$result_json" = "null" ]; then
             verdict="failed"
             reason="no terminal result record${label_suffix}"
           else
             jqget() { printf '%s' "$result_json" | jq -r "$1 // empty" 2>/dev/null || true; }
-            subtype="$(jqget '.subtype')"
+            subtype="$(jqget '(.subtype // empty) | if type=="string" then . else tojson end | gsub("[\r\n]"; " ")')"
             is_error="$(jqget '.is_error')"
             terminal_reason="$(jqget '.terminal_reason')"
             api_error_status="$(jqget '.api_error_status')"
@@ -154,7 +186,7 @@ runs:
                           else . end)
                          | if . == null then "" else tostring | gsub("[\r\n]"; " ") end;
               if type=="array" then . else [.] end
-              | map(select(.type=="rate_limit_event")) as $ev
+              | map(objects | select(.type=="rate_limit_event")) as $ev
               | ($ev | map(select(qualifies)) | last) as $q
               | (($q // ($ev | last)) // {}) as $src
               | {qualifying: ($q != null),
@@ -228,8 +260,13 @@ runs:
         main_turns=""
         sub_turns=""
         reported=""
-        if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ] && [ -s "$TRANSCRIPT" ]; then
-          eval "$(bash "$GITHUB_ACTION_PATH/../_shared/count-turns.sh" "$TRANSCRIPT")"
+        # Only lines of the exact `name=<digits or empty>` shape reach the
+        # eval. `reported` is the transcript's own .num_turns printed
+        # verbatim, so a string value can carry a newline and a second
+        # assignment (verdict=...) or a `$(...)` the eval would run (#551).
+        if [ -n "$COUNT_SOURCE" ] && [ -f "$COUNT_SOURCE" ] && [ -s "$COUNT_SOURCE" ]; then
+          eval "$(bash "$GITHUB_ACTION_PATH/../_shared/count-turns.sh" "$COUNT_SOURCE" \
+                  | grep -E '^(main_turns|sub_turns|reported)=[0-9]*$' || true)"
           counted_turns="$main_turns"
           subagent_turns="$sub_turns"
           reported_turns="$reported"
@@ -243,6 +280,16 @@ runs:
           over_budget="true"
         fi
 
+        if [ -n "$normalised" ]; then rm -f "$normalised"; fi
+
+        # Write-site layer (see the RUN_LABEL comment above).
+        verdict="${verdict//[$'\r\n']/ }"
+        reason="${reason//[$'\r\n']/ }"
+        rate_limit_reset_output="${rate_limit_reset_output//[$'\r\n']/ }"
+        counted_turns="${counted_turns//[$'\r\n']/ }"
+        reported_turns="${reported_turns//[$'\r\n']/ }"
+        over_budget="${over_budget//[$'\r\n']/ }"
+        subagent_turns="${subagent_turns//[$'\r\n']/ }"
         {
           echo "verdict=$verdict"
           echo "reason=$reason"
