@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,14 +31,25 @@
 
 ## Notes
 
-- **Three [NEEDS CLARIFICATION] markers remain by design** (FR-005, FR-008,
-  FR-016), restated as Q1–Q3 in the spec's Open Questions section. This run
-  is the pipeline's intake stage, which does not wait for answers: the
-  questions are posted to lifecycle issue #581 and the clarify stage encodes
-  the answers back into the spec. All three concern behaviour that is
-  unsafe to guess — whether a stall notice can be lost, what group an empty
-  spec directory produces, and whether an existing spec's independent
-  re-derivation rule is amended or preserved.
+- **All three [NEEDS CLARIFICATION] markers are resolved.** Intake left
+  three open by design (FR-005, FR-008, FR-016) because each concerned
+  behaviour unsafe to guess — whether a stall notice can be lost, what group
+  an empty spec directory produces, and whether an existing spec's
+  independent re-derivation rule is amended or preserved. All three were
+  answered on lifecycle issue #581 and are folded in: fail loudly on an API
+  error plus a widened survivor admission condition (Q1, FR-005/FR-007);
+  spec 041's D6 amended to admit a derivation-only prerequisite (Q2,
+  FR-016/FR-019); a per-PR fallback group with Gate 80 taught that spelling
+  (Q3, FR-008/FR-018). The spec's former "Open Questions" section is now
+  "Resolved Clarifications" and records each answer with its rationale.
+
+- **Two requirements and two success criteria were added** for consequences
+  the answers introduced rather than assumed: FR-018/SC-008 (Gate 80 accepts
+  the fallback spelling exactly and still rejects the degenerate
+  `wing-commander-` group) and FR-019/SC-009 (spec 041's D6 amendment). The
+  Scope section was widened to name both files, since the original scope
+  line — one stage file, one waiver entry, one contract — no longer covers
+  them.
 
 - **"Non-technical stakeholder" reading, applied to this repository.** The
   subject of this specification is a GitHub Actions concurrency group, so
@@ -56,5 +67,8 @@
   job could not previously join the group. Kept for consistency with
   `specs/060-self-redrive-concurrency` and its neighbours.
 
-- **Validation iterations**: 1. All items other than the deliberate
-  [NEEDS CLARIFICATION] markers passed on the first review.
+- **Validation iterations**: 2. Iteration 1 (intake) passed every item other
+  than the deliberate [NEEDS CLARIFICATION] markers. Iteration 2 (clarify)
+  closed those markers from the answers on #581 and re-checked the items the
+  answers touched — scope bounding, requirement testability, and measurable
+  success criteria — after adding FR-018/FR-019 and SC-008/SC-009.

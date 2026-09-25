@@ -108,10 +108,13 @@ feature is as much about *not* breaking them as about joining the group.
 
 ### Scope
 
-One stage file, one waiver entry, and the contract that governs them.
-`clarify.yml`'s `stalled` waiver stays: that job has the same wiring but its
-target branch does not exist yet at the clarify stage, so it is waived for a
-different reason that this feature does not address.
+One stage file, one waiver entry, and the contract that governs them, plus
+two consequences of the resolved clarifications: Gate 80 learns the fallback
+group spelling the empty-spec-dir case needs (FR-008, FR-018), and spec 041's
+D6 decision is amended to admit a derivation-only prerequisite job (FR-016,
+FR-019). `clarify.yml`'s `stalled` waiver stays: that job has the same wiring
+but its target branch does not exist yet at the clarify stage, so it is
+waived for a different reason that this feature does not address.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -162,7 +165,10 @@ review must still learn that the stage did not start. Today the survivor
 job tolerates the failed lookup, posts its notice to the PR number, and the
 chain-stop composite takes its "record could not be updated" branch because
 `spec-dir` is empty. That behaviour must survive the introduction of a
-prerequisite job that can itself fail.
+prerequisite job that can itself fail. After this change the failed API read
+is also *visible*: the prerequisite job goes red rather than reporting an
+empty head ref as if it had read one, and the survivor job is admitted
+anyway.
 
 **Why this priority**: A concurrency fix that trades a rare lost push for a
 routinely lost stall notice is a net regression. Spec 041 exists precisely
@@ -184,6 +190,12 @@ today.
    composite is invoked, **Then** it receives an empty `spec-dir` and takes
    its existing "record could not be updated" branch rather than pushing to
    a guessed branch.
+4. **Given** the prerequisite job's API read failed, **When** the run is
+   inspected afterwards, **Then** that job is red — the failure is reported
+   as a failure, not as an empty head ref — and the survivor job still ran.
+5. **Given** the spec directory is empty, **When** the survivor job's
+   concurrency group is resolved, **Then** it is the per-PR fallback group,
+   not the repository-wide `wing-commander-`.
 
 ---
 
@@ -248,13 +260,15 @@ strip and slug-format check; each appears once.
 ### Edge Cases
 
 - **The prerequisite job cannot reach the GitHub API.** The head ref is
-  unknowable, so the group string is unknowable. The survivor job must
-  still run and still report (Story 2); see FR-005 and the open question
-  Q1.
-- **The head ref is not a spec branch.** `spec-dir` is legitimately empty.
-  A group expression built from an empty `spec-dir` degenerates to
-  `wing-commander-`, a repository-wide group that would serialize unrelated
-  survivor jobs against one another; see FR-008 and the open question Q3.
+  unknowable, so the group string is unknowable. The prerequisite job fails
+  loudly, and the survivor job — whose admission condition tolerates that
+  failure — still runs, joins the per-PR fallback group, and still reports
+  (Story 2); see FR-005 and FR-008.
+- **The head ref is not a spec branch.** `spec-dir` is legitimately empty
+  and the prerequisite job stays green. The group falls back to the per-PR
+  spelling rather than degenerating to `wing-commander-`, a repository-wide
+  group that would serialize unrelated survivor jobs against one another;
+  see FR-008.
 - **Two pr-conversation runs stall for the same specification at once.**
   Both survivor jobs now request the same per-spec slot. With
   `cancel-in-progress: false` the second queues behind the first rather
@@ -292,23 +306,30 @@ strip and slug-format check; each appears once.
 - **FR-005**: The survivor job MUST still run, and still post a stall
   notice, whenever it runs today — including when the new prerequisite job
   fails or is skipped. A stalled run MUST NOT become silent as a result of
-  this change. [NEEDS CLARIFICATION: how is that guaranteed when the
-  prerequisite job itself cannot resolve identity — does the prerequisite
-  job never fail and emit empty outputs, or does the survivor job's
-  admission condition tolerate a failed prerequisite explicitly?]
+  this change. The guarantee is wired in two halves (resolved on #581, Q1):
+  the prerequisite job MUST fail loudly when its API read fails — it MUST
+  NOT swallow an unreadable API response and emit empty outputs as if the
+  head ref had been read successfully — and the survivor job's admission
+  condition MUST therefore tolerate a failed or skipped prerequisite
+  explicitly. This follows the fail-loudly precedent of #564/#567 and
+  #557/#563: an error is reported as an error, and the notice still lands.
 - **FR-006**: When the specification's identity cannot be resolved, the
   stall notice MUST post to the PR number and the chain-stop notice MUST
   receive an empty spec directory, preserving today's
   "record could not be updated" behaviour.
 - **FR-007**: A pull request the stage does not act on MUST continue to
   produce no reply, no comment, and no failed job. The new prerequisite job
-  MUST NOT treat a non-spec head ref as an error.
+  MUST NOT treat a non-spec head ref as an error. FR-005's loud failure is
+  scoped to an unreadable API response only: a head ref that reads cleanly
+  and simply is not `spec/NNN-slug` is an ordinary, expected event and MUST
+  leave the prerequisite job green with an empty spec directory.
 - **FR-008**: The survivor job MUST NOT join a concurrency group that
-  serializes runs belonging to different specifications. [NEEDS
-  CLARIFICATION: when the spec directory is empty — a non-qualifying PR, or
-  a failed lookup — a group built from it degenerates to the constant
-  `wing-commander-`, shared by every such run repository-wide. Is that
-  acceptable, or must the empty case fall back to a distinct per-PR group?]
+  serializes runs belonging to different specifications. When the spec
+  directory is empty — a non-qualifying PR, or a failed lookup — the group
+  MUST fall back to a per-pull-request group (resolved on #581, Q3). It MUST
+  NOT degenerate to the constant `wing-commander-`, which every such run
+  repository-wide would share, letting one stalled run evict another's
+  pending notice by #415's mechanism.
 - **FR-009**: The entry job's qualification verdict — the comparison of the
   PR's base ref against the repository default branch and the exclusion of
   plan, tasks, and spec-draft head refs — MUST reach the same result for
@@ -336,16 +357,25 @@ strip and slug-format check; each appears once.
 - **FR-016**: The survivor job MUST resolve the identity it puts in the
   stall record without depending on a value the stage's entry job would
   have published, since that job is by construction the one that did not
-  run. [NEEDS CLARIFICATION: spec 041's FR-003/D6 currently requires the
-  survivor job to re-derive identity itself rather than read
-  `needs.<entry-job>.outputs.*`. Does reading a dedicated prerequisite
-  job's outputs satisfy that rule — amending D6 to admit a derivation-only
-  prerequisite — or must the survivor job keep its own independent lookup
-  for the record while using the prerequisite's value only for the group
-  string?]
+  run. Reading the outputs of a **derivation-only prerequisite job** — no
+  checkout, no secrets, whose only product is the identity — satisfies spec
+  041's FR-003/D6 rule (resolved on #581, Q2). The survivor job MUST NOT
+  keep a second independent head-ref lookup of its own for the record: one
+  home for the derivation (FR-012) is the point, and the prerequisite job is
+  not the job that failed to publish.
 - **FR-017**: No new `workflow_call` input may be added to the
   pr-conversation stage, and no adopter's wrapper workflow may need editing
   to receive this fix.
+- **FR-018**: Gate 80 MUST recognise the fallback group spelling FR-008
+  requires, exactly, so that the survivor job passes with no waiver while a
+  degenerate `wing-commander-` group and a non-canonical per-spec group are
+  both still rejected. Widening what the gate accepts MUST NOT weaken what
+  it rejects.
+- **FR-019**: `specs/041-implement-stall-notice`'s D6 decision MUST be
+  amended to record that a survivor job may take its identity from a
+  derivation-only prerequisite job, and its pr-conversation row MUST
+  describe the shape this feature ships rather than the independent
+  re-derivation it describes today.
 
 ### Key Entities
 
@@ -390,6 +420,14 @@ strip and slug-format check; each appears once.
 - **SC-007**: A re-driven pr-conversation run on a real stalled PR records
   its stall mark on the specification's working branch with no lost push,
   evidenced on the pull request or the lifecycle issue.
+- **SC-008**: Gate 80 accepts the survivor job's group with no waiver, and
+  still fails a job declaring the degenerate `wing-commander-` group or a
+  near-miss of either accepted spelling — demonstrated by cases in the
+  gate's own tests, not by the gate passing over the repository alone.
+- **SC-009**: A reader of spec 041's D6 decision finds the
+  derivation-only-prerequisite allowance and the pr-conversation row that
+  matches what this stage ships; no statement in 041 contradicts the shipped
+  wiring.
 
 ## Assumptions
 
@@ -410,28 +448,37 @@ strip and slug-format check; each appears once.
   of scope. This feature removes exactly one waiver.
 - No change to what the stall notice says. The wording, the restart command,
   and the agent-ran/agent-conclusion branches are untouched.
-- The three group spellings Gate 80 accepts are the complete set; this
-  change uses the `needs.<job>.outputs.spec-dir` spelling rather than
-  proposing a fourth.
+- The qualifying case uses the `needs.<job>.outputs.spec-dir` spelling Gate
+  80 already accepts. The empty-spec-dir fallback (FR-008) is a fourth
+  accepted spelling, added to Gate 80 in this change (FR-018) — the only
+  addition to the accepted set, and it must be matched exactly, the way the
+  existing three are, so that a near-miss group is still rejected.
+- The widened admission condition is an `if:` change, so it gets a
+  `review-step-gating` pass before merge, as the repository's rule for
+  touching an `if:` requires and as the answer on #581 asks for.
 
-## Open Questions
+## Resolved Clarifications
 
-Three questions remain unresolved in the requirements above. They are
-recorded here so the clarify stage can close them before planning.
+All three questions this specification opened were answered on lifecycle
+issue [#581](https://github.com/charlesguse/wing-commander/issues/581) and are
+folded into the requirements above. No open questions remain.
 
-- **Q1 (FR-005, FR-016)**: When the new prerequisite job cannot resolve
-  identity — a rate-limited or failing API read — what happens to the
-  survivor job? Options: the prerequisite job never fails, emitting empty
-  outputs so the survivor job runs and falls back to the PR number as it
-  does today; or the survivor job's admission condition tolerates a failed
-  prerequisite explicitly; or the loss of the notice in that case is
-  accepted.
-- **Q2 (FR-016)**: Does a derivation-only prerequisite job satisfy spec
-  041's rule that the survivor job never reads identity from another job's
-  outputs, or must the survivor job keep its own independent lookup for the
-  record and use the prerequisite's value only for the concurrency group?
-- **Q3 (FR-008)**: What group does the survivor job join when the spec
-  directory is empty?
+- **Q1 (FR-005, FR-007) — what happens when the prerequisite job cannot
+  resolve identity?** It fails loudly on an API error, and the survivor job's
+  admission condition is widened to tolerate a failed or skipped
+  prerequisite, so the notice still lands. A non-spec head ref is *not* an
+  API error and keeps the job green. Cited precedent: #564/#567 and
+  #557/#563. The widened `if:` gets a `review-step-gating` pass.
+- **Q2 (FR-016, FR-019) — does a derivation-only prerequisite satisfy spec
+  041's independent-re-derivation rule?** Yes; spec 041's D6 is amended to
+  admit that shape (no checkout, no secrets, publishes identity only). The
+  survivor job does not keep a second lookup — the derivation stays in one
+  home (FR-012).
+- **Q3 (FR-008, FR-018) — what group does the survivor job join when the
+  spec directory is empty?** A per-PR fallback group, with Gate 80 taught
+  that exact fallback spelling. A repository-wide `wing-commander-` group
+  would let one stalled run evict another's pending notice (#415's
+  mechanism).
 
 ---
 
