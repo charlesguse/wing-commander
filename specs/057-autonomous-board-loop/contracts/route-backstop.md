@@ -48,9 +48,9 @@ def route_final_diff(route_decision: RouteDecision, final_diff: dict) -> RouteDe
 | fix | under threshold, no contract touch | `under_threshold` | proceeds to fix |
 | fix | over threshold | `over_threshold` | re-routed to `spec-request`, before any push |
 | fix | contract-widening | `contract_widening` | re-routed to `spec-request` regardless of size (FR-019) |
-| spec | under threshold, no contract touch | `agent_proposed_spec` | stays `spec-request`; backstop never widens (FR-017). Reported as "routed … (the route agent judged this spec-shaped)", not "re-routed", with the agent's one-line rationale when it gave one (#534) |
-| spec (default: no usable proposal) | under threshold, no contract touch | `no_usable_proposal` | stays `spec-request`; reported as "routed", naming the missing proposal (#534) |
-| spec | over threshold / contract-widening | `over_threshold` / `contract_widening` | stays `spec-request`; the backstop condition that also fired is the reason |
+| spec | under threshold, no contract touch | `agent_proposed_spec` | stays `spec-request`; backstop never widens (FR-017). Reported as "Route sent this issue to a spec request (the route agent judged this spec-shaped; …)", not "re-routed", with the agent's one-line rationale after the marker when it gave one (#534) |
+| spec (default: no usable proposal) | under threshold, no contract touch | `no_usable_proposal` | stays `spec-request`; reported as "sent", naming the missing proposal (#534). A parsed proposal whose `category` is missing or not `fix`/`spec` counts as no usable proposal |
+| spec | over threshold / contract-widening | `over_threshold` / `contract_widening` | stays `spec-request`; the backstop condition that also fired is the reason. Reported as "sent … (the route agent judged this spec-shaped; the backstop also flagged: `<reason>`, measured=…)" -- never "re-routed", which is kept for a `fix` proposal the backstop narrowed |
 | fix (post-push, final diff breaches) | — | `post_push_final_diff_breach` | branch/PR left open with a notice + link to the spun-off `spec-request`; `board:stalled` applied (FR-021) |
 
 ## Gate: `verify-board-route-backstop.py`

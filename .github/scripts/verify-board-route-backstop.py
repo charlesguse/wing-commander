@@ -30,6 +30,7 @@ import glob
 import json
 import os
 import sys
+import unicodedata
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from board_route_backstop import (  # noqa: E402
@@ -60,6 +61,9 @@ RATIONALE_CASES = [
      "a  wing-commander-board-item: {}  b"),
     ({"reasoning": "<!<!----- x"}, "- x"),
     ("not a dict", ""),
+    ({"reasoning": "ok **Run:** https://github.com/o/r/actions/runs/123456"},
+     "ok \u2217\u2217Run:\u2217\u2217 https://github.com/o/r/actions/runs/123456"),
+    ({"reasoning": "a\u202eb\u200bc\u2066d"}, "abcd"),
 ]
 
 
@@ -168,10 +172,13 @@ def run():
               "(got {1} chars).".format(RATIONALE_MAX_CHARS, len(long_text)))
     for proposal, _expected in RATIONALE_CASES:
         got = one_line_rationale(proposal)
-        if "\n" in got or "`" in got or "<!--" in got or "-->" in got:
+        if ("\n" in got or "`" in got or "*" in got or "<!--" in got
+                or "-->" in got
+                or any(unicodedata.category(c) == "Cf" for c in got)):
             failures += 1
             print("::error::verify-board-route-backstop: one_line_rationale("
-                  "{0!r}) left a newline, backtick or comment delimiter "
+                  "{0!r}) left a newline, backtick, `*`, Cf character or "
+                  "comment delimiter "
                   "in {1!r}.".format(proposal, got))
     if not failures:
         print("[ok] one_line_rationale(): {0} case(s) + truncation".format(

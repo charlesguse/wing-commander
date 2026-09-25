@@ -1,4 +1,5 @@
 {
+  "_note": "board-loop.yml's route extract step sets proposal_extracted=false when no fenced proposal was read, when it was not a JSON object, or when its category is missing or not fix/spec (#534 review) -- a default spec is then never reported as the agent's own judgment.",
   "agent_proposal": "spec",
   "proposal_extracted": false,
   "board_max_files": 6,

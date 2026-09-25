@@ -22,6 +22,7 @@ or a `wing-commander-*` composite's top-level `inputs:`/`outputs:` keys.
 """
 import re
 import sys
+import unicodedata
 
 TOP_LEVEL_KEY_RE = re.compile(r"^([A-Za-z0-9_.-]+):")
 HUNK_HEADER_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
@@ -245,7 +246,10 @@ def one_line_rationale(proposal, limit=RATIONALE_MAX_CHARS):
     collapsed to one line, backticks become `'` so it cannot close the
     code span it is rendered in, and HTML comment delimiters are removed
     so it can never forge or break the board item marker, whose structure
-    only code renders (write_marker)."""
+    only code renders (write_marker). `*` becomes `\u2217` so no
+    `**Run:**` line can form (board_stop_check's MARKER_RUN_RE takes the
+    first match), and every Unicode format (Cf) character -- bidi
+    overrides, zero-width joiners/spaces -- is dropped."""
     if not isinstance(proposal, dict):
         return ""
     text = proposal.get("reasoning")
@@ -253,8 +257,9 @@ def one_line_rationale(proposal, limit=RATIONALE_MAX_CHARS):
         text = proposal.get("rationale")
     if not isinstance(text, str):
         return ""
+    text = "".join(c for c in text if unicodedata.category(c) != "Cf")
     text = " ".join(text.split())
-    text = text.replace("`", "'")
+    text = text.replace("`", "'").replace("*", "\u2217")
     while "<!--" in text or "-->" in text:
         text = text.replace("<!--", "").replace("-->", "")
     text = text.strip()

@@ -1308,7 +1308,11 @@ jobs:
                       print("::warning::board-loop route-propose: {0} -- falling back to the default proposal (category=spec)".format(err))
                   elif isinstance(parsed, dict):
                       proposal.update(parsed)
-                      extracted = True
+                      # A valid object with no fix/spec category is not
+                      # the agent's judgment of shape (#534 review).
+                      extracted = parsed.get("category") in ("fix", "spec")
+                      if not extracted:
+                          print("::warning::board-loop route-propose: parsed ```board-route-proposal``` block has no fix/spec category (got {0!r}) -- the route does not report it as the agent's own judgment".format(parsed.get("category")))
                   else:
                       print("::warning::board-loop route-propose: parsed ```board-route-proposal``` block was not a JSON object (got {0}) -- falling back to the default proposal (category=spec)".format(type(parsed).__name__))
               else:
@@ -1380,16 +1384,17 @@ jobs:
           diff_paths = [fc.get("path") for fc in file_changes if fc.get("path")]
           widened = touches_protected_file(diff_paths)
 
+          proposal_extracted = os.environ.get("PROPOSAL_EXTRACTED") == "true"
           decision = route(
               proposal.get("category") or "spec", file_changes,
               int(os.environ["BOARD_MAX_FILES"]), int(os.environ["BOARD_MAX_LINES"]),
               measure_backstop, widened_paths_override=widened,
-              proposal_extracted=(os.environ.get("PROPOSAL_EXTRACTED") == "true"
-                                  and bool(proposal.get("category"))))
+              proposal_extracted=proposal_extracted)
 
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "board-route-decision.json"), "w", encoding="utf-8") as fh:
               json.dump({"decision": decision, "proposal": proposal,
+                         "proposal_extracted": proposal_extracted,
                          "rationale": one_line_rationale(proposal)}, fh)
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
@@ -1429,29 +1434,44 @@ jobs:
           issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)"
 
           spec_title="${pr_title:-$issue_title}"
-          # #534: agent_proposed_spec (the route agent's own call) and
-          # no_usable_proposal (the default spec) are not the backstop
-          # narrowing fix -> spec, so they read "routed", not "re-routed",
-          # and carry no measured size. The rationale is
-          # agent text: one_line_rationale() already made it one bounded
-          # line with no backtick or comment delimiter; it only ever
-          # reaches printf as a quoted %s argument, inside a code span.
+          # #534: only the backstop narrowing a fix proposal to spec reads
+          # "re-routed". A spec that was never fix -- the agent's own call
+          # (agent_proposed_spec) or the default (no_usable_proposal) --
+          # reads "sent" and carries no measured size; when a backstop
+          # condition also fired on it, that condition is named as well.
+          # The rationale is agent text: one_line_rationale() already made
+          # it one bounded line with no backtick, `*`, format character or
+          # comment delimiter; it only ever reaches printf as a quoted %s
+          # argument, inside a code span, and the comment puts it AFTER
+          # the marker so it can never precede a line code rendered.
           rationale="$(jq -r '.rationale // empty' "$RUNNER_TEMP/board-route-decision.json")"
           rationale_footer=""
           rationale_comment=""
           if [ -n "$rationale" ]; then
             rationale_line="$(printf 'Route agent'"'"'s rationale: `%s`' "$rationale")"
             rationale_footer="$rationale_line"$'\n'
-            rationale_comment="$rationale_line"$'\n\n'
+            rationale_comment=$'\n\n'"$rationale_line"
           fi
+          agent_proposal="$(jq -r '.decision.agent_proposal' "$RUNNER_TEMP/board-route-decision.json")"
+          proposal_extracted="$(jq -r '.proposal_extracted' "$RUNNER_TEMP/board-route-decision.json")"
+          agent_judged="the route agent judged this spec-shaped"
+          no_proposal="route-propose returned no usable proposal, so the route defaulted to spec"
           if [ "$reason" = "agent_proposed_spec" ]; then
-            route_verb="routed"
-            route_detail="the route agent judged this spec-shaped; reason: $reason"
-            footer_detail="reason=$reason (the route agent judged this spec-shaped)"
+            route_verb="sent"
+            route_detail="$agent_judged; reason: $reason"
+            footer_detail="reason=$reason ($agent_judged)"
           elif [ "$reason" = "no_usable_proposal" ]; then
-            route_verb="routed"
-            route_detail="route-propose returned no usable proposal, so the route defaulted to spec; reason: $reason"
-            footer_detail="reason=$reason (route-propose returned no usable proposal, so the route defaulted to spec)"
+            route_verb="sent"
+            route_detail="$no_proposal; reason: $reason"
+            footer_detail="reason=$reason ($no_proposal)"
+          elif [ "$agent_proposal" = "spec" ]; then
+            # Spec was never narrowed from fix here, so not "re-routed";
+            # the backstop condition that also fired is named alongside.
+            origin="$agent_judged"
+            [ "$proposal_extracted" = "true" ] || origin="$no_proposal"
+            route_verb="sent"
+            route_detail="$origin; the backstop also flagged: $reason, measured=$measured"
+            footer_detail="reason=$reason, measured=$measured ($origin; the backstop also flagged it)"
           else
             route_verb="re-routed"
             route_detail="reason: $reason, measured=$measured"
@@ -1480,7 +1500,7 @@ jobs:
           echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
 
           marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, None, None))")"
-          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Route %s this issue to a spec request (%s) -- a fix-shaped PR was never opened.\n\n%s%s' "$route_verb" "$route_detail" "$rationale_comment" "$marker")"
+          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Route %s this issue to a spec request (%s) -- a fix-shaped PR was never opened.\n\n%s%s' "$route_verb" "$route_detail" "$marker" "$rationale_comment")"
           gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
 
       # research.md D9: every artifact this loop spins off outside the

@@ -43,7 +43,8 @@ The unit of work one run selects and acts on.
 | `backstop_verdict` | enum: `fix` \| `spec` | code's own verdict |
 | `reason` | enum: `under_threshold` \| `over_threshold` \| `contract_widening` \| `agent_proposed_spec` \| `no_usable_proposal` \| `post_push_final_diff_breach` | names the threshold and measured value when re-routing (FR-020). `agent_proposed_spec`: the agent proposed `spec` and no backstop condition fired; `no_usable_proposal`: no proposal could be read and the route defaulted to `spec` (#534). Neither is a re-route, so neither names a measured size. |
 | `measured` | object | `{files, lines}` from `wing-commander-size-path-backstop`, plus `contract_touched_paths: []` when `reason == contract_widening` |
-| `rationale` | string | the route agent's own `reasoning`, as one bounded line (`one_line_rationale()`), or `""`; quoted in a code span on the issue and in the spec-request footer (#534). Stored beside the decision, not inside it. |
+| `rationale` | string | the route agent's own `reasoning`, as one bounded line (`one_line_rationale()`), or `""`; quoted in a code span on the issue and in the spec-request footer (#534). Stored beside the decision, not inside it, with `*` neutralised and Unicode format (Cf) characters dropped. |
+| `proposal_extracted` | boolean | whether a proposal with a `fix`/`spec` category was read; stored beside the decision so a default spec is never worded as the agent's judgment (#534) |
 
 ## Review Finding
 
