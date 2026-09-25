@@ -481,13 +481,47 @@ def case_epoch_reset_becomes_iso():
 
 def case_terminal_429_reset_from_informational_event():
     """FR-003: a terminal 429 whose only event is informational still
-    exposes that event's reset time and window; the 429 alone classifies."""
+    exposes that event's reset time; the 429 alone classifies. The window
+    does NOT fall back: an informational event may name a different window
+    from the one that rejected the call."""
     case = "allowed_warning event then terminal 429 -> reset from the event"
     recs = rate_limit_event(status="allowed_warning",
                             resetsAt="2026-09-12T10:10:00Z",
-                            rateLimitType="five_hour") \
+                            rateLimitType="seven_day") \
         + result(is_error=True, subtype="success", terminal_reason="api_error",
                  api_error_status=429, num_turns=0)
+    outputs = expect(case, recs, "rate-limited",
+                     reason_contains="usage window exhausted, resets at "
+                                     "2026-09-12T10:10:00Z")
+    if "seven_day" in (outputs.get("reason") or ""):
+        fail(case, f"the informational event's window must not be named, "
+                   f"got reason {outputs.get('reason')!r}")
+    if outputs.get("rate-limit-reset") != "2026-09-12T10:10:00Z":
+        fail(case, f"expected rate-limit-reset=2026-09-12T10:10:00Z, got "
+                   f"{outputs.get('rate-limit-reset')!r}")
+
+
+def case_implausible_epoch_reset_is_unknown():
+    """spec.md: never epoch-zero, never a fabricated timestamp. Zero,
+    negative, millisecond-scale and unconvertible numbers are 'unknown'."""
+    for value in (0, -1, 1790000000000, 1e20):
+        case = f"numeric resetsAt {value!r} -> unknown"
+        recs = nested_rate_limit_event("rejected", resetsAt=value) \
+            + result(is_error=True, subtype="success", num_turns=1)
+        outputs = expect(case, recs, "rate-limited",
+                         reason_contains="resets at unknown")
+        if outputs.get("rate-limit-reset") != "unknown":
+            fail(case, f"expected rate-limit-reset=unknown, got "
+                       f"{outputs.get('rate-limit-reset')!r}")
+
+
+def case_empty_top_level_reset_falls_through_to_nested():
+    case = "empty top-level resetsAt -> nested rate_limit_info.resetsAt"
+    recs = [{"type": "rate_limit_event", "resetsAt": "", "rateLimitType": "",
+             "rate_limit_info": {"status": "rejected",
+                                 "resetsAt": "2026-09-12T10:10:00Z",
+                                 "rateLimitType": "five_hour"}}] \
+        + result(is_error=True, subtype="success", num_turns=1)
     outputs = expect(case, recs, "rate-limited", reason_contains="five_hour")
     if outputs.get("rate-limit-reset") != "2026-09-12T10:10:00Z":
         fail(case, f"expected rate-limit-reset=2026-09-12T10:10:00Z, got "
@@ -595,6 +629,8 @@ CASES = [
     case_terminal_429_without_event_rate_limited,
     case_epoch_reset_becomes_iso,
     case_terminal_429_reset_from_informational_event,
+    case_implausible_epoch_reset_is_unknown,
+    case_empty_top_level_reset_falls_through_to_nested,
     case_status_case_insensitive,
     case_reset_newline_cannot_inject_output,
     case_shared_counter_absent,
@@ -649,11 +685,22 @@ MUTATIONS = [
                          '($q // {}) as $src', 1)),
     ("prints an epoch resetsAt raw instead of as ISO-8601", "action",
      lambda s: s.replace(
-         'if type=="number" then (try todate catch tostring) else . end',
-         'if type=="number" then . else . end', 1)),
+         '(if . > 0 and . < 1e11 then (try todate catch null) else null end)',
+         '.', 1)),
+    ("converts any numeric resetsAt, fabricating dates from 0, negative "
+     "or millisecond values", "action",
+     lambda s: s.replace(
+         '(if . > 0 and . < 1e11 then (try todate catch null) else null end)',
+         '(try todate catch tostring)', 1)),
+    ("lets the window fall back to an informational event", "action",
+     lambda s: s.replace('window: (($q // {}) | field("rateLimitType")',
+                         'window: ($src | field("rateLimitType")', 1)),
+    ("lets an empty top-level resetsAt hide the nested one", "action",
+     lambda s: s.replace('map(select(. != null and . != ""))',
+                         'map(select(. != null))', 1)),
     ("stops stripping CR/LF from the reset/window values", "action",
-     lambda s: s.replace('| tostring | gsub("[\\r\\n]"; " ") end;',
-                         '| tostring end;', 1)),
+     lambda s: s.replace('tostring | gsub("[\\r\\n]"; " ") end;',
+                         'tostring end;', 1)),
 ]
 
 

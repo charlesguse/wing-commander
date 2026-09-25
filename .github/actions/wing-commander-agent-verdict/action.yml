@@ -127,31 +127,39 @@ runs:
             # would demote a real rejection to "failed". It also keeps
             # data-model.md's "status tolerated absent" rule.
             #
-            # Reset time and window come from the last qualifying event;
-            # when none qualifies they fall back to the last event of any
-            # status (FR-003: expose the reset whenever the transcript
-            # carries one -- reachable as rate-limited only via a terminal
-            # api_error 429). That fallback never feeds classification. A
-            # numeric (epoch-seconds) resetsAt becomes ISO-8601, and CR/LF
-            # become spaces so neither value can inject a $GITHUB_OUTPUT
-            # line.
+            # Reset time and window come from the last qualifying event.
+            # When none qualifies, the RESET TIME alone falls back to the
+            # last event of any status (FR-003: expose the reset whenever
+            # the transcript carries one -- reachable as rate-limited only
+            # via a terminal api_error 429). The window never falls back:
+            # an informational event may name a different window than the
+            # one that rejected the call. Neither fallback feeds
+            # classification. Each field is read top-level first, then
+            # under .rate_limit_info, with "" treated as absent. A numeric
+            # resetsAt is epoch seconds and becomes ISO-8601 only when
+            # plausible (> 0 and < 1e11); zero, negative, millisecond-scale
+            # or unconvertible values become "unknown", never a fabricated
+            # date (spec.md edge case). CR/LF become spaces so neither value
+            # can inject a $GITHUB_OUTPUT line.
             rate_limit_json="$(jq -c '
               def status_of: (if (.rate_limit_info|type)=="object"
                                 then .rate_limit_info.status else null end)
                              // .status // "rejected";
               def qualifies: (status_of | if type=="string" then ascii_downcase else . end) == "rejected";
-              def field($k): .[$k] // (if (.rate_limit_info|type)=="object"
-                                           then .rate_limit_info[$k] else null end);
-              def clean: if . == null then ""
-                         else (if type=="number" then (try todate catch tostring) else . end)
-                              | tostring | gsub("[\r\n]"; " ") end;
+              def field($k): [.[$k], (if (.rate_limit_info|type)=="object"
+                                        then .rate_limit_info[$k] else null end)]
+                             | map(select(. != null and . != "")) | first;
+              def clean: (if type=="number"
+                          then (if . > 0 and . < 1e11 then (try todate catch null) else null end)
+                          else . end)
+                         | if . == null then "" else tostring | gsub("[\r\n]"; " ") end;
               if type=="array" then . else [.] end
               | map(select(.type=="rate_limit_event")) as $ev
               | ($ev | map(select(qualifies)) | last) as $q
               | (($q // ($ev | last)) // {}) as $src
               | {qualifying: ($q != null),
                  reset: ($src | field("resetsAt") | clean),
-                 window: ($src | field("rateLimitType") | clean)}' \
+                 window: (($q // {}) | field("rateLimitType") | clean)}' \
               "$TRANSCRIPT" 2>/dev/null || true)"
             rlget() { printf '%s' "$rate_limit_json" | jq -r "$1" 2>/dev/null || true; }
 

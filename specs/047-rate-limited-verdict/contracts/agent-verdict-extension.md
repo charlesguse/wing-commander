@@ -49,13 +49,16 @@ record" entities define the field shapes referenced below;
   second file read, no network call (FR-002).
 - `rate-limit-reset` is computed once, from the *last* qualifying
   (rejected or statusless) `.type=="rate_limit_event"` record's
-  `.resetsAt`, or its `.rate_limit_info.resetsAt`. When no event
-  qualifies (a terminal api_error 429 whose only events are
-  informational), it falls back to the last event of any status (FR-003:
-  expose the reset whenever the transcript carries one). That fallback
-  feeds only the reset time and window, never classification. A numeric
-  (epoch-seconds) `resetsAt` is converted to ISO-8601, and CR/LF in the
-  reset time or window become spaces, so neither can inject a
+  `.resetsAt`, or its `.rate_limit_info.resetsAt` (an empty string counts
+  as absent). When no event qualifies (a terminal api_error 429 whose
+  only events are informational), the reset time alone falls back to the
+  last event of any status (FR-003: expose the reset whenever the
+  transcript carries one). The window never falls back, since an
+  informational event may name a different window, and neither fallback
+  feeds classification. A numeric `resetsAt` is epoch seconds: it becomes
+  ISO-8601 only when greater than 0 and less than 1e11; zero, negative,
+  millisecond-scale or unconvertible values give `"unknown"`. CR/LF in
+  the reset time or window become spaces, so neither can inject a
   `$GITHUB_OUTPUT` line (mirrors the
   "last record is authoritative" rule the classifier already applies to
   `result` records) — `"unknown"` when no such record exists, is empty,
