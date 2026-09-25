@@ -1,0 +1,5 @@
+[
+  {"type": "rate_limit_event", "rate_limit_info": {"status": "allowed", "rateLimitType": "five_hour", "resetsAt": 1790000000}},
+  {"type": "result", "subtype": "success", "is_error": false,
+   "num_turns": 1, "total_cost_usd": 0}
+]

@@ -4,8 +4,18 @@
 
 ```python
 def check_rate_limit(run_transcript_path: str) -> dict | None:
-    """Delegates to wing-commander-agent-verdict's existing classifier
-    (spec 047) — returns its rate-limited evidence dict, or None."""
+    """Returns evidence only when the cited run's transcript carries
+    rate-limit evidence (a `rate_limit_event`, or a terminal `api_error`
+    with `api_error_status: 429`) AND its terminal result is a failure
+    (`is_error: true` or `subtype` != "success") AND records one turn
+    (finite `num_turns`, 0 <= n <= 1) AND zero cost (finite
+    `total_cost_usd` == 0); else None. Missing, non-numeric or non-finite
+    turns/cost → None. A `rate_limit_event` alone is not enough: ordinary
+    long runs emit informational ones (#402). The evidence quotes the
+    transcript's own fields, never constants:
+    {rate_limit_event: bool, rate_limit_status: str|None,
+     terminal_reason: str|None, api_error_status: str|None,
+     num_turns, cost_usd}."""
 
 def check_action_bump(run_commit_sha: str, workflow_files: list[str],
                       cited_workflow_path: str | None) -> dict | None:
@@ -85,3 +95,10 @@ Fixtures (FR-064 bullet 1), each a checked-in transcript/workflow-pin pair:
    each proven by mutating the real workflow.
 9. `find_cited_run()`: a quoted or fenced link is ignored, a watchdog
    "First seen" run is preferred, a plain body link still works.
+10. Rate-limit evidence without a failed run, one turn and zero cost →
+    NOT closed (#402): a many-turn, nonzero-cost run carrying a
+    `rate_limit_event`, a many-turn $0 429, a negative-turns 429, a
+    one-turn nonzero-cost 429, a 429 with no cost recorded, and a
+    successful one-turn $0 run all `proceed`. Closed cases pin the quoted
+    evidence exactly. Removing any one guard, or hard-coding the evidence,
+    must fail these.
