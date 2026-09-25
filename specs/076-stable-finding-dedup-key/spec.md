@@ -45,15 +45,51 @@ problem: the prompt already asks the agent for "a stable name (a heading, a
 job name, a gate name), never a sentence" and the agent still varied it on
 every attempt. A prompt instruction is a request the model can silently
 fail; the key has to be something code can either compute or check.
-Second, choosing the replacement key is a trade-off the owner has to
+Second, choosing the replacement key was a trade-off the owner had to
 settle, because every candidate trades dedup precision against how much
 agent wording the key still trusts — which is why this reached the spec
-pipeline instead of a local fix PR.
+pipeline instead of a local fix PR. The Clarifications section below
+records the answer: the key keeps one agent-supplied component, but it is
+a value the agent can only copy — an anchor the pipeline checks occurs
+verbatim in the file the finding names — and a finding with no such anchor
+falls back to a key made of the stage and the file path alone.
 
 Scope note: the board loop's own code-review findings (spec 057) carry the
 same `fingerprint_basis` shape and file the same way, so whatever key this
-feature settles on has an obvious second consumer. Whether it takes it in
-this release is an open question below.
+feature settles on has an obvious second consumer. It does not take it in
+this release: FR-015 shares the invariants with the board loop and leaves
+its key composition where it is, with a gate holding the difference in
+place.
+
+## Clarifications
+
+### Session 2026-09-25 — answered on [#569](https://github.com/charlesguse/wing-commander/issues/569)
+
+- Q: Which keying strategy replaces the normalised free-text name? → A: the
+  verbatim anchor — the agent supplies a value it can only copy (an exact
+  heading, job name, or gate name) and the pipeline rejects a value that
+  does not occur verbatim in the named file — with the stage-plus-file-path
+  key as the fallback, as recommended on #424 (FR-004).
+- Q: What is the fallback route for a finding that cannot supply a
+  verifiable anchor? → A: the stage-plus-file-path key, with the later
+  encounter appended in full text. The finding lands on, or appends to, the
+  file-level issue for that stage and file; several distinct unanchorable
+  defects in one file share that issue and stay legible because each
+  append carries its own description (FR-007, FR-008).
+- Q: Does the board loop's code-review finding key (spec 057) adopt the same
+  rule in this release? → A: no — shared invariants only. The board loop
+  keeps its per-issue key composition, this feature changes stage findings
+  only, and a gate enforces that the two compositions differ deliberately
+  rather than by drift (FR-015).
+
+One consequence the answers make explicit, folded into the requirements
+below: the anchor check turns wording drift into a *route* choice rather
+than a fresh key. A run that anchors and a run that does not key apart, so
+one defect can hold at most two board items — its anchored issue and the
+file-level one — instead of one per run. Both keys are themselves stable,
+so neither accumulates twins. FR-001, SC-001, SC-002 and the
+fixtures in FR-010/FR-011 are stated against that behaviour rather than
+against an unattainable "one item always".
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -73,16 +109,19 @@ degrades with every iteration: the more the pipeline runs, the more twins
 bury the defects a maintainer has not yet seen.
 
 **Independent Test**: Drive the same stage three times against one planted
-defect, with nothing between the runs that would make the agent phrase its
-description identically, and confirm exactly one issue exists afterwards
-carrying two "seen again" references.
+defect that has quotable text to anchor on, with nothing between the runs
+that would make the agent phrase its description identically, and confirm
+exactly one issue exists afterwards carrying two "seen again" references.
+Where a run fails to anchor, confirm it lands on the file-level fallback
+issue rather than opening a fresh one.
 
 **Acceptance Scenarios**:
 
 1. **Given** two runs of one stage meeting one defect in one file, where
-   the agent's free-text description of that defect differs between the
-   runs in punctuation, capitalisation, spacing, and at least one added or
-   dropped word, **When** both runs complete, **Then** exactly one issue
+   the agent's free-text title and description of that defect differ
+   between the runs in punctuation, capitalisation, spacing, and at least
+   one added or dropped word, and both runs anchor on the same text in
+   that file, **When** both runs complete, **Then** exactly one issue
    exists and the second run is recorded on it as an append.
 2. **Given** two runs of one stage meeting two genuinely different defects
    in one file, **When** both runs complete, **Then** the two defects are
@@ -94,6 +133,12 @@ carrying two "seen again" references.
 4. **Given** one stage meeting a defect and a different stage meeting the
    same defect, **When** both runs complete, **Then** they are keyed
    apart, because a finding's label and attribution are per-stage.
+5. **Given** two runs of one stage meeting one defect in one file where the
+   first run supplies an anchor the pipeline verifies and the second
+   supplies one it cannot, **When** both runs complete, **Then** at most
+   two issues exist — the anchored one and the file-level fallback one —
+   and any further run that behaves like either of them appends to that
+   run's issue rather than filing a third.
 
 ---
 
@@ -102,10 +147,10 @@ carrying two "seen again" references.
 Whatever the key is made of, a reviewer can re-derive it from the run's
 inputs and get the same answer. Nothing in the key is a value the pipeline
 accepted from the agent without either computing it itself or checking it
-against something on disk. When a proposed finding carries a key component
-the pipeline cannot verify, that is a malformed proposal and the pipeline
-says so with a log line, rather than filing under a key that will not
-match next time.
+against something on disk. When a proposed finding carries an anchor the
+pipeline cannot find in the file the finding names, the pipeline says so
+with a log line and keys the finding without it, rather than filing under a
+value that will not match next time.
 
 **Why this priority**: Constitution Principle IX: the agent proposes, code
 decides. A key hashed from unverified prose looks deterministic — the same
@@ -114,22 +159,25 @@ every run. This story is what makes the dedup behaviour in User Story 1
 testable at all.
 
 **Independent Test**: Feed the filing step fixtures directly, with no agent
-running: two findings whose key components differ only in phrasing produce
-one key; two findings naming genuinely different subjects produce two; a
-finding whose key component cannot be verified against the file it names is
-handled by the stated fallback and the reason is recorded.
+running: two findings whose titles and descriptions are phrased differently
+but whose anchors quote the same file text produce one key; two findings
+naming genuinely different anchors produce two; a finding whose anchor
+cannot be found in the file it names takes the stated fallback and the
+reason is recorded.
 
 **Acceptance Scenarios**:
 
-1. **Given** a proposed finding whose key component the pipeline can check
-   against the file the finding names, **When** the check fails, **Then**
-   the finding is not filed under that component and the run records why.
+1. **Given** a proposed finding whose anchor the pipeline checks against
+   the file the finding names, **When** the check fails, **Then** the
+   finding is not filed under that anchor and the run records why and
+   which route it took instead.
 2. **Given** any filed finding, **When** its key is recomputed from the
    run's recorded inputs, **Then** the value is identical.
 3. **Given** the filing step's own test fixtures, **When** they are
    inspected, **Then** at least one pair exercises the wording variance an
-   agent actually produced (punctuation, case, and a differing word), not
-   only byte-identical input.
+   agent actually produced — differing titles and descriptions, and an
+   anchor quoting the same text with different punctuation, case and
+   spacing — not only byte-identical input.
 
 ---
 
@@ -138,18 +186,20 @@ handled by the stated fallback and the reason is recorded.
 Some defects have no anchor to quote: a file that should exist and does
 not, a registry entry that was never added, a gate that is missing rather
 than wrong. The stage that meets one of these still has something worth
-filing. It reaches the board under a key the pipeline can stand behind, and
-a maintainer reading the resulting issue can tell the several defects
-apart even when they share that key.
+filing. It reaches the board under the key the pipeline can stand behind
+without an anchor — the stage and the file path alone — and a maintainer
+reading the resulting issue can tell the several defects apart even
+though they share that key.
 
 **Why this priority**: Without this story, tightening the key trades one
 failure (twins) for a worse one (silence). A defect dropped for lacking a
 quotable anchor is a defect nobody ever sees.
 
 **Independent Test**: Feed the filing step a finding about a file that does
-not exist in the tree and confirm it is filed or appended — not silently
-dropped — and that the resulting issue carries the finding's own full
-description.
+not exist in the tree, and one about a file that does exist but carries no
+text the finding can quote, and confirm each is filed or appended — not
+silently dropped — and that the resulting issue carries the finding's own
+full description.
 
 **Acceptance Scenarios**:
 
@@ -191,8 +241,14 @@ not in the prompt sentence, and confirm a gate fails.
 
 ### Edge Cases
 
-- A finding whose key component is verifiable but matches many places in
-  the named file — the key must still be deterministic.
+- A finding whose anchor is verifiable but occurs in many places in the
+  named file — the key must still be deterministic; the check is that the
+  anchor occurs at all, not where.
+- One stage that supplies a verifiable anchor on one run and fails to on
+  the next: the two runs key apart, so one defect can hold two board items
+  — its anchored issue and the file-level fallback one. Each key is itself
+  stable, so neither accumulates twins. This is the accepted cost of the
+  settled strategy, not a defect.
 - A finding about a file that is renamed between two runs: the key moves,
   and a twin is filed. This is out of scope; the spec records it as a
   known limit rather than solving rename tracking.
@@ -205,40 +261,40 @@ not in the prompt sentence, and confirm a gate fails.
   not a new issue, and the run summary must not report it as one.
 - Two stages of one pipeline run meeting the same defect in the same file
   in the same run.
-- A key component containing only characters that the pipeline's
-  normalisation removes, leaving an empty value.
+- An anchor containing only characters that the pipeline's normalisation
+  removes, leaving an empty value: it is not a usable key component, so the
+  finding takes the FR-007 fallback route rather than keying on an empty
+  string.
 
 ## Requirements *(mandatory)*
 
 ### The key itself
 
 - **FR-001**: A finding's dedup key MUST NOT change when the agent
-  re-describes the same defect in different words. Specifically, two
-  descriptions of one defect that differ in punctuation, capitalisation,
-  spacing, or in words added or dropped around the same subject MUST
-  produce the same key.
+  re-describes the same defect in different words. Under the settled
+  composition (FR-004) this holds because the key's only agent-supplied
+  component is one the agent copies rather than phrases: two encounters
+  that anchor on the same text in the same file MUST produce the same key
+  however differently their titles and their statements of what is wrong
+  are worded, and differences of punctuation, capitalisation and spacing
+  within the copied anchor MUST be erased before the key is derived. An
+  encounter that supplies no verifiable anchor MUST NOT key on its own
+  wording either: it takes the FR-007 fallback key, which is equally
+  stable across runs.
 - **FR-002**: The key MUST remain deterministic and re-derivable: given the
   run's recorded inputs, a reviewer recomputing the key MUST get the same
   value.
 - **FR-003**: The key MUST continue to be scoped by the stage that found
   the defect, so two stages meeting one defect do not collide.
-- **FR-004**: The key's composition MUST be settled as follows.
-  [NEEDS CLARIFICATION: which keying strategy? The evidence on #424
-  eliminates "normalised agent prose" and leaves four candidates, each a
-  different trade between precision and trusted wording: (a) key on stage
-  plus file path only, with the append carrying the later finding's full
-  text — no agent wording in the key at all, at the cost of two distinct
-  defects in one file sharing one issue, and one board item per
-  (stage, file) rather than per defect; (b) key on stage, file path, and a
-  normalised title — the field that was byte-identical across all three
-  observed runs, but still agent wording; (c) require the agent to supply a
-  value it can only copy, not phrase — an exact heading, job name, or gate
-  name — and reject a value that does not occur verbatim in the named
-  file, with a stated fallback for defects that have no quotable anchor;
-  (d) a fixed enumeration of artifact kinds, as the watchdog's finding
-  class became after #118/#120/#122. The lifecycle issue records the
-  maintainer's recommendation as (c) with (a)'s append-with-full-text as
-  the fallback, but the routing note records it as the owner's call.]
+- **FR-004**: The key MUST be composed of the stage, the normalised file
+  path the finding names, and a **verbatim anchor**: a value the agent can
+  only copy, not phrase — an exact heading, job name, or gate name — which
+  the pipeline MUST check occurs verbatim in that file before the key is
+  derived from it. An anchor the pipeline cannot find there MUST NOT enter
+  the key (FR-005, FR-006); the finding takes the fallback route of FR-007
+  instead. The normalisation already on main applies to the accepted
+  anchor, so the verbatim check decides whether a value is an anchor at all
+  and the normalisation decides which anchors key together.
 - **FR-005**: No component of the key may be a value the pipeline accepted
   from the agent without either computing it itself or checking it against
   a file in the tree. A component that cannot be computed or checked MUST
@@ -247,18 +303,23 @@ not in the prompt sentence, and confirm a gate fails.
   checks and rejects MUST NOT be filed under that component, and the run
   MUST record the rejection with the finding's title and the reason,
   consistent with spec 056's existing drop-with-a-log-line discipline.
+  Rejecting the anchor does not drop the finding — FR-007 states where it
+  lands instead — so the recorded line MUST name the route taken as well as
+  the reason.
 
 ### Not losing findings to the tighter key
 
-- **FR-007**: A finding that cannot supply a verifiable key component MUST
-  still reach the board — filed or appended — rather than being discarded.
-  [NEEDS CLARIFICATION: what is the fallback route for an unanchorable
-  finding? Candidates: fall back to the stage-plus-file-path key of
-  FR-004(a) so the finding lands on (or appends to) the file-level issue;
-  or treat the absence of an anchor as a distinct key component of its own
-  so unanchorable findings do not merge with anchored ones; or file it
-  under a "needs triage" key that a maintainer sweeps. This question only
-  has force if FR-004 resolves to a strategy with a verifiable component.]
+- **FR-007**: A finding that cannot supply a verifiable anchor MUST still
+  reach the board — filed or appended — rather than being discarded. Its
+  key is FR-004's composition with the anchor component absent: the stage
+  and the normalised file path alone. The finding files, or appends to, the
+  file-level issue for that stage and that file, and the append carries its
+  full text per FR-008. Two consequences are accepted: several distinct
+  unanchorable defects in one file share one board item, and an
+  unanchorable encounter of a defect whose earlier encounter did anchor
+  does not join that anchored issue. Neither key drifts with wording, which
+  is what bounds any one defect at two board items — its anchored issue and
+  the file-level one — however many times it is met.
 - **FR-008**: When a later encounter appends to an issue already open, the
   append MUST carry the later finding's own description of the defect — its
   title and what is wrong — not only a reference to the run. This is what
@@ -272,13 +333,17 @@ not in the prompt sentence, and confirm a gate fails.
 
 - **FR-010**: The filing step's checked-in fixtures MUST include at least
   one pair of findings that describe one defect in wording an agent
-  actually varied — differing in punctuation, in capitalisation, and in at
-  least one word — and assert that the pair produces a single key; and at
-  least one pair naming genuinely different subjects that asserts two keys.
-  Fixtures that hand the step byte-identical input MUST NOT be the only
-  evidence of dedup.
-- **FR-011**: A fixture MUST cover the FR-007 fallback route, so the
-  unanchorable case is proven by the harness and not only by reasoning.
+  actually varied — differing titles, differing statements of what is
+  wrong, and anchors copied from the same file text but differing in
+  punctuation, capitalisation and spacing — and assert that the pair
+  produces a single key; and at least one pair naming genuinely different
+  anchors in one file that asserts two keys. Fixtures that hand the step
+  byte-identical input MUST NOT be the only evidence of dedup.
+- **FR-011**: Fixtures MUST cover the FR-007 fallback route, so the
+  unanchorable case is proven by the harness and not only by reasoning:
+  a finding whose anchor does not occur in the named file takes the
+  fallback key, two such findings in one file share it, and a fallback
+  finding does not collide with an anchored finding in the same file.
 - **FR-012**: The key rule MUST be stated in exactly one canonical place in
   the specification artifacts of spec 056 (its data model, beside the
   existing fingerprint definition), and the repository's existing
@@ -286,8 +351,11 @@ not in the prompt sentence, and confirm a gate fails.
   statement and the filing step's behaviour fails a gate.
 - **FR-013**: The sentence in each stage's agent prompt that describes what
   the agent must supply for the key MUST be updated to match the settled
-  rule, in one canonical copy with the other call sites pointing at it, per
-  this repository's canonical-comment discipline.
+  rule — that the value must occur verbatim in the file the finding names,
+  that the agent should copy it rather than phrase it, and that a value
+  which does not occur there costs the finding its own board item rather
+  than dropping it — in one canonical copy with the other call sites
+  pointing at it, per this repository's canonical-comment discipline.
 
 ### Compatibility and reach
 
@@ -295,15 +363,14 @@ not in the prompt sentence, and confirm a gate fails.
   the new one. The change MUST record this consequence where a maintainer
   will meet it (spec 056's data model), and MUST NOT attempt to rewrite
   markers on already-filed issues as part of this feature.
-- **FR-015**: The scope of this change across the repository's two
-  finding-filing consumers MUST be settled.
-  [NEEDS CLARIFICATION: does the board loop's code-review finding key
-  (spec 057, `board-review-finding.schema.json`) adopt the same rule in
-  this release, or does this feature change stage findings only and leave
-  the board loop's separate key to a later change? The two share a
-  proposal shape and both file to the board, so a split leaves two rules
-  live at once; taking both widens the change to a second workflow and a
-  second fixture set.]
+- **FR-015**: This release changes stage findings only. The board loop's
+  code-review finding key (spec 057, `board-review-finding.schema.json`)
+  keeps its own per-issue key composition; what the two consumers share is
+  the invariants — FR-001, FR-002, FR-003 and FR-005 — stated once and
+  required of both. The difference in composition MUST be held in place by
+  a gate, so that the two rules differ because this spec says so and not
+  because one of them drifted; the gate MUST name this requirement as the
+  reason the compositions are allowed to differ.
 - **FR-016**: Whatever the settled rule, the pipeline MUST NOT gain any
   new grant that lets an agent file an issue directly — the agent still
   proposes and code still decides.
@@ -316,11 +383,13 @@ not in the prompt sentence, and confirm a gate fails.
   validation they must pass.
 - **Dedup Key**: the derived value that decides file-vs-append. Today a
   hash over the stage, a normalised file path, and a normalised free-text
-  name. This feature redefines its composition under FR-004.
-- **Key Anchor**: a value the pipeline can check against the tree rather
-  than trust — for example a heading or name that must occur verbatim in
-  the file the finding points at. Exists only if FR-004 resolves to a
-  strategy that has one.
+  name. Under FR-004 the third component becomes a verified anchor, and
+  under FR-007 it is absent altogether for a finding that has none — two
+  key shapes, both derived the same way from the same stage and path.
+- **Key Anchor**: a value the pipeline checks against the tree rather than
+  trusts — a heading, job name or gate name that must occur verbatim in
+  the file the finding points at. A proposed anchor that does not occur
+  there is not an anchor; the finding keys without one.
 - **Filed Finding Issue**: the durable board item, carrying the key as a
   marker in its body. Unchanged in shape; this feature changes which
   encounters land on the same one and what an append must contain.
@@ -331,12 +400,17 @@ not in the prompt sentence, and confirm a gate fails.
 
 - **SC-001**: Three consecutive runs of one stage against one planted
   defect, with the agent free to phrase its description afresh each time,
-  produce exactly one board item — one filing and two appends. Today the
-  same drill produces three.
-- **SC-002**: Two findings describing one defect whose key components
-  differ in punctuation, capitalisation, and one added word produce one key
-  in the checked-in fixtures; two findings naming different subjects
-  produce two.
+  produce exactly one board item — one filing and two appends — when every
+  run supplies a verifiable anchor, and never more than two board items
+  when some runs anchor and others take the FR-007 fallback. Today the same
+  drill produces one item per run, with no ceiling.
+- **SC-002**: In the checked-in fixtures, two findings describing one defect
+  with differing titles, differing statements of what is wrong, and anchors
+  copied from the same file text but differing in punctuation,
+  capitalisation and spacing produce one key; two findings naming genuinely
+  different anchors in one file produce two; and a finding whose anchor
+  does not occur in the named file produces the FR-007 fallback key rather
+  than a key built from its own wording.
 - **SC-003**: 100% of key components that the pipeline cannot compute or
   verify are kept out of the key, verifiable by inspecting the filing
   step's inputs against its key computation.
@@ -352,6 +426,10 @@ not in the prompt sentence, and confirm a gate fails.
 - **SC-007**: The dedup behaviour can be demonstrated in under one minute
   from a clean checkout by running the checked-in fixtures, with no agent
   run and no scratch repository.
+- **SC-008**: A change that makes the board loop's code-review finding key
+  and the stage-finding key diverge further, or silently converge, fails a
+  gate in the repository's local gate suite — the split FR-015 chose stays
+  a decision on the record rather than an accident.
 
 ## Assumptions
 
@@ -375,6 +453,15 @@ not in the prompt sentence, and confirm a gate fails.
 - The stage prompt sentence about the key is treated as code, per this
   repository's rule that workflow comments and prompt prose are
   gate-compared.
+- Agents can copy a verbatim string out of a file they have just read more
+  reliably than they can re-phrase a name identically. The evidence on #424
+  supports this only indirectly — the titles were byte-identical while the
+  phrased names were not — so the anchor is designed to fail safe: an
+  agent that cannot copy costs its finding a separate board item, never the
+  finding itself.
+- Leaving the board loop's key composition unchanged (FR-015) means two key
+  rules are live at once. That is accepted for this release; the gate
+  FR-015 requires is what keeps the split deliberate.
 
 ## Dependencies
 
@@ -382,7 +469,10 @@ not in the prompt sentence, and confirm a gate fails.
   schema, the fingerprint, and the FR-011 append promise this feature is
   keeping. Its data model is the canonical home for the key rule.
 - Spec 057 (`057-autonomous-board-loop`) is the second consumer of the
-  proposal shape and the board that suffers the twins; FR-015 decides
-  whether it is in scope here.
+  proposal shape and the board that suffers the twins. Its key composition
+  is out of scope here: FR-015 shares the invariants with it and requires a
+  gate over the difference, so the only change this feature makes in spec
+  057's territory is that gate and whatever statement of the shared
+  invariants it reads.
 - The normalisation change already on main is a prerequisite and remains
   useful under every candidate strategy.

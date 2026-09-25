@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,21 +31,28 @@
 
 ## Notes
 
-- Three `[NEEDS CLARIFICATION]` markers remain, deliberately, at the
-  maximum the specify skill allows:
-  - **FR-004** — which keying strategy replaces the normalised free-text
-    name. This is the reason the issue was routed to the pipeline rather
-    than fixed locally: the routing note records it as "the owner's call"
-    among four candidates with no clear winner. Every other requirement in
-    this spec is written to hold under any of them.
-  - **FR-007** — the fallback route for a finding that cannot supply a
-    verifiable key component. Conditional on FR-004 resolving to a
-    strategy that has one.
-  - **FR-015** — whether the board loop's separate code-review finding key
-    adopts the same rule in this release.
-- This run is the intake stage of the CI pipeline, so the questions are
-  not presented interactively; they are posted to the lifecycle issue and
-  answered by the clarify stage, which will replace the markers in place.
+- The three `[NEEDS CLARIFICATION]` markers intake left open were answered
+  by the repository owner on lifecycle issue #569 and resolved in place by
+  the clarify stage on 2026-09-25. None remain:
+  - **FR-004** — the keying strategy is the verbatim anchor (an exact
+    heading, job name or gate name the agent copies, checked against the
+    named file) over stage and normalised file path.
+  - **FR-007** — an unanchorable finding falls back to the
+    stage-plus-file-path key, with the later encounter appended in full
+    text.
+  - **FR-015** — this release changes stage findings only; the board loop
+    keeps its per-issue key composition, shares the invariants, and a gate
+    holds the difference in place.
+- The answers introduced one consequence the original draft did not state:
+  a run that anchors and a run that does not key apart, so one
+  (stage, file) pair can hold two board items rather than one. FR-001,
+  SC-001, SC-002, FR-010 and FR-011 were restated against that behaviour,
+  Edge Cases gained the mixed-route case, and User Story 1 gained
+  acceptance scenario 5 for it. SC-008 was added so FR-015's gate has a
+  measurable outcome.
+- This spec was drafted by the intake stage of the CI pipeline, so the
+  questions were not presented interactively; they were posted to the
+  lifecycle issue and answered there.
 - Two content-quality items were re-checked after the first pass and
   tightened: Success Criteria originally named the hash function and the
   marker format (implementation detail) and now state the observable
