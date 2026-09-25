@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -32,14 +32,17 @@
 ## Notes
 
 - Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`
-- **Three `[NEEDS CLARIFICATION]` markers remain by design** (FR-009 dispatch
-  collapse, FR-016 re-dispatch vs. report-only, FR-017 acknowledgment latency).
-  Each is a scope-level trade-off the originating issue explicitly raised as an
-  option for the owner to decide, and no reasonable default exists: FR-009
-  changes whether a follow-up comment gets its own iteration number, FR-016
-  changes whether the lifecycle self-heals, FR-017 chooses between the simplest
-  serialization and a prompt acknowledgment. Intake runs headless and does not
-  wait for answers; the questions are posted to lifecycle issue #560 instead.
+- **All three `[NEEDS CLARIFICATION]` markers are resolved** by the owner's
+  reply on lifecycle issue #560, recorded in the spec's Clarifications section
+  (session 2026-09-25): FR-009 takes one implement cycle for the whole
+  overlapping set, so a follow-up comment is absorbed into the round in flight;
+  FR-016 takes report plus a single automatic re-dispatch, bounded at
+  most-once by FR-016a; FR-017 keeps the second round's acknowledgment prompt,
+  and FR-017a records that a whole-run per-PR group is ruled out because its
+  single pending slot reproduces the eviction. Downstream effects were folded
+  into FR-011, US1 scenario 5, US2 scenario 5, US3 scenarios 4–6, SC-003,
+  SC-004a, SC-005, the "second run arrives after the first has dispatched" edge
+  case, and the Assumptions note on the originating issue's four options.
 - **On "no implementation details"**: the Context section names specific
   workflow files, jobs, and line ranges, and Key Entities names the concurrency
   groups by their literal names. This is deliberate and matches the repository's
@@ -50,8 +53,8 @@
   not which grouping achieves it, so all four options sketched on the issue
   remain open to the plan stage.
 - **Constitution alignment**: III (a lost fold and a lost cycle must be legible
-  from the issue — US1, US3, SC-005), IV (FR-016's clarification is exactly the
-  "no silent manual step" question), VII (FR-019 holds the published contract
+  from the issue — US1, US3, SC-005), IV and X (FR-016/FR-016a — the lifecycle
+  self-heals once, and the recovery path is bounded so it cannot loop), VII (FR-019 holds the published contract
   fixed), VIII (FR-021, FR-022, SC-007 — a fixture per failure branch, evaluated
   against both files' real expressions), IX (FR-015 — the replaced-vs-human
   cancel verdict is code, not prompt), and the Operational Constraint that

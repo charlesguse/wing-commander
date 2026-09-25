@@ -67,6 +67,29 @@ notice.
    family), and a job cancelled while pending runs no steps at all, so the
    cancelled run cannot report itself. Nothing reaches the lifecycle issue.
 
+## Clarifications
+
+### Session 2026-09-25 — answered on [#560](https://github.com/charlesguse/wing-commander/issues/560)
+
+- Q: For a set of overlapping stage-9 runs on one PR that collectively folded at
+  least one item, does the pipeline dispatch exactly one implement cycle for the
+  whole set, or one cycle per stage-9 run? → A: exactly one cycle for the whole
+  overlapping set; the later runs' folds ride along in it and the earlier runs'
+  dispatches yield. A follow-up comment posted mid-fold is absorbed into the
+  first round's iteration rather than producing a second iteration number
+  (FR-009).
+- Q: After a lost cycle is detected and reported, does the pipeline re-dispatch
+  it automatically or report only and leave the re-drive to a maintainer? → A:
+  neither in full — report, then re-dispatch the lost cycle **at most once**. The
+  bound keeps the dispatch path from looping while still recovering the single
+  eviction observed on PR #414 (Principles IV and X) (FR-016).
+- Q: Does a maintainer whose review starts a second stage-9 run get a prompt
+  acknowledgment, or may the whole second run queue behind the first? → A: the
+  acknowledgment stays prompt — classification and per-item announcements are
+  not serialized against another run's folds. Queuing the whole run per PR is
+  not eviction-free anyway: a concurrency group holds one pending entry, so a
+  third review would cancel the pending second run (FR-017).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - No review item is lost when two reviews land on one PR (Priority: P1)
@@ -105,15 +128,21 @@ runs, with no item missing from both.
 4. **Given** two stage-9 runs in flight for **different** specs, **When** both
    fold concurrently, **Then** they run in parallel exactly as today — this
    feature adds no cross-spec serialization.
+5. **Given** a stage-9 run is mid-fold on a PR, **When** a maintainer's
+   follow-up comment starts a second run on that PR, **Then** the second run's
+   classification and per-item announcements are posted without waiting for the
+   first run's legs — only its branch-mutating work queues.
 
 ---
 
 ### User Story 2 - The dispatched implement cycle actually starts (Priority: P2)
 
-After a review round on an implementation PR is folded, exactly one implement
-cycle is dispatched, and the run named in the "Implementation cycle N
-dispatched" reply is a run that actually starts and does the work. A cycle is
-never dispatched into a queue that is still being used for folds.
+After the folds of every stage-9 run in flight on an implementation PR have
+finished, exactly one implement cycle is dispatched for the whole overlapping
+set, and the run named in the "Implementation cycle N dispatched" reply is a run
+that actually starts and does the work. A follow-up comment that lands mid-fold
+rides along in that one cycle rather than earning its own iteration number. A
+cycle is never dispatched into a queue that is still being used for folds.
 
 **Why this priority**: a cancelled cycle costs a wasted dispatch and, when it is
 the last dispatch of the round, stops the lifecycle dead. It is recoverable by
@@ -121,9 +150,9 @@ hand once seen, which is why it ranks below the silent data loss of US1, but it
 is what makes the failure terminal rather than merely untidy.
 
 **Independent Test**: drive two overlapping stage-9 runs that both fold at least
-one item, and confirm that every implement run dispatched for the round reaches
-a non-`cancelled` conclusion and that the lifecycle issue shows one dispatch
-outcome per review round rather than one per stage-9 run.
+one item, and confirm that exactly one implement run is dispatched for the pair,
+that it reaches a non-`cancelled` conclusion, and that the lifecycle issue shows
+one dispatch outcome for the overlapping set rather than one per stage-9 run.
 
 **Acceptance Scenarios**:
 
@@ -140,6 +169,10 @@ outcome per review round rather than one per stage-9 run.
 4. **Given** a `stop`-classified run overlapping a fold run on the same PR,
    **When** the stop run's jobs queue, **Then** they join the per-PR stop group
    as today and cannot evict any pending job in the per-spec group.
+5. **Given** two overlapping stage-9 runs on one PR that each folded at least
+   one item, **When** the last fold leg of the set reaches a terminal state,
+   **Then** exactly one implement cycle is dispatched for the pair, carrying one
+   iteration number, and its reply names the folds of both runs.
 
 ---
 
@@ -147,9 +180,10 @@ outcome per review round rather than one per stage-9 run.
 
 When an implement run is cancelled because a concurrency group replaced it while
 it was pending, a one-line notice appears on the lifecycle issue naming the
-spec, the iteration, the cancelled run, and what replaced it. A maintainer
-reading the issue alone can tell that a cycle was lost and why, without opening
-the Actions tab.
+spec, the iteration, the cancelled run, and what replaced it, and the cycle is
+re-dispatched once. A maintainer reading the issue alone can tell that a cycle
+was lost, why, and whether the pipeline recovered it — without opening the
+Actions tab.
 
 **Why this priority**: this is the safety net rather than the fix. Once US1 and
 US2 hold, a replacement cancel should not happen — but the class of bug is
@@ -158,8 +192,11 @@ findable in minutes instead of by hand-reconstructing a timeline. It is
 independently valuable and independently shippable.
 
 **Independent Test**: force an implement run to be cancelled while pending in
-its group and confirm a notice naming it appears on the lifecycle issue, while a
-maintainer's own manual cancel of an implement run still produces no notice.
+its group and confirm a notice naming it appears on the lifecycle issue and that
+the cycle is re-dispatched exactly once; force the replacement to happen again
+and confirm the second loss is reported with no third dispatch; confirm a
+maintainer's own manual cancel of an implement run still produces no notice and
+no re-dispatch.
 
 **Acceptance Scenarios**:
 
@@ -174,6 +211,15 @@ maintainer's own manual cancel of an implement run still produces no notice.
    maintainer reads the lifecycle issue, **Then** the "dispatched" notice for
    that cycle and the "lost" notice for the same cycle can be matched to each
    other by run URL or iteration number.
+4. **Given** a lost cycle has been reported, **When** the pipeline recovers it,
+   **Then** the cycle is re-dispatched exactly once and the re-dispatch is named
+   on the lifecycle issue next to the lost-cycle notice.
+5. **Given** a cycle that has already been re-dispatched once, **When** the
+   re-dispatched run is itself replaced while pending, **Then** the second loss
+   is reported, no further cycle is dispatched automatically, and the notice
+   says a maintainer's re-drive is the remaining step.
+6. **Given** a maintainer cancels an implement run by hand, **When** the run
+   concludes `cancelled`, **Then** nothing is re-dispatched.
 
 ---
 
@@ -184,7 +230,10 @@ maintainer's own manual cancel of an implement run still produces no notice.
 - **The second run arrives after the first has already dispatched.** The first
   run's cycle may already be running; the second run's legs must queue behind it
   without either side being cancelled, and without the fold loop deadlocking
-  against a long-running implement job.
+  against a long-running implement job. The one-cycle collapse of FR-009 covers
+  only the runs still folding when the dispatch decision is taken — a run that
+  arrives after the dispatch has fired owns its own cycle and its own iteration
+  number.
 - **A run whose legs all fail, hold, or reply-only.** No fold commits exist, so
   no cycle is dispatched — unchanged.
 - **Attribution of fold commits across runs.** `dispatch-once` decides whether
@@ -236,18 +285,18 @@ maintainer's own manual cancel of an implement run still produces no notice.
 - **FR-008**: A dispatched implement run MUST NOT be cancelled by the later
   queuing of any job belonging to a stage-9 run on the same PR.
 - **FR-009**: For a set of overlapping stage-9 runs on one PR that collectively
-  folded at least one item, the pipeline MUST dispatch
-  [NEEDS CLARIFICATION: exactly one implement cycle for the whole overlapping
-  set — the later runs' folds ride along in the one cycle and the earlier runs'
-  dispatches yield — or one cycle per stage-9 run, serialized so each round gets
-  its own iteration? This decides whether a maintainer's follow-up comment
-  produces a second iteration number or is absorbed into the first.]
+  folded at least one item, the pipeline MUST dispatch exactly one implement
+  cycle for the whole set. The later runs' folds ride along in that one cycle
+  and the earlier runs' dispatches yield to it, so a maintainer's follow-up
+  comment posted mid-fold is absorbed into the round already in flight rather
+  than producing a second iteration number.
 - **FR-010**: The "Implementation cycle N dispatched" reply MUST name a run that
   goes on to start. When the named run does not start, the discrepancy MUST be
   reported rather than left standing as the last word on the round.
-- **FR-011**: The `folded` list a dispatch reply publishes MUST name only the
-  items that reply's own run folded, so the list and the round's per-item
-  reports cannot disagree.
+- **FR-011**: Because one dispatch now covers a whole overlapping set (FR-009),
+  the `folded` list that dispatch reply publishes MUST name exactly the items
+  the set folded — every one of them, and no item no run in the set folded —
+  so the list and the per-run per-item reports (FR-006) cannot disagree.
 
 #### Making a lost cycle visible
 
@@ -262,22 +311,27 @@ maintainer's own manual cancel of an implement run still produces no notice.
   cancelled by a human) MUST be made by deterministic code reading run state,
   never by an agent's judgment (Principle IX).
 - **FR-016**: After a lost cycle is detected and reported, the pipeline MUST
-  [NEEDS CLARIFICATION: re-dispatch the lost cycle automatically so the
-  lifecycle self-heals, or report only and leave the re-drive to a maintainer?
-  Automatic re-dispatch removes a manual step (Principle IV) but adds a
-  dispatch path that can itself loop; report-only keeps the loop bounded but
-  leaves a manual step that must then be announced on the issue.]
+  re-dispatch that cycle automatically **at most once**. The re-dispatch MUST be
+  named on the lifecycle issue alongside the lost-cycle notice, and the
+  at-most-once bound MUST be enforced by deterministic code, so no chain of
+  replacements can drive an unbounded dispatch loop (Principles IV and X).
+- **FR-016a**: If the re-dispatched cycle is itself lost to a concurrency
+  replacement, the pipeline MUST report that second loss and stop — no further
+  automatic re-dispatch — and the notice MUST say that a maintainer's re-drive
+  is the remaining step.
 
 #### Latency and interaction shape
 
 - **FR-017**: A maintainer whose review or comment starts a second stage-9 run
-  on a PR MUST receive
-  [NEEDS CLARIFICATION: a prompt acknowledgment of their round — classification
-  and per-item announcements posted without waiting for the first run's folds,
-  with only the branch-mutating work serialized — or is it acceptable for the
-  whole second run, acknowledgment included, to queue behind the first run's
-  entire lifecycle (the simplest serialization, at a cost of minutes of
-  silence)?]
+  on a PR MUST receive a prompt acknowledgment of their round: classification
+  and the per-item announcements MUST be posted without waiting for any other
+  run's fold legs. Only the branch-mutating work is serialized.
+- **FR-017a**: The serialization MUST NOT be achieved by queuing whole stage-9
+  runs in one per-PR group. Because a concurrency group holds at most one
+  pending entry, a third review would evict the pending second run — the same
+  defect in a new place. The mechanism chosen MUST hold every in-flight run's
+  branch-touching work without relying on more than one pending entry per
+  group.
 - **FR-018**: Whatever the serialization shape, the pipeline MUST NOT deadlock:
   no job may wait on a queue slot held by a run that is itself waiting on that
   job.
@@ -330,15 +384,21 @@ maintainer's own manual cancel of an implement run still produces no notice.
   from every report.
 - **SC-002**: Across the fixture-covered overlapping-run scenarios, zero
   implement runs conclude `cancelled` as a result of pending replacement.
-- **SC-003**: For one review round, the lifecycle issue carries exactly one
-  dispatch outcome — one "dispatched" notice whose run started, or one
-  explicitly-reported reason no cycle was dispatched — never two "dispatched"
-  notices for the same round.
+- **SC-003**: For a set of overlapping stage-9 runs on one PR, the lifecycle
+  issue carries exactly one dispatch outcome — one "dispatched" notice whose run
+  started, or one explicitly-reported reason no cycle was dispatched — never one
+  notice per stage-9 run. In the reproduced two-run scenario this is one
+  "dispatched" notice where today there are two.
 - **SC-004**: 100% of implement runs cancelled by concurrency replacement
   produce a lifecycle-issue notice; 0% of maintainer-cancelled runs do.
+- **SC-004a**: A cycle lost to concurrency replacement is automatically
+  re-dispatched at most once — never twice for the same cycle, and never for a
+  maintainer's manual cancel — so a chain of replacements can add at most one
+  run to the round.
 - **SC-005**: A maintainer can determine, from the lifecycle issue and the PR
-  alone, how many cycles a review round dispatched and whether any was lost —
-  without opening the Actions tab (Principle III).
+  alone, how many cycles a review round dispatched, whether any was lost, and
+  whether a lost one was recovered by the single re-dispatch or still needs a
+  hand re-drive — without opening the Actions tab (Principle III).
 - **SC-006**: Two specs' stage runs still overlap in wall-clock time in a
   two-spec scenario; no measurable increase in end-to-end time for a single-run
   review round.
@@ -369,8 +429,12 @@ maintainer's own manual cancel of an implement run still produces no notice.
 - The four options sketched on the originating issue (serialize the whole run
   per PR; make dispatch PR-wide; re-group the implement job so legs wait on it;
   report the cancellation independently) are input to planning, not a decision
-  taken here. FR-009, FR-016 and FR-017 are the three choices among them that
-  change what the feature delivers rather than how.
+  taken here — with one exception now settled: FR-017a rules out serializing
+  whole stage-9 runs in a single per-PR group, because that group's one pending
+  slot reproduces the eviction. The three scope-level choices are answered in
+  Clarifications: one cycle per overlapping set (FR-009), report plus a single
+  automatic re-dispatch (FR-016), and a prompt acknowledgment for every round
+  (FR-017).
 
 ## Out of Scope
 
